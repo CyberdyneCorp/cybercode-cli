@@ -16,9 +16,45 @@ pub fn mask_env(
 }
 
 fn contains_name(names: &[String], name: &str, on_error: bool) -> bool {
-    names
-        .iter()
-        .any(|candidate| equal_name(name, candidate).unwrap_or(on_error))
+    names.iter().any(|candidate| {
+        if candidate.contains(['*', '?']) {
+            cyber_core::wildcard::matches(candidate, name)
+        } else {
+            equal_name(name, candidate).unwrap_or(on_error)
+        }
+    })
+}
+
+/// The variables `sandbox.env.mode: "none"` keeps.
+pub const BASE_VARS: &[&str] = &["PATH", "HOME", "TMPDIR", "LANG", "TERM"];
+
+/// The environment of a sandboxed process (`sandbox` → Environment policy): the masked
+/// server environment (`inherit`) or only [`BASE_VARS`] (`none`), without names matching
+/// `deny`, plus `set`.
+pub fn policy_env(
+    vars: impl Iterator<Item = (String, String)>,
+    config: &crate::SandboxConfig,
+    extra: &[String],
+) -> Vec<(String, String)> {
+    let kept: Vec<(String, String)> = if config.env.clean {
+        vars.filter(|(name, _)| {
+            BASE_VARS
+                .iter()
+                .any(|base| equal_name(name, base).unwrap_or(false))
+        })
+        .collect()
+    } else {
+        mask_env(vars, &config.env_allow, extra)
+    };
+    let mut out: Vec<(String, String)> = kept
+        .into_iter()
+        .filter(|(name, _)| !contains_name(&config.env.deny, name, true))
+        .collect();
+    for (name, value) in &config.env.set {
+        out.retain(|(existing, _)| existing != name);
+        out.push((name.clone(), value.clone()));
+    }
+    out
 }
 
 #[cfg(not(windows))]

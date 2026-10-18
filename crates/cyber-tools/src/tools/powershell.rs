@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use base64::Engine as _;
 use cyber_server::runtime::{RetrySafety, ToolDef};
 use futures::future::BoxFuture;
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::{Tool, ToolError, bash, def, failed, number, text};
 use crate::host::Ctx;
@@ -18,11 +18,12 @@ impl Tool for PowerShell {
     fn def(&self) -> ToolDef {
         def(
             "powershell",
-            "Run a native PowerShell command in the project. stdout and stderr are combined. timeout_ms defaults to 120000 (max 600000).",
+            "Run a native PowerShell command in the project. stdout and stderr are combined. timeout_ms defaults to 120000 (max 600000). background: true starts a background Job and returns its job_id and log path at once; `task_stop` stops it and a completion notice arrives as a queued message unless notify is false.",
             json!({
                 "type": "object", "required": ["command"], "properties": {
                     "command": {"type": "string"}, "timeout_ms": {"type": "integer"}, "workdir": {"type": "string"},
-                    "description": {"type": "string"}, "background": {"type": "boolean"}
+                    "description": {"type": "string"}, "background": {"type": "boolean"},
+                    "notify": {"type": "boolean"}
                 }
             }),
             RetrySafety::Never,
@@ -40,11 +41,7 @@ impl Tool for PowerShell {
             if command.len() > 1024 * 1024 {
                 return Err(failed("PowerShell source exceeds the 1 MiB analysis limit"));
             }
-            if input.get("background").and_then(Value::as_bool) == Some(true) {
-                return Err(failed(
-                    "background: true starts a background Job, which arrives in P1; run in the foreground",
-                ));
-            }
+            let background = super::background::requested(input)?;
             let program = installed(&ctx.location).ok_or_else(|| {
                 failed("Neither pwsh.exe nor powershell.exe is installed outside the checkout")
             })?;
@@ -79,17 +76,26 @@ impl Tool for PowerShell {
                 .iter()
                 .flat_map(|c| c.mutates.clone())
                 .collect();
-            bash::authorize_facts(ctx, command, &workdir, &analysis, risk, false, mutates).await?;
+            let facts = bash::Facts {
+                removal_risk: risk,
+                mutates,
+                ..bash::Facts::default()
+            };
+            bash::authorize_facts(ctx, command, &workdir, &analysis, facts).await?;
             let prepared = crate::sandboxing::prepare_command(
                 ctx,
                 &program.display().to_string(),
                 &arguments(command),
             )
             .await?;
+            if background {
+                return super::background::start(ctx, prepared, &workdir, command, "powershell")
+                    .await;
+            }
             let timeout = number(input, "timeout_ms")
                 .unwrap_or(bash::DEFAULT_TIMEOUT_MS)
                 .clamp(1, bash::MAX_TIMEOUT_MS);
-            let output = bash::execute_prepared(ctx, prepared, &workdir, timeout).await?;
+            let output = bash::execute_prepared(ctx, prepared, &workdir, timeout, None).await?;
             super::pr_links::observe(ctx, command, &workdir, &output).await;
             Ok(output)
         })

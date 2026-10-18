@@ -286,6 +286,25 @@ impl Runtime {
             .await
     }
 
+    /// Start a user shell command (`background-tasks` → Background commands from the user:
+    /// `& cmd`) as a background Job of the Session, without a Turn or a message. It may
+    /// start while a Turn runs; its completion notice is queued like any Job's.
+    pub async fn shell_background(
+        &self,
+        session_id: &str,
+        command: &str,
+    ) -> Result<super::Job, RuntimeError> {
+        let handle = self.inner.handle(session_id).await?;
+        let directory = handle.state.lock().await.info.directory.clone();
+        let id = self
+            .inner
+            .tools
+            .shell_background(&directory, session_id, command)
+            .await
+            .map_err(RuntimeError::Invalid)?;
+        self.job(&id)
+    }
+
     /// File diffs recorded for a user message (`snapshots-checkpoints` → Per-turn diff summary).
     pub async fn diff(
         &self,

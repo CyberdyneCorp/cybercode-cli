@@ -3020,3 +3020,416 @@ fn worktree_remove_while_session_active_fails_in_use() {
     assert!(!repo.join(".git/cyber-worktrees/spike.json").exists());
     assert!(!branch_exists(&repo, "cyber/spike"));
 }
+
+/// The global configuration file of an `Env`.
+fn global_config(env: &Env, config: Value) {
+    let dir = env.root.join("cyber-home/config");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("cyber.jsonc"), config.to_string()).unwrap();
+}
+
+/// `sandbox` → Sandbox CLI: `cyber sandbox explain` prints the writable roots, network
+/// mode, allowed domains and the names (never values) of masked variables.
+#[test]
+fn sandbox_explain_prints_roots_network_domains_and_masked_names() {
+    let env = Env::new();
+    let repo = env.repo("{}");
+    global_config(
+        &env,
+        serde_json::json!({"sandbox": {"writable_roots": ["~/extra"], "allowed_domains": ["example.com"]}}),
+    );
+    let o = env
+        .command(&["sandbox", "explain"])
+        .current_dir(&repo)
+        .env("OPENAI_API_KEY", "sk-secret-value")
+        .output()
+        .unwrap();
+    let text = exits(&o, 0);
+    assert!(text.contains("profile: workspace"), "{text}");
+    assert!(text.contains("policy: workspace-write"), "{text}");
+    assert!(text.contains(&format!("  {}", repo.display())), "{text}");
+    assert!(
+        text.contains(&format!(
+            "  {}",
+            env.root.join("home").join("extra").display()
+        )),
+        "{text}"
+    );
+    assert!(text.contains("network: proxy"), "{text}");
+    assert!(text.contains("allowed domains: example.com"), "{text}");
+    let masked = text
+        .lines()
+        .find(|line| line.starts_with("masked variables:"))
+        .unwrap();
+    assert!(masked.contains("OPENAI_API_KEY"), "{text}");
+    assert!(!masked.contains("PATH"), "{text}");
+    assert!(!text.contains("sk-secret-value"), "{text}");
+}
+
+/// `sandbox` → Named sandbox profiles: `--profile` resolves an `extends` chain, takes the
+/// root's policy and unions every `deny_read`, anchored at the Location and home.
+#[test]
+fn sandbox_explain_profile_resolves_extends_and_unions_deny_read() {
+    let env = Env::new();
+    let repo = env.repo("{}");
+    global_config(
+        &env,
+        serde_json::json!({"sandbox": {"profiles": {
+            "base": {"extends": "read-only", "deny_read": ["~/.aws/**"], "network": {"mode": "off"}},
+            "ci": {"extends": "base", "deny_read": ["**/*.pem"], "env": {"mode": "none", "set": {"CI": "1"}}}
+        }}}),
+    );
+    let o = env
+        .command(&["sandbox", "explain", "--profile", "ci", "--format", "json"])
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+    exits(&o, 0);
+    let v = json(&o);
+    assert_eq!(v["profile"], "ci");
+    assert_eq!(v["policy"], "read-only");
+    assert_eq!(v["network"], "off");
+    assert_eq!(v["env_mode"], "none");
+    assert_eq!(v["env_set"]["CI"], "1");
+    let deny: Vec<&str> = v["deny_read"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(deny.len(), 2, "{v}");
+    assert!(
+        deny[0].ends_with("/home/.aws/**") && deny[1].ends_with("/repo/**/*.pem"),
+        "{v}"
+    );
+    #[cfg(unix)]
+    assert_eq!(
+        deny,
+        [
+            format!("{}/.aws/**", env.root.join("home").display()),
+            format!("{}/**/*.pem", repo.display())
+        ]
+    );
+    let unknown = env
+        .command(&["sandbox", "explain", "--profile", "missing"])
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+    assert!(
+        stdout(&unknown).contains("error: unknown sandbox profile missing"),
+        "{}",
+        stdout(&unknown)
+    );
+}
+
+/// Regression (`sandbox` → Named sandbox profiles, org `min_profile`): a trusted
+/// repository that redefines the profile the organization names as its minimum cannot
+/// lower it; the floor fails closed to `read-only`.
+#[test]
+fn repository_cannot_redefine_the_managed_minimum_profile() {
+    let env = Env::new();
+    let repo = env.repo(
+        &serde_json::json!({"sandbox": {"profiles": {"corp": {"policy": "full-access", "deny_read": []}}}})
+            .to_string(),
+    );
+    global_config(
+        &env,
+        serde_json::json!({"sandbox": {"policy": "full-access", "profiles": {
+            "corp": {"extends": "workspace", "deny_read": ["**/*.pem"]}
+        }}}),
+    );
+    let managed = env.root.join("managed");
+    std::fs::create_dir_all(&managed).unwrap();
+    std::fs::write(
+        managed.join("cyber-policy.json"),
+        serde_json::json!({"policy": {"sandbox": {"min_profile": "corp"}}}).to_string(),
+    )
+    .unwrap();
+    let cwd = repo.to_str().unwrap();
+    let report = json(&env.cyber(&["trust", "inspect", "--cwd", cwd, "--format", "json"]));
+    let digest = report["digest"].as_str().unwrap().to_string();
+    assert!(
+        env.cyber(&["trust", "approve", "--cwd", cwd, "--digest", &digest])
+            .status
+            .success()
+    );
+    let o = env
+        .command(&["sandbox", "explain", "--format", "json"])
+        .env(cyber_core::config::MANAGED_POLICY_DIR_ENV, &managed)
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+    exits(&o, 0);
+    let v = json(&o);
+    assert_eq!(v["policy"], "read-only", "{v}");
+}
+
+/// `sandbox` → Sandbox CLI: `cyber sandbox run` enforces the effective policy on one
+/// command, masks credentials and passes its exit code through.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn sandbox_run_executes_under_effective_policy() {
+    let env = Env::new();
+    let repo = env.repo("{}");
+    global_config(&env, serde_json::json!({"sandbox": {"network": "off"}}));
+    let outside = format!("/usr/cyber-sandbox-run-{}", std::process::id());
+    let script = format!(
+        "echo inside > inside.txt; echo ${{OPENAI_API_KEY:-masked}}; echo outside > {outside}; exit 7"
+    );
+    let run = |extra: &[&str]| {
+        let mut args = vec!["sandbox", "run"];
+        args.extend_from_slice(extra);
+        args.extend(["--", "/bin/sh", "-c", script.as_str()]);
+        env.command(&args)
+            .current_dir(&repo)
+            .env("OPENAI_API_KEY", "sk-secret-value")
+            .output()
+            .unwrap()
+    };
+    let o = run(&[]);
+    let text = exits(&o, 7);
+    assert!(
+        text.contains("masked") && !text.contains("sk-secret-value"),
+        "{text}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.join("inside.txt")).unwrap(),
+        "inside\n"
+    );
+    assert!(!Path::new(&outside).exists());
+    std::fs::remove_file(repo.join("inside.txt")).unwrap();
+    let read_only = run(&["--policy", "read-only"]);
+    exits(&read_only, 7);
+    assert!(
+        !repo.join("inside.txt").exists(),
+        "read-only refuses Location writes"
+    );
+}
+
+/// A checkout whose database holds the saved approval `bash: npm test *`.
+#[cfg(unix)]
+fn saved_approval_env() -> (Env, PathBuf, PathBuf) {
+    let env = Env::new();
+    let repo = env.repo("{}");
+    let db = env.root.join("approvals.db");
+    let store = cyber_store::Store::open(cyber_store::StoreOptions::new(
+        cyber_core::paths::DatabaseLocation::File(db.clone()),
+        cyber_server::runtime::Runtime::registry(),
+    ))
+    .unwrap();
+    cyber_tools::permissions::saved::save(&store, &repo, "bash", &["npm test *".into()], "ses_x")
+        .unwrap();
+    (env, repo, db)
+}
+
+/// `permissions-modes` → Rule dry run: each command of a shell line names its effect and
+/// the layer that decided it, under the Session Mode. Unix only: the saved-approval
+/// fixture keys the checkout by its canonical path, which differs from the lookup key on
+/// Windows (`\\?\` prefix).
+#[cfg(unix)]
+#[test]
+fn permissions_test_lists_saved_approval_and_default_rule_per_command() {
+    let (env, repo, db) = saved_approval_env();
+    let o = env
+        .command(&["permissions", "test", "--", "npm test && git push"])
+        .current_dir(&repo)
+        .env("CYBER_DB", &db)
+        .output()
+        .unwrap();
+    let text = exits(&o, 0);
+    assert_eq!(
+        stdout(&o),
+        "npm test \u{2192} allow (saved approval, project)\ngit push \u{2192} ask (default rules)\n",
+        "{text}"
+    );
+    let dont_ask = env
+        .command(&[
+            "permissions",
+            "test",
+            "--mode",
+            "dont-ask",
+            "--",
+            "git push",
+        ])
+        .current_dir(&repo)
+        .env("CYBER_DB", &db)
+        .output()
+        .unwrap();
+    exits(&dont_ask, 0);
+    assert_eq!(
+        stdout(&dont_ask),
+        "git push \u{2192} deny (dont-ask mode)\n"
+    );
+    let tool = env
+        .command(&[
+            "permissions",
+            "test",
+            "--tool",
+            "edit",
+            "--resource",
+            ".cyber/hooks.jsonc",
+            "--mode",
+            "bypass",
+        ])
+        .current_dir(&repo)
+        .env("CYBER_DB", &db)
+        .output()
+        .unwrap();
+    exits(&tool, 0);
+    assert_eq!(
+        stdout(&tool),
+        ".cyber/hooks.jsonc \u{2192} ask (protected path)\n"
+    );
+}
+
+/// Regression (`permissions-modes` → Rule dry run): a tool is evaluated under the action
+/// a Session authorizes it with, so an `edit` rule decides `--tool write` and a `bash`
+/// rule decides `--tool monitor`.
+#[test]
+fn permissions_test_evaluates_tools_under_their_action() {
+    let env = Env::new();
+    let repo = env.repo("{}");
+    global_config(
+        &env,
+        serde_json::json!({"permissions": {"edit": {"src/**": "deny"}, "bash": {"git push*": "deny"}}}),
+    );
+    let test = |tool: &str, resource: &str| {
+        let o = env
+            .command(&[
+                "permissions",
+                "test",
+                "--tool",
+                tool,
+                "--resource",
+                resource,
+            ])
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        exits(&o, 0);
+        stdout(&o)
+    };
+    for tool in ["write", "apply_patch", "edit"] {
+        let out = test(tool, "src/a.rs");
+        assert!(out.starts_with("src/a.rs \u{2192} deny"), "{tool}: {out}");
+    }
+    let out = test("monitor", "git push --force");
+    assert!(out.starts_with("git push --force \u{2192} deny"), "{out}");
+}
+
+/// `permissions-modes` → Rule dry run: `GET /api/v1/permissions/test` on the shared server
+/// returns the evaluation the CLI prints, without creating a Session.
+#[cfg(unix)]
+#[test]
+fn permissions_test_route_matches_cli_evaluation_without_session() {
+    let (env, repo, db) = saved_approval_env();
+    let catalog = env.root.join("models.json");
+    std::fs::write(&catalog, "{}").unwrap();
+    let cli = env
+        .command(&[
+            "permissions",
+            "test",
+            "--format",
+            "json",
+            "--",
+            "npm test && git push",
+        ])
+        .current_dir(&repo)
+        .env("CYBER_DB", &db)
+        .output()
+        .unwrap();
+    exits(&cli, 0);
+    let service = StartedService(&env, catalog);
+    let api = service
+        .0
+        .command(&[
+            "api",
+            "GET",
+            "/permissions/test?command=npm%20test%20%26%26%20git%20push",
+        ])
+        .current_dir(&repo)
+        .env("CYBER_DB", &db)
+        .env("CYBER_MODELS_PATH", &service.1)
+        .output()
+        .unwrap();
+    exits(&api, 0);
+    let routed: Value = serde_json::from_slice(&api.stdout).unwrap();
+    assert_eq!(routed["data"], json(&cli));
+    assert_eq!(
+        routed["data"]["results"][0]["reason"],
+        "saved approval, project"
+    );
+    let sessions = service
+        .0
+        .command(&["api", "GET", "/sessions"])
+        .current_dir(&repo)
+        .env("CYBER_DB", &db)
+        .env("CYBER_MODELS_PATH", &service.1)
+        .output()
+        .unwrap();
+    exits(&sessions, 0);
+    let listed: Value = serde_json::from_slice(&sessions.stdout).unwrap();
+    assert_eq!(listed["data"]["data"], serde_json::json!([]), "{listed}");
+}
+
+/// `sandbox` → Sandbox CLI: `cyber sandbox test` probes reads, writes inside and outside
+/// the roots, a credential directory and the network, and every probe matches the policy.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn sandbox_test_probes_match_the_effective_policy() {
+    let env = Env::new();
+    let repo = env.repo("{}");
+    std::fs::create_dir_all(env.root.join("home/.ssh")).unwrap();
+    // Keep home out of the per-user temporary root macOS commands may write.
+    let tmpdir = env.root.join("tmpdir");
+    std::fs::create_dir_all(&tmpdir).unwrap();
+    let o = env
+        .command(&["sandbox", "test", "--format", "json"])
+        .current_dir(&repo)
+        .env("TMPDIR", &tmpdir)
+        .output()
+        .unwrap();
+    exits(&o, 0);
+    let probes = json(&o);
+    let summary: Vec<(String, String)> = probes
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            (
+                p["operation"].as_str().unwrap().to_string(),
+                p["expected"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    let expected: Vec<(String, String)> = [
+        ("read", "allowed"),
+        ("write", "allowed"),
+        ("write", "denied"),
+        ("read", "denied"),
+        ("network", "denied"),
+    ]
+    .iter()
+    .map(|(a, b)| (a.to_string(), b.to_string()))
+    .collect();
+    assert_eq!(summary, expected, "{probes}");
+    assert!(
+        probes
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|p| p["passed"] == true),
+        "{probes}"
+    );
+    let leftovers: Vec<_> = std::fs::read_dir(&repo)
+        .unwrap()
+        .chain(std::fs::read_dir(env.root.join("home")).unwrap())
+        .filter_map(Result::ok)
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with(".cyber-sandbox-probe")
+        })
+        .collect();
+    assert!(leftovers.is_empty(), "probe files are removed");
+}

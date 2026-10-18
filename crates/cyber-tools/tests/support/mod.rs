@@ -37,6 +37,13 @@ impl cyber_core::env::EnvSource for TestEnv {
     }
 }
 
+/// Tool tests exercise each Mode's rules, not the `bypass` eligibility gate (App and CLI
+/// tests cover it), so their hosts run as with `--dangerously-bypass-permissions`.
+const TOOL_TEST_ISOLATION: cyber_tools::IsolationOptions = cyber_tools::IsolationOptions {
+    dangerously_bypass: true,
+    container: false,
+};
+
 impl Fixture {
     pub fn new() -> Self {
         Self::with_shell("bash", cyber_sandbox::find_helper())
@@ -85,6 +92,7 @@ impl Fixture {
             temp_dir: root.join("tmp"),
             sandbox_policy: policy,
             sandbox_helper: helper,
+            isolation: TOOL_TEST_ISOLATION,
         });
         Self {
             dir,
@@ -120,6 +128,7 @@ impl Fixture {
             temp_dir: root.join("tmp"),
             sandbox_policy: policy,
             sandbox_helper: cyber_sandbox::find_helper(),
+            isolation: TOOL_TEST_ISOLATION,
         });
     }
 

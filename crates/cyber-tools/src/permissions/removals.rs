@@ -9,6 +9,7 @@ use crate::bash_analysis::normalize;
 mod bindings;
 mod inline;
 mod input;
+mod launchers;
 mod powershell;
 use bindings::{State, word};
 
@@ -310,6 +311,9 @@ fn inspect_command(
             }
             inspect_wrapper(name, args, source, scope, depth, state, risks);
         }
+        launcher if launchers::LAUNCHERS.contains(&launcher) => {
+            launchers::inspect_launcher(launcher, args, source, scope, depth, state, risks);
+        }
         "alias" | "unalias" | "trap" | "shopt" | "." | "source" => {
             risks.push(RemovalRisk::Unresolved(
                 "indirect shell state or callback".into(),
@@ -541,11 +545,13 @@ fn inspect_find(
     state: &State,
     risks: &mut Vec<RemovalRisk>,
 ) {
-    if !args
-        .iter()
-        .any(|n| word(*n, source, state).as_deref() == Some("-delete"))
-    {
-        return;
+    match launchers::find_removes(args, source, state) {
+        Ok(true) => {}
+        Ok(false) => return,
+        Err(reason) => {
+            risks.push(RemovalRisk::Unresolved(reason.into()));
+            return;
+        }
     }
     let Some(start) = find_paths_start(args, source, state) else {
         risks.push(RemovalRisk::Unresolved("dynamic find option".into()));

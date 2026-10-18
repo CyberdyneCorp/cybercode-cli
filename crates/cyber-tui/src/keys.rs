@@ -69,6 +69,12 @@ const DEFAULTS: &[(&str, &str, &str, &str)] = &[
         "expand or collapse tool output",
     ),
     (
+        "global",
+        "background_command",
+        "ctrl+b",
+        "move the running command to the background",
+    ),
+    (
         "composer",
         "history_previous",
         "up",

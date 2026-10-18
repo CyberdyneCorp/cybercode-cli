@@ -9,7 +9,7 @@ impl Runtime {
             .read(move |db| {
                 let mut query = db.prepare(
                 "SELECT subagent_name FROM session WHERE parent_id=?1 AND subagent_name IS NOT NULL
-                 UNION SELECT name FROM job WHERE session_id=?1 ORDER BY 1",
+                 UNION SELECT name FROM job WHERE session_id=?1 AND child_id IS NOT NULL ORDER BY 1",
             )?;
                 Ok(query
                     .query_map([parent], |row| row.get(0))?

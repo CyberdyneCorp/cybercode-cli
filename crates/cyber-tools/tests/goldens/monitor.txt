@@ -1,0 +1,1 @@
+{"job_id":"<job>","status":"running","output_path":"<data>/jobs/<job>.log","message":"The monitor runs in the background. Matching lines arrive as queued messages from the monitor; do not poll for them. task_stop stops it, and a final notice arrives when it ends."}

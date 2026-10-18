@@ -1658,3 +1658,44 @@ fn workflow_settings_have_defaults_and_validate_ranges_and_tiers() {
         assert!(error.contains(key), "{value}: {error}");
     }
 }
+
+/// `org-policy` → Permission mode ceiling (`modes.disable`) and `sandbox` → Named sandbox
+/// profiles (`min_profile`): managed settings reach the resolved config under `policy`
+/// with a `managed:` source; a malformed value fails closed by disabling `bypass`.
+#[test]
+fn managed_modes_and_minimum_profile_are_merged_with_managed_sources() {
+    let mut f = Fixture::new();
+    f.write(
+        "global:cyber.jsonc",
+        &json!({"policy": {"modes": {"disable": []}}}).to_string(),
+    );
+    let path = f.managed(
+        &json!({"policy": {"modes": {"disable": ["bypass"]}, "sandbox": {"min_profile": "workspace"}}})
+            .to_string(),
+    );
+    let resolved = f.load().unwrap();
+    let label = format!("managed:{}", path.display());
+    assert_eq!(
+        resolved.value["policy"]["modes"]["disable"],
+        json!(["bypass"])
+    );
+    assert_eq!(
+        resolved.value["policy"]["sandbox"]["min_profile"],
+        "workspace"
+    );
+    assert_eq!(resolved.sources["/policy/sandbox/min_profile"], label);
+    assert!(
+        resolved
+            .sources
+            .iter()
+            .filter(|(pointer, _)| pointer.starts_with("/policy/modes/disable"))
+            .all(|(_, source)| *source == label)
+    );
+    f.managed(&json!({"policy": {"modes": {"disable": ["yolo"]}}}).to_string());
+    let malformed = f.load().unwrap();
+    assert!(malformed.managed.error.is_some());
+    assert_eq!(
+        malformed.value["policy"]["modes"]["disable"],
+        json!(["bypass"])
+    );
+}

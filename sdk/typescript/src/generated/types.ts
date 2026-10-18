@@ -56,6 +56,11 @@ export type AutoOverrideReceipt = {
   call_id: string;
 };
 
+/** The foreground calls asked to move to the background (Ctrl+B). */
+export type BackgroundResult = {
+  call_ids: string[];
+};
+
 export type Budget = {
   max_turns?: number | null;
   max_tokens?: number | null;
@@ -295,6 +300,10 @@ export type Data_AutoOverrideReceipt = {
   data: AutoOverrideReceipt;
 };
 
+export type Data_BackgroundResult = {
+  data: BackgroundResult;
+};
+
 export type Data_ChildSetupInspection = {
   data: ChildSetupInspection;
 };
@@ -319,6 +328,10 @@ export type Data_Job = {
   data: Job;
 };
 
+export type Data_JobOutput = {
+  data: JobOutput;
+};
+
 export type Data_LocationInfo = {
   data: LocationInfo;
 };
@@ -329,6 +342,10 @@ export type Data_Message = {
 
 export type Data_Nullable_Recap = {
   data?: Recap | null;
+};
+
+export type Data_PtyTicket = {
+  data: PtyTicket;
 };
 
 export type Data_Recap = {
@@ -361,6 +378,10 @@ export type Data_SessionContext = {
 
 export type Data_ShellResult = {
   data: ShellResult;
+};
+
+export type Data_SideAnswer = {
+  data: SideAnswer;
 };
 
 export type Data_SubtreeReopenReport = {
@@ -566,6 +587,11 @@ export type Health = {
   id?: string | null;
   apiVersion: string;
   features: string[];
+  /**
+   * The default Location's sandbox: `{ policy, profile, enforcement, isolation }`
+   * (`sandbox` → Container detection: `isolation: container` in the header).
+   */
+  sandbox?: unknown;
 };
 
 export type HistoryPage = {
@@ -745,9 +771,13 @@ export type InvalidMemory = {
 export type Job = {
   id: string;
   session_id: string;
+  /** The child Session of a `subagent` Job; empty for process Jobs. */
   child_id: string;
   name: string;
+  /** `subagent`, `workflow`, or a process kind (`bash`, `powershell`). */
   kind: string;
+  /** The command line of a process Job. */
+  command?: string | null;
   description: string;
   status: JobStatus;
   started_ms: number;
@@ -761,6 +791,16 @@ export type Job = {
   unpriced?: boolean;
   tokens: number;
   notified: boolean;
+};
+
+/** The end of a process Job's log (`background-tasks` → Tasks view: open output). */
+export type JobOutput = {
+  /** The last `tail_bytes` of the log, lossily decoded. */
+  text: string;
+  /** The log's size in bytes. */
+  size: number;
+  /** Whether earlier bytes were left out. */
+  truncated: boolean;
 };
 
 export type JobStatus = "running" | "completed" | "error" | "cancelled" | "interrupted";
@@ -781,6 +821,12 @@ export type LimitReading = {
   resets_ms?: number | null;
   /** When the response carrying this reading arrived, Unix milliseconds. */
   observed_ms: number;
+};
+
+/** A Location-scoped response. */
+export type Located_AnyValue = {
+  location: LocationInfo;
+  data: unknown;
 };
 
 /** A Location-scoped response. */
@@ -1356,6 +1402,13 @@ export type PromptBody = {
   source?: string | null;
 };
 
+/** A single-use ticket for `GET /jobs/{id}/pty/connect`. */
+export type PtyTicket = {
+  ticket: string;
+  /** Seconds until the ticket expires. */
+  expires_in: number;
+};
+
 export type PutMemory = {
   /** Complete Markdown document with YAML name, description and type fields. */
   content: string;
@@ -1860,10 +1913,31 @@ export type SetupStatus = {
 
 export type ShellBody = {
   command: string;
+  /**
+   * Start the command as a background Job of the Session (`& cmd`) instead of
+   * recording its output.
+   */
+  background?: boolean;
 };
 
 export type ShellResult = {
   output: string;
+  /** The background Job a `background: true` command started. */
+  job?: Job | null;
+};
+
+/** The answer to a side question. */
+export type SideAnswer = {
+  answer: string;
+  /** The model reference that answered. */
+  model: string;
+  /** The read-only tools it called, in order. */
+  tools: string[];
+};
+
+/** `POST /sessions/{id}/side`. */
+export type SideBody = {
+  question: string;
 };
 
 /**

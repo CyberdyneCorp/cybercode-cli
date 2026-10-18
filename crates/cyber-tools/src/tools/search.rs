@@ -22,10 +22,11 @@ const GLOB_LIMIT: usize = 100;
 pub(crate) struct Glob;
 pub(crate) struct Grep;
 
-fn walker(base: &Path) -> impl Iterator<Item = PathBuf> {
+/// Files under `base`, without `.git/` and without the profile's `deny_read` matches.
+fn walker(base: &Path, hidden: cyber_sandbox::DenyRead) -> impl Iterator<Item = PathBuf> {
     ignore::WalkBuilder::new(base)
         .hidden(false)
-        .filter_entry(|e| e.file_name() != ".git")
+        .filter_entry(move |e| e.file_name() != ".git" && !hidden.denies(e.path()))
         .build()
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_some_and(|t| t.is_file()))
@@ -62,6 +63,10 @@ async fn scope(ctx: &Ctx<'_>, action: &str, resource: &str) -> Result<PathBuf, T
     };
     ctx.authorize(req, vec![resource.into()], Value::Null)
         .await?;
+    // The walk never filters its own root, so a hidden base is refused as `read` is.
+    if crate::sandboxing::hidden(ctx).denies(&base) {
+        return Err(failed(crate::sandboxing::hidden_read(ctx, &base).await));
+    }
     if !base.exists() {
         return Err(failed(format!("Path not found: {}", base.display())));
     }
@@ -84,17 +89,18 @@ impl Tool for Glob {
             let pattern = text(&ctx.inv.input, "pattern");
             let base = scope(ctx, "glob", pattern).await?;
             let m = matcher(pattern)?;
-            let mut found: Vec<(SystemTime, PathBuf)> = walker(&base)
-                .filter(|p| glob_matches(&m, &base, p))
-                .map(|p| {
-                    (
-                        std::fs::metadata(&p)
-                            .and_then(|m| m.modified())
-                            .unwrap_or(SystemTime::UNIX_EPOCH),
-                        p,
-                    )
-                })
-                .collect();
+            let mut found: Vec<(SystemTime, PathBuf)> =
+                walker(&base, crate::sandboxing::hidden(ctx))
+                    .filter(|p| glob_matches(&m, &base, p))
+                    .map(|p| {
+                        (
+                            std::fs::metadata(&p)
+                                .and_then(|m| m.modified())
+                                .unwrap_or(SystemTime::UNIX_EPOCH),
+                            p,
+                        )
+                    })
+                    .collect();
             if found.is_empty() {
                 return Ok("No files found".into());
             }
@@ -141,7 +147,7 @@ impl Tool for Grep {
             };
             let context = number(input, "context_lines").unwrap_or(0).min(5) as usize;
             let limit = number(input, "limit").unwrap_or(100).clamp(1, 1000) as usize;
-            let files = walker(&base)
+            let files = walker(&base, crate::sandboxing::hidden(ctx))
                 .filter(|p| include.as_ref().is_none_or(|m| glob_matches(m, &base, p)));
             Ok(search(files, &regex, context, limit, &ctx.cancel))
         })

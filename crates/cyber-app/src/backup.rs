@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 const MANIFEST: &str = "manifest.json";
 const DATABASE: &str = "cyber.db";
 /// Data directories copied with `--artifacts`, relative to `<data>`.
-const ARTIFACTS: &[&str] = &["tool-output", "snapshot"];
+const ARTIFACTS: &[&str] = &["tool-output", "sent", "snapshot"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BundleFile {

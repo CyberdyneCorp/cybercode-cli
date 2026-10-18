@@ -18,6 +18,7 @@ pub mod models;
 pub mod permissions;
 pub mod pr;
 pub mod review;
+pub mod sandbox;
 pub mod serve;
 pub mod sessions;
 pub mod skills;
@@ -33,7 +34,11 @@ use crate::context::Context;
 use crate::error::CliError;
 use crate::{output, tree};
 
-pub fn run(cli: Cli) -> Result<(), CliError> {
+pub fn run(mut cli: Cli) -> Result<(), CliError> {
+    // `cyber sandbox … --profile <name>` names a sandbox profile, not a configuration one.
+    if let Some(Command::Sandbox { cmd }) = &mut cli.command {
+        cmd.select_profile(cli.global.profile.take())?;
+    }
     if cli.version {
         return version(&cli.global);
     }
@@ -77,6 +82,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Command::Permissions { cmd } => permissions::run(cmd, &ctx, &cli.global),
         Command::Db { cmd } => db::run(cmd, &ctx, &cli.global),
         Command::Trust { cmd } => trust::run(cmd, &ctx, &cli.global),
+        Command::Sandbox { cmd } => sandbox::run(cmd, &ctx, &cli.global),
         Command::Hooks { cmd } => hooks::run(cmd, &ctx, &cli.global),
         Command::Serve(args) => serve::serve(args, &ctx),
         Command::Service { cmd } => serve::service(cmd, &ctx, &cli.global),

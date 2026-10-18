@@ -273,6 +273,7 @@ fn now_ms() -> i64 {
 fn denial_reason(output: &str) -> Option<&'static str> {
     if output.starts_with("Not pre-approved")
         || output.starts_with("Denied: no interactive approver")
+        || output.starts_with(&format!("Rejected by user: {}", super::NO_APPROVER))
         || output.starts_with("Blocked by auto mode")
         || output.starts_with("Plan mode is read-only")
     {

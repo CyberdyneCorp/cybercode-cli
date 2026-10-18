@@ -70,6 +70,13 @@ pub enum LiveEvent {
         call_id: String,
         status: String,
     },
+    /// `job.output.1`: output a process Job wrote, never durable (`background-tasks` →
+    /// Background job events). The full output is in the Job's log file.
+    JobOutput {
+        session_id: String,
+        job_id: String,
+        text: String,
+    },
     /// `session.retry`: the attempt number and delay before it.
     Retry {
         session_id: String,

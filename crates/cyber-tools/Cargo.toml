@@ -35,8 +35,11 @@ shell-words = "1.1"
 thiserror.workspace = true
 ulid.workspace = true
 url = "2"
+# Renders a PTY's screen for `pty_read`'s screen mode.
+vt100 = "0.16"
 tokio = { version = "1", features = ["rt", "process", "io-util", "time", "sync", "fs", "macros", "net"] }
 tokio-util = "0.7"
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-native-roots"] }
 tree-sitter = "0.27"
 tree-sitter-bash = "0.25"
 tree-sitter-python = "0.25"

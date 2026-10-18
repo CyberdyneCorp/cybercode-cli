@@ -155,6 +155,20 @@ pub fn envelope(event: &LiveEvent, counter: u64) -> EventEnvelope {
             durable: None,
         };
     }
+    if let LiveEvent::JobOutput {
+        session_id,
+        job_id,
+        text,
+    } = event
+    {
+        return EventEnvelope {
+            id: format!("live:{counter}"),
+            kind: "job.output.1".into(),
+            data: json!({"session_id": session_id, "job_id": job_id, "text": text}),
+            location: None,
+            durable: None,
+        };
+    }
     if let LiveEvent::RequestRouted { kind, data, .. } = event {
         return EventEnvelope {
             id: format!("live:{counter}"),
@@ -194,6 +208,7 @@ fn session_of(event: &LiveEvent) -> Option<&str> {
         | LiveEvent::ReasoningDelta { session_id, .. }
         | LiveEvent::ToolInputDelta { session_id, .. }
         | LiveEvent::ToolProgress { session_id, .. }
+        | LiveEvent::JobOutput { session_id, .. }
         | LiveEvent::Retry { session_id, .. }
         | LiveEvent::Usage { session_id, .. }
         | LiveEvent::Error { session_id, .. }
@@ -405,6 +420,7 @@ async fn follow(
             | Ok(event @ LiveEvent::RequestRouted { .. })
             | Ok(event @ LiveEvent::WorktreeSetup { .. })
             | Ok(event @ LiveEvent::ToolProgress { .. })
+            | Ok(event @ LiveEvent::JobOutput { .. })
                 if session_of(&event) == Some(id.as_str()) =>
             {
                 counter += 1;

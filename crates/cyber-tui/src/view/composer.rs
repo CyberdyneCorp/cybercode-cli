@@ -44,7 +44,7 @@ pub(super) fn agent_color(app: &App, agent: &str) -> Color {
 fn bar_color(app: &App) -> Color {
     let t = &app.theme;
     match app.input_mode() {
-        InputMode::Shell => t.warning,
+        InputMode::Shell | InputMode::Background => t.warning,
         InputMode::Command => t.info,
         InputMode::Prompt => agent_color(app, &app.session.agent),
     }
@@ -98,6 +98,10 @@ fn info_line(app: &App) -> Vec<Span<'static>> {
     let s = &app.session;
     let mut spans = match app.input_mode() {
         InputMode::Shell => vec![Span::styled("shell", Style::default().fg(t.warning))],
+        InputMode::Background => vec![Span::styled(
+            "background shell",
+            Style::default().fg(t.warning),
+        )],
         InputMode::Command => vec![Span::styled("command", Style::default().fg(t.info))],
         InputMode::Prompt => {
             let (provider, variant) = provider_and_variant(&s.model);

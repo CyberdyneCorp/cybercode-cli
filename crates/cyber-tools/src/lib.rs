@@ -23,6 +23,7 @@ pub mod permissions;
 mod reconcile;
 mod registered;
 pub mod remote_skills;
+pub mod sandbox_cli;
 mod sandboxing;
 mod schema;
 mod skill_permissions;
@@ -33,7 +34,9 @@ mod tools;
 mod worktrees;
 
 pub use budget::Budget;
-pub use host::{BuiltinHost, ConfigFn, HostOptions};
+pub use host::{
+    BuiltinHost, ConfigFn, HostOptions, IsolationOptions, PermissionTest, PermissionTestReport,
+};
 pub use remote_skills::{FetchRequest, PolicyFetcher, RemoteSkillFetcher};
 pub use schema::validate as validate_input;
 pub use tools::process::Process as HookCommandProcess;

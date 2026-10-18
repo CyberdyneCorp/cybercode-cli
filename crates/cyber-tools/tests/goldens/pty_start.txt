@@ -1,0 +1,1 @@
+{"job_id":"<job>","status":"running","output_path":"<data>/jobs/<job>.log","message":"The program runs on a terminal in the background. Send input with pty_write and read its output with pty_read; task_stop ends it."}

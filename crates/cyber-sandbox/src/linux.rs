@@ -64,7 +64,16 @@ pub(crate) fn wrap(
             bind(&mut out, "--ro-bind", path);
         }
     }
-    for path in launch.unreadable.iter().filter(|p| p.exists()) {
+    let denied = launch
+        .deny_read
+        .expand()
+        .map_err(SandboxError::Unavailable)?;
+    for path in launch
+        .unreadable
+        .iter()
+        .chain(&denied)
+        .filter(|p| p.exists())
+    {
         if path.is_dir() {
             // An empty private overlay must also reject writes, rather than
             // reporting success for effects that disappear with the sandbox.

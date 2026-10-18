@@ -50,7 +50,7 @@ tokio-tungstenite = "0.28"
 cyber-llm = { path = "../cyber-llm" }
 base64 = "0.22"
 serde_json.workspace = true
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "test-util"] }
 tokio-util = "0.7"
 futures = "0.3"
 cyber-workflow = { path = "../cyber-workflow" }

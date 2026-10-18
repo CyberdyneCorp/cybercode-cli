@@ -236,7 +236,22 @@ pub(super) struct ManagedRead {
     pub policy: ManagedPolicy,
     pub hooks: Vec<(String, Value)>,
     pub mcp: Vec<(String, Value)>,
+    /// `policy.modes` and `policy.sandbox`, merged into the resolved config under
+    /// `policy` where no other layer can write.
+    pub settings: Vec<(String, Value)>,
 }
+
+/// The `policy.modes.disable` a malformed document implies: `bypass` stays off.
+pub const MALFORMED_DISABLED_MODES: &[&str] = &["bypass"];
+
+const MODES: &[&str] = &[
+    "default",
+    "accept-edits",
+    "plan",
+    "auto",
+    "dont-ask",
+    "bypass",
+];
 
 /// The OS-managed directory: `/etc/cyber` on Linux and other Unix systems,
 /// `/Library/Application Support/cyber` on macOS, `%ProgramData%\cyber` on Windows, where
@@ -271,6 +286,7 @@ pub(super) fn read(env: &dyn EnvSource, warnings: &mut Vec<String>) -> ManagedRe
         policy: ManagedPolicy::default(),
         hooks: Vec::new(),
         mcp: Vec::new(),
+        settings: Vec::new(),
     };
     for path in FILES.iter().map(|name| dir.join(name)) {
         match document(&path, owner_checked, warnings) {
@@ -297,6 +313,10 @@ fn malformed(sources: Vec<String>, error: String) -> ManagedRead {
         },
         hooks: Vec::new(),
         mcp: Vec::new(),
+        settings: vec![(
+            "managed:malformed".into(),
+            serde_json::json!({"modes": {"disable": MALFORMED_DISABLED_MODES}}),
+        )],
     }
 }
 
@@ -366,6 +386,11 @@ fn absorb(read: &mut ManagedRead, label: &str, value: Value) -> Result<(), Strin
     }
     if let Some(policy) = document.get("policy") {
         absorb_policy(&mut read.policy, policy)?;
+        let settings = policy_settings(policy)?;
+        if !settings.is_empty() {
+            read.settings
+                .push((label.to_owned(), Value::Object(settings)));
+        }
     }
     if let Some(hooks) = document.get("hooks") {
         read.hooks.push((label.to_owned(), managed_hooks(hooks)?));
@@ -381,7 +406,7 @@ fn absorb_policy(read: &mut ManagedPolicy, policy: &Value) -> Result<(), String>
     let policy = policy.as_object().ok_or("policy: expected an object")?;
     if let Some(key) = policy
         .keys()
-        .find(|key| !matches!(key.as_str(), "hooks" | "mcp"))
+        .find(|key| !matches!(key.as_str(), "hooks" | "mcp" | "modes" | "sandbox"))
     {
         return Err(format!("policy.{key}: unsupported managed policy key"));
     }
@@ -390,6 +415,56 @@ fn absorb_policy(read: &mut ManagedPolicy, policy: &Value) -> Result<(), String>
         mcp_policy(&mut read.mcp, mcp)?;
     }
     Ok(())
+}
+
+/// `policy.modes.disable` (a list of Modes) and `policy.sandbox.min_profile` (a profile
+/// name), validated strictly so a typo fails closed.
+fn policy_settings(policy: &Value) -> Result<Map<String, Value>, String> {
+    let mut out = Map::new();
+    if let Some(modes) = policy.get("modes") {
+        let modes = modes
+            .as_object()
+            .ok_or("policy.modes: expected an object")?;
+        if let Some(key) = modes.keys().find(|key| *key != "disable") {
+            return Err(format!(
+                "policy.modes.{key}: unsupported managed policy key"
+            ));
+        }
+        let disable = modes.get("disable").map_or(Ok(Vec::new()), |list| {
+            list.as_array()
+                .ok_or("policy.modes.disable: expected an array")?
+                .iter()
+                .map(|mode| {
+                    mode.as_str()
+                        .filter(|mode| MODES.contains(mode))
+                        .map(|mode| Value::String(mode.into()))
+                        .ok_or_else(|| format!("policy.modes.disable: unknown mode {mode}"))
+                })
+                .collect::<Result<Vec<_>, String>>()
+        })?;
+        out.insert("modes".into(), serde_json::json!({"disable": disable}));
+    }
+    if let Some(sandbox) = policy.get("sandbox") {
+        let sandbox = sandbox
+            .as_object()
+            .ok_or("policy.sandbox: expected an object")?;
+        if let Some(key) = sandbox.keys().find(|key| *key != "min_profile") {
+            return Err(format!(
+                "policy.sandbox.{key}: unsupported managed policy key"
+            ));
+        }
+        if let Some(profile) = sandbox.get("min_profile") {
+            let profile = profile
+                .as_str()
+                .filter(|name| !name.trim().is_empty())
+                .ok_or("policy.sandbox.min_profile: expected a profile name")?;
+            out.insert(
+                "sandbox".into(),
+                serde_json::json!({"min_profile": profile}),
+            );
+        }
+    }
+    Ok(out)
 }
 
 /// `policy.mcp`: `allow` and `deny` arrays of patterns; several documents add up.

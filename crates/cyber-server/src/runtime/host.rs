@@ -555,6 +555,14 @@ pub trait ToolHost: Send + Sync {
         Ok(None)
     }
 
+    /// Whether a Session of `agent` in `directory` may run in `mode` (`permissions-modes`
+    /// → bypass mode; org `policy.modes.disable`). Checked on every Mode a Session takes:
+    /// creation, the deferred agent default and each switch. Hosts without a policy
+    /// admit every Mode.
+    fn admit_mode(&self, _directory: &str, _agent: &str, _mode: &str) -> Result<(), String> {
+        Ok(())
+    }
+
     /// `budgets.daily`: the per-machine daily cap the Usage breakdown reports.
     fn daily_budget(&self, _directory: &str) -> Result<Option<cyber_core::budget::Budget>, String> {
         Ok(None)
@@ -704,6 +712,17 @@ pub trait ToolHost: Send + Sync {
         _cancel: CancellationToken,
     ) -> BoxFuture<'_, Result<String, String>> {
         self.shell(directory, session_id, command)
+    }
+
+    /// Start a user shell command (`& cmd`) as a background process Job of the Session,
+    /// under the sandbox and without prompts, and return the Job ID.
+    fn shell_background(
+        &self,
+        _directory: &str,
+        _session_id: &str,
+        _command: &str,
+    ) -> BoxFuture<'_, Result<String, String>> {
+        Box::pin(async { Err("background shell commands are not supported by this host".into()) })
     }
 
     /// Extra Context Sources this host contributes for a Session, such as `core/skills`.

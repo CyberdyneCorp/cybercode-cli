@@ -184,6 +184,28 @@
 - **THEN** a `network` request for `example.org` is raised and the connection waits up to 120 s for a decision
 
 
+### Requirement: Excluded commands
+(P1) Commands matching `sandbox.excluded_commands` patterns (for example `docker *`, `gh auth *`) SHALL run outside the sandbox and SHALL always evaluate the `bash` permission as at least `ask`, regardless of Mode. In `bypass` such a command SHALL run without asking only when the process runs inside a detected container or VM or with `--dangerously-bypass-permissions`; when the OS sandbox alone made `bypass` eligible, leaving it SHALL still ask.
+
+#### Scenario: Docker runs outside sandbox
+- **WHEN** `docker ps` matches an excluded pattern
+- **THEN** it runs unsandboxed after approval
+
+#### Scenario: Sandbox-admitted bypass still asks
+- **WHEN** a `bypass` Session admitted only by the OS sandbox runs an excluded command
+- **THEN** the command asks for approval and does not run without it
+
+### Requirement: Container detection
+(P1) The system SHALL detect execution inside a container or VM (`/.dockerenv`, `/run/.containerenv`, cgroup markers, `CYBER_CONTAINER=1`, devcontainer environment variables). Runtimes that share the user's home and expose the host (Flatpak, toolbox, distrobox) SHALL NOT count as a container unless `CYBER_CONTAINER=1` is set. When detected and no OS sandbox is available, it SHALL treat the environment as isolated for the purposes of `bypass` eligibility and report `isolation: container` in the session header. An OS sandbox with the network on, or with a writable root that is relative or contains the home directory, SHALL NOT count as isolation.
+
+#### Scenario: Devcontainer allows bypass
+- **WHEN** Cyber runs in a devcontainer without Landlock
+- **THEN** `bypass` mode is allowed and the header shows `isolation: container`
+
+#### Scenario: Toolbox is not isolation
+- **WHEN** Cyber runs in a toolbox with `full-access` and no flag
+- **THEN** `bypass` is refused and the header shows `isolation: none`
+
 ## ADDED Requirements
 
 ### Requirement: Invocation launch excludes ambient package wildcard authority

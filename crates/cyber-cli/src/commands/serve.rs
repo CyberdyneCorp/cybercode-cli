@@ -36,6 +36,10 @@ pub struct ServeArgs {
     /// Speak JSON-RPC over stdin and stdout.
     #[arg(long)]
     pub stdio: bool,
+    /// Allow `bypass` mode without a sandbox or a container. Everything the model runs
+    /// executes without approval or OS confinement.
+    #[arg(long)]
+    pub dangerously_bypass_permissions: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -81,6 +85,7 @@ pub fn serve(args: ServeArgs, ctx: &Context) -> Result<(), CliError> {
             mcp_credentials: None,
             remote_skill_fetcher: None,
             workflow_cores: None,
+            isolation: crate::commands::exec::setup::isolation(args.dangerously_bypass_permissions),
         })
         .await
         .map_err(CliError::runtime)?;
@@ -116,6 +121,7 @@ fn stdio(args: ServeArgs, ctx: &Context) -> Result<(), CliError> {
             mcp_credentials: None,
             remote_skill_fetcher: None,
             workflow_cores: None,
+            isolation: crate::commands::exec::setup::isolation(args.dangerously_bypass_permissions),
         })
         .await
         .map_err(CliError::runtime)?;

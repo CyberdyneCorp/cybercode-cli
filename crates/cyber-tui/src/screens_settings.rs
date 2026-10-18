@@ -44,6 +44,9 @@ fn stabilize_status(app: &mut App) {
     let status = app.settings.status.data.as_mut().expect("status loaded");
     if let Section::Ready(health) = &mut status.health {
         health.version = Some("1.0.0".into());
+        // Enforcement and isolation depend on the host; the server did report them.
+        assert!(health.sandbox.is_some(), "{health:?}");
+        health.sandbox = Some("workspace-write · available · isolation: sandbox".into());
     }
     if let Section::Ready(session) = &mut status.session {
         session.id = "ses_settings".into();

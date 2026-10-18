@@ -32,10 +32,88 @@ async fn every_registered_tool_has_a_golden() {
                     .to_string()
             })
             .collect();
-    if !names.contains("powershell") {
-        fixtures.remove("powershell");
+    // Platform tools: powershell on Windows, the PTY tools elsewhere.
+    for platform in ["powershell", "pty_start", "pty_write", "pty_read"] {
+        if !names.contains(platform) {
+            fixtures.remove(platform);
+        }
     }
     assert_eq!(names, fixtures);
+}
+
+/// The model-facing tool names `builtin-tools` defines: the built-in set and the
+/// capability-owned catalog, read from the canonical spec.
+fn canonical_registry() -> BTreeSet<String> {
+    let spec = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../openspec/specs/builtin-tools/spec.md"
+    ))
+    .unwrap();
+    let section = |title: &str| -> String {
+        let start = spec
+            .find(&format!("### Requirement: {title}\n"))
+            .expect(title);
+        let rest = &spec[start..];
+        let end = rest.find("#### Scenario").unwrap_or(rest.len());
+        rest[..end].to_string()
+    };
+    let names = |text: &str| -> Vec<String> {
+        text.split('`')
+            .skip(1)
+            .step_by(2)
+            .filter(|token| {
+                !token.is_empty() && token.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+            })
+            .map(str::to_owned)
+            .collect()
+    };
+    let builtin = section("Built-in tool set");
+    let catalog = section("Capability-owned tool catalog");
+    let listed: String = catalog
+        .lines()
+        .filter(|line| line.starts_with("- `"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut registry: BTreeSet<String> = names(&builtin).into_iter().collect();
+    registry.extend(names(&listed));
+    registry
+}
+
+/// `builtin-tools` → Capability-owned tool catalog: no capability introduces a tool the
+/// registry does not list. Tools whose capability or phase is not implemented are
+/// absent, so the advertised set is a subset rather than the whole catalog.
+#[tokio::test]
+async fn advertised_tool_names_are_a_subset_of_the_canonical_registry() {
+    let registry = canonical_registry();
+    for name in [
+        "read",
+        "bash",
+        "invalid",
+        "monitor",
+        "task_stop",
+        "pty_start",
+        "advisor",
+    ] {
+        assert!(registry.contains(name), "{name} missing from {registry:?}");
+    }
+    let f = Fixture::new();
+    f.set_config(
+        json!({"tools":{"websearch":{"backend":"searxng","searxng":{"url":"http://127.0.0.1"}}}}),
+    );
+    let advertised: BTreeSet<String> = ["default", "plan", "bypass"]
+        .into_iter()
+        .flat_map(|mode| {
+            [false, true]
+                .into_iter()
+                .flat_map(|patch| f.tool_names(mode, patch))
+        })
+        .collect();
+    assert!(advertised.contains("monitor"), "{advertised:?}");
+    let unknown: Vec<_> = advertised.difference(&registry).collect();
+    assert!(
+        unknown.is_empty(),
+        "advertised but not in the registry: {unknown:?}"
+    );
 }
 
 #[tokio::test]

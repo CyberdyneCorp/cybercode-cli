@@ -678,6 +678,52 @@ async fn job_ended_observes_a_settled_background_job() {
 }
 
 #[tokio::test]
+async fn job_ended_hook_receives_nonzero_exit_code() {
+    let flow = Flow::new(vec![text("notice handled")], false);
+    flow.f.set_config(json!({"permissions":{"bash":"allow"}}));
+    hooks(
+        &flow,
+        json!({"JobEnded":[{"matcher":"bash","hooks":[capture("job.jsonl")]}]}),
+    );
+    let parent = flow.session("default").await;
+    let mut inv = flow.f.invocation(
+        "default",
+        "bash",
+        json!({"command":"echo building; exit 7","background":true}),
+    );
+    inv.session_id = parent.clone();
+    let ack: Value = serde_json::from_str(&support::ok(
+        flow.f
+            .host
+            .execute(inv, tokio_util::sync::CancellationToken::new())
+            .await,
+    ))
+    .unwrap();
+    let id = ack["job_id"].as_str().unwrap().to_owned();
+    let ended = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let done = receipts(&flow, &parent, "JobEnded");
+            if done.len() == 1 && done[0].outcome.is_some() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    assert!(ended.is_ok(), "JobEnded did not run");
+    let events = lines(&flow, "job.jsonl");
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["event"], "JobEnded");
+    assert_eq!(events[0]["exit_code"], 7);
+    assert_eq!(events[0]["job"]["id"], json!(id));
+    assert_eq!(events[0]["job"]["kind"], "bash");
+    assert_eq!(events[0]["job"]["status"], "error");
+    assert_eq!(events[0]["job"]["exit_code"], 7);
+    assert_eq!(events[0]["job"]["command"], "echo building; exit 7");
+    flow.settle(&parent).await;
+}
+
+#[tokio::test]
 async fn unavailable_fail_closed_user_prompt_handler_rejects_the_prompt() {
     for fail_closed in [true, false] {
         let flow = Flow::new(vec![text("answer")], false);

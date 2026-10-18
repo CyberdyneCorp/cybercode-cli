@@ -714,3 +714,246 @@ async fn inline_critical_removals_cannot_be_lifted_by_rules_or_saved_approvals()
         assert!(out.contains("no interactive approver"), "{out}");
     }
 }
+
+/// `sandbox` → Named sandbox profiles: a profile that extends `workspace` with
+/// `deny_read` hides `key.pem` from a sandboxed `cat` (the OS refuses it) and from `read`,
+/// `glob` and `grep`.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tokio::test]
+async fn profile_deny_read_blocks_cat_and_hides_glob_match() {
+    let f = Fixture::new();
+    f.set_config(json!({
+        "permissions": {"bash": "allow"},
+        "sandbox": {"profile": "ci", "profiles": {
+            "ci": {"extends": "workspace", "deny_read": ["**/*.pem", "~/.aws/**"]}
+        }}
+    }));
+    f.write("key.pem", "PRIVATE-KEY-MATERIAL\n");
+    f.write("notes.txt", "public notes\n");
+    let catted = ok(f
+        .call(
+            "default",
+            "bash",
+            json!({"command": "cat key.pem; cat notes.txt"}),
+        )
+        .await);
+    assert!(!catted.contains("PRIVATE-KEY-MATERIAL"), "{catted}");
+    assert!(catted.contains("public notes"), "{catted}");
+    #[cfg(target_os = "macos")]
+    assert!(
+        catted.contains(&format!(
+            "Sandbox denied: read {}",
+            f.repo.join("key.pem").display()
+        )),
+        "{catted}"
+    );
+    let globbed = ok(f.call("default", "glob", json!({"pattern": "*"})).await);
+    assert!(
+        globbed.contains("notes.txt") && !globbed.contains("key.pem"),
+        "{globbed}"
+    );
+    let grepped = ok(f
+        .call("default", "grep", json!({"pattern": "PRIVATE"}))
+        .await);
+    assert!(!grepped.contains("key.pem"), "{grepped}");
+    let read = failed(f.call("default", "read", json!({"path": "key.pem"})).await);
+    assert!(read.starts_with("Sandbox denied: read"), "{read}");
+    assert!(!read.contains("PRIVATE"), "{read}");
+}
+
+/// Regression (`sandbox` → Named sandbox profiles): `grep` and `glob` whose `path` names
+/// a `deny_read` file directly are refused as `read` is; the walk never filters its root.
+#[tokio::test]
+async fn grep_and_glob_refuse_a_hidden_base_path() {
+    let f = Fixture::new();
+    f.set_config(json!({
+        "sandbox": {"profile": "ci", "profiles": {
+            "ci": {"extends": "workspace", "deny_read": ["**/*.pem"]}
+        }}
+    }));
+    f.write("key.pem", "PRIVATE-KEY-MATERIAL\n");
+    let grepped = failed(
+        f.call(
+            "default",
+            "grep",
+            json!({"pattern": "PRIVATE", "path": "key.pem"}),
+        )
+        .await,
+    );
+    assert!(grepped.starts_with("Sandbox denied: read"), "{grepped}");
+    assert!(!grepped.contains("PRIVATE-KEY"), "{grepped}");
+    let globbed = failed(
+        f.call(
+            "default",
+            "glob",
+            json!({"pattern": "*", "path": "key.pem"}),
+        )
+        .await,
+    );
+    assert!(globbed.starts_with("Sandbox denied: read"), "{globbed}");
+}
+
+/// `sandbox` → Environment policy: `mode: none` keeps only the base variables, `set`,
+/// the `CYBER_*` markers and (with the network off) nothing else.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tokio::test]
+async fn sandbox_env_none_exposes_only_base_vars_set_and_markers() {
+    let f = Fixture::new();
+    f.set_config(json!({
+        "permissions": {"bash": "allow"},
+        "sandbox": {"network": "off", "env": {"mode": "none", "set": {"CI": "1"}}}
+    }));
+    let out = ok(f.call("default", "bash", json!({"command": "env"})).await);
+    let shell_set = ["PWD", "SHLVL", "_", "OLDPWD"];
+    let names: Vec<&str> = out
+        .lines()
+        .filter_map(|line| line.split_once('=').map(|(name, _)| name))
+        .filter(|name| !shell_set.contains(name))
+        .collect();
+    assert!(out.lines().any(|line| line == "CI=1"), "{out}");
+    for name in &names {
+        assert!(
+            cyber_sandbox::BASE_VARS.contains(name) || *name == "CI" || name.starts_with("CYBER"),
+            "unexpected {name} in {out}"
+        );
+    }
+    assert!(
+        names.contains(&"PATH") && names.contains(&"TMPDIR"),
+        "{out}"
+    );
+}
+
+/// `sandbox` → Escalation requests, Sandbox events and audit: a write outside the
+/// writable roots says `Sandbox denied: write <path>` and is stored as `sandbox.denied.1`.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tokio::test]
+async fn sandbox_write_denial_is_explicit_and_recorded_as_event() {
+    use support::flow::{Flow, call, text};
+    let target = format!("/usr/cyber-sandbox-denied-{}", std::process::id());
+    let flow = Flow::new(
+        vec![
+            call(
+                "c1",
+                "bash",
+                json!({"command": format!("echo x > {target}")}),
+            ),
+            text("done"),
+        ],
+        false,
+    );
+    flow.f
+        .set_config(json!({"permissions": {"bash": "allow", "external_directory": "allow"}}));
+    let id = flow.session("default").await;
+    flow.prompt(&id, "write").await;
+    flow.settle(&id).await;
+    let output = flow.output(&id, "c1").await;
+    assert!(
+        output.contains(&format!("Sandbox denied: write {target}")),
+        "{output}"
+    );
+    assert!(output.contains("sandbox: \"escalate\""), "{output}");
+    assert!(!std::path::Path::new(&target).exists());
+    let events = flow.f.store.read_events(&id, -1, 500).unwrap().events;
+    let denied: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == "sandbox.denied.1")
+        .collect();
+    assert_eq!(denied.len(), 1, "{events:?}");
+    assert_eq!(denied[0].data["operation"], "write");
+    assert_eq!(denied[0].data["target"], target.as_str());
+    assert_eq!(denied[0].data["call_id"], "c1");
+    assert_eq!(denied[0].data["session_id"], id.as_str());
+}
+
+/// `sandbox` → Excluded commands: a matching command runs outside the sandbox, and an
+/// allow rule cannot lift its `ask` floor outside `bypass`.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tokio::test]
+async fn excluded_command_runs_unsandboxed_and_asks_even_with_allow_rule() {
+    let f = Fixture::new();
+    let secret = f.dir.path().join("home/.ssh/id_fixture");
+    std::fs::create_dir_all(secret.parent().unwrap()).unwrap();
+    std::fs::write(&secret, "SECRET-IDENTITY\n").unwrap();
+    let command = format!("cat {}", secret.display());
+    f.set_config(json!({"permissions": {"bash": "allow"}}));
+    let sandboxed = ok(f.call("bypass", "bash", json!({"command": command})).await);
+    assert!(!sandboxed.contains("SECRET-IDENTITY"), "{sandboxed}");
+    f.set_config(json!({
+        "permissions": {"bash": "allow"},
+        "sandbox": {"excluded_commands": ["cat *"]}
+    }));
+    for mode in ["default", "accept-edits", "dont-ask"] {
+        let out = failed(f.call(mode, "bash", json!({"command": command})).await);
+        assert!(
+            out.contains("no interactive approver") || out.contains("Not pre-approved"),
+            "{mode}: {out}"
+        );
+    }
+    let unsandboxed = ok(f.call("bypass", "bash", json!({"command": command})).await);
+    assert!(unsandboxed.contains("SECRET-IDENTITY"), "{unsandboxed}");
+    let listed = ok(f
+        .call(
+            "bypass",
+            "bash",
+            json!({"command": format!("{command} | head -1")}),
+        )
+        .await);
+    assert!(
+        !listed.contains("SECRET-IDENTITY"),
+        "a pipeline never qualifies: {listed}"
+    );
+}
+
+/// `permissions-modes` → Critical-path removal guard: the scenario command is refused in
+/// `bypass` before anything runs.
+#[tokio::test]
+async fn bypass_refuses_rm_rf_of_git_toplevel_substitution_without_execution() {
+    let f = Fixture::new();
+    f.set_config(json!({"permissions": {"bash": "allow", "external_directory": "allow"}}));
+    f.write("keep.txt", "preserve me");
+    for command in [
+        "touch ran-before; rm -rf \"$(git rev-parse --show-toplevel)\"",
+        "touch ran-before; nice -n 5 rm -rf \"$(git rev-parse --show-toplevel)\"",
+        "touch ran-before; find \"$(git rev-parse --show-toplevel)\" -exec rm -rf {} +",
+        "touch ran-before; git rev-parse --show-toplevel | xargs rm -rf",
+    ] {
+        let out = failed(f.call("bypass", "bash", json!({"command": command})).await);
+        assert!(out.starts_with("Refused: removal"), "{command}: {out}");
+        assert!(
+            out.ends_with("Rewrite the command to target specific files."),
+            "{out}"
+        );
+        assert_eq!(f.read("keep.txt"), "preserve me");
+        assert!(
+            !f.repo.join("ran-before").exists(),
+            "nothing ran: {command}"
+        );
+    }
+}
+
+/// `permissions-modes` → accept-edits mode: `write` inside the Location runs; `curl`,
+/// `webfetch` and a recursive `rm` still ask (and fail without an approver).
+#[tokio::test]
+async fn accept_edits_allows_write_but_keeps_non_edit_and_recursive_rm_asks() {
+    let f = Fixture::new();
+    ok(f.call(
+        "accept-edits",
+        "write",
+        json!({"path": "src/new.rs", "content": "fn a() {}\n"}),
+    )
+    .await);
+    assert_eq!(f.read("src/new.rs"), "fn a() {}\n");
+    f.write("build/out.o", "object");
+    for (tool, input) in [
+        ("bash", json!({"command": "curl https://example.org"})),
+        ("webfetch", json!({"url": "https://example.org"})),
+        ("bash", json!({"command": "rm -r build"})),
+    ] {
+        let out = failed(f.call("accept-edits", tool, input.clone()).await);
+        assert!(
+            out.contains("no interactive approver"),
+            "{tool} {input}: {out}"
+        );
+    }
+    assert_eq!(f.read("build/out.o"), "object");
+}

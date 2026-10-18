@@ -238,3 +238,58 @@ async fn native_powershell_timeout_and_cancellation_settle_and_terminate_the_int
         assert!(flow.runtime.pending_requests(Some(&id)).is_empty());
     }
 }
+
+/// `background: true` on native Windows: the Job records the exit code and log, and
+/// `task_stop` terminates the Job Object (`background-tasks` → Stop kills process trees).
+#[tokio::test]
+async fn native_powershell_background_job_records_exit_code_and_stops_its_job_object() {
+    use cyber_server::runtime::{JobStatus, ToolHost};
+    use support::flow::{Flow, text};
+    let flow = Flow::new(vec![text("notice handled")], false);
+    flow.f.set_config(
+        json!({"sandbox": {"policy": "full-access"}, "permissions": {"bash": "allow"}}),
+    );
+    let session = flow.session("default").await;
+    let run = |input: serde_json::Value| {
+        let mut inv = flow.f.invocation("default", "powershell", input);
+        inv.session_id = session.clone();
+        flow.f
+            .host
+            .execute(inv, tokio_util::sync::CancellationToken::new())
+    };
+    let started: serde_json::Value = serde_json::from_str(&ok(run(
+        json!({"command": "Write-Output 'bg-out'; exit 4", "background": true}),
+    )
+    .await))
+    .unwrap();
+    let id = started["job_id"].as_str().unwrap().to_owned();
+    let job = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        loop {
+            let job = flow.runtime.job(&id).unwrap();
+            if job.status != JobStatus::Running && job.notified {
+                return job;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the job did not end");
+    assert_eq!(job.status, JobStatus::Error);
+    assert_eq!(job.exit_code, Some(4));
+    assert_eq!(job.kind, "powershell");
+    let log = std::fs::read_to_string(job.output_path.unwrap()).unwrap();
+    assert!(log.contains("bg-out"), "{log}");
+    let sleeper: serde_json::Value = serde_json::from_str(&ok(run(
+        json!({"command": "Start-Sleep -Seconds 120", "background": true, "notify": false}),
+    )
+    .await))
+    .unwrap();
+    let stopped = std::time::Instant::now();
+    let job = flow
+        .runtime
+        .cancel_job(sleeper["job_id"].as_str().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(job.status, JobStatus::Cancelled);
+    assert!(stopped.elapsed() < std::time::Duration::from_secs(30));
+}

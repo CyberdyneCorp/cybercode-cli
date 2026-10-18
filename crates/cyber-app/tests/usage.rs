@@ -92,6 +92,7 @@ async fn session_usage_breaks_down_two_models_a_subagent_lines_and_budgets() {
         mcp_credentials: None,
         remote_skill_fetcher: None,
         workflow_cores: None,
+        isolation: None,
     })
     .await
     .unwrap();
@@ -269,6 +270,7 @@ async fn session_usage_is_served_when_the_daily_budget_cannot_be_read() {
         mcp_credentials: None,
         remote_skill_fetcher: None,
         workflow_cores: None,
+        isolation: None,
     })
     .await
     .unwrap();

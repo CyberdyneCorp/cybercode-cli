@@ -451,3 +451,42 @@ fn an_unknown_remove_method_is_not_assumed_to_be_a_filesystem_api() {
     let command = "python3 -c 'items=[\".\"]; items.remove(\".\")'";
     assert!(matches!(risk(command), Some(RemovalRisk::Unresolved(_))));
 }
+
+/// `permissions-modes` → Critical-path removal guard, wrappers and shell flow: launchers
+/// (`sudo`, `nice`, `timeout`, `stdbuf`, `time`), `find -exec rm` and removals fed from
+/// input (`xargs rm`) cannot hide a critical removal.
+#[test]
+fn launchers_xargs_and_find_exec_cannot_hide_critical_removals() {
+    let critical = Some(RemovalRisk::Critical(PathBuf::from("/repo")));
+    for command in [
+        "nice -n 5 rm -rf /repo",
+        "timeout 5 rm -rf /repo",
+        "sudo -u root rm -rf /repo",
+        "stdbuf -o0 rm -rf /repo",
+        "time rm -rf /repo",
+        "nice timeout 5 bash -c 'rm -rf /repo'",
+        "find /repo -exec rm -rf {} +",
+        "find /repo -execdir rmdir {} ;",
+    ] {
+        assert_eq!(risk(command), critical, "{command}");
+    }
+    for command in [
+        "xargs rm -rf <<< /repo",
+        "echo /repo | xargs rm -rf",
+        "find /repo -exec sh -c 'rm -rf \"$1\"' _ {} ;",
+        "nice -n \"$LEVEL\" rm -rf /repo",
+    ] {
+        assert!(
+            matches!(risk(command), Some(RemovalRisk::Unresolved(_))),
+            "{command}: {:?}",
+            risk(command)
+        );
+    }
+    for command in [
+        "nice -n 5 make",
+        "timeout 5 cargo test",
+        "find . -name '*.o' -print",
+    ] {
+        assert_eq!(risk(command), None, "{command}");
+    }
+}

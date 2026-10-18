@@ -82,6 +82,10 @@ impl ToolHost for AppHost {
         self.builtin.session_budget(directory)
     }
 
+    fn admit_mode(&self, directory: &str, agent: &str, mode: &str) -> Result<(), String> {
+        self.builtin.admit_mode(directory, agent, mode)
+    }
+
     fn config_digest(&self, directory: &str) -> Option<String> {
         self.builtin.config_digest(directory)
     }
@@ -311,5 +315,15 @@ impl ToolHost for AppHost {
     ) -> BoxFuture<'_, Result<String, String>> {
         self.builtin
             .shell_owned(directory, session_id, command, cancel)
+    }
+
+    fn shell_background(
+        &self,
+        directory: &str,
+        session_id: &str,
+        command: &str,
+    ) -> BoxFuture<'_, Result<String, String>> {
+        self.builtin
+            .shell_background(directory, session_id, command)
     }
 }

@@ -134,8 +134,20 @@ pub enum Msg {
     /// A Workflow monitor reply.
     Workflow(crate::workflows::Reply),
     Toast(String),
+    /// The end of a background task's log, for `/tasks`.
+    TaskLog {
+        session_id: String,
+        title: String,
+        text: String,
+    },
     /// Text to put in the composer for the user to review and submit.
     Compose(String),
+    /// The answer to a `/btw` side question.
+    SideAnswer {
+        session_id: String,
+        question: String,
+        result: Result<String, String>,
+    },
     Done,
 }
 
@@ -512,6 +524,19 @@ pub(crate) fn err(e: cyber_client::ClientError) -> String {
     e.to_string()
 }
 
+/// A refused request as the server words it, such as `bypass mode is disabled by your
+/// organization`, without the error tag.
+pub(crate) fn mode_refusal(e: cyber_client::ClientError) -> String {
+    match e {
+        cyber_client::ClientError::Api {
+            status: 400,
+            message,
+            ..
+        } => message,
+        other => err(other),
+    }
+}
+
 /// What a panel shows when the server lacks its route: it runs an older build.
 pub(crate) const NEWER_SERVER: &str = "needs a newer server · cyber service restart";
 
@@ -672,7 +697,7 @@ pub async fn perform_owned(
     let scoped = client.at(&session.directory);
     let client = &scoped;
     match action {
-        Action::Memory(_) | Action::SetMemory(_) | Action::GitText(_) => {
+        Action::Memory(_) | Action::SetMemory(_) | Action::GitText(_) | Action::SideChat { .. } => {
             location_action(client, action).await
         }
         Action::ReconcileAdmission(_) | Action::Admission { .. } => {
@@ -699,9 +724,12 @@ pub async fn perform_owned(
         | Action::Fork
         | Action::NewSession
         | Action::Open(_) => switch(client, session, action).await,
-        Action::LoadTasks | Action::OpenTask(_) | Action::StopTask(_) | Action::StopTasks => {
-            manage_tasks(client, session, action).await
-        }
+        Action::LoadTasks
+        | Action::OpenTask(_)
+        | Action::StopTask(_)
+        | Action::StopTasks
+        | Action::BackgroundShell(_)
+        | Action::MoveToBackground => manage_tasks(client, session, action).await,
         Action::LoadChildren => Ok(Msg::Children {
             session_id: session.id.clone(),
             result: crate::children::load(client, session).await,
@@ -886,7 +914,7 @@ async fn switch(client: &Client, session: &Session, action: Action) -> Result<Ms
                     result: client
                         .post(&format!("/sessions/{id}/mode"), json!({ "mode": mode }))
                         .await
-                        .map_err(err)
+                        .map_err(mode_refusal)
                         .map(|v| Session::parse(&v["data"])),
                 });
             }
@@ -907,12 +935,31 @@ async fn switch(client: &Client, session: &Session, action: Action) -> Result<Ms
     switched(result)
 }
 
-/// Location-scoped requests that change no Session: memory and drafted git text.
+/// `/btw`: the Session's model answers beside the conversation; nothing is recorded.
+async fn side_chat(client: &Client, session_id: String, question: String) -> Msg {
+    let body = json!({ "question": question });
+    let result = client
+        .post(&format!("/sessions/{session_id}/side"), body)
+        .await
+        .map_err(err)
+        .map(|v| v["data"]["answer"].as_str().unwrap_or_default().to_string());
+    Msg::SideAnswer {
+        session_id,
+        question,
+        result,
+    }
+}
+
+/// Requests that change no Session: memory, drafted git text and side questions.
 async fn location_action(client: &Client, action: Action) -> Result<Msg, String> {
     match action {
         Action::Memory(request) => Ok(crate::memory::perform(client, request).await),
         Action::SetMemory(state) => set_memory(client, state).await,
         Action::GitText(kind) => git_text(client, kind).await,
+        Action::SideChat {
+            session_id,
+            question,
+        } => Ok(side_chat(client, session_id, question).await),
         _ => Err("Unsupported Location action".into()),
     }
 }
@@ -1255,21 +1302,49 @@ fn encode(s: &str) -> String {
         .collect()
 }
 
+/// `& cmd` and Ctrl+B (`background-tasks` → Background commands from the user).
+async fn background(client: &Client, session: &str, action: Action) -> Result<Msg, String> {
+    match action {
+        Action::BackgroundShell(command) => {
+            let started = client
+                .post(
+                    &format!("/sessions/{session}/shell"),
+                    json!({ "command": command, "background": true }),
+                )
+                .await
+                .map_err(err)?;
+            let job = started["data"]["job"]["id"].as_str().unwrap_or("a job");
+            Ok(Msg::Toast(format!(
+                "Started {job} in the background · /tasks"
+            )))
+        }
+        Action::MoveToBackground => {
+            client
+                .post(&format!("/sessions/{session}/background"), json!({}))
+                .await
+                .map_err(err)?;
+            Ok(Msg::Toast(
+                "Moved the running command to the background".into(),
+            ))
+        }
+        _ => Ok(Msg::Done),
+    }
+}
+
 async fn manage_tasks(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
     match action {
         Action::LoadTasks => tasks(client, &session.id).await,
-        Action::OpenTask(id) => {
-            let job = client.get(&format!("/jobs/{id}")).await.map_err(err)?;
-            let child = job["data"]["child_id"]
-                .as_str()
-                .ok_or("Task has no child Session")?;
-            switch(client, session, Action::Open(child.into())).await
+        Action::OpenTask(id) => open_task(client, session, &id).await,
+        Action::BackgroundShell(_) | Action::MoveToBackground => {
+            background(client, &session.id, action).await
         }
         Action::StopTask(id) => {
-            client
-                .post(&format!("/jobs/{id}/stop"), json!({}))
-                .await
-                .map_err(err)?;
+            let path = if id.starts_with("run_") {
+                format!("/workflows/runs/{id}/stop")
+            } else {
+                format!("/jobs/{id}/stop")
+            };
+            client.post(&path, json!({})).await.map_err(err)?;
             tasks(client, &session.id).await
         }
         Action::StopTasks => {
@@ -1288,48 +1363,114 @@ async fn manage_tasks(client: &Client, session: &Session, action: Action) -> Res
     }
 }
 
+/// Enter on a task: a subagent's thread, else the end of a command's or monitor's log.
+async fn open_task(client: &Client, session: &Session, id: &str) -> Result<Msg, String> {
+    let job = client.get(&format!("/jobs/{id}")).await.map_err(err)?;
+    if let Some(child) = job["data"]["child_id"].as_str().filter(|c| !c.is_empty()) {
+        return switch(client, session, Action::Open(child.into())).await;
+    }
+    let output = client
+        .get(&format!("/jobs/{id}/output"))
+        .await
+        .map_err(err)?;
+    let label = job["data"]["command"]
+        .as_str()
+        .or_else(|| job["data"]["name"].as_str())
+        .unwrap_or(id);
+    Ok(Msg::TaskLog {
+        session_id: session.id.clone(),
+        title: format!("{id} · {}", one_line(label, 60)),
+        text: output["data"]["text"].as_str().unwrap_or("").to_owned(),
+    })
+}
+
+/// The first line of `text`, at most `max` characters.
+fn one_line(text: &str, max: usize) -> String {
+    text.lines()
+        .next()
+        .unwrap_or("")
+        .chars()
+        .take(max)
+        .collect()
+}
+
+/// `/tasks`: the Session's Jobs (background commands, monitors, subagents) and its
+/// Workflow Runs, with kind, status, elapsed time and last output line.
 async fn tasks(client: &Client, session: &str) -> Result<Msg, String> {
     let jobs = fetch_jobs(client, session).await?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64;
-    let items = jobs
-        .iter()
-        .map(|job| {
-            let elapsed = (job["ended_ms"].as_i64().unwrap_or(now)
-                - job["started_ms"].as_i64().unwrap_or(now))
-            .max(0)
-                / 1000;
-            let last = job
+    let mut items = Vec::new();
+    for job in &jobs {
+        let last = match job["output_path"].as_str() {
+            Some(_) => log_line(client, job["id"].as_str().unwrap_or("")).await,
+            None => job
                 .pointer("/result/text")
                 .and_then(Value::as_str)
                 .or_else(|| job["error"].as_str())
-                .unwrap_or("")
-                .lines()
-                .last()
-                .unwrap_or("")
-                .chars()
-                .take(120)
-                .collect::<String>();
-            Choice {
-                key: job["id"].as_str().unwrap_or("").into(),
-                label: format!(
-                    "{} ({})",
-                    job["name"].as_str().unwrap_or("task"),
-                    job["status"].as_str().unwrap_or("unknown")
-                ),
-                detail: format!(
-                    "{} · {elapsed}s · {last}",
-                    job["kind"].as_str().unwrap_or("task")
-                ),
-            }
-        })
-        .collect();
+                .map(last_line)
+                .unwrap_or_default(),
+        };
+        let elapsed = (job["ended_ms"].as_i64().unwrap_or(now)
+            - job["started_ms"].as_i64().unwrap_or(now))
+        .max(0)
+            / 1000;
+        let kind = job["kind"].as_str().unwrap_or("task");
+        items.push(task_choice(job, kind, elapsed, &last));
+    }
+    for run in fetch_runs(client, session).await? {
+        let elapsed = run["elapsed_ms"].as_i64().unwrap_or(0) / 1000;
+        let last = run["reason"].as_str().map(last_line).unwrap_or_default();
+        items.push(task_choice(&run, "workflow", elapsed, &last));
+    }
     Ok(Msg::Tasks {
         session_id: session.into(),
         items,
     })
+}
+
+/// A row of `/tasks`: a command or monitor shows its command, others their name.
+fn task_choice(task: &Value, kind: &str, elapsed: i64, last: &str) -> Choice {
+    let name = match task["command"].as_str() {
+        Some(command) => one_line(command, 60),
+        None => task["name"].as_str().unwrap_or("task").to_owned(),
+    };
+    Choice {
+        key: task["id"].as_str().unwrap_or("").into(),
+        label: format!("{name} ({})", task["status"].as_str().unwrap_or("unknown")),
+        detail: format!("{kind} · {elapsed}s · {last}"),
+    }
+}
+
+fn last_line(text: &str) -> String {
+    text.lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("")
+        .chars()
+        .take(120)
+        .collect()
+}
+
+/// The last line of a process Job's log; empty when it cannot be read.
+async fn log_line(client: &Client, id: &str) -> String {
+    match client
+        .get(&format!("/jobs/{id}/output?tail_bytes=4096"))
+        .await
+    {
+        Ok(output) => last_line(output["data"]["text"].as_str().unwrap_or("")),
+        Err(_) => String::new(),
+    }
+}
+
+async fn fetch_runs(client: &Client, session: &str) -> Result<Vec<Value>, String> {
+    let page = client
+        .get(&format!("/workflows/runs?session_id={session}&limit=200"))
+        .await
+        .map_err(err)?;
+    Ok(page["data"].as_array().cloned().unwrap_or_default())
 }
 
 async fn fetch_jobs(client: &Client, session: &str) -> Result<Vec<Value>, String> {

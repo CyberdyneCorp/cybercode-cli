@@ -66,6 +66,12 @@ const BUILTINS: &[(&str, &str, Option<&str>, bool)] = &[
         true,
     ),
     ("fork", "fork this session", Some("session_fork"), false),
+    (
+        "btw",
+        "ask a side question without adding it to the session",
+        None,
+        true,
+    ),
     ("mode", "choose the permission mode", None, false),
     ("theme", "switch theme", Some("theme_list"), false),
     ("compact", "summarize older history", None, false),

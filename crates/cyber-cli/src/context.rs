@@ -85,6 +85,43 @@ impl Context {
         })
     }
 
+    /// A tool host over this Location's configuration, without a server or a Session:
+    /// what `cyber sandbox` and `cyber permissions test` evaluate with. `sandbox` is the
+    /// `--sandbox`/`--policy`/`--profile` selection.
+    pub fn local_host(
+        &self,
+        database: DatabaseLocation,
+        sandbox: Option<String>,
+    ) -> Result<std::sync::Arc<cyber_tools::BuiltinHost>, CliError> {
+        let store = std::sync::Arc::new(cyber_store::Store::open(cyber_store::StoreOptions::new(
+            database,
+            cyber_server::runtime::Runtime::registry(),
+        ))?);
+        let resolver = self.hook_resolver();
+        let shell = self.config()?.value["shell"]
+            .as_str()
+            .map(str::to_string)
+            .or_else(|| cyber_core::env::EnvSource::get(&self.env, "SHELL"))
+            .unwrap_or_else(|| "/bin/sh".into());
+        Ok(cyber_tools::BuiltinHost::new(cyber_tools::HostOptions {
+            store,
+            tool_output_dir: self.paths.data.join("tool-output"),
+            allowed_dirs: Vec::new(),
+            home: self.home.clone(),
+            shell,
+            config: std::sync::Arc::new(move |location| {
+                resolver(location).map(|resolved| (resolved.value, resolved.sources))
+            }),
+            global_config_dir: self.paths.config.clone(),
+            env: std::sync::Arc::new(ProcessEnv),
+            models: None,
+            temp_dir: self.paths.tmp.join("sessions"),
+            sandbox_policy: sandbox,
+            sandbox_helper: cyber_sandbox::find_helper(),
+            isolation: cyber_tools::IsolationOptions::probe(false),
+        }))
+    }
+
     pub fn withheld_hooks(&self) -> Result<Vec<config::RawHookSection>, CliError> {
         Ok(config::withheld_hook_sections(&self.request())?)
     }

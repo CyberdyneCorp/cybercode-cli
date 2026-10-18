@@ -44,6 +44,7 @@ fn launch(s: &Setup, config: serde_json::Value, proxy_port: Option<u16>) -> Laun
     let config = SandboxConfig::resolve(&config, &BTreeMap::new(), None, &s.home);
     Launch {
         unreadable: config.unreadable(&s.home),
+        deny_read: Default::default(),
         writable: vec![s.root.clone()],
         read_only: protected_in(&s.root),
         proxy: proxy_port.map(cyber_sandbox::proxy::Endpoint::Tcp),
@@ -247,4 +248,43 @@ async fn network_off_blocks_everything() {
     )
     .await;
     assert!(!ok);
+}
+
+/// Regression (`sandbox` → Named sandbox profiles): a `deny_read` match inside a writable
+/// root cannot be renamed, hard-linked or moved out of its pattern (by renaming its
+/// directory) and then read under the new name; other writes still work.
+#[tokio::test]
+async fn deny_read_matches_cannot_be_renamed_out_of_their_pattern() {
+    let s = setup();
+    std::fs::create_dir_all(s.root.join("config")).unwrap();
+    std::fs::write(s.root.join("config/a.key"), "SECRET-A").unwrap();
+    std::fs::write(s.root.join("key.pem"), "SECRET-PEM").unwrap();
+    let mut l = launch(&s, json!({}), None);
+    l.deny_read = cyber_sandbox::DenyRead::new(
+        &["config/*.key".to_string(), "**/*.pem".to_string()],
+        &s.root,
+        &s.home,
+    );
+    let root = q(&s.root);
+    for script in [
+        format!("cd {root} && mv key.pem k.txt; cat k.txt"),
+        format!("cd {root} && ln key.pem k2.txt; cat k2.txt"),
+        format!("cd {root} && mv config c2; cat c2/a.key"),
+        format!("cd {root} && mkdir d && mv config d/; cat d/config/a.key"),
+        format!("cd {root} && mv config/a.key config/a.txt; cat config/a.txt"),
+    ] {
+        let (_, out) = run(&l, &script).await;
+        assert!(!out.contains("SECRET"), "{script}: {out}");
+    }
+    assert_eq!(
+        std::fs::read_to_string(s.root.join("key.pem")).unwrap(),
+        "SECRET-PEM"
+    );
+    assert!(s.root.join("config/a.key").exists());
+    let (ok, out) = run(
+        &l,
+        &format!("cd {root} && echo x > config/new.txt && mv config/new.txt moved.txt"),
+    )
+    .await;
+    assert!(ok, "{out}");
 }

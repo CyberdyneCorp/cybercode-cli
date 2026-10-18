@@ -24,6 +24,7 @@ mod rename;
 mod review;
 mod runner;
 mod settings;
+mod side_chat;
 mod sidebar;
 mod store;
 mod switcher;
@@ -62,9 +63,13 @@ mod screens_rename;
 #[cfg(test)]
 mod screens_settings;
 #[cfg(test)]
+mod screens_side_chat;
+#[cfg(test)]
 mod screens_sidebar;
 #[cfg(test)]
 mod screens_stats;
+#[cfg(test)]
+mod screens_tasks;
 #[cfg(test)]
 mod screens_themes;
 #[cfg(test)]

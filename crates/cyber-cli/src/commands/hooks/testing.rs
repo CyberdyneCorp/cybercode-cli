@@ -112,6 +112,7 @@ pub(super) fn run(
         temp_dir: temp.clone(),
         sandbox_policy: None,
         sandbox_helper: helper.clone(),
+        isolation: Default::default(),
     });
     host.attach_hook_config(ctx.hook_resolver(), trust.clone())
         .map_err(CliError::runtime)?;

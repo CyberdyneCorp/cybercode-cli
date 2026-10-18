@@ -105,6 +105,9 @@ pub struct LaunchArgs {
     /// Sandbox policy for an embedded server: read-only, workspace-write or full-access.
     #[arg(long)]
     pub sandbox: Option<String>,
+    /// Allow `bypass` mode in an embedded server without a sandbox or a container.
+    #[arg(long, requires = "embedded")]
+    pub dangerously_bypass_permissions: bool,
     /// Open the Session picker over the Sessions linked to this pull request.
     #[arg(long, value_name = "NUMBER|URL")]
     pub from_pr: Option<String>,
@@ -171,7 +174,7 @@ pub enum Command {
     },
     /// List models from the catalog, available first.
     Models(ModelsArgs),
-    /// Inspect or reset checkout-scoped auto-mode statistics.
+    /// Dry-run permission rules; inspect or reset checkout-scoped auto-mode statistics.
     Permissions {
         #[command(subcommand)]
         cmd: crate::commands::permissions::PermissionsCmd,
@@ -185,6 +188,11 @@ pub enum Command {
     Hooks {
         #[command(subcommand)]
         cmd: HooksCmd,
+    },
+    /// Test, explain or run a command under the effective OS sandbox policy.
+    Sandbox {
+        #[command(subcommand)]
+        cmd: crate::commands::sandbox::SandboxCmd,
     },
     /// Inspect and approve repository-controlled configuration for this checkout.
     Trust {

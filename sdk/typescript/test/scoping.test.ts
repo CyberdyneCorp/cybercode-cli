@@ -210,3 +210,10 @@ test("usage.get narrows a Workflow Run rollup by its scope", async () => {
   assert.equal(result.tiers[0]?.key, "fast");
   assert.equal(calls[0]?.url.searchParams.get("scope"), "run");
 });
+
+test("permission.test dry-runs in the client's Location", async () => {
+  const { client, calls } = mockClient(() => json(200, { location, data: { results: [] } }), { directory: "/repo/a" });
+  await client.at("/repo/b").permission.test({ tool: "write", resource: "src/a.rs" });
+  assert.equal(calls[0]?.headers.get("x-cyber-directory"), "%2Frepo%2Fb");
+  assert.equal(calls[0]?.url.search, "?tool=write&resource=src%2Fa.rs");
+});

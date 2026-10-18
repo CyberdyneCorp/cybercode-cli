@@ -44,6 +44,9 @@ impl Tool for Read {
                 ..Request::default()
             };
             ctx.authorize(req, vec![resource], Value::Null).await?;
+            if crate::sandboxing::hidden(ctx).denies(&path) {
+                return Err(failed(crate::sandboxing::hidden_read(ctx, &path).await));
+            }
             let meta = tokio::fs::metadata(&path)
                 .await
                 .map_err(|_| failed(not_found(&path)))?;
@@ -345,6 +348,7 @@ impl Tool for Write {
         Box::pin(async move {
             let path = ctx.resolve(text(&ctx.inv.input, "path"));
             let content = text(&ctx.inv.input, "content");
+            crate::sandboxing::refuse_hidden(ctx, &[&path]).await?;
             let before = tokio::fs::read(&path).await.ok();
             if before.is_some() && !ctx.host.was_read(&ctx.inv.session_id, &path) {
                 return Err(failed("Read the file before overwriting it."));
@@ -399,6 +403,7 @@ impl Tool for Edit {
                     "old_string must be non-empty and different from new_string",
                 ));
             }
+            crate::sandboxing::refuse_hidden(ctx, &[&path]).await?;
             let before = tokio::fs::read(&path)
                 .await
                 .map_err(|_| failed(not_found(&path)))?;

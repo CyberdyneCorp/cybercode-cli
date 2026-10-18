@@ -4,7 +4,8 @@ use axum::{
     extract::{Path, Query, State},
     routing::{get, post},
 };
-use serde::Deserialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use super::{
     ApiError, AppState,
@@ -24,6 +25,27 @@ pub fn routes() -> Router<AppState> {
         .route("/jobs", get(list))
         .route("/jobs/{id}", get(show))
         .route("/jobs/{id}/stop", post(stop))
+        .route("/jobs/{id}/output", get(output))
+}
+
+/// Bytes of a Job log returned by default, and at most.
+const DEFAULT_TAIL: u64 = 64 * 1024;
+const MAX_TAIL: u64 = 1024 * 1024;
+
+#[derive(Default, Deserialize)]
+struct OutputQuery {
+    tail_bytes: Option<u64>,
+}
+
+/// The end of a process Job's log (`background-tasks` → Tasks view: open output).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct JobOutput {
+    /// The last `tail_bytes` of the log, lossily decoded.
+    pub text: String,
+    /// The log's size in bytes.
+    pub size: u64,
+    /// Whether earlier bytes were left out.
+    pub truncated: bool,
 }
 async fn list(
     State(state): State<AppState>,
@@ -67,4 +89,38 @@ async fn stop(
     Ok(Json(Data {
         data: state.runtime.cancel_job(&id).await?,
     }))
+}
+
+async fn output(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<OutputQuery>,
+) -> Result<Json<Data<JobOutput>>, ApiError> {
+    let job = known(&state, &id)?;
+    let path = job.output_path.ok_or_else(|| {
+        ApiError::not_found("JobOutputNotFoundError", format!("Job {id} has no log"))
+    })?;
+    let tail = query.tail_bytes.unwrap_or(DEFAULT_TAIL).clamp(1, MAX_TAIL);
+    let read = tokio::task::spawn_blocking(move || read_tail(std::path::Path::new(&path), tail))
+        .await
+        .map_err(ApiError::unknown)?;
+    let (text, size) = read
+        .map_err(|e| ApiError::not_found("JobOutputNotFoundError", format!("Job {id} log: {e}")))?;
+    Ok(Json(Data {
+        data: JobOutput {
+            truncated: size > tail,
+            text,
+            size,
+        },
+    }))
+}
+
+fn read_tail(path: &std::path::Path, tail: u64) -> std::io::Result<(String, u64)> {
+    use std::io::{Read as _, Seek as _, SeekFrom};
+    let mut file = std::fs::File::open(path)?;
+    let size = file.metadata()?.len();
+    file.seek(SeekFrom::Start(size.saturating_sub(tail)))?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok((String::from_utf8_lossy(&bytes).into_owned(), size))
 }

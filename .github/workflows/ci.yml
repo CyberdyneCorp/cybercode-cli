@@ -610,10 +610,38 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: cargo test --locked -p cyber-server --test http typed_child_results_are_available_in_message_history
-      - name: Native background subagent ownership and registry recovery
+      - name: Native background subagent and process Job ownership and registry recovery
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test background_subagents -p cyber-server --test jobs
+      - name: Native process Job log cap and background flags
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: cargo test --locked -p cyber-tools --lib tools::background::tests
+      - name: Native monitor file tail, WebSocket, rate limit and registry subset
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        run: |
+          cargo test --locked -p cyber-tools --lib tools::monitor::
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-tools --test monitor --test golden
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-app --test server monitor_tail_filter_admits_error_lines_rate_limited
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Native PTY tickets, notify, send_file and side chat
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        run: |
+          cargo test --locked -p cyber-server --test pty
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-tools --lib tools::deliver::tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-tools --test notify
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-app --test deliveries
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-tui --lib side_chat
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native background job API controls
         if: ${{ !cancelled() }}
         timeout-minutes: 20
@@ -806,6 +834,28 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: cargo test --locked -p cyber-app --test server
+      - name: Native sandbox profiles, escalation, bypass gate and rule dry run
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        run: |
+          cargo test --locked -p cyber-sandbox --lib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-tools --lib -- permissions::dry_run sandboxing::tests::refusal_lines
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-tools --test tools -- bypass_refuses_rm_rf_of_git_toplevel_substitution_without_execution accept_edits_allows_write_but_keeps_non_edit_and_recursive_rm_asks grep_and_glob_refuse_a_hidden_base_path
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-tools --test flow -- escalation_denied_in_dont_ask
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-core --test config managed_modes_and_minimum_profile_are_merged_with_managed_sources
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-cli --test cli -- repository_cannot_redefine_the_managed_minimum_profile permissions_test_evaluates_tools_under_their_action
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-tools --lib -- permissions::engine::tests::sandbox_boundary_needs_an_explicit_user_allow
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-core --lib config::gate
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-app --test retention --test backup
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native pending HTTP2 request cleanup
         if: ${{ !cancelled() }}
         timeout-minutes: 20

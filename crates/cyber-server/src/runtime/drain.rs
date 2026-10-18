@@ -334,29 +334,45 @@ async fn eligible(
             || state.pending(Delivery::Queue).next().is_some())
 }
 
+/// Every Safe Boundary admits the Session's Mode again: a pending agent default takes
+/// effect, and a held Mode the host no longer admits (a restart without
+/// `--dangerously-bypass-permissions`, a looser sandbox, a managed `modes.disable`) fails
+/// the Turn before any tool runs, until a switch to an admitted Mode.
+async fn admit_boundary_mode(inner: &Arc<Inner>, handle: &Arc<Handle>) -> Result<(), RuntimeError> {
+    let mut state = handle.state.lock().await;
+    if !state.mode_default_pending {
+        return inner
+            .tools
+            .admit_mode(&state.info.directory, &state.info.agent, &state.info.mode)
+            .map_err(RuntimeError::Invalid);
+    }
+    let selected = inner.resolve_selection(&state.info, &state.model_selection)?;
+    let mode = selected
+        .permission_mode
+        .clone()
+        .unwrap_or_else(|| "default".into());
+    super::selection::validate_mode(&mode)?;
+    // A refused agent default fails the Turn and stays pending until a switch.
+    inner
+        .tools
+        .admit_mode(&state.info.directory, &state.info.agent, &mode)
+        .map_err(RuntimeError::Invalid)?;
+    let payload = Switched {
+        from: state.info.mode.clone(),
+        to: mode,
+        automatic: true,
+    };
+    inner.commit_locked(&mut state, vec![event(MODE_SWITCHED, &payload)])?;
+    Ok(())
+}
+
 /// The Safe Boundary: epoch, promoted input, context updates, then requested compaction.
 async fn boundary(
     inner: &Arc<Inner>,
     handle: &Arc<Handle>,
     continue_tools: bool,
 ) -> Result<(PreparedModel, bool), RuntimeError> {
-    {
-        let mut state = handle.state.lock().await;
-        if state.mode_default_pending {
-            let selected = inner.resolve_selection(&state.info, &state.model_selection)?;
-            let mode = selected
-                .permission_mode
-                .clone()
-                .unwrap_or_else(|| "default".into());
-            super::selection::validate_mode(&mode)?;
-            let payload = Switched {
-                from: state.info.mode.clone(),
-                to: mode,
-                automatic: true,
-            };
-            inner.commit_locked(&mut state, vec![event(MODE_SWITCHED, &payload)])?;
-        }
-    }
+    admit_boundary_mode(inner, handle).await?;
     inner.config_change(handle).await;
     // The profile-derived model switch runs its observational hooks unlocked.
     inner.automatic_model_switch(handle).await?;

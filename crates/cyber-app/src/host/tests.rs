@@ -26,6 +26,11 @@ async fn application(root: &std::path::Path) -> App {
         mcp_credentials: None,
         remote_skill_fetcher: None,
         workflow_cores: None,
+        // These hosts run `bypass` Sessions under `full-access`, as with the explicit flag.
+        isolation: Some(cyber_tools::IsolationOptions {
+            dangerously_bypass: true,
+            container: false,
+        }),
     })
     .await
     .unwrap()

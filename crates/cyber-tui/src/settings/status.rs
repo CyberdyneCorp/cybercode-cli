@@ -46,10 +46,24 @@ impl Health {
         Self {
             version: text(&v["version"]),
             build: text(&v["build"]),
-            sandbox: text(&v["sandbox"]),
+            sandbox: text(&v["sandbox"]).or_else(|| sandbox_summary(&v["sandbox"])),
             account: text(&v["account"]),
         }
     }
+}
+
+/// `/health`'s `sandbox` object as one row: `workspace-write · available · isolation:
+/// sandbox` (`sandbox` → Container detection: `isolation: container`).
+fn sandbox_summary(v: &Value) -> Option<String> {
+    let policy = v["policy"].as_str()?;
+    let mut parts = vec![clean(policy)];
+    if let Some(enforcement) = v["enforcement"].as_str() {
+        parts.push(clean(enforcement));
+    }
+    if let Some(isolation) = v["isolation"].as_str() {
+        parts.push(format!("isolation: {}", clean(isolation)));
+    }
+    Some(parts.join(" · "))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -371,4 +385,22 @@ pub fn heading(app: &App, text: &str) -> Line<'static> {
             .fg(app.theme.text)
             .add_modifier(Modifier::BOLD),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn health_sandbox_object_shows_policy_enforcement_and_isolation() {
+        let health = Health::parse(&serde_json::json!({
+            "sandbox": {"policy": "full-access", "profile": "full", "enforcement": "off", "isolation": "container"}
+        }));
+        assert_eq!(
+            health.sandbox.as_deref(),
+            Some("full-access · off · isolation: container")
+        );
+        let legacy = Health::parse(&serde_json::json!({"sandbox": "unavailable"}));
+        assert_eq!(legacy.sandbox.as_deref(), Some("unavailable"));
+    }
 }

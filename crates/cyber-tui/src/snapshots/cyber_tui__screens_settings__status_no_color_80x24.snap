@@ -22,7 +22,7 @@ expression: "render(&mut app, 80, 24, &plain)"
   MCP:           none configured
   LSP:           none running
   Machine:       CPU 18 percent busy, 12 cores; memory 75 percent used, 4.0 G…
-
+  Sandbox:       workspace-write · available · isolation: sandbox
 
   ↑↓ scroll · r refresh · tab next tab · 1-4 jump · esc close
  ~/work/app                                  100 (86%) · $0.00  ctrl+p commands

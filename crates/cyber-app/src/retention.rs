@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use cyber_server::runtime::{ListFilter, Runtime};
+use cyber_server::runtime::{JobStatus, ListFilter, Runtime};
 use serde_json::{Value, json};
 
 const FIRST_SWEEP: Duration = Duration::from_secs(120);
@@ -16,6 +16,9 @@ const DAY: u64 = 86_400;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Sweep {
     pub tool_output_files: usize,
+    /// Logs of ended process Jobs and copies of sent files, under the tool-output window.
+    pub job_logs: usize,
+    pub sent_files: usize,
     pub archived_sessions: usize,
     /// Usage ledger rows folded into daily aggregates.
     pub usage_rows_folded: usize,
@@ -63,6 +66,8 @@ pub fn spawn(
                 "sweep",
                 json!({
                     "tool_output_files": swept.tool_output_files,
+                    "job_logs": swept.job_logs,
+                    "sent_files": swept.sent_files,
                     "archived_sessions": swept.archived_sessions,
                     "usage_rows_folded": swept.usage_rows_folded,
                 }),
@@ -84,6 +89,13 @@ pub async fn sweep(
             retention.tool_output_days,
             now,
         ),
+        job_logs: old_job_logs(
+            runtime,
+            &data_dir.join("jobs"),
+            retention.tool_output_days,
+            now,
+        ),
+        sent_files: old_entries(&data_dir.join("sent"), retention.tool_output_days, now, &[]),
         archived_sessions: old_archived_sessions(runtime, retention.archived_days, now).await,
         usage_rows_folded: old_usage(runtime, retention.usage_days, now),
     }
@@ -108,6 +120,25 @@ fn older_than(time: SystemTime, days: u64, now: SystemTime) -> bool {
 
 /// The only cleanup of `<data>/tool-output`.
 fn old_tool_output(dir: &Path, days: u64, now: SystemTime) -> usize {
+    old_entries(dir, days, now, &[])
+}
+
+/// Logs in `<data>/jobs` unchanged for the window, except those of running Jobs.
+fn old_job_logs(runtime: &Runtime, dir: &Path, days: u64, now: SystemTime) -> usize {
+    let Ok(jobs) = runtime.jobs(None) else {
+        return 0;
+    };
+    let running: Vec<String> = jobs
+        .iter()
+        .filter(|job| job.status == JobStatus::Running)
+        .map(|job| format!("{}.log", job.id))
+        .collect();
+    old_entries(dir, days, now, &running)
+}
+
+/// Remove the entries of `dir` (files, or directories such as `sent/<file_id>/`) not
+/// modified within `days`, except those named in `keep`.
+fn old_entries(dir: &Path, days: u64, now: SystemTime, keep: &[String]) -> usize {
     if days == 0 {
         return 0;
     }
@@ -116,13 +147,21 @@ fn old_tool_output(dir: &Path, days: u64, now: SystemTime) -> usize {
     };
     entries
         .flatten()
+        .filter(|e| !keep.iter().any(|name| e.file_name() == name.as_str()))
         .filter(|e| {
             e.metadata()
                 .ok()
                 .and_then(|m| m.modified().ok())
                 .is_some_and(|t| older_than(t, days, now))
         })
-        .filter(|e| std::fs::remove_file(e.path()).is_ok())
+        .filter(|e| {
+            let path = e.path();
+            if path.is_dir() {
+                std::fs::remove_dir_all(path).is_ok()
+            } else {
+                std::fs::remove_file(path).is_ok()
+            }
+        })
         .count()
 }
 

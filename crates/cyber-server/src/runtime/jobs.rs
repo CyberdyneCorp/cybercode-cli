@@ -10,10 +10,12 @@ use tokio_util::sync::CancellationToken;
 
 use super::{Admission, Delivery, LiveEvent, Runtime, RuntimeError, WeakRuntime};
 
-const STARTED: &str = "job.started.1";
-const ENDED: &str = "job.ended.1";
-const CANCELLED: &str = "job.cancelled.1";
+pub(super) const STARTED: &str = "job.started.1";
+pub(super) const ENDED: &str = "job.ended.1";
+pub(super) const CANCELLED: &str = "job.cancelled.1";
 const NOTIFIED: &str = "job.notified.1";
+/// Lines of output a completion notice carries.
+const NOTICE_LINES: usize = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -29,9 +31,14 @@ pub enum JobStatus {
 pub struct Job {
     pub id: String,
     pub session_id: String,
+    /// The child Session of a `subagent` Job; empty for process Jobs.
     pub child_id: String,
     pub name: String,
+    /// `subagent`, `workflow`, or a process kind (`bash`, `powershell`).
     pub kind: String,
+    /// The command line of a process Job.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
     pub description: String,
     pub status: JobStatus,
     pub started_ms: i64,
@@ -135,7 +142,7 @@ pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> rusqlite::Re
             params![
                 data["id"].as_str(),
                 event.aggregate_id,
-                data["child_id"].as_str(),
+                data["child_id"].as_str().filter(|child| !child.is_empty()),
                 data["name"].as_str(),
                 data["status"].as_str(),
                 data.to_string(),
@@ -346,6 +353,7 @@ impl Runtime {
             child_id: child.into(),
             name,
             kind: "subagent".into(),
+            command: None,
             description,
             status: JobStatus::Running,
             started_ms: chrono::Utc::now().timestamp_millis(),
@@ -456,7 +464,7 @@ impl Runtime {
         Ok(job)
     }
 
-    async fn record_job(&self, kind: &str, job: &Job) -> Result<(), RuntimeError> {
+    pub(super) async fn record_job(&self, kind: &str, job: &Job) -> Result<(), RuntimeError> {
         let handle = self.inner.handle(&job.session_id).await?;
         self.inner
             .commit(&handle, vec![super::events::event(kind, job)])
@@ -547,14 +555,28 @@ impl Runtime {
         }
     }
 
-    async fn notify_job(&self, mut job: Job) -> Result<(), RuntimeError> {
+    pub(super) async fn notify_job(&self, mut job: Job) -> Result<(), RuntimeError> {
+        let (heading, output) = if job.kind == "subagent" {
+            let text = job
+                .result
+                .as_ref()
+                .and_then(|result| result["text"].as_str());
+            (
+                "Background subagent handback",
+                text.unwrap_or("").to_owned(),
+            )
+        } else if job.kind == "monitor" {
+            ("Monitor ended", super::process_jobs::log_tail(&job))
+        } else {
+            ("Background job ended", super::process_jobs::log_tail(&job))
+        };
         let mut admission = Admission::text(
             format!(
-                "Background subagent handback: {}",
+                "{heading}: {}",
                 serde_json::json!({
                     "job":job,
                     "duration_ms":job.ended_ms.unwrap_or(job.started_ms).saturating_sub(job.started_ms).max(0),
-                    "output_tail":job.result.as_ref().and_then(|result| result["text"].as_str()).unwrap_or("").lines().rev().take(20).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n")
+                    "output_tail":last_lines(&output, NOTICE_LINES)
                 })
             ),
             Delivery::Queue,
@@ -621,7 +643,9 @@ impl Runtime {
                 job.status = JobStatus::Interrupted;
                 job.ended_ms = Some(chrono::Utc::now().timestamp_millis());
                 job.error = Some("Server restarted; background task was not redispatched".into());
-                self.refresh_job_usage(&mut job).await;
+                if job.kind == "subagent" {
+                    self.refresh_job_usage(&mut job).await;
+                }
                 self.record_job(ENDED, &job).await?;
             }
             if !job.notified {
@@ -634,4 +658,10 @@ impl Runtime {
         }
         Ok(())
     }
+}
+
+/// The last `count` lines of `text`.
+pub(super) fn last_lines(text: &str, count: usize) -> String {
+    let lines: Vec<&str> = text.lines().rev().take(count).collect();
+    lines.into_iter().rev().collect::<Vec<_>>().join("\n")
 }

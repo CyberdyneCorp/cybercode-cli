@@ -123,6 +123,7 @@ async fn execute(
         mcp_credentials: None,
         remote_skill_fetcher: None,
         workflow_cores: None,
+        isolation: None,
     })
     .await
     .map_err(CliError::runtime)?;

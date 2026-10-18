@@ -30,6 +30,7 @@ fn host(root: &Path, config: Result<Value, String>) -> Arc<BuiltinHost> {
         temp_dir: root.join("tmp"),
         sandbox_policy: None,
         sandbox_helper: None,
+        isolation: Default::default(),
     })
 }
 

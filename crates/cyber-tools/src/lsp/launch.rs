@@ -288,6 +288,9 @@ impl LocalLauncher {
                 .flat_map(|p| cyber_sandbox::protected_in(p))
                 .collect(),
             unreadable: resources.config.unreadable(&self.options.home),
+            deny_read: resources
+                .config
+                .deny_read_for(&self.location, &self.options.home),
             writable,
             proxy: resources.proxy.as_ref().map(|p| p.endpoint.clone()),
             helper: self.options.helper.clone(),
@@ -375,9 +378,9 @@ impl LocalLauncher {
         let mut environment = if resources.config.policy == Policy::FullAccess {
             self.options.environment.clone().into_iter().collect()
         } else {
-            cyber_sandbox::mask_env(
+            cyber_sandbox::policy_env(
                 self.options.environment.clone().into_iter(),
-                &resources.config.env_allow,
+                &resources.config,
                 &credentials,
             )
             .into_iter()

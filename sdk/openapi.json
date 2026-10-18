@@ -1809,6 +1809,9 @@
             "items": {
               "type": "string"
             }
+          },
+          "sandbox": {
+            "description": "The default Location's sandbox: `{ policy, profile, enforcement, isolation }`\n(`sandbox` → Container detection: `isolation: container` in the header)."
           }
         },
         "required": [
@@ -1921,13 +1924,22 @@
             "type": "string"
           },
           "child_id": {
-            "type": "string"
+            "type": "string",
+            "description": "The child Session of a `subagent` Job; empty for process Jobs."
           },
           "name": {
             "type": "string"
           },
           "kind": {
-            "type": "string"
+            "type": "string",
+            "description": "`subagent`, `workflow`, or a process kind (`bash`, `powershell`)."
+          },
+          "command": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The command line of a process Job."
           },
           "description": {
             "type": "string"
@@ -2034,6 +2046,72 @@
         "required": [
           "data"
         ]
+      },
+      "Data_JobOutput": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/JobOutput"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "JobOutput": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The last `tail_bytes` of the log, lossily decoded."
+          },
+          "size": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "The log's size in bytes."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "Whether earlier bytes were left out."
+          }
+        },
+        "required": [
+          "text",
+          "size",
+          "truncated"
+        ],
+        "description": "The end of a process Job's log (`background-tasks` → Tasks view: open output)."
+      },
+      "Data_PtyTicket": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PtyTicket"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "PtyTicket": {
+        "type": "object",
+        "properties": {
+          "ticket": {
+            "type": "string"
+          },
+          "expires_in": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Seconds until the ticket expires."
+          }
+        },
+        "required": [
+          "ticket",
+          "expires_in"
+        ],
+        "description": "A single-use ticket for `GET /jobs/{id}/pty/connect`."
       },
       "StartBody": {
         "type": "object",
@@ -5363,6 +5441,11 @@
         "properties": {
           "command": {
             "type": "string"
+          },
+          "background": {
+            "type": "boolean",
+            "description": "Start the command as a background Job of the Session (`& cmd`) instead of\nrecording its output.",
+            "default": false
           }
         },
         "required": [
@@ -5385,11 +5468,96 @@
         "properties": {
           "output": {
             "type": "string"
+          },
+          "job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Job"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The background Job a `background: true` command started."
           }
         },
         "required": [
           "output"
         ]
+      },
+      "Data_BackgroundResult": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/BackgroundResult"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "BackgroundResult": {
+        "type": "object",
+        "properties": {
+          "call_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "call_ids"
+        ],
+        "description": "The foreground calls asked to move to the background (Ctrl+B)."
+      },
+      "SideBody": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "description": "`POST /sessions/{id}/side`."
+      },
+      "Data_SideAnswer": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SideAnswer"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "SideAnswer": {
+        "type": "object",
+        "properties": {
+          "answer": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string",
+            "description": "The model reference that answered."
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The read-only tools it called, in order."
+          }
+        },
+        "required": [
+          "answer",
+          "model",
+          "tools"
+        ],
+        "description": "The answer to a side question."
       },
       "Page_Message": {
         "type": "object",
@@ -6237,6 +6405,20 @@
         "required": [
           "label"
         ]
+      },
+      "Located_AnyValue": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": true
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
       },
       "Located_Array_of_ModelInfo": {
         "type": "object",
@@ -9270,6 +9452,155 @@
         }
       }
     },
+    "/api/v1/jobs/{id}/output": {
+      "get": {
+        "operationId": "v1.job.output",
+        "summary": "Read the end of a background task's log",
+        "tags": [
+          "job"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tail_bytes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_JobOutput"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}/pty/ticket": {
+      "post": {
+        "operationId": "v1.job.ptyTicket",
+        "summary": "Issue a single-use ticket, valid for 60 seconds, to attach to a running PTY",
+        "tags": [
+          "job"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_PtyTicket"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}/pty/connect": {
+      "get": {
+        "operationId": "v1.job.ptyConnect",
+        "summary": "Attach to a running PTY over WebSocket with a ticket: replays retained output from cursor (omitted: all, -1: none), then live output; client frames are input",
+        "tags": [
+          "job"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ticket",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "x-websocket": true
+      }
+    },
     "/api/v1/workflows/runs": {
       "post": {
         "operationId": "v1.workflow.run",
@@ -11942,6 +12273,156 @@
         }
       }
     },
+    "/api/v1/sessions/{sessionID}/background": {
+      "post": {
+        "operationId": "v1.session.background",
+        "summary": "Move the Session's running foreground command to a background Job",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_BackgroundResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/side": {
+      "post": {
+        "operationId": "v1.session.side",
+        "summary": "Ask a side question (/btw) with a read-only copy of the Session's context and read-only tools; the Session's history is unchanged",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SideAnswer"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SideBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/files/{fileID}": {
+      "get": {
+        "operationId": "v1.session.sentFile",
+        "summary": "Download a file the Session delivered with send_file",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "fileID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{sessionID}/messages": {
       "get": {
         "operationId": "v1.message.list",
@@ -12655,6 +13136,95 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Data_Array_of_PendingRequest"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/permissions/test": {
+      "get": {
+        "operationId": "v1.permission.test",
+        "summary": "Evaluate a tool call or shell command against the effective ruleset without a Session",
+        "tags": [
+          "permission"
+        ],
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tool",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "resource",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "command",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_AnyValue"
                 }
               }
             }

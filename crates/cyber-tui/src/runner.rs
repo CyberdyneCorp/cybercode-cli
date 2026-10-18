@@ -554,9 +554,9 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
         }
         Msg::Tasks { session_id, items } => {
             if session_id == app.session.id {
-                app.open_picker(
+                app.open_or_refresh_picker(
                     PickerKind::Tasks,
-                    "Tasks · Enter opens child · Ctrl+S stops",
+                    "Tasks · Enter opens · x stops",
                     items,
                 );
             }
@@ -611,6 +611,20 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
         }
         Msg::Workflow(reply) => return app.workflow_reply(reply),
         Msg::Toast(text) => app.toast(text),
+        Msg::TaskLog {
+            session_id,
+            title,
+            text,
+        } => {
+            if session_id == app.session.id {
+                app.open_task_log(title, text);
+            }
+        }
+        Msg::SideAnswer {
+            session_id,
+            question,
+            result,
+        } => app.side_answer(&session_id, &question, result),
         Msg::Compose(text) => {
             app.composer.set_text(&text);
             app.toast("Review the drafted command, then press Enter to run it");
@@ -1361,5 +1375,59 @@ mod mode_tests {
         ));
         assert!(enter(&mut app, KeyCode::Enter).is_empty());
         assert_eq!(app.composer.text(), "/deploy ");
+    }
+
+    /// A server that answers every request with the organization's bypass refusal, as
+    /// `POST /sessions/:id/mode` does when `policy.modes.disable` lists `bypass`.
+    async fn refusing_server() -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut buffer = vec![0; 8192];
+                let _ = socket.read(&mut buffer).await;
+                let body = json!({"_tag": "InvalidRequestError",
+                    "message": "bypass mode is disabled by your organization"})
+                .to_string();
+                let reply = format!(
+                    "HTTP/1.1 400 Bad Request\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(reply.as_bytes()).await;
+            }
+        });
+        base
+    }
+
+    /// `tui` → Permission mode indicator and cycling: when org policy disables `bypass`,
+    /// the confirmed `/mode bypass` shows the server's reason and the mode is unchanged.
+    #[tokio::test]
+    async fn mode_bypass_disabled_by_org_policy_keeps_mode() {
+        let mut app = app();
+        for c in "/mode bypass".chars() {
+            app.on_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        assert!(
+            app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+                .is_empty()
+        );
+        let action = app
+            .on_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE))
+            .remove(0);
+        assert_eq!(action, Action::SwitchMode("bypass".into()));
+        let client = cyber_client::Client::http(&refusing_server().await, None);
+        let msg = perform::perform_owned(&client, &app.session, action, None).await;
+        let mut refresh = Refresh {
+            mode_in_flight: true,
+            ..Refresh::default()
+        };
+        apply(&mut app, msg, &mut refresh);
+        assert_eq!(app.session.mode, "default");
+        assert_eq!(app.mode_label(), "default");
+        assert_eq!(
+            app.toast.as_ref().map(|(text, _)| text.as_str()),
+            Some("bypass mode is disabled by your organization")
+        );
     }
 }

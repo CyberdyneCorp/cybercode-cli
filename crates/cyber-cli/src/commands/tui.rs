@@ -160,6 +160,9 @@ async fn connect(ctx: &Context, launch: &LaunchArgs) -> Result<(Client, Option<A
             mcp_credentials: None,
             remote_skill_fetcher: None,
             workflow_cores: None,
+            isolation: crate::commands::exec::setup::isolation(
+                launch.dangerously_bypass_permissions,
+            ),
         })
         .await
         .map_err(CliError::runtime)?;

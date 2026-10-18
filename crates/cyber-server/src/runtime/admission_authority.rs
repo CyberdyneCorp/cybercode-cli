@@ -592,6 +592,13 @@ fn check_closed_admission(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(
                 .as_str()
                 .ok_or("Missing hook Session")?,
         ],
+        // A process Job has no child Session; only its owner is checked.
+        "job.started.1"
+            if event.data["kind"] != "subagent"
+                && event.data["child_id"].as_str().is_none_or(str::is_empty) =>
+        {
+            vec![&event.aggregate_id]
+        }
         "job.started.1" => vec![
             &event.aggregate_id,
             event.data["child_id"]

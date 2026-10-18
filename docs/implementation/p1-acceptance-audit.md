@@ -24,6 +24,66 @@ Dated sections below are history. These statements in them are superseded:
 - The `mcp/instructions` Context Source is now `core/mcp-instructions`; the legacy key is withdrawn.
 - "All 225 P1 contracts remain in scope". This was correct when written; the in-scope count is now 214, which is 227 canonical minus the 13 editor-integration requirements deferred by the still-open change `defer-editor-integration`.
 
+## P1 batch B sign-off, increments 6–9 (2026-10-18)
+
+The 33 requirements that [plan increments 6–9](p1-acceptance-plan.md#implementation-increments) moved to class (a) were demonstrated end to end on macOS in 46 scenarios with the real debug `cyber` binary and a real `cyber serve` (HTTP, SSE and the ticketed PTY WebSocket), against a scripted local provider, a local WebSocket fixture and local TCP listeners (no live model, no internet). TUI scenarios ran in a pty and were captured as screens. All 46 passed after the three fixes below; the [plan's batch B section](p1-acceptance-plan.md#batch-b-acceptance-run-increments-69-2026-10-18) lists what each one observed. No row changed class, so the counts stay 118 (a), 3 (b), 32 (c), 59 (d) and 2 (e) of 214. Linux (bubblewrap) and native Windows were not run, so no milestone is signed off natively.
+
+The ROADMAP P1 escape exit criterion was demonstrated on macOS: in a `bypass` Session with the default `workspace-write` sandbox, nine write forms outside the roots (including `.git/hooks/pre-commit` and `.cyber/hooks.jsonc`) wrote nothing, and four connections to a non-allowlisted local listener (proxy, `--noproxy`, raw socket) never arrived.
+
+| Milestone | (a) after batch B | Moved by batch B increments | Left for sign-off |
+|---|--:|---|---|
+| M1.1 | 15 of 18 | 6 (13 rows), 8 (1 row) | Windows enforcement and the `powershell` tool (increment 15), live auto classifier (e) |
+| M1.2 | 41 of 41 | 7 (8 rows), 8 (5 rows), 9 (5 rows) | Native Windows CI and a Linux run; PTY tools are Unix-only |
+| M1.3 | 34 of 53 | none | Unchanged since batch A |
+| M1.4 | 26 of 28 | none | Unchanged since batch A |
+| M1.5 | 0 of 10 | none | Unchanged since batch A |
+
+Increment 9 also moved *Side chat* (session-runtime, Other P1) to (a).
+
+Three bugs found by the run were fixed, each with a regression test that fails without the fix:
+
+- `cyber exec` hung forever on any permission request its Session raised on the shared background server (reachable from `--yolo` once increment 6 made `sandbox.escalate` and unlisted-domain network asks ceilings even in `bypass`, and from any ask in `--mode default`). Exec now rejects each `permission.asked.1` of its run with `no interactive approver is attached to cyber exec` and reports it as a denial (`cyber-cli` `exec_lifecycle_hooks.rs::exec_on_the_shared_server_declines_requests_instead_of_waiting`, real `cyber serve` plus `cyber exec`, Unix-only).
+- A WebSocket or file monitor ended its log with `the command exited with code 0`; non-command sources now say `the source closed` (`cyber-tools` `monitor.rs::monitor_url_end_note_says_the_source_closed`, portable, in the Windows job's `--test monitor` step).
+- `/tasks` lost its selection and filter on every `job.*` reload, so it could not be navigated while a task produced output; the reload now refreshes the open picker in place (`cyber-tui` `screens_tasks.rs::tasks_reload_keeps_the_filter_and_the_selected_task`, production App over HTTP, Unix-only).
+
+Follow-ups observed, not fixed (none breaks a SHALL clause): on an attended server a `bypass` proxy network ask blocks the Turn until a person answers (the intended ceiling); a Tasks row with a long command hides the last-log-line column at 160 columns; a Tasks reload response that arrives just after Esc can reopen the list.
+
+## PTY, notify, send file and side chat, P1 increment 9 (2026-10-18)
+
+[Plan increment 9](p1-acceptance-plan.md#9-pty-notify-send-file-and-side-chat-m12-and-other-6-requirements) moved 6 requirements to class (a): PTY sessions, Model interaction with PTYs, Notify tool, Send file to user, Side chat (session-runtime) and Subagent threads and side chat (tui). The plan's counts are now 118 (a), 3 (b), 32 (c), 59 (d) and 2 (e); M1.2 is 41 (a) of 41.
+
+A PTY is a process Job of kind `pty` (`pty_start`), authorized and sandboxed as `bash` for its command, on a pseudo-terminal the program leads with `TERM=xterm-256color` and `CYBER_TERMINAL=1`. The runtime keeps its newest 2 MiB with a byte cursor (`runtime/pty.rs`). Clients get a single-use, 60-second ticket from `POST /jobs/{id}/pty/ticket` and attach with `GET /jobs/{id}/pty/connect?ticket=&cursor=`: no cursor replays the buffer, `-1` tails, a number resumes; client frames are input. The model writes with `pty_write` (text and named keys such as `ctrl-c`, checked against the `bash` rules for the PTY's command) and reads with `pty_read` (plain output since its last read, or the rendered screen); only the owning Session reaches a PTY. `notify` records `session.notification.sent.1` (title 80 and body 300 characters, 10 per Session per hour; denied in plan mode only with `background.deny_notify_in_plan`), which the TUI turns into a desktop notification. `send_file` checks each file like `read`, caps 10 files and 25 MB each, copies them to `<data>/sent/` and records `session.files.sent.1` with the call and message; `GET /sessions/{id}/files/{file_id}` downloads the copy. The side chat (`POST /sessions/{id}/side`, TUI `/btw` and `/side`) asks the Session's model with a copy of its context and only `read`, `list`, `glob` and `grep`; nothing that would ask runs, and only its usage is recorded.
+
+Evidence through the production App over HTTP: `cyber-app/tests/deliveries.rs::side_chat_answers_with_read_only_tools_and_leaves_history_unchanged`, `model_pty_attaches_over_http_with_a_single_use_ticket` (Unix) and `notify_and_send_file_reach_clients_over_http`; the TUI against a production App: `screens_side_chat.rs::btw_overlay_discards_on_close_and_insert_answer_inserts` and `notify_and_send_file_reach_the_tui_as_a_notification_and_a_toast`. Tool and runtime tests: `cyber-tools/tests/pty_tools.rs::pty_drives_python_repl_print_2_plus_2`, `cyber-tools/tests/notify.rs`, `cyber-server/tests/pty.rs`.
+
+Remaining, not blocking the rows: the PTY tools are absent on Windows (ConPTY is not wired to the sandboxed launch); on Linux bubblewrap's `--new-session` detaches the controlling terminal, so `ctrl-c` is expected to reach the sandbox launcher (not run locally); the TUI opens a PTY's log but cannot type into it; push to paired Devices belongs to remote control; a side-chat `read` counts as a read for the Session's edit-before-read check. The portable tests join the Windows CI job; nothing ran natively on Windows.
+
+## Monitor and task controls, P1 increment 8 (2026-10-18)
+
+[Plan increment 8](p1-acceptance-plan.md#8-monitor-and-task-controls-m12-and-m11-catalog-6-requirements) moved 6 requirements to class (a): Monitor tool (background-tasks), monitor tool (builtin-tools), Tasks view, Background tasks view (tui), Background commands from the user and Capability-owned tool catalog. The plan's per-milestone counts are now 112 (a), 3 (b), 33 (c), 64 (d) and 2 (e); M1.1 is 15 (a), 2 (c), 1 (e) and M1.2 is 36 (a), 1 (c), 4 (d).
+
+`monitor` watches a command (sandboxed, authorized as `bash`), a `ws://`/`wss://` WebSocket (`network` permission for the host, sandbox-denied domains refused) or a file tail (`bash` for `tail -F <path>`, external-directory check and `deny_read`). It runs as a `monitor` process Job: every line goes to its log, matching lines are queued as `Monitor <job_id>: <line>` with `delivery: queue` and `source: monitor`, at most `max_lines_per_minute` per 60 s window with the rest summarized as `N lines suppressed`, and `until`, `timeout_seconds`, the source closing or `task_stop` end it with the `Monitor ended` notice. `/tasks` lists commands, monitors, subagents and Workflow Runs with the last log line (new `GET /api/v1/jobs/{id}/output`), opens logs in a scrollable view and stops the selection with `x`. `& cmd` starts a background command without the model (`POST /sessions/{id}/shell` with `background: true`), and Ctrl+B moves the running foreground `bash` call to a background Job (`POST /sessions/{id}/background`), keeping its captured output and settling the call with the Job ID. The catalog row is closed by a registry-subset golden that reads the canonical spec, plus a clarification that phase-gated tools are absent rather than stubs.
+
+Remaining, not blocking the rows: `wss://` was only exercised as `ws://` locally; Ctrl+B does not move foreground `powershell` calls; Loops (P2) are not listed in `/tasks`. The TUI tests are Unix-only; the portable monitor tests join the Windows CI job but were only cross-type-checked here. Linux and native Windows were not run locally.
+
+## Process Jobs foundation, P1 increment 7 (2026-10-18)
+
+[Plan increment 7](p1-acceptance-plan.md#7-process-jobs-foundation-m12-8-requirements) moved 8 M1.2 background-tasks requirements to class (a): Background bash, Job registry, Completion notices, Reading job output, Stop kills process trees, Concurrency limits, Jobs end with their session and Background job events. The plan's per-milestone counts are now 106 (a), 3 (b), 36 (c), 67 (d) and 2 (e); M1.2 is 31 (a), 3 (c), 7 (d). The plan row of each requirement names its production-path tests.
+
+`bash` and `powershell` accept `background: true` (and `notify: false`). The command is authorized, guarded and sandboxed exactly as in the foreground, then owned by the runtime as a process Job (`runtime/process_jobs.rs`) with `kind`, `command`, `exit_code` and a log at `<data>/jobs/<job_id>.log` capped by `background.max_output_mb`. `background.max_jobs` limits each Session's running process Jobs. Stopping sends SIGTERM to the process group and SIGKILL after 5 s (Windows: the Job Object is terminated). Interrupts never stop a Job; deleting the Session does, without a notice. `job.output.1` is live-only; `job.ended.1` carries the exit code, and `JobEnded` hooks receive it. The production App over HTTP is covered by `cyber-app/tests/server.rs::background_bash_job_streams_output_lists_and_notifies_over_http`.
+
+Remaining, not blocking the rows: sandbox-proxy network questions from a running Job are refused because no person can answer them, and a background Job's sandbox refusals are not classified as `sandbox.denied.1` (the raw lines stay in its log). The Windows PowerShell background test was only type-checked with the cross target; Linux and native Windows were not run locally.
+
+## Sandbox policy, escalation and mode gates, P1 increment 6 (2026-10-18)
+
+[Plan increment 6](p1-acceptance-plan.md#6-sandbox-policy-escalation-and-mode-gates-m11-13-requirements) moved 13 M1.1 requirements to class (a): Sandbox CLI, Named sandbox profiles, Environment policy, Escalation requests, Excluded commands, Sandbox events and audit, Container detection, bypass mode, Rule dry run, Critical-path removal guard, Permission mode indicator and cycling, accept-edits mode and dont-ask mode. The plan's per-milestone counts are now 98 (a), 3 (b), 41 (c), 70 (d) and 2 (e); M1.1 is 14 (a), 3 (c), 1 (e). The plan row of each requirement names its production-path tests.
+
+The ROADMAP P1 exit criterion is covered by `crates/cyber-app/tests/sandbox_escape.rs` (macOS and Linux, production App over HTTP): with the sandbox enabled, a `bypass` Session cannot write outside the writable roots (direct, nested shell, background job, dynamic path) or into `.git/hooks` and an existing `.cyber/hooks.jsonc`, cannot reach a non-allowlisted local host through the proxy or with `--noproxy`, and cannot escalate without a person. Writes and network refusals are stored as `sandbox.denied.1`.
+
+`exec --yolo` is fixed: it no longer enables `bypass` unconditionally; the server refuses it on a bare host with `full-access` unless the process runs in a container or `--dangerously-bypass-permissions` is given (`--embedded`/`--ephemeral` only).
+
+Remaining, not blocking the rows: telemetry export of `sandbox.*` events (no exporter yet); on Linux, `deny_read` matches created after launch are not hidden and a protected file that does not exist yet can be created by a dynamic path (bubblewrap binds existing paths only); `perl -e` removal scripts are not analyzed. Linux and native Windows were not run locally; a new Windows CI step runs the portable cases.
+
 ## P1 batch A sign-off, increments 1–5 (2026-10-18)
 
 The 38 requirements that [plan increments 1–5](p1-acceptance-plan.md#implementation-increments) moved to class (a) were demonstrated end to end in 41 scenarios with the real debug `cyber` binary, a real `cyber serve` and the SDK's embedded `cyber serve --stdio`, against a scripted local provider and local MCP, HTTP-hook and LSP fixtures (no live model, no internet). All 41 passed; the [plan's batch A section](p1-acceptance-plan.md#batch-a-acceptance-run-increments-15-2026-10-18) lists what each one observed. No row changed class, so the counts stay 85 (a), 5 (b), 45 (c), 77 (d) and 2 (e) of 214. Native Windows CI has not run on this tree, so no milestone is signed off natively.
@@ -614,21 +674,21 @@ Canonical source: [agents-subagents](../../openspec/specs/agents-subagents/spec.
 
 Canonical source: [background-tasks](../../openspec/specs/background-tasks/spec.md).
 
-- [ ] Background bash
-- [ ] Job registry
-- [ ] Completion notices
-- [ ] Reading job output
-- [ ] Monitor tool
-- [ ] Tasks view
-- [ ] Stop kills process trees
-- [ ] Concurrency limits
-- [ ] Jobs end with their session
-- [ ] PTY sessions
-- [ ] Model interaction with PTYs
-- [ ] Notify tool
-- [ ] Send file to user
-- [ ] Background job events
-- [ ] Background commands from the user
+- [x] Background bash — 2026-10-18 (increment 7): `background_bash_returns_job_id_and_log_path_and_survives_turn_end`, `background_bash_job_streams_output_lists_and_notifies_over_http`.
+- [x] Job registry — 2026-10-18 (increment 7): `restart_marks_two_running_bash_jobs_interrupted`, `GET /jobs` in `background_bash_job_streams_output_lists_and_notifies_over_http`.
+- [x] Completion notices — 2026-10-18 (increment 7): `background_bash_notice_has_exit_code_duration_and_last_20_lines`, `notify_false_suppresses_the_completion_notice`.
+- [x] Reading job output — 2026-10-18 (increment 7): `read_pages_a_running_job_log_without_stopping_it`, `job_log_cap_drops_oldest_bytes_with_marker`.
+- [x] Monitor tool — 2026-10-18 (increment 8): `monitor_filters_and_rate_limits_to_30_per_minute`, `monitor_until_match_ends_with_final_notice`, `monitor_lines_are_queued_with_source_monitor`, `monitor_tail_filter_admits_error_lines_rate_limited`.
+- [x] Tasks view — 2026-10-18 (increment 8): `tasks_stop_with_x_marks_job_cancelled_and_notifies_model`.
+- [x] Stop kills process trees — 2026-10-18 (increment 7): `task_stop_terminates_grandchildren_and_records_cancelled`, `task_stop_kills_after_the_grace_when_sigterm_is_ignored`.
+- [x] Concurrency limits — 2026-10-18 (increment 7): `twenty_first_job_fails_with_limit_message`.
+- [x] Jobs end with their session — 2026-10-18 (increment 7): `interrupt_keeps_background_dev_server_running`, `deleting_session_cancels_bash_jobs`.
+- [x] PTY sessions — 2026-10-18 (increment 9): `reattach_without_cursor_replays_buffer_then_live`, `ticket_is_single_use_and_expires_in_60s`, `model_pty_attaches_over_http_with_a_single_use_ticket`.
+- [x] Model interaction with PTYs — 2026-10-18 (increment 9): `pty_drives_python_repl_print_2_plus_2`, `pty_start_needs_bash_permission_and_ends_on_eof_or_task_stop`.
+- [x] Notify tool — 2026-10-18 (increment 9): `notify_rate_limits_to_10_per_hour_and_truncates_fields`, `notify_is_offered_in_plan_mode_unless_configured`, `notify_and_send_file_reach_clients_over_http`; Device push stays with remote control.
+- [x] Send file to user — 2026-10-18 (increment 9): `send_file_caps_25mb_and_10_files_and_records_part`, `notify_and_send_file_reach_clients_over_http`.
+- [x] Background job events — 2026-10-18 (increment 7): `job_ended_hook_receives_nonzero_exit_code`, `job.output.1` in `background_bash_job_streams_output_lists_and_notifies_over_http`.
+- [x] Background commands from the user — 2026-10-18 (increment 8): `ampersand_shell_command_starts_background_job_without_model`, `ctrl_b_moves_foreground_bash_to_background_job`.
 
 ### browser-verification (2)
 
@@ -641,10 +701,10 @@ Canonical source: [browser-verification](../../openspec/specs/browser-verificati
 
 Canonical source: [builtin-tools](../../openspec/specs/builtin-tools/spec.md).
 
-- [ ] Capability-owned tool catalog
+- [x] Capability-owned tool catalog — 2026-10-18 (increment 8): `advertised_tool_names_are_a_subset_of_the_canonical_registry`; phase-gated tools clarified as absent in `implement-m1-1-sandbox-modes`.
 - [ ] powershell tool
 - [ ] notebook_edit tool — local implementation and tests pass; fresh native CI remains pending.
-- [ ] monitor tool
+- [x] monitor tool — 2026-10-18 (increment 8): `monitor_command_and_file_sources_need_bash_permission`, `monitor_url_needs_network_permission_and_streams_websocket_lines`, `monitor_tail_filter_admits_error_lines_rate_limited`.
 
 ### cli-commands (1)
 
@@ -821,13 +881,13 @@ Canonical source: [observability-costs](../../openspec/specs/observability-costs
 
 Canonical source: [permissions-modes](../../openspec/specs/permissions-modes/spec.md).
 
-- [ ] Critical-path removal guard
-- [ ] accept-edits mode
+- [x] Critical-path removal guard — 2026-10-18 (increment 6): `bypass_refuses_rm_rf_of_git_toplevel_substitution_without_execution`, `launchers_xargs_and_find_exec_cannot_hide_critical_removals`.
+- [x] accept-edits mode — 2026-10-18 (increment 6): `accept_edits_allows_write_but_keeps_non_edit_and_recursive_rm_asks`.
 - [ ] auto mode classifier
-- [ ] dont-ask mode
-- [ ] bypass mode
+- [x] dont-ask mode — 2026-10-18 (increment 6): real binary `exec_without_tty_denies_unapproved_curl_and_continues`.
+- [x] bypass mode — 2026-10-18 (increment 6): `bypass_refused_on_bare_host_with_full_access`, `exec_yolo_needs_isolation_or_the_explicit_flag`, escape suite `sandbox_escape.rs`.
 - [ ] Auto-mode configuration and override
-- [ ] Rule dry run
+- [x] Rule dry run — 2026-10-18 (increment 6): real binary `permissions_test_lists_saved_approval_and_default_rule_per_command`, `permissions_test_route_matches_cli_evaluation_without_session`.
 
 ### plugins-marketplace (14)
 
@@ -870,13 +930,13 @@ Canonical source: [provider-credentials](../../openspec/specs/provider-credentia
 Canonical source: [sandbox](../../openspec/specs/sandbox/spec.md).
 
 - [ ] Windows enforcement
-- [ ] Escalation requests
-- [ ] Excluded commands
-- [ ] Container detection
-- [ ] Sandbox CLI
-- [ ] Sandbox events and audit
-- [ ] Named sandbox profiles
-- [ ] Environment policy
+- [x] Escalation requests — 2026-10-18 (increment 6): `escalation_prompt_shows_command_and_justification_and_runs_once_unsandboxed`, `escalation_denied_in_dont_ask`, `bypass_session_cannot_escalate_without_a_person`.
+- [x] Excluded commands — 2026-10-18 (increment 6): `excluded_command_runs_unsandboxed_and_asks_even_with_allow_rule`.
+- [x] Container detection — 2026-10-18 (increment 6): `container_marker_allows_bypass_and_header_shows_isolation_container`, real binary `CYBER_CONTAINER=1` in `exec_yolo_needs_isolation_or_the_explicit_flag`.
+- [x] Sandbox CLI — 2026-10-18 (increment 6): real binary `sandbox_explain_*`, `sandbox_run_executes_under_effective_policy`, `sandbox_test_probes_match_the_effective_policy`.
+- [x] Sandbox events and audit — 2026-10-18 (increment 6): `sandbox_write_denial_is_explicit_and_recorded_as_event`, escape suite; telemetry export waits for the exporter.
+- [x] Named sandbox profiles — 2026-10-18 (increment 6): `profile_deny_read_blocks_cat_and_hides_glob_match`, `sandbox_explain_profile_resolves_extends_and_unions_deny_read`.
+- [x] Environment policy — 2026-10-18 (increment 6): `sandbox_env_none_exposes_only_base_vars_set_and_markers`, `sandbox_explain_prints_roots_network_domains_and_masked_names`.
 
 ### session-runtime (3)
 
@@ -884,7 +944,7 @@ Canonical source: [session-runtime](../../openspec/specs/session-runtime/spec.md
 
 - [ ] Eager tool execution
 - [ ] Structured output
-- [ ] Side chat
+- [x] Side chat — 2026-10-18 (increment 9): `side_chat_answers_with_read_only_tools_and_leaves_history_unchanged`.
 
 ### skills-commands (5)
 
@@ -933,10 +993,10 @@ Canonical source: [tool-registry](../../openspec/specs/tool-registry/spec.md).
 
 Canonical source: [tui](../../openspec/specs/tui/spec.md).
 
-- [ ] Permission mode indicator and cycling
+- [x] Permission mode indicator and cycling — 2026-10-18 (increment 6): `mode_bypass_disabled_by_org_policy_keeps_mode`, `exec_mode_disabled_by_org_policy_is_refused`, `mode_switch_to_plan_is_durable_and_next_turn_denies_writes`.
 - [ ] Rewind UI
-- [ ] Background tasks view
-- [ ] Subagent threads and side chat
+- [x] Background tasks view — 2026-10-18 (increment 8): `tasks_stop_with_x_marks_job_cancelled_and_notifies_model`, `ampersand_shell_command_starts_background_job_without_model`.
+- [x] Subagent threads and side chat — 2026-10-18 (increment 9): `btw_overlay_discards_on_close_and_insert_answer_inserts`, `child_thread_commands_open_existing_threads_and_preserve_steer_delivery`.
 - [ ] Status line
 - [ ] Accessibility
 - [ ] Reasoning display and effort command

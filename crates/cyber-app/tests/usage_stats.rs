@@ -63,6 +63,7 @@ impl Fixture {
             mcp_credentials: None,
             remote_skill_fetcher: None,
             workflow_cores: None,
+            isolation: None,
         })
         .await
         .unwrap();

@@ -36,6 +36,8 @@ fn seeded(root: &std::path::Path) -> (Paths, std::path::PathBuf) {
         .unwrap();
     drop(store);
     std::fs::write(p.data.join("tool-output/tool_1"), "big output").unwrap();
+    std::fs::create_dir_all(p.data.join("sent/file_1")).unwrap();
+    std::fs::write(p.data.join("sent/file_1/report.txt"), "sent copy").unwrap();
     std::fs::create_dir_all(p.data.join("snapshot/prj_1/abc")).unwrap();
     std::fs::write(
         p.data.join("snapshot/prj_1/abc/HEAD"),
@@ -51,17 +53,25 @@ fn a_bundle_verifies_and_restores_database_and_artifacts() {
     let (p, db) = seeded(tmp.path());
     let bundle = tmp.path().join("bundle");
     let manifest = backup::create(&p, &db, &bundle, true).unwrap();
-    assert_eq!(manifest.artifacts, vec!["tool-output", "snapshot"]);
+    assert_eq!(manifest.artifacts, vec!["tool-output", "sent", "snapshot"]);
     assert!(
         manifest
             .files
             .iter()
             .any(|f| f.path == "artifacts/tool-output/tool_1")
     );
+    // Regression: the copies `send_file` delivered come back with the events naming them.
+    assert!(
+        manifest
+            .files
+            .iter()
+            .any(|f| f.path == "artifacts/sent/file_1/report.txt")
+    );
     backup::verify(&bundle).unwrap();
 
     // Lose everything, then restore.
     std::fs::write(p.data.join("tool-output/tool_1"), "changed after backup").unwrap();
+    std::fs::remove_dir_all(p.data.join("sent")).unwrap();
     std::fs::remove_file(&db).unwrap();
     let kept = backup::restore(&p, &db, &bundle).unwrap();
     assert!(
@@ -71,6 +81,10 @@ fn a_bundle_verifies_and_restores_database_and_artifacts() {
     assert_eq!(
         std::fs::read_to_string(p.data.join("tool-output/tool_1")).unwrap(),
         "big output"
+    );
+    assert_eq!(
+        std::fs::read_to_string(p.data.join("sent/file_1/report.txt")).unwrap(),
+        "sent copy"
     );
     let store = Store::open(StoreOptions::new(
         DatabaseLocation::File(db),

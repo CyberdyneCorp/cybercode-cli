@@ -108,6 +108,12 @@ pub fn draw(f: &mut Frame, app: &App) {
         Overlay::Rename(title) => rename::draw(f, app, title, area),
         Overlay::Findings => overlays::findings(f, app, area),
         Overlay::FileDiff { index, scroll } => overlays::file_diff(f, app, *index, *scroll, area),
+        Overlay::TaskLog {
+            title,
+            text,
+            scroll,
+        } => overlays::task_log(f, app, title, text, *scroll, area),
+        Overlay::SideChat(chat) => overlays::side_chat(f, app, chat, area),
         Overlay::ConfirmStopTasks => overlays::confirm_stop_tasks(f, app, area),
         Overlay::ConfirmBypass => overlays::confirm_bypass(f, app, area),
     }

@@ -371,6 +371,7 @@ mod file_backend {
                 mcp_credentials: Some(cyber_tools::mcp::oauth::open_store(&paths)),
                 remote_skill_fetcher: None,
                 workflow_cores: None,
+                isolation: None,
             }))
             .unwrap();
         let listener = runtime

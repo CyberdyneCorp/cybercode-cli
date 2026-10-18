@@ -1,0 +1,1 @@
+{"files":[{"id":"<file>","name":"report.pdf","size":15,"media_type":"application/pdf"},{"id":"<file>","name":"summary.md","size":9,"media_type":"text/markdown"},{"id":"<file>","name":"edge.bin","size":26214400,"media_type":"application/octet-stream"}],"caption":"Weekly report","message":"The files were delivered to the user."}

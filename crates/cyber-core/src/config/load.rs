@@ -78,6 +78,15 @@ pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
     }
     // Policy layers apply last and are read only from the OS-managed directory.
     let managed = managed::read(req.env, &mut warnings);
+    for (label, settings) in managed.settings {
+        merge::merge_layer(
+            &mut value,
+            &json!({ "policy": settings }),
+            &label,
+            &mut sources,
+        );
+        labels.push(label);
+    }
     for (label, hooks) in managed.hooks {
         merge::merge_layer(&mut value, &json!({ "hooks": hooks }), &label, &mut sources);
         labels.push(label);

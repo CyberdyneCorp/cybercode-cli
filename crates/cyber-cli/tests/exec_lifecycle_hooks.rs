@@ -983,3 +983,242 @@ fn exec_applies_prompt_stop_and_records_input_rewrites_through_the_app_host() {
         "{detail}"
     );
 }
+
+/// The first request runs `curl`; once a tool result is present the model answers.
+fn curl_then_answer(body: &Value) -> (Value, &'static str) {
+    let messages = &body["messages"];
+    let called = messages
+        .as_array()
+        .is_some_and(|messages| messages.iter().any(|message| message["role"] == "tool"));
+    if messages.to_string().contains("Write a short title") || called {
+        return (json!({"content":"continued after the denial"}), "stop");
+    }
+    let call = json!({"tool_calls":[{"index":0,"id":"call_curl","type":"function",
+        "function":{"name":"bash","arguments":json!({"command":"curl https://example.org"}).to_string()}}]});
+    (call, "tool_calls")
+}
+
+/// A checkout under `root` whose global configuration names `provider` as `corp/main`.
+fn provider_root(provider: &Provider) -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    for path in ["home", "repo/.git", "cyber/config"] {
+        std::fs::create_dir_all(root.join(path)).unwrap();
+    }
+    std::fs::write(
+        root.join("cyber/config/cyber.jsonc"),
+        json!({"providers":{"corp":{"api":{"type":"openai-compatible","url":provider.url},"models":{"main":{}}}}})
+            .to_string(),
+    )
+    .unwrap();
+    std::fs::write(root.join("models.json"), "{}").unwrap();
+    (dir, root)
+}
+
+/// `permissions-modes` → dont-ask mode: `cyber exec` without a TTY runs in `dont-ask`, an
+/// unapproved `curl` is denied with `Not pre-approved (dont-ask mode)`, the model gets a
+/// second Turn step and the run exits 0.
+#[test]
+fn exec_without_tty_denies_unapproved_curl_and_continues() {
+    let provider = Provider::start(curl_then_answer);
+    let (_dir, root) = provider_root(&provider);
+    let output = exec(&root);
+    let detail = format!(
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert_eq!(output.status.code(), Some(0), "{detail}");
+    let turns: Vec<_> = provider
+        .requests()
+        .into_iter()
+        .filter(|body| !body["messages"].to_string().contains("Write a short title"))
+        .collect();
+    assert_eq!(turns.len(), 2, "{detail}");
+    let tool = turns[1]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|message| message["role"] == "tool")
+        .cloned()
+        .unwrap();
+    assert!(
+        tool.to_string()
+            .contains("Not pre-approved (dont-ask mode)"),
+        "{tool}\n{detail}"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("continued after the denial"),
+        "{detail}"
+    );
+}
+
+/// `permissions-modes` → bypass mode: `exec --yolo` is refused on a bare host with
+/// `full-access`, and allowed in a detected container or with the explicit flag.
+#[test]
+fn exec_yolo_needs_isolation_or_the_explicit_flag() {
+    let provider = Provider::start(stop_answers);
+    let (_dir, root) = provider_root(&provider);
+    let bare = exec_with(&root, &["--yolo", "--sandbox", "full-access"], &[]);
+    assert_ne!(bare.status.code(), Some(0));
+    assert!(
+        String::from_utf8_lossy(&bare.stderr).contains(
+            "bypass mode requires a sandbox, a container, or --dangerously-bypass-permissions"
+        ),
+        "{}",
+        String::from_utf8_lossy(&bare.stderr)
+    );
+    let flagged = exec_with(
+        &root,
+        &[
+            "--yolo",
+            "--sandbox",
+            "full-access",
+            "--dangerously-bypass-permissions",
+        ],
+        &[],
+    );
+    assert_eq!(
+        flagged.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&flagged.stderr)
+    );
+    let container = exec_with(
+        &root,
+        &["--yolo", "--sandbox", "full-access"],
+        &[("CYBER_CONTAINER", Path::new("1"))],
+    );
+    assert_eq!(
+        container.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&container.stderr)
+    );
+    // Regression: a Flatpak sandbox or a toolbox shares the user's home and the host.
+    for marker in [
+        ("container", Path::new("flatpak")),
+        ("TOOLBOX_PATH", Path::new("/usr/bin/toolbox")),
+    ] {
+        let shared = exec_with(&root, &["--yolo", "--sandbox", "full-access"], &[marker]);
+        assert_ne!(shared.status.code(), Some(0), "{marker:?}");
+    }
+}
+
+/// `tui` → Permission mode indicator and cycling, `org-policy` → `modes.disable`: a Mode
+/// the OS-managed policy disables is refused with the organization's message, even where
+/// the sandbox would make `bypass` eligible; other Modes still run.
+#[test]
+fn exec_mode_disabled_by_org_policy_is_refused() {
+    let provider = Provider::start(stop_answers);
+    let (_dir, root) = provider_root(&provider);
+    let managed = root.join("managed");
+    std::fs::create_dir_all(&managed).unwrap();
+    std::fs::write(
+        managed.join("cyber-policy.json"),
+        json!({"policy": {"modes": {"disable": ["bypass", "auto"]}}}).to_string(),
+    )
+    .unwrap();
+    let policy = [("CYBER_MANAGED_POLICY_DIR", managed.as_path())];
+    for mode in ["bypass", "auto"] {
+        let refused = exec_with(
+            &root,
+            &["--mode", mode, "--dangerously-bypass-permissions"],
+            &policy,
+        );
+        assert_ne!(refused.status.code(), Some(0));
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert!(
+            stderr.contains(&format!("{mode} mode is disabled by your organization")),
+            "{stderr}"
+        );
+    }
+    let allowed = exec_with(&root, &["--mode", "default"], &policy);
+    assert_eq!(
+        allowed.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&allowed.stderr)
+    );
+}
+
+/// Kills the owned `cyber serve` child when the test ends, however it ends.
+struct OwnedServer(std::process::Child);
+
+impl Drop for OwnedServer {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// Regression (`exec-mode` → non-interactive runs, `sandbox` → Escalation requests): on
+/// the shared background server, which has an interactive request broker, a request
+/// the exec Session raises (an ask in `--mode default`, a sandbox ceiling such as
+/// `sandbox.escalate` in `bypass`) waited for a person forever and the run never
+/// ended. Exec now declines it at once; the model reads the denial, the Turn
+/// continues and the run reports the denial.
+#[test]
+fn exec_on_the_shared_server_declines_requests_instead_of_waiting() {
+    let provider = Provider::start(curl_then_answer);
+    let (_dir, root) = provider_root(&provider);
+    let log = std::fs::File::create(root.join("serve.log")).unwrap();
+    let _server = OwnedServer(
+        cyber(&root, &[])
+            .args(["serve", "--register", "--port", "0"])
+            .stdout(Stdio::null())
+            .stderr(log)
+            .spawn()
+            .unwrap(),
+    );
+    let registration = root.join("cyber/state/server.json");
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !registration.is_file() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the server did not register"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    let child = cyber(&root, &[])
+        .args([
+            "exec",
+            "--model",
+            "corp/main",
+            "--format",
+            "json",
+            "--mode",
+            "default",
+            "hello",
+        ])
+        .spawn()
+        .unwrap();
+    let id = child.id();
+    let (exited, deadline) = mpsc::channel::<()>();
+    let killer = thread::spawn(move || {
+        if deadline.recv_timeout(Duration::from_secs(60)) == Err(mpsc::RecvTimeoutError::Timeout) {
+            let _ = Command::new("kill").args(["-9", &id.to_string()]).status();
+        }
+    });
+    let output = child.wait_with_output().unwrap();
+    let _ = exited.send(());
+    killer.join().unwrap();
+    let detail = format!(
+        "status={:?}\nstdout={}\nstderr={}\nserve={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+        std::fs::read_to_string(root.join("serve.log")).unwrap_or_default(),
+    );
+    assert_eq!(output.status.code(), Some(0), "{detail}");
+    let result: Value = serde_json::from_slice(&output.stdout).expect(&detail);
+    assert_eq!(result["result"], "continued after the denial", "{detail}");
+    let denials = result["denials"].as_array().expect(&detail);
+    assert_eq!(denials.len(), 1, "{detail}");
+    assert_eq!(
+        denials[0]["message"],
+        "Rejected by user: no interactive approver is attached to cyber exec",
+        "{detail}"
+    );
+}

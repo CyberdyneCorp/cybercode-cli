@@ -1,5 +1,7 @@
 //! Health, OpenAPI, Location, catalogs and pending requests.
 
+use std::collections::BTreeMap;
+
 use axum::extract::{Query, State};
 use axum::http::request::Parts;
 use axum::routing::get;
@@ -28,6 +30,10 @@ pub struct Health {
     #[serde(rename = "apiVersion")]
     pub api_version: String,
     pub features: Vec<String>,
+    /// The default Location's sandbox: `{ policy, profile, enforcement, isolation }`
+    /// (`sandbox` → Container detection: `isolation: container` in the header).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -75,6 +81,7 @@ pub fn routes() -> Router<AppState> {
         .route("/skills", get(skills))
         .route("/fs/find", get(find))
         .route("/permissions/requests", get(permission_requests))
+        .route("/permissions/test", get(permission_test))
         .route("/questions/requests", get(question_requests))
 }
 
@@ -86,7 +93,26 @@ async fn health(State(state): State<AppState>) -> Json<Health> {
         id: state.service.as_ref().map(|service| service.id.clone()),
         api_version: "v1".into(),
         features: state.options.features.clone(),
+        sandbox: state
+            .services
+            .sandbox_status(&state.options.default_directory),
     })
+}
+
+/// `GET /permissions/test?agent&mode&tool&resource&command` (`permissions-modes` → Rule
+/// dry run): the evaluation a Session of the Location would make, without one.
+async fn permission_test(
+    State(state): State<AppState>,
+    parts: Parts,
+    Query(query): Query<BTreeMap<String, String>>,
+) -> Result<Json<Located<serde_json::Value>>> {
+    let directory = location(&parts, &state.options.default_directory)?;
+    let query = serde_json::to_value(query).map_err(ApiError::unknown)?;
+    let data = state.services.permission_test(&directory, query).await?;
+    Ok(Json(Located {
+        location: LocationInfo::of(&directory),
+        data,
+    }))
 }
 
 async fn openapi(State(state): State<AppState>) -> Json<serde_json::Value> {

@@ -106,6 +106,10 @@ const ALL: &[&str] = &[
     REVERTED,
     RECAP_GENERATED,
     super::pr_links::PR_LINKED,
+    super::sandbox_events::DENIED,
+    super::sandbox_events::ESCALATED,
+    super::deliveries::NOTIFICATION_SENT,
+    super::deliveries::FILES_SENT,
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

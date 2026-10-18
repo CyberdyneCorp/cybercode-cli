@@ -134,7 +134,7 @@ fn color(c: Color) -> String {
 }
 
 const ANSWER: &str = "## Plan\n\nThis keeps the cache warm:\n\n1. **Memoization:** results are cached\n- avoids `recomputation`\n\n```rust\nfn fib(n: u64) -> u64 { n }\n```\n";
-const TITLE: &str = "Theme baseline";
+pub(crate) const TITLE: &str = "Theme baseline";
 /// The recap the scripted model writes.
 pub const RECAP: &str = "I explained how to speed up fib with memoization and a cache. Next I'll add a benchmark that compares the iterative version with the recursive one before changing the code.";
 
@@ -270,6 +270,7 @@ impl Server {
             remote_skill_fetcher: None,
             // Slot counts in snapshots must not depend on the runner's cores.
             workflow_cores: Some(16),
+            isolation: None,
         })
         .await
         .unwrap();

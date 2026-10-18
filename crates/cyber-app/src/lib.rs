@@ -63,6 +63,10 @@ pub struct AppOptions {
     /// caller) is this machine's; tests pin it so their slot counts do not depend on the
     /// runner.
     pub workflow_cores: Option<usize>,
+    /// What may enable `bypass` besides an enforced sandbox. `None` (every production
+    /// caller without `--dangerously-bypass-permissions`) probes this machine for a
+    /// container; tests pin it.
+    pub isolation: Option<cyber_tools::IsolationOptions>,
 }
 
 pub struct App {
@@ -164,6 +168,9 @@ impl App {
             temp_dir: opts.paths.tmp.join("sessions"),
             sandbox_policy: opts.sandbox_policy.clone(),
             sandbox_helper: cyber_sandbox::find_helper(),
+            isolation: opts
+                .isolation
+                .unwrap_or_else(|| cyber_tools::IsolationOptions::probe(false)),
         });
         host.attach_hook_config(
             hook_config_loader(opts.paths.clone(), opts.home.clone()),

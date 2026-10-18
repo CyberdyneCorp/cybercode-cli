@@ -10,7 +10,7 @@ impl Tool for TaskStop {
     fn def(&self) -> cyber_server::runtime::ToolDef {
         def(
             "task_stop",
-            "Stop a background task owned by this Session and wait for its child to settle.",
+            "Stop a background task owned by this Session and wait for it to settle: a subagent's child stops; a command's whole process tree gets SIGTERM, then SIGKILL after 5 s.",
             json!({"type":"object","required":["job_id"],"additionalProperties":false,"properties":{"job_id":{"type":"string"}}}),
             RetrySafety::Idempotent,
             false,

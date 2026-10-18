@@ -33,6 +33,7 @@ async fn sweeps_remove_only_expired_items() {
         mcp_credentials: None,
         remote_skill_fetcher: None,
         workflow_cores: None,
+        isolation: None,
     })
     .await
     .unwrap();
@@ -67,8 +68,14 @@ async fn sweeps_remove_only_expired_items() {
         archived_days: 90,
         usage_days: 365,
     };
+    // Regression: process Job logs and sent copies age out with tool output.
+    std::fs::create_dir_all(paths.data.join("jobs")).unwrap();
+    std::fs::write(paths.data.join("jobs/job_1.log"), "output").unwrap();
+    std::fs::create_dir_all(paths.data.join("sent/file_1")).unwrap();
+    std::fs::write(paths.data.join("sent/file_1/report.txt"), "copy").unwrap();
     let soon = retention::sweep(&app.runtime, &paths.data, policy, now).await;
     assert_eq!((soon.tool_output_files, soon.archived_sessions), (1, 0));
+    assert_eq!((soon.job_logs, soon.sent_files), (0, 0));
     assert!(out.join("tool_new").exists() && !out.join("tool_old").exists());
 
     let disabled = Retention {
@@ -93,6 +100,9 @@ async fn sweeps_remove_only_expired_items() {
     arm("INSERT INTO usage_backfill (id, cursor, target) VALUES (1, 0, 0)");
     let backfilling = retention::sweep(&app.runtime, &paths.data, policy, now + 91 * DAY).await;
     assert_eq!(backfilling.archived_sessions, 0);
+    assert_eq!((backfilling.job_logs, backfilling.sent_files), (1, 1));
+    assert!(!paths.data.join("jobs/job_1.log").exists());
+    assert!(!paths.data.join("sent/file_1").exists());
     assert!(app.runtime.state(&archived).await.is_ok());
     arm("DELETE FROM usage_backfill");
 

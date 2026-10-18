@@ -1,5 +1,10 @@
 //! Server lifecycle: password, lock, listeners and registration.
 
+#[path = "support/mode_app.rs"]
+mod mode_app;
+#[path = "support/scripted_model.rs"]
+mod scripted_model;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -32,6 +37,36 @@ async fn app(root: &std::path::Path) -> App {
         mcp_credentials: None,
         remote_skill_fetcher: None,
         workflow_cores: None,
+        isolation: None,
+    })
+    .await
+    .unwrap()
+}
+
+/// `--dangerously-bypass-permissions`: tests that run `bypass` Sessions under
+/// `full-access` without testing the eligibility gate.
+const DANGEROUSLY_BYPASS: cyber_tools::IsolationOptions = cyber_tools::IsolationOptions {
+    dangerously_bypass: true,
+    container: false,
+};
+
+/// [`app`] as with `--dangerously-bypass-permissions`.
+async fn bypass_app(root: &std::path::Path) -> App {
+    let p = paths(root);
+    p.ensure().unwrap();
+    App::build(AppOptions {
+        paths: p,
+        home: root.join("home"),
+        database: DatabaseLocation::Memory,
+        default_directory: root.to_path_buf(),
+        sandbox_policy: None,
+        snapshots: false,
+        interactive: true,
+        password: Some("test-password-123456".into()),
+        mcp_credentials: None,
+        remote_skill_fetcher: None,
+        workflow_cores: None,
+        isolation: Some(DANGEROUSLY_BYPASS),
     })
     .await
     .unwrap()
@@ -54,6 +89,7 @@ async fn worktree_app(root: &std::path::Path) -> App {
         mcp_credentials: None,
         remote_skill_fetcher: None,
         workflow_cores: None,
+        isolation: None,
     })
     .await
     .unwrap()
@@ -1258,6 +1294,7 @@ async fn child_setup_recovery_api_preserves_steps_and_idempotent_retry() {
         mcp_credentials: None,
         remote_skill_fetcher: None,
         workflow_cores: None,
+        isolation: Some(DANGEROUSLY_BYPASS),
     })
     .await
     .unwrap();
@@ -2055,7 +2092,7 @@ async fn authenticated_skill_commands_capture_declarations_and_refuse_denials() 
     use serde_json::json;
     let tmp = tempfile::tempdir().unwrap();
     std::fs::create_dir(tmp.path().join(".git")).unwrap();
-    let application = app(tmp.path()).await;
+    let application = bypass_app(tmp.path()).await;
     let mut config = json!({"sandbox":{"policy":"full-access"},"providers":{"test":{"api":{"type":"openai-compatible","url":"http://127.0.0.1:9/v1","settings":{"auth":"none"}},"models":{"main":{},"skill":{}}}}});
     std::fs::write(
         application.paths.config.join("cyber.json"),
@@ -2656,6 +2693,335 @@ async fn agent_catalogue_and_queued_progress_reach_http_clients() {
         ),
         "{description}"
     );
+    let _ = stop.send(());
+    server.await.unwrap().unwrap();
+    application.runtime.shutdown().await;
+}
+
+/// Starts one background `bash` Job on the first user prompt; answers `done` otherwise.
+#[cfg(unix)]
+fn background_bash_model(body: &serde_json::Value) -> (&'static str, String) {
+    use serde_json::json;
+    let last = body["messages"]
+        .as_array()
+        .and_then(|messages| messages.last())
+        .cloned()
+        .unwrap_or_default();
+    let start = body["tools"].is_array()
+        && last["role"] == "user"
+        && last["content"].to_string().contains("start the watcher");
+    let delta = if start {
+        let arguments = json!({"command":"echo tick; while [ ! -f go ]; do sleep 0.05; done; echo done; exit 5","background":true});
+        json!({"tool_calls":[{"index":0,"id":"call_bg","type":"function","function":{"name":"bash","arguments":arguments.to_string()}}]})
+    } else {
+        json!({"content":"done"})
+    };
+    let finish = if start { "tool_calls" } else { "stop" };
+    let chunk = json!({"choices":[{"index":0,"delta":delta,"finish_reason":finish}],"usage":{"prompt_tokens":100,"completion_tokens":10}});
+    (
+        "text/event-stream",
+        format!("data: {chunk}\n\ndata: [DONE]\n\n"),
+    )
+}
+
+/// Through the production App over HTTP (`background-tasks` → Background bash, Job
+/// registry, Completion notices, Background job events): a model `bash` call with
+/// `background: true` returns while the command runs; its live output streams as
+/// `job.output.1`, `GET /jobs` lists it with its kind, command and log under
+/// `<data>/jobs`, and its end is a durable `job.ended.1` with the exit code followed by
+/// a queued notice the model answers.
+#[cfg(unix)]
+#[tokio::test]
+async fn background_bash_job_streams_output_lists_and_notifies_over_http() {
+    use futures::StreamExt;
+    use serde_json::{Value, json};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let repo = root.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let provider = LocalEndpoint::start(background_bash_model);
+    let paths = paths(&root);
+    paths.ensure().unwrap();
+    std::fs::write(
+        paths.config.join("cyber.json"),
+        json!({
+            "providers":{"test":{"api":{"type":"openai-compatible","url":format!("{}/v1",provider.url),"settings":{"auth":"none"}},
+                                 "models":{"main":{}}}},
+            "permissions":{"bash":"allow"},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let application = app(&root).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api = format!("http://{}/api/v1", listener.local_addr().unwrap());
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(cyber_server::http::serve_tcp(
+        cyber_server::http::router(application.state.clone()),
+        listener,
+        async {
+            let _ = stopped.await;
+        },
+    ));
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let auth = |request: reqwest::RequestBuilder| {
+        request
+            .header("x-cyber-directory", repo.display().to_string())
+            .basic_auth("cyber", Some("test-password-123456"))
+    };
+    let created: Value = auth(client.post(format!("{api}/sessions")))
+        .json(&json!({"model":"test/main"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = created["data"]["id"].as_str().unwrap().to_owned();
+    let events = auth(client.get(format!("{api}/sessions/{id}/events")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(events.status(), 200);
+    let mut events = events.bytes_stream();
+    let response = auth(client.post(format!("{api}/sessions/{id}/prompt")))
+        .json(&json!({"parts":[{"type":"text","text":"start the watcher"}]}))
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+    let mut buffer = String::new();
+    let mut next = async |wanted: &str| -> Value {
+        loop {
+            while let Some(end) = buffer.find("\n\n") {
+                let frame: String = buffer.drain(..end + 2).collect();
+                if !frame.contains(&format!("event: {wanted}\n")) {
+                    continue;
+                }
+                let data = frame
+                    .lines()
+                    .find_map(|line| line.strip_prefix("data:"))
+                    .unwrap();
+                return serde_json::from_str(data.trim()).unwrap();
+            }
+            let chunk = tokio::time::timeout(Duration::from_secs(20), events.next())
+                .await
+                .unwrap_or_else(|_| panic!("no {wanted}"))
+                .unwrap()
+                .unwrap();
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+        }
+    };
+    let started = next("job.started.1").await;
+    let job_id = started["data"]["id"].as_str().unwrap().to_owned();
+    assert_eq!(started["data"]["kind"], "bash");
+    let output = next("job.output.1").await;
+    assert!(output.get("durable").is_none(), "{output}");
+    assert_eq!(output["data"]["job_id"], job_id.as_str());
+    assert_eq!(output["data"]["text"], "tick\n");
+    application.runtime.wait_idle(&id).await;
+    let listed: Value = auth(client.get(format!("{api}/jobs?session_id={id}")))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let job = &listed["data"][0];
+    assert_eq!(job["id"], job_id.as_str());
+    assert_eq!(job["status"], "running");
+    assert_eq!(job["kind"], "bash");
+    assert!(job["command"].as_str().unwrap().starts_with("echo tick;"));
+    let log = std::path::PathBuf::from(job["output_path"].as_str().unwrap());
+    assert_eq!(log, paths.data.join("jobs").join(format!("{job_id}.log")));
+    std::fs::write(repo.join("go"), "").unwrap();
+    let ended = next("job.ended.1").await;
+    assert_eq!(ended["data"]["id"], job_id.as_str());
+    assert_eq!(ended["data"]["status"], "error");
+    assert_eq!(ended["data"]["exit_code"], 5);
+    assert_eq!(std::fs::read_to_string(&log).unwrap(), "tick\ndone\n");
+    next("job.notified.1").await;
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let seen = provider.seen();
+            if seen.iter().any(|body| {
+                body["messages"]
+                    .to_string()
+                    .contains("Background job ended")
+            }) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the notice reached the model");
+    application.runtime.wait_idle(&id).await;
+    let _ = stop.send(());
+    server.await.unwrap().unwrap();
+    application.runtime.shutdown().await;
+}
+
+fn monitor_model(body: &serde_json::Value) -> (&'static str, String) {
+    use serde_json::json;
+    let last = body["messages"]
+        .as_array()
+        .and_then(|messages| messages.last())
+        .cloned()
+        .unwrap_or_default();
+    let start = body["tools"].is_array()
+        && last["role"] == "user"
+        && last["content"].to_string().contains("watch the app log");
+    let delta = if start {
+        let arguments = json!({"path":"app.log","filter":"ERROR|panic","max_lines_per_minute":3,"until":"^SHUTDOWN$"});
+        json!({"tool_calls":[{"index":0,"id":"call_monitor","type":"function","function":{"name":"monitor","arguments":arguments.to_string()}}]})
+    } else {
+        json!({"content":"noted"})
+    };
+    let finish = if start { "tool_calls" } else { "stop" };
+    let chunk = json!({"choices":[{"index":0,"delta":delta,"finish_reason":finish}],"usage":{"prompt_tokens":100,"completion_tokens":10}});
+    (
+        "text/event-stream",
+        format!("data: {chunk}\n\ndata: [DONE]\n\n"),
+    )
+}
+
+/// Through the production App over HTTP (`background-tasks` → Monitor tool,
+/// `builtin-tools` → monitor tool): a model `monitor` call tails a log file with a
+/// filter; only matching lines are admitted as queued `source: monitor` prompts, at most
+/// `max_lines_per_minute`, the rest summarized; `until` ends it with the final notice the
+/// model sees, and `GET /jobs/{id}/output` returns the monitor's log.
+#[tokio::test]
+async fn monitor_tail_filter_admits_error_lines_rate_limited() {
+    use serde_json::{Value, json};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let repo = root.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let provider = LocalEndpoint::start(monitor_model);
+    let paths = paths(&root);
+    paths.ensure().unwrap();
+    std::fs::write(
+        paths.config.join("cyber.json"),
+        json!({
+            "providers":{"test":{"api":{"type":"openai-compatible","url":format!("{}/v1",provider.url),"settings":{"auth":"none"}},
+                                 "models":{"main":{}}}},
+            "permissions":{"bash":"allow"},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let application = app(&root).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api = format!("http://{}/api/v1", listener.local_addr().unwrap());
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(cyber_server::http::serve_tcp(
+        cyber_server::http::router(application.state.clone()),
+        listener,
+        async {
+            let _ = stopped.await;
+        },
+    ));
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let auth = |request: reqwest::RequestBuilder| {
+        request
+            .header("x-cyber-directory", repo.display().to_string())
+            .basic_auth("cyber", Some("test-password-123456"))
+    };
+    let get = async |path: String| -> Value {
+        auth(client.get(format!("{api}{path}")))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap()
+    };
+    let created: Value = auth(client.post(format!("{api}/sessions")))
+        .json(&json!({"model":"test/main"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = created["data"]["id"].as_str().unwrap().to_owned();
+    let response = auth(client.post(format!("{api}/sessions/{id}/prompt")))
+        .json(&json!({"parts":[{"type":"text","text":"watch the app log"}]}))
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+    application.runtime.wait_idle(&id).await;
+    let jobs = get(format!("/jobs?session_id={id}")).await;
+    let job = &jobs["data"][0];
+    assert_eq!(job["kind"], "monitor", "{jobs}");
+    assert_eq!(job["status"], "running");
+    assert_eq!(job["command"], "tail -F app.log");
+    let job_id = job["id"].as_str().unwrap().to_owned();
+    let mut lines = String::new();
+    for i in 0..5 {
+        lines.push_str(&format!("INFO request {i}\nERROR request {i} failed\n"));
+    }
+    lines.push_str("SHUTDOWN\nERROR after the end\n");
+    std::fs::write(repo.join("app.log"), lines).unwrap();
+    let ended = tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let job = get(format!("/jobs/{job_id}")).await;
+            if job["data"]["status"] != "running" && job["data"]["notified"] == true {
+                return job;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the monitor ended");
+    assert_eq!(ended["data"]["status"], "completed");
+    let inbox = get(format!("/sessions/{id}/inbox")).await;
+    let mut rows: Vec<&Value> = inbox["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["source"] == "monitor")
+        .collect();
+    rows.sort_by_key(|row| row["admitted_seq"].as_i64());
+    let texts: Vec<&str> = rows
+        .iter()
+        .map(|row| row["parts"][0]["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            format!("Monitor {job_id}: ERROR request 0 failed"),
+            format!("Monitor {job_id}: ERROR request 1 failed"),
+            format!("Monitor {job_id}: ERROR request 2 failed"),
+            format!("Monitor {job_id}: 2 lines suppressed (max_lines_per_minute is 3)"),
+        ]
+    );
+    assert!(rows.iter().all(|row| row["delivery"] == "queue"));
+    let output = get(format!("/jobs/{job_id}/output")).await;
+    let log = output["data"]["text"].as_str().unwrap();
+    assert!(log.contains("INFO request 4\n"), "{log}");
+    assert!(
+        log.ends_with("SHUTDOWN\n[monitor ended: until matched]\n"),
+        "{log}"
+    );
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let seen = provider.seen();
+            let text = |needle: &str| {
+                seen.iter()
+                    .any(|body| body["messages"].to_string().contains(needle))
+            };
+            if text("Monitor ended") && text("ERROR request 0 failed") {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the lines and the final notice reached the model");
+    application.runtime.wait_idle(&id).await;
     let _ = stop.send(());
     server.await.unwrap().unwrap();
     application.runtime.shutdown().await;
@@ -5037,6 +5403,7 @@ async fn remote_skill_source_fetches_caches_and_serves_stale_offline() {
         mcp_credentials: None,
         remote_skill_fetcher: Some(Arc::clone(&site) as Arc<dyn cyber_tools::RemoteSkillFetcher>),
         workflow_cores: None,
+        isolation: None,
     })
     .await
     .unwrap();
@@ -5718,4 +6085,576 @@ async fn user_shell_pr_creation_links_the_session() {
         .collect();
     assert_eq!(ids, [fixture.session.as_str()], "{listed}");
     fixture.close().await;
+}
+
+/// `permissions-modes` → bypass mode: with `full-access`, no container and no
+/// `--dangerously-bypass-permissions`, a client cannot create or switch a Session into
+/// `bypass`; the explicit flag allows it.
+#[tokio::test]
+async fn bypass_refused_on_bare_host_with_full_access() {
+    use mode_app::{ModeApp, Setup};
+    use serde_json::json;
+    let app = ModeApp::start(Setup {
+        sandbox_policy: Some("full-access"),
+        ..Setup::default()
+    })
+    .await;
+    let (_, health) = app.send("GET", "/health", None).await;
+    assert_eq!(health["sandbox"]["isolation"], "none", "{health}");
+    assert_eq!(health["sandbox"]["policy"], "full-access", "{health}");
+    let (status, refused) = app.create("bypass").await;
+    assert_eq!(status, 400, "{refused}");
+    assert_eq!(
+        refused["message"],
+        "bypass mode requires a sandbox, a container, or --dangerously-bypass-permissions"
+    );
+    let (status, created) = app.create("default").await;
+    assert_eq!(status, 201, "{created}");
+    let id = created["data"]["id"].as_str().unwrap();
+    let (status, switched) = app
+        .send(
+            "POST",
+            &format!("/sessions/{id}/mode"),
+            Some(json!({"mode": "bypass"})),
+        )
+        .await;
+    assert_eq!(status, 400, "{switched}");
+    let (_, shown) = app.send("GET", &format!("/sessions/{id}"), None).await;
+    assert_eq!(shown["data"]["mode"], "default", "{shown}");
+    assert!(
+        !app.events(id)
+            .iter()
+            .any(|event| event.kind == "session.mode.switched.1")
+    );
+    let flagged = ModeApp::start(Setup {
+        sandbox_policy: Some("full-access"),
+        isolation: cyber_tools::IsolationOptions {
+            dangerously_bypass: true,
+            container: false,
+        },
+        ..Setup::default()
+    })
+    .await;
+    let (status, created) = flagged.create("bypass").await;
+    assert_eq!(status, 201, "{created}");
+}
+
+/// Regression (`sandbox` → Container detection, `permissions-modes` → bypass mode): a
+/// sandbox with the network on does not isolate, so it does not make `bypass` eligible
+/// and the header shows `isolation: none`; the explicit flag still allows it.
+#[tokio::test]
+async fn sandbox_with_network_on_does_not_admit_bypass() {
+    use mode_app::{ModeApp, Setup};
+    use serde_json::json;
+    let setup = |isolation| Setup {
+        config: json!({"sandbox": {"network": "on"}}),
+        isolation,
+        ..Setup::default()
+    };
+    let app = ModeApp::start(setup(cyber_tools::IsolationOptions::default())).await;
+    let (_, health) = app.send("GET", "/health", None).await;
+    assert_eq!(health["sandbox"]["isolation"], "none", "{health}");
+    let (status, refused) = app.create("bypass").await;
+    assert_eq!(status, 400, "{refused}");
+    assert_eq!(
+        refused["message"],
+        "bypass mode requires a sandbox, a container, or --dangerously-bypass-permissions"
+    );
+    let flagged = ModeApp::start(setup(DANGEROUSLY_BYPASS)).await;
+    let (status, created) = flagged.create("bypass").await;
+    assert_eq!(status, 201, "{created}");
+}
+
+/// Regression (`permissions-modes` → bypass mode): a Session that takes `bypass` from
+/// its agent's `permission_mode` (no `mode` in the request) is refused on a bare host.
+#[tokio::test]
+async fn agent_permission_mode_bypass_is_refused_on_bare_host() {
+    use mode_app::{ModeApp, Setup};
+    use serde_json::json;
+    let app = ModeApp::start(Setup {
+        sandbox_policy: Some("full-access"),
+        config: json!({"agents": {"yolo": {"description": "y", "permission_mode": "bypass"}}}),
+        ..Setup::default()
+    })
+    .await;
+    let (status, refused) = app
+        .send("POST", "/sessions", Some(json!({"agent": "yolo"})))
+        .await;
+    assert_eq!(status, 400, "{refused}");
+    assert_eq!(
+        refused["message"],
+        "bypass mode requires a sandbox, a container, or --dangerously-bypass-permissions"
+    );
+    let (_, listed) = app.send("GET", "/sessions", None).await;
+    assert_eq!(listed["data"]["data"], json!([]), "{listed}");
+    let (status, created) = app.create("default").await;
+    assert_eq!(status, 201, "{created}");
+    let id = created["data"]["id"].as_str().unwrap();
+    let (status, switched) = app
+        .send(
+            "POST",
+            &format!("/sessions/{id}/agent"),
+            Some(json!({"agent": "yolo"})),
+        )
+        .await;
+    assert_eq!(status, 200, "{switched}");
+    let state = app.app.runtime.state(id).await.unwrap();
+    assert_eq!(state.info.mode, "default");
+}
+
+/// Regression (`org-policy` → `modes.disable`): Modes the managed policy disables are
+/// refused also when they come from an agent's `permission_mode`, a worktree start
+/// without a `mode`, or a runtime switch (as `plan_exit` makes).
+#[tokio::test]
+async fn managed_modes_disable_covers_agent_defaults_and_runtime_switches() {
+    run_with_managed_policy("managed_modes_disable_child");
+}
+
+#[tokio::test]
+#[ignore = "runs in a child process with a managed policy directory"]
+async fn managed_modes_disable_child() {
+    use mode_app::{ModeApp, Setup};
+    use serde_json::json;
+    let Some(policy) = std::env::var_os(cyber_core::config::MANAGED_POLICY_DIR_ENV) else {
+        return;
+    };
+    std::fs::write(
+        std::path::Path::new(&policy).join("cyber-policy.json"),
+        json!({"policy": {"modes": {"disable": ["bypass", "auto"]}}}).to_string(),
+    )
+    .unwrap();
+    let app = ModeApp::start(Setup {
+        sandbox_policy: Some("full-access"),
+        isolation: cyber_tools::IsolationOptions {
+            dangerously_bypass: true,
+            container: false,
+        },
+        config: json!({"agents": {"yolo": {"description": "y", "permission_mode": "bypass"}}}),
+        ..Setup::default()
+    })
+    .await;
+    let (status, refused) = app
+        .send("POST", "/sessions", Some(json!({"agent": "yolo"})))
+        .await;
+    assert_eq!(status, 400, "{refused}");
+    assert_eq!(
+        refused["message"],
+        "bypass mode is disabled by your organization"
+    );
+    let (status, refused) = app
+        .send(
+            "POST",
+            "/worktrees",
+            Some(json!({"name": "spike", "session": {"agent": "yolo"}})),
+        )
+        .await;
+    assert_eq!(status, 400, "{refused}");
+    assert_eq!(
+        refused["message"],
+        "bypass mode is disabled by your organization"
+    );
+    let (status, created) = app.create("plan").await;
+    assert_eq!(status, 201, "{created}");
+    let id = created["data"]["id"].as_str().unwrap();
+    let switched = app.app.runtime.switch_mode(id, "auto").await;
+    assert!(
+        switched.as_ref().is_err_and(|e| e
+            .to_string()
+            .contains("auto mode is disabled by your organization")),
+        "{switched:?}"
+    );
+    let state = app.app.runtime.state(id).await.unwrap();
+    assert_eq!(state.info.mode, "plan");
+}
+
+/// Regression (`permissions-modes` → bypass mode): a Session stored in `bypass` is
+/// admitted again at every Safe Boundary. After a restart without
+/// `--dangerously-bypass-permissions` on a bare `full-access` host, its next Turn fails
+/// before the model or any tool runs, until it switches to an admitted Mode.
+#[tokio::test]
+async fn stored_bypass_session_is_refused_after_restart_without_the_flag() {
+    use mode_app::{ModeApp, Setup};
+    let database = tempfile::tempdir().unwrap();
+    let file = database.path().join("events.db");
+    let app = ModeApp::start(Setup {
+        sandbox_policy: Some("full-access"),
+        isolation: DANGEROUSLY_BYPASS,
+        database: Some(file.clone()),
+        ..Setup::default()
+    })
+    .await;
+    let (status, created) = app.create("bypass").await;
+    assert_eq!(status, 201, "{created}");
+    let id = created["data"]["id"].as_str().unwrap().to_string();
+    let app = app
+        .restart(Setup {
+            sandbox_policy: Some("full-access"),
+            database: Some(file),
+            ..Setup::default()
+        })
+        .await;
+    assert_refused_bypass_turn(&app, &id).await;
+}
+
+/// Regression (`org-policy` → `modes.disable`): a Session already in `bypass` stops
+/// running Turns once a managed document disables `bypass`.
+#[tokio::test]
+async fn managed_modes_disable_refuses_an_existing_bypass_session() {
+    run_with_managed_policy("managed_modes_disable_existing_child");
+}
+
+#[tokio::test]
+#[ignore = "runs in a child process with a managed policy directory"]
+async fn managed_modes_disable_existing_child() {
+    use mode_app::{ModeApp, Setup};
+    let Some(policy) = std::env::var_os(cyber_core::config::MANAGED_POLICY_DIR_ENV) else {
+        return;
+    };
+    let app = ModeApp::start(Setup {
+        sandbox_policy: Some("full-access"),
+        isolation: DANGEROUSLY_BYPASS,
+        ..Setup::default()
+    })
+    .await;
+    let (status, created) = app.create("bypass").await;
+    assert_eq!(status, 201, "{created}");
+    let id = created["data"]["id"].as_str().unwrap().to_string();
+    std::fs::write(
+        std::path::Path::new(&policy).join("cyber-policy.json"),
+        serde_json::json!({"policy": {"modes": {"disable": ["bypass"]}}}).to_string(),
+    )
+    .unwrap();
+    assert_refused_bypass_turn(&app, &id).await;
+}
+
+/// A prompt to the `bypass` Session `id` runs no model request and no tool, and a switch
+/// to `default` lets the next Turn run.
+async fn assert_refused_bypass_turn(app: &mode_app::ModeApp, id: &str) {
+    let requests = app.model.requests().len();
+    let marker = app.repo.join("bypassed.txt");
+    let command = format!("RUN<<touch {}>>", marker.display());
+    app.run(id, &command).await;
+    assert!(app.outputs(id).await.is_empty());
+    assert_eq!(app.model.requests().len(), requests);
+    assert!(!marker.exists());
+    let (status, switched) = app
+        .send(
+            "POST",
+            &format!("/sessions/{id}/mode"),
+            Some(serde_json::json!({"mode": "default"})),
+        )
+        .await;
+    assert_eq!(status, 200, "{switched}");
+    app.run(id, "hello").await;
+    assert!(app.model.requests().len() > requests);
+}
+
+/// Regression (`sandbox` → Named sandbox profiles): the in-process editors run outside
+/// the OS sandbox, so `edit`, `write`, `apply_patch` (source and move destination) and
+/// `notebook_edit` refuse a `deny_read` path before reading it, also in `bypass`: no
+/// diff, match count or copy discloses it.
+#[tokio::test]
+async fn editors_refuse_deny_read_paths_on_the_production_app() {
+    use mode_app::{ModeApp, Setup};
+    use serde_json::json;
+    let setup = |extra: serde_json::Value| {
+        let mut config = json!({"sandbox": {"deny_read": ["**/*.pem", "**/secret.ipynb"]}});
+        config
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        Setup {
+            sandbox_policy: Some("full-access"),
+            isolation: DANGEROUSLY_BYPASS,
+            config,
+            ..Setup::default()
+        }
+    };
+    let app = ModeApp::start(setup(json!({}))).await;
+    let secret = "-----BEGIN PRIVATE KEY-----\nPRIVATE-KEY-MATERIAL\n";
+    std::fs::write(app.repo.join("key.pem"), secret).unwrap();
+    std::fs::write(
+        app.repo.join("secret.ipynb"),
+        r#"{"cells":[],"metadata":{},"nbformat":4,"nbformat_minor":5}"#,
+    )
+    .unwrap();
+    let edits = [
+        (
+            "edit",
+            json!({"path": "key.pem", "old_string": "-----BEGIN", "new_string": "-----BEGIN "}),
+        ),
+        ("write", json!({"path": "key.pem", "content": "replaced"})),
+        (
+            "notebook_edit",
+            json!({"path": "secret.ipynb", "mode": "insert", "new_source": "print(1)"}),
+        ),
+    ];
+    assert_editors_refused(&app, &edits).await;
+    // A model that prefers `apply_patch` is offered it instead of `edit` and `write`.
+    let mut providers = app.model.config()["providers"].clone();
+    providers["test"]["models"]["main"] = json!({"capabilities": {"prefers_apply_patch": true}});
+    let app = app.restart(setup(json!({ "providers": providers }))).await;
+    let moved = "*** Begin Patch\n*** Update File: key.pem\n*** Move to: key.txt\n@@\n-PRIVATE-KEY-MATERIAL\n+PRIVATE-KEY-MATERIAL\n*** End Patch";
+    let added = "*** Begin Patch\n*** Add File: copy.pem\n+x\n*** End Patch";
+    let patches = [
+        ("apply_patch", json!({"patch": moved})),
+        ("apply_patch", json!({"patch": added})),
+    ];
+    assert_editors_refused(&app, &patches).await;
+    assert_eq!(
+        std::fs::read_to_string(app.repo.join("key.pem")).unwrap(),
+        secret
+    );
+    assert!(!app.repo.join("key.txt").exists());
+    assert!(!app.repo.join("copy.pem").exists());
+}
+
+/// Each call, in a new `bypass` Session, is refused as a hidden read and recorded as a
+/// sandbox denial, disclosing nothing of the file.
+async fn assert_editors_refused(app: &mode_app::ModeApp, calls: &[(&str, serde_json::Value)]) {
+    let (status, created) = app.create("bypass").await;
+    assert_eq!(status, 201, "{created}");
+    let id = created["data"]["id"].as_str().unwrap().to_string();
+    for (name, input) in calls {
+        app.run(&id, &format!("TOOL<<{name}>>{input}")).await;
+    }
+    let outputs = app.outputs(&id).await;
+    assert_eq!(outputs.len(), calls.len(), "{outputs:?}");
+    for output in &outputs {
+        assert!(output.starts_with("Sandbox denied: read"), "{outputs:?}");
+        assert!(!output.contains("PRIVATE"), "{outputs:?}");
+    }
+    let denied = app
+        .events(&id)
+        .into_iter()
+        .filter(|event| event.kind == "sandbox.denied.1")
+        .count();
+    assert_eq!(denied, calls.len());
+}
+
+/// Regression (`background-tasks` → Send file to user, `sessions` → Delete): deleting a
+/// Session removes the copies of the files it sent and its process Job logs; nothing
+/// else in managed storage goes.
+#[tokio::test]
+async fn deleting_a_session_removes_its_sent_copies_and_job_logs() {
+    use mode_app::{ModeApp, Setup};
+    use serde_json::json;
+    let app = ModeApp::start(Setup {
+        sandbox_policy: Some("full-access"),
+        isolation: DANGEROUSLY_BYPASS,
+        ..Setup::default()
+    })
+    .await;
+    std::fs::write(app.repo.join("report.txt"), "the report").unwrap();
+    let data = app.root.join("data");
+    let entries = |dir: &str| -> Vec<std::path::PathBuf> {
+        std::fs::read_dir(data.join(dir))
+            .map(|dir| dir.flatten().map(|entry| entry.path()).collect())
+            .unwrap_or_default()
+    };
+    let create = || async {
+        let (status, created) = app.create("bypass").await;
+        assert_eq!(status, 201, "{created}");
+        created["data"]["id"].as_str().unwrap().to_string()
+    };
+    let (doomed, kept) = (create().await, create().await);
+    for id in [&doomed, &kept] {
+        app.run(
+            id,
+            &format!("TOOL<<send_file>>{}", json!({"paths": ["report.txt"]})),
+        )
+        .await;
+        if cfg!(unix) {
+            let job = json!({"command": "echo job-output", "background": true, "notify": false});
+            app.run(id, &format!("TOOL<<bash>>{job}")).await;
+        }
+    }
+    let jobs = if cfg!(unix) { 2 } else { 0 };
+    assert_eq!(entries("sent").len(), 2, "{:?}", app.outputs(&doomed).await);
+    assert_eq!(
+        entries("jobs").len(),
+        jobs,
+        "{:?}",
+        app.outputs(&doomed).await
+    );
+    let (status, body) = app
+        .send("DELETE", &format!("/sessions/{doomed}"), None)
+        .await;
+    assert!((200..300).contains(&status), "{body}");
+    let sent = entries("sent");
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    let events = app.events(&kept);
+    let delivered = events
+        .iter()
+        .find(|event| event.kind == "session.files.sent.1")
+        .unwrap();
+    let file_id = delivered.data["files"][0]["id"].as_str().unwrap();
+    assert!(sent[0].ends_with(file_id), "{sent:?}");
+    let logs = entries("jobs");
+    assert_eq!(logs.len(), jobs / 2, "{logs:?}");
+    for log in logs {
+        let job = log.file_stem().unwrap().to_string_lossy().into_owned();
+        assert_eq!(app.app.runtime.job(&job).unwrap().session_id, kept);
+    }
+}
+
+/// Regression (`background-tasks` → Send file to user): a Session sends at most
+/// `SEND_LIMIT_FILES` files; past it `send_file` is refused before anything is copied.
+#[tokio::test]
+async fn send_file_is_refused_past_the_session_send_limit() {
+    use mode_app::{ModeApp, Setup};
+    use serde_json::json;
+    let app = ModeApp::start(Setup {
+        sandbox_policy: Some("full-access"),
+        isolation: DANGEROUSLY_BYPASS,
+        ..Setup::default()
+    })
+    .await;
+    std::fs::write(app.repo.join("report.txt"), "the report").unwrap();
+    let (status, created) = app.create("bypass").await;
+    assert_eq!(status, 201, "{created}");
+    let id = created["data"]["id"].as_str().unwrap().to_string();
+    let calls = cyber_server::runtime::SEND_LIMIT_FILES / 10 + 1;
+    for call in 0..calls {
+        // A caption per call keeps them from reading as a repeated call.
+        let batch = json!({"paths": vec!["report.txt"; 10], "caption": format!("batch {call}")});
+        app.run(&id, &format!("TOOL<<send_file>>{batch}")).await;
+    }
+    let outputs = app.outputs(&id).await;
+    assert_eq!(outputs.len(), calls);
+    assert!(
+        outputs.last().unwrap().contains("Send limit reached"),
+        "{outputs:?}"
+    );
+    let sent = std::fs::read_dir(app.root.join("data/sent"))
+        .unwrap()
+        .count();
+    assert_eq!(sent, cyber_server::runtime::SEND_LIMIT_FILES);
+}
+
+/// Run `name`, an ignored test of this binary, in a child process whose
+/// `CYBER_MANAGED_POLICY_DIR` is a fresh directory the child writes its policy into: the
+/// App reads the managed policy from the process environment.
+fn run_with_managed_policy(name: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            name,
+            "--exact",
+            "--ignored",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(cyber_core::config::MANAGED_POLICY_DIR_ENV, dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Regression (`permissions-modes` → Rule dry run): `GET /permissions/test` evaluates
+/// `write` under the `edit` rules, as a Session does.
+#[tokio::test]
+async fn permissions_test_route_evaluates_write_under_edit_rules() {
+    use mode_app::{ModeApp, Setup};
+    let app = ModeApp::start(Setup {
+        sandbox_policy: Some("full-access"),
+        config: serde_json::json!({"permissions": {"edit": {"src/**": "deny"}}}),
+        ..Setup::default()
+    })
+    .await;
+    let (status, body) = app
+        .send(
+            "GET",
+            "/permissions/test?tool=write&resource=src/a.rs",
+            None,
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["data"]["results"][0]["effect"], "deny", "{body}");
+}
+
+/// `sandbox` → Container detection: in a detected container without the OS sandbox,
+/// `bypass` is allowed and the header (`/health`) shows `isolation: container`.
+#[tokio::test]
+async fn container_marker_allows_bypass_and_header_shows_isolation_container() {
+    use mode_app::{ModeApp, Setup};
+    let app = ModeApp::start(Setup {
+        sandbox_policy: Some("full-access"),
+        isolation: cyber_tools::IsolationOptions {
+            dangerously_bypass: false,
+            container: true,
+        },
+        ..Setup::default()
+    })
+    .await;
+    let (_, health) = app.send("GET", "/health", None).await;
+    assert_eq!(health["sandbox"]["isolation"], "container", "{health}");
+    let (status, created) = app.create("bypass").await;
+    assert_eq!(status, 201, "{created}");
+    assert_eq!(created["data"]["mode"], "bypass");
+}
+
+/// `tui` → Permission mode indicator and cycling, `permissions-modes` → plan mode: a
+/// switch to `plan` is a durable event, survives a restart and the next Turn's write is
+/// denied with the plan-mode message.
+#[tokio::test]
+async fn mode_switch_to_plan_is_durable_and_next_turn_denies_writes() {
+    use mode_app::{ModeApp, Setup};
+    use serde_json::json;
+    let database = tempfile::tempdir().unwrap();
+    let file = database.path().join("events.db");
+    let app = ModeApp::start(Setup {
+        sandbox_policy: Some("full-access"),
+        database: Some(file.clone()),
+        ..Setup::default()
+    })
+    .await;
+    let (status, created) = app.create("default").await;
+    assert_eq!(status, 201, "{created}");
+    let id = created["data"]["id"].as_str().unwrap().to_string();
+    let (status, switched) = app
+        .send(
+            "POST",
+            &format!("/sessions/{id}/mode"),
+            Some(json!({"mode": "plan"})),
+        )
+        .await;
+    assert_eq!(status, 200, "{switched}");
+    let events = app.events(&id);
+    let switch = events
+        .iter()
+        .find(|event| event.kind == "session.mode.switched.1")
+        .expect("a durable switch event");
+    assert_eq!(
+        (switch.data["from"].clone(), switch.data["to"].clone()),
+        (json!("default"), json!("plan"))
+    );
+    let input = json!({"path": "blocked.txt", "content": "x"});
+    app.run(&id, &format!("TOOL<<write>>{input}")).await;
+    let outputs = app.outputs(&id).await;
+    assert_eq!(
+        outputs,
+        ["Plan mode is read-only. Present the plan with plan_exit."]
+    );
+    assert!(!app.repo.join("blocked.txt").exists());
+    app.app.runtime.shutdown().await;
+    let reopened = ModeApp::build(
+        &app.root,
+        &app.repo,
+        &app.model,
+        &Setup {
+            sandbox_policy: Some("full-access"),
+            database: Some(file),
+            ..Setup::default()
+        },
+    )
+    .await;
+    let state = reopened.runtime.state(&id).await.unwrap();
+    assert_eq!(state.info.mode, "plan");
+    reopened.runtime.shutdown().await;
 }

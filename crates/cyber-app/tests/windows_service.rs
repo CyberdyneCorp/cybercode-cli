@@ -140,6 +140,7 @@ fn options(root: &Path) -> AppOptions {
         mcp_credentials: None,
         remote_skill_fetcher: None,
         workflow_cores: None,
+        isolation: None,
     }
 }
 

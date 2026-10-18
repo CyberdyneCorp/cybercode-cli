@@ -292,6 +292,29 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         )
         .ok::<Data<crate::runtime::Job>>(g),
         op(
+            "get",
+            "/jobs/{id}/output",
+            "v1.job.output",
+            "Read the end of a background task's log",
+        )
+        .query(&["tail_bytes"])
+        .ok::<Data<super::jobs::JobOutput>>(g),
+        op(
+            "post",
+            "/jobs/{id}/pty/ticket",
+            "v1.job.ptyTicket",
+            "Issue a single-use ticket, valid for 60 seconds, to attach to a running PTY",
+        )
+        .ok::<Data<super::pty::PtyTicket>>(g),
+        op(
+            "get",
+            "/jobs/{id}/pty/connect",
+            "v1.job.ptyConnect",
+            "Attach to a running PTY over WebSocket with a ticket: replays retained output from cursor (omitted: all, -1: none), then live output; client frames are input",
+        )
+        .query(&["ticket", "cursor"])
+        .websocket(),
+        op(
             "post",
             "/workflows/runs",
             "v1.workflow.run",
@@ -669,6 +692,27 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .body::<ShellBody>(g)
         .ok::<Data<ShellResult>>(g),
         op(
+            "post",
+            "/sessions/{sessionID}/background",
+            "v1.session.background",
+            "Move the Session's running foreground command to a background Job",
+        )
+        .ok::<Data<super::sessions::BackgroundResult>>(g),
+        op(
+            "post",
+            "/sessions/{sessionID}/side",
+            "v1.session.side",
+            "Ask a side question (/btw) with a read-only copy of the Session's context and read-only tools; the Session's history is unchanged",
+        )
+        .body::<super::deliveries::SideBody>(g)
+        .ok::<Data<crate::runtime::SideAnswer>>(g),
+        op(
+            "get",
+            "/sessions/{sessionID}/files/{fileID}",
+            "v1.session.sentFile",
+            "Download a file the Session delivered with send_file",
+        ),
+        op(
             "get",
             "/sessions/{sessionID}/messages",
             "v1.message.list",
@@ -775,6 +819,15 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         )
         .query(&["session_id"])
         .ok::<Data<Vec<PendingRequest>>>(g),
+        op(
+            "get",
+            "/permissions/test",
+            "v1.permission.test",
+            "Evaluate a tool call or shell command against the effective ruleset without a Session",
+        )
+        .located()
+        .query(&["agent", "mode", "tool", "resource", "command"])
+        .ok::<Located<serde_json::Value>>(g),
         op(
             "get",
             "/questions/requests",

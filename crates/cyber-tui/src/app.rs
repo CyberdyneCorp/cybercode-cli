@@ -34,6 +34,11 @@ pub enum Action {
     SetMemory(cyber_core::memory::MemoryState),
     /// `/commit` and `/pr-description`: generated text, prefilled as a shell command.
     GitText(GitText),
+    /// `/btw`: `POST /sessions/:id/side`.
+    SideChat {
+        session_id: String,
+        question: String,
+    },
     ReconcileAdmission(crate::admissions::Request),
     Admission {
         request: crate::admissions::Request,
@@ -92,6 +97,10 @@ pub enum Action {
         delivery: &'static str,
     },
     Shell(String),
+    /// `& cmd`: start a user shell command as a background Job of the Session.
+    BackgroundShell(String),
+    /// Ctrl+B: move the running foreground command to the background.
+    MoveToBackground,
     Command {
         name: String,
         arguments: String,
@@ -227,6 +236,19 @@ impl Picker {
     pub fn current(&self) -> Option<&Choice> {
         self.filtered.get(self.selected).map(|&i| &self.items[i])
     }
+
+    /// Replace the items of an open picker, keeping what the user typed and, while it is
+    /// still listed, the selected item.
+    fn refresh(&mut self, items: Vec<Choice>) {
+        let key = self.current().map(|choice| choice.key.clone());
+        self.items = items;
+        self.filter();
+        if let Some(at) =
+            key.and_then(|key| self.filtered.iter().position(|&i| self.items[i].key == key))
+        {
+            self.selected = at;
+        }
+    }
 }
 
 /// Steps of the permission prompt.
@@ -277,6 +299,14 @@ pub enum Overlay {
     Workflows,
     /// `/rename`: the title being edited.
     Rename(String),
+    /// The end of a background task's log, opened from `/tasks`.
+    TaskLog {
+        title: String,
+        text: String,
+        scroll: u16,
+    },
+    /// `/btw`: a side question and its answer.
+    SideChat(crate::side_chat::SideChat),
 }
 
 /// Text the small model drafts for the user (`vcs-integration` → Commit and PR text
@@ -295,6 +325,8 @@ pub enum InputMode {
     Prompt,
     /// `!`: a user shell command.
     Shell,
+    /// `&`: a user shell command started in the background.
+    Background,
     /// `/`: a slash command.
     Command,
 }
@@ -857,6 +889,14 @@ impl App {
                 self.file_diff_key(key);
                 Vec::new()
             }
+            Overlay::TaskLog { .. } => {
+                self.task_log_key(key);
+                Vec::new()
+            }
+            Overlay::SideChat(_) => {
+                self.side_key(key);
+                Vec::new()
+            }
         }
     }
 
@@ -864,6 +904,7 @@ impl App {
     pub fn input_mode(&self) -> InputMode {
         match self.composer.lines().first().and_then(|l| l.chars().next()) {
             Some('!') => InputMode::Shell,
+            Some('&') => InputMode::Background,
             Some('/') => InputMode::Command,
             _ => InputMode::Prompt,
         }
@@ -954,9 +995,44 @@ impl App {
             "help" => self.overlay = Overlay::Help,
             "reasoning_toggle" => self.show_reasoning = !self.show_reasoning,
             "tool_details" => self.expand_tools = !self.expand_tools,
+            "background_command" => return self.move_to_background(),
             _ => {}
         }
         Vec::new()
+    }
+
+    /// Ctrl+B: only a running Turn can have a foreground command to move.
+    fn move_to_background(&mut self) -> Vec<Action> {
+        if self.session.running {
+            return vec![Action::MoveToBackground];
+        }
+        self.toast("No command is running".to_string());
+        Vec::new()
+    }
+
+    /// Keys over a task's log.
+    fn task_log_key(&mut self, key: KeyEvent) {
+        let Overlay::TaskLog { scroll, .. } = &mut self.overlay else {
+            return;
+        };
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => *scroll = scroll.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => *scroll = scroll.saturating_add(1),
+            KeyCode::PageUp => *scroll = scroll.saturating_sub(10),
+            KeyCode::PageDown => *scroll = scroll.saturating_add(10),
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => self.overlay = Overlay::None,
+            _ => {}
+        }
+    }
+
+    /// Show a task's log, scrolled to its end.
+    pub fn open_task_log(&mut self, title: String, text: String) {
+        let scroll = u16::try_from(text.lines().count().saturating_sub(20)).unwrap_or(u16::MAX);
+        self.overlay = Overlay::TaskLog {
+            title,
+            text,
+            scroll,
+        };
     }
 
     fn findings_key(&mut self, key: KeyEvent) {
@@ -1378,6 +1454,9 @@ impl App {
         let text = self.composer.take();
         self.completion = None;
         self.scroll = 0;
+        if let Some(command) = text.strip_prefix('&') {
+            return vec![Action::BackgroundShell(command.trim().to_string())];
+        }
         if let Some(command) = text.strip_prefix('!') {
             return vec![Action::Shell(command.trim().to_string())];
         }
@@ -1462,6 +1541,7 @@ impl App {
             "skills" => vec![Action::LoadSkills],
             "resume" | "sessions" => vec![Action::LoadSessions],
             "rename" => self.rename_command(args),
+            "btw" | "side" => self.side_command(args),
             "new" | "clear" => vec![Action::NewSession],
             "fork" => vec![Action::Fork],
             "subtask" if !args.is_empty() => vec![Action::Subtask(args.into())],
@@ -1536,6 +1616,17 @@ impl App {
         self.overlay = Overlay::Picker(Picker::new(kind, title, items));
     }
 
+    /// Open a picker, or refresh it in place when one of this kind is already open (a
+    /// live reload must not reset the filter or the selection under the user).
+    pub fn open_or_refresh_picker(&mut self, kind: PickerKind, title: &str, items: Vec<Choice>) {
+        match &mut self.overlay {
+            Overlay::Picker(picker) if picker.kind == kind && picker.pending.is_none() => {
+                picker.refresh(items);
+            }
+            _ => self.open_picker(kind, title, items),
+        }
+    }
+
     fn picker_key(&mut self, key: KeyEvent) -> Vec<Action> {
         let Overlay::Picker(picker) = &mut self.overlay else {
             return Vec::new();
@@ -1570,10 +1661,13 @@ impl App {
                 .map(|entry| vec![entry.request.action(true)])
                 .unwrap_or_default();
         }
-        if picker.kind == PickerKind::Tasks
-            && key.modifiers.contains(KeyModifiers::CONTROL)
-            && key.code == KeyCode::Char('s')
-        {
+        // `x` stops the selected task while no filter is typed; Ctrl+S always does.
+        let stop_key = match key.code {
+            KeyCode::Char('x') => picker.query.is_empty() && key.modifiers.is_empty(),
+            KeyCode::Char('s') => key.modifiers.contains(KeyModifiers::CONTROL),
+            _ => false,
+        };
+        if picker.kind == PickerKind::Tasks && stop_key {
             return picker
                 .current()
                 .map(|choice| vec![Action::StopTask(choice.key.clone())])
@@ -1642,6 +1736,9 @@ impl App {
                 .get(&choice.key)
                 .map(|entry| vec![entry.request.action(false)])
                 .unwrap_or_default(),
+            PickerKind::Tasks if choice.key.starts_with("run_") => {
+                self.open_workflow_run(choice.key)
+            }
             PickerKind::Tasks => vec![Action::OpenTask(choice.key)],
             PickerKind::Sessions | PickerKind::Children => vec![Action::Open(choice.key)],
             PickerKind::Models => vec![Action::SwitchModel(choice.key)],
@@ -1835,6 +1932,7 @@ impl App {
     pub fn on_event(&mut self, kind: &str, data: &Value) -> Vec<Action> {
         self.progress.observe(kind, self.now());
         self.title_event(kind, data);
+        self.delivery_event(kind, data);
         let mut actions = if kind == "job.ended.1" {
             self.job_ended(data)
         } else if kind.starts_with("session.prompt.admitted") {

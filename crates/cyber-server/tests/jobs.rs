@@ -433,3 +433,139 @@ async fn dropping_an_owner_recovers_a_still_running_job_without_redispatch() {
     assert_eq!(restarted.state(&parent).await.unwrap().inbox.len(), 1);
     assert_eq!(h.models.requests("test/main").len(), 2);
 }
+
+#[tokio::test]
+async fn restart_marks_two_running_bash_jobs_interrupted() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![text("first notice handled"), text("second notice handled")],
+        )],
+        ..Default::default()
+    });
+    let parent = h.session().await;
+    let mut ids = Vec::new();
+    for command in ["npm run dev", "cargo test"] {
+        let reservation = h
+            .runtime
+            .reserve_process_job(cyber_server::runtime::ProcessJob {
+                session_id: parent.clone(),
+                kind: "bash".into(),
+                command: command.into(),
+                description: String::new(),
+                notify: true,
+                output_dir: h.dir.path().join("jobs"),
+                max_jobs: 20,
+            })
+            .await
+            .unwrap();
+        std::fs::create_dir_all(reservation.output_path().parent().unwrap()).unwrap();
+        std::fs::write(reservation.output_path(), format!("{command} output\n")).unwrap();
+        let job = h
+            .runtime
+            .start_process_job(
+                reservation,
+                Box::new(|io| {
+                    Box::pin(async move {
+                        io.stop.cancelled().await;
+                        Ok(None)
+                    })
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(job.status, JobStatus::Running);
+        ids.push(job.id);
+    }
+    // A crash: the new runtime takes over without the old one settling anything.
+    let restarted = h.restart();
+    restarted.recover_jobs().await.unwrap();
+    let listed = restarted.jobs(Some(&parent)).unwrap();
+    assert_eq!(listed.len(), 2);
+    for job in &listed {
+        assert!(ids.contains(&job.id));
+        assert_eq!(job.status, JobStatus::Interrupted);
+        assert_eq!(job.kind, "bash");
+        assert!(job.ended_ms.is_some());
+        assert!(job.notified);
+    }
+    let commands: Vec<_> = listed
+        .iter()
+        .filter_map(|job| job.command.clone())
+        .collect();
+    assert_eq!(commands.len(), 2);
+    restarted.wait_idle(&parent).await;
+    let state = restarted.state(&parent).await.unwrap();
+    for id in &ids {
+        let row = state
+            .inbox
+            .iter()
+            .find(|row| row.message_id == format!("msg_handback_{id}"))
+            .expect("interrupted notice");
+        let text = serde_json::to_string(&row.parts).unwrap();
+        assert!(text.contains("Background job ended"), "{text}");
+        assert!(text.contains("interrupted"), "{text}");
+        assert!(text.contains(" output"), "{text}");
+    }
+    // Recovery is idempotent.
+    restarted.recover_jobs().await.unwrap();
+    assert_eq!(
+        restarted.state(&parent).await.unwrap().inbox.len(),
+        state.inbox.len()
+    );
+}
+
+#[tokio::test]
+async fn shutdown_stops_a_process_job_and_restart_notices_it_once() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("notice handled")])],
+        ..Default::default()
+    });
+    let parent = h.session().await;
+    let reservation = h
+        .runtime
+        .reserve_process_job(cyber_server::runtime::ProcessJob {
+            session_id: parent.clone(),
+            kind: "bash".into(),
+            command: "npm run dev".into(),
+            description: String::new(),
+            notify: true,
+            output_dir: h.dir.path().join("jobs"),
+            max_jobs: 20,
+        })
+        .await
+        .unwrap();
+    let stopped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let seen = std::sync::Arc::clone(&stopped);
+    let job = h
+        .runtime
+        .start_process_job(
+            reservation,
+            Box::new(move |io| {
+                Box::pin(async move {
+                    io.stop.cancelled().await;
+                    seen.store(true, std::sync::atomic::Ordering::SeqCst);
+                    Ok(None)
+                })
+            }),
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), h.runtime.shutdown())
+        .await
+        .unwrap();
+    assert!(
+        stopped.load(std::sync::atomic::Ordering::SeqCst),
+        "the work was told to stop"
+    );
+    let settled = h.runtime.job(&job.id).unwrap();
+    assert_eq!(settled.status, JobStatus::Interrupted);
+    assert!(!settled.notified);
+    assert!(h.state(&parent).await.inbox.is_empty());
+    let restarted = h.restart();
+    restarted.recover_jobs().await.unwrap();
+    restarted.wait_idle(&parent).await;
+    restarted.recover_jobs().await.unwrap();
+    assert_eq!(restarted.state(&parent).await.unwrap().inbox.len(), 1);
+    assert!(restarted.job(&job.id).unwrap().notified);
+}

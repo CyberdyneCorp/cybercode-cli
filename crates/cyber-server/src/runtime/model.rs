@@ -303,6 +303,12 @@ pub struct SessionState {
     /// Pull requests this Session is linked to (`session.pr.linked.1`).
     #[serde(skip)]
     pub(crate) pull_requests: BTreeSet<u64>,
+    /// Times of the newest notifications (`session.notification.sent.1`).
+    #[serde(skip)]
+    pub(crate) notifications: Vec<i64>,
+    /// Files delivered to the user by ID (`session.files.sent.1`).
+    #[serde(skip)]
+    pub(crate) sent_files: BTreeMap<String, super::deliveries::SentFile>,
     #[serde(skip)]
     pub(crate) first_turn_started: bool,
     /// SessionStart's durable marker was replayed; it never runs again.
@@ -520,6 +526,8 @@ impl SessionState {
         Self {
             loaded_tools: BTreeSet::new(),
             pull_requests: BTreeSet::new(),
+            notifications: Vec::new(),
+            sent_files: BTreeMap::new(),
             first_turn_started: false,
             session_started: false,
             hook_stop_step: None,
@@ -753,6 +761,14 @@ impl SessionState {
                 if let Some(number) = e.data["number"].as_u64() {
                     self.pull_requests.insert(number);
                 }
+            }
+            "session.notification.sent" => {
+                super::deliveries::remember_notification(&mut self.notifications, e.time_ms);
+            }
+            "session.files.sent" => {
+                let sent: super::deliveries::FilesSent = decode(e)?;
+                self.sent_files
+                    .extend(sent.files.into_iter().map(|f| (f.id.clone(), f)));
             }
             "session.recap.generated" => {
                 let recap: super::recap::RecapGenerated = decode(e)?;

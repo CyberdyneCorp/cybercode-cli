@@ -28,10 +28,13 @@ impl Tool for Bash {
     fn def(&self) -> ToolDef {
         def(
             "bash",
-            "Run a shell command in the project. stdout and stderr are combined. timeout_ms defaults to 120000 (max 600000).",
+            "Run a shell command in the project. stdout and stderr are combined. timeout_ms defaults to 120000 (max 600000). When the sandbox denies an operation the result says `Sandbox denied: <operation> <target>`; to ask the user to run that one command outside the sandbox, call again with sandbox: \"escalate\" and a justification. background: true starts a background Job and returns its job_id and log path at once; the Job keeps running after the Turn, its output is read with `read` on that path, `task_stop` stops it, and a completion notice arrives as a queued message unless notify is false.",
             json!({"type": "object", "required": ["command"], "properties": {
                 "command": {"type": "string"}, "timeout_ms": {"type": "integer"}, "workdir": {"type": "string"},
-                "description": {"type": "string"}, "background": {"type": "boolean"}}}),
+                "description": {"type": "string"}, "background": {"type": "boolean"},
+                "notify": {"type": "boolean"},
+                "sandbox": {"type": "string", "enum": ["escalate"]},
+                "justification": {"type": "string"}}}),
             RetrySafety::Never,
             false,
         )
@@ -44,19 +47,33 @@ impl Tool for Bash {
             if command.trim().is_empty() {
                 return Err(failed("command is empty"));
             }
-            if input.get("background").and_then(Value::as_bool) == Some(true) {
-                return Err(failed(
-                    "background: true starts a background Job, which arrives in P1; run in the foreground",
-                ));
-            }
+            let background = super::background::requested(input)?;
+            let escalation = escalation(input)?;
             let raw = text(input, "workdir");
             let workdir = ctx.resolve(if raw.is_empty() { "." } else { raw });
             let analysis = analyze(command, &workdir);
-            authorize(ctx, command, &workdir, &analysis).await?;
+            let excluded = excluded(ctx, command);
+            authorize(ctx, command, &workdir, &analysis, excluded).await?;
+            if let Some(justification) = &escalation {
+                escalate(ctx, command, justification).await?;
+            }
             let timeout = number(input, "timeout_ms")
                 .unwrap_or(DEFAULT_TIMEOUT_MS)
                 .clamp(1, MAX_TIMEOUT_MS);
-            let output = execute(ctx, command, &workdir, timeout).await?;
+            let unsandboxed = excluded || escalation.is_some();
+            if background {
+                let shell = shell(&ctx.host.opts.shell, &ctx.location)?;
+                let prepared =
+                    crate::sandboxing::prepare_shell(ctx, &shell, command, unsandboxed).await?;
+                return super::background::start(ctx, prepared, &workdir, command, "bash").await;
+            }
+            // Ctrl+B may move this call to the background while it runs.
+            let handoff = ctx
+                .host
+                .runtime()
+                .map(|runtime| runtime.offer_handoff(&ctx.inv.session_id, &ctx.inv.call_id));
+            let offer = handoff.as_ref().map(|handoff| Offer { handoff, command });
+            let output = execute(ctx, command, &workdir, timeout, unsandboxed, offer).await?;
             super::pr_links::observe(ctx, command, &workdir, &output).await;
             Ok(output)
         })
@@ -66,16 +83,93 @@ impl Tool for Bash {
 /// A user shell command (`!`): sandboxed, but never asks for permission. A PR it
 /// creates or pushes to links the Session, as for the `bash` tool.
 pub(crate) async fn run_user(ctx: &Ctx<'_>, command: &str) -> Result<String, ToolError> {
-    let output = execute(ctx, command, &ctx.location, DEFAULT_TIMEOUT_MS).await?;
+    let output = execute(ctx, command, &ctx.location, DEFAULT_TIMEOUT_MS, false, None).await?;
     super::pr_links::observe(ctx, command, &ctx.location, &output).await;
     Ok(output)
+}
+
+/// A user background command (`& cmd`): sandboxed like `!`, never asking, started as a
+/// process Job of the Session. Returns the Job ID.
+pub(crate) async fn run_user_background(ctx: &Ctx<'_>, command: &str) -> Result<String, ToolError> {
+    if command.trim().is_empty() {
+        return Err(failed("command is empty"));
+    }
+    let shell = shell(&ctx.host.opts.shell, &ctx.location)?;
+    let prepared = crate::sandboxing::prepare_shell(ctx, &shell, command, false).await?;
+    super::background::start_job(ctx, prepared, &ctx.location, command, "bash")
+        .await
+        .map(|job| job.id)
 }
 
 /// A template's `` !`cmd` `` (`skills-commands` → Shell output injection): `bash`
 /// permission for the command text in the Session's mode, asking when the rules say so.
 pub(crate) async fn authorize_injection(ctx: &Ctx<'_>, command: &str) -> Result<(), ToolError> {
     let analysis = analyze(command, &ctx.location);
-    authorize(ctx, command, &ctx.location, &analysis).await
+    authorize(ctx, command, &ctx.location, &analysis, false).await
+}
+
+/// `{ sandbox: "escalate", justification }` (`sandbox` → Escalation requests).
+fn escalation(input: &Value) -> Result<Option<String>, ToolError> {
+    match input.get("sandbox") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) if value == "escalate" => {
+            let justification = text(input, "justification").trim();
+            if justification.is_empty() {
+                return Err(failed(
+                    "sandbox: \"escalate\" needs a justification explaining why the command must run outside the sandbox",
+                ));
+            }
+            Ok(Some(justification.to_string()))
+        }
+        Some(other) => Err(failed(format!("sandbox must be \"escalate\", got {other}"))),
+    }
+}
+
+/// Ask `sandbox.escalate` for this one call, showing the command and justification.
+/// The sandbox is a ceiling: `bypass` still asks, `dont-ask` denies and `auto` classifies.
+async fn escalate(ctx: &Ctx<'_>, command: &str, justification: &str) -> Result<(), ToolError> {
+    let req = Request {
+        action: "sandbox.escalate".into(),
+        resources: vec![command.to_string()],
+        sandbox_boundary: true,
+        ..Request::default()
+    };
+    let metadata = json!({
+        "command": command,
+        "justification": justification,
+        "warning": "Runs this one command outside the sandbox",
+    });
+    ctx.authorize(req, Vec::new(), metadata).await?;
+    let _ = ctx
+        .inv
+        .asker
+        .record_sandbox(
+            cyber_server::runtime::SandboxEvent::Escalated,
+            json!({
+                "session_id": ctx.inv.session_id,
+                "call_id": ctx.inv.call_id,
+                "command": command,
+                "justification": justification,
+            }),
+        )
+        .await;
+    Ok(())
+}
+
+/// A single literal command matching `sandbox.excluded_commands` runs outside the
+/// sandbox (`sandbox` → Excluded commands). Lists, pipes and expansions never qualify.
+fn excluded(ctx: &Ctx<'_>, command: &str) -> bool {
+    excluded_by(&crate::sandboxing::effective(ctx), command)
+}
+
+pub(crate) fn excluded_by(sandbox: &cyber_sandbox::SandboxConfig, command: &str) -> bool {
+    sandbox.policy != cyber_sandbox::Policy::FullAccess
+        && !sandbox.excluded_commands.is_empty()
+        && crate::bash_analysis::literal_argv(command).is_some()
+        && sandbox
+            .excluded_commands
+            .iter()
+            .any(|pattern| cyber_core::wildcard::matches(pattern, command.trim()))
 }
 
 /// Run an authorized injection in the sandbox and return its stdout, bounded by
@@ -91,7 +185,8 @@ pub(crate) async fn run_injected(
         crate::sandboxing::prepare(ctx, &shell(&ctx.host.opts.shell, &ctx.location)?, command)
             .await?;
     let output = Output::Stdout { max_bytes };
-    let (capture, ended) = run_process(ctx, prepared, &ctx.location, timeout_ms, output).await?;
+    let (capture, ended) =
+        run_process(ctx, prepared, &ctx.location, timeout_ms, output, None).await?;
     // Like shell command substitution, trailing newlines are dropped.
     let stdout = String::from_utf8_lossy(&capture.tail);
     let stdout = stdout.trim_end_matches(['\n', '\r']);
@@ -101,70 +196,103 @@ pub(crate) async fn run_injected(
     })
 }
 
-async fn authorize(
+pub(super) async fn authorize(
     ctx: &Ctx<'_>,
     command: &str,
     workdir: &Path,
     analysis: &Analysis,
+    ask_floor: bool,
 ) -> Result<(), ToolError> {
-    let edits = literal_edits(command, workdir);
-    let mut mutates: Vec<PathBuf> = analysis
-        .commands
-        .iter()
-        .flat_map(|c| c.mutates.clone())
-        .collect();
-    if let Some(paths) = &edits {
-        mutates = paths.clone();
-    }
-    let project = cyber_core::config::project_root(&ctx.location);
-    let removal_risk = bash_removal(
-        command,
-        &RemovalScope {
-            location: &ctx.location,
-            project: &project,
-            home: &ctx.policy.home,
-            workdir,
-        },
-    );
-    authorize_facts(
-        ctx,
-        command,
-        workdir,
-        analysis,
-        removal_risk,
-        edits.is_some(),
-        mutates,
-    )
-    .await
+    let mut facts = Facts::of(command, workdir, analysis, &ctx.location, &ctx.policy.home);
+    facts.ask_floor = ask_floor;
+    facts.boundary = ask_floor && ctx.host.sandbox_isolates_alone();
+    authorize_facts(ctx, command, workdir, analysis, facts).await
 }
 
-pub(super) async fn authorize_facts(
+impl Facts {
+    /// Mutated paths and removal risk of `command`, as the `bash` tool decides them.
+    pub(crate) fn of(
+        command: &str,
+        workdir: &Path,
+        analysis: &Analysis,
+        location: &Path,
+        home: &Path,
+    ) -> Self {
+        let edits = literal_edits(command, workdir);
+        let mutates: Vec<PathBuf> = match &edits {
+            Some(paths) => paths.clone(),
+            None => analysis
+                .commands
+                .iter()
+                .flat_map(|c| c.mutates.clone())
+                .collect(),
+        };
+        let project = cyber_core::config::project_root(location);
+        let removal_risk = bash_removal(
+            command,
+            &RemovalScope {
+                location,
+                project: &project,
+                home,
+                workdir,
+            },
+        );
+        Self {
+            removal_risk,
+            file_edit: edits.is_some(),
+            mutates,
+            ask_floor: false,
+            boundary: false,
+        }
+    }
+
+    /// The `bash` request for `analysis`'s commands.
+    pub(crate) fn request(self, analysis: &Analysis) -> Request {
+        Request {
+            removal_risk: self.removal_risk,
+            action: "bash".into(),
+            resources: analysis.commands.iter().map(|c| c.text.clone()).collect(),
+            file_edit: self.file_edit,
+            mutates: self.mutates,
+            ask_floor: self.ask_floor,
+            sandbox_boundary: self.boundary,
+            ..Request::default()
+        }
+    }
+}
+
+/// What the permission request of one shell command carries beyond its resources.
+#[derive(Default)]
+pub(crate) struct Facts {
+    pub removal_risk: Option<crate::permissions::RemovalRisk>,
+    pub file_edit: bool,
+    pub mutates: Vec<PathBuf>,
+    /// An excluded command: at least `ask` outside `bypass`.
+    pub ask_floor: bool,
+    /// The excluded command leaves the sandbox that alone isolates this process, so
+    /// `bypass` asks for it too (`sandbox` → Excluded commands).
+    pub boundary: bool,
+}
+
+pub(crate) async fn authorize_facts(
     ctx: &Ctx<'_>,
     command: &str,
     workdir: &Path,
     analysis: &Analysis,
-    removal_risk: Option<crate::permissions::RemovalRisk>,
-    file_edit: bool,
-    mutates: Vec<PathBuf>,
+    facts: Facts,
 ) -> Result<(), ToolError> {
-    let mut external = mutates.clone();
+    let mut external = facts.mutates.clone();
     external.push(workdir.to_path_buf());
-    let resources: Vec<String> = analysis.commands.iter().map(|c| c.text.clone()).collect();
     let always: Vec<String> = analysis.commands.iter().map(|c| c.always.clone()).collect();
     let mut metadata = json!({"command": command});
-    if let Some(risk) = &removal_risk {
+    if let Some(risk) = &facts.removal_risk {
         metadata["warning"] = json!(risk.warning());
         metadata["severity"] = json!("danger");
         metadata["requires_confirmation"] = json!(true);
+    } else if facts.ask_floor {
+        metadata["warning"] = json!("Excluded command: runs outside the sandbox");
     }
-    let req = Request {
-        removal_risk,
-        action: "bash".into(),
-        resources,
-        file_edit,
-        mutates,
-        ..Request::default()
-    };
+    let req = facts.request(analysis);
     // Critical warnings must reach the user before an external-directory approval.
     if req.removal_risk.is_some() {
         ctx.authorize(req, always, metadata).await?;
@@ -220,11 +348,30 @@ struct Capture {
     file: Option<(PathBuf, std::fs::File)>,
     dir: PathBuf,
     limit: Option<usize>,
+    /// Set once the command moved to a background Job: output goes to its log.
+    forward: Option<super::background::SharedSink>,
 }
 
 impl Capture {
+    fn new(dir: PathBuf, limit: Option<usize>) -> Self {
+        Self {
+            tail: Vec::new(),
+            dropped: 0,
+            file: None,
+            dir,
+            limit,
+            forward: None,
+        }
+    }
+
     /// Returns `false` once a bounded capture is full, so its reader stops.
     fn push(&mut self, chunk: &[u8]) -> bool {
+        if let Some(sink) = &self.forward {
+            sink.lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .write(chunk);
+            return true;
+        }
         if let Some(limit) = self.limit {
             let room = limit.saturating_sub(self.tail.len()).min(chunk.len());
             self.tail.extend_from_slice(&chunk[..room]);
@@ -241,6 +388,23 @@ impl Capture {
             self.dropped += excess;
         }
         true
+    }
+
+    /// Send everything from now on to `sink`, starting with what was captured so far.
+    fn forward_to(&mut self, sink: super::background::SharedSink) {
+        {
+            let mut log = sink.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some((path, _)) = &self.file {
+                let note = format!(
+                    "[earlier foreground output: {} bytes omitted; full output at {}]\n",
+                    self.dropped,
+                    path.display()
+                );
+                log.write(note.as_bytes());
+            }
+            log.write(&self.tail);
+        }
+        self.forward = Some(sink);
     }
 
     /// Start the full-output file with everything captured so far.
@@ -261,26 +425,51 @@ impl Capture {
     }
 }
 
+/// A foreground tool call the user may move to the background (Ctrl+B).
+#[derive(Clone, Copy)]
+pub(super) struct Offer<'a> {
+    pub handoff: &'a cyber_server::runtime::Handoff,
+    pub command: &'a str,
+}
+
 async fn execute(
     ctx: &Ctx<'_>,
     command: &str,
     workdir: &Path,
     timeout_ms: u64,
+    unsandboxed: bool,
+    offer: Option<Offer<'_>>,
 ) -> Result<String, ToolError> {
-    let prepared =
-        crate::sandboxing::prepare(ctx, &shell(&ctx.host.opts.shell, &ctx.location)?, command)
-            .await?;
-    execute_prepared(ctx, prepared, workdir, timeout_ms).await
+    let shell = shell(&ctx.host.opts.shell, &ctx.location)?;
+    let prepared = crate::sandboxing::prepare_shell(ctx, &shell, command, unsandboxed).await?;
+    execute_prepared(ctx, prepared, workdir, timeout_ms, offer).await
 }
 
 pub(super) async fn execute_prepared(
     ctx: &Ctx<'_>,
-    prepared: crate::sandboxing::Prepared,
+    mut prepared: crate::sandboxing::Prepared,
     workdir: &Path,
     timeout_ms: u64,
+    offer: Option<Offer<'_>>,
 ) -> Result<String, ToolError> {
-    let (capture, ended) = run_process(ctx, prepared, workdir, timeout_ms, Output::Merged).await?;
-    Ok(render(&capture, ended, timeout_ms))
+    let boundary = prepared.boundary.take();
+    let refused = Arc::clone(&prepared.refused);
+    let (capture, ended) =
+        run_process(ctx, prepared, workdir, timeout_ms, Output::Merged, offer).await?;
+    if let Ended::Handed(job) = ended {
+        return Ok(job);
+    }
+    let mut out = render(&capture, ended, timeout_ms);
+    if let Some(boundary) = boundary {
+        let refused = refused
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let text = String::from_utf8_lossy(&capture.tail);
+        let denials = crate::sandboxing::denials(&text, workdir, &boundary, &refused);
+        out.push_str(&crate::sandboxing::report(ctx, &denials).await);
+    }
+    Ok(out)
 }
 
 /// Which output a command contributes: tool calls merge stderr into stdout and keep the
@@ -297,13 +486,84 @@ async fn run_process(
     workdir: &Path,
     timeout_ms: u64,
     output: Output,
+    mut offer: Option<Offer<'_>>,
 ) -> Result<(Capture, Ended), ToolError> {
     let (stderr, limit) = match output {
         Output::Merged => (Stdio::piped(), None),
         Output::Stdout { max_bytes } => (Stdio::null(), Some(max_bytes)),
     };
+    let mut child = spawn(ctx, &prepared, workdir, stderr).await?;
+    let capture = Arc::new(Mutex::new(Capture::new(
+        ctx.host.opts.tool_output_dir.clone(),
+        limit,
+    )));
+    let readers: Vec<_> = [child.stdout(), child.stderr()]
+        .into_iter()
+        .flatten()
+        .map(|s| tokio::spawn(pump(s, Arc::clone(&capture))))
+        .collect();
+    let deadline = tokio::time::sleep(Duration::from_millis(timeout_ms));
+    tokio::pin!(deadline);
+    let ended = loop {
+        let ended = wait(ctx, &mut child, &mut prepared.asks, &mut deadline, offer).await;
+        let (Ended::Handoff, Some(Offer { command, .. })) = (&ended, offer) else {
+            break ended;
+        };
+        match super::background::admit(ctx, command, "bash").await {
+            Ok(admitted) => {
+                capture
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .forward_to(Arc::clone(&admitted.sink));
+                let owned = super::background::Owned {
+                    process: child,
+                    prepared,
+                    readers,
+                };
+                let job = super::background::launch(admitted, owned).await?;
+                let handed = Ended::Handed(super::background::describe(&job));
+                return Ok((Capture::new(PathBuf::new(), limit), handed));
+            }
+            // The command keeps running in the foreground.
+            Err(ToolError::Failed(reason)) => {
+                cyber_core::log::error(
+                    "bash",
+                    &format!("Could not move to the background: {reason}"),
+                    json!({}),
+                );
+                offer = None;
+            }
+            Err(ToolError::Aborted) => break Ended::Cancelled,
+        }
+    };
+    if !matches!(ended, Ended::Exited(_)) {
+        child.terminate();
+        let _ = child.wait().await;
+    }
+    for reader in readers {
+        // Background grandchildren may hold the pipes open; do not wait on them forever.
+        let _ = tokio::time::timeout(Duration::from_secs(1), reader).await;
+    }
+    if matches!(ended, Ended::Cancelled) {
+        return Err(ToolError::Aborted);
+    }
+    let capture = std::mem::replace(
+        &mut *capture.lock().unwrap_or_else(PoisonError::into_inner),
+        Capture::new(PathBuf::new(), limit),
+    );
+    Ok((capture, ended))
+}
+
+/// Start a prepared shell command with stdin closed, stdout piped and the `CYBER_*`
+/// environment, in its own process group (Windows: Job Object).
+pub(super) async fn spawn(
+    ctx: &Ctx<'_>,
+    prepared: &crate::sandboxing::Prepared,
+    workdir: &Path,
+    stderr: Stdio,
+) -> Result<Process, ToolError> {
     let depth = ctx.host.process_mcp_depth(&ctx.inv.session_id);
-    let mut child = Process::spawn(
+    Process::spawn(
         &prepared.program,
         &prepared.args,
         ctx.host.opts.sandbox_helper.as_deref(),
@@ -323,61 +583,31 @@ async fn run_process(
         },
     )
     .await
-    .map_err(|e| failed(format!("Could not start the shell: {e}")))?;
-    let capture = Arc::new(Mutex::new(Capture {
-        tail: Vec::new(),
-        dropped: 0,
-        file: None,
-        dir: ctx.host.opts.tool_output_dir.clone(),
-        limit,
-    }));
-    let readers = [
-        child
-            .stdout()
-            .map(|s| tokio::spawn(pump(s, Arc::clone(&capture)))),
-        child
-            .stderr()
-            .map(|s| tokio::spawn(pump(s, Arc::clone(&capture)))),
-    ];
-    let ended = wait(ctx, &mut child, &mut prepared.asks, timeout_ms).await;
-    if !matches!(ended, Ended::Exited(_)) {
-        child.terminate();
-        let _ = child.wait().await;
-    }
-    for reader in readers.into_iter().flatten() {
-        // Background grandchildren may hold the pipes open; do not wait on them forever.
-        let _ = tokio::time::timeout(Duration::from_secs(1), reader).await;
-    }
-    if matches!(ended, Ended::Cancelled) {
-        return Err(ToolError::Aborted);
-    }
-    let capture = std::mem::replace(
-        &mut *capture.lock().unwrap_or_else(PoisonError::into_inner),
-        Capture {
-            tail: Vec::new(),
-            dropped: 0,
-            file: None,
-            dir: PathBuf::new(),
-            limit,
-        },
-    );
-    Ok((capture, ended))
+    .map_err(|e| failed(format!("Could not start the shell: {e}")))
 }
 
-/// Wait for exit, timeout or cancellation, answering the proxy's network questions meanwhile.
+/// Wait for exit, timeout, cancellation or a move to the background, answering the
+/// proxy's network questions meanwhile.
 async fn wait(
     ctx: &Ctx<'_>,
     child: &mut Process,
     asks: &mut Option<tokio::sync::mpsc::Receiver<crate::sandboxing::NetworkAsk>>,
-    timeout_ms: u64,
+    deadline: &mut std::pin::Pin<&mut tokio::time::Sleep>,
+    offer: Option<Offer<'_>>,
 ) -> Ended {
-    let deadline = tokio::time::sleep(Duration::from_millis(timeout_ms));
-    tokio::pin!(deadline);
+    let handoff = async {
+        match offer {
+            Some(offer) => offer.handoff.requested().cancelled().await,
+            None => std::future::pending().await,
+        }
+    };
+    tokio::pin!(handoff);
     loop {
         tokio::select! {
             status = child.wait() => return Ended::Exited(status.ok().and_then(|s| s.code())),
-            _ = &mut deadline => return Ended::TimedOut,
+            _ = deadline.as_mut() => return Ended::TimedOut,
             _ = ctx.cancel.cancelled() => return Ended::Cancelled,
+            () = &mut handoff => return Ended::Handoff,
             Some((host, reply)) = next_ask(asks) => {
                 let _ = reply.send(crate::sandboxing::answer(ctx, host).await);
             }
@@ -385,7 +615,7 @@ async fn wait(
     }
 }
 
-async fn next_ask(
+pub(super) async fn next_ask(
     asks: &mut Option<tokio::sync::mpsc::Receiver<crate::sandboxing::NetworkAsk>>,
 ) -> Option<crate::sandboxing::NetworkAsk> {
     match asks {
@@ -398,6 +628,10 @@ enum Ended {
     Exited(Option<i32>),
     TimedOut,
     Cancelled,
+    /// The user asked to move the command to the background.
+    Handoff,
+    /// The command now runs as this background Job (its JSON description).
+    Handed(String),
 }
 
 async fn pump(mut stream: impl tokio::io::AsyncRead + Unpin, capture: Arc<Mutex<Capture>>) {
@@ -436,7 +670,8 @@ fn render(capture: &Capture, ended: Ended, timeout_ms: u64) -> String {
         Ended::Exited(Some(code)) => format!("{out}\nExit code: {code}"),
         Ended::Exited(None) => format!("{out}\nTerminated by a signal"),
         Ended::TimedOut => format!("{out}\nCommand timed out after {timeout_ms} ms"),
-        Ended::Cancelled => out,
+        Ended::Cancelled | Ended::Handoff => out,
+        Ended::Handed(job) => job,
     }
 }
 

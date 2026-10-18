@@ -218,3 +218,14 @@
 - **AND** decisions and evaluator usage SHALL remain recorded on the executing child, identifying the reviewed ancestor and the actual execution Location
 - **AND** intermediate allows SHALL NOT reset consecutive action blocks; three blocked actions SHALL trigger the ordinary fallback on the next classifier request
 - **AND** a deny fallback anywhere in the intersection SHALL refuse effects, while an independent manual ceiling SHALL remain a manual request
+
+### Requirement: bypass mode
+(P1) `bypass` SHALL evaluate every request as `allow` except explicit user/global deny ceilings, protected paths, critical-path removals, workspace trust and org policy denies. It SHALL be enabled only when the process runs inside the OS sandbox with `workspace-write` or stricter, or inside a detected container or VM, or when `--dangerously-bypass-permissions` is passed explicitly. Enabling it outside these conditions SHALL fail with `bypass mode requires a sandbox, a container, or --dangerously-bypass-permissions`. Every Turn SHALL admit the Session's Mode again before the model or any tool runs: a Session that holds a Mode the server no longer admits SHALL fail the Turn with the refusal until it switches to an admitted Mode.
+
+#### Scenario: Bypass refused on bare host
+- **WHEN** the user sets `mode: "bypass"` with sandbox `full-access` on a host machine and no flag
+- **THEN** the Session refuses to start in bypass and reports the requirement
+
+#### Scenario: Stored bypass refused after restart
+- **WHEN** a Session created in `bypass` with `--dangerously-bypass-permissions` is prompted after the server restarts without the flag on a bare host
+- **THEN** the Turn fails with the requirement before any tool runs

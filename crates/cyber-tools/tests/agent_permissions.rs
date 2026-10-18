@@ -158,6 +158,7 @@ fn host_with_loader(
         temp_dir: root.join("tmp"),
         sandbox_policy: None,
         sandbox_helper: cyber_sandbox::find_helper(),
+        isolation: Default::default(),
     })
 }
 
@@ -204,7 +205,8 @@ async fn policy_does_not_lose_config_denies_when_later_reads_fail() {
     );
     assert!(error.contains("denied"), "{error}");
     assert_eq!(f.read("a.txt"), "original");
-    assert_eq!(loads.load(Ordering::SeqCst), 2);
+    // The policy, then the `deny_read` check of the in-process editor.
+    assert_eq!(loads.load(Ordering::SeqCst), 3);
 }
 
 #[tokio::test]

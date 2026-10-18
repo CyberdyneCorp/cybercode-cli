@@ -1,10 +1,13 @@
 //! OS sandbox for model-run commands (`sandbox`): policy resolution, credential masking,
 //! the network allowlist proxy and per-platform enforcement.
 
+mod deny_read;
 mod env;
+mod isolation;
 #[cfg(target_os = "linux")]
 mod linux;
 mod policy;
+mod profiles;
 pub mod proxy;
 #[cfg(target_os = "macos")]
 mod seatbelt;
@@ -20,10 +23,14 @@ pub mod windows_streams;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-pub use env::mask_env;
+pub use deny_read::DenyRead;
+pub use env::{BASE_VARS, mask_env, policy_env};
+pub use isolation::{BYPASS_REQUIREMENT, Isolation, container_markers, in_container};
 pub use policy::{
-    DEFAULT_DOMAINS, NetworkMode, Policy, SandboxConfig, matches_domain, protected_in,
+    DEFAULT_DOMAINS, EnvPolicy, MANAGED_NOTICE, NetworkMode, Policy, SandboxConfig, matches_domain,
+    protected_in,
 };
+pub use profiles::BUILTIN_PROFILES;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SandboxError {
@@ -41,6 +48,8 @@ pub struct Launch {
     pub read_only: Vec<PathBuf>,
     /// Paths that must not be read.
     pub unreadable: Vec<PathBuf>,
+    /// `deny_read` globs of the selected profile, anchored at the Location.
+    pub deny_read: DenyRead,
     /// The allowlist proxy when the network mode is `proxy`.
     pub proxy: Option<proxy::Endpoint>,
     /// The `cyber-sandbox-exec` helper (Linux), which bridges the proxy into the sandbox.
@@ -61,6 +70,9 @@ pub struct Wrapped {
 
 /// Wrap `program args` for the current platform. Full access runs the command as is.
 pub fn wrap(launch: &Launch, program: &str, args: &[String]) -> Result<Wrapped, SandboxError> {
+    if let Some(error) = &launch.config.error {
+        return Err(SandboxError::Unavailable(error.clone()));
+    }
     let mut env = BTreeMap::new();
     let port = match &launch.proxy {
         Some(proxy::Endpoint::Tcp(port)) => Some(*port),

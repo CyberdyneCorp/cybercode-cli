@@ -54,6 +54,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         temp_dir: scratch.path().join("tmp"),
         sandbox_policy: None,
         sandbox_helper: cyber_sandbox::find_helper(),
+        isolation: Default::default(),
     });
     let snapshots =
         cyber_snapshot::GitSnapshots::new(scratch.path().join("data"), Arc::new(|_| json!({})));

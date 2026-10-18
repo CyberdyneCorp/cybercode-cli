@@ -31,6 +31,7 @@ async fn app(root: &std::path::Path) -> (App, String) {
         mcp_credentials: None,
         remote_skill_fetcher: None,
         workflow_cores: None,
+        isolation: None,
     })
     .await
     .unwrap();

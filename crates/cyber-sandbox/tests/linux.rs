@@ -44,6 +44,7 @@ fn launch(s: &Setup, config: serde_json::Value, proxy: Option<Endpoint>) -> Laun
     let config = SandboxConfig::resolve(&config, &BTreeMap::new(), None, &s.home);
     Launch {
         unreadable: config.unreadable(&s.home),
+        deny_read: Default::default(),
         writable: vec![s.root.clone()],
         read_only: protected_in(&s.root),
         proxy,
@@ -260,4 +261,31 @@ async fn hidden_credential_directories_reject_writes_without_changing_host_files
         assert!(!run(&l, &format!("touch {}", q(&fresh))).await.0);
         assert!(!fresh.exists());
     }
+}
+
+/// Regression (`sandbox` → Named sandbox profiles): a `**/*.pem` profile still launches
+/// in a checkout with more than 20,000 entries, and the match stays unreadable.
+#[tokio::test]
+async fn deny_read_glob_launches_in_a_large_checkout() {
+    let s = setup();
+    for dir in 0..50 {
+        let dir = s.root.join(format!("target/d{dir}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        for file in 0..500 {
+            std::fs::write(dir.join(format!("f{file}.o")), "").unwrap();
+        }
+    }
+    std::fs::write(s.root.join("target/d7/key.pem"), "SECRET").unwrap();
+    let mut l = launch(&s, json!({}), None);
+    l.deny_read = cyber_sandbox::DenyRead::new(&["**/*.pem".to_string()], &s.root, &s.home);
+    let (_, out) = run(
+        &l,
+        &format!(
+            "cat {}; echo launched",
+            q(&s.root.join("target/d7/key.pem"))
+        ),
+    )
+    .await;
+    assert!(out.contains("launched"), "{out}");
+    assert!(!out.contains("SECRET"), "{out}");
 }

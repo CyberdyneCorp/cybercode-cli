@@ -51,11 +51,23 @@ pub(crate) fn profile(launch: &Launch) -> String {
     if !launch.unreadable.is_empty() {
         let _ = writeln!(out, "(deny file-read* {})", filters(&launch.unreadable));
     }
+    for regex in launch.deny_read.regexes() {
+        let _ = writeln!(out, "(deny file-read* (regex #\"{regex}\"))");
+    }
     if launch.config.policy == Policy::WorkspaceWrite && !launch.writable.is_empty() {
         let _ = writeln!(out, "(allow file-write* {})", filters(&launch.writable));
         if !launch.read_only.is_empty() {
             let _ = writeln!(out, "(deny file-write* {})", filters(&launch.read_only));
         }
+    }
+    // A hidden file must not be renamed, linked or moved out of its pattern and then read
+    // under the new name: no writes to a match, no removal of the directories the
+    // pattern names.
+    for regex in launch.deny_read.regexes() {
+        let _ = writeln!(out, "(deny file-write* (regex #\"{regex}\"))");
+    }
+    for regex in launch.deny_read.ancestor_regexes() {
+        let _ = writeln!(out, "(deny file-write-unlink (regex #\"{regex}\"))");
     }
     let proxy_port = match &launch.proxy {
         Some(crate::proxy::Endpoint::Tcp(port)) => Some(*port),

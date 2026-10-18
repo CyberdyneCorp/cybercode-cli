@@ -79,6 +79,13 @@ impl Process {
         }
     }
 
+    /// Own a child started elsewhere, such as on a pseudo-terminal, that leads its own
+    /// process group.
+    #[cfg(unix)]
+    pub(crate) fn from_child(child: tokio::process::Child) -> Self {
+        Self { child }
+    }
+
     /// Adapt an already authorized native container into the foreground command loop.
     /// Shell tools have no stdin producer, so close that endpoint immediately.
     #[cfg(windows)]

@@ -415,6 +415,55 @@ pub fn file_diff(f: &mut Frame, app: &App, index: usize, scroll: u16, area: Rect
     );
 }
 
+/// A background task's log from `/tasks`.
+pub fn task_log(f: &mut Frame, app: &App, title: &str, text: &str, scroll: u16, area: Rect) {
+    let lines: Vec<Line> = text
+        .lines()
+        .map(|line| Line::from(line.to_owned()))
+        .collect();
+    let rect = centered(area, 110, area.height);
+    let title = format!("{title} · ↑↓ scroll · Esc close");
+    f.render_widget(Clear, rect);
+    f.render_widget(
+        Paragraph::new(lines)
+            .scroll((scroll, 0))
+            .block(frame(app, &title)),
+        rect,
+    );
+}
+
+/// `/btw`: the question, then the answer or a spinner line.
+pub fn side_chat(f: &mut Frame, app: &App, chat: &crate::side_chat::SideChat, area: Rect) {
+    let mut lines = vec![
+        Line::from(format!("You: {}", chat.question)),
+        Line::from(String::new()),
+    ];
+    let footer = match &chat.answer {
+        None => {
+            lines.push(Line::from("Thinking…"));
+            "Esc close"
+        }
+        Some(Ok(answer)) => {
+            lines.extend(answer.lines().map(|line| Line::from(line.to_owned())));
+            "i Insert answer · Esc discard"
+        }
+        Some(Err(error)) => {
+            lines.push(Line::from(format!("The side question failed: {error}")));
+            "Esc close"
+        }
+    };
+    let rect = centered(area, 100, area.height.min(24));
+    let title = format!("Side chat · not added to the session · {footer}");
+    f.render_widget(Clear, rect);
+    f.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((chat.scroll, 0))
+            .block(frame(app, &title)),
+        rect,
+    );
+}
+
 pub fn help(f: &mut Frame, app: &App, area: Rect) {
     let rows = [
         ("Enter", "send (steer while running)"),
@@ -442,7 +491,14 @@ pub fn help(f: &mut Frame, app: &App, area: Rect) {
         ("/rename [title]", "rename this session to resume it later"),
         ("/subtask <prompt> · /tasks · /stop", "background tasks"),
         ("/agent · /subagents", "browse child and parent threads"),
-        ("@path  !cmd", "mention a file · run a shell command"),
+        (
+            "/btw <question> · /side",
+            "side question; not added to the session",
+        ),
+        (
+            "@path  !cmd  &cmd",
+            "mention a file · run a shell command · in the background",
+        ),
         ("Alt+Up", "take back the last queued message"),
         ("PageUp / PageDown", "scroll"),
         ("Ctrl+C", "clear, or quit when empty"),

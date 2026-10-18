@@ -22,7 +22,7 @@ expression: shown
   MCP:           none configured
   LSP:           none running
   Machine:       CPU 18 percent busy, 12 cores; memory 75 percent used, 4.0 GB free; disk 98 percent used, 15.0 GB fr…
-
+  Sandbox:       workspace-write · available · isolation: sandbox
 
 
 

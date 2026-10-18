@@ -2033,6 +2033,7 @@ async fn memory_panel_recovery_and_deletion_use_real_api_ownership_and_retained_
         mcp_credentials: None,
         remote_skill_fetcher: None,
         workflow_cores: None,
+        isolation: None,
     })
     .await
     .unwrap();
@@ -3069,6 +3070,7 @@ async fn hook_notice_event_shows_untrusted_review_hint() {
         mcp_credentials: None,
         remote_skill_fetcher: None,
         workflow_cores: None,
+        isolation: None,
     })
     .await
     .unwrap();

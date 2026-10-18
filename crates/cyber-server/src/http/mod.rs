@@ -5,6 +5,7 @@
 
 mod catalog;
 mod children;
+mod deliveries;
 mod envelope;
 mod error;
 mod event_location;
@@ -20,6 +21,7 @@ mod mcp;
 mod mcp_serve;
 mod memory;
 pub mod openapi;
+mod pty;
 pub mod remote_tools;
 pub mod rpc;
 mod serve;
@@ -159,6 +161,23 @@ pub struct LocationDefaults {
 
 /// What the server needs beyond the runtime: catalogs and Location-level lookups.
 pub trait Services: Send + Sync {
+    /// `{ policy, profile, enforcement, isolation }` of `location` for `/health`.
+    fn sandbox_status(&self, _location: &Path) -> Option<serde_json::Value> {
+        None
+    }
+    /// `GET /permissions/test` (`permissions-modes` → Rule dry run).
+    fn permission_test<'a>(
+        &'a self,
+        _location: &'a Path,
+        _query: serde_json::Value,
+    ) -> BoxFuture<'a, Result<serde_json::Value, ApiError>> {
+        Box::pin(async {
+            Err(ApiError::service_unavailable(
+                "permissions",
+                "Permission dry runs are unavailable in this host",
+            ))
+        })
+    }
     fn transition_lsp(
         &self,
         _location: PathBuf,
@@ -577,6 +596,8 @@ pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router 
         .merge(sessions::routes())
         .merge(children::router())
         .merge(jobs::routes())
+        .merge(pty::routes())
+        .merge(deliveries::routes())
         .merge(hooks::routes())
         .merge(mcp::routes(mcp_serve))
         .merge(intelligence::routes())

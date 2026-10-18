@@ -55,9 +55,15 @@ pub struct ExecArgs {
     /// Use `auto` mode.
     #[arg(long)]
     pub auto: bool,
-    /// Use `bypass` mode: everything runs without approval.
+    /// Use `bypass` mode: everything runs without approval. The server refuses it unless
+    /// commands run in the OS sandbox or a container, or with
+    /// --dangerously-bypass-permissions.
     #[arg(long)]
     pub yolo: bool,
+    /// Allow `bypass` mode without a sandbox or a container (needs --embedded or
+    /// --ephemeral: a shared server cannot take it for one run).
+    #[arg(long)]
+    pub dangerously_bypass_permissions: bool,
     /// Add the never-ask rules to a reused Session too.
     #[arg(long)]
     pub non_interactive_rules: bool,
@@ -434,6 +440,7 @@ async fn handle(
             run.error = Some("the Session was deleted".into());
             return Step::End;
         }
+        "permission.asked.1" => decline(client, &event.data).await,
         kind => {
             out.durable(run, kind, &event.data);
             if kind.starts_with("session.step.ended") && run.over_budget() {
@@ -442,6 +449,28 @@ async fn handle(
         }
     }
     Step::Continue
+}
+
+/// What the model reads when exec declines a request nobody can answer.
+pub(crate) const NO_APPROVER: &str = "no interactive approver is attached to cyber exec";
+
+/// `exec-mode` → non-interactive runs: nobody answers a prompt, so a request the
+/// Session still raises (a sandbox ceiling such as `sandbox.escalate`, a network ask
+/// in `bypass`, or any ask in `--mode default`) is denied at once instead of
+/// holding the run open forever. The reply carries a message, so the model reads
+/// the denial and the Drain continues.
+async fn decline(client: &Client, data: &Value) {
+    let (Some(session), Some(request)) = (data["session_id"].as_str(), data["id"].as_str()) else {
+        return;
+    };
+    if !safe_id(session, "ses") || !safe_id(request, "per") {
+        return;
+    }
+    let body = json!({ "reply": "reject", "message": NO_APPROVER });
+    let path = format!("/sessions/{session}/permissions/{request}/reply");
+    if let Err(error) = client.post(&path, body).await {
+        eprintln!("could not decline permission request {request}: {error}");
+    }
 }
 
 fn api(e: cyber_client::ClientError) -> CliError {

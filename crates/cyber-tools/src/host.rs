@@ -2,6 +2,7 @@
 mod command_mcp;
 mod command_skills;
 mod files;
+mod isolation;
 mod path_skills;
 mod remote_sources;
 pub(crate) mod review;
@@ -54,7 +55,11 @@ pub struct HostOptions {
     pub sandbox_policy: Option<String>,
     /// Sandbox helper: Linux proxy bridging and Windows process ownership.
     pub sandbox_helper: Option<PathBuf>,
+    /// What may enable `bypass` besides an enforced sandbox.
+    pub isolation: IsolationOptions,
 }
+
+pub use isolation::{IsolationOptions, PermissionTest, PermissionTestReport};
 
 pub struct BuiltinHost {
     pub(crate) weak: std::sync::Weak<Self>,
@@ -791,6 +796,10 @@ impl ToolHost for BuiltinHost {
         cyber_core::budget::Budget::from_config(&config, "session")
     }
 
+    fn admit_mode(&self, directory: &str, agent: &str, mode: &str) -> Result<(), String> {
+        self.mode_admission(Path::new(directory), agent, mode)
+    }
+
     fn config_digest(&self, directory: &str) -> Option<String> {
         use sha2::Digest;
         // An unresolvable configuration has no digest; the next resolvable one is
@@ -1196,42 +1205,77 @@ impl ToolHost for BuiltinHost {
         command: &str,
         cancel: CancellationToken,
     ) -> BoxFuture<'_, Result<String, String>> {
-        let inv = Invocation {
-            registration: None,
-            session_id: session_id.into(),
-            directory: directory.into(),
-            agent: "user".into(),
-            mode: "bypass".into(),
-            message_id: String::new(),
-            call_id: cyber_core::ids::new_id("call"),
-            name: "bash".into(),
-            input: serde_json::json!({ "command": command }),
-            attempt: 1,
-            operation_key: String::new(),
-            asker: cyber_server::runtime::Asker::detached(),
-            rules: Value::Null,
-        };
+        let inv = user_invocation(directory, session_id, command);
         let command = command.to_string();
         Box::pin(async move {
-            let ctx = Ctx {
-                skill_paths: Default::default(),
-                loaded_skill: Default::default(),
-                compiler_feedback: Default::default(),
-                hook_decision: None,
-                denial: Default::default(),
-                host: self,
-                policy: self.policy_for(&inv, None).await?,
-                location: PathBuf::from(&inv.directory),
-                inv: &inv,
-                cancel,
-            };
+            let ctx = self.user_ctx(&inv, cancel).await?;
             let output = tools::bash::run_user(&ctx, &command)
                 .await
-                .map_err(|e| match e {
-                    ToolError::Failed(message) => message,
-                    ToolError::Aborted => "aborted".into(),
-                })?;
+                .map_err(user_error)?;
             self.budget(&ctx.location).apply(output, true)
+        })
+    }
+
+    fn shell_background(
+        &self,
+        directory: &str,
+        session_id: &str,
+        command: &str,
+    ) -> BoxFuture<'_, Result<String, String>> {
+        let inv = user_invocation(directory, session_id, command);
+        let command = command.to_string();
+        Box::pin(async move {
+            let ctx = self.user_ctx(&inv, CancellationToken::new()).await?;
+            tools::bash::run_user_background(&ctx, &command)
+                .await
+                .map_err(user_error)
+        })
+    }
+}
+
+/// A user shell command (`!` or `&`): the `user` agent in `bypass`, never asking.
+fn user_invocation(directory: &str, session_id: &str, command: &str) -> Invocation {
+    Invocation {
+        registration: None,
+        session_id: session_id.into(),
+        directory: directory.into(),
+        agent: "user".into(),
+        mode: "bypass".into(),
+        message_id: String::new(),
+        call_id: cyber_core::ids::new_id("call"),
+        name: "bash".into(),
+        input: serde_json::json!({ "command": command }),
+        attempt: 1,
+        operation_key: String::new(),
+        asker: cyber_server::runtime::Asker::detached(),
+        rules: Value::Null,
+    }
+}
+
+fn user_error(error: ToolError) -> String {
+    match error {
+        ToolError::Failed(message) => message,
+        ToolError::Aborted => "aborted".into(),
+    }
+}
+
+impl BuiltinHost {
+    async fn user_ctx<'a>(
+        &'a self,
+        inv: &'a Invocation,
+        cancel: CancellationToken,
+    ) -> Result<Ctx<'a>, String> {
+        Ok(Ctx {
+            skill_paths: Default::default(),
+            loaded_skill: Default::default(),
+            compiler_feedback: Default::default(),
+            hook_decision: None,
+            denial: Default::default(),
+            host: self,
+            policy: self.policy_for(inv, None).await?,
+            location: PathBuf::from(&inv.directory),
+            inv,
+            cancel,
         })
     }
 }
@@ -1251,7 +1295,7 @@ fn offered(
         _ => true,
     };
     let by_mode = match (mode, name) {
-        (Mode::Plan, "write" | "plan_exit" | "todo" | "skill") => true,
+        (Mode::Plan, "write" | "plan_exit" | "todo" | "skill" | "notify") => true,
         (Mode::Plan, "plan_enter") => false,
         (Mode::Plan, _) => safety == cyber_server::runtime::RetrySafety::ReadOnly,
         (_, "plan_exit") => false,

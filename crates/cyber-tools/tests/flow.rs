@@ -642,3 +642,89 @@ async fn the_pr_lookup_after_a_push_neither_asks_for_nor_grants_network() {
         .unwrap();
     flow.settle(&id).await;
 }
+
+/// `sandbox` → Escalation requests: the request shows the command and justification, an
+/// approval runs that one call outside the sandbox (`sandbox.escalated.1`), and the next
+/// call is sandboxed again.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tokio::test]
+async fn escalation_prompt_shows_command_and_justification_and_runs_once_unsandboxed() {
+    let fixture = Fixture::new();
+    let secret = fixture.dir.path().join("home/.ssh/id_fixture");
+    std::fs::create_dir_all(secret.parent().unwrap()).unwrap();
+    std::fs::write(&secret, "SECRET-IDENTITY\n").unwrap();
+    let command = format!("cat {}", secret.display());
+    let flow = Flow::with(
+        fixture,
+        vec![
+            call(
+                "c1",
+                "bash",
+                json!({"command": command, "sandbox": "escalate", "justification": "read the deploy key"}),
+            ),
+            call("c2", "bash", json!({"command": command})),
+            text("done"),
+        ],
+        true,
+        Arc::new(NoSnapshots),
+    );
+    flow.f.set_config(json!({"permissions": {"bash": "allow"}}));
+    let id = flow.session("bypass").await;
+    flow.prompt(&id, "read it").await;
+    let request = flow.pending(&id).await;
+    let PendingKind::Permission(ask) = &request.kind else {
+        panic!("expected a permission request")
+    };
+    assert_eq!(ask.action, "sandbox.escalate");
+    assert_eq!(ask.resources, vec![command.clone()]);
+    assert_eq!(ask.metadata["command"], command.as_str());
+    assert_eq!(ask.metadata["justification"], "read the deploy key");
+    assert!(
+        ask.always_patterns.is_empty(),
+        "an escalation is never saved"
+    );
+    flow.runtime
+        .reply_permission(&request.id, PermissionReply::Once)
+        .await
+        .unwrap();
+    flow.settle(&id).await;
+    assert!(flow.output(&id, "c1").await.contains("SECRET-IDENTITY"));
+    let second = flow.output(&id, "c2").await;
+    assert!(!second.contains("SECRET-IDENTITY"), "{second}");
+    let events = flow.f.store.read_events(&id, -1, 500).unwrap().events;
+    let escalated: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == "sandbox.escalated.1")
+        .collect();
+    assert_eq!(escalated.len(), 1);
+    assert_eq!(escalated[0].data["command"], command.as_str());
+    assert_eq!(escalated[0].data["justification"], "read the deploy key");
+    assert_eq!(escalated[0].data["call_id"], "c1");
+}
+
+/// `sandbox` → Escalation requests: `dont-ask` denies the escalation and nothing runs.
+#[tokio::test]
+async fn escalation_denied_in_dont_ask() {
+    let flow = Flow::new(
+        vec![
+            call(
+                "c1",
+                "bash",
+                json!({"command": "touch escalated", "sandbox": "escalate", "justification": "needs it"}),
+            ),
+            text("done"),
+        ],
+        false,
+    );
+    flow.f.set_config(json!({"permissions": {"bash": "allow"}}));
+    let id = flow.session("dont-ask").await;
+    flow.prompt(&id, "go").await;
+    flow.settle(&id).await;
+    assert_eq!(
+        flow.output(&id, "c1").await,
+        "Not pre-approved (dont-ask mode)"
+    );
+    assert!(!flow.f.repo.join("escalated").exists());
+    let events = flow.f.store.read_events(&id, -1, 500).unwrap().events;
+    assert!(!events.iter().any(|e| e.kind == "sandbox.escalated.1"));
+}

@@ -243,6 +243,7 @@ async fn recorded_job_without_a_live_owner_cannot_acknowledge_cancellation() {
         child_id: child.id,
         name: "lost".into(),
         kind: "subagent".into(),
+        command: None,
         description: "Lost control fixture".into(),
         status: JobStatus::Running,
         started_ms: 1,

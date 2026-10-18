@@ -64,6 +64,15 @@ pub struct SessionContext {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ShellResult {
     pub output: String,
+    /// The background Job a `background: true` command started.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job: Option<crate::runtime::Job>,
+}
+
+/// The foreground calls asked to move to the background (Ctrl+B).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct BackgroundResult {
+    pub call_ids: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -173,6 +182,10 @@ pub struct RevertBody {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ShellBody {
     pub command: String,
+    /// Start the command as a background Job of the Session (`& cmd`) instead of
+    /// recording its output.
+    #[serde(default)]
+    pub background: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -268,6 +281,7 @@ pub fn routes() -> Router<AppState> {
         .route(&format!("{s}/revert/clear"), post(clear))
         .route(&format!("{s}/revert/commit"), post(commit))
         .route(&format!("{s}/shell"), post(shell))
+        .route(&format!("{s}/background"), post(background))
         .route(&format!("{s}/messages"), get(messages))
         .route(&format!("{s}/messages/{{message_id}}"), get(message))
         .route(&format!("{s}/inbox"), get(inbox))
@@ -738,9 +752,41 @@ async fn shell(
     Path(id): Path<String>,
     Json(b): Json<ShellBody>,
 ) -> Result<Json<Data<ShellResult>>> {
+    if b.background {
+        let job = state.runtime.shell_background(&id, &b.command).await?;
+        let output = format!(
+            "Started background job {}; its log is {}",
+            job.id,
+            job.output_path.as_deref().unwrap_or("")
+        );
+        return Ok(Json(Data {
+            data: ShellResult {
+                output,
+                job: Some(job),
+            },
+        }));
+    }
     let output = state.runtime.shell(&id, &b.command).await?;
     Ok(Json(Data {
-        data: ShellResult { output },
+        data: ShellResult { output, job: None },
+    }))
+}
+
+/// Move the Session's running foreground command to the background (Ctrl+B); the call
+/// settles with the new Job's ID.
+async fn background(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Data<BackgroundResult>>> {
+    state.runtime.state(&id).await?;
+    let call_ids = state.runtime.request_handoff(&id);
+    if call_ids.is_empty() {
+        return Err(ApiError::conflict(
+            "No foreground command of this Session is running",
+        ));
+    }
+    Ok(Json(Data {
+        data: BackgroundResult { call_ids },
     }))
 }
 

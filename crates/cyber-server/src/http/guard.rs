@@ -39,8 +39,10 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
     {
         return error.into_response();
     }
+    // The PTY socket authenticates with its single-use ticket on every transport.
     if transport == Transport::Tcp
         && !public(req.uri().path())
+        && !super::pty::attach_route(req.uri().path())
         && !authorized(&req, state.options.password.as_deref())
     {
         let mut response = ApiError::unauthorized().into_response();

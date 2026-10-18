@@ -1,5 +1,27 @@
 # P1 implementation status
 
+## P1 acceptance batch B: increments 6–9 sign-off and whole-tree validation (2026-10-18)
+
+Uncommitted. The 33 requirements that [acceptance-plan](p1-acceptance-plan.md) increments 6–9 moved to class (a) (M1.1: 14, M1.2: 18, Other P1: 1, *Side chat*) were demonstrated on macOS in 46 end-to-end scenarios with the real debug `cyber` binary and a real `cyber serve` (HTTP, SSE and the ticketed PTY WebSocket), against a scripted local provider, a local WebSocket fixture and local TCP listeners; TUI scenarios ran in a pty and were captured as screens. No live model or internet was used. All 46 passed after the fixes below; the plan's [batch B section](p1-acceptance-plan.md#batch-b-acceptance-run-increments-69-2026-10-18) and the [audit](p1-acceptance-audit.md#p1-batch-b-sign-off-increments-69-2026-10-18) record each observation. The counts stay 118 (a), 3 (b), 32 (c), 59 (d), 2 (e) of 214: M1.1 15 of 18, M1.2 41 of 41.
+
+The ROADMAP escape exit criterion was demonstrated on macOS: a `bypass` Session with the default `workspace-write` sandbox wrote nothing outside the roots in nine write forms (including `.git/hooks/pre-commit` and `.cyber/hooks.jsonc`), and no connection reached a non-allowlisted local listener (proxy, `--noproxy`, raw socket).
+
+Bugs found and fixed, each with a regression test that fails without the fix:
+
+- `cyber exec` hung forever on any permission request its Session raised on the shared background server. Increment 6 made this reachable from `--yolo` (`sandbox.escalate` and unlisted-domain network asks are ceilings even in `bypass`); any ask in `--mode default` triggered it too. `cyber-cli` `commands/exec/mod.rs` (`decline`) rejects each `permission.asked.1` of the run with `no interactive approver is attached to cyber exec`, and `exec/report.rs` counts it as a denial. Test: `exec_lifecycle_hooks.rs::exec_on_the_shared_server_declines_requests_instead_of_waiting` (real `cyber serve` plus `cyber exec`; Unix-only like its file). Documented in `docs/local-core-guide.md`.
+- A WebSocket or file monitor ended its log with `[monitor ended: the command exited with code 0]`. `cyber-tools` `tools/monitor.rs` (`watch`) names an exit code only for command sources; others say `the source closed`. Test: `monitor.rs::monitor_url_end_note_says_the_source_closed` (portable; in the Windows job's `--test monitor` step).
+- The TUI `/tasks` list could not be navigated while a task produced output: every `job.*` reload reopened the picker, resetting the selection and the filter. `cyber-tui` `App::open_or_refresh_picker` and `Picker::refresh` (`app.rs`, used by `runner.rs` for `Msg::Tasks`) keep both. Test: `screens_tasks.rs::tasks_reload_keeps_the_filter_and_the_selected_task` (production App over HTTP; Unix-only like that module).
+
+Validation (macOS, whole working tree): `cargo test --workspace --no-fail-fast` 3,426 passed, 0 failed, 8 ignored (238 result lines including doc tests); workspace all-target Clippy with warnings denied; `x86_64-pc-windows-gnu` all-target Clippy (stub CC/AR, type-check only) for `cyber-app`, `cyber-cli`, `cyber-core`, `cyber-sandbox`, `cyber-server`, `cyber-tools` and `cyber-tui`; `cargo fmt --check`; `generate_sdk.py --check`, the SDK typecheck and 97 SDK tests; `openspec validate --all --strict` (72 items); `spec_lint.py` 0 errors, 21 warnings (the baseline); `spec_inventory.py` leaves ROADMAP unchanged.
+
+Docs: the acceptance plan (batch B section; the stale sandbox top gap is closed), audit (batch B sign-off section), M1.1/M1.2 `tasks.md` (batch B entries), ROADMAP milestone lines (M1.1 15 of 18, M1.2 41 of 41, totals after batch B) and `docs/local-core-guide.md` (exec declines requests) are updated.
+
+Partial or deferred:
+- Only macOS was run. Linux (bubblewrap) and native Windows were not, so no milestone is signed off natively. The PTY tools are Unix-only.
+- The scripted policy, jobs and escape scenarios ran before the later monitor and TUI rebuilds; those two fixes do not touch the paths they exercise.
+- Observed, not fixed (no SHALL clause broken): on an attended server a `bypass` proxy network ask blocks the Turn until a person answers (the intended ceiling); a Tasks row with a long command hides the last-log-line column at 160 columns; a Tasks reload response that arrives just after Esc can reopen the list.
+- Still open for M1.1: Windows enforcement and the `powershell` tool (increment 15) and the live auto classifier (e). M1.3, M1.4 and M1.5 were not part of batch B.
+
 ## P1 acceptance batch A: increments 1–5 sign-off and whole-tree validation (2026-10-18)
 
 Uncommitted. The 38 requirements that [acceptance-plan](p1-acceptance-plan.md) increments 1–5 moved to class (a) (M1.2: 10, M1.3: 16, M1.4: 12) were demonstrated in 41 end-to-end scenarios with the real debug `cyber` binary, a real `cyber serve` and the SDK's embedded `cyber serve --stdio`, against a scripted local provider and local MCP, HTTP-hook and LSP fixtures; TUI scenarios ran in a pty. No live model or internet was used. All 41 passed; the plan's [batch A section](p1-acceptance-plan.md#batch-a-acceptance-run-increments-15-2026-10-18) and the [audit](p1-acceptance-audit.md#p1-batch-a-sign-off-increments-15-2026-10-18) record each observation. The counts stay 85 (a), 5 (b), 45 (c), 77 (d), 2 (e) of 214.

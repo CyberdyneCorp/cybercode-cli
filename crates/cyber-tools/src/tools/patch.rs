@@ -1,6 +1,6 @@
 //! `apply_patch` (`builtin-tools` → apply_patch tool).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use cyber_server::runtime::{RetrySafety, ToolDef};
 use futures::future::BoxFuture;
@@ -200,6 +200,7 @@ async fn plan(ctx: &Ctx<'_>, ops: Vec<Op>) -> Result<Vec<Change>, ToolError> {
         match op {
             Op::Add { path, content } => {
                 let path = ctx.resolve(&path);
+                crate::sandboxing::refuse_hidden(ctx, &[&path]).await?;
                 let before = tokio::fs::read(&path).await.ok();
                 changes.push(Change {
                     kind: 'A',
@@ -210,6 +211,7 @@ async fn plan(ctx: &Ctx<'_>, ops: Vec<Op>) -> Result<Vec<Change>, ToolError> {
             }
             Op::Delete { path } => {
                 let path = ctx.resolve(&path);
+                crate::sandboxing::refuse_hidden(ctx, &[&path]).await?;
                 let before = tokio::fs::read(&path).await.map_err(|_| {
                     failed(format!("Cannot delete missing file {}", path.display()))
                 })?;
@@ -238,6 +240,11 @@ async fn update(
     out: &mut Vec<Change>,
 ) -> Result<(), ToolError> {
     let source = ctx.resolve(path);
+    let dest = move_to.map(|dest| ctx.resolve(&dest));
+    let checked: Vec<&Path> = std::iter::once(source.as_path())
+        .chain(dest.as_deref())
+        .collect();
+    crate::sandboxing::refuse_hidden(ctx, &checked).await?;
     let before = tokio::fs::read(&source)
         .await
         .map_err(|_| failed(format!("Cannot update missing file {}", source.display())))?;
@@ -250,9 +257,8 @@ async fn update(
     } else {
         updated
     };
-    match move_to {
+    match dest {
         Some(dest) => {
-            let dest = ctx.resolve(&dest);
             let existing = tokio::fs::read(&dest).await.ok();
             out.push(Change {
                 kind: 'D',

@@ -1,24 +1,31 @@
 //! Built-in tool implementations (`builtin-tools`).
 
 pub(crate) mod agent;
+mod background;
 pub(crate) mod bash;
+mod deliver;
 mod formatters;
 mod fs;
 pub(crate) mod intelligence;
 mod lsp;
 pub(crate) mod mcp;
 pub(crate) mod memory;
+mod monitor;
 mod notebook;
 pub(crate) mod patch;
 pub(crate) mod powershell;
 mod pr_links;
 pub(crate) mod process;
+#[cfg(unix)]
+mod pty;
 mod search;
 mod session;
 #[cfg(any(windows, test))]
 pub(crate) mod shell_resolve;
 mod skill;
 mod task;
+#[cfg(unix)]
+mod terminal;
 mod tool_search;
 mod web;
 pub(crate) mod websearch;
@@ -68,6 +75,9 @@ pub(crate) fn all() -> Vec<Box<dyn Tool>> {
         Box::new(agent::Agent),
         Box::new(workflow::Workflow),
         Box::new(task::TaskStop),
+        Box::new(monitor::Monitor),
+        Box::new(deliver::Notify),
+        Box::new(deliver::SendFile),
         Box::new(mcp::WaitForMcp),
         Box::new(mcp::ResourceTool::List),
         Box::new(mcp::ResourceTool::Templates),
@@ -83,6 +93,15 @@ pub(crate) fn all() -> Vec<Box<dyn Tool>> {
         tools.push(Box::new(powershell::PowerShell));
         tools
     };
+    // PTYs need a pseudo-terminal; Windows ConPTY is not wired to the sandboxed launch.
+    #[cfg(unix)]
+    let tools = {
+        let mut tools = tools;
+        tools.push(Box::new(pty::PtyStart));
+        tools.push(Box::new(pty::PtyWrite));
+        tools.push(Box::new(pty::PtyRead));
+        tools
+    };
     tools
 }
 
@@ -90,7 +109,8 @@ pub(crate) fn all() -> Vec<Box<dyn Tool>> {
 pub(crate) fn action_of(name: &str) -> &str {
     match name {
         "write" | "edit" | "apply_patch" | "notebook_edit" => "edit",
-        "powershell" => "bash",
+        "powershell" | "monitor" | "pty_start" | "pty_write" | "pty_read" => "bash",
+        "send_file" => "read",
         "enter_worktree" | "exit_worktree" => "worktree",
         "workflow" => crate::permissions::WORKFLOW_RUN,
         "mcp_list_resources" | "mcp_list_resource_templates" | "mcp_read_resource" => "read",

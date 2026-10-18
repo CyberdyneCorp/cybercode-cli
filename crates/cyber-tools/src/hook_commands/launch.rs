@@ -436,6 +436,7 @@ impl HookCommandRunner<'_> {
                 .flat_map(|root| cyber_sandbox::protected_in(root))
                 .collect(),
             unreadable: sandbox.unreadable(self.home),
+            deny_read: sandbox.deny_read_for(&self.resolved.trust.checkout_root, self.home),
             writable,
             proxy: proxy.as_ref().map(|proxy| proxy.endpoint.clone()),
             helper: self.helper.map(Path::to_path_buf),
@@ -467,7 +468,7 @@ impl HookCommandRunner<'_> {
         let mut env = if sandbox.policy == Policy::FullAccess {
             std::env::vars().collect::<Vec<_>>()
         } else {
-            cyber_sandbox::mask_env(std::env::vars(), &sandbox.env_allow, &credentials)
+            cyber_sandbox::policy_env(std::env::vars(), &sandbox, &credentials)
         };
         env.retain(|(key, _)| !wrapped.env.contains_key(key) && key != "TMPDIR");
         env.extend(wrapped.env.clone());

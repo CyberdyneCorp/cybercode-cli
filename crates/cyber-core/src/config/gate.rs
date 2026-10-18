@@ -96,7 +96,8 @@ fn classify(path: &[String], value: &Value) -> Class {
         ["permissions"] | ["agents", _, "permissions"] => {
             sensitive_if(grants_allow(value) || value.get("auto_mode").is_some())
         }
-        ["worktrees", "setup"] | ["agents", _, "request"] => Class::Sensitive,
+        // An agent's sandbox profile is a boundary, as `sandbox` is.
+        ["worktrees", "setup"] | ["agents", _, "request" | "sandbox"] => Class::Sensitive,
         _ if value.is_object() => Class::Recurse,
         _ => sensitive_if(has_placeholder_deep(value)),
     }
@@ -205,7 +206,7 @@ mod tests {
             "permissions": {"bash": {"*": "ask", "rm *": "deny"}},
             "instructions": ["{file:~/.ssh/id_rsa}"],
             "agents": {"docs": {"description": "d", "permission_mode": "plan",
-                                 "permissions": {"edit": "allow"}}},
+                                 "permissions": {"edit": "allow"}, "sandbox": "workspace"}},
             "worktrees": {"root": "../wt", "setup": ["npm ci"]}
         });
         let split = split_sensitive(&layer);
@@ -216,6 +217,7 @@ mod tests {
                 "/mcp",
                 "/instructions",
                 "/agents/docs/permissions",
+                "/agents/docs/sandbox",
                 "/worktrees/setup"
             ]
         );

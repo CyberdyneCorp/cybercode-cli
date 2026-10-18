@@ -60,6 +60,7 @@ impl Server {
             remote_skill_fetcher: None,
             // Slot counts must not depend on the runner's cores (CI has 3-4).
             workflow_cores: Some(16),
+            isolation: None,
         })
         .await
         .unwrap();

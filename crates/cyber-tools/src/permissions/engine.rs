@@ -294,6 +294,7 @@ pub fn defaults(allowed_dirs: &[PathBuf], primary_agent: bool) -> Vec<Rule> {
         "history_search",
         "wait_for_mcp",
         "tool_search",
+        "notify",
     ] {
         rules.push(Rule::new(action, "*", Effect::Allow, "default"));
     }
@@ -371,6 +372,12 @@ pub struct Request {
     /// The tool declares itself destructive (`destructiveHint`): `auto` mode always
     /// sends it to the classifier, even when a rule or saved approval allows it.
     pub destructive: bool,
+    /// Crossing an OS sandbox boundary (an unlisted domain, an escalation): `bypass`
+    /// does not turn its `ask` into `allow` (`sandbox` boundaries are ceilings).
+    pub sandbox_boundary: bool,
+    /// At least `ask` in every Mode but `bypass`, whatever the rules and saved
+    /// approvals allow (`sandbox` → Excluded commands).
+    pub ask_floor: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -408,16 +415,46 @@ impl Policy {
         if let Some(denied) = self.rule_denial(req, ruled) {
             return denied;
         }
-        let effect = if ruled == Effect::Ask && self.saved_allows(req) {
+        let effect = if req.sandbox_boundary {
+            self.boundary_effect(req, ruled)
+        } else if ruled == Effect::Ask && self.saved_allows(req) {
             Effect::Allow
         } else {
             ruled
+        };
+        let effect = if req.ask_floor && effect == Effect::Allow {
+            Effect::Ask
+        } else {
+            effect
         };
         let mut decision = self.decide_in_mode(req, effect, self.mode);
         for mode in &self.parent_modes {
             decision = intersect(decision, self.decide_in_mode(req, effect, *mode));
         }
         decision
+    }
+
+    /// A sandbox boundary is a ceiling: only an explicit `allow` for its own action
+    /// (`sandbox.escalate`, `network`) from a user, global, command-line or managed layer,
+    /// or a person's saved approval (a domain approved `always`), crosses it without
+    /// asking. Wildcard actions (`"permissions": "allow"`) and repository, agent and
+    /// Session rules leave it at `ask`.
+    fn boundary_effect(&self, req: &Request, ruled: Effect) -> Effect {
+        let explicit: Vec<Rule> = self
+            .rules
+            .iter()
+            .filter(|rule| {
+                rule.action == req.action && (rule.effect != Effect::Allow || trusted(rule))
+            })
+            .cloned()
+            .collect();
+        let explicit_allow =
+            ruled == Effect::Allow && request_effect(&explicit, req) == Effect::Allow;
+        if explicit_allow || self.saved_allows(req) {
+            Effect::Allow
+        } else {
+            Effect::Ask
+        }
     }
 
     /// `tool-registry` → Annotations drive modes and hooks: a destructive tool is always
@@ -514,7 +551,7 @@ impl Policy {
         })
     }
 
-    fn saved_allows(&self, req: &Request) -> bool {
+    pub(super) fn saved_allows(&self, req: &Request) -> bool {
         req.resources.iter().all(|res| {
             self.saved
                 .iter()
@@ -526,6 +563,7 @@ impl Policy {
         match (mode, effect) {
             (_, Effect::Deny) => Decision::Deny(format!("denied by rule for {}", req.action)),
             (_, Effect::Allow) => Decision::Allow,
+            (Mode::Bypass, Effect::Ask) if req.sandbox_boundary => Decision::Ask,
             (Mode::Bypass, Effect::Ask) => Decision::Allow,
             (Mode::Auto, Effect::Ask) if self.default_workflow_run(req) => Decision::Allow,
             (Mode::AcceptEdits, Effect::Ask) if req.file_edit && self.inside_location(req) => {
@@ -575,6 +613,16 @@ impl Policy {
             })
         })
     }
+}
+
+/// A rule the user controls: not a default, repository, config-profile, agent or Session
+/// rule.
+fn trusted(rule: &Rule) -> bool {
+    !["project:", "profile:", "agent:"]
+        .iter()
+        .any(|prefix| rule.source.starts_with(prefix))
+        && rule.source != "default"
+        && rule.source != "session"
 }
 
 fn intersect(child: Decision, parent: Decision) -> Decision {
@@ -920,6 +968,89 @@ mod tests {
             Decision::Allow,
             "exact allow lifts protection"
         );
+    }
+
+    /// Regression (`sandbox` → Escalation requests): a blanket `allow` (also an
+    /// `"*": "allow"` action) or a repository `sandbox.escalate: allow` does not cross the
+    /// sandbox boundary: the escalation asks in `default` and `bypass` and is denied in
+    /// `dont-ask`. Only the user's explicit rule allows it; a deny still denies.
+    #[test]
+    fn sandbox_boundary_needs_an_explicit_user_allow() {
+        let escalate = Request {
+            action: "sandbox.escalate".into(),
+            resources: vec!["rm -rf /tmp/x".into()],
+            sandbox_boundary: true,
+            ..Request::default()
+        };
+        let with = |rule: Rule| {
+            let mut rules = defaults(&[], true);
+            rules.push(rule);
+            rules
+        };
+        for rule in [
+            Rule::new("*", "*", Effect::Allow, "global:x"),
+            Rule::new(
+                "sandbox.escalate",
+                "*",
+                Effect::Allow,
+                "project:/repo/cyber.jsonc",
+            ),
+            Rule::new("sandbox.escalate", "*", Effect::Allow, "agent:build"),
+        ] {
+            let source = rule.source.clone();
+            let rules = with(rule);
+            assert_eq!(
+                policy(rules.clone(), Mode::Default).decide(&escalate),
+                Decision::Ask,
+                "{source}"
+            );
+            assert_eq!(
+                policy(rules.clone(), Mode::Bypass).decide(&escalate),
+                Decision::Ask,
+                "{source}"
+            );
+            assert!(
+                matches!(
+                    policy(rules, Mode::DontAsk).decide(&escalate),
+                    Decision::Deny(_)
+                ),
+                "{source}"
+            );
+        }
+        // A domain a person approved `always` stays approved.
+        let mut saved = policy(
+            with(Rule::new("*", "*", Effect::Allow, "global:x")),
+            Mode::Bypass,
+        );
+        saved.saved = vec![Rule::new("network", "example.org", Effect::Allow, "saved")];
+        let domain = |host: &str| Request {
+            action: "network".into(),
+            resources: vec![host.into()],
+            sandbox_boundary: true,
+            ..Request::default()
+        };
+        assert_eq!(saved.decide(&domain("example.org")), Decision::Allow);
+        assert_eq!(saved.decide(&domain("evil.test")), Decision::Ask);
+        let explicit = with(Rule::new(
+            "sandbox.escalate",
+            "*",
+            Effect::Allow,
+            "global:x",
+        ));
+        assert_eq!(
+            policy(explicit, Mode::DontAsk).decide(&escalate),
+            Decision::Allow
+        );
+        let denied = with(Rule::new(
+            "*",
+            "*",
+            Effect::Deny,
+            "project:/repo/cyber.jsonc",
+        ));
+        assert!(matches!(
+            policy(denied, Mode::Bypass).decide(&escalate),
+            Decision::Deny(_)
+        ));
     }
 
     #[test]

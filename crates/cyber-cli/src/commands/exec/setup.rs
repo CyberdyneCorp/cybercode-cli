@@ -62,6 +62,11 @@ pub fn validate(args: &ExecArgs) -> Result<(), CliError> {
             "--attach cannot be combined with --embedded or --ephemeral",
         ));
     }
+    if args.dangerously_bypass_permissions && !(args.embedded || args.ephemeral) {
+        return Err(CliError::usage(
+            "--dangerously-bypass-permissions needs --embedded or --ephemeral: a shared server cannot take it for one run",
+        ));
+    }
     if args.trust_project_hooks && !(args.embedded || args.ephemeral) {
         return Err(CliError::usage(
             "--trust-project-hooks needs --embedded or --ephemeral: a shared server cannot take an approval for one run",
@@ -104,6 +109,7 @@ pub async fn backend(args: &ExecArgs, ctx: &Context) -> Result<Backend, CliError
             mcp_credentials: None,
             remote_skill_fetcher: None,
             workflow_cores: None,
+            isolation: isolation(args.dangerously_bypass_permissions),
         })
         .await
         .map_err(CliError::runtime)?;
@@ -122,6 +128,12 @@ pub async fn backend(args: &ExecArgs, ctx: &Context) -> Result<Backend, CliError
         client: Client::http(&info.registration.url, Some(info.password)),
         _app: None,
     })
+}
+
+/// The `bypass` gate inputs of an in-process server: the probe alone, or with the
+/// explicit `--dangerously-bypass-permissions`.
+pub(crate) fn isolation(dangerously: bool) -> Option<cyber_tools::IsolationOptions> {
+    dangerously.then(|| cyber_tools::IsolationOptions::probe(true))
 }
 
 /// Approve the project/local handler digests resolved now, for this run only.

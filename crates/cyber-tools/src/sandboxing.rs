@@ -1,12 +1,14 @@
-//! Running bash under the OS sandbox (`sandbox`): roots, masked environment, the network
-//! proxy and `network` permission requests for domains outside the allowlist.
+//! Running bash under the OS sandbox (`sandbox`): roots, the environment policy, the
+//! network proxy and `network` permission requests for domains outside the allowlist,
+//! plus the classification of sandbox denials (`sandbox` → Escalation requests, Sandbox
+//! events and audit).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use cyber_sandbox::proxy::{Decide, Proxy};
-use cyber_sandbox::{Launch, NetworkMode, Policy, SandboxConfig, matches_domain, protected_in};
+use cyber_sandbox::{DenyRead, Launch, NetworkMode, Policy, SandboxConfig, protected_in};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::host::Ctx;
@@ -22,15 +24,79 @@ pub(crate) struct Prepared {
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
     pub asks: Option<mpsc::Receiver<NetworkAsk>>,
+    /// What the OS sandbox enforces; `None` when the command runs unsandboxed.
+    pub boundary: Option<Boundary>,
+    /// Hosts the proxy refused while the command ran.
+    pub refused: Arc<Mutex<Vec<String>>>,
     _proxy: Option<Proxy>,
 }
 
+/// The enforced filesystem boundary of one sandboxed command.
+pub(crate) struct Boundary {
+    writable: Vec<PathBuf>,
+    read_only: Vec<PathBuf>,
+    unreadable: Vec<PathBuf>,
+    deny_read: DenyRead,
+}
+
+/// How one launch is confined beyond the effective policy.
+#[derive(Default)]
+struct Scope<'a> {
+    ambient_temp: bool,
+    git_roots: Option<&'a [PathBuf]>,
+    extra_credentials: &'a [String],
+    /// An approved escalation or an excluded command: no OS enforcement.
+    unsandboxed: bool,
+}
+
+/// The effective sandbox of the call: config, `--sandbox` and the agent's profile.
+pub(crate) fn effective(ctx: &Ctx<'_>) -> SandboxConfig {
+    let (config, sources) = (ctx.host.opts.config)(&ctx.location).unwrap_or_default();
+    resolve(ctx, &config, &sources)
+}
+
+fn resolve(
+    ctx: &Ctx<'_>,
+    config: &serde_json::Value,
+    sources: &std::collections::BTreeMap<String, String>,
+) -> SandboxConfig {
+    SandboxConfig::resolve_for(
+        config,
+        sources,
+        ctx.host.opts.sandbox_policy.as_deref(),
+        Some(&ctx.inv.agent),
+        &ctx.host.opts.home,
+    )
+}
+
+/// A shell command under the effective sandbox (`bash -l` with `sandbox.env.login_shell`).
 pub(crate) async fn prepare(
     ctx: &Ctx<'_>,
     shell: &str,
     command: &str,
 ) -> Result<Prepared, ToolError> {
-    prepare_command(ctx, shell, &["-c".to_string(), command.to_string()]).await
+    prepare_shell(ctx, shell, command, false).await
+}
+
+/// As [`prepare`], or without OS enforcement for an approved escalation or an excluded
+/// command.
+pub(crate) async fn prepare_shell(
+    ctx: &Ctx<'_>,
+    shell: &str,
+    command: &str,
+    unsandboxed: bool,
+) -> Result<Prepared, ToolError> {
+    let flag = if effective(ctx).env.login_shell {
+        "-lc"
+    } else {
+        "-c"
+    };
+    let scope = Scope {
+        ambient_temp: true,
+        unsandboxed,
+        ..Scope::default()
+    };
+    prepare_scoped_command(ctx, shell, &[flag.to_string(), command.to_string()], scope).await
 }
 
 pub(crate) async fn prepare_command(
@@ -38,7 +104,11 @@ pub(crate) async fn prepare_command(
     program: &str,
     args: &[String],
 ) -> Result<Prepared, ToolError> {
-    prepare_scoped_command(ctx, program, args, true, None, &[]).await
+    let scope = Scope {
+        ambient_temp: true,
+        ..Scope::default()
+    };
+    prepare_scoped_command(ctx, program, args, scope).await
 }
 
 /// Automatic formatters use owned temporary roots rather than the ambient OS temp tree.
@@ -47,7 +117,7 @@ pub(crate) async fn prepare_formatter_command(
     program: &str,
     args: &[String],
 ) -> Result<Prepared, ToolError> {
-    prepare_scoped_command(ctx, program, args, false, None, &[]).await
+    prepare_scoped_command(ctx, program, args, Scope::default()).await
 }
 
 /// Setup must not gain ambient temporary-directory access outside its owned roots.
@@ -57,7 +127,11 @@ pub(crate) async fn prepare_worktree_command(
     args: &[String],
     credentials: &[String],
 ) -> Result<Prepared, ToolError> {
-    prepare_scoped_command(ctx, program, args, false, None, credentials).await
+    let scope = Scope {
+        extra_credentials: credentials,
+        ..Scope::default()
+    };
+    prepare_scoped_command(ctx, program, args, scope).await
 }
 
 pub(crate) fn credential_env_names(config: &serde_json::Value) -> Vec<String> {
@@ -77,32 +151,34 @@ pub(crate) async fn prepare_worktree_git(
     args: &[String],
     writable: &[PathBuf],
 ) -> Result<Prepared, ToolError> {
-    prepare_scoped_command(ctx, "git", args, false, Some(writable), &[]).await
+    let scope = Scope {
+        git_roots: Some(writable),
+        ..Scope::default()
+    };
+    prepare_scoped_command(ctx, "git", args, scope).await
 }
 
 async fn prepare_scoped_command(
     ctx: &Ctx<'_>,
     program: &str,
     args: &[String],
-    ambient_temp: bool,
-    git_roots: Option<&[PathBuf]>,
-    extra_credentials: &[String],
+    scope: Scope<'_>,
 ) -> Result<Prepared, ToolError> {
-    let (config, sources) = (ctx.host.opts.config)(&ctx.location).unwrap_or_default();
+    let (config, _) = (ctx.host.opts.config)(&ctx.location).unwrap_or_default();
     let home = &ctx.host.opts.home;
-    let sandbox = SandboxConfig::resolve(
-        &config,
-        &sources,
-        ctx.host.opts.sandbox_policy.as_deref(),
-        home,
-    );
+    let mut sandbox = effective(ctx);
+    if scope.unsandboxed {
+        sandbox.policy = Policy::FullAccess;
+    }
     let tmp = session_tmp(ctx)?;
+    let refused = Arc::new(Mutex::new(Vec::new()));
     let (asks, proxy) =
         if sandbox.policy != Policy::FullAccess && sandbox.network == NetworkMode::Proxy {
             let (tx, rx) = mpsc::channel(16);
             let decide = decider(
-                &sandbox.allowed_domains,
+                &sandbox,
                 ctx.host.network_approvals(&ctx.inv.session_id),
+                Arc::clone(&refused),
                 tx,
             );
             let proxy = start_proxy(decide, &tmp)
@@ -112,22 +188,23 @@ async fn prepare_scoped_command(
         } else {
             (None, None)
         };
-    let writable = match git_roots {
+    let writable = match scope.git_roots {
         Some(owned) => owned
             .iter()
             .cloned()
             .chain([tmp.clone(), ctx.host.opts.tool_output_dir.clone()])
             .chain(sandbox.extra_writable.iter().cloned())
             .collect(),
-        None => roots(ctx, &sandbox, &tmp, ambient_temp),
+        None => roots(ctx, &sandbox, &tmp, scope.ambient_temp),
     };
     let launch = Launch {
         read_only: writable
             .iter()
-            .filter(|root| !git_roots.is_some_and(|owned| owned.contains(root)))
+            .filter(|root| !scope.git_roots.is_some_and(|owned| owned.contains(root)))
             .flat_map(|root| protected_in(root))
             .collect(),
         unreadable: sandbox.unreadable(home),
+        deny_read: sandbox.deny_read_for(&ctx.location, home),
         writable,
         proxy: proxy.as_ref().map(|p| p.endpoint.clone()),
         helper: ctx.host.opts.sandbox_helper.clone(),
@@ -139,7 +216,7 @@ async fn prepare_scoped_command(
         &sandbox,
         &config,
         ctx.host.opts.models.as_deref(),
-        extra_credentials,
+        scope.extra_credentials,
     );
     let mut env: Vec<(String, String)> = base
         .into_iter()
@@ -147,11 +224,19 @@ async fn prepare_scoped_command(
         .collect();
     env.extend(wrapped.env);
     env.push(("TMPDIR".into(), tmp.display().to_string()));
+    let boundary = (sandbox.policy != Policy::FullAccess).then(|| Boundary {
+        writable: launch.writable,
+        read_only: launch.read_only,
+        unreadable: launch.unreadable,
+        deny_read: launch.deny_read,
+    });
     Ok(Prepared {
         program: wrapped.program,
         args: wrapped.args,
         env,
         asks,
+        boundary,
+        refused,
         _proxy: proxy,
     })
 }
@@ -171,7 +256,7 @@ fn command_environment(
         .unwrap_or_default();
     credentials.extend(credential_env_names(config));
     credentials.extend_from_slice(extra_credentials);
-    cyber_sandbox::mask_env(vars, &sandbox.env_allow, &credentials)
+    cyber_sandbox::policy_env(vars, sandbox, &credentials)
 }
 
 async fn start_proxy(decide: Decide, _tmp: &Path) -> std::io::Result<Proxy> {
@@ -189,46 +274,55 @@ async fn start_proxy(decide: Decide, _tmp: &Path) -> std::io::Result<Proxy> {
 /// Whether the effective sandbox has its network off (`sandbox.network: "off"` under an
 /// enforcing policy).
 pub(crate) fn network_off(ctx: &Ctx<'_>) -> bool {
-    let (config, sources) = (ctx.host.opts.config)(&ctx.location).unwrap_or_default();
-    let sandbox = SandboxConfig::resolve(
-        &config,
-        &sources,
-        ctx.host.opts.sandbox_policy.as_deref(),
-        &ctx.host.opts.home,
-    );
+    let sandbox = effective(ctx);
     sandbox.policy != Policy::FullAccess && sandbox.network == NetworkMode::Off
 }
 
-/// Allowlisted and session-approved domains pass at once; others wait for the tool loop.
+/// Allowlisted and session-approved domains pass at once, denied ones never; others wait
+/// for the tool loop. Every refusal is kept for the denial report.
 fn decider(
-    allowed: &[String],
+    sandbox: &SandboxConfig,
     approved: Arc<Mutex<HashSet<String>>>,
+    refused: Arc<Mutex<Vec<String>>>,
     tx: mpsc::Sender<NetworkAsk>,
 ) -> Decide {
-    let allowed = allowed.to_vec();
+    let sandbox = sandbox.clone();
     Arc::new(move |host: String| {
-        let known = matches_domain(&host, &allowed)
-            || approved
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .contains(&host);
-        let tx = tx.clone();
+        let denied = sandbox.domain_denied(&host);
+        let known = !denied
+            && (sandbox.domain_allowed(&host)
+                || approved
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .contains(&host));
+        let (tx, refused) = (tx.clone(), Arc::clone(&refused));
         Box::pin(async move {
             if known {
                 return true;
             }
-            let (reply, answer) = oneshot::channel();
-            tx.send((host, reply)).await.is_ok() && answer.await.unwrap_or(false)
+            let allowed = !denied && {
+                let (reply, answer) = oneshot::channel();
+                tx.send((host.clone(), reply)).await.is_ok() && answer.await.unwrap_or(false)
+            };
+            if !allowed {
+                let mut refused = refused.lock().unwrap_or_else(PoisonError::into_inner);
+                if !refused.contains(&host) {
+                    refused.push(host);
+                }
+            }
+            allowed
         })
     })
 }
 
-/// Ask for `network` on a domain; an approval holds for the rest of the Session.
+/// Ask for `network` on a domain; an approval holds for the rest of the Session. The
+/// allowlist is a sandbox boundary, so `bypass` still asks.
 pub(crate) async fn answer(ctx: &Ctx<'_>, host: String) -> bool {
     let req = Request {
         action: "network".into(),
         resources: vec![host.clone()],
         read_only: true,
+        sandbox_boundary: true,
         ..Request::default()
     };
     let allowed = ctx
@@ -249,27 +343,183 @@ pub(crate) async fn answer(ctx: &Ctx<'_>, host: String) -> bool {
     allowed
 }
 
+/// One sandbox denial: `operation` is `read`, `write` or `network`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Denial {
+    pub operation: &'static str,
+    pub target: String,
+}
+
+/// Messages the OS reports for sandbox refusals, lowercase: Seatbelt answers `EPERM`,
+/// bubblewrap's read-only binds `EROFS`.
+const DENIAL_MARKERS: &[&str] = &["operation not permitted", "read-only file system"];
+
+/// The denials in a sandboxed command's output and the proxy's refusals. A path error
+/// counts only when the boundary explains it: an unreadable or `deny_read` path, or a
+/// write outside the writable roots or onto a protected path.
+pub(crate) fn denials(
+    output: &str,
+    workdir: &Path,
+    boundary: &Boundary,
+    refused: &[String],
+) -> Vec<Denial> {
+    let mut out: Vec<Denial> = Vec::new();
+    for line in output.lines() {
+        let Some(denial) = denied_path(line, workdir).and_then(|path| boundary.classify(&path))
+        else {
+            continue;
+        };
+        if !out.contains(&denial) {
+            out.push(denial);
+        }
+    }
+    out.extend(refused.iter().map(|host| Denial {
+        operation: "network",
+        target: host.clone(),
+    }));
+    out
+}
+
+impl Boundary {
+    fn classify(&self, path: &Path) -> Option<Denial> {
+        let target = path.display().to_string();
+        let hidden =
+            self.unreadable.iter().any(|p| path.starts_with(p)) || self.deny_read.denies(path);
+        if hidden {
+            return Some(Denial {
+                operation: "read",
+                target,
+            });
+        }
+        let canonical = crate::host::canonical(path);
+        let inside = |roots: &[PathBuf]| {
+            roots.iter().any(|root| {
+                path.starts_with(root) || canonical.starts_with(crate::host::canonical(root))
+            })
+        };
+        (!inside(&self.writable) || inside(&self.read_only)).then_some(Denial {
+            operation: "write",
+            target,
+        })
+    }
+}
+
+/// The path of a refusal line: `tool: path: message`, `cannot touch 'path': message`
+/// or zsh's `zsh:1: message: path`.
+fn denied_path(line: &str, workdir: &Path) -> Option<PathBuf> {
+    let lower = line.to_ascii_lowercase();
+    let (at, marker) = DENIAL_MARKERS
+        .iter()
+        .find_map(|marker| lower.find(marker).map(|at| (at, *marker)))?;
+    let raw = quoted(line).or_else(|| {
+        let after = line[at + marker.len()..].strip_prefix(": ");
+        after.or_else(|| {
+            let before = line[..at].trim_end().strip_suffix(':')?;
+            let segment = before.rsplit(": ").next()?;
+            Some(
+                segment
+                    .trim()
+                    .trim_start_matches("cannot create ")
+                    .trim_start_matches("cannot open "),
+            )
+        })
+    })?;
+    let raw = raw.trim();
+    if raw.is_empty() || (raw.contains(char::is_whitespace) && !raw.contains('/')) {
+        return None;
+    }
+    let path = Path::new(raw);
+    Some(crate::bash_analysis::normalize(&if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        workdir.join(path)
+    }))
+}
+
+/// The first quoted span of `line`, as GNU tools print paths.
+fn quoted(line: &str) -> Option<&str> {
+    let quotes = ['\'', '‘', '’', '"', '`'];
+    let start = line.find(quotes)?;
+    let rest = &line[start + line[start..].chars().next()?.len_utf8()..];
+    Some(&rest[..rest.find(quotes)?])
+}
+
+/// The model-visible report of `denials`, recorded as `sandbox.denied.1` events.
+pub(crate) async fn report(ctx: &Ctx<'_>, denials: &[Denial]) -> String {
+    let mut text = String::new();
+    for denial in denials {
+        let _ = ctx
+            .inv
+            .asker
+            .record_sandbox(
+                cyber_server::runtime::SandboxEvent::Denied,
+                serde_json::json!({
+                    "session_id": ctx.inv.session_id,
+                    "call_id": ctx.inv.call_id,
+                    "operation": denial.operation,
+                    "target": denial.target,
+                }),
+            )
+            .await;
+        text.push_str(&format!(
+            "\nSandbox denied: {} {}",
+            denial.operation, denial.target
+        ));
+    }
+    if !denials.is_empty() {
+        text.push_str(
+            "\nTo run this one command outside the sandbox, call bash again with sandbox: \"escalate\" and a justification.",
+        );
+    }
+    text
+}
+
+/// The profile's `deny_read` globs, which `read`, `glob` and `grep` also hide.
+pub(crate) fn hidden(ctx: &Ctx<'_>) -> DenyRead {
+    effective(ctx).deny_read_for(&ctx.location, &ctx.host.opts.home)
+}
+
+/// The refusal of a `read` of a hidden path, recorded as a sandbox denial.
+pub(crate) async fn hidden_read(ctx: &Ctx<'_>, path: &Path) -> String {
+    let denial = Denial {
+        operation: "read",
+        target: path.display().to_string(),
+    };
+    report(ctx, std::slice::from_ref(&denial))
+        .await
+        .lines()
+        .find(|line| line.starts_with("Sandbox denied:"))
+        .unwrap_or("Sandbox denied: read")
+        .to_string()
+}
+
+/// The in-process editors (`edit`, `write`, `apply_patch`, `notebook_edit`) run outside
+/// the OS sandbox, so they refuse a `deny_read` path, before reading it, as `read` does:
+/// a diff, a match count or a move would otherwise disclose or copy it.
+pub(crate) async fn refuse_hidden(ctx: &Ctx<'_>, paths: &[&Path]) -> Result<(), ToolError> {
+    // Without the configuration the `deny_read` globs are unknown: refuse.
+    let (config, sources) = (ctx.host.opts.config)(&ctx.location).map_err(|error| {
+        failed(format!(
+            "Sandbox denied: read (the sandbox configuration could not be read: {error})"
+        ))
+    })?;
+    let hidden = resolve(ctx, &config, &sources).deny_read_for(&ctx.location, &ctx.host.opts.home);
+    match paths.iter().find(|path| hidden.denies(path)) {
+        Some(path) => Err(failed(hidden_read(ctx, path).await)),
+        None => Ok(()),
+    }
+}
+
 /// Location, worktree root, the Session's temp directory, managed tool output and
 /// `sandbox.writable_roots`.
 fn roots(ctx: &Ctx<'_>, sandbox: &SandboxConfig, tmp: &Path, ambient_temp: bool) -> Vec<PathBuf> {
-    let mut roots = vec![
-        ctx.location.clone(),
-        cyber_core::config::project_root(&ctx.location),
-        tmp.to_path_buf(),
-        ctx.host.opts.tool_output_dir.clone(),
-    ];
-    // macOS tools such as mktemp use the per-user temp directory even when TMPDIR is set.
-    if cfg!(target_os = "macos") && ambient_temp {
-        roots.push(std::env::temp_dir());
-    }
-    roots.extend(sandbox.extra_writable.iter().cloned());
-    let mut unique: Vec<PathBuf> = Vec::new();
-    for root in roots {
-        if !unique.contains(&root) {
-            unique.push(root);
-        }
-    }
-    unique
+    crate::sandbox_cli::root_list(
+        &ctx.location,
+        tmp,
+        &ctx.host.opts.tool_output_dir,
+        sandbox,
+        ambient_temp,
+    )
 }
 
 pub(crate) fn session_tmp(ctx: &Ctx<'_>) -> Result<PathBuf, ToolError> {
@@ -445,6 +695,7 @@ mod tests {
             temp_dir: root.join("temp"),
             sandbox_policy: None,
             sandbox_helper: cyber_sandbox::find_helper(),
+            isolation: Default::default(),
         });
         let inv = Invocation {
             registration: None,
@@ -478,16 +729,14 @@ mod tests {
             "printf metadata > \"$1/index\"; printf target > \"$2/cyber.json\"; if printf forbidden > \"$3/file\" 2>/dev/null; then exit 8; fi; if printf forbidden > \"$4/file\" 2>/dev/null; then exit 9; fi".into(),
             "scope".into(), metadata.display().to_string(), target.display().to_string(),
             source.display().to_string(), sibling.display().to_string()];
-        let prepared = prepare_scoped_command(
-            &ctx,
-            "bash",
-            &args,
-            false,
-            Some(&[metadata.clone(), target.clone()]),
-            &[],
-        )
-        .await
-        .unwrap();
+        let owned = [metadata.clone(), target.clone()];
+        let scope = Scope {
+            git_roots: Some(&owned),
+            ..Scope::default()
+        };
+        let prepared = prepare_scoped_command(&ctx, "bash", &args, scope)
+            .await
+            .unwrap();
         let result = tokio::process::Command::new(&prepared.program)
             .args(&prepared.args)
             .env_clear()
@@ -512,6 +761,39 @@ mod tests {
         );
         assert!(!source.join("file").exists());
         assert!(!sibling.join("file").exists());
+    }
+
+    #[test]
+    fn refusal_lines_of_common_shells_and_tools_name_their_path() {
+        let workdir = Path::new("/repo");
+        for (line, path) in [
+            ("sh: /usr/x: Operation not permitted", "/usr/x"),
+            ("bash: /usr/x: Read-only file system", "/usr/x"),
+            (
+                "/bin/sh: 1: cannot create /usr/x: Read-only file system",
+                "/usr/x",
+            ),
+            (
+                "touch: cannot touch '/usr/x': Read-only file system",
+                "/usr/x",
+            ),
+            ("zsh:1: operation not permitted: /usr/x", "/usr/x"),
+            ("cat: key.pem: Operation not permitted", "/repo/key.pem"),
+        ] {
+            assert_eq!(
+                denied_path(line, workdir),
+                Some(PathBuf::from(path)),
+                "{line}"
+            );
+        }
+        assert_eq!(
+            denied_path("cat: x: No such file or directory", workdir),
+            None
+        );
+        assert_eq!(
+            denied_path("zsh:1: nice(5) failed: operation not permitted", workdir),
+            None
+        );
     }
 
     #[tokio::test]

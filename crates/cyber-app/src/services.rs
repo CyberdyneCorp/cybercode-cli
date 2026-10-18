@@ -68,6 +68,10 @@ const BUILTIN_COMMANDS: &[(&str, &str)] = &[
     ),
     ("resume", "Open another Session"),
     ("rename", "Rename this Session"),
+    (
+        "btw",
+        "Ask a side question; the answer is not added to the Session",
+    ),
     ("fork", "Fork this Session into a new one"),
     ("new", "Start a new Session"),
     ("rewind", "Rewind code and conversation to a message"),
@@ -117,6 +121,26 @@ const BUILTIN_COMMANDS: &[(&str, &str)] = &[
 ];
 
 impl Services for AppServices {
+    fn sandbox_status(&self, location: &Path) -> Option<serde_json::Value> {
+        Some(self.host.sandbox_status(location))
+    }
+    fn permission_test<'a>(
+        &'a self,
+        location: &'a Path,
+        query: serde_json::Value,
+    ) -> BoxFuture<'a, Result<serde_json::Value, cyber_server::http::ApiError>> {
+        Box::pin(async move {
+            let test: cyber_tools::PermissionTest = serde_json::from_value(query)
+                .map_err(|error| cyber_server::http::ApiError::invalid(error.to_string()))?;
+            let report = self
+                .host
+                .permission_test(location, &test)
+                .await
+                .map_err(cyber_server::http::ApiError::invalid)?;
+            serde_json::to_value(report)
+                .map_err(|error| cyber_server::http::ApiError::unknown(error.to_string()))
+        })
+    }
     fn transition_lsp(
         &self,
         directory: PathBuf,
@@ -857,7 +881,7 @@ mod tests {
     use super::BUILTIN_COMMANDS;
 
     /// Aliases the TUI accepts that are deliberately not suggested on their own.
-    const ALIASES: &[&str] = &["subagents", "models", "sessions", "clear", "quit"];
+    const ALIASES: &[&str] = &["subagents", "models", "sessions", "clear", "quit", "side"];
 
     /// Every slash command the TUI dispatches itself must be in the catalog that feeds
     /// `/` completion and `GET /commands`, or users can't discover it (`/rename` was missing).

@@ -1115,6 +1115,7 @@ impl LocalLauncher<'_> {
                 .flat_map(|root| cyber_sandbox::protected_in(root))
                 .collect(),
             unreadable: resources.config.unreadable(self.home),
+            deny_read: resources.config.deny_read_for(self.location, self.home),
             writable,
             proxy: resources.proxy.as_ref().map(|proxy| proxy.endpoint.clone()),
             helper: self.helper.map(Path::to_path_buf),
@@ -1134,7 +1135,7 @@ impl LocalLauncher<'_> {
         let mut env: BTreeMap<_, _> = if resources.config.policy == Policy::FullAccess {
             std::env::vars().collect()
         } else {
-            cyber_sandbox::mask_env(std::env::vars(), &resources.config.env_allow, &credentials)
+            cyber_sandbox::policy_env(std::env::vars(), &resources.config, &credentials)
                 .into_iter()
                 .collect()
         };

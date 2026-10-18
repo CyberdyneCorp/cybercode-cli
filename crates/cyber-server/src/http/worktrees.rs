@@ -205,6 +205,16 @@ async fn create(
             "call_id must be 1-128 ASCII letters, digits, underscores or hyphens",
         ));
     }
+    // Refuse before the checkout exists; the runtime admits the Session's Mode again.
+    let agent = body.session.agent.as_deref().unwrap_or("build");
+    let path = directory.display().to_string();
+    let mode = match &body.session.mode {
+        Some(mode) => Some(mode.clone()),
+        None => state.runtime.agent_permission_mode(&path, agent)?,
+    };
+    if let Some(mode) = mode {
+        state.runtime.admit_mode(&path, agent, &mode)?;
+    }
     let model_is_default = body.session.model.is_none();
     let model = body
         .session

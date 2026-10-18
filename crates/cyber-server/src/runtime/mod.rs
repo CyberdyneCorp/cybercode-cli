@@ -26,6 +26,8 @@ mod context_meter;
 mod continuation;
 mod delegations;
 mod deletion;
+pub mod deliveries;
+pub use deliveries::{FilesSent, Notification, SEND_LIMIT_BYTES, SEND_LIMIT_FILES, SentFile};
 mod drain;
 mod events;
 mod files;
@@ -42,10 +44,16 @@ pub use hooks::{
     HookExecution, HookExecutionIo, HookExecutionRecord, HookExecutionResult, HookExecutionStatus,
     hook_execution_page, hook_last_run,
 };
+mod handoff;
 mod host;
 pub mod instructions;
 mod jobs;
 mod names;
+pub use handoff::Handoff;
+mod process_jobs;
+pub use process_jobs::{JobIo, ProcessJob, ProcessReservation, ProcessWork};
+pub mod pty;
+pub use pty::{Pty, PtyAttach, PtyChunk, PtyCursor, PtyFeed, PtyInput, PtySpec};
 mod pr_links;
 pub use pr_links::{PR_LINKED, PrLink};
 mod preparation;
@@ -76,9 +84,13 @@ pub mod deferred_tools;
 mod model;
 mod requests;
 mod rewind;
+mod sandbox_events;
+pub use sandbox_events::SandboxEvent;
 mod selection;
 pub mod settlement;
 mod shutdown;
+pub mod side_chat;
+pub use side_chat::SideAnswer;
 mod structured;
 pub use structured::StructuredSchema;
 mod recap;
@@ -622,6 +634,10 @@ pub(crate) struct Inner {
     background: StdMutex<Vec<tokio::task::JoinHandle<()>>>,
     jobs: StdMutex<HashMap<String, Arc<jobs::Control>>>,
     job_admission: Arc<Mutex<()>>,
+    /// Foreground commands the user may move to the background, by Session.
+    handoffs: StdMutex<HashMap<String, Vec<handoff::Entry>>>,
+    /// Running PTYs and their attach tickets.
+    ptys: pty::Registry,
     delegations: StdMutex<HashMap<String, Arc<delegations::Control>>>,
     child_executions: StdMutex<HashMap<String, std::sync::Weak<Mutex<()>>>>,
     /// Registration ID of the server lock this runtime holds (`adopt_server_lock`).
@@ -714,6 +730,8 @@ impl Runtime {
             background: StdMutex::default(),
             jobs: StdMutex::default(),
             job_admission: Arc::new(Mutex::new(())),
+            handoffs: StdMutex::default(),
+            ptys: pty::Registry::default(),
             delegations: StdMutex::default(),
             child_executions: StdMutex::default(),
             server_holder: std::sync::OnceLock::new(),
@@ -995,14 +1013,7 @@ impl Runtime {
         } else {
             Ok(AgentInference::default())
         };
-        let mode_default_pending = mode_is_default && defaults.is_err();
-        if mode_is_default && let Ok(options) = &defaults {
-            info.mode = options
-                .permission_mode
-                .clone()
-                .unwrap_or_else(|| "default".into());
-            selection::validate_mode(&info.mode)?;
-        }
+        let mode_default_pending = self.resolve_mode(&mut info, mode_is_default, &defaults)?;
         if selection.agent_default {
             let options = defaults.map_err(RuntimeError::Invalid)?;
             info.model = self
@@ -1050,6 +1061,29 @@ impl Runtime {
         Ok((info, first))
     }
 
+    /// A new Session's Mode: the requested one, else the agent's `permission_mode`, admitted
+    /// by the host. `true` when the agent cannot be resolved yet: the first Safe Boundary
+    /// then applies (and admits) its default.
+    fn resolve_mode(
+        &self,
+        info: &mut SessionInfo,
+        mode_is_default: bool,
+        defaults: &Result<AgentInference, String>,
+    ) -> Result<bool, RuntimeError> {
+        if mode_is_default {
+            let Ok(options) = defaults else {
+                return Ok(true);
+            };
+            info.mode = options
+                .permission_mode
+                .clone()
+                .unwrap_or_else(|| "default".into());
+            selection::validate_mode(&info.mode)?;
+        }
+        self.admit_mode(&info.directory, &info.agent, &info.mode)?;
+        Ok(false)
+    }
+
     /// The `permission_mode` an agent would give a new Session at `directory`, before any
     /// write; `None` when the agent sets none. An unknown or hidden agent is `Invalid`.
     pub fn agent_permission_mode(
@@ -1070,6 +1104,15 @@ impl Runtime {
             .tools
             .agent_inference(&turn)
             .map(|options| options.permission_mode)
+            .map_err(RuntimeError::Invalid)
+    }
+
+    /// Whether a Session of `agent` at `directory` may run in `mode` (the host's
+    /// `bypass` gate and org `policy.modes.disable`).
+    pub fn admit_mode(&self, directory: &str, agent: &str, mode: &str) -> Result<(), RuntimeError> {
+        self.inner
+            .tools
+            .admit_mode(directory, agent, mode)
             .map_err(RuntimeError::Invalid)
     }
 
@@ -1656,6 +1699,15 @@ impl Runtime {
         if from == to && !(kind == MODE_SWITCHED && state.mode_default_pending) {
             return Ok(());
         }
+        // The Mode stays admitted for whichever agent runs it (its own sandbox profile).
+        let (agent, mode) = match kind {
+            MODE_SWITCHED => (state.info.agent.as_str(), to),
+            _ => (to, state.info.mode.as_str()),
+        };
+        self.inner
+            .tools
+            .admit_mode(&state.info.directory, agent, mode)
+            .map_err(RuntimeError::Invalid)?;
         self.inner.commit_locked(
             &mut state,
             vec![event(

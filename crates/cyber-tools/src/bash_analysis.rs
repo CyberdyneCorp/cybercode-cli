@@ -106,6 +106,45 @@ fn literal_node(node: Node<'_>) -> bool {
     node.named_children(&mut cursor).all(literal_node)
 }
 
+/// Whether `command` parses as complete shell input, with no unterminated quote, heredoc
+/// or compound command.
+#[cfg(unix)]
+pub(crate) fn parses(command: &str) -> bool {
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_bash::LANGUAGE.into())
+        .ok()
+        .and_then(|()| parser.parse(command, None))
+        .is_some_and(|tree| !tree.root_node().has_error())
+}
+
+/// Whether the shell reads on past the end of `line`: it ends in an unescaped backslash
+/// outside a comment (a backslash in a comment ends the line).
+#[cfg(unix)]
+pub(crate) fn continues_line(line: &str) -> bool {
+    let trailing = line.bytes().rev().take_while(|&byte| byte == b'\\').count();
+    if trailing % 2 == 0 {
+        return false;
+    }
+    let mut parser = Parser::new();
+    let Some(tree) = parser
+        .set_language(&tree_sitter_bash::LANGUAGE.into())
+        .ok()
+        .and_then(|()| parser.parse(line, None))
+    else {
+        return true;
+    };
+    let end = line.len();
+    let mut node = tree.root_node().descendant_for_byte_range(end - 1, end);
+    while let Some(current) = node {
+        if current.kind() == "comment" {
+            return false;
+        }
+        node = current.parent();
+    }
+    true
+}
+
 pub fn analyze(command: &str, cwd: &Path) -> Analysis {
     let mut parser = Parser::new();
     let parsed = parser

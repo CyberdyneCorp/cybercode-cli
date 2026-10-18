@@ -179,6 +179,20 @@ export interface Operations {
     body: undefined;
     response: S.Page_Job;
   };
+  "v1.job.output": {
+    path: { id: string };
+    query: {
+      tail_bytes?: QueryValue;
+    };
+    body: undefined;
+    response: S.JobOutput;
+  };
+  "v1.job.ptyTicket": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.PtyTicket;
+  };
   "v1.job.stop": {
     path: { id: string };
     query: Record<string, never>;
@@ -337,6 +351,18 @@ export interface Operations {
     body: S.PermissionReplyBody;
     response: void;
   };
+  "v1.permission.test": {
+    path: Record<string, never>;
+    query: {
+      agent?: QueryValue;
+      mode?: QueryValue;
+      tool?: QueryValue;
+      resource?: QueryValue;
+      command?: QueryValue;
+    };
+    body: undefined;
+    response: S.Located_AnyValue;
+  };
   "v1.question.list": {
     path: Record<string, never>;
     query: {
@@ -374,6 +400,12 @@ export interface Operations {
     query: Record<string, never>;
     body: undefined;
     response: S.AutoOverrideReceipt;
+  };
+  "v1.session.background": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.BackgroundResult;
   };
   "v1.session.children": {
     path: { id: string };
@@ -575,11 +607,23 @@ export interface Operations {
     body: S.RevertBody;
     response: S.RevertState;
   };
+  "v1.session.sentFile": {
+    path: { sessionID: string; fileID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: unknown;
+  };
   "v1.session.shell": {
     path: { sessionID: string };
     query: Record<string, never>;
     body: S.ShellBody;
     response: S.ShellResult;
+  };
+  "v1.session.side": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: S.SideBody;
+    response: S.SideAnswer;
   };
   "v1.session.startDelegation": {
     path: { sessionID: string; requestID: string };
@@ -999,6 +1043,30 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.job.output": {
+    tag: "job",
+    name: "output",
+    method: "GET",
+    path: "/api/v1/jobs/{id}/output",
+    pathParams: ["id"],
+    query: ["tail_bytes"],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.job.ptyTicket": {
+    tag: "job",
+    name: "ptyTicket",
+    method: "POST",
+    path: "/api/v1/jobs/{id}/pty/ticket",
+    pathParams: ["id"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.job.stop": {
     tag: "job",
     name: "stop",
@@ -1287,6 +1355,18 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.permission.test": {
+    tag: "permission",
+    name: "test",
+    method: "GET",
+    path: "/api/v1/permissions/test",
+    pathParams: [],
+    query: ["agent", "mode", "tool", "resource", "command"],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
   "v1.question.list": {
     tag: "question",
     name: "list",
@@ -1352,6 +1432,18 @@ export const operations = {
     name: "approve",
     method: "POST",
     path: "/api/v1/sessions/{sessionID}/approve",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.background": {
+    tag: "session",
+    name: "background",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/background",
     pathParams: ["sessionID"],
     query: [],
     body: "none",
@@ -1719,11 +1811,35 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.session.sentFile": {
+    tag: "session",
+    name: "sentFile",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/files/{fileID}",
+    pathParams: ["sessionID", "fileID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
   "v1.session.shell": {
     tag: "session",
     name: "shell",
     method: "POST",
     path: "/api/v1/sessions/{sessionID}/shell",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.side": {
+    tag: "session",
+    name: "side",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/side",
     pathParams: ["sessionID"],
     query: [],
     body: "required",
@@ -2155,6 +2271,12 @@ export function createGroups(caller: Caller) {
       /** List durable background tasks (`GET /api/v1/jobs`) */
       list: (query?: Operations["v1.job.list"]["query"], options?: RequestOptions): Promise<Operations["v1.job.list"]["response"]> =>
         caller.call("v1.job.list", { query }, options),
+      /** Read the end of a background task's log (`GET /api/v1/jobs/{id}/output`) */
+      output: (id: string, query?: Operations["v1.job.output"]["query"], options?: RequestOptions): Promise<Operations["v1.job.output"]["response"]> =>
+        caller.call("v1.job.output", { path: { id }, query }, options),
+      /** Issue a single-use ticket, valid for 60 seconds, to attach to a running PTY (`POST /api/v1/jobs/{id}/pty/ticket`) */
+      ptyTicket: (id: string, options?: RequestOptions): Promise<Operations["v1.job.ptyTicket"]["response"]> =>
+        caller.call("v1.job.ptyTicket", { path: { id } }, options),
       /** Cancel a background task and await settlement (`POST /api/v1/jobs/{id}/stop`) */
       stop: (id: string, options?: RequestOptions): Promise<Operations["v1.job.stop"]["response"]> =>
         caller.call("v1.job.stop", { path: { id } }, options),
@@ -2241,6 +2363,9 @@ export function createGroups(caller: Caller) {
       /** Reply to a permission request (`POST /api/v1/sessions/{sessionID}/permissions/{requestID}/reply`) */
       reply: (sessionID: string, requestID: string, body: Operations["v1.permission.reply"]["body"], options?: RequestOptions): Promise<Operations["v1.permission.reply"]["response"]> =>
         caller.call("v1.permission.reply", { path: { sessionID, requestID }, body }, options),
+      /** Evaluate a tool call or shell command against the effective ruleset without a Session (`GET /api/v1/permissions/test`) */
+      test: (query?: Operations["v1.permission.test"]["query"], options?: RequestOptions): Promise<Operations["v1.permission.test"]["response"]> =>
+        caller.call("v1.permission.test", { query }, options),
     },
     question: {
       /** Pending questions (`GET /api/v1/questions/requests`) */
@@ -2265,6 +2390,9 @@ export function createGroups(caller: Caller) {
       /** Confirm and replay the latest classifier-blocked call once (`POST /api/v1/sessions/{sessionID}/approve`) */
       approve: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.approve"]["response"]> =>
         caller.call("v1.session.approve", { path: { sessionID } }, options),
+      /** Move the Session's running foreground command to a background Job (`POST /api/v1/sessions/{sessionID}/background`) */
+      background: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.background"]["response"]> =>
+        caller.call("v1.session.background", { path: { sessionID } }, options),
       /** List direct child threads across Locations with observed state (`GET /api/v1/sessions/{id}/children`) */
       children: (id: string, query?: Operations["v1.session.children"]["query"], options?: RequestOptions): Promise<Operations["v1.session.children"]["response"]> =>
         caller.call("v1.session.children", { path: { id }, query }, options),
@@ -2355,9 +2483,15 @@ export function createGroups(caller: Caller) {
       /** Stage and commit a rewind (`POST /api/v1/sessions/{sessionID}/rewind`) */
       rewind: (sessionID: string, body: Operations["v1.session.rewind"]["body"], options?: RequestOptions): Promise<Operations["v1.session.rewind"]["response"]> =>
         caller.call("v1.session.rewind", { path: { sessionID }, body }, options),
+      /** Download a file the Session delivered with send_file (`GET /api/v1/sessions/{sessionID}/files/{fileID}`) */
+      sentFile: (sessionID: string, fileID: string, options?: RequestOptions): Promise<Operations["v1.session.sentFile"]["response"]> =>
+        caller.call("v1.session.sentFile", { path: { sessionID, fileID } }, options),
       /** Run a user shell command (`POST /api/v1/sessions/{sessionID}/shell`) */
       shell: (sessionID: string, body: Operations["v1.session.shell"]["body"], options?: RequestOptions): Promise<Operations["v1.session.shell"]["response"]> =>
         caller.call("v1.session.shell", { path: { sessionID }, body }, options),
+      /** Ask a side question (/btw) with a read-only copy of the Session's context and read-only tools; the Session's history is unchanged (`POST /api/v1/sessions/{sessionID}/side`) */
+      side: (sessionID: string, body: Operations["v1.session.side"]["body"], options?: RequestOptions): Promise<Operations["v1.session.side"]["response"]> =>
+        caller.call("v1.session.side", { path: { sessionID }, body }, options),
       /** Durably reserve a named user delegation request (`POST /api/v1/sessions/{sessionID}/delegations/{requestID}`) */
       startDelegation: (sessionID: string, requestID: string, body: Operations["v1.session.startDelegation"]["body"], options?: RequestOptions): Promise<Operations["v1.session.startDelegation"]["response"]> =>
         caller.call("v1.session.startDelegation", { path: { sessionID, requestID }, body }, options),
