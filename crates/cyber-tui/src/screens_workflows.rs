@@ -267,6 +267,9 @@ pub(crate) fn stabilized(app: &mut App, render_it: impl FnOnce(&mut App) -> Stri
         detail.summary.id = "run_01JA2BCDEFGHK3".into();
         detail.summary.elapsed_ms = 724_000;
         detail.summary.cost_usd = 0.82;
+        // Agents of one `parallel()` start in either order; within a phase the view lists
+        // them by start, so order them by label before their IDs are numbered.
+        detail.agents.sort_by(|a, b| a.label.cmp(&b.label));
         for (i, agent) in detail.agents.iter_mut().enumerate() {
             agent.id = format!("agt_01JA2B{:02}", i + 1);
             agent.duration_ms = Some(38_000 + 1_000 * i as u64);
