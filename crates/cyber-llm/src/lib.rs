@@ -6,6 +6,7 @@
 
 pub mod adapters;
 pub mod catalog;
+pub mod chatgpt;
 mod error;
 mod json;
 pub mod limits;

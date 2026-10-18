@@ -2,7 +2,8 @@
 //! authorize URL with the RFC 8707 `resource`, and a one-shot loopback callback listener.
 //!
 //! The listener binds 127.0.0.1 only (an ephemeral or configured port) and accepts nothing
-//! but `GET /mcp/oauth/callback`; other paths get 404 and the wait continues. The first
+//! but `GET` of its callback path (`/mcp/oauth/callback` for MCP); other paths get 404 and
+//! the wait continues. The first
 //! callback ends the wait: its `state` is compared in constant time, and a mismatch, an
 //! `error=` response or a missing code fails the flow. `wait` consumes the listener, so
 //! once it returns (including on timeout) the socket is closed and no later callback
@@ -95,18 +96,28 @@ pub fn authorize_url(
 pub struct CallbackListener {
     listener: TcpListener,
     address: SocketAddr,
+    path: &'static str,
 }
 
 impl CallbackListener {
-    /// Bind 127.0.0.1 on `port`, or an ephemeral port.
+    /// Bind 127.0.0.1 on `port`, or an ephemeral port, for the MCP callback path.
     pub async fn bind(port: Option<u16>) -> Result<Self, OAuthError> {
+        Self::bind_path(port, CALLBACK_PATH).await
+    }
+
+    /// Bind 127.0.0.1 on `port`, or an ephemeral port, accepting callbacks at `path`.
+    pub async fn bind_path(port: Option<u16>, path: &'static str) -> Result<Self, OAuthError> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port.unwrap_or(0)))
             .await
             .map_err(|_| OAuthError::Callback("could not bind the loopback callback port"))?;
         let address = listener
             .local_addr()
             .map_err(|_| OAuthError::Callback("loopback callback address unavailable"))?;
-        Ok(Self { listener, address })
+        Ok(Self {
+            listener,
+            address,
+            path,
+        })
     }
 
     pub fn local_addr(&self) -> SocketAddr {
@@ -114,7 +125,7 @@ impl CallbackListener {
     }
 
     pub fn redirect_uri(&self) -> String {
-        format!("http://127.0.0.1:{}{CALLBACK_PATH}", self.address.port())
+        format!("http://127.0.0.1:{}{}", self.address.port(), self.path)
     }
 
     /// Wait for the callback carrying `state` and return its authorization code. The
@@ -136,7 +147,10 @@ impl CallbackListener {
                 .await
                 .ok()
                 .flatten();
-            let Some(result) = target.as_deref().and_then(|target| verdict(target, state)) else {
+            let Some(result) = target
+                .as_deref()
+                .and_then(|target| verdict(target, self.path, state))
+            else {
                 respond(&mut stream, "404 Not Found", "Not found.").await;
                 continue;
             };
@@ -175,13 +189,21 @@ async fn request_target(stream: &mut TcpStream) -> Option<String> {
         .then(|| target.to_owned())
 }
 
-/// `None` when the request is not for the callback path; otherwise the flow's outcome.
-fn verdict(target: &str, state: &str) -> Option<Result<String, OAuthError>> {
+/// `None` when the request is not for the callback `path`; otherwise the flow's outcome.
+fn verdict(target: &str, path: &str, state: &str) -> Option<Result<String, OAuthError>> {
     let url = Url::parse("http://127.0.0.1").ok()?.join(target).ok()?;
-    if url.path() != CALLBACK_PATH {
+    if url.path() != path {
         return None;
     }
     Some(Callback::from_url(&url).and_then(|callback| callback.result(state)))
+}
+
+/// The authorization code of a redirect URL a user pasted from the browser's address bar,
+/// checked like a loopback callback: its `state` must match.
+pub fn callback_code(redirect: &str, state: &str) -> Result<String, OAuthError> {
+    let url = Url::parse(redirect.trim())
+        .map_err(|_| OAuthError::Callback("pasted text is not the redirect URL"))?;
+    Callback::from_url(&url).and_then(|callback| callback.result(state))
 }
 
 #[derive(Default)]
@@ -246,36 +268,54 @@ async fn respond(stream: &mut TcpStream, status: &str, page: &str) {
 mod tests {
     use super::*;
 
+    fn verdict_mcp(target: &str, state: &str) -> Option<Result<String, OAuthError>> {
+        verdict(target, CALLBACK_PATH, state)
+    }
+
     #[test]
     fn verdict_checks_path_state_error_and_repetition() {
-        assert!(verdict("/favicon.ico", "s").is_none());
-        assert!(verdict("/mcp/oauth/callbackx?code=c&state=s", "s").is_none());
+        assert!(verdict_mcp("/favicon.ico", "s").is_none());
+        assert!(verdict_mcp("/mcp/oauth/callbackx?code=c&state=s", "s").is_none());
         assert_eq!(
-            verdict("/mcp/oauth/callback?code=c&state=s", "s")
+            verdict_mcp("/mcp/oauth/callback?code=c&state=s", "s")
                 .unwrap()
                 .unwrap(),
             "c"
         );
         assert!(matches!(
-            verdict("/mcp/oauth/callback?code=c&state=t", "s").unwrap(),
+            verdict_mcp("/mcp/oauth/callback?code=c&state=t", "s").unwrap(),
             Err(OAuthError::StateMismatch)
         ));
         assert!(matches!(
-            verdict("/mcp/oauth/callback?code=c", "s").unwrap(),
+            verdict_mcp("/mcp/oauth/callback?code=c", "s").unwrap(),
             Err(OAuthError::StateMismatch)
         ));
         assert!(matches!(
-            verdict("/mcp/oauth/callback?code=c&code=d&state=s", "s").unwrap(),
+            verdict_mcp("/mcp/oauth/callback?code=c&code=d&state=s", "s").unwrap(),
             Err(OAuthError::Callback(_))
         ));
         assert!(matches!(
-            verdict("/mcp/oauth/callback?state=s", "s").unwrap(),
+            verdict_mcp("/mcp/oauth/callback?state=s", "s").unwrap(),
             Err(OAuthError::Callback(_))
         ));
-        match verdict("/mcp/oauth/callback?error=bad%0Aline%3Cx%3E&state=s", "s").unwrap() {
+        match verdict_mcp("/mcp/oauth/callback?error=bad%0Aline%3Cx%3E&state=s", "s").unwrap() {
             Err(OAuthError::Denied(code)) => assert_eq!(code, "badlinex"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn a_pasted_redirect_must_carry_the_state() {
+        let pasted = "http://localhost:1455/auth/callback?code=c&state=s\n";
+        assert_eq!(callback_code(pasted, "s").unwrap(), "c");
+        assert!(matches!(
+            callback_code("http://localhost:1455/auth/callback?code=c&state=x", "s"),
+            Err(OAuthError::StateMismatch)
+        ));
+        assert!(matches!(
+            callback_code("c", "s"),
+            Err(OAuthError::Callback(_))
+        ));
     }
 
     #[test]

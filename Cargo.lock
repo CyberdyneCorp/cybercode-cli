@@ -783,6 +783,7 @@ dependencies = [
  "cyber-workflow",
  "futures",
  "libc",
+ "reqwest",
  "rusqlite",
  "serde",
  "serde_json",
@@ -846,6 +847,7 @@ dependencies = [
 name = "cyber-llm"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "bytes",
  "cyber-core",
  "flate2",

@@ -36,7 +36,7 @@ pub use self::keyring::{
 };
 pub use challenge::AuthChallenge;
 pub use discovery::{AuthorizationServer, Discovery, discover};
-pub use flow::{CALLBACK_PATH, CallbackListener, Pkce, authorize_url, random_state};
+pub use flow::{CALLBACK_PATH, CallbackListener, Pkce, authorize_url, callback_code, random_state};
 pub use provider::{REFRESH_WINDOW, TokenSource};
 pub use register::{OAuthClient, client_for};
 pub use store::{
