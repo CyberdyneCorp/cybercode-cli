@@ -60,7 +60,8 @@ fn open(cols: u16, rows: u16) -> io::Result<(OwnedFd, OwnedFd)> {
             &mut slave,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
-            &mut size,
+            // `*const winsize` on Linux and `*mut winsize` on macOS; a raw pointer fits both.
+            &raw mut size,
         )
     };
     if opened != 0 {
