@@ -70,6 +70,39 @@ You rarely manage it by hand:
 
 After a rebuild or upgrade, the next client replaces an idle server that runs an older build of this install and says so. If that server is busy, it keeps it and warns (`⚠ older server build · cyber service restart` in the TUI sidebar), so a running Turn or workflow is never cut off. Restart it when it's idle. A server started before build tracking existed needs one manual `cyber service restart`. Details: [background server and rebuilds](docs/local-core-guide.md#background-server-and-rebuilds).
 
+### Connect MCP servers
+
+Add servers under `"mcp"` in your global config `~/.config/cyber/cyber.jsonc` (every project), or in a project's `cyber.jsonc` (that checkout only). Each key is the server name. Remote servers use `url`, and local servers run a `command` over stdio:
+
+```jsonc
+{
+  "mcp": {
+    // Remote (Streamable HTTP, with SSE fallback). These two need no sign-in.
+    "context7": { "type": "remote", "url": "https://mcp.context7.com/mcp" },
+    "deepwiki": { "type": "remote", "url": "https://mcp.deepwiki.com/mcp" },
+
+    // Remote with a header taken from the environment.
+    "internal": { "type": "remote", "url": "https://mcp.example.com/mcp",
+                  "headers": { "Authorization": "Bearer {env:INTERNAL_MCP_TOKEN}" } },
+
+    // Local (stdio): a command, its args and environment.
+    "fs": { "type": "local", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+            "env": { "NODE_ENV": "production" } },
+
+    // Keep a server configured but off, or limit which tools it offers.
+    "github": { "type": "remote", "url": "https://api.githubcopilot.com/mcp/", "enabled": false,
+                "tools": { "deny": ["delete_*"] } }
+  }
+}
+```
+
+- Servers connect when a Session opens in that folder, and their tools appear to the model as `mcp__<server>__<tool>` (for example `mcp__context7__resolve-library-id`), which is also the name to use in permission rules. The TUI sidebar shows each server's status, `GET /api/v1/mcp` reports it, and `cyber mcp definitions` / `cyber mcp get <name>` show what was loaded and from which file.
+- A server that needs OAuth reports `needs_auth`. Sign in once with `cyber mcp auth <name>`; tokens go to the OS keyring (a 0600 file on Linux). `cyber` never opens a browser by itself.
+- A server defined in a project's config is not started until you review it and run `cyber mcp trust <name>` in that checkout, because a cloned repository could otherwise run commands on your machine. Global servers are trusted already.
+- `{env:NAME}` reads a value from the environment, so secrets stay out of the file.
+
+See [MCP in the guide](docs/local-core-guide.md#mcp-server-guidance) for resources, `@server:uri` mentions, prompt commands, elicitation, roots, timeouts, output budgets and organization policy.
+
 Let another agent drive Cyber Sessions over MCP:
 
 ```bash
