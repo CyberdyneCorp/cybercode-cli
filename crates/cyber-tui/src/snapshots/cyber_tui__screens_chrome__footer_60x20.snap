@@ -21,9 +21,9 @@ expression: shown
 ┃ Ask anything… "/" commands · "@" files · "!" shell
 ┃
 ┃ Build · Amini Coder test · default
- /Users/leo/work/app     100 (86%) · $0.00  ctrl+p commands
-row 19: 0-19 fg=#6b7a8f bg=#0b0f14
-row 19: 20-24 fg=#d6e4f0 bg=#0b0f14
+ ~/work/app              100 (86%) · $0.00  ctrl+p commands
+row 19: 0-10 fg=#6b7a8f bg=#0b0f14
+row 19: 11-24 fg=#d6e4f0 bg=#0b0f14
 row 19: 25-33 fg=#ffcc66 bg=#0b0f14
 row 19: 34-41 fg=#6b7a8f bg=#0b0f14
 row 19: 42-49 fg=#d6e4f0 bg=#0b0f14
