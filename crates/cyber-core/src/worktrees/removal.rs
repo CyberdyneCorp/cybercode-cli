@@ -80,12 +80,9 @@ impl Repository {
             phase: RemovalPhase::TreeRemovalIntent,
         };
         save(self, &record)?;
-        let mut args = vec!["worktree".into(), "remove".into()];
-        if force {
-            args.push("--force".into());
-        }
-        args.extend(["--".into(), git_path_argument(&managed.path)?]);
-        repository_git(self, execution, &args).await?;
+        remove_checkout_tree(self, managed)?;
+        // Only the registration remains; pruning needs just the common directory writable.
+        repository_git(self, execution, &["worktree".into(), "prune".into()]).await?;
         confirm_tree_removed(self, execution, managed).await?;
         record.phase = RemovalPhase::TreeRemoved;
         save(self, &record)?;
@@ -149,6 +146,14 @@ impl Repository {
     ) -> io::Result<RemovalRecord> {
         if record.phase == RemovalPhase::Completed {
             return Ok(record.clone());
+        }
+        if record.phase == RemovalPhase::TreeRemovalIntent
+            && matches!(std::fs::symlink_metadata(&record.managed.path), Err(error) if error.kind() == io::ErrorKind::NotFound)
+        {
+            // The tree is gone but the prune outcome is unknown. Pruning only drops
+            // registrations whose checkout is missing, so it is safe to repeat; the
+            // tree itself is never deleted twice.
+            repository_git(self, execution, &["worktree".into(), "prune".into()]).await?;
         }
         confirm_tree_removed(self, execution, &record.managed).await?;
         if record.phase == RemovalPhase::TreeRemovalIntent {
@@ -237,6 +242,45 @@ pub(super) fn check_record_admission(repo: &Repository, managed: &Managed) -> io
     {
         return Err(io::Error::other(
             "Worktree was removed or removal is incomplete; recovery is required",
+        ));
+    }
+    Ok(())
+}
+
+/// Delete the checkout directory in-process. Cyber owns its worktree storage, so the
+/// tree is removed here rather than by a sandboxed `git worktree remove`: deleting a
+/// directory writes its parent, which a sandbox only granting the checkout cannot do
+/// (bubblewrap mounts the storage parent read-only). The path must still be this
+/// repository's registered linked worktree, a real directory reached without symlinks,
+/// and neither the main checkout nor inside the Git directory.
+fn remove_checkout_tree(repo: &Repository, managed: &Managed) -> io::Result<()> {
+    owned_checkout(repo, managed)?;
+    std::fs::remove_dir_all(&managed.path)?;
+    sync_parent(&managed.path)
+}
+
+pub(super) fn owned_checkout(repo: &Repository, managed: &Managed) -> io::Result<()> {
+    let metadata = std::fs::symlink_metadata(&managed.path)?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(invalid("Managed worktree path is not a directory"));
+    }
+    if managed.path.canonicalize()? != managed.path {
+        return Err(invalid(
+            "Managed worktree path is not canonical; recovery is required",
+        ));
+    }
+    // The deleted tree must not hold the Git directory (the main checkout does) nor
+    // lie inside it.
+    let common_dir = repo.common_dir.canonicalize()?;
+    if common_dir.starts_with(&managed.path) || managed.path.starts_with(&common_dir) {
+        return Err(invalid(
+            "Managed worktree path overlaps the repository; recovery is required",
+        ));
+    }
+    let metadata = super::repository::linked_git_directory(&managed.path)?;
+    if !metadata.starts_with(common_dir.join("worktrees")) {
+        return Err(invalid(
+            "Managed worktree is not registered with this repository",
         ));
     }
     Ok(())

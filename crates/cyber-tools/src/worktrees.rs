@@ -579,6 +579,35 @@ impl BuiltinHost {
         })
     }
 
+    /// Refuse to delete a checkout that is not directly inside this project's worktree
+    /// storage (`<data>/worktrees/<project>` or the configured `worktrees.root`). Cyber
+    /// deletes the tree in-process, outside the sandbox, so this is the boundary.
+    pub(crate) fn require_owned_storage(
+        &self,
+        ctx: &Ctx<'_>,
+        repository: &Repository,
+        managed: &Managed,
+    ) -> io::Result<()> {
+        let (config, _) = (self.opts.config)(&ctx.location).map_err(io::Error::other)?;
+        let settings = Settings::from_config(&config).map_err(io::Error::other)?;
+        let data = self
+            .opts
+            .tool_output_dir
+            .parent()
+            .ok_or_else(|| io::Error::other("Missing data directory"))?;
+        let project = cyber_core::project::identify(&ctx.location).id;
+        let root = repository.storage_root(&settings, data, &project)?;
+        if managed.path.parent() != Some(root.as_path())
+            || managed.path.canonicalize()? != managed.path
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Worktree is not inside this project's worktree storage",
+            ));
+        }
+        Ok(())
+    }
+
     /// Current configuration and settings; a read-only sandbox refuses creation.
     fn worktree_config(&self, ctx: &Ctx<'_>) -> io::Result<(serde_json::Value, Settings)> {
         let (config, sources) = (self.opts.config)(&ctx.location).map_err(io::Error::other)?;

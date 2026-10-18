@@ -82,7 +82,7 @@ impl GitExecution for Interrupted<'_> {
             );
             let tree = args
                 .windows(2)
-                .any(|pair| pair[0] == "worktree" && pair[1] == "remove");
+                .any(|pair| pair[0] == "worktree" && pair[1] == "prune");
             let branch =
                 args.iter().any(|arg| arg == "update-ref") && args.iter().any(|arg| arg == "-d");
             if (tree && matches!(self.failure, Failure::BeforeTree))
@@ -277,15 +277,11 @@ fn unknown_tree_intent_blocks_redispatch_reuse_setup_and_status() {
     let repo = fixture.repository();
     let owned = managed(&fixture, &repo);
     let activity = Activity::default();
+    // The tree is deleted in-process; the failure hits the registration prune.
     let execution = interrupted(&fixture, &owned, &activity, Failure::BeforeTree);
     assert!(block_on(repo.remove(&execution, &activity, &owned, false)).is_err());
     assert_eq!(journal(&repo).phase, RemovalPhase::TreeRemovalIntent);
-    assert!(
-        block_on(repo.remove(&fixture.execution, &activity, &owned, false))
-            .unwrap_err()
-            .to_string()
-            .contains("outcome is unknown")
-    );
+    assert!(!owned.path.exists());
     assert!(
         fixture
             .create(
@@ -309,9 +305,48 @@ fn unknown_tree_intent_blocks_redispatch_reuse_setup_and_status() {
     assert!(
         matches!(&block_on(repo.list(&fixture.execution)).unwrap()[0], cyber_core::worktrees::ListedWorktree::Invalid { name, error } if name == "remove-me" && error.contains("recovery"))
     );
+    // Something reappearing at the path is never deleted by a retry.
+    std::fs::create_dir(&owned.path).unwrap();
+    std::fs::write(owned.path.join("user.txt"), "new work").unwrap();
+    assert!(
+        block_on(repo.remove(&fixture.execution, &activity, &owned, false))
+            .unwrap_err()
+            .to_string()
+            .contains("outcome is unknown")
+    );
     assert_eq!(
-        std::fs::read_to_string(owned.path.join("tracked.txt")).unwrap(),
-        "base"
+        std::fs::read_to_string(owned.path.join("user.txt")).unwrap(),
+        "new work"
+    );
+    // Once the path is gone again, a retry only prunes the registration and completes.
+    std::fs::remove_dir_all(&owned.path).unwrap();
+    let done = block_on(repo.remove(&fixture.execution, &activity, &owned, false)).unwrap();
+    assert_eq!(done.phase, RemovalPhase::Completed);
+}
+
+/// Removal deletes the checkout in-process, so it must never follow a checkout that
+/// was replaced by a symlink: even forced, the target outside storage survives.
+#[cfg(unix)]
+#[test]
+fn removal_never_deletes_through_a_symlinked_checkout() {
+    let fixture = Fixture::new();
+    let repo = fixture.repository();
+    let owned = managed(&fixture, &repo);
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("keep.txt"), "outside").unwrap();
+    let real = owned.path.with_file_name("moved-away");
+    std::fs::rename(&owned.path, &real).unwrap();
+    std::os::unix::fs::symlink(outside.path(), &owned.path).unwrap();
+    assert!(block_on(repo.remove(&fixture.execution, &Activity::default(), &owned, true)).is_err());
+    assert_eq!(
+        std::fs::read_to_string(outside.path().join("keep.txt")).unwrap(),
+        "outside"
+    );
+    assert!(
+        std::fs::symlink_metadata(&owned.path)
+            .unwrap()
+            .file_type()
+            .is_symlink()
     );
 }
 

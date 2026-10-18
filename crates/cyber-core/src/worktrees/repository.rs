@@ -400,6 +400,30 @@ impl Repository {
         project_id: &str,
         name: &Name,
     ) -> io::Result<PathBuf> {
+        let root = self.storage_parent(settings, data, project_id)?;
+        std::fs::create_dir_all(&root)?;
+        Ok(root.canonicalize()?.join(name.as_str()))
+    }
+
+    /// The canonical directory this repository's managed checkouts are created in
+    /// (`<data>/worktrees/<project>` or the configured `worktrees.root`). Removal
+    /// refuses any checkout outside it.
+    pub fn storage_root(
+        &self,
+        settings: &Settings,
+        data: &Path,
+        project_id: &str,
+    ) -> io::Result<PathBuf> {
+        self.storage_parent(settings, data, project_id)?
+            .canonicalize()
+    }
+
+    fn storage_parent(
+        &self,
+        settings: &Settings,
+        data: &Path,
+        project_id: &str,
+    ) -> io::Result<PathBuf> {
         if project_id.is_empty()
             || !project_id
                 .bytes()
@@ -407,14 +431,12 @@ impl Repository {
         {
             return Err(invalid("Invalid project ID for worktree storage"));
         }
-        let root = match &settings.root {
-            Some(path) if path.is_absolute() => path.clone(),
-            Some(path) => self.root.join(path),
-            None if data.is_absolute() => data.join("worktrees").join(project_id),
-            None => return Err(invalid("Worktree data directory must be absolute")),
-        };
-        std::fs::create_dir_all(&root)?;
-        Ok(root.canonicalize()?.join(name.as_str()))
+        match &settings.root {
+            Some(path) if path.is_absolute() => Ok(path.clone()),
+            Some(path) => Ok(self.root.join(path)),
+            None if data.is_absolute() => Ok(data.join("worktrees").join(project_id)),
+            None => Err(invalid("Worktree data directory must be absolute")),
+        }
     }
 
     async fn reuse(

@@ -163,9 +163,11 @@ impl BuiltinHost {
             .ok_or_else(|| io::Error::other("Runtime is not attached"))?;
         let owner = Self::removal_owner(&runtime, &managed).await?;
         self.release_entered(&runtime, &managed, force).await?;
+        self.require_owned_storage(&ctx, &repository, &managed)?;
+        // The checkout is deleted in-process; Git only prunes its registration.
         let execution = GitPort {
             ctx: &ctx,
-            writable: Some(vec![repository.common_dir.clone(), managed.path.clone()]),
+            writable: Some(vec![repository.common_dir.clone()]),
             credentials: &[],
         };
         retry_repository_busy(&ctx.cancel, || {

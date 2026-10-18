@@ -679,6 +679,7 @@ impl ChildWorktree {
             },
         )
         .map_err(tool_error)?;
+        host.require_owned_storage(&ctx, &self.repository, &self.managed)?;
         retry_repository_busy(&ctx.cancel, || {
             self.repository
                 .remove(&execution, &CheckoutActivity, &self.managed, false)
