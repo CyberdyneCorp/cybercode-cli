@@ -41,4 +41,4 @@ expression: "render(&mut app, 80, 40, &opts)"
 ┃ Ask anything… "/" commands · "@" files · "!" shell
 ┃
 ┃ Build · main test · default
- /Users/leo/work/app                                   100 · —  ctrl+p commands
+ ~/work/app                                            100 · —  ctrl+p commands

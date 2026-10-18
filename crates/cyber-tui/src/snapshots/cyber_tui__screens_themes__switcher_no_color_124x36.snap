@@ -37,5 +37,5 @@ expression: "render(&mut app, 124, 36, &plain)"
 ┃ │                                       │                                                                              │
 ┃ │↑↓ select · tab filter · type to search · enter keep · p project · esc revert                                         │
 ┃ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- /Users/leo/work/app                                          100 · —  ctrl+p commands   ● Connected · Cyber Code 1.0.0
+ ~/work/app                                                   100 · —  ctrl+p commands   ● Connected · Cyber Code 1.0.0
 row 23: 4-21 bold reverse

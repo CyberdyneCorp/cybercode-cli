@@ -41,7 +41,7 @@ expression: shown
 ┃ Ask anything… "/" commands · "@" files · "!" shell
 ┃                                                                                     ~/work/app
 ┃ Build · main test · default
- /Users/leo/work/app                                       100 · —  ctrl+p commands   ● Cyber Code 1.0.0
+ ~/work/app                                                100 · —  ctrl+p commands   ● Cyber Code 1.0.0
 row 12: 0-14 fg=#d6e4f0 bg=#0b0f14
 row 12: 15-15 fg=#00e5ff bg=#171c21
 row 12: 16-17 fg=#d6e4f0 bg=#171c21

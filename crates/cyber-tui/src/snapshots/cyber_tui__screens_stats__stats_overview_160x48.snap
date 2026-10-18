@@ -49,7 +49,7 @@ expression: "render(&mut app, width, height, &opts)"
 
 
   ↑↓ scroll · p period · v view · s scope · r refresh · tab next tab · 1-4 jump · esc close
- /Users/leo/work/app                                                               100 · $0.00  ctrl+p commands
+ ~/work/app                                                                        100 · $0.00  ctrl+p commands
 row 14: 0-10 fg=#d6e4f0 bg=#0b0f14
 row 14: 11-11 fg=#08454f bg=#0b0f14
 row 14: 12-12 fg=#d6e4f0 bg=#0b0f14

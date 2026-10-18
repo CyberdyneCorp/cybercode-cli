@@ -49,7 +49,7 @@ expression: "render(&mut app, width, height, &opts)"
 ┃ Ask anything… "/" commands · "@" files · "!" shell
 ┃                                                                                                                 ~/work/app
 ┃ Build · main test · default
- /Users/leo/work/app                                                                   100 · —  ctrl+p commands   ● Cyber Code 1.0.0
+ ~/work/app                                                                            100 · —  ctrl+p commands   ● Cyber Code 1.0.0
 row 2: 0-1 fg=#d6e4f0 bg=#0b0f14
 row 2: 2-5 fg=#00e5ff bg=#0b0f14 bold
 row 2: 6-111 fg=#d6e4f0 bg=#0b0f14

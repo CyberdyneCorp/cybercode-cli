@@ -49,7 +49,7 @@ expression: screen
 ┃ Ask anything… "/" commands · "@" files · "!" shell
 ┃                                                                                                                 ~/work/app
 ┃ Build · main test · default
- /Users/leo/work/app                                                                   100 · —  ctrl+p commands   ● Cyber Code 1.0.0
+ ~/work/app                                                                            100 · —  ctrl+p commands   ● Cyber Code 1.0.0
 row 6: 0-1 fg=#1f2933 bg=#ffffff
 row 6: 2-4 fg=#5b6878 bg=#ffffff
 row 6: 5-16 fg=#1f2933 bg=#ffffff bold

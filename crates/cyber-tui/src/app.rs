@@ -1326,6 +1326,21 @@ impl App {
                     (completion.selected + 1).min(completion.items.len().saturating_sub(1))
             }
             KeyCode::Esc => self.completion = None,
+            // Enter on a command already typed in full runs it rather than completing it.
+            KeyCode::Enter
+                if completion.trigger == '/'
+                    && completion
+                        .items
+                        .get(completion.selected)
+                        .is_some_and(|choice| {
+                            self.composer
+                                .trigger()
+                                .is_some_and(|(_, _, word)| word == choice.key)
+                        }) =>
+            {
+                self.completion = None;
+                return None;
+            }
             KeyCode::Tab | KeyCode::Enter if !completion.items.is_empty() => {
                 let choice = completion.items[completion.selected].clone();
                 let (trigger, start) = (completion.trigger, completion.start);

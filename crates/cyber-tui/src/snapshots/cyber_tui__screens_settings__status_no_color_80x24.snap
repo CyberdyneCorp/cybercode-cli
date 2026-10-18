@@ -25,6 +25,6 @@ expression: "render(&mut app, 80, 24, &plain)"
 
 
   ↑↓ scroll · r refresh · tab next tab · 1-4 jump · esc close
- /Users/leo/work/app                         100 (86%) · $0.00  ctrl+p commands
+ ~/work/app                                  100 (86%) · $0.00  ctrl+p commands
 row 1: 2-9 bold
 row 1: 12-19 bold reverse

@@ -25,7 +25,7 @@ expression: shown
 ┃ three
 ┃
 ┃ Build · Amini Coder test · default
- /Users/leo/work/app                         100 (86%) · $0.00  ctrl+p commands
+ ~/work/app                                  100 (86%) · $0.00  ctrl+p commands
 row 16: 0-0 fg=#d6e4f0 bg=#0b0f14
 row 16: 1-9 fg=#ff9ad5 bg=#0b0f14 bold
 row 16: 10-11 fg=#d6e4f0 bg=#0b0f14

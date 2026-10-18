@@ -47,7 +47,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect, compact: bool) {
             format!(
                 " {}",
                 shorten_path(
-                    &crate::sidebar::display_path(&app.session.directory),
+                    &crate::sidebar::home_path(&app.session.directory, app.home.as_deref()),
                     room.saturating_sub(1)
                 )
             ),

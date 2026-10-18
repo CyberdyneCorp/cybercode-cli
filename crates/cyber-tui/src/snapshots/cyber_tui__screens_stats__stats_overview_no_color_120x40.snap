@@ -41,5 +41,5 @@ expression: "render(&mut app, 120, 40, &plain)"
 
 
   ↑↓ scroll · p period · v view · s scope · r refresh · tab next tab · 1-4 jump · esc close
- /Users/leo/work/app                                   100 · $0.00  ctrl+p commands
+ ~/work/app                                            100 · $0.00  ctrl+p commands
 row 16: 2-9 bold

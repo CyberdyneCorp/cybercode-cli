@@ -41,4 +41,4 @@ expression: snapshot(&mut app)
 │                                                                                                                      │
 │ enter open · p pause/resume · r resume · x stop · R resume interrupted · s script · l log · a all · esc              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- /Users/leo/work/app                        ⚙ 1 workflow · 100 · —  ctrl+p commands
+ ~/work/app                                 ⚙ 1 workflow · 100 · —  ctrl+p commands

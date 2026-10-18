@@ -35,4 +35,4 @@ expression: "render(&mut app, 120, 34, &no_color)"
 ┃ Ask anything… "/" commands · "@" files · "!" shell
 ┃                                                                                     ~/work/app
 ┃ Build · main test · default
- /Users/leo/work/app                                         $0.00  ctrl+p commands   ● Connected · Cyber Code 1.0.0
+ ~/work/app                                                  $0.00  ctrl+p commands   ● Connected · Cyber Code 1.0.0

@@ -25,4 +25,4 @@ expression: "render(&mut app, 80, 24, &opts)"
 ┃ │   matrix                              │                                  │
 ┃ │↑↓ select · tab filter · type to search · enter keep · p project · esc re…│
 ┃ └──────────────────────────────────────────────────────────────────────────┘
- /Users/leo/work/app                                   100 · —  ctrl+p commands
+ ~/work/app                                            100 · —  ctrl+p commands

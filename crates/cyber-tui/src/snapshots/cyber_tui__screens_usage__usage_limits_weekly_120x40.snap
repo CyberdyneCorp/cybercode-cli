@@ -41,7 +41,7 @@ expression: "render(&mut app, 120, 40, &opts)"
 
 
   ↑↓ scroll · d day · w week · r refresh · tab next tab · 1-4 jump · esc close
- /Users/leo/work/app                                   100 · $0.00  ctrl+p commands
+ ~/work/app                                            100 · $0.00  ctrl+p commands
 row 22: 0-1 fg=#d6e4f0 bg=#0b0f14
 row 22: 2-13 fg=#00e5ff bg=#0b0f14
 row 22: 14-41 fg=#2b3445 bg=#0b0f14

@@ -25,4 +25,4 @@ expression: "render(&mut app, 80, 24, &plain)"
   Last 24h · These are independent characteristics of your usage, not a breakd
 
   ↑↓ scroll · d day · w week · r refresh · tab next tab · 1-4 jump · esc close
- /Users/leo/work/app                               100 · $0.00  ctrl+p commands
+ ~/work/app                                        100 · $0.00  ctrl+p commands

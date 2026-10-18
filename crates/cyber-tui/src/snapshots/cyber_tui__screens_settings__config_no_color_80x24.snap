@@ -25,5 +25,5 @@ expression: "render(&mut app, 80, 24, &plain)"
   Core settings: use cyber config or edit cyber.jsonc
 
   ↑↓ select · enter change · tab next tab · 1-4 jump · esc close
- /Users/leo/work/app                         100 (86%) · $0.00  ctrl+p commands
+ ~/work/app                                  100 (86%) · $0.00  ctrl+p commands
 row 5: 2-55 bold reverse

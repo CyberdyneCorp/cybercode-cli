@@ -31,6 +31,6 @@ expression: "render(&mut app, 100, 30, &plain)"
 ┃ Ask anything… "/" commands · "@" files · "!" shell
 ┃
 ┃ Build · main test · default
- /Users/leo/work/app                                                       100 · —  ctrl+p commands
+ ~/work/app                                                                100 · —  ctrl+p commands
 row 1: 1-8 bold italic
 row 1: 9-96 italic

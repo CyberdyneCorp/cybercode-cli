@@ -118,6 +118,39 @@ fn at_mentions_ask_for_files_and_complete() {
     assert_eq!(app.composer.text(), "see @src/main.rs ");
 }
 
+#[test]
+fn enter_runs_a_fully_typed_command_and_completes_a_partial_one() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    app.commands = ["rename", "release-notes"]
+        .map(|name| crate::model::Choice {
+            key: name.into(),
+            label: name.into(),
+            detail: String::new(),
+        })
+        .to_vec();
+    typed(&mut app, "/rena");
+    assert!(app.completion.is_some());
+    assert!(app.on_key(key(KeyCode::Enter)).is_empty());
+    assert_eq!(app.composer.text(), "/rename ");
+    assert!(matches!(app.overlay, Overlay::None));
+
+    app.composer.clear();
+    typed(&mut app, "/rename");
+    assert_eq!(app.completion.as_ref().unwrap().items[0].key, "rename");
+    app.on_key(key(KeyCode::Enter));
+    assert!(app.composer.is_empty());
+    assert!(matches!(app.overlay, Overlay::Rename(_)));
+}
+
+#[test]
+fn the_footer_shows_the_location_with_home_as_tilde() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    app.session.directory = "/Users/dev/work/app".into();
+    app.home = Some("/Users/dev".into());
+    let footer = screen(&app).lines().last().unwrap_or_default().to_owned();
+    assert!(footer.starts_with(" ~/work/app"), "{footer}");
+}
+
 fn permission() -> Request {
     Request::Permission {
         id: "per_1".into(),

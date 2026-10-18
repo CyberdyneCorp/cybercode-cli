@@ -49,7 +49,7 @@ expression: screen
 ┃ Ask anything… "/" commands · "@" files · "!" shell
 ┃                                                                                                                 ~/work/app
 ┃ Build · Demo Sonnet test · default
- /Users/leo/work/app                                                      116.5K (91%) · $0.00  ctrl+p commands   ● Cyber Code 1.0.0
+ ~/work/app                                                               116.5K (91%) · $0.00  ctrl+p commands   ● Cyber Code 1.0.0
 row 3: 0-111 fg=#d6e4f0 bg=#0b0f14
 row 3: 112-113 fg=#d6e4f0 bg=#13181d
 row 3: 114-121 fg=#d6e4f0 bg=#13181d bold

@@ -25,7 +25,7 @@ expression: "render(&mut app, 110, 24, &opts)"
 ┃ Ask anything… "/" commands · "@" files · "!" shell
 ┃
 ┃ Build · main test · default
- /Users/leo/work/app                                                                 100 · —  ctrl+p commands
+ ~/work/app                                                                          100 · —  ctrl+p commands
 row 18: 0-0 fg=#d6e4f0 bg=#0b0f14
 row 18: 1-1 fg=#481519 bg=#0b0f14
 row 18: 2-2 fg=#4c2119 bg=#0b0f14

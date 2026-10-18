@@ -25,7 +25,7 @@ expression: shown
   Core settings: use cyber config or edit cyber.jsonc
 
   ↑↓ select · enter change · tab next tab · 1-4 jump · esc close
- /Users/leo/work/app                         100 (86%) · $0.00  ctrl+p commands
+ ~/work/app                                  100 (86%) · $0.00  ctrl+p commands
 row 1: 0-1 fg=#d6e4f0 bg=#0b0f14
 row 1: 2-9 fg=#00e5ff bg=#0b0f14 bold
 row 1: 10-21 fg=#d6e4f0 bg=#0b0f14

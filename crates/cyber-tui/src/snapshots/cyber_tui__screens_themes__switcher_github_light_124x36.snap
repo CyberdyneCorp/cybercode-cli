@@ -37,7 +37,7 @@ expression: "render(&mut app, 124, 36, &light)"
 ┃ │                                       │                                                                              │
 ┃ │↑↓ select · tab filter · type to search · enter keep · p project · esc revert                                         │
 ┃ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- /Users/leo/work/app                                          100 · —  ctrl+p commands   ● Cyber Code 1.0.0
+ ~/work/app                                                   100 · —  ctrl+p commands   ● Cyber Code 1.0.0
 row 23: 0-1 fg=#24292f bg=#ffffff
 row 23: 2-2 fg=#0969da bg=#f2f2f3
 row 23: 3-3 fg=#24292f bg=#f2f2f3

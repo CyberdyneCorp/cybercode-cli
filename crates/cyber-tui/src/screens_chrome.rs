@@ -186,7 +186,7 @@ async fn footer_shows_cwd_context_cost_and_the_hint_at_60_and_120_columns() {
             footer.ends_with("100 (86%) · $0.00  ctrl+p commands"),
             "{footer}"
         );
-        assert!(footer.starts_with(" /Users/"), "{footer}");
+        assert!(footer.starts_with(" ~/work/app"), "{footer}");
         insta::assert_snapshot!(format!("footer_{width}x20"), shown);
     }
     // Above 85% the context field is drawn in the warning color.
@@ -227,7 +227,7 @@ async fn a_toast_replaces_the_left_side_and_an_unpriced_model_shows_a_dash() {
         ..Opts::default()
     };
     let buf = buffer(&mut app, 120, 20, &later);
-    assert!(row(&buf, 19).starts_with(" /Users/leo/work/app"));
+    assert!(row(&buf, 19).starts_with(" ~/work/app"));
 }
 
 #[tokio::test]

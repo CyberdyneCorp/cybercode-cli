@@ -25,7 +25,7 @@ expression: "render(&mut app, 80, 24, &opts)"
 ┃ Ask anything… "/" commands · "@" files · "!" shell
 ┃
 ┃ Build · Amini Coder test · default
- /Users/leo/work/app                         100 (86%) · $0.00  ctrl+p commands
+ ~/work/app                                  100 (86%) · $0.00  ctrl+p commands
 row 19: 0-1 fg=#00e5ff bg=#171c21
 row 19: 2-79 fg=#d6e4f0 bg=#171c21
 row 20: 0-1 fg=#00e5ff bg=#171c21

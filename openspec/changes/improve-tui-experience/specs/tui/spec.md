@@ -419,8 +419,23 @@ Frames SHALL advance at no more than 12 per second, only while working, with not
 - **WHEN** a bash tool returns 400 lines
 - **THEN** the card shows the last 10 lines and `+390 lines (press o to expand)`
 
+### Requirement: Shell, slash and memory input modes
+(P0) The system SHALL treat input starting with `!` as a user shell command. It SHALL run in the Location with the configured shell, and its output SHALL be recorded in the Session as user-provided context. Input starting with `/` SHALL open slash-command autocomplete over built-in TUI commands, custom commands, skills and MCP prompts (fuzzy, maximum 12 results). (P1) In the slash-command menu, Tab and Enter SHALL accept the selected entry, except that Enter SHALL run the command when the typed name already equals the selected entry. (P1) Input starting with `#` SHALL offer to save the remaining text as a memory entry in project or user scope, as defined in `memory`.
+
+#### Scenario: Shell mode output in context
+- **WHEN** the user submits `!cargo test 2>&1 | tail -20`
+- **THEN** the command runs in the Location and the output appears as a shell block the model can see on the next Turn
+
+#### Scenario: Enter runs a fully typed command
+- **WHEN** the user types `/rename`, the menu selects `rename`, and the user presses Enter
+- **THEN** `/rename` runs at once and the rename dialog opens, while Enter after `/rena` only completes the composer to `/rename `
+
+#### Scenario: Memory quick-add
+- **WHEN** the user submits `# always use pnpm, never npm`
+- **THEN** the TUI asks `Save to: project / user` and, on `project`, appends the entry to the project memory
+
 ### Requirement: Status line
-(P1) The system SHALL render a configurable status line as the last row of the screen, below the composer, from `tui.statusline.fields`. Available fields: `model`, `variant`, `agent`, `mode`, `context` (tokens and percent of the context window used, as `29.5K (22%)`), `cost` (`$0.00`, `—` when unpriced, `≥ $x` when partly unpriced), `branch`, `worktree`, `goal`, `loops`, `remote`, `cwd`. Default fields: `cwd, context, cost`, since the composer info line shows the agent, model and Mode, and the sidebar shows the branch. `cwd` SHALL be left-aligned and shortened in the middle to fit. The other fields SHALL be right-aligned, separated by ` · `, and followed by the key hint `<command_palette key> commands` (default `ctrl+p commands`), which reflects the configured binding. A toast SHALL replace the left side for 6 seconds. When `tui.statusline.command` is set, the system SHALL run that command at most once every 300 ms with Session state as JSON on stdin, and render the first line of its stdout in place of the fields.
+(P1) The system SHALL render a configurable status line as the last row of the screen, below the composer, from `tui.statusline.fields`. Available fields: `model`, `variant`, `agent`, `mode`, `context` (tokens and percent of the context window used, as `29.5K (22%)`), `cost` (`$0.00`, `—` when unpriced, `≥ $x` when partly unpriced), `branch`, `worktree`, `goal`, `loops`, `remote`, `cwd`. Default fields: `cwd, context, cost`, since the composer info line shows the agent, model and Mode, and the sidebar shows the branch. `cwd` SHALL be left-aligned, show the home directory as `~` as the sidebar does, and be shortened in the middle to fit. The other fields SHALL be right-aligned, separated by ` · `, and followed by the key hint `<command_palette key> commands` (default `ctrl+p commands`), which reflects the configured binding. A toast SHALL replace the left side for 6 seconds. When `tui.statusline.command` is set, the system SHALL run that command at most once every 300 ms with Session state as JSON on stdin, and render the first line of its stdout in place of the fields.
 
 #### Scenario: Custom status command
 - **WHEN** `tui.statusline.command` is `~/.config/cyber/status.sh`
@@ -431,8 +446,8 @@ Frames SHALL advance at no more than 12 per second, only while working, with not
 - **THEN** the `context` field is rendered in the warning color
 
 #### Scenario: Default footer
-- **WHEN** a Session in `/Users/leo/work/app` has used 29,470 of 131,072 context tokens and $0.00
-- **THEN** the footer shows `/Users/leo/work/app` on the left and `29.5K (22%) · $0.00  ctrl+p commands` on the right
+- **WHEN** a Session in `/Users/leo/work/app`, with home `/Users/leo`, has used 29,470 of 131,072 context tokens and $0.00
+- **THEN** the footer shows `~/work/app` on the left and `29.5K (22%) · $0.00  ctrl+p commands` on the right
 
 ### Requirement: Themes and appearance
 (P0) The system SHALL ship at least 12 built-in themes, including `cyber`, `system`, `dracula`, `tokyonight`, `catppuccin`, `gruvbox`, `nord`, `one-dark`, `github-light` and `solarized-light`. It SHALL load custom themes from `themes/*.json` in global and project config directories. Since a project's files may be untrusted, a theme file over 64 KiB, a `tui.jsonc` over 256 KiB, and either one when it is not a regular file (a FIFO, or a link to a device) SHALL be skipped with a warning, without reading past the limit or waiting on the file. It SHALL follow the terminal's dark/light background when `tui.theme` is `system`. `/theme` SHALL preview themes live, and the choice SHALL be persisted to `~/.local/state/cyber/kv.json`. (P1) The theme SHALL reload on SIGUSR2 without a restart. (P1) Every theme SHALL resolve to the Theme tokens, and colors SHALL be rendered as Color capability and NO_COLOR defines.

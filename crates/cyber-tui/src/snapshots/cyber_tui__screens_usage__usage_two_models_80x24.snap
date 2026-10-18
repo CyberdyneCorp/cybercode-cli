@@ -25,7 +25,7 @@ expression: "render(&mut app, width, height, &opts)"
 
 
   ↑↓ scroll · d day · w week · r refresh · tab next tab · 1-4 jump · esc close
- /Users/leo/work/app                               100 · $0.00  ctrl+p commands
+ ~/work/app                                        100 · $0.00  ctrl+p commands
 row 5: 0-1 fg=#d6e4f0 bg=#0b0f14
 row 5: 2-24 fg=#6b7a8f bg=#0b0f14
 row 5: 25-79 fg=#d6e4f0 bg=#0b0f14
