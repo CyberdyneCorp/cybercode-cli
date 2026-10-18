@@ -6,6 +6,7 @@ The model is a **scripted local OpenAI-compatible provider** (`scripts/screens/p
 
 Two things are not scripted:
 
+- **Context bar** in the sidebar: the scripted model reports 86.4K prompt tokens per reply against the demo model's 200K window, so the bar sits at 43% with the auto-compact marker at 90%.
 - **Machine stats** in the sidebar (CPU, memory, disk, load) are live readings of the machine that took the captures.
 - **Stats history** (the heatmap, streaks and totals) is seeded fixture usage for earlier days, written into the temporary database before the TUI starts. Today's usage comes from the scripted Turns.
 
@@ -24,7 +25,7 @@ PY=/tmp/cyber-shots/bin/python just screenshots
 | File | Screen |
 |---|---|
 | [`welcome.png`](welcome.png) | Welcome screen: the ASCII logo, session details, tips, and the docked sidebar with Context, MCP, LSP and Machine |
-| [`transcript-sidebar.png`](transcript-sidebar.png) | A finished Turn: rendered Markdown, a highlighted Python block and the `▣ Build · model · duration` marker |
+| [`transcript-sidebar.png`](transcript-sidebar.png) | A finished Turn: rendered Markdown, a highlighted Python block, the `▣ Build · model · duration` marker and the sidebar context bar |
 | [`thinking.png`](thinking.png), [`thinking.gif`](thinking.gif) | A Turn in progress with the Nyan comet trail, `Thinking`, the elapsed time and the interrupt hint (the GIF is 24 consecutive captures) |
 | [`rename.png`](rename.png) | The `/rename` dialog, prefilled with the Session's current title |
 | [`themes.png`](themes.png) | The `/theme` switcher previewing `synthwave-84` |

@@ -214,6 +214,17 @@ def wait(what, check, timeout=40, step=0.2, tui=None):
     raise TimeoutError(what)
 
 
+def command(tui, name, wait=1.2):
+    """Run a slash command. The first enter may only accept the completion, so press it until
+    the command leaves the composer."""
+    tui.type(name, 0.8)
+    for _ in range(3):
+        tui.key("enter", wait)
+        if name not in "\n".join(tui.text().splitlines()[-6:]):
+            return
+    raise TimeoutError(f"{name} did not run:\n{tui.text()}")
+
+
 def fanout(name, tag, n):
     return (f"export const meta = {{ name: '{name}', description: 'Fan out {n} agents', "
             f"phases: [{{ title: 'Fan out' }}, {{ title: 'Collect' }}] }};\n"
@@ -258,8 +269,8 @@ def capture(env):
     tui.pump(1.5)
     env.shot(tui, "transcript-sidebar.png")
 
-    tui.type("/rename")
-    tui.key("enter", 1.2)
+    command(tui, "/rename")
+    tui.wait_for("Rename session", 10)
     env.shot(tui, "rename.png")
     tui.key("esc", 0.8)
 
@@ -273,14 +284,12 @@ def capture(env):
     tui.wait_for("Result TURN", 20)
     tui.pump(1)
 
-    tui.type("/theme")
-    tui.key("enter", 1.2)
+    command(tui, "/theme")
     tui.type("synthwave", 1.5)
     env.shot(tui, "themes.png")
     tui.key("esc", 1.0)
 
-    tui.type("/files")
-    tui.key("enter", 2.0)
+    command(tui, "/files", 2.0)
     tui.wait_for("docs/", 20)
     lines = tui.text().splitlines()
     first = next(i for i, l in enumerate(lines) if "crates/" in l)
@@ -297,8 +306,7 @@ def capture(env):
     tui.key("esc", 0.8)
     tui.key("esc", 0.8)
 
-    tui.type("/settings")
-    tui.key("enter", 2.0)
+    command(tui, "/settings", 2.0)
     tui.key("3", 2.0)
     env.shot(tui, "usage.png")
     tui.key("4", 2.5)
@@ -316,8 +324,7 @@ def capture(env):
     for prefix in ("S-0", "A-0", "A-1"):
         env.ctl("/ctl/release", {"tag": prefix})
         tui.pump(0.8)
-    tui.type("/workflows")
-    tui.key("enter", 3.0)
+    command(tui, "/workflows", 3.0)
     env.shot(tui, "workflows-monitor.png")
     tui.key("esc", 1.0)
     env.ctl("/ctl/auto", {"on": True})

@@ -128,7 +128,7 @@ class Handler(BaseHTTPRequestHandler):
         chunks = [{"choices": [{"index": 0, "delta": {"content": text[i:i + 40]}, "finish_reason": None}]}
                   for i in range(0, len(text), 40)]
         chunks.append({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-                       "usage": {"prompt_tokens": 1800, "completion_tokens": 240}})
+                       "usage": {"prompt_tokens": 86400, "completion_tokens": 1240}})
         data = ("".join(f"data: {json.dumps(c)}\n\n" for c in chunks) + "data: [DONE]\n\n").encode()
         time.sleep(1.6)  # a plausible streaming time for the Turn marker
         try:

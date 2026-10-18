@@ -11,15 +11,15 @@ A model-independent, local-first coding agent: a durable server owns your sessio
 - **Recovery and confinement.** Shadow-git snapshots restore files without overwriting your own edits. Commands run in an OS sandbox on macOS and Linux (Windows is incomplete).
 - **Open contracts.** Behavior is specified as [OpenSpec requirements](openspec/specs) tagged by phase and validated in CI, and implementation evidence is published ([P1](docs/implementation/p1-status.md), [P2](docs/implementation/p2-status.md)).
 - **Many agents, one server.** Subagents run as real child Sessions (in the background or in their own worktree), workflows fan out dozens of agents with fair scheduling across runs, and every agent's transcript stays inspectable. Agent teams and agent-to-agent messaging are not built yet.
-- **A full terminal UI.** 18 themes with a live switcher, Markdown with highlighted code, a responsive sidebar with machine stats (CPU, memory, disk), the `Ctrl+P` palette, a file explorer, a workflows monitor, Usage/Stats tabs (also as `cyber stats`), and `/rename` to name a Session and resume it later by title.
+- **A full terminal UI.** 18 themes with a live switcher, Markdown with highlighted code, a responsive sidebar with a context-window bar (tokens used, auto-compact point, cost), the MCP servers and machine stats (CPU, memory, disk), the `Ctrl+P` palette, a file explorer, a workflows monitor, Usage/Stats tabs (also as `cyber stats`), and `/rename` to name a Session and resume it later by title.
 
 ## Screenshots
 
 Real captures of the TUI in a 160×48 pseudo-terminal against a scripted local model (not live inference); the Machine bars are live readings of the capturing machine. Regenerate them with `just screenshots` ([how](docs/screenshots/README.md)).
 
-| Welcome screen with the Machine sidebar | Transcript: Markdown, highlighted code, turn marker |
+| Welcome screen with the sidebar | Transcript: Markdown, highlighted code, turn marker |
 |---|---|
-| ![Welcome screen with the ASCII logo, session details, tips and the sidebar with Context, MCP, LSP and Machine stats](docs/screenshots/welcome.png) | ![Rendered Markdown and a highlighted Python block next to the sidebar](docs/screenshots/transcript-sidebar.png) |
+| ![Welcome screen with the ASCII logo, session details, tips and the sidebar with Context, MCP, LSP and Machine stats](docs/screenshots/welcome.png) | ![Rendered Markdown and a highlighted Python block next to the sidebar, with the context bar at 43% of a 200K window](docs/screenshots/transcript-sidebar.png) |
 | **Thinking: the Nyan progress indicator** | **`/workflows`: three runs and one queued** |
 | ![Animated Nyan comet trail with Thinking, elapsed time and the interrupt hint](docs/screenshots/thinking.gif) | ![Workflows monitor with three running runs, one queued run and per-run progress](docs/screenshots/workflows-monitor.png) |
 | **File explorer with a rendered Markdown preview** | **`/theme` switcher with live preview** |
@@ -139,7 +139,7 @@ Use `--model provider/model` to select a model. Remote MCP servers that need OAu
 | Hooks | Command, HTTP, prompt and MCP-tool handlers; managed-only org policy | Plugin hooks pending |
 | Skills | Bundled `/review`, `/batch`, `/simplify`, `/security-review`, `/customize-cyber`; remote sources; `cyber review` | Plugin skills pending |
 | Instructions | `CYBER.md`, `AGENTS.md`, `CLAUDE.md`, `CONTEXT.md`; confined `@path` imports | [Guide](docs/local-core-guide.md#project-instructions-and-cybermd) |
-| TUI | Themes, Markdown, sidebar with machine stats, palette, explorer, Settings/Usage/Stats, recaps, `/rename` | Some Settings extras pending |
+| TUI | Themes, Markdown, sidebar with context bar, MCP and machine stats, palette, explorer, Settings/Usage/Stats, recaps, `/rename` | Some Settings extras pending |
 | Clients | TUI, `exec`, background service (an idle server from an older build is replaced automatically), HTTP/SSE/WebSocket/stdio API, TypeScript SDK | [SDK](sdk/typescript/README.md) |
 | Partial P1 | Subagents/worktrees, cancellation, budgets, memory, LSP, formatting, migration previews | [P1 status](docs/implementation/p1-status.md) |
 
