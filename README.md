@@ -52,6 +52,14 @@ export OPENAI_API_KEY="your-key"
 
 `cyber` is a client and a server. The TUI, `cyber exec`, `cyber api` and `cyber mcp serve` don't run the agent themselves: they start (or reuse) **one background server per user**, and that server owns every Session, Turn, tool call and workflow run. That's why you can close the TUI, open it again or attach a second client and find the same Sessions, and why work continues and recovers after a crash. Everything it stores lives on your machine: the database in `~/.local/share/cyber/cyber.db`, and the server's registration (address, version, build and PID) in `~/.local/state/cyber/server.json`.
 
+Why a separate server instead of running everything inside the terminal UI:
+
+- **Work outlives the window.** A Turn, a background subagent or a 30-agent workflow keeps running when you close the TUI or your SSH connection drops. Reattach later and it's still there, or already finished.
+- **Crash safety.** Every prompt is written to SQLite before it runs. If the process dies, the next start recovers interrupted Sessions and resumes workflow runs instead of losing them.
+- **One source of truth for many clients.** The TUI, `exec`, scripts using the SDK and other agents over `cyber mcp serve` all see the same Sessions, approvals and live events, instead of each holding a private copy.
+- **Shared, expensive state.** Language servers, MCP connections, the agent-slot scheduler and the usage ledger live once in the server and are reused by every client, instead of starting over for each command.
+- **Safety in one place.** Permissions, sandboxing, budgets and hooks are enforced by the server, so no client can skip them.
+
 You rarely manage it by hand:
 
 ```bash
