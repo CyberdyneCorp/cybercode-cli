@@ -6,8 +6,33 @@ on:
   pull_request:
 
 jobs:
+  # Commits that only touch root Markdown, docs/ or openspec/ skip the build and test
+  # jobs; OpenSpec validation still runs for them.
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "$BASE" "$GITHUB_SHA" | grep -qvE '^[^/]+\.md$|^docs/|^openspec/'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
   rust:
     name: Rust (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -31,6 +56,8 @@ jobs:
 
   windows-lint:
     name: Windows lint
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@v4
@@ -243,8 +270,8 @@ jobs:
 
   windows:
     name: Windows build
-    needs: windows-lint
-    if: ${{ !cancelled() }}
+    needs: [changes, windows-lint]
+    if: ${{ !cancelled() && needs.changes.outputs.code == 'true' }}
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@v4
@@ -260,6 +287,7 @@ jobs:
         run: .\target\debug\cyber.exe --version
       - name: Native worktree startup flags and API admission
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: |
           cargo test --locked -p cyber-cli --bin cyber worktree_tests
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -271,9 +299,11 @@ jobs:
         run: cargo test --locked -p cyber-core --lib --test worktrees --test worktree_lock --test worktree_repository --test config
       - name: Native MCP configuration, framed protocol and startup wait
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-core --test mcp_config --test mcp_trust -p cyber-tools --test mcp_protocol --test mcp_authority --test mcp_discovery --test mcp_wait
       - name: Native MCP passive transport and leader-exit observation
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: |
           cargo test --locked -p cyber-tools --lib mcp::stdio::tests
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -287,6 +317,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native scope-aware deferred tool materialization
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: |
           cargo test --locked -p cyber-core --lib config::deferred_tools::tests
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -302,15 +333,19 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native MCP retained startup joins and bounded reconnect
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --lib mcp::pool::tests
       - name: Native MCP retained proxy settlement
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --lib mcp::launch::tests
       - name: Native independent MCP ownership and restart fencing
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-server --test mcp_ownership
       - name: Native tool registration identity through dispatch
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: |
           cargo test --locked -p cyber-server --test runtime registration
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -318,15 +353,19 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native application client-tool schema and permission boundaries
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-app --lib host::tests
       - name: Native authenticated MCP Location-close API
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-app --test mcp
       - name: Native MCP definition review and trust CLI
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-cli --test mcp_review
       - name: Native remote MCP Streamable HTTP transport
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: |
           cargo test --locked -p cyber-tools --test mcp_remote
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -337,6 +376,7 @@ jobs:
       # Credential Manager layout over the in-memory vault: no test touches the real store.
       - name: Native MCP OAuth credential store
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: |
           cargo test --locked -p cyber-tools --test mcp_oauth
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -346,15 +386,19 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native memory documents and storage ownership
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-core --test memory --test memory_storage
       - name: Native memory tool admission and golden output
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test memory --test memory_context
       - name: Native memory CLI review and mutation admission
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-cli --test memory
       - name: Native durable memory mutation admission
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: |
           cargo test --locked -p cyber-server --lib runtime::memory
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -362,74 +406,97 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native memory HTTP shutdown ownership
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-server --test http shutdown_waits_for_disposed_handler_memory_work_and_refuses_new_leases
       - name: Native client checkpoint privacy refusal
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-core --test memory_client_state
       - name: Native authenticated memory review and mutation admission API
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-app --test memory
       - name: Native hook configuration validation and trust withholding
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-core --test config hook
       - name: Native individual hook trust and concurrent approval storage
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-core --test hook_trust
       - name: Native hook review and exact handler approval CLI
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-cli --test cli hook_
       - name: Native CLI hook execution history
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-cli --test hook_history
       - name: Native synthetic hook CLI validation and isolation
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-cli --test hook_test_cli
       - name: Native prompt hook evaluator, metering and interruption ownership
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test hook_prompt
       - name: Native HTTP hook transport, policy and receipt ownership
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test hook_http -p cyber-sandbox --test proxy_shutdown
       - name: Native TUI hook receipt history
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tui hook_history
       - name: Native TUI hook definition and trust review
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tui hook_definitions
       - name: Native TUI memory review and explicit confirmation
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tui memory
       - name: Native embedded raw request identity
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-client --lib embedded_raw
       - name: Native authenticated hook definition catalog
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-app --test server hook_catalog_api
       - name: Native hook selectors and ordered decisions
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-core --test hook_decisions
       - name: Native hook envelopes and captured identity
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-core --test hook_envelopes
       - name: Native durable hook receipts and admission fences
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-server --test hook_receipts
       - name: Native hook scratch creation and ownership
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --lib hook_commands::launch::tests
       - name: Native hook command trust and launch refusals
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test hook_command_launch
       - name: Native hook command result contracts
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test hook_command_results
       - name: Native hook command stdin and owned transport
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test windows_container_process container_hook_transport
       # Production path: `cyber exec --embedded` with PowerShell command hooks and an
       # HTTP context hook; the ownership helper is built earlier in this job.
       - name: Native PowerShell and HTTP hooks through exec
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: |
           cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -437,126 +504,167 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native HTTP lifecycle hooks through the app host
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-app --test server application_emits_runtime_lifecycle_hooks_with_session_identity
       - name: Unsupported Unix bridge refuses execution
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-sandbox --test bridge
       - name: Native environment credential masking
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-sandbox --lib env::tests
       - name: Native Windows process-tree ownership
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-sandbox --test windows_job
       - name: Native parent-owned Windows process trees
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-sandbox --test windows_parent_job
       - name: Native Windows AppContainer profile and ACL ownership
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-sandbox --lib windows_container::tests
       - name: Native Windows runtime capability verification
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-sandbox --lib windows_launch::capabilities::tests
       - name: Native Windows AppContainer launch and direct-object isolation
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-sandbox --features windows-test-controls --test windows_container_launch
       - name: Native Windows AppContainer asynchronous command streams
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-sandbox --features windows-test-controls --test windows_container_launch piped_ -- --nocapture
       - name: Native Windows foreground AppContainer process adapter
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test windows_container_process -- --nocapture
       - name: Native tool proxy transport
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --lib sandboxing::tests
       - name: Native agent profile resolution
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-core --test agent_profiles
       - name: Native built-in profile tool admission
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test agent_profiles
       - name: Native client tool profile admission
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-app --lib host::tests
       - name: Native durable agent context
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test agent_context
       - name: Native filesystem edit path proofs
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --lib permissions::filesystem
       - name: Native ordered permission rules
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test ordered_permissions --test auto_dispatch -p cyber-server --test auto
       - name: Native agent permission admission
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test agent_permissions
       - name: Native agent request options
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test agent_requests
       - name: Native agent starting Modes and step limits
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test agent_limits
       - name: Native final no-tools wire choices
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-llm --test adapters runtime_no_tools_choice
       - name: Native structured child results and durable projection
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test structured_subagents -p cyber-server --test structured_results
       - name: Native structured result HTTP history
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-server --test http typed_child_results_are_available_in_message_history
       - name: Native background subagent ownership and registry recovery
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test background_subagents -p cyber-server --test jobs
       - name: Native background job API controls
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-server --test http background_job_routes_list_scope_and_stop_a_child
       - name: Native background task TUI controls
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tui --lib tasks
       - name: Native exec durable admission and child Job ownership
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-cli --test exec_delegation --test exec_session_usage --bin cyber
       - name: Native Session subtree budgets and config validation
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-server --test budgets --test budget_errors -p cyber-core --test config -p cyber-store --test store
       - name: Native Session budget API
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-server --test http session_api_persists_budget_and_refuses_invalid_or_reserved_objects
       - name: Native auxiliary web model usage
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test web_skills
       - name: Native repository inspection helper protocol
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-sandbox --test git_inspection
       - name: Native long-root library inspection candidate
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-core --test worktree_repository library_status
       - name: Native Session descendant deletion safety
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-server --test runtime delete_
       - name: Native descendant billing and migration
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-server --test child_usage
       - name: Native descendant billing API
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-server --test http session_detail_and_listing_expose_separate_descendant_billing
       - name: Native durable Session usage API
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-server --test http session_usage_api
       - name: Native TUI cost snapshots
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tui cost_
       - name: Native explicit user subtasks
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test subtasks --test delegations -p cyber-server --test subtask_cancellation
       - name: Native subtree admission closure
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-server --test subtree_admission --test subtree_stop --test subtree_reopen --test callback_authority --test idle_cancellation --test child_ownership
       - name: Native forked child context and ownership
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test forked_subagents -p cyber-server --test fork_context
       - name: Native child-thread API and TUI browsing
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: |
           cargo test --locked -p cyber-server --test http child_thread
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -564,12 +672,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native subagent resume and attempt replay
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test subagent_resume -p cyber-server --test resume_children --test child_preparation --test admission_authority
       - name: Native automatic structured child handoff
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test isolated_subagents structured_foreground_result_is_collected_before_automatic_queued_attempts -- --exact --nocapture
       - name: Native isolated child checkout execution
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: |
           cargo test --locked -p cyber-tools --test isolated_subagents interrupt_cancels_public_child_preparation_before_late_setup_or_input -- --exact --nocapture
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -577,87 +688,115 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native durable subagent names
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-server --test subagent_names -p cyber-tools --test subagent_names
       - name: Native foreground subagent ownership
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test subagents
       - name: Native agent model selection
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test agent_models
       - name: Native app-host inference delegation
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-app --lib app_host_delegates_validated_agent_request_options
       - name: Native model selection API
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-server --test http model
       - name: Native request option layering
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-llm --test catalog
       - name: Native parent deny inheritance
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test parent_permissions
       - name: Native Turn identity pinning
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-server --test modes
       - name: Native parent Mode ceilings
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test parent_modes
       - name: Native ancestor request visibility and scoped replies
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-server --test requests
       - name: Native ancestor request reply endpoints
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-server --test http parent_endpoint_replies_to_child_requests_and_refuses_unrelated_sessions
       - name: Native routed child request streams
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-server --test http child_requests_reach_parent_location_and_session_streams_without_changing_replay_cursor
       - name: Native TUI child approvals and durable admission
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tui --lib
       - name: Native historical context compatibility
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-server --test context_compaction historical_epoch_without_a_system_prefix_keeps_legacy_request_bytes
       - name: Native worktree setup admission
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test worktree_setup
       - name: Native durable worktree setup recovery
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-server --test worktree_setup_journal --test worktree_setup_output --test location_activity
       - name: Native shell ownership and cancellation
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test windows_shell
       - name: Native PowerShell critical-path analysis
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test inline_removals powershell_native_
       - name: Native PowerShell filesystem facts
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test powershell_analysis native_
       - name: PowerShell source and legacy fallback contracts
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --lib tools::powershell::tests
       - name: Native PowerShell tool contracts
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test windows_powershell
       - name: Every registered tool has a golden
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test golden every_registered_tool_has_a_golden
       - name: Native runtime shutdown
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-server --test runtime shutdown_
       - name: Native server listener lifecycle
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-app --test server
       - name: Native pending HTTP2 request cleanup
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-server --test transport
       - name: Native active-tool service shutdown
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-app --test windows_service
       - name: Native CLI service shutdown
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: cargo test --locked -p cyber-cli --test cli service_stop_uses_registered_http_shutdown
       - name: Native workflow engine, runs and surfaces
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: |
           cargo test --locked -p cyber-workflow
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -687,6 +826,8 @@ jobs:
 
   sdk:
     name: TypeScript SDK
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -732,6 +873,8 @@ jobs:
 
   platforms:
     name: Build (${{ matrix.target }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
