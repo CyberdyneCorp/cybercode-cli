@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::{Json, Router, extract::State, http::request::Parts, routing::get};
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sysinfo::{CpuRefreshKind, DiskRefreshKind, Disks, MemoryRefreshKind, System};
 
 use super::{
@@ -20,9 +20,12 @@ use super::{
 const REFRESH: Duration = Duration::from_secs(2);
 /// The disk list (mounts) is re-read this rarely; only the matched disk is refreshed.
 const DISK_LIST_REFRESH: Duration = Duration::from_secs(60);
+/// A JSON file holding a fixed [`Machine`] served instead of live readings, so the README
+/// screenshots never show the capturing machine. Unset in normal use.
+const FIXTURE_ENV: &str = "CYBER_MACHINE_FIXTURE";
 
 /// One machine sample.
-#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Machine {
     /// The OS name and version, such as `macOS 15.0`; never the host or user name.
     pub hostname_label: Option<String>,
@@ -42,7 +45,7 @@ pub struct Machine {
     pub sampled_at: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct DiskUsage {
     pub mount: String,
     /// Bytes.
@@ -63,14 +66,37 @@ async fn system(
     if !directory.is_dir() {
         return Err(ApiError::invalid("System Location must be a directory"));
     }
-    let probe = directory.clone();
-    let machine = tokio::task::spawn_blocking(move || sample(&probe))
-        .await
-        .map_err(|_| ApiError::invalid("System sampling was interrupted"))?;
+    let machine = match fixture() {
+        Some(machine) => Machine {
+            sampled_at: unix_ms(),
+            ..machine.clone()
+        },
+        None => {
+            let probe = directory.clone();
+            tokio::task::spawn_blocking(move || sample(&probe))
+                .await
+                .map_err(|_| ApiError::invalid("System sampling was interrupted"))?
+        }
+    };
     Ok(Json(Located {
         location: LocationInfo::of(&directory),
         data: machine,
     }))
+}
+
+/// The [`FIXTURE_ENV`] sample, read once; `None` when unset or unreadable.
+fn fixture() -> Option<&'static Machine> {
+    static FIXTURE: OnceLock<Option<Machine>> = OnceLock::new();
+    FIXTURE
+        .get_or_init(|| {
+            let path = std::env::var_os(FIXTURE_ENV)?;
+            parse_fixture(&std::fs::read_to_string(path).ok()?)
+        })
+        .as_ref()
+}
+
+fn parse_fixture(text: &str) -> Option<Machine> {
+    serde_json::from_str(text).ok()
 }
 
 /// The process-wide sampler: one `System` refreshed at most every [`REFRESH`].
@@ -272,6 +298,20 @@ mod tests {
         assert_eq!(found("/homework/a"), Some(&PathBuf::from("/homework")));
         assert_eq!(found("/etc"), Some(&PathBuf::from("/")));
         assert_eq!(containing_mount(Path::new("/x"), &[]), None);
+    }
+
+    #[test]
+    fn a_fixture_parses_and_a_malformed_one_is_ignored() {
+        let machine = parse_fixture(
+            r#"{"hostname_label":"macOS 15.0","cores_logical":12,"cores_physical":12,
+                "cpu_idle_percent":77.0,"load_avg":[2.1,1.8,1.6],"memory_total":34359738368,
+                "memory_available":19112603648,"disk":{"mount":"/","total":926000000000,
+                "available":514000000000},"sampled_at":0}"#,
+        )
+        .expect("fixture");
+        assert_eq!(machine.cores_logical, 12);
+        assert_eq!(machine.disk.map(|d| d.available), Some(514_000_000_000));
+        assert_eq!(parse_fixture(r#"{"cores_logical":"twelve"}"#), None);
     }
 
     #[test]

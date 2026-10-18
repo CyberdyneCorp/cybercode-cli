@@ -7,7 +7,7 @@ The model is a **scripted local OpenAI-compatible provider** (`scripts/screens/p
 Two things are not scripted:
 
 - **Context bar** in the sidebar: the scripted model reports 86.4K prompt tokens per reply against the demo model's 200K window, so the bar sits at 43% with the auto-compact marker at 90%.
-- **Machine stats** in the sidebar (CPU, memory, disk, load) are live readings of the machine that took the captures.
+- **Machine stats** in the sidebar (CPU, memory, disk, load) are a fixed sample (12 cores at 23%, 14.2 of 32 GB memory, 412 of 926 GB disk) that the capture hands the server through `CYBER_MACHINE_FIXTURE`, a JSON file served by `GET /system` in place of live readings, so no screenshot shows the capturing machine. Normal runs never set it.
 - **Stats history** (the heatmap, streaks and totals) is seeded fixture usage for earlier days, written into the temporary database before the TUI starts. Today's usage comes from the scripted Turns.
 
 ## Regenerating

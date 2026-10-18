@@ -10,7 +10,8 @@ as HTML and turned into a PNG with headless Chrome.
     /tmp/cyber-shots/bin/python scripts/capture_tui_screens.py --binary target/debug/cyber
 
 The Stats history is seeded fixture data (usage rows for earlier days in the temporary
-database); the machine stats in the sidebar are live readings of the capturing machine.
+database); the machine stats in the sidebar are the fixed MACHINE sample, served through
+CYBER_MACHINE_FIXTURE so no screenshot shows the capturing machine.
 """
 import argparse
 import os
@@ -39,6 +40,12 @@ MCP = os.path.join(REPO, "crates", "cyber-app", "tests", "support", "mcp_stdio.p
 COLS, ROWS = 160, 48
 DARK = ("#d6e4f0", "#0b0f14", "0b0b/0f0f/1414")
 LIGHT = ("#1f2933", "#ffffff", "ffff/ffff/ffff")
+GB = 1024 ** 3  # the sidebar shows binary gigabytes
+# 12 cores at 23% CPU, 14.2 of 32 GB memory in use, 412 of 926 GB disk in use.
+MACHINE = {"hostname_label": "macOS 15.4", "cores_logical": 12, "cores_physical": 12,
+           "cpu_idle_percent": 77.0, "load_avg": [2.1, 1.8, 1.6],
+           "memory_total": 32 * GB, "memory_available": int(17.8 * GB),
+           "disk": {"mount": "/", "total": 926 * GB, "available": 514 * GB}, "sampled_at": 0}
 
 
 class Env:
@@ -51,6 +58,7 @@ class Env:
 
     def env(self):
         return {"HOME": self.home, "CYBER_HOME": self.cyber_home, "CYBER_MODELS_PATH": f"{self.root}/models.json",
+                "CYBER_MACHINE_FIXTURE": f"{self.root}/machine.json",
                 "PATH": os.environ["PATH"], "TERM": "xterm-256color", "COLORTERM": "truecolor",
                 "LANG": "en_US.UTF-8", "TZ": "UTC"}
 
@@ -59,6 +67,10 @@ class Env:
                               capture_output=True, text=True, timeout=timeout)
 
     # -- fixtures -----------------------------------------------------------------
+    def machine_fixture(self):
+        with open(f"{self.root}/machine.json", "w") as f:
+            json.dump(MACHINE, f)
+
     def project_fixture(self):
         """A small copy of this repository (docs, specs list, top-level files) under git."""
         os.makedirs(self.project)
@@ -215,14 +227,11 @@ def wait(what, check, timeout=40, step=0.2, tui=None):
 
 
 def command(tui, name, wait=1.2):
-    """Run a slash command. The first enter may only accept the completion, so press it until
-    the command leaves the composer."""
+    """Run a slash command: enter on a fully typed name runs it."""
     tui.type(name, 0.8)
-    for _ in range(3):
-        tui.key("enter", wait)
-        if name not in "\n".join(tui.text().splitlines()[-6:]):
-            return
-    raise TimeoutError(f"{name} did not run:\n{tui.text()}")
+    tui.key("enter", wait)
+    if name in "\n".join(tui.text().splitlines()[-6:]):
+        raise TimeoutError(f"{name} did not run:\n{tui.text()}")
 
 
 def fanout(name, tag, n):
@@ -250,6 +259,7 @@ def gif(env, tui, frames=24, name="thinking.gif"):
 
 
 def capture(env):
+    env.machine_fixture()
     env.project_fixture()
     env.config(env.start_provider())
     env.start_server()
