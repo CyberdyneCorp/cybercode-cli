@@ -48,6 +48,20 @@ export OPENAI_API_KEY="your-key"
 ./target/debug/cyber doctor                       # check your setup
 ```
 
+### The background server
+
+`cyber` is a client and a server. The TUI, `cyber exec`, `cyber api` and `cyber mcp serve` don't run the agent themselves: they start (or reuse) **one background server per user**, and that server owns every Session, Turn, tool call and workflow run. That's why you can close the TUI, open it again or attach a second client and find the same Sessions, and why work continues and recovers after a crash. Everything it stores lives on your machine: the database in `~/.local/share/cyber/cyber.db`, and the server's registration (address, version, build and PID) in `~/.local/state/cyber/server.json`.
+
+You rarely manage it by hand:
+
+```bash
+./target/debug/cyber service status    # which server is registered, its build, and whether it is healthy
+./target/debug/cyber service restart   # stop it and start the current binary (Sessions are kept)
+./target/debug/cyber service stop      # stop it; the next cyber command starts it again
+```
+
+After a rebuild or upgrade, the next client replaces an idle server that runs an older build of this install and says so. If that server is busy, it keeps it and warns (`⚠ older server build · cyber service restart` in the TUI sidebar), so a running Turn or workflow is never cut off. Restart it when it's idle. A server started before build tracking existed needs one manual `cyber service restart`. Details: [background server and rebuilds](docs/local-core-guide.md#background-server-and-rebuilds).
+
 Let another agent drive Cyber Sessions over MCP:
 
 ```bash
