@@ -72,7 +72,20 @@ After a rebuild or upgrade, the next client replaces an idle server that runs an
 
 ### Connect MCP servers
 
-Add servers under `"mcp"` in your global config `~/.config/cyber/cyber.jsonc` (every project), or in a project's `cyber.jsonc` (that checkout only). Each key is the server name. Remote servers use `url`, and local servers run a `command` over stdio:
+The quickest way is the CLI, which edits your config and keeps its comments:
+
+```bash
+./target/debug/cyber mcp add context7 --url https://mcp.context7.com/mcp              # remote, in ~/.config/cyber/cyber.jsonc
+./target/debug/cyber mcp add fs -- npx -y @modelcontextprotocol/server-filesystem .   # local (stdio)
+./target/debug/cyber mcp add internal --url https://mcp.example.com/mcp --header "Authorization=Bearer {env:INTERNAL_MCP_TOKEN}"
+./target/debug/cyber mcp add db --scope project -- ./scripts/db-mcp                    # shared through the repo (.cyber/cyber.jsonc)
+./target/debug/cyber mcp list                                                         # every server and its live status
+./target/debug/cyber mcp remove fs
+```
+
+`--scope` is `user` (default, every project), `project` (`.cyber/cyber.jsonc`, committed with the repo) or `local` (`.cyber/cyber.local.jsonc`, this checkout only). Or edit the file yourself:
+
+Each key under `"mcp"` is the server name. Remote servers use `url`, and local servers run a `command` over stdio:
 
 ```jsonc
 {
@@ -96,7 +109,7 @@ Add servers under `"mcp"` in your global config `~/.config/cyber/cyber.jsonc` (e
 }
 ```
 
-- Servers connect when a Session opens in that folder, and their tools appear to the model as `mcp__<server>__<tool>` (for example `mcp__context7__resolve-library-id`), which is also the name to use in permission rules. The TUI sidebar shows each server's status, `GET /api/v1/mcp` reports it, and `cyber mcp definitions` / `cyber mcp get <name>` show what was loaded and from which file.
+- Servers connect when a Session opens in that folder, and their tools appear to the model as `mcp__<server>__<tool>` (for example `mcp__context7__resolve-library-id`), which is also the name to use in permission rules. The TUI sidebar lists every configured server with its status and tool count (`idle` until a Session opens, then `connected`, `failed`, `needs auth`, `disabled` or `blocked`), `GET /api/v1/mcp` reports it, and `cyber mcp definitions` / `cyber mcp get <name>` show what was loaded and from which file.
 - A server that needs OAuth reports `needs_auth`. Sign in once with `cyber mcp auth <name>`; tokens go to the OS keyring (a 0600 file on Linux). `cyber` never opens a browser by itself.
 - A server defined in a project's config is not started until you review it and run `cyber mcp trust <name>` in that checkout, because a cloned repository could otherwise run commands on your machine. Global servers are trusted already.
 - `{env:NAME}` reads a value from the environment, so secrets stay out of the file.
