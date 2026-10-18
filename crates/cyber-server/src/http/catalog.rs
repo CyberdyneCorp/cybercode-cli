@@ -143,7 +143,6 @@ async fn tools(
         mode: q.mode.unwrap_or_else(|| "default".into()),
         prefers_apply_patch: false,
         rules: serde_json::Value::Null,
-        worktree: Default::default(),
     };
     let data = state
         .services
