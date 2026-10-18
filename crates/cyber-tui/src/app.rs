@@ -531,15 +531,21 @@ impl App {
                 out.extend(crate::markdown::code_blocks(shown));
             }
         }
-        for (id, text) in &self.streaming {
-            let durable = self.items.iter().any(|i| {
-                matches!(i, Item::Assistant { id: aid, text: done, .. } if aid == id && !done.is_empty())
-            });
-            if !durable {
-                out.extend(crate::markdown::code_blocks(text));
-            }
+        for (_, text) in self.unlisted_streams() {
+            out.extend(crate::markdown::code_blocks(text));
         }
         out
+    }
+
+    /// Streamed text whose assistant message is not listed yet. A listed message shows
+    /// its own stream while its text is empty, so it must not be drawn twice.
+    pub fn unlisted_streams(&self) -> impl Iterator<Item = (&String, &String)> {
+        self.streaming.iter().filter(|(id, _)| {
+            !self
+                .items
+                .iter()
+                .any(|i| matches!(i, Item::Assistant { id: aid, .. } if aid == *id))
+        })
     }
 
     /// Select the last code block (Ctrl+X y); `y` then copies it.

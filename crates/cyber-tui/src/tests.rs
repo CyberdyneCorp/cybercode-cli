@@ -309,6 +309,30 @@ fn streaming_text_shows_until_the_message_is_durable() {
     assert!(!app.session.running);
 }
 
+/// A refresh during a step brings the in-progress assistant message with no text yet;
+/// its streamed text must show once, inside that message, not again after it.
+#[test]
+fn streaming_text_shows_once_when_its_message_is_listed_without_text() {
+    let mut app = App::new(session(true), Vec::new(), "cyber");
+    app.items = vec![Item::Assistant {
+        id: "m9".into(),
+        text: String::new(),
+        reasoning: String::new(),
+        tools: Vec::new(),
+        error: None,
+        step: Default::default(),
+    }];
+    app.on_event(
+        "session.text.delta",
+        &json!({ "session_id": "ses_1", "message_id": "m9", "text": "Streamed once" }),
+    );
+    let s = screen(&app);
+    assert_eq!(s.matches("Streamed once").count(), 1, "{s}");
+    app.streaming
+        .insert("m9".into(), "```\nonly block\n```\n".into());
+    assert_eq!(app.code_blocks(), vec!["only block".to_string()]);
+}
+
 #[test]
 fn queued_messages_are_listed_and_can_be_taken_back() {
     let mut app = App::new(session(true), Vec::new(), "cyber");

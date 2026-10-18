@@ -111,12 +111,10 @@ pub fn transcript(app: &App, width: usize) -> Rendered {
         }
         notices(app, Some(item.id()), &mut out);
     }
-    for (id, text) in &app.streaming {
-        if !app.items.iter().any(|i| matches!(i, Item::Assistant { id: aid, text: done, .. } if aid == id && !done.is_empty())) {
-            let rendered = app.markdown.streaming(id, text, &out.ctx);
-            out.markdown(&rendered);
-            out.push(Line::default());
-        }
+    for (id, text) in app.unlisted_streams() {
+        let rendered = app.markdown.streaming(id, text, &out.ctx);
+        out.markdown(&rendered);
+        out.push(Line::default());
     }
     out.rendered
 }
