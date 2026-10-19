@@ -113,6 +113,14 @@ pub struct LaunchArgs {
     /// Allow `bypass` mode in an embedded server without a sandbox or a container.
     #[arg(long, requires = "embedded")]
     pub dangerously_bypass_permissions: bool,
+    /// Claude Code's name for running without prompts: start in `bypass` mode with
+    /// --dangerously-bypass-permissions, so every action runs without approval and,
+    /// outside a sandbox or a container, without OS confinement. Needs --embedded: the
+    /// shared server cannot take the override for one TUI (there, use --mode bypass where
+    /// its sandbox or a container already admits it). An organization policy that
+    /// disables `bypass` still refuses it.
+    #[arg(long)]
+    pub dangerously_skip_permissions: bool,
     /// Open the Session picker over the Sessions linked to this pull request.
     #[arg(long, value_name = "NUMBER|URL")]
     pub from_pr: Option<String>,
@@ -248,6 +256,9 @@ pub enum Command {
         #[command(subcommand)]
         cmd: crate::commands::eval::EvalCmd,
     },
+    /// Print this command-line reference as Markdown (`just docs-cli` writes docs/cli.md).
+    #[command(hide = true)]
+    HelpMarkdown,
     #[command(external_subcommand)]
     External(Vec<String>),
 }
@@ -282,7 +293,7 @@ mod worktree_tests {
             (vec!["cyber", "exec", "--worktree", "--", "fix"], ""),
         ] {
             let cli = Cli::try_parse_from(args).unwrap();
-            let Some(Command::Exec(args)) = cli.command else {
+            let Some(Command::Exec(args)) = &cli.command else {
                 panic!("expected exec")
             };
             assert_eq!(args.worktree.as_deref(), Some(name));
@@ -295,15 +306,15 @@ mod worktree_tests {
         for option in ["--continue", "--ephemeral", "--fork"] {
             let cli =
                 Cli::try_parse_from(["cyber", "exec", "--worktree=fix", option, "prompt"]).unwrap();
-            let Some(Command::Exec(args)) = cli.command else {
+            let Some(Command::Exec(args)) = &cli.command else {
                 panic!("expected exec")
             };
-            assert!(crate::commands::exec::setup::validate(&args).is_err());
+            assert!(crate::commands::exec::setup::validate(args, &cli.global).is_err());
         }
         let cli = Cli::try_parse_from(["cyber", "exec", "--worktree=../escape", "prompt"]).unwrap();
-        let Some(Command::Exec(args)) = cli.command else {
+        let Some(Command::Exec(args)) = &cli.command else {
             panic!("expected exec")
         };
-        assert!(crate::commands::exec::setup::validate(&args).is_err());
+        assert!(crate::commands::exec::setup::validate(args, &cli.global).is_err());
     }
 }

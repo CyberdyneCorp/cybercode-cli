@@ -38,7 +38,7 @@ pub fn prompt(words: &[String]) -> Result<String, CliError> {
     Ok(prompt)
 }
 
-pub fn validate(args: &ExecArgs) -> Result<(), CliError> {
+pub fn validate(args: &ExecArgs, global: &GlobalArgs) -> Result<(), CliError> {
     if args.worktree.is_some()
         && (args.ephemeral || args.resume_last || args.session.is_some() || args.fork)
     {
@@ -66,6 +66,13 @@ pub fn validate(args: &ExecArgs) -> Result<(), CliError> {
         return Err(CliError::usage(
             "--dangerously-bypass-permissions needs --embedded or --ephemeral: a shared server cannot take it for one run",
         ));
+    }
+    if args.dangerously_skip_permissions {
+        skip_permissions(
+            global.mode.as_deref(),
+            args.embedded || args.ephemeral,
+            "--embedded or --ephemeral",
+        )?;
     }
     if args.trust_project_hooks && !(args.embedded || args.ephemeral) {
         return Err(CliError::usage(
@@ -109,7 +116,7 @@ pub async fn backend(args: &ExecArgs, ctx: &Context) -> Result<Backend, CliError
             mcp_credentials: None,
             remote_skill_fetcher: None,
             workflow_cores: None,
-            isolation: isolation(args.dangerously_bypass_permissions),
+            isolation: isolation(args.bypass_override()),
         })
         .await
         .map_err(CliError::runtime)?;
@@ -134,6 +141,30 @@ pub async fn backend(args: &ExecArgs, ctx: &Context) -> Result<Backend, CliError
 /// explicit `--dangerously-bypass-permissions`.
 pub(crate) fn isolation(dangerously: bool) -> Option<cyber_tools::IsolationOptions> {
     dangerously.then(|| cyber_tools::IsolationOptions::probe(true))
+}
+
+/// The gates of `--dangerously-skip-permissions` (exec and the TUI): it selects `bypass`,
+/// so another `--mode` contradicts it, and it carries the no-sandbox override, which only
+/// an in-process server can take for one run.
+pub(crate) fn skip_permissions(
+    mode: Option<&str>,
+    in_process: bool,
+    flags: &str,
+) -> Result<(), CliError> {
+    if let Some(mode) = mode.filter(|mode| *mode != "bypass") {
+        return Err(CliError::usage(format!(
+            "--dangerously-skip-permissions selects bypass mode and cannot be combined with --mode {mode}"
+        )));
+    }
+    if !in_process {
+        return Err(CliError::usage(format!(
+            "--dangerously-skip-permissions needs {flags}: a shared server cannot take the no-sandbox override for one run"
+        ))
+        .with_hint(
+            "add it for a private server, or use --mode bypass where the shared server's sandbox or a container already admits bypass",
+        ));
+    }
+    Ok(())
 }
 
 /// Approve the project/local handler digests resolved now, for this run only.
@@ -167,6 +198,12 @@ fn invocation_hook_trust(
 }
 
 fn mode(args: &ExecArgs, global: &GlobalArgs) -> String {
+    if args.dangerously_skip_permissions {
+        eprintln!(
+            "warning: --dangerously-skip-permissions runs every action without approval or OS confinement (bypass mode)"
+        );
+        return "bypass".into();
+    }
     if args.yolo {
         eprintln!("warning: --yolo runs every action without approval (bypass mode)");
         return "bypass".into();
@@ -221,7 +258,7 @@ pub async fn session(
             .await
             .map_err(api)?;
     }
-    if args.yolo || args.auto || global.mode.is_some() {
+    if args.yolo || args.dangerously_skip_permissions || args.auto || global.mode.is_some() {
         client
             .post(
                 &format!("/sessions/{id}/mode"),

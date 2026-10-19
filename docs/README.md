@@ -5,6 +5,7 @@ Start with the [project README](../README.md) for setup, architecture and the so
 | If you want to… | Read |
 |---|---|
 | Install, configure or use the CLI/TUI | [Local core guide](local-core-guide.md) |
+| Look up every command and flag | [Command-line reference](cli.md) (generated) |
 | Check implemented features and limitations | [Feature reference](features.md) |
 | See the terminal UI and commands | [Screenshots](screenshots/README.md) |
 | Understand phase and milestone scope | [Roadmap](../ROADMAP.md) |

@@ -192,9 +192,19 @@ fn cyber(root: &Path, envs: &[(&str, &Path)]) -> Command {
 
 /// Runs exec with extra flags and variables, killed after 60 s.
 fn exec_with(root: &Path, flags: &[&str], envs: &[(&str, &Path)]) -> std::process::Output {
+    exec_as(root, "json", flags, envs)
+}
+
+/// Runs exec with `--format <format>`, extra flags and variables, killed after 60 s.
+fn exec_as(
+    root: &Path,
+    format: &str,
+    flags: &[&str],
+    envs: &[(&str, &Path)],
+) -> std::process::Output {
     let child = cyber(root, envs)
         .arg("exec")
-        .args(["--embedded", "--model", "corp/main", "--format", "json"])
+        .args(["--embedded", "--model", "corp/main", "--format", format])
         .args(flags)
         .arg("hello")
         .spawn()
@@ -1140,6 +1150,64 @@ fn exec_mode_disabled_by_org_policy_is_refused() {
         Some(0),
         "{}",
         String::from_utf8_lossy(&allowed.stderr)
+    );
+}
+
+/// `exec-mode` → Model, agent and mode selection: `--dangerously-skip-permissions`
+/// (Claude Code's name) selects `bypass` and carries the override, so it runs on a bare
+/// host with `full-access` where `--yolo` alone is refused.
+#[test]
+fn exec_skip_permissions_selects_bypass_with_the_override() {
+    let provider = Provider::start(stop_answers);
+    let (_dir, root) = provider_root(&provider);
+    let flags = ["--dangerously-skip-permissions", "--sandbox", "full-access"];
+    let output = exec_as(&root, "stream-json", &flags, &[]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    let init = stdout
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|event| event["subtype"] == "init")
+        .unwrap_or_else(|| panic!("no init event\n{stdout}"));
+    assert_eq!(init["mode"], "bypass", "{init}");
+    assert!(
+        stderr.contains("--dangerously-skip-permissions runs every action without approval"),
+        "{stderr}"
+    );
+    // `--mode bypass` agrees with it rather than conflicting.
+    let agreeing = exec_with(&root, &["--mode", "bypass", flags[0]], &[]);
+    assert_eq!(
+        agreeing.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&agreeing.stderr)
+    );
+}
+
+/// `permissions-modes` → bypass mode: the override in `--dangerously-skip-permissions`
+/// does not reach past an organization's `modes.disable`.
+#[test]
+fn exec_skip_permissions_is_refused_when_org_policy_disables_bypass() {
+    let provider = Provider::start(stop_answers);
+    let (_dir, root) = provider_root(&provider);
+    let managed = root.join("managed");
+    std::fs::create_dir_all(&managed).unwrap();
+    std::fs::write(
+        managed.join("cyber-policy.json"),
+        json!({"policy": {"modes": {"disable": ["bypass"]}}}).to_string(),
+    )
+    .unwrap();
+    let refused = exec_with(
+        &root,
+        &["--dangerously-skip-permissions"],
+        &[("CYBER_MANAGED_POLICY_DIR", managed.as_path())],
+    );
+    assert_ne!(refused.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        stderr.contains("bypass mode is disabled by your organization"),
+        "{stderr}"
     );
 }
 

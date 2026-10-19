@@ -65,6 +65,10 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
     if let Command::Import(args) = &command {
         return import::run(args, &cli.global);
     }
+    if let Command::HelpMarkdown = &command {
+        print!("{}", crate::cli_docs::markdown());
+        return Ok(());
+    }
     let ctx = Context::new(&cli.global)?;
     // The MCP serve bridge logs to its own file and never loads the project configuration
     // first.
@@ -105,7 +109,9 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
         Command::Doctor => doctor::run(&ctx, &cli.global),
         Command::Stats(args) => stats::run(args, &ctx, &cli.global),
         Command::Eval { cmd } => eval::run(cmd, &ctx),
-        Command::External(_) | Command::Import(_) => unreachable!("handled above"),
+        Command::External(_) | Command::Import(_) | Command::HelpMarkdown => {
+            unreachable!("handled above")
+        }
     }
 }
 

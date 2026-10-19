@@ -64,6 +64,14 @@ pub struct ExecArgs {
     /// --ephemeral: a shared server cannot take it for one run).
     #[arg(long)]
     pub dangerously_bypass_permissions: bool,
+    /// Claude Code's name for running without prompts: `bypass` mode plus
+    /// --dangerously-bypass-permissions, so every action runs without approval and,
+    /// outside a sandbox or a container, without OS confinement. Needs --embedded or
+    /// --ephemeral: a shared server cannot take the override for one run (there, use
+    /// --mode bypass where its sandbox or a container already admits it). An
+    /// organization policy that disables `bypass` still refuses it.
+    #[arg(long, conflicts_with = "auto")]
+    pub dangerously_skip_permissions: bool,
     /// Add the never-ask rules to a reused Session too.
     #[arg(long)]
     pub non_interactive_rules: bool,
@@ -108,6 +116,13 @@ pub struct ExecArgs {
     pub trust_project_hooks: bool,
 }
 
+impl ExecArgs {
+    /// Whether this run takes the no-sandbox `bypass` override, under either name.
+    pub(crate) fn bypass_override(&self) -> bool {
+        self.dangerously_bypass_permissions || self.dangerously_skip_permissions
+    }
+}
+
 pub const EXIT_ERROR: u8 = 1;
 pub const EXIT_BUDGET: u8 = 4;
 pub const EXIT_DENIED: u8 = 5;
@@ -142,7 +157,7 @@ fn launch(
     prompt: String,
     review: Option<cyber_core::review::Target>,
 ) -> Result<(), CliError> {
-    setup::validate(&args)?;
+    setup::validate(&args, global)?;
     let timeout = args.timeout.as_deref().map(parse_duration).transpose()?;
     let format = global.format.unwrap_or(Format::Text);
     if !matches!(format, Format::Text | Format::Json | Format::StreamJson) {

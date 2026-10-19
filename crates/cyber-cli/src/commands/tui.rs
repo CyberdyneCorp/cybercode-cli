@@ -15,13 +15,18 @@ pub fn run(
     global: &GlobalArgs,
     project: Option<&str>,
 ) -> Result<(), CliError> {
+    let mut mode = global.mode.clone();
+    if launch.dangerously_skip_permissions {
+        super::exec::setup::skip_permissions(mode.as_deref(), launch.embedded, "--embedded")?;
+        mode = Some("bypass".into());
+    }
     let mut start = start(launch)?;
     let mut global = GlobalArgs {
         cwd: global.cwd.clone(),
         profile: global.profile.clone(),
         config: global.config.clone(),
         model: global.model.clone(),
-        mode: global.mode.clone(),
+        mode,
         format: global.format,
         log_level: global.log_level.clone(),
         print_logs: global.print_logs,
@@ -162,7 +167,7 @@ async fn connect(ctx: &Context, launch: &LaunchArgs) -> Result<(Client, Option<A
             remote_skill_fetcher: None,
             workflow_cores: None,
             isolation: crate::commands::exec::setup::isolation(
-                launch.dangerously_bypass_permissions,
+                launch.dangerously_bypass_permissions || launch.dangerously_skip_permissions,
             ),
         })
         .await

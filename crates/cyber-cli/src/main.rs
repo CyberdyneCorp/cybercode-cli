@@ -1,6 +1,7 @@
 //! The `cyber` binary.
 
 mod cli;
+mod cli_docs;
 mod commands;
 mod context;
 mod error;

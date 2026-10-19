@@ -50,6 +50,10 @@ specs:
     python3 scripts/spec_inventory.py
     git diff --exit-code ROADMAP.md
 
+# Regenerate docs/cli.md from the clap definition (a cyber-cli test fails when it is stale).
+docs-cli:
+    cargo run -q -p cyber-cli -- help-markdown > docs/cli.md
+
 # TypeScript SDK: generated sources current, typecheck, tests.
 sdk-test:
     python3 scripts/generate_sdk.py --check

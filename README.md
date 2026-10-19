@@ -62,6 +62,30 @@ A ChatGPT Plus or Pro plan can pay for OpenAI models instead of an API key, in t
 
 Usage counts against your plan's limits. The login is kept in `~/.local/share/cyber/chatgpt-auth.json` (mode 0600), separate from Codex's, and the token is renewed before it expires. The model list comes from your account and is refreshed daily. macOS and Linux only for now. Details: [ChatGPT subscription](docs/local-core-guide.md#signing-in-with-a-chatgpt-subscription).
 
+### Permission modes
+
+Every Session runs in one Mode. Pick it with `--mode`, the `mode` config key or `/mode <name>`; Shift+Tab in the TUI cycles `default → accept-edits → plan → auto`.
+
+| Mode | What it does |
+|---|---|
+| `default` | Reads in the Location run; edits, commands and anything else not allowed by a rule ask you. |
+| `accept-edits` | File edits and simple file commands (`mkdir`, `touch`, `mv`, `cp`, non-recursive `rm`) inside the Location run without asking; everything else still asks. |
+| `plan` | Read-only. The agent writes a plan and presents it with `plan_exit`; approving it switches to the Mode you choose. |
+| `auto` | Each action that would ask goes to a classifier model, which allows or blocks it with a reason. Three blocks in a row, or no classifier, fall back to asking. |
+| `dont-ask` | Anything that would ask is denied and the agent carries on. The default for `cyber exec`. |
+| `bypass` | Everything runs without asking, except your explicit deny rules, protected paths, critical removals and organization policy. |
+
+To run without prompts:
+
+```bash
+cyber --mode bypass                                   # TUI, or `/mode bypass` (asks you to confirm)
+cyber exec --yolo "fix the failing test"              # exec in bypass, with a warning
+cyber exec --embedded --dangerously-skip-permissions "fix the failing test"
+cyber --embedded --dangerously-bypass-permissions --mode bypass
+```
+
+`bypass` is admitted only when commands run in the OS sandbox (`workspace-write` or stricter) or inside a container or VM; otherwise it needs `--dangerously-bypass-permissions`. `--dangerously-skip-permissions` (Claude Code's name) is that flag plus `--mode bypass`. Both need a private server (`--embedded`, or `--ephemeral` for exec), because the shared background server cannot drop its sandbox for one run. An organization's `policy.modes.disable` refuses `bypass` either way. Details: [sandbox and bypass](docs/local-core-guide.md#sandbox-profiles-environment-and-escalation).
+
 ### The background server
 
 `cyber` is a client and a server. The TUI, `cyber exec`, `cyber api` and `cyber mcp serve` don't run the agent themselves: they start (or reuse) **one background server per user**, and that server owns every Session, Turn, tool call and workflow run. That's why you can close the TUI, open it again or attach a second client and find the same Sessions, and why work continues and recovers after a crash. Everything it stores lives on your machine: the database in `~/.local/share/cyber/cyber.db`, and the server's registration (address, version, build and PID) in `~/.local/state/cyber/server.json`.
@@ -245,7 +269,7 @@ flowchart LR
 
 ## Documentation and development
 
-[Documentation index](docs/README.md) · [Feature reference](docs/features.md) · [Commands and configuration](docs/local-core-guide.md) · [Roadmap](ROADMAP.md) · [SDK](sdk/typescript/README.md) · [OpenAPI](sdk/openapi.json) · [Evaluations](eval/README.md) · [OpenSpec contracts](openspec/specs)
+[Documentation index](docs/README.md) · [Feature reference](docs/features.md) · [Commands and configuration](docs/local-core-guide.md) · [Command-line reference](docs/cli.md) · [Roadmap](ROADMAP.md) · [SDK](sdk/typescript/README.md) · [OpenAPI](sdk/openapi.json) · [Evaluations](eval/README.md) · [OpenSpec contracts](openspec/specs)
 
 Run `just` to list tasks, `just build` to build and `just ci` for local checks. Platform builds run in [CI](.github/workflows/ci.yml). See the [development guide](docs/local-core-guide.md#build-and-development) for raw commands and the pinned specification validator.
 
