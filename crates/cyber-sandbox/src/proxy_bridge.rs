@@ -1,31 +1,37 @@
-//! Unix socket bridge used by the Linux sandbox helper.
+//! Unix socket bridge and terminal owner used by the Linux sandbox helper.
 
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::os::unix::net::UnixStream;
+use std::os::unix::process::CommandExt as _;
 use std::process::{Command, ExitCode};
 
+/// `--forward <port> <socket> -- <program>…` bridges the proxy port to its socket;
+/// `--tty -- <program>…` starts the program as the leader of a new session whose
+/// controlling terminal is stdin. Either way the program runs as a child until it exits.
 pub(super) fn run() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(split) = args.iter().position(|a| a == "--") else {
         return usage();
     };
     let (options, command) = (&args[..split], &args[split + 1..]);
-    let ["--forward", port, socket] = options.iter().map(String::as_str).collect::<Vec<_>>()[..]
-    else {
-        return usage();
+    let terminal = match options.iter().map(String::as_str).collect::<Vec<_>>()[..] {
+        ["--forward", port, socket] => {
+            listen(port, socket);
+            false
+        }
+        ["--tty"] => true,
+        _ => return usage(),
     };
     let Some(program) = command.first() else {
         return usage();
     };
-    match TcpListener::bind(("127.0.0.1", port.parse().unwrap_or(3128))) {
-        Ok(listener) => {
-            let socket = socket.to_string();
-            std::thread::spawn(move || forward(listener, &socket));
-        }
-        Err(e) => eprintln!("cyber-sandbox-exec: cannot listen for the proxy bridge: {e}"),
+    let mut child = Command::new(program);
+    child.args(&command[1..]);
+    if terminal {
+        take_terminal(&mut child);
     }
-    let mut child = match Command::new(program).args(&command[1..]).spawn() {
+    let mut child = match child.spawn() {
         Ok(child) => child,
         Err(e) => {
             eprintln!("cyber-sandbox-exec: {program}: {e}");
@@ -54,8 +60,39 @@ fn outlive_termination() {
     }
 }
 
+fn listen(port: &str, socket: &str) {
+    match TcpListener::bind(("127.0.0.1", port.parse().unwrap_or(3128))) {
+        Ok(listener) => {
+            let socket = socket.to_string();
+            std::thread::spawn(move || forward(listener, &socket));
+        }
+        Err(e) => eprintln!("cyber-sandbox-exec: cannot listen for the proxy bridge: {e}"),
+    }
+}
+
+/// A PTY Job's program inside bubblewrap: bubblewrap's own session cannot hold the
+/// terminal (it would get ctrl-c's SIGINT and take the sandbox down), so the program
+/// leads a session of its own with the terminal, and ctrl-c reaches it alone.
+#[allow(unsafe_code)]
+fn take_terminal(command: &mut Command) {
+    // SAFETY: only async-signal-safe calls run between fork and exec.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::ioctl(0, libc::TIOCSCTTY as _, 0) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
 fn usage() -> ExitCode {
-    eprintln!("usage: cyber-sandbox-exec --forward <port> <socket> -- <program> [args...]");
+    eprintln!(
+        "usage: cyber-sandbox-exec --forward <port> <socket> -- <program> [args...]\n       cyber-sandbox-exec --tty -- <program> [args...]"
+    );
     ExitCode::from(2)
 }
 

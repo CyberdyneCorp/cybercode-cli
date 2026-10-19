@@ -16,11 +16,14 @@ pub(crate) struct Master {
     fd: AsyncFd<OwnedFd>,
 }
 
-/// Open a terminal of `cols` × `rows` and start `program` on it.
+/// Open a terminal of `cols` × `rows` and start `program` on it, as a new session leader
+/// that takes the terminal as its controlling one unless `delegated` (a sandbox helper
+/// inside `program` takes it for the command instead).
 pub(crate) fn spawn(
     program: &str,
     args: &[String],
     (cols, rows): (u16, u16),
+    delegated: bool,
     configure: impl FnOnce(&mut Command),
 ) -> io::Result<(Process, Master)> {
     let (master, slave) = open(cols, rows)?;
@@ -31,7 +34,7 @@ pub(crate) fn spawn(
         .stdin(Stdio::from(slave.try_clone()?))
         .stdout(Stdio::from(slave.try_clone()?))
         .stderr(Stdio::from(slave));
-    become_session_leader(&mut command);
+    become_session_leader(&mut command, !delegated);
     let child = command.spawn()?;
     // The parent's copies of the slave side close with the command.
     drop(command);
@@ -95,17 +98,17 @@ fn set_flags(fd: &OwnedFd, flags: libc::c_int) -> io::Result<()> {
     }
 }
 
-/// In the child: a new session whose controlling terminal is its stdin. The session
-/// leader's process group is the one a stop signals.
+/// In the child: a new session, whose controlling terminal is its stdin when `controls`.
+/// The session leader's process group is the one a stop signals.
 #[allow(unsafe_code)]
-fn become_session_leader(command: &mut Command) {
+fn become_session_leader(command: &mut Command, controls: bool) {
     // SAFETY: only async-signal-safe calls run between fork and exec.
     unsafe {
-        command.pre_exec(|| {
+        command.pre_exec(move || {
             if libc::setsid() == -1 {
                 return Err(io::Error::last_os_error());
             }
-            if libc::ioctl(0, libc::TIOCSCTTY as _, 0) == -1 {
+            if controls && libc::ioctl(0, libc::TIOCSCTTY as _, 0) == -1 {
                 return Err(io::Error::last_os_error());
             }
             Ok(())

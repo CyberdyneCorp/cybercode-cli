@@ -191,7 +191,8 @@ fn spawn(
     size: (u16, u16),
 ) -> Result<(Process, Master), ToolError> {
     let depth = ctx.host.process_mcp_depth(&ctx.inv.session_id);
-    super::terminal::spawn(&prepared.program, &prepared.args, size, |cmd| {
+    let (args, delegated) = terminal_args(ctx, prepared);
+    super::terminal::spawn(&prepared.program, &args, size, delegated, |cmd| {
         cmd.env_clear()
             .envs(prepared.env.iter().map(|(k, v)| (k, v)))
             .current_dir(&ctx.location)
@@ -205,6 +206,31 @@ fn spawn(
             .env("CYBER_PROJECT_DIR", &ctx.location);
     })
     .map_err(|e| failed(format!("Could not start the terminal: {e}")))
+}
+
+/// The arguments to start, and whether a helper inside them takes the terminal. Under
+/// bubblewrap the command runs in a session of its own, so bubblewrap must not hold the
+/// terminal: ctrl-c's SIGINT would reach it instead of the command and end the sandbox.
+/// `cyber-sandbox-exec --tty` gives the command the terminal inside it.
+#[cfg(target_os = "linux")]
+fn terminal_args(ctx: &Ctx<'_>, prepared: &Prepared) -> (Vec<String>, bool) {
+    let bubblewrap = std::path::Path::new(&prepared.program).file_name() == Some("bwrap".as_ref());
+    // The command follows bubblewrap's last `--` (after the proxy bridge's, if any).
+    let command = prepared.args.iter().rposition(|arg| arg == "--");
+    match (bubblewrap, command, &ctx.host.opts.sandbox_helper) {
+        (true, Some(at), Some(helper)) => {
+            let mut args = prepared.args[..=at].to_vec();
+            args.extend([helper.display().to_string(), "--tty".into(), "--".into()]);
+            args.extend_from_slice(&prepared.args[at + 1..]);
+            (args, true)
+        }
+        _ => (prepared.args.clone(), false),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn terminal_args(_ctx: &Ctx<'_>, prepared: &Prepared) -> (Vec<String>, bool) {
+    (prepared.args.clone(), false)
 }
 
 /// Input goes through one writer task, in order, without blocking the caller.
