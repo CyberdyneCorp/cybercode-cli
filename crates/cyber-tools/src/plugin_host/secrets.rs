@@ -136,7 +136,9 @@ impl FileSecrets {
 #[cfg(unix)]
 impl PluginSecrets for FileSecrets {
     fn get(&self, plugin: &str, key: &str) -> Result<Option<String>, String> {
-        Ok(self.read()?[plugin][key].as_str().map(str::to_owned))
+        let map = self.read()?;
+        let value = map.get(plugin).and_then(|entry| entry.get(key));
+        Ok(value.and_then(|value| value.as_str()).map(str::to_owned))
     }
 
     fn put(&self, plugin: &str, key: &str, value: &str) -> Result<(), String> {
@@ -234,5 +236,18 @@ mod tests {
         );
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
         assert!(store.get("jira", "api_token").is_err());
+    }
+
+    /// Regression: reading a secret of a plugin or key the file did not hold panicked
+    /// (`Map` indexing) instead of answering none.
+    #[cfg(unix)]
+    #[test]
+    fn file_secrets_answer_none_for_an_absent_plugin_or_key() {
+        let root = tempfile::tempdir().unwrap();
+        let store = FileSecrets::new(root.path().join("plugin-secrets.json"));
+        store.write(&Default::default()).unwrap();
+        assert_eq!(store.get("jira", "api_token").unwrap(), None);
+        store.put("jira", "site", "acme").unwrap();
+        assert_eq!(store.get("jira", "api_token").unwrap(), None);
     }
 }
