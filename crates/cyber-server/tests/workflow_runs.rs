@@ -2649,7 +2649,11 @@ async fn queued_runs_are_dispatched_in_queue_order() {
     for run in [&b, &q1, &q2] {
         assert_eq!(f.ended(&run.id).await.status, WorkflowRunStatus::Completed);
     }
-    assert_eq!(agents.prompts(), ["gate a", "gate b", "gate q1", "q2"]);
+    // A and B run at once, so their agents may arrive in either order; the queue's are
+    // dispatched in order after them.
+    let mut prompts = agents.prompts();
+    prompts[..2].sort_unstable();
+    assert_eq!(prompts, ["gate a", "gate b", "gate q1", "q2"]);
 }
 
 /// `workflows` → Run queue, "Stop a queued run": it ends `stopped` without starting an

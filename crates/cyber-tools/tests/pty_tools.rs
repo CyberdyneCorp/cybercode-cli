@@ -38,16 +38,32 @@ async fn read_until(flow: &Flow, session: &str, job: &str, want: &str) -> String
     let deadline = Instant::now() + Duration::from_secs(30);
     while !seen.contains(want) {
         assert!(Instant::now() < deadline, "no {want:?} in {seen:?}");
-        let read = json_of(
+        let outcome = call(
             flow,
             session,
             "pty_read",
             json!({"job_id": job, "wait_ms": 2000}),
         )
         .await;
+        let output = alive(flow, job, outcome, &format!("waiting for {want:?}"));
+        let read: Value = serde_json::from_str(&output).expect(&output);
         seen.push_str(read["output"].as_str().unwrap());
     }
     seen
+}
+
+/// The output of a call on a live PTY; otherwise a panic showing what the program
+/// printed before it went away.
+fn alive(flow: &Flow, job: &str, outcome: ToolOutcome, doing: &str) -> String {
+    let ToolOutcome::Ok(output) = outcome else {
+        let ended = flow.runtime.job(job).unwrap();
+        let log = ended
+            .output_path
+            .as_ref()
+            .and_then(|path| std::fs::read_to_string(path).ok());
+        panic!("{doing}: {outcome:?}; {ended:?}; log {log:?}");
+    };
+    output
 }
 
 async fn settled(flow: &Flow, id: &str) -> Job {
@@ -96,13 +112,14 @@ async fn pty_drives_python_repl_print_2_plus_2() {
     assert_eq!(job.command.as_deref(), Some("python3 -q"));
     read_until(&flow, &session, &id, ">>> ").await;
 
-    let wrote = json_of(
+    let wrote = call(
         &flow,
         &session,
         "pty_write",
         json!({"job_id": id, "input": "print(2+2)\n"}),
     )
     .await;
+    let wrote: Value = serde_json::from_str(&alive(&flow, &id, wrote, "print(2+2)")).unwrap();
     assert_eq!(wrote["written"], 11);
     let mut stable = wrote.clone();
     stable["job_id"] = json!("<job>");
@@ -112,7 +129,9 @@ async fn pty_drives_python_repl_print_2_plus_2() {
 
     // The terminal is announced to the program.
     let env = "import os; print(os.environ['TERM'], os.environ['CYBER_TERMINAL'], os.isatty(0))\n";
-    support::ok(
+    alive(
+        &flow,
+        &id,
         call(
             &flow,
             &session,
@@ -120,6 +139,7 @@ async fn pty_drives_python_repl_print_2_plus_2() {
             json!({"job_id": id, "input": env}),
         )
         .await,
+        "environment",
     );
     read_until(&flow, &session, &id, "xterm-256color 1 True").await;
     let screen = json_of(
@@ -144,9 +164,16 @@ async fn pty_drives_python_repl_print_2_plus_2() {
 
     // ctrl-c interrupts a running statement; the exit code is the program's.
     let busy = json!({"job_id": id, "input": "import time; time.sleep(60)\n"});
-    support::ok(call(&flow, &session, "pty_write", busy).await);
+    alive(
+        &flow,
+        &id,
+        call(&flow, &session, "pty_write", busy).await,
+        "sleep",
+    );
     tokio::time::sleep(Duration::from_millis(300)).await;
-    support::ok(
+    alive(
+        &flow,
+        &id,
         call(
             &flow,
             &session,
@@ -154,9 +181,12 @@ async fn pty_drives_python_repl_print_2_plus_2() {
             json!({"job_id": id, "keys": ["ctrl-c"]}),
         )
         .await,
+        "ctrl-c",
     );
     read_until(&flow, &session, &id, "KeyboardInterrupt").await;
-    support::ok(
+    alive(
+        &flow,
+        &id,
         call(
             &flow,
             &session,
@@ -164,6 +194,7 @@ async fn pty_drives_python_repl_print_2_plus_2() {
             json!({"job_id": id, "input": "exit(0)\n"}),
         )
         .await,
+        "exit(0)",
     );
     let ended = settled(&flow, &id).await;
     assert_eq!(
