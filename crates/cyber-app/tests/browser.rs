@@ -75,7 +75,10 @@ impl Fixture {
         let serve = work.join("serve.sh");
         std::fs::write(
             &serve,
-            "#!/bin/sh\nexec python3 -m http.server \"$1\" --bind 127.0.0.1 --directory \"$(dirname \"$0\")/site\"\n",
+            // Not `python3 -m http.server`: its bind resolves the host name
+            // (getfqdn), which hangs past the readiness timeout with some Pythons
+            // (Homebrew 3.14+ on macOS).
+            "#!/bin/sh\nexec python3 -c '\nimport functools, http.server, socketserver, sys\nclass Server(socketserver.ThreadingTCPServer):\n    allow_reuse_address = True\n    daemon_threads = True\nhandler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=sys.argv[2])\nServer((\"127.0.0.1\", int(sys.argv[1])), handler).serve_forever()\n' \"$1\" \"$(dirname \"$0\")/site\"\n",
         )
         .unwrap();
         let mut mode = std::fs::metadata(&serve).unwrap().permissions();
