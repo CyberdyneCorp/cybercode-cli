@@ -817,6 +817,27 @@ fn npm_install_packs_without_lifecycle_scripts() {
         ],
     );
     let spec = format!("npm:{}", package.display());
+    // npm before 11 runs a folder's prepare script despite --ignore-scripts: refused.
+    let npm = std::process::Command::new(if cfg!(windows) { "npm.cmd" } else { "npm" })
+        .arg("--version")
+        .output()
+        .unwrap();
+    let major: u32 = String::from_utf8_lossy(&npm.stdout)
+        .trim()
+        .split('.')
+        .next()
+        .and_then(|major| major.parse().ok())
+        .unwrap_or(0);
+    if major < 11 {
+        let output = f.cyber(&["plugins", "install", &spec, "--scope", "project"]);
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("install npm 11 or later"), "{stderr}");
+        for name in ["PREPACK_RAN", "PREPARE_RAN", "POSTPACK_RAN"] {
+            assert!(!marker(name).exists(), "{name} ran");
+        }
+        return;
+    }
     let installed = f.json(&["plugins", "install", &spec, "--scope", "project"]);
     assert_eq!(installed["version"], "1.2.0", "{installed:#}");
     for name in ["PREPACK_RAN", "PREPARE_RAN", "POSTPACK_RAN"] {

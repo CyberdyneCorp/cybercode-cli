@@ -10,10 +10,20 @@ use std::process::Command;
 const MAX_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ENTRIES: usize = 4096;
 
+const NPM: &str = if cfg!(windows) { "npm.cmd" } else { "npm" };
+
 /// Pack `package` into `staging` and unpack it; returns the package directory.
 pub(super) fn fetch(staging: &Path, package: &str) -> Result<PathBuf, String> {
+    if builds_from_source(package) {
+        let major = Command::new(NPM)
+            .arg("--version")
+            .output()
+            .ok()
+            .and_then(|out| major_version(&String::from_utf8_lossy(&out.stdout)));
+        refuse_script_running_pack(package, major)?;
+    }
     std::fs::create_dir_all(staging).map_err(|e| format!("{}: {e}", staging.display()))?;
-    let output = Command::new(if cfg!(windows) { "npm.cmd" } else { "npm" })
+    let output = Command::new(NPM)
         .args(["pack", "--ignore-scripts", "--json", "--pack-destination"])
         .arg(super::install::plain(staging))
         .arg("--")
@@ -36,6 +46,36 @@ pub(super) fn fetch(staging: &Path, package: &str) -> Result<PathBuf, String> {
     let target = staging.join("unpacked");
     unpack(&tarball, &target)?;
     Ok(target)
+}
+
+/// A folder or git package, which npm packs from its source tree. npm before 11 runs the
+/// package's `prepare` script for those even under `--ignore-scripts`.
+fn builds_from_source(package: &str) -> bool {
+    let hosted = ["git+", "git:", "github:", "gitlab:", "bitbucket:", "gist:"]
+        .iter()
+        .any(|prefix| package.starts_with(prefix))
+        || package.ends_with(".git");
+    hosted
+        || package.starts_with(['.', '/', '~'])
+        || package.starts_with("file:")
+        || Path::new(package).is_absolute()
+        || Path::new(package).is_dir()
+}
+
+/// Refuse to pack a source package with an npm that would run its scripts (or whose
+/// version is unknown): fail closed rather than execute plugin code at install.
+fn refuse_script_running_pack(package: &str, major: Option<u32>) -> Result<(), String> {
+    match major {
+        Some(major) if major >= 11 => Ok(()),
+        found => Err(format!(
+            "npm pack {package}: npm {} runs a folder or git package's prepare script even with --ignore-scripts; install npm 11 or later, or install the folder as a path plugin",
+            found.map_or("of unknown version".to_string(), |major| major.to_string())
+        )),
+    }
+}
+
+fn major_version(text: &str) -> Option<u32> {
+    text.trim().split('.').next()?.parse().ok()
 }
 
 /// Unpack a gzip'd tar into `target`, keeping only regular files under `package/`.
@@ -158,6 +198,21 @@ fn pax_path(data: &[u8]) -> Option<String> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    /// Regression: npm 10 ran a folder package's `prepare` script despite
+    /// `--ignore-scripts`, executing plugin code at install.
+    #[test]
+    fn source_packages_need_an_npm_that_honours_ignore_scripts() {
+        assert!(builds_from_source("/tmp/kit"));
+        assert!(builds_from_source("./kit"));
+        assert!(builds_from_source("github:acme/kit"));
+        assert!(builds_from_source("git+https://example.com/kit.git"));
+        assert!(!builds_from_source("@acme/kit@1.2.0"));
+        assert!(refuse_script_running_pack("./kit", Some(10)).is_err());
+        assert!(refuse_script_running_pack("./kit", None).is_err());
+        assert!(refuse_script_running_pack("./kit", Some(11)).is_ok());
+        assert_eq!(major_version("10.8.2\n"), Some(10));
+    }
 
     fn header(name: &str, size: usize, kind: u8) -> Vec<u8> {
         let mut header = vec![0u8; 512];
