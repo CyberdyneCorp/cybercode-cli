@@ -1,6 +1,9 @@
 //! `cyber providers login|logout chatgpt` through the real binary: an in-process fake OpenAI
 //! issuer on 127.0.0.1 answers the code exchange, and the test plays the user by pasting
 //! the redirect URL (`--method code`). Nothing reaches the internet.
+// Login refuses on Windows, so only the other-provider test runs there and the login
+// fixtures go unused.
+#![cfg_attr(windows, allow(dead_code, unused_imports))]
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
