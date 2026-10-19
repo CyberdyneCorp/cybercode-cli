@@ -63,17 +63,20 @@ const CREDENTIAL_PATHS: &[&str] = &[
 /// Cyber's own credential files (plugin secrets and MCP OAuth tokens in the data
 /// directory, which need not be under home), hidden from every sandboxed process this
 /// process launches. Sandboxed processes run as the same user, so owner-only modes do
-/// not keep them out.
-static HIDDEN: std::sync::RwLock<Vec<PathBuf>> = std::sync::RwLock::new(Vec::new());
+/// not keep them out. Each file belongs to the home of the installation that registered
+/// it: one process may host several (tests do), and a launch must not depend on another
+/// one's files, which can vanish while it starts.
+static HIDDEN: std::sync::RwLock<Vec<(PathBuf, PathBuf)>> = std::sync::RwLock::new(Vec::new());
 
-/// Keep `path` unreadable in every sandboxed launch of this process; `readable_paths`
-/// never re-exposes it.
-pub fn hide_credential_file(path: PathBuf) {
+/// Keep `path` unreadable in every sandboxed launch of this process for `home`;
+/// `readable_paths` never re-exposes it.
+pub fn hide_credential_file(home: &Path, path: PathBuf) {
     let mut hidden = HIDDEN
         .write()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if !hidden.contains(&path) {
-        hidden.push(path);
+    let entry = (home.to_path_buf(), path);
+    if !hidden.contains(&entry) {
+        hidden.push(entry);
     }
 }
 
@@ -248,12 +251,19 @@ impl SandboxConfig {
     }
 
     /// Credential files that stay unreadable: the home ones `readable_paths` does not
-    /// re-expose, and every [`hide_credential_file`] path.
+    /// re-expose, and every [`hide_credential_file`] path registered for `home`.
     pub fn unreadable(&self, home: &Path) -> Vec<PathBuf> {
-        let hidden = HIDDEN
+        let canonical = std::fs::canonicalize(home).ok();
+        let hidden: Vec<PathBuf> = HIDDEN
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
+            .iter()
+            .filter(|(owner, _)| {
+                owner == home
+                    || canonical.is_some() && std::fs::canonicalize(owner).ok() == canonical
+            })
+            .map(|(_, path)| path.clone())
+            .collect();
         CREDENTIAL_PATHS
             .iter()
             .map(|p| home.join(p))
@@ -408,6 +418,20 @@ mod tests {
         assert!(c.allowed_domains.contains(&"crates.io".to_string()));
         let hidden = c.unreadable(home);
         assert!(hidden.contains(&home.join(".ssh")) && !hidden.contains(&home.join(".config/gh")));
+    }
+
+    /// Regression: the hidden credential files were process-wide, so one installation's
+    /// launches bound over another's files (tests run many in one process) and failed to
+    /// start when those vanished.
+    #[test]
+    fn hidden_credential_files_belong_to_their_home() {
+        let (mine, other) = (Path::new("/home/mine"), Path::new("/home/other"));
+        hide_credential_file(mine, PathBuf::from("/data/mine/plugin-secrets.json"));
+        hide_credential_file(other, PathBuf::from("/data/other/plugin-secrets.json"));
+        let c = SandboxConfig::resolve(&json!({}), &BTreeMap::new(), None, mine);
+        let hidden = c.unreadable(mine);
+        assert!(hidden.contains(&PathBuf::from("/data/mine/plugin-secrets.json")));
+        assert!(!hidden.contains(&PathBuf::from("/data/other/plugin-secrets.json")));
     }
 
     #[test]

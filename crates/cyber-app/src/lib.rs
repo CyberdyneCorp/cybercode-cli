@@ -187,7 +187,7 @@ impl App {
         // Secret plugin settings: the OS keyring on macOS and Windows, the owner-only file
         // elsewhere. No sandboxed process (tools, hooks, MCP, LSP, plugin hosts) may read
         // the credential files of the data directory.
-        cyber_tools::plugin_host::hide_credential_files(&opts.paths);
+        cyber_tools::plugin_host::hide_credential_files(&opts.paths, &opts.home);
         host.attach_plugin_secrets(cyber_tools::plugin_host::open_secrets(&opts.paths));
         // `https://` skill entries: cached under `<cache>/skills`, refreshed in the background.
         let fetcher = opts

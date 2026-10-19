@@ -162,9 +162,9 @@ impl PluginSecrets for FileSecrets {
 }
 
 /// Hide cyber's credential files in the data directory from every sandboxed launch of
-/// this process. On the file backend the secret file is created (empty, owner-only)
+/// this process for `home`. On the file backend the secret file is created (empty, owner-only)
 /// first: a sandbox hides only paths that exist when it starts.
-pub fn hide_credential_files(paths: &cyber_core::paths::Paths) {
+pub fn hide_credential_files(paths: &cyber_core::paths::Paths, home: &std::path::Path) {
     #[cfg(not(any(target_os = "macos", windows)))]
     {
         let store = FileSecrets::new(secret_file(paths));
@@ -172,8 +172,8 @@ pub fn hide_credential_files(paths: &cyber_core::paths::Paths) {
             let _ = store.write(&Default::default());
         }
     }
-    cyber_sandbox::hide_credential_file(secret_file(paths));
-    cyber_sandbox::hide_credential_file(paths.mcp_auth_file());
+    cyber_sandbox::hide_credential_file(home, secret_file(paths));
+    cyber_sandbox::hide_credential_file(home, paths.mcp_auth_file());
 }
 
 /// This platform's plugin secret store, chosen at compile time and never by
