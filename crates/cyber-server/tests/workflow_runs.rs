@@ -713,7 +713,9 @@ async fn the_global_limit_is_shared_fairly_across_runs() {
             WorkflowRunStatus::Completed
         );
     }
-    let order: Vec<String> = agents.prompts();
+    // a1 and a2 take the two slots together, so they may arrive in either order.
+    let mut order: Vec<String> = agents.prompts();
+    order[..2].sort_unstable();
     assert_eq!(
         order,
         [
