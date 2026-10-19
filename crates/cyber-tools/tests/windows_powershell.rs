@@ -101,16 +101,28 @@ async fn native_powershell_validates_empty_background_and_missing_helper_calls()
         ),
         "command is empty"
     );
-    assert!(
+    // `background: true` starts a Job (see the background test); malformed flags fail.
+    assert_eq!(
         failed(
             f.call(
                 "default",
                 "powershell",
-                json!({"command": "Write-Output hi", "background": true})
+                json!({"command": "Write-Output hi", "background": "yes"})
             )
             .await
-        )
-        .contains("foreground")
+        ),
+        "background must be a boolean, got \"yes\""
+    );
+    assert_eq!(
+        failed(
+            f.call(
+                "default",
+                "powershell",
+                json!({"command": "Write-Output hi", "notify": false})
+            )
+            .await
+        ),
+        "notify applies only with background: true"
     );
     let f = Fixture::with_shell("bash", None);
     f.set_config(json!({"sandbox": {"policy": "full-access"}, "permissions": {"bash": "allow"}}));
@@ -247,7 +259,7 @@ async fn native_powershell_background_job_records_exit_code_and_stops_its_job_ob
     use support::flow::{Flow, text};
     let flow = Flow::new(vec![text("notice handled")], false);
     flow.f.set_config(
-        json!({"sandbox": {"policy": "full-access"}, "permissions": {"bash": "allow"}}),
+        json!({"sandbox": {"policy": "full-access"}, "permissions": {"bash": "allow", "external_directory": "allow"}}),
     );
     let session = flow.session("default").await;
     let run = |input: serde_json::Value| {
