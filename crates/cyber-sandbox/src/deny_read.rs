@@ -166,7 +166,7 @@ fn literal_base(anchored: &str) -> PathBuf {
 }
 
 fn anchor(raw: &str, location: &Path, home: &Path) -> String {
-    let raw = raw.replace('\\', "/");
+    let raw = plain(&raw.replace('\\', "/"));
     let joined = if let Some(rest) = raw.strip_prefix("~/") {
         format!("{}/{rest}", slash(home))
     } else if raw == "~" {
@@ -229,7 +229,20 @@ fn glob_regex(anchored: &str, descendants: bool) -> String {
 }
 
 fn slash(path: &Path) -> String {
-    path.display().to_string().replace('\\', "/")
+    plain(&path.display().to_string().replace('\\', "/"))
+}
+
+/// A Windows verbatim path (`\\?\C:\repo`, `\\?\UNC\host\share`, as `canonicalize`
+/// returns them) in its ordinary form, so patterns and paths compare whichever form they
+/// came in. Its `?` would otherwise also end a pattern's literal base.
+fn plain(slashed: &str) -> String {
+    if let Some(rest) = slashed.strip_prefix("//?/UNC/") {
+        format!("//{rest}")
+    } else if let Some(rest) = slashed.strip_prefix("//?/") {
+        rest.to_string()
+    } else {
+        slashed.to_string()
+    }
 }
 
 #[cfg(test)]
@@ -313,7 +326,34 @@ mod tests {
         std::fs::write(root.join(".git/objects/ab/cdef"), "").unwrap();
         std::fs::write(root.join("target/d7/key.pem"), "k").unwrap();
         let d = DenyRead::new(&["**/*.pem".into()], &root, Path::new("/home/u"));
-        assert_eq!(d.expand().unwrap(), vec![root.join("target/d7/key.pem")]);
+        let found: Vec<PathBuf> = d
+            .expand()
+            .unwrap()
+            .iter()
+            .map(|p| std::fs::canonicalize(p).unwrap())
+            .collect();
+        assert_eq!(found, vec![root.join("target/d7/key.pem")]);
+    }
+
+    /// Regression: on Windows `canonicalize` returns `\\?\C:\…`; a pattern anchored at
+    /// such a Location still hides the ordinary path of a match, and the other way round.
+    #[test]
+    fn verbatim_and_ordinary_windows_paths_match_the_same_patterns() {
+        let verbatim = deny_at(&["**/*.pem"], r"\\?\C:\repo");
+        assert!(verbatim.denies(Path::new(r"C:\repo\keys\a.pem")));
+        assert!(verbatim.denies(Path::new(r"\\?\C:\repo\a.pem")));
+        assert!(!verbatim.denies(Path::new(r"C:\repo\a.txt")));
+        assert_eq!(verbatim.anchored(), ["C:/repo/**/*.pem"]);
+        let ordinary = deny_at(&["**/*.pem"], r"C:\repo");
+        assert!(ordinary.denies(Path::new(r"\\?\C:\repo\a.pem")));
+        let unc = deny_at(&["secrets"], r"\\?\UNC\host\share");
+        assert!(unc.denies(Path::new(r"\\host\share\secrets\k")));
+        assert_eq!(literal_base("C:/repo/**/*.pem"), PathBuf::from("C:/repo"));
+    }
+
+    fn deny_at(patterns: &[&str], location: &str) -> DenyRead {
+        let patterns: Vec<String> = patterns.iter().map(|p| p.to_string()).collect();
+        DenyRead::new(&patterns, Path::new(location), Path::new("/home/u"))
     }
 
     #[cfg(unix)]
