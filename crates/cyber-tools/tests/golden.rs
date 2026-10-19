@@ -44,11 +44,21 @@ async fn every_registered_tool_has_a_golden() {
 /// The model-facing tool names `builtin-tools` defines: the built-in set and the
 /// capability-owned catalog, read from the canonical spec.
 fn canonical_registry() -> BTreeSet<String> {
-    let spec = std::fs::read_to_string(concat!(
+    registry_in(&builtin_tools_spec())
+}
+
+fn builtin_tools_spec() -> String {
+    std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../openspec/specs/builtin-tools/spec.md"
     ))
-    .unwrap();
+    .unwrap()
+}
+
+/// The registry listed in a `builtin-tools` spec text.
+fn registry_in(spec: &str) -> BTreeSet<String> {
+    // Windows checkouts may convert the spec to CRLF line endings.
+    let spec = spec.replace("\r\n", "\n");
     let section = |title: &str| -> String {
         let start = spec
             .find(&format!("### Requirement: {title}\n"))
@@ -77,6 +87,13 @@ fn canonical_registry() -> BTreeSet<String> {
     let mut registry: BTreeSet<String> = names(&builtin).into_iter().collect();
     registry.extend(names(&listed));
     registry
+}
+
+#[test]
+fn the_registry_reads_the_same_from_a_crlf_checkout() {
+    let spec = builtin_tools_spec();
+    let crlf = spec.replace("\r\n", "\n").replace('\n', "\r\n");
+    assert_eq!(registry_in(&crlf), registry_in(&spec));
 }
 
 /// `builtin-tools` → Capability-owned tool catalog: no capability introduces a tool the
