@@ -21,6 +21,11 @@ pub struct Process {
     child: WindowsChild,
     #[cfg(not(windows))]
     child: tokio::process::Child,
+    /// The leader is bubblewrap, which runs the command in a new session and dies on
+    /// SIGTERM (taking the sandbox with it), so a graceful stop signals the command's own
+    /// process groups instead.
+    #[cfg(target_os = "linux")]
+    bubblewrap: bool,
 }
 
 impl Process {
@@ -75,6 +80,8 @@ impl Process {
             command.process_group(0);
             Ok(Self {
                 child: command.spawn()?,
+                #[cfg(target_os = "linux")]
+                bubblewrap: Path::new(program).file_name() == Some("bwrap".as_ref()),
             })
         }
     }
@@ -83,7 +90,11 @@ impl Process {
     /// process group.
     #[cfg(unix)]
     pub(crate) fn from_child(child: tokio::process::Child) -> Self {
-        Self { child }
+        Self {
+            child,
+            #[cfg(target_os = "linux")]
+            bubblewrap: false,
+        }
     }
 
     /// Adapt an already authorized native container into the foreground command loop.
@@ -193,6 +204,18 @@ impl Process {
 
     #[cfg(unix)]
     pub(crate) fn request_graceful_stop(&mut self) -> io::Result<bool> {
+        #[cfg(target_os = "linux")]
+        if self.bubblewrap
+            && let Some(leader) = self.child.id()
+        {
+            let groups = sandboxed_groups(leader);
+            if !groups.is_empty() {
+                for group in groups {
+                    let _ = signal_group(Some(group), libc::SIGTERM);
+                }
+                return Ok(true);
+            }
+        }
         signal_group(self.child.id(), libc::SIGTERM)
     }
 
@@ -250,6 +273,38 @@ impl Drop for Process {
     fn drop(&mut self) {
         self.terminate();
     }
+}
+
+/// The process groups of `leader`'s descendants other than its own: under bubblewrap,
+/// the sandboxed command's (it runs in a new session) and any its children made.
+#[cfg(target_os = "linux")]
+fn sandboxed_groups(leader: u32) -> Vec<u32> {
+    // (pid, parent, group) of every visible process, from /proc/<pid>/stat.
+    let processes: Vec<(u32, u32, u32)> = std::fs::read_dir("/proc")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let pid: u32 = entry.file_name().to_str()?.parse().ok()?;
+            let stat = std::fs::read_to_string(entry.path().join("stat")).ok()?;
+            // Fields after the parenthesized command: state, ppid, pgrp, ...
+            let mut fields = stat.get(stat.rfind(')')? + 1..)?.split_whitespace();
+            let parent = fields.nth(1)?.parse().ok()?;
+            let group = fields.next()?.parse().ok()?;
+            Some((pid, parent, group))
+        })
+        .collect();
+    let mut tree = vec![leader];
+    let mut groups = Vec::new();
+    while let Some(parent) = tree.pop() {
+        for &(pid, _, group) in processes.iter().filter(|p| p.1 == parent) {
+            tree.push(pid);
+            if group != leader && !groups.contains(&group) {
+                groups.push(group);
+            }
+        }
+    }
+    groups
 }
 
 #[cfg(unix)]
