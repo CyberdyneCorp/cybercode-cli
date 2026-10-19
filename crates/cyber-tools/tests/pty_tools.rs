@@ -174,7 +174,11 @@ async fn pty_drives_python_repl_print_2_plus_2() {
     let gone = support::failed(call(&flow, &session, "pty_read", json!({"job_id": id})).await);
     assert!(gone.contains("has exited"), "{gone}");
     let log = std::fs::read_to_string(started["output_path"].as_str().unwrap()).unwrap();
-    assert!(log.contains("print(2+2)"), "{log}");
+    // The log is the raw terminal stream: Python 3.13+'s REPL echoes each key with
+    // insert-character and color sequences, so compare its text.
+    let escapes = regex::Regex::new(r"\x1b(\[[0-?]*[ -/]*[@-~]|[=>])").unwrap();
+    let typed = escapes.replace_all(&log, "");
+    assert!(typed.contains("print(2+2)"), "{log}");
 }
 
 #[tokio::test]
