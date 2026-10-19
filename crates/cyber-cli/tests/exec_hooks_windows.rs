@@ -196,7 +196,9 @@ fn cyber(root: &Path) -> Command {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    for name in ["SystemRoot", "TEMP", "TMP", "ProgramFiles"] {
+    // An AppContainer profile needs LOCALAPPDATA; a cleared environment would make every
+    // sandboxed launch fail as unavailable.
+    for name in ["SystemRoot", "TEMP", "TMP", "ProgramFiles", "LOCALAPPDATA"] {
         if let Some(value) = std::env::var_os(name) {
             command.env(name, value);
         }

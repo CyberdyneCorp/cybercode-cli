@@ -205,7 +205,15 @@ mod tests {
         assert_eq!(plan.roots, launch.writable);
         assert!(plan.read_only.contains(&root.join("repo/.git")));
         assert!(plan.unreadable.contains(&root.join("home/.ssh")));
-        assert!(plan.unreadable.contains(&root.join("repo/.env")));
+        // Expanded matches come back in ordinary (not `\\?\`) form on Windows.
+        let env = root.join("repo/.env");
+        assert!(
+            plan.unreadable
+                .iter()
+                .any(|p| std::fs::canonicalize(p).is_ok_and(|p| p == env)),
+            "{:?}",
+            plan.unreadable
+        );
         assert_eq!(ContainerPlan::decode(&plan.encode().unwrap()), Ok(plan));
     }
 

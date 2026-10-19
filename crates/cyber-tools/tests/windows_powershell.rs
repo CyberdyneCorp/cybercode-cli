@@ -143,7 +143,8 @@ async fn native_powershell_validates_empty_background_and_missing_helper_calls()
             )
             .await
         ),
-        "background must be a boolean, got \"yes\""
+        // The input schema rejects it before the tool runs.
+        "Invalid tool input: /background: expected boolean"
     );
     assert_eq!(
         failed(

@@ -253,8 +253,12 @@ fn assert_components_load(f: &Fixture, kit: &Path) {
     );
 
     let servers = f.json(&["mcp", "definitions"]);
-    let command = kit.join("docs-server").display().to_string();
-    let command = command.strip_prefix(r"\\?\").unwrap_or(&command);
+    // `${CYBER_PLUGIN_ROOT}/docs-server`: the root substituted, the manifest's `/` kept.
+    let root = kit.display().to_string();
+    let command = format!(
+        "{}/docs-server",
+        root.strip_prefix(r"\\?\").unwrap_or(&root)
+    );
     let server = named(&servers, "servers", "kit-docs");
     assert_eq!(
         server["definition"]["command"],
