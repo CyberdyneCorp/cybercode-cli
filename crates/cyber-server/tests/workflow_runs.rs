@@ -2,7 +2,7 @@
 //! Durable agent results, Concurrency limit, Model tiers and mixing, Phases and logs).
 mod support;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -52,7 +52,8 @@ struct Agents {
     runtime: OnceLock<WeakRuntime>,
     /// Every agent profile can edit files in the Location.
     writers: AtomicBool,
-    /// Prompts starting with `gate` each wait for one [`Gate::open`], in arrival order.
+    /// Prompts starting with `gate` each wait for one [`Gate::open`], in arrival order, or
+    /// for a [`Gate::open_for`] naming their task.
     gate_permits: Gate,
     /// Offer a `stall` tool that ignores cancellation for [`STALL`]; `realstall` children
     /// call it, like a child that is slow to exit.
@@ -64,24 +65,48 @@ struct Agents {
 /// How long a `stall` tool call ignores cancellation: longer than a subtree stop waits.
 const STALL: Duration = Duration::from_millis(2500);
 
-/// Releases gated agents one at a time.
-struct Gate(tokio::sync::Semaphore);
+/// Releases gated agents one at a time: the longest waiting one, or one by its task.
+struct Gate {
+    any: tokio::sync::Semaphore,
+    named: Mutex<HashMap<String, Arc<tokio::sync::Semaphore>>>,
+}
 
 impl Default for Gate {
     fn default() -> Self {
-        Self(tokio::sync::Semaphore::new(0))
+        Self {
+            any: tokio::sync::Semaphore::new(0),
+            named: Mutex::default(),
+        }
     }
 }
 
 impl Gate {
     fn open(&self) {
-        self.0.add_permits(1);
+        self.any.add_permits(1);
+    }
+
+    /// Release the agent whose task is `task`, whichever gated agent waits longest.
+    fn open_for(&self, task: &str) {
+        self.named(task).add_permits(1);
+    }
+
+    fn named(&self, task: &str) -> Arc<tokio::sync::Semaphore> {
+        let mut named = self.named.lock().unwrap();
+        let gate = named
+            .entry(task.to_owned())
+            .or_insert_with(|| Arc::new(tokio::sync::Semaphore::new(0)));
+        Arc::clone(gate)
     }
 
     /// Wait for one opening; false when cancelled first.
-    async fn pass(&self, cancel: &CancellationToken) -> bool {
+    async fn pass(&self, task: &str, cancel: &CancellationToken) -> bool {
+        let named = self.named(task);
         tokio::select! {
-            permit = self.0.acquire() => {
+            permit = self.any.acquire() => {
+                permit.unwrap().forget();
+                true
+            }
+            permit = named.acquire() => {
                 permit.unwrap().forget();
                 true
             }
@@ -254,7 +279,7 @@ impl ToolHost for Agents {
             if task.starts_with("flaky") && request.resume {
                 return Err(Diagnostic::new(DiagnosticKind::AgentFailed, "flaky failed"));
             }
-            if task.starts_with("gate") && !self.gate_permits.pass(&cancel).await {
+            if task.starts_with("gate") && !self.gate_permits.pass(&task, &cancel).await {
                 return Err(Diagnostic::new(DiagnosticKind::AgentFailed, "cancelled"));
             }
             if (task.starts_with("hold")
@@ -2575,7 +2600,8 @@ async fn a_run_started_while_every_run_slot_is_taken_is_queued_until_one_ends() 
     let positions: Vec<_> = listed.iter().map(|run| run.queue_position).collect();
     assert_eq!(positions, [Some(1), None, None]);
 
-    agents.gate_permits.open();
+    // Both gated agents wait; release A's, not whichever reached the gate first.
+    agents.gate_permits.open_for("gate a");
     assert_eq!(f.ended(&a.id).await.status, WorkflowRunStatus::Completed);
     let c = f.ended(&c.id).await;
     assert_eq!(c.status, WorkflowRunStatus::Completed, "{c:?}");
@@ -2586,7 +2612,7 @@ async fn a_run_started_while_every_run_slot_is_taken_is_queued_until_one_ends() 
         ["workflow.run.started.1", "workflow.run.dispatched.1"]
     );
     assert_eq!(f.status(&b.id).0, WorkflowRunStatus::Running);
-    agents.gate_permits.open();
+    agents.gate_permits.open_for("gate b");
     assert_eq!(f.ended(&b.id).await.status, WorkflowRunStatus::Completed);
 }
 
@@ -2611,7 +2637,7 @@ async fn queued_runs_are_dispatched_in_queue_order() {
     let q2 = f.start(&owner, "export default () => agent('q2');\n").await;
     assert_eq!((q1.queue_position, q2.queue_position), (Some(1), Some(2)));
 
-    agents.gate_permits.open();
+    agents.gate_permits.open_for("gate a");
     assert_eq!(f.ended(&a.id).await.status, WorkflowRunStatus::Completed);
     gated(&agents, 3).await;
     assert_eq!(f.status(&q1.id), (WorkflowRunStatus::Running, None));
