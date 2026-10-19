@@ -61,6 +61,8 @@ async fn agent_tool_restrictions_refuse_client_dispatch_without_sending_a_reques
     let host = AppHost {
         builtin: app.host.clone(),
         remote: app.state.remote_tools.clone(),
+        peers: Arc::new(|_| Ok(None)),
+        peer_names: Arc::new(|| Ok(Vec::new())),
     };
     let turn = TurnContext {
         session_id: "ses_test".into(),
@@ -131,6 +133,8 @@ async fn app_host_preserves_typed_agent_context_observations() {
     let host = AppHost {
         builtin: app.host.clone(),
         remote: app.state.remote_tools.clone(),
+        peers: Arc::new(|_| Ok(None)),
+        peer_names: Arc::new(|| Ok(Vec::new())),
     };
     let turn = TurnContext {
         session_id: "ses_test".into(),
@@ -170,6 +174,8 @@ async fn app_host_delegates_validated_agent_request_options() {
     let host = AppHost {
         builtin: app.host.clone(),
         remote: app.state.remote_tools.clone(),
+        peers: Arc::new(|_| Ok(None)),
+        peer_names: Arc::new(|| Ok(Vec::new())),
     };
     let turn = TurnContext {
         session_id: "ses_test".into(),
@@ -267,6 +273,8 @@ impl ClientFixture {
         let host = AppHost {
             builtin: app.host.clone(),
             remote: app.state.remote_tools.clone(),
+            peers: Arc::new(|_| Ok(None)),
+            peer_names: Arc::new(|| Ok(Vec::new())),
         };
         let (out, frames) = mpsc::channel(4);
         let owner = host.remote.owner();
@@ -748,6 +756,9 @@ fn app_host_forwards_every_tool_host_method() {
         "instruction_read_gate",
         "lifecycle_hooks",
         "messaging_settings",
+        "peer_names",
+        "peer_target",
+        "permission_effect",
         "resolve_prompt_resources",
         "take_hook_effects",
     ] {

@@ -8,6 +8,12 @@
 //! Only a sender's trusted addresses (see [`SenderAddresses`]) can satisfy a `deliver` or
 //! `hold` pattern; its other addresses can only restrict it (`refuse`, or `hold` instead
 //! of `deliver`), so a name another Session chose never lets a message in.
+//!
+//! A cross-machine sender is delivered at once only by a `deliver` pattern that names a
+//! peer (`*@laptop`, `review@laptop`: it contains `@`). Patterns written for local senders
+//! (`*`, `ses_*`, `review-*`) still refuse or hold it, but never deliver it, since `*`
+//! also matches `@` and a peer chooses its own Session labels; a Session override
+//! `deliver` does not deliver it either.
 
 use cyber_core::config::{InboundPolicy, InboundSettings};
 use serde::{Deserialize, Serialize};
@@ -112,10 +118,12 @@ pub fn decide(
     let trusted = || addresses.trusted.iter();
     let decided = if matches_any(&settings.hold, trusted()) {
         Verdict::Hold
-    } else if matches_any(&settings.deliver, trusted()) {
+    } else if matches_any(&delivering(&settings.deliver, reach), trusted()) {
         Verdict::Deliver
     } else {
         match (session, reach) {
+            // Only a pattern naming a peer delivers a cross-machine sender at once.
+            (Some(o), Reach::CrossMachine) if o.inbound == InboundPolicy::Deliver => Verdict::Hold,
             (Some(o), _) => verdict(o.inbound, o.reason.map_or(INBOUND_RULE, |r| r.as_str())),
             (None, Reach::CrossMachine) => Verdict::Hold,
             (None, Reach::SameMachine) => verdict(settings.default, INBOUND_RULE),
@@ -125,6 +133,19 @@ pub fn decide(
         return Verdict::Hold;
     }
     decided
+}
+
+/// The `deliver` patterns that may deliver a sender at `reach`: every one for a local
+/// sender, only those naming a peer (with `@`) for a cross-machine one.
+fn delivering(patterns: &[String], reach: Reach) -> Vec<String> {
+    match reach {
+        Reach::SameMachine => patterns.to_vec(),
+        Reach::CrossMachine => patterns
+            .iter()
+            .filter(|pattern| pattern.contains('@'))
+            .cloned()
+            .collect(),
+    }
 }
 
 fn verdict(policy: InboundPolicy, reason: &'static str) -> Verdict {
@@ -271,6 +292,53 @@ mod tests {
             decide(&settings, None, &peer, Reach::CrossMachine),
             Verdict::Deliver
         );
+    }
+
+    /// Regression: `*` matches `@`, so patterns written for local senders (`*`, `ses_*`,
+    /// `build*`) delivered peer messages at once, as did a Session override `deliver`.
+    /// Only a pattern naming a peer delivers a cross-machine sender now.
+    #[test]
+    fn only_a_pattern_naming_a_peer_delivers_a_cross_machine_sender() {
+        let peer = from(&["ses_01JB@laptop", "build@laptop"]);
+        let cross = Reach::CrossMachine;
+        for pattern in ["*", "ses_*", "build*", "*laptop"] {
+            let settings = rules(&[pattern], &[], &[]);
+            assert_eq!(
+                decide(&settings, None, &peer, cross),
+                Verdict::Hold,
+                "{pattern}"
+            );
+            // The same pattern still delivers a local sender it matches.
+            let local = from(&["ses_01JB", "build", "buildlaptop"]);
+            assert_eq!(
+                decide(&settings, None, &local, Reach::SameMachine),
+                Verdict::Deliver,
+                "{pattern}"
+            );
+        }
+        let deliver = InboundOverride {
+            inbound: InboundPolicy::Deliver,
+            reason: None,
+        };
+        let none = rules(&[], &[], &[]);
+        assert_eq!(decide(&none, Some(&deliver), &peer, cross), Verdict::Hold);
+        assert_eq!(
+            decide(&none, Some(&NON_INTERACTIVE), &peer, cross),
+            Verdict::Refuse("non_interactive")
+        );
+        // Local patterns still restrict a peer sender.
+        assert_eq!(
+            decide(&rules(&[], &[], &["build*"]), None, &peer, cross),
+            Verdict::Refuse(INBOUND_RULE)
+        );
+        for pattern in ["*@laptop", "build@laptop", "*@*"] {
+            let settings = rules(&[pattern], &[], &[]);
+            assert_eq!(
+                decide(&settings, None, &peer, cross),
+                Verdict::Deliver,
+                "{pattern}"
+            );
+        }
     }
 
     #[test]

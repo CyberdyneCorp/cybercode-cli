@@ -207,6 +207,31 @@ fn commit_msg_withholds_unreadable_files_and_redacts_credentials() {
     assert!(sent.contains("- .env"), "{sent}");
 }
 
+/// A peer grant token (`cyp_…`) in a staged file is redacted before the diff reaches the
+/// model, like other known key formats.
+#[test]
+fn commit_msg_redacts_peer_grant_tokens() {
+    let f = Repo::new();
+    let token = "cyp_pgr01HZX0ABCDEF_Qm9vbGVhbi1zZWNyZXQtdmFsdWUtNDMtY2hhcnMtbG9uZw";
+    std::fs::write(
+        f.repo.join("pairing.txt"),
+        format!("pair with cyberpeer://desk.local:4748/?t={token}\n"),
+    )
+    .unwrap();
+    git(&f.repo, &["add", "pairing.txt"]);
+    let output = f.cyber(&["git", "commit-msg"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let requests = f.model.requests();
+    assert_eq!(requests.len(), 1);
+    let sent = requests[0]["messages"].to_string();
+    assert!(sent.contains("pairing.txt"), "{sent}");
+    assert!(!sent.contains(token) && !sent.contains("cyp_pgr"), "{sent}");
+}
+
 /// Regression: with `diff.relative=true` in the repository configuration, Git would list
 /// paths relative to the Location, so a withheld file in a subdirectory escaped its
 /// `:(top)` exclusion and its contents reached the model. Paths stay repository-relative.

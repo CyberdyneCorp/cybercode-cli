@@ -1,6 +1,7 @@
 //! Command dispatch.
 
 pub mod api;
+pub mod attach;
 pub mod db;
 pub mod debug;
 pub mod doctor;
@@ -17,6 +18,7 @@ pub mod mcp_serve;
 pub mod memory;
 pub mod messages;
 pub mod models;
+pub mod peers;
 pub mod permissions;
 pub mod plugin_config;
 pub mod plugins;
@@ -102,6 +104,8 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
         Command::Service { cmd } => serve::service(cmd, &ctx, &cli.global),
         Command::Api(args) => api::run(args, &ctx),
         Command::Messages { cmd } => messages::run(cmd, &ctx, &cli.global),
+        Command::Peers { cmd } => peers::run(cmd, &ctx, &cli.global),
+        Command::Attach(args) => attach::run(&args, &ctx),
         Command::Exec(args) => exec::run(*args, &ctx, &cli.global),
         Command::Review(args) => review::run(*args, &ctx, &cli.global),
         Command::Git { cmd } => git::run(cmd, &ctx, &cli.global),
@@ -210,4 +214,32 @@ pub(crate) fn start_logging(ctx: &Context, global: &GlobalArgs) -> Result<(), Cl
     Ok(())
 }
 
+/// `<tag>: <message>` for a server error, once: peer errors already open their message
+/// with their tag (`PeerUnreachableError: peer `desk` is unreachable`).
+pub(crate) fn tagged(tag: &str, message: &str) -> String {
+    match message.strip_prefix(tag) {
+        Some(rest) if tag.is_empty() || rest.starts_with(':') => message.to_owned(),
+        _ => format!("{tag}: {message}"),
+    }
+}
+
 pub(crate) mod worktrees;
+
+#[cfg(test)]
+mod tagged_tests {
+    /// Regression: `cyber messages send` and `cyber attach` printed
+    /// `PeerUnreachableError: PeerUnreachableError: peer `desk` is unreachable`.
+    #[test]
+    fn a_message_that_names_its_tag_is_not_prefixed_again() {
+        let peer = "PeerUnreachableError: peer `desk` is unreachable: connection failed";
+        assert_eq!(super::tagged("PeerUnreachableError", peer), peer);
+        assert_eq!(
+            super::tagged("ConflictError", "a grant named `laptop` is active"),
+            "ConflictError: a grant named `laptop` is active"
+        );
+        assert_eq!(
+            super::tagged("PeerAuthError", "PeerAuthErrors happen"),
+            "PeerAuthError: PeerAuthErrors happen"
+        );
+    }
+}

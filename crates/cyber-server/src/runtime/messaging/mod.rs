@@ -10,10 +10,16 @@ pub(crate) mod hops;
 pub mod inbound;
 pub(crate) mod inbox;
 pub mod limits;
+pub mod listing;
+pub mod peer;
+pub mod peer_error;
+pub mod receive;
 pub mod records;
 mod recovery;
+mod remote;
 pub mod render;
 pub mod send;
+pub mod tracker;
 pub mod watch;
 
 use std::collections::{HashMap, HashSet};
@@ -21,18 +27,23 @@ use std::sync::Arc;
 
 use cyber_core::config::MessagingSettings;
 use rusqlite::OptionalExtension;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub use address::{AddressError, AddressKind, Candidate, REACHABLE_LIMIT, SessionLocation, Target};
 pub use history::{HistoryPage, HistoryQuery, MessageRecord, Order};
 pub use inbound::{InboundOverride, OverrideReason};
 pub use limits::MAX_MESSAGE_BYTES;
+pub use listing::{PeerSessionStatus, RemoteReach};
+pub use peer::{PeerClient, PeerTarget, RemoteHello};
+pub use peer_error::{PeerAuthReason, PeerError, PeerErrorTag, PeerScope};
 pub use records::{Direction, MessageChain, MessageRow, WatchRow};
 pub use send::{Outcome, SendRequest, SendResult, Sender, SentTo};
+pub use tracker::Tracked;
 pub use watch::{Swept, Watch, WatchRequest, WatchStatus};
 
 use super::{Runtime, RuntimeError};
 use inbound::{Reach, SenderAddresses, Verdict};
+pub use receive::{PeerMessage, PeerOutcome, PeerSendResult};
 
 /// What `target` does with a message from a sender known by `addresses`, under its
 /// Location's `settings` (`None`: unreadable, so disabled): an archived target or a
@@ -41,15 +52,13 @@ fn inbound_verdict(
     target: &Target,
     settings: Option<&MessagingSettings>,
     addresses: &SenderAddresses,
+    reach: Reach,
 ) -> Verdict {
     match settings {
         _ if target.archived => Verdict::Refuse("archived"),
-        Some(settings) if settings.enabled => inbound::decide(
-            &settings.inbound,
-            target.inbound.as_ref(),
-            addresses,
-            Reach::SameMachine,
-        ),
+        Some(settings) if settings.enabled => {
+            inbound::decide(&settings.inbound, target.inbound.as_ref(), addresses, reach)
+        }
         _ => Verdict::Refuse("disabled"),
     }
 }
@@ -108,7 +117,7 @@ impl Runtime {
 }
 
 /// What a reachable Session is doing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReachableState {
     Idle,
@@ -116,10 +125,12 @@ pub enum ReachableState {
     Running,
     /// A permission request or question of the Session waits for a client.
     WaitingInput,
+    /// A configured peer that did not answer: one `*@<peer>` entry.
+    Offline,
 }
 
 /// One entry of the reachable listing (`list_sessions`, `GET /messaging/sessions`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ReachableSession {
     /// What to pass as `to`: the name when it resolves to this Session, else the ID.
     pub address: String,
@@ -151,9 +162,15 @@ impl Runtime {
 
 impl Messaging {
     /// Resolve `to` relative to the sending Session `from` (none for a client).
+    /// An `X@P` address resolves to the configured peer `P` (`PeerNotConfiguredError`
+    /// without one); the peer resolves `X` when the message arrives.
     pub fn resolve(&self, from: Option<&str>, to: &str) -> Result<Target, RuntimeError> {
         let (from, to) = (from.map(str::to_owned), to.to_owned());
         self.caller_exists(from.as_deref())?;
+        if let Some((session, peer)) = send::remote_address(&to) {
+            self.peer_target(&peer)?;
+            return Ok(Target::remote(&session, &peer));
+        }
         let found = self
             .runtime
             .inner
@@ -196,6 +213,41 @@ impl Messaging {
                 directory.as_deref(),
             )?)
         })?;
+        Ok(self.describe(targets, sender, &addresses))
+    }
+
+    /// The root Session of this server `id` names (its ID, or a name that resolves to one
+    /// Session) as [`Self::reachable_as`] would list it for `sender`, without the listing's
+    /// limit; `None` when nothing (or a subagent or an archived Session) has that address.
+    pub fn reachable_one_as(
+        &self,
+        sender: &Sender,
+        id: &str,
+    ) -> Result<Option<ReachableSession>, RuntimeError> {
+        let addresses = self.sender_addresses(sender)?;
+        let id = id.to_owned();
+        let found = self
+            .runtime
+            .inner
+            .store
+            .read(move |db| Ok(address::resolve(db, None, &id)?))?;
+        let Ok(target) = found else {
+            return Ok(None);
+        };
+        if target.archived || target.candidate.kind != AddressKind::Local {
+            return Ok(None);
+        }
+        Ok(self.describe(vec![target], sender, &addresses).pop())
+    }
+
+    /// `targets` as listing entries for `sender`: what each is doing, and whether it would
+    /// accept a message from `sender`.
+    fn describe(
+        &self,
+        targets: Vec<Target>,
+        sender: &Sender,
+        addresses: &SenderAddresses,
+    ) -> Vec<ReachableSession> {
         let mut settings: HashMap<String, Option<MessagingSettings>> = HashMap::new();
         let running = self.runtime.running_sessions();
         let waiting: HashSet<String> = self
@@ -207,7 +259,7 @@ impl Messaging {
                 std::iter::once(r.session_id).chain(routes)
             })
             .collect();
-        Ok(targets
+        targets
             .into_iter()
             .map(|t| {
                 let id = &t.candidate.session_id;
@@ -223,7 +275,7 @@ impl Messaging {
                     .entry(directory.clone())
                     .or_insert_with(|| self.settings(Some(directory)));
                 let can_receive = !matches!(
-                    inbound_verdict(&t, located.as_ref(), &addresses),
+                    inbound_verdict(&t, located.as_ref(), addresses, sender.reach()),
                     Verdict::Refuse(_)
                 );
                 ReachableSession {
@@ -236,7 +288,7 @@ impl Messaging {
                     can_receive,
                 }
             })
-            .collect())
+            .collect()
     }
 
     /// Whether message `id` has a record (its `in` record in any Session, or `sender`'s
@@ -268,6 +320,8 @@ impl Messaging {
                 sender.key(),
                 "client".into(),
             ])),
+            // Named inside the grant's namespace, which no other machine can claim.
+            Sender::Peer { .. } => Ok(SenderAddresses::trusted(sender.peer_addresses())),
         }
     }
 
@@ -305,7 +359,8 @@ impl Messaging {
     fn sender_enabled(&self, sender: &Sender) -> Result<MessagingSettings, RuntimeError> {
         let directory = match sender {
             Sender::Session(id) => Some(self.session_directory(id)?),
-            Sender::Client(_) | Sender::Mcp(_) => None,
+            // A peer's message is received under this machine's process scope.
+            Sender::Client(_) | Sender::Mcp(_) | Sender::Peer { .. } => None,
         };
         self.settings(directory.as_deref())
             .filter(|settings| settings.enabled)

@@ -152,6 +152,42 @@ fn release_and_drop_update_the_recorded_side_only() {
     assert_eq!(store.aggregate_seq("ses_b").unwrap(), Some(1));
 }
 
+fn next_poll(store: &Store, id: &str) -> Option<i64> {
+    let id = id.to_owned();
+    store
+        .read(move |db| {
+            Ok(db.query_row(
+                "SELECT next_poll_ms FROM xsession_message WHERE session_id = ?1",
+                [id],
+                |row| row.get(0),
+            )?)
+        })
+        .unwrap()
+}
+
+#[test]
+fn only_a_message_a_peer_holds_is_followed_until_it_expires() {
+    let store = store();
+    // A local message held by its target is not polled.
+    append(&store, "ses_b", HELD, accepted("out", "hi", "hold")).unwrap();
+    assert_eq!(next_poll(&store, "ses_b"), None);
+    let mut remote = accepted("out", "hi", "hold");
+    remote["origin_kind"] = json!("peer");
+    remote["remote_peer"] = json!("desk");
+    remote["remote_session_id"] = json!("ses_remote");
+    append(&store, "ses_a", HELD, remote).unwrap();
+    let row = &rows(&store, "ses_a")[0];
+    assert_eq!(next_poll(&store, "ses_a"), Some(row.created_ms + 5_000));
+    // Only the sender's record expires.
+    let inbound = json!({"message_id": "msgx_1", "direction": "in"});
+    let err = append(&store, "ses_a", EXPIRED, inbound).unwrap_err();
+    assert!(matches!(err, StoreError::InvalidEvent { .. }), "{err}");
+    let expired = json!({"message_id": "msgx_1", "direction": "out"});
+    append(&store, "ses_a", EXPIRED, expired).unwrap();
+    assert_eq!(rows(&store, "ses_a")[0].outcome, "expired");
+    assert_eq!(next_poll(&store, "ses_a"), None);
+}
+
 #[test]
 fn watch_records_create_fire_and_expire_the_subscription() {
     let store = store();

@@ -76,9 +76,6 @@ pub const COMMANDS: &[&str] = &[
 /// Error for a subcommand that clap did not match.
 pub fn external(args: &[String]) -> CliError {
     let name = args.first().map(String::as_str).unwrap_or_default();
-    if name == "peers" {
-        return peers_unavailable();
-    }
     if COMMANDS.contains(&name) {
         return CliError::unavailable(&format!("`cyber {name}`"), "P0 or later");
     }
@@ -88,16 +85,6 @@ pub fn external(args: &[String]) -> CliError {
             CliError::usage(format!("unknown command \"{name}\"")).with_hint("run \"cyber --help\"")
         }
     }
-}
-
-/// `cyber peers` (`cross-session-messaging` → Direct peers, P2) until the direct peers
-/// change ships: an unavailable capability (exit 2) that points at same-server messaging.
-fn peers_unavailable() -> CliError {
-    CliError::unavailable("`cyber peers`", "P2 (add-messaging-direct-peers)").with_hint(
-        "messaging other Sessions on this server works now: \"cyber messages list --reachable\" \
-         and \"cyber messages send <session> <text>\"; direct peers arrive with \
-         add-messaging-direct-peers (milestone P2, see ROADMAP.md)",
-    )
 }
 
 /// `--format` given after an unmatched subcommand, which clap leaves unparsed.
@@ -148,20 +135,6 @@ mod tests {
         assert_eq!(suggest("sesions"), Some("sessions"));
         assert_eq!(suggest("dbug"), Some("debug"));
         assert_eq!(suggest("zzzzzzzz"), None);
-    }
-
-    #[test]
-    fn peers_is_an_unavailable_capability_until_direct_peers() {
-        for args in [
-            vec!["peers".to_owned()],
-            vec!["peers".into(), "list".into()],
-        ] {
-            let error = external(&args);
-            assert_eq!(error.code, 2);
-            assert!(error.message.contains("`cyber peers` is not available"));
-            let hint = error.hint.unwrap();
-            assert!(hint.contains("add-messaging-direct-peers") && hint.contains("--reachable"));
-        }
     }
 
     #[test]

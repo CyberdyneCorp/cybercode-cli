@@ -358,6 +358,122 @@ export interface Operations {
     body: undefined;
     response: S.Located_Array_of_ModelInfo;
   };
+  "v1.peer.attachClose": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: void;
+  };
+  "v1.peer.attachEvents": {
+    path: { sessionID: string };
+    query: {
+      after?: QueryValue;
+    };
+    body: undefined;
+    response: S.EventEnvelope;
+  };
+  "v1.peer.attachInterrupt": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: void;
+  };
+  "v1.peer.attachMessages": {
+    path: { sessionID: string };
+    query: {
+      limit?: QueryValue;
+      cursor?: QueryValue;
+      order?: QueryValue;
+    };
+    body: undefined;
+    response: S.Page_Message;
+  };
+  "v1.peer.attachOpen": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Attach;
+  };
+  "v1.peer.attachPermissions": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.PendingRequest[];
+  };
+  "v1.peer.attachPrompt": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: S.PeerPrompt;
+    response: S.Receipt;
+  };
+  "v1.peer.attachReply": {
+    path: { sessionID: string; requestID: string };
+    query: Record<string, never>;
+    body: S.PermissionReplyBody;
+    response: void;
+  };
+  "v1.peer.attachSession": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Session;
+  };
+  "v1.peer.hello": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Hello;
+  };
+  "v1.peer.outcome": {
+    path: { messageID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.PeerOutcome;
+  };
+  "v1.peer.send": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.PeerMessage;
+    response: S.PeerSendResult;
+  };
+  "v1.peer.sessions": {
+    path: Record<string, never>;
+    query: {
+      limit?: QueryValue;
+    };
+    body: undefined;
+    response: S.PeerSessions;
+  };
+  "v1.peer.status": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.PeerSessionStatus;
+  };
+  "v1.peers.invite": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.InvitePeer;
+    response: S.PeerInvitation;
+  };
+  "v1.peers.list": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.PeersOverview;
+  };
+  "v1.peers.remotes": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.RemoteReach[];
+  };
+  "v1.peers.revoke": {
+    path: { name: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.PeerRevoked;
+  };
   "v1.permission.list": {
     path: Record<string, never>;
     query: {
@@ -1433,6 +1549,222 @@ export const operations = {
     body: "none",
     located: true,
     unwrap: false,
+    stream: false,
+  },
+  "v1.peer.attachClose": {
+    tag: "peer",
+    name: "attachClose",
+    method: "DELETE",
+    path: "/api/v1/peer/attach/{sessionID}",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.peer.attachEvents": {
+    tag: "peer",
+    name: "attachEvents",
+    method: "GET",
+    path: "/api/v1/peer/attach/{sessionID}/events",
+    pathParams: ["sessionID"],
+    query: ["after"],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: true,
+  },
+  "v1.peer.attachInterrupt": {
+    tag: "peer",
+    name: "attachInterrupt",
+    method: "POST",
+    path: "/api/v1/peer/attach/{sessionID}/interrupt",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.peer.attachMessages": {
+    tag: "peer",
+    name: "attachMessages",
+    method: "GET",
+    path: "/api/v1/peer/attach/{sessionID}/messages",
+    pathParams: ["sessionID"],
+    query: ["limit", "cursor", "order"],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.peer.attachOpen": {
+    tag: "peer",
+    name: "attachOpen",
+    method: "POST",
+    path: "/api/v1/peer/attach/{sessionID}",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.peer.attachPermissions": {
+    tag: "peer",
+    name: "attachPermissions",
+    method: "GET",
+    path: "/api/v1/peer/attach/{sessionID}/permissions",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.peer.attachPrompt": {
+    tag: "peer",
+    name: "attachPrompt",
+    method: "POST",
+    path: "/api/v1/peer/attach/{sessionID}/prompt",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.peer.attachReply": {
+    tag: "peer",
+    name: "attachReply",
+    method: "POST",
+    path: "/api/v1/peer/attach/{sessionID}/permissions/{requestID}/reply",
+    pathParams: ["sessionID", "requestID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.peer.attachSession": {
+    tag: "peer",
+    name: "attachSession",
+    method: "GET",
+    path: "/api/v1/peer/attach/{sessionID}/session",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.peer.hello": {
+    tag: "peer",
+    name: "hello",
+    method: "GET",
+    path: "/api/v1/peer/hello",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.peer.outcome": {
+    tag: "peer",
+    name: "outcome",
+    method: "GET",
+    path: "/api/v1/peer/messages/{messageID}",
+    pathParams: ["messageID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.peer.send": {
+    tag: "peer",
+    name: "send",
+    method: "POST",
+    path: "/api/v1/peer/messages",
+    pathParams: [],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.peer.sessions": {
+    tag: "peer",
+    name: "sessions",
+    method: "GET",
+    path: "/api/v1/peer/sessions",
+    pathParams: [],
+    query: ["limit"],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.peer.status": {
+    tag: "peer",
+    name: "status",
+    method: "GET",
+    path: "/api/v1/peer/sessions/{sessionID}/status",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.peers.invite": {
+    tag: "peers",
+    name: "invite",
+    method: "POST",
+    path: "/api/v1/peers/grants",
+    pathParams: [],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.peers.list": {
+    tag: "peers",
+    name: "list",
+    method: "GET",
+    path: "/api/v1/peers",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.peers.remotes": {
+    tag: "peers",
+    name: "remotes",
+    method: "GET",
+    path: "/api/v1/peers/remotes",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.peers.revoke": {
+    tag: "peers",
+    name: "revoke",
+    method: "DELETE",
+    path: "/api/v1/peers/grants/{name}",
+    pathParams: ["name"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
     stream: false,
   },
   "v1.permission.list": {
@@ -2555,6 +2887,64 @@ export function createGroups(caller: Caller) {
       list: (options?: RequestOptions): Promise<Operations["v1.model.list"]["response"]> =>
         caller.call("v1.model.list", {}, options),
     },
+    peer: {
+      /** End this attach (`DELETE /api/v1/peer/attach/{sessionID}`) */
+      attachClose: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.peer.attachClose"]["response"]> =>
+        caller.call("v1.peer.attachClose", { path: { sessionID } }, options),
+      /** The attached Session's durable events after `after`; without it, its durable and live events from now on, as the instance stream carries them (`GET /api/v1/peer/attach/{sessionID}/events`) */
+      attachEvents: (sessionID: string, query?: Operations["v1.peer.attachEvents"]["query"], options?: StreamOptions): AsyncIterableIterator<S.EventEnvelope> =>
+        caller.stream("v1.peer.attachEvents", { path: { sessionID }, query }, options),
+      /** Interrupt the attached Session's running Drain (`POST /api/v1/peer/attach/{sessionID}/interrupt`) */
+      attachInterrupt: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.peer.attachInterrupt"]["response"]> =>
+        caller.call("v1.peer.attachInterrupt", { path: { sessionID } }, options),
+      /** The attached Session's transcript, as GET /sessions/:id/messages (`GET /api/v1/peer/attach/{sessionID}/messages`) */
+      attachMessages: (sessionID: string, query?: Operations["v1.peer.attachMessages"]["query"], options?: RequestOptions): Promise<Operations["v1.peer.attachMessages"]["response"]> =>
+        caller.call("v1.peer.attachMessages", { path: { sessionID }, query }, options),
+      /** Ask the Session's user for remote.attach (resource peer:<grant>, up to 2 minutes); an approval returns the attach ID (scope attach) (`POST /api/v1/peer/attach/{sessionID}`) */
+      attachOpen: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.peer.attachOpen"]["response"]> =>
+        caller.call("v1.peer.attachOpen", { path: { sessionID } }, options),
+      /** The attached Session's pending permission requests, attach requests excluded (`GET /api/v1/peer/attach/{sessionID}/permissions`) */
+      attachPermissions: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.peer.attachPermissions"]["response"]> =>
+        caller.call("v1.peer.attachPermissions", { path: { sessionID } }, options),
+      /** Prompt the attached Session as its user with text and image parts (`POST /api/v1/peer/attach/{sessionID}/prompt`) */
+      attachPrompt: (sessionID: string, body: Operations["v1.peer.attachPrompt"]["body"], options?: RequestOptions): Promise<Operations["v1.peer.attachPrompt"]["response"]> =>
+        caller.call("v1.peer.attachPrompt", { path: { sessionID }, body }, options),
+      /** Reply once or reject to a permission request the attach lists (`always` is refused); never to an attach request (`POST /api/v1/peer/attach/{sessionID}/permissions/{requestID}/reply`) */
+      attachReply: (sessionID: string, requestID: string, body: Operations["v1.peer.attachReply"]["body"], options?: RequestOptions): Promise<Operations["v1.peer.attachReply"]["response"]> =>
+        caller.call("v1.peer.attachReply", { path: { sessionID, requestID }, body }, options),
+      /** The attached Session, as GET /sessions/:id shows it (`GET /api/v1/peer/attach/{sessionID}/session`) */
+      attachSession: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.peer.attachSession"]["response"]> =>
+        caller.call("v1.peer.attachSession", { path: { sessionID } }, options),
+      /** This machine's name, version and key fingerprint, and the calling grant's name and scopes (`GET /api/v1/peer/hello`) */
+      hello: (options?: RequestOptions): Promise<Operations["v1.peer.hello"]["response"]> =>
+        caller.call("v1.peer.hello", {}, options),
+      /** The current outcome of a message the calling grant sent: delivered, held, released, dropped or refused (`GET /api/v1/peer/messages/{messageID}`) */
+      outcome: (messageID: string, options?: RequestOptions): Promise<Operations["v1.peer.outcome"]["response"]> =>
+        caller.call("v1.peer.outcome", { path: { messageID } }, options),
+      /** Receive a message from a Session of the calling machine (scope message); the sender is named after the grant; idempotent on the grant and message ID (`POST /api/v1/peer/messages`) */
+      send: (body: Operations["v1.peer.send"]["body"], options?: RequestOptions): Promise<Operations["v1.peer.send"]["response"]> =>
+        caller.call("v1.peer.send", { body }, options),
+      /** Root Sessions the calling grant could message, newest first, at most 50; Locations by workspace name unless peers.share_paths (`GET /api/v1/peer/sessions`) */
+      sessions: (query?: Operations["v1.peer.sessions"]["query"], options?: RequestOptions): Promise<Operations["v1.peer.sessions"]["response"]> =>
+        caller.call("v1.peer.sessions", { query }, options),
+      /** What one Session the grant can see is doing, for watches (`GET /api/v1/peer/sessions/{sessionID}/status`) */
+      status: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.peer.status"]["response"]> =>
+        caller.call("v1.peer.status", { path: { sessionID } }, options),
+    },
+    peers: {
+      /** Create a peer grant and return its pairing code, the only time its token is shown (`POST /api/v1/peers/grants`) */
+      invite: (body: Operations["v1.peers.invite"]["body"], options?: RequestOptions): Promise<Operations["v1.peers.invite"]["response"]> =>
+        caller.call("v1.peers.invite", { body }, options),
+      /** The running peer listener and every peer grant (never a token) (`GET /api/v1/peers`) */
+      list: (options?: RequestOptions): Promise<Operations["v1.peers.list"]["response"]> =>
+        caller.call("v1.peers.list", {}, options),
+      /** The enabled remotes of user config and whether each answered its last listing (asked at most every 15 s, 5 s timeout) (`GET /api/v1/peers/remotes`) */
+      remotes: (options?: RequestOptions): Promise<Operations["v1.peers.remotes"]["response"]> =>
+        caller.call("v1.peers.remotes", {}, options),
+      /** Revoke a peer grant; its next request is refused (`DELETE /api/v1/peers/grants/{name}`) */
+      revoke: (name: string, options?: RequestOptions): Promise<Operations["v1.peers.revoke"]["response"]> =>
+        caller.call("v1.peers.revoke", { path: { name } }, options),
+    },
     permission: {
       /** Pending permission requests (`GET /api/v1/permissions/requests`) */
       list: (query?: Operations["v1.permission.list"]["query"], options?: RequestOptions): Promise<Operations["v1.permission.list"]["response"]> =>
@@ -2829,6 +3219,11 @@ export const errorTags = [
   "InvalidRequestError",
   "MessageNotFoundError",
   "MemoryNotFoundError",
+  "PeerAuthError",
+  "PeerNotConfiguredError",
+  "PeerScopeError",
+  "PeerUnreachableError",
+  "PermissionDeniedError",
   "RequestNotFoundError",
   "ReviewTargetError",
   "RewindConflictError",
@@ -2879,6 +3274,26 @@ export function isMessageNotFoundError(err: unknown): err is TaggedError<"Messag
 
 export function isMemoryNotFoundError(err: unknown): err is TaggedError<"MemoryNotFoundError"> {
   return hasTag(err, "MemoryNotFoundError");
+}
+
+export function isPeerAuthError(err: unknown): err is TaggedError<"PeerAuthError"> {
+  return hasTag(err, "PeerAuthError");
+}
+
+export function isPeerNotConfiguredError(err: unknown): err is TaggedError<"PeerNotConfiguredError"> {
+  return hasTag(err, "PeerNotConfiguredError");
+}
+
+export function isPeerScopeError(err: unknown): err is TaggedError<"PeerScopeError"> {
+  return hasTag(err, "PeerScopeError");
+}
+
+export function isPeerUnreachableError(err: unknown): err is TaggedError<"PeerUnreachableError"> {
+  return hasTag(err, "PeerUnreachableError");
+}
+
+export function isPermissionDeniedError(err: unknown): err is TaggedError<"PermissionDeniedError"> {
+  return hasTag(err, "PermissionDeniedError");
 }
 
 export function isRequestNotFoundError(err: unknown): err is TaggedError<"RequestNotFoundError"> {

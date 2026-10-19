@@ -169,6 +169,20 @@ pub fn envelope(event: &LiveEvent, counter: u64) -> EventEnvelope {
             durable: None,
         };
     }
+    if let LiveEvent::MessagingOutcome { .. } = event {
+        return EventEnvelope {
+            id: format!("live:{counter}"),
+            kind: "messaging.outcome".into(),
+            data: serde_json::to_value(event)
+                .map(|mut data| {
+                    data.as_object_mut().map(|m| m.remove("type"));
+                    data
+                })
+                .unwrap_or_default(),
+            location: None,
+            durable: None,
+        };
+    }
     if let LiveEvent::RequestRouted { kind, data, .. } = event {
         return EventEnvelope {
             id: format!("live:{counter}"),
@@ -209,6 +223,7 @@ fn session_of(event: &LiveEvent) -> Option<&str> {
         | LiveEvent::ToolInputDelta { session_id, .. }
         | LiveEvent::ToolProgress { session_id, .. }
         | LiveEvent::JobOutput { session_id, .. }
+        | LiveEvent::MessagingOutcome { session_id, .. }
         | LiveEvent::Retry { session_id, .. }
         | LiveEvent::Usage { session_id, .. }
         | LiveEvent::Error { session_id, .. }
@@ -340,8 +355,60 @@ async fn instance(State(state): State<AppState>, parts: Parts) -> Result<Respons
     Ok(stream_response(rx, runtime))
 }
 
+/// One Session's events from now on as the instance stream carries them (`server.connected`,
+/// then its durable and live events): the feed of a peer attach's TUI, which follows a run
+/// through live events such as `session.idle` and text deltas that the Session stream
+/// leaves out.
+pub(crate) async fn session_instance_events(
+    state: AppState,
+    id: String,
+) -> Result<Response, ApiError> {
+    let mut directory = state.runtime.state(&id).await?.info.directory;
+    let mut live = state.runtime.subscribe();
+    let (tx, rx) = mpsc::channel(256);
+    let runtime = state.runtime.clone();
+    spawn_stream(runtime.clone(), tx.clone(), async move {
+        let hello = EventEnvelope {
+            id: "live:0".into(),
+            kind: "server.connected".into(),
+            data: json!({}),
+            location: None,
+            durable: None,
+        };
+        if tx.send(sse_event(&hello)).await.is_err() {
+            return;
+        }
+        let mut counter = 0u64;
+        loop {
+            let event = match live.recv().await {
+                Ok(event) => event,
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => return,
+            };
+            if session_of(&event) != Some(id.as_str()) {
+                continue;
+            }
+            if let LiveEvent::Deleted { .. } = event {
+                return;
+            }
+            if let LiveEvent::Durable { kind, data, .. } = &event
+                && let Some(updated) = event_location::changed(kind, data)
+            {
+                directory = updated;
+            }
+            counter += 1;
+            let mut e = envelope(&event, counter);
+            e.location = Some(directory.clone());
+            if tx.send(sse_event(&e)).await.is_err() {
+                return;
+            }
+        }
+    });
+    Ok(stream_response(rx, runtime))
+}
+
 /// Replay durable events after `after` (or `Last-Event-ID`), then follow new ones without gaps.
-async fn session_events(
+pub(crate) async fn session_events(
     State(state): State<AppState>,
     Path(id): Path<String>,
     parts: Parts,
@@ -421,6 +488,7 @@ async fn follow(
             | Ok(event @ LiveEvent::WorktreeSetup { .. })
             | Ok(event @ LiveEvent::ToolProgress { .. })
             | Ok(event @ LiveEvent::JobOutput { .. })
+            | Ok(event @ LiveEvent::MessagingOutcome { .. })
                 if session_of(&event) == Some(id.as_str()) =>
             {
                 counter += 1;

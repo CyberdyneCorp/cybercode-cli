@@ -25,6 +25,12 @@ pub struct Registration {
     /// Length and modification time of that executable when the server started.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binary_stamp: Option<String>,
+    /// The peer listener (`server-api` → Peer listener), when `peers.listen` started one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_url: Option<String>,
+    /// `sha256:<hex>` of the peer certificate's SubjectPublicKeyInfo, with `peer_url`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_fingerprint: Option<String>,
 }
 
 impl Registration {
@@ -40,6 +46,8 @@ impl Registration {
             build: Some(cyber_core::version::build_info().build.into()),
             binary: binary.path.clone(),
             binary_stamp: binary.stamp.clone(),
+            peer_url: None,
+            peer_fingerprint: None,
         }
     }
 }

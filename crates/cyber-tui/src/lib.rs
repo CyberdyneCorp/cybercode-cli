@@ -61,6 +61,8 @@ mod screens_messages;
 #[cfg(test)]
 mod screens_parallel;
 #[cfg(test)]
+mod screens_peers;
+#[cfg(test)]
 mod screens_progress;
 #[cfg(test)]
 mod screens_recap;

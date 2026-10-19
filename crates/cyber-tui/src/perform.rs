@@ -194,10 +194,7 @@ pub async fn snapshot(client: &Client, id: &str) -> Result<Msg, String> {
         }
     }
     let messages = message_records(client, id).await;
-    let inbox = client
-        .get(&format!("/sessions/{id}/inbox"))
-        .await
-        .map_err(err)?;
+    let inbox = unless_missing(client.get(&format!("/sessions/{id}/inbox")).await)?;
     let queued = inbox["data"]
         .as_array()
         .into_iter()
@@ -206,10 +203,11 @@ pub async fn snapshot(client: &Client, id: &str) -> Result<Msg, String> {
         .collect();
     let mut requests = Vec::new();
     for kind in ["permissions", "questions"] {
-        let list = client
-            .get(&format!("/{kind}/requests?session_id={id}"))
-            .await
-            .map_err(err)?;
+        let list = unless_missing(
+            client
+                .get(&format!("/{kind}/requests?session_id={id}"))
+                .await,
+        )?;
         requests.extend(
             list["data"]
                 .as_array()
@@ -241,6 +239,17 @@ pub async fn snapshot(client: &Client, id: &str) -> Result<Msg, String> {
     })
 }
 
+/// A snapshot part, empty when the server has no such route (an older server, or a peer
+/// attach, which serves no inbox and no questions).
+fn unless_missing(
+    result: Result<serde_json::Value, cyber_client::ClientError>,
+) -> Result<serde_json::Value, String> {
+    match result {
+        Err(error) if error.route_missing() => Ok(serde_json::Value::Null),
+        other => other.map_err(err),
+    }
+}
+
 /// Every message record of the Session, oldest first; `None` when the history cannot
 /// be read, so the last records stay.
 async fn message_records(client: &Client, id: &str) -> Option<Vec<crate::messaging::Record>> {
@@ -266,13 +275,16 @@ async fn message_records(client: &Client, id: &str) -> Option<Vec<crate::messagi
 /// A sidebar source; 404 or 503 omits its section and any other failure keeps the last
 /// value.
 pub async fn sidebar(client: &Client, session: &Session, part: crate::sidebar::Part) -> Msg {
-    use crate::sidebar::{Loaded, Part, clean, parse_files, parse_lsp, parse_mcp, parse_vcs};
+    use crate::sidebar::{
+        Loaded, Part, clean, parse_files, parse_lsp, parse_mcp, parse_peers, parse_vcs,
+    };
     let at = client.at(&session.directory);
     let loaded = match part {
         Part::Mcp => source(&at, "/mcp", |s| Loaded::Mcp(s.map(parse_mcp))).await,
         Part::Lsp => source(&at, "/lsp", |s| Loaded::Lsp(s.map(parse_lsp))).await,
         Part::Vcs => source(&at, "/vcs", |s| Loaded::Vcs(s.map(parse_vcs))).await,
         Part::Health => health(&at).await,
+        Part::Peers => source(&at, "/peers/remotes", |s| Loaded::Peers(s.map(parse_peers))).await,
         Part::Machine => {
             match source(&at, "/system", |s| {
                 Loaded::Machine(s.map(crate::sidebar::parse_machine))

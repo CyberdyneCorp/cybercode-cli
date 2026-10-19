@@ -3334,3 +3334,141 @@ fn quiet_loop_iterations_collapse_in_the_transcript() {
     assert!(!text.contains("#1"), "{text}");
     assert!(text.contains("↻ loop · running"), "{text}");
 }
+
+/// `cyber attach migration@desk` (`cross-session-messaging` → Peer attach): the TUI opens
+/// a Session of a real App through its TLS peer listener with the attach transport, shows
+/// its transcript and prompts it; the routes an attach does not serve (inbox, questions,
+/// plugins) leave those parts empty instead of failing the UI.
+#[tokio::test]
+async fn the_tui_opens_a_peer_session_through_an_attach() {
+    use cyber_core::paths::{DatabaseLocation, Paths};
+    use cyber_server::http::peer::{self, PeerInfo, tls};
+    use cyber_server::runtime::messaging::{PeerScope, PeerTarget};
+    use cyber_server::runtime::peers::{NewGrant, grants};
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().canonicalize().unwrap();
+    let repo = directory.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let paths = Paths {
+        data: directory.join("data"),
+        config: directory.join("config"),
+        state: directory.join("state"),
+        cache: directory.join("cache"),
+        tmp: directory.join("tmp"),
+    };
+    paths.ensure().unwrap();
+    std::fs::write(
+        paths.config.join("cyber.json"),
+        json!({"providers":{"test":{"api":{"type":"openai-compatible","url":"http://127.0.0.1:9/v1","settings":{"auth":"none"}},"models":{"main":{}}}},
+            "permissions":{"remote.attach":{"peer:laptop":"allow"}}})
+            .to_string(),
+    )
+    .unwrap();
+    let desk = cyber_app::App::build(cyber_app::AppOptions {
+        paths: paths.clone(),
+        home: directory.join("home"),
+        database: DatabaseLocation::File(directory.join("events.db")),
+        default_directory: repo.clone(),
+        sandbox_policy: None,
+        snapshots: false,
+        interactive: true,
+        password: Some("tui-attach-password".into()),
+        mcp_credentials: None,
+        remote_skill_fetcher: None,
+        workflow_cores: None,
+        isolation: None,
+    })
+    .await
+    .unwrap();
+    let local = cyber_client::Client::embedded(desk.embedded()).at(&repo.display().to_string());
+    let created = local
+        .post(
+            "/sessions",
+            json!({"model":"test/main","title":"migration"}),
+        )
+        .await
+        .unwrap();
+    let id = created["data"]["id"].as_str().unwrap().to_owned();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let names = tls::SubjectNames {
+        machine: "desk".into(),
+        address,
+    };
+    let identity = tls::PeerIdentity::load_or_create(&paths.state.join(tls::DIR), &names).unwrap();
+    let info = PeerInfo {
+        machine: "desk".into(),
+        fingerprint: identity.fingerprint().to_string(),
+        share_paths: false,
+        attach_wait: peer::ATTACH_WAIT,
+    };
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(cyber_server::http::serve_peer(
+        peer::router(desk.state.clone(), info),
+        listener,
+        Some(identity.server_config().unwrap()),
+        async {
+            let _ = stopped.await;
+        },
+    ));
+    let grant = NewGrant {
+        name: "laptop".into(),
+        scopes: vec![PeerScope::Message, PeerScope::Attach],
+        expires_ms: None,
+    };
+    let token = grants::create(&desk.store, grant, 0).unwrap().token;
+    let target = PeerTarget {
+        name: "desk".into(),
+        url: format!("https://{address}"),
+        fingerprint: identity.fingerprint().to_string(),
+        token,
+    };
+    let client = cyber_client::Client::attach_peer(target, "migration")
+        .await
+        .unwrap();
+
+    let state = tempfile::tempdir().unwrap();
+    let opts = crate::TuiOptions {
+        client: client.clone(),
+        directory: directory.display().to_string(),
+        state_dir: state.path().to_path_buf(),
+        config_dir: state.path().join("config"),
+        start: crate::Start::Resume(id.clone()),
+        fork: false,
+        model: None,
+        agent: None,
+        mode: None,
+        prompt: None,
+    };
+    let store = crate::store::LocalStore::new(state.path());
+    let (app, _) = crate::runner::start(&client, &store, &opts, &|_| None)
+        .await
+        .unwrap();
+    assert_eq!(
+        (app.session.id.as_str(), app.session.title.as_str()),
+        (id.as_str(), "migration")
+    );
+
+    let action = Action::Prompt {
+        text: "from the laptop".into(),
+        delivery: "steer",
+    };
+    crate::perform::perform(&client, &app.session, action)
+        .await
+        .unwrap();
+    let crate::perform::Msg::Snapshot { session, items, .. } =
+        crate::perform::perform(&client, &app.session, Action::Refresh)
+            .await
+            .unwrap()
+    else {
+        panic!("a snapshot")
+    };
+    assert_eq!(session.id, id);
+    let prompted = items
+        .iter()
+        .any(|item| format!("{item:?}").contains("from the laptop"));
+    assert!(prompted, "{items:?}");
+    client.detach().await.unwrap();
+    let _ = stop.send(());
+    server.await.unwrap().unwrap();
+}

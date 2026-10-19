@@ -225,7 +225,7 @@ async fn reachable_sessions_are_listed_over_http() {
 /// the HTTP listing shows an ambiguous or shadowed name by ID.
 #[tokio::test]
 async fn addresses_resolve_in_tiers_on_the_production_app() {
-    use cyber_server::runtime::messaging::AddressError;
+    use cyber_server::runtime::messaging::{AddressError, PeerError};
     use cyber_server::runtime::{CreateSession, RuntimeError};
 
     let app = ModeApp::start(Setup::default()).await;
@@ -265,8 +265,8 @@ async fn addresses_resolve_in_tiers_on_the_production_app() {
     let prefix = &first[..12];
     assert_eq!(to(prefix), Err(AddressError::NotFound(prefix.into())));
     assert!(matches!(
-        to("api@laptop"),
-        Err(AddressError::AccountRequired(_))
+        messaging.resolve(Some(&caller), "api@laptop"),
+        Err(RuntimeError::Peer(PeerError::NotConfigured { .. }))
     ));
 
     let (status, body) = app

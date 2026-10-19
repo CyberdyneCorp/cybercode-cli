@@ -13,6 +13,8 @@ use tokio::sync::Notify;
 pub struct ServiceControl {
     pub id: String,
     pub stop: Arc<Notify>,
+    /// The running peer listener, when `peers.listen` opened one.
+    pub peer: Option<Arc<super::peer::PeerHandle>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

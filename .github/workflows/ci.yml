@@ -224,6 +224,49 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tui --lib screens_messages
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Native direct peers config, error tags, token redaction, TLS identity, peer listener, grants, peer client, cyber peers, peer sends, listings, watches, discovery, attach and surfaces
+        if: ${{ !cancelled() }}
+        run: |
+          cargo test --locked -p cyber-core --lib config::peers
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-core --lib memory::secrets
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-core --test config peers
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-server --lib peer_error
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-server --lib http::error
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-server --lib http::peer
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-server --lib runtime::peers
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-server --lib runtime::messaging
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-tools --lib permissions::engine::tests::remote_attach
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-server --test peers
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-app --test peers
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-app --lib peer_tokens
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-app --lib peer_discovery
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-cli --bin cyber peers
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-cli --test peers_cli
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-cli --bin cyber commands::attach
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-client --lib peer
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-tui --lib the_tui_opens_a_peer_session_through_an_attach
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-tui --lib screens_peers
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-tui --lib messaging::tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native bundled skill discovery and agent profiles
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --lib --test agent_profiles

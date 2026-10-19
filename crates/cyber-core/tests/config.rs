@@ -1895,3 +1895,85 @@ fn a_linked_project_mcp_json_is_not_read() {
         resolved.warnings
     );
 }
+
+const PEER_FP: &str = "sha256:9f2c000000000000000000000000000000000000000000000000000000000001";
+
+fn peers_config() -> Value {
+    json!({"peers": {
+        "listen": {"address": "127.0.0.1:4748", "tls": false},
+        "remotes": [{"name": "desk", "url": "https://desk.local:4748", "fingerprint": PEER_FP}],
+    }})
+}
+
+/// `peers` opens a listener and names trusted machines, so it is read only from user
+/// config; any other layer fails with a message naming that layer, trusted or not.
+#[test]
+fn peers_are_accepted_only_from_user_config() {
+    let f = Fixture::new();
+    f.write("global:cyber.jsonc", &peers_config().to_string());
+    let resolved = f.load().unwrap();
+    let settings = config::PeersSettings::from_config(&resolved.value).unwrap();
+    assert_eq!(settings.remotes[0].name, "desk");
+    let global = config::load_global(&f.request(&f.repo, &[])).unwrap();
+    assert!(
+        config::PeersSettings::from_config(&global)
+            .unwrap()
+            .listen
+            .is_some()
+    );
+
+    for file in [
+        "cyber.jsonc",
+        ".cyber/cyber.jsonc",
+        ".cyber/cyber.local.jsonc",
+    ] {
+        let f = Fixture::new();
+        let path = f.write(file, &peers_config().to_string());
+        for trusted in [false, true] {
+            if trusted {
+                f.approve_current();
+            }
+            let err = f.load().unwrap_err().to_string();
+            assert!(err.starts_with("ConfigInvalidError: peers:"), "{err}");
+            assert!(err.contains(&path.display().to_string()), "{err}");
+            assert!(err.contains("cyber peers add"), "{err}");
+        }
+    }
+
+    let mut f = Fixture::new();
+    f.env
+        .insert("CYBER_CONFIG_CONTENT".into(), peers_config().to_string());
+    let err = f.load().unwrap_err().to_string();
+    assert!(err.contains("not in env:CYBER_CONFIG_CONTENT"), "{err}");
+
+    let f = Fixture::new();
+    f.write(
+        "global:cyber.jsonc",
+        &json!({"profiles": {"lan": peers_config()}}).to_string(),
+    );
+    let err = f.load().unwrap_err().to_string();
+    assert!(err.contains("profiles.lan.peers is not allowed"), "{err}");
+
+    let f = Fixture::new();
+    let overrides = vec!["peers.mdns=true".to_string()];
+    let err = config::load(&f.request(&f.repo, &overrides))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("--config cannot set peers"), "{err}");
+}
+
+/// Peer rules fail the whole user configuration with a message, on both loaders.
+#[test]
+fn invalid_user_peers_config_fails_loading() {
+    let f = Fixture::new();
+    f.write(
+        "global:cyber.jsonc",
+        r#"{ "peers": { "listen": { "address": "0.0.0.0:4748", "tls": false } } }"#,
+    );
+    let err = f.load().unwrap_err().to_string();
+    assert!(err.contains("peers.listen.tls:"), "{err}");
+    let err = config::load_global(&f.request(&f.repo, &[]))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("peers.listen.tls:"), "{err}");
+}

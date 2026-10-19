@@ -70,7 +70,8 @@ pub(super) async fn list(connection: &Connection, args: &Value, caller: &Caller)
         .state
         .runtime
         .messaging()
-        .reachable_as(&sender(connection, caller), directory.as_deref())
+        .list_as(&sender(connection, caller), directory.as_deref())
+        .await
         .map_err(ApiError::from)?;
     Ok(ToolOutput {
         value: json!({ "sessions": sessions }),
@@ -170,6 +171,13 @@ fn check(
     request.depth = caller.check_depth(connection)?;
     let messaging = connection.state.runtime.messaging();
     let target = match messaging.resolve(request.from.session_id(), &request.to) {
+        // MCP serve drives this server's Sessions only.
+        Ok(target) if target.peer.is_some() => {
+            return Err(ApiError::invalid(format!(
+                "`{}` is a peer Session; MCP serve sends only to Sessions of this server",
+                target.address
+            )));
+        }
         Ok(target) => target.candidate.session_id,
         Err(RuntimeError::Address(AddressError::SelfTarget)) => {
             return Err(caller::self_target());

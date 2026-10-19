@@ -14,7 +14,7 @@ use crate::context::Context;
 use crate::error::CliError;
 use crate::output;
 
-/// Exit code of an address that names a remote Session (`AccountRequiredError`).
+/// Exit code of an address that needs a Cyber Account (`AccountRequiredError`, the Relay).
 pub const EXIT_ACCOUNT_REQUIRED: u8 = 6;
 /// The client label the CLI sends as (`client:cli`).
 const CLIENT: &str = "cli";
@@ -24,8 +24,9 @@ const PREVIEW: usize = 60;
 #[derive(Debug, Subcommand)]
 pub enum MessagesCmd {
     /// Send a message to a Session by ID or name. Exits 0 when delivered or held, 1 when
-    /// refused (the reason on stderr), 2 for an ambiguous or unknown address or a text
-    /// over 16 KiB, and 6 for a remote address.
+    /// refused (the reason on stderr) or when a peer cannot be reached, 2 for an
+    /// ambiguous or unknown address, an unconfigured peer or a text over 16 KiB, and 6
+    /// for an address that needs a Cyber Account.
     #[command(after_help = SEND_EXAMPLES)]
     Send(SendArgs),
     /// The message history of a Session (default: the Location's most recent one), or with
@@ -37,7 +38,8 @@ pub enum MessagesCmd {
 const SEND_EXAMPLES: &str = "Examples:
   cyber messages send frontend \"the API moved to port 8080\"
   echo \"deploy is done\" | cyber messages send migration -
-  cyber messages send ses_01J... \"rebase on main\" --from backend --notify-when-idle";
+  cyber messages send ses_01J... \"rebase on main\" --from backend --notify-when-idle
+  cyber messages send migration@desk \"is the migration done?\" --from review";
 
 const LIST_EXAMPLES: &str = "Examples:
   cyber messages list --session frontend --direction in
@@ -45,12 +47,13 @@ const LIST_EXAMPLES: &str = "Examples:
 
 #[derive(Debug, Args)]
 pub struct SendArgs {
-    /// The target: a `ses_` ID, a subagent name or a Session name.
+    /// The target: a `ses_` ID, a subagent name, a Session name, or `<session>@<peer>` for
+    /// a Session of a paired machine (which needs `--from`).
     pub to: String,
     /// The message text; `-` (or nothing, with a pipe) reads it from stdin.
     pub text: Option<String>,
     /// Send as this Session (ID, exact title or unique ID prefix) instead of as the
-    /// `client:cli` client.
+    /// `client:cli` client; a message to a peer Session (`<session>@<peer>`) needs it.
     #[arg(long)]
     pub from: Option<String>,
     /// Also notify the `--from` Session once when the target next goes idle.
@@ -291,7 +294,7 @@ fn clean(text: &str) -> String {
 }
 
 /// Percent-encode a query or path value.
-fn query(value: &str) -> String {
+pub(crate) fn query(value: &str) -> String {
     value
         .bytes()
         .map(|b| {
@@ -332,8 +335,8 @@ fn report(result: &Value, global: &GlobalArgs) -> Result<(), CliError> {
     )))
 }
 
-/// A declared failure as an exit code: usage errors (2) for what the caller can fix,
-/// 6 for a remote address, 1 otherwise.
+/// A declared failure as an exit code: usage errors (2) for what the caller can fix
+/// (an unconfigured peer included), 6 for an address that needs an account, 1 otherwise.
 fn failure(body: &Value) -> CliError {
     let tag = body["_tag"].as_str().unwrap_or_default();
     let message = body["message"]
@@ -362,10 +365,14 @@ fn failure(body: &Value) -> CliError {
             message: message.to_owned(),
             hint: None,
         },
+        "PeerNotConfiguredError" => CliError::usage(message).with_hint(format!(
+            "pair it with `cyber peers add {} '<code>'`",
+            body["peer"].as_str().unwrap_or("<name>")
+        )),
         "MessageTooLargeError" | "AddressNotFoundError" | "InvalidRequestError" => {
             CliError::usage(message)
         }
-        _ => CliError::runtime(format!("{tag}: {message}")),
+        _ => CliError::runtime(super::tagged(tag, message)),
     }
 }
 
@@ -386,6 +393,9 @@ mod tests {
             ("AddressNotFoundError", 2),
             ("InvalidRequestError", 2),
             ("AccountRequiredError", 6),
+            ("PeerNotConfiguredError", 2),
+            ("PeerUnreachableError", 1),
+            ("PeerAuthError", 1),
             ("ServiceUnavailableError", 1),
         ] {
             assert_eq!(

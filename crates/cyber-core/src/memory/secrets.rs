@@ -7,6 +7,8 @@ const CREDENTIAL_PATTERNS: &[&str] = &[
     r#"(?i)\b(?:[a-z0-9_-]*(?:api[_-]?key|password|passwd|token|secret)|authorization)["']?\s*[:=]\s*\S+"#,
     r"(?i)\bsk-(?:proj-|ant-)?[a-z0-9_-]{8,}",
     r"(?i)\b(?:gh[pousr]_[a-z0-9]{8,}|github_pat_[a-z0-9_]{8,}|AKIA[0-9A-Z]{16})",
+    // Peer grant tokens (`cyp_pgr…_<secret>`) of `cross-session-messaging` → Peer grants.
+    r"\bcyp_[A-Za-z0-9_-]{8,}",
     r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----",
 ];
 static CREDENTIALS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
@@ -75,5 +77,16 @@ mod tests {
         assert!(!redacted.contains("abc123") && !redacted.contains("AKIAABCDEFGHIJKLMNOP"));
         assert!(redacted.starts_with("ok\n") && redacted.contains("done"));
         assert_eq!(super::redact_credentials("plain hi"), "plain hi");
+    }
+
+    #[test]
+    fn peer_grant_tokens_are_redacted_and_refused() {
+        let token = "cyp_pgr01HZX0ABCDEF_Qm9vbGVhbi1zZWNyZXQtdmFsdWUtNDMtY2hhcnMtbG9uZw";
+        let redacted = super::redact_credentials(&format!("Authorization: Bearer {token}"));
+        assert!(!redacted.contains(token), "{redacted}");
+        let redacted = super::redact_credentials(&format!("code t={token} ok"));
+        assert_eq!(redacted, "code t=[REDACTED] ok");
+        assert!(super::check(&format!("paired with {token}")).is_err());
+        assert_eq!(super::redact_credentials("cyp_ alone"), "cyp_ alone");
     }
 }

@@ -1,4 +1,5 @@
-//! Running the server: lock, listeners, password and registration.
+//! Running the server: lock, listeners (main, Unix socket and peer), password and
+//! registration.
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -8,6 +9,7 @@ use base64::Engine;
 use cyber_core::paths::Paths;
 use cyber_server::http;
 use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
 
 use crate::App;
 use crate::registration::{Registration, registration_path, remove_registration, write_private};
@@ -23,6 +25,10 @@ pub struct ServeOptions {
     pub no_tcp: bool,
     /// Write `server.json` so clients find this server.
     pub register: bool,
+    /// Publish the peer listener over mDNS (`cyber serve --mdns`), as `peers.mdns` does.
+    pub mdns: bool,
+    /// How long a peer attach waits for `remote.attach`: 2 minutes; tests shorten it.
+    pub peer_attach_wait: std::time::Duration,
 }
 
 impl Default for ServeOptions {
@@ -33,6 +39,8 @@ impl Default for ServeOptions {
             socket: None,
             no_tcp: false,
             register: false,
+            mdns: false,
+            peer_attach_wait: cyber_server::http::peer::ATTACH_WAIT,
         }
     }
 }
@@ -107,21 +115,37 @@ pub async fn run_server_until(
         .as_ref()
         .and_then(|l| l.local_addr().ok())
         .map(|a: SocketAddr| format!("http://{a}"));
-    let registration = Registration::current(
+    let peer = crate::peer_listener::bind(&app, opts.peer_attach_wait).await;
+    let mut registration = Registration::current(
         server_id,
         url.clone().unwrap_or_default(),
         socket.as_ref().map(|p| p.display().to_string()),
     );
+    let peer_handle = peer.as_ref().map(|peer| Arc::clone(&peer.handle));
+    registration.peer_url = peer_handle.as_ref().map(|handle| handle.url());
+    registration.peer_fingerprint = peer_handle.as_ref().map(|handle| handle.info().fingerprint);
+    if let Some(handle) = &peer_handle
+        && opts.register
+    {
+        handle.on_rotate(rewrite_fingerprint(&app.paths, &registration));
+    }
     let mut state = app.state.clone();
     state.service = Some(http::ServiceControl {
         id: registration.id.clone(),
         stop: Arc::clone(&stop),
+        peer: peer_handle,
     });
     let router = http::router(state);
     cyber_core::log::info(
         "server",
         "listening",
-        serde_json::json!({ "url": url, "socket": registration.socket, "pid": std::process::id() }),
+        serde_json::json!({
+            "url": url,
+            "socket": registration.socket,
+            "peer_url": registration.peer_url,
+            "peer_fingerprint": registration.peer_fingerprint,
+            "pid": std::process::id(),
+        }),
     );
     let address = url
         .clone()
@@ -134,24 +158,28 @@ pub async fn run_server_until(
             &serde_json::to_string_pretty(&registration).unwrap_or_default(),
         )?;
     }
+    // The listeners stop on a token, not on `stop` itself: `notify_waiters` wakes only
+    // tasks already waiting, and a listener task that was not polled yet (a stop right
+    // after the server registered) would miss it and keep the server from stopping.
+    let closing = CancellationToken::new();
     let tcp_task = tcp.map(|listener| {
-        let stop = Arc::clone(&stop);
-        tokio::spawn(http::serve_tcp(router.clone(), listener, async move {
-            stop.notified().await
-        }))
+        let closing = closing.clone().cancelled_owned();
+        tokio::spawn(http::serve_tcp(router.clone(), listener, closing))
     });
+    let publication =
+        crate::peer_discovery::start(&app, peer.as_ref().map(|peer| &peer.handle), opts.mdns);
+    let peer_task = peer.map(|peer| peer.spawn(&app, closing.clone().cancelled_owned()));
     let unix_task = socket
         .as_ref()
-        .and_then(|socket| unix(router, socket, Arc::clone(&stop)));
+        .and_then(|socket| unix(router, socket, closing.clone()));
     stop.notified().await;
+    closing.cancel();
     stop.notify_waiters();
+    crate::peer_discovery::unpublish(publication).await;
     sweeper.abort();
     let _ = sweeper.await;
     app.runtime.shutdown().await;
-    if let Some(task) = tcp_task {
-        let _ = task.await;
-    }
-    if let Some(task) = unix_task {
+    for task in [tcp_task, peer_task, unix_task].into_iter().flatten() {
         let _ = task.await;
     }
     if let Some(socket) = socket {
@@ -166,6 +194,29 @@ pub async fn run_server_until(
         remove_registration(&app.paths, &registration.id);
     }
     Ok(())
+}
+
+/// After a key rotation, `server.json` names the new fingerprint.
+fn rewrite_fingerprint(
+    paths: &Paths,
+    registration: &Registration,
+) -> http::peer::handle::RotateHook {
+    let path = registration_path(paths);
+    let registration = std::sync::Mutex::new(registration.clone());
+    Box::new(move |fingerprint| {
+        let mut registration = registration
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        registration.peer_fingerprint = Some(fingerprint.to_string());
+        let text = serde_json::to_string_pretty(&*registration).unwrap_or_default();
+        if let Err(error) = write_private(&path, &text) {
+            cyber_core::log::warn(
+                "server",
+                "cannot record the rotated peer key",
+                serde_json::json!({ "reason": error }),
+            );
+        }
+    })
 }
 
 #[cfg(unix)]
@@ -202,11 +253,11 @@ async fn bind(host: &str, port: Option<u16>) -> Result<tokio::net::TcpListener, 
 fn unix(
     router: axum::Router,
     socket: &Path,
-    stop: Arc<Notify>,
+    closing: CancellationToken,
 ) -> Option<tokio::task::JoinHandle<std::io::Result<()>>> {
     let socket = socket.to_path_buf();
     Some(tokio::spawn(async move {
-        http::serve_unix(router, &socket, async move { stop.notified().await }).await
+        http::serve_unix(router, &socket, closing.cancelled_owned()).await
     }))
 }
 
@@ -214,7 +265,7 @@ fn unix(
 fn unix(
     _router: axum::Router,
     _socket: &Path,
-    _stop: Arc<Notify>,
+    _closing: CancellationToken,
 ) -> Option<tokio::task::JoinHandle<std::io::Result<()>>> {
     None
 }

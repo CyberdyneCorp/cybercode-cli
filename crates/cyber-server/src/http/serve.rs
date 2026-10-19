@@ -1,17 +1,21 @@
-//! Transports: TCP, the Unix socket and the in-process embedded client
-//! (`server-api` → Listener defaults, Embedded transport).
+//! Transports: TCP, the Unix socket, the peer listener and the in-process embedded client
+//! (`server-api` → Listener defaults, Embedded transport, Peer listener).
 
 use std::net::SocketAddr;
 #[cfg(unix)]
 use std::path::Path;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::Request;
 use axum::response::Response;
 use axum::{Extension, Router};
-use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto::Builder;
 use hyper_util::service::TowerToHyperService;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 
@@ -31,22 +35,113 @@ pub async fn serve_tcp(
         router.layer(Extension(Transport::Tcp)),
         listener,
         |addr| Some(*addr),
+        plain,
+        None,
         shutdown,
     )
     .await;
     Ok(())
 }
 
+/// How long a peer has to finish the TLS handshake.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// What the peer listener allows each connection, which any host that can reach it may
+/// open before authenticating: so many at once, and so long to send a request's headers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PeerLimits {
+    /// Connections served at once; one more is closed as soon as it is accepted.
+    pub connections: usize,
+    /// How long a connection may take to send a request's headers, which is also how
+    /// long it may stay idle before or between requests.
+    pub header_timeout: Duration,
+}
+
+impl Default for PeerLimits {
+    fn default() -> Self {
+        Self {
+            connections: 64,
+            header_timeout: Duration::from_secs(10),
+        }
+    }
+}
+
+/// [`serve_peer_with`] with the default [`PeerLimits`].
+pub async fn serve_peer(
+    router: Router,
+    listener: tokio::net::TcpListener,
+    tls: Option<Arc<rustls::ServerConfig>>,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+) -> std::io::Result<()> {
+    serve_peer_with(router, listener, tls, PeerLimits::default(), shutdown).await
+}
+
+/// Serve the peer router ([`super::peer::router`]) on a bound TCP listener until
+/// `shutdown` resolves: TLS with `tls`, plain HTTP only when the listener is on loopback
+/// (an SSH-forwarded port). A plain listener on any other address is refused. Only
+/// HTTP/1.1 is served, within `limits`, so connections that never send a request (or
+/// stall) are closed and cannot exhaust the process's file descriptors.
+pub async fn serve_peer_with(
+    router: Router,
+    listener: tokio::net::TcpListener,
+    tls: Option<Arc<rustls::ServerConfig>>,
+    limits: PeerLimits,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+) -> std::io::Result<()> {
+    let Some(config) = tls else {
+        let address = listener.local_addr()?;
+        if !super::guard::loopback_peer(address.ip()) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("a plain peer listener is allowed only on loopback, not {address}"),
+            ));
+        }
+        let peer = |addr: &SocketAddr| Some(*addr);
+        serve_owned(router, listener, peer, plain, Some(limits), shutdown).await;
+        return Ok(());
+    };
+    let acceptor = tokio_rustls::TlsAcceptor::from(config);
+    let handshake = move |io: tokio::net::TcpStream| {
+        let accept = acceptor.accept(io);
+        async move {
+            tokio::time::timeout(HANDSHAKE_TIMEOUT, accept)
+                .await
+                .ok()?
+                .ok()
+        }
+    };
+    let peer = |addr: &SocketAddr| Some(*addr);
+    serve_owned(router, listener, peer, handshake, Some(limits), shutdown).await;
+    Ok(())
+}
+
+/// The connection as accepted, for listeners without a handshake.
+fn plain<Io>(io: Io) -> std::future::Ready<Option<Io>> {
+    std::future::ready(Some(io))
+}
+
 /// Own connection tasks so a blocked socket cannot prevent listener shutdown indefinitely.
-async fn serve_owned<L: axum::serve::Listener>(
+/// `upgrade` runs in the connection's task (a TLS handshake), so a slow client does not
+/// hold up `accept`; a connection it rejects is closed. With `limits`, a connection past
+/// the cap is closed on accept, and each one is held to the header timeout.
+async fn serve_owned<L, U, F, Io>(
     router: Router,
     mut listener: L,
     peer: fn(&L::Addr) -> Option<SocketAddr>,
+    upgrade: U,
+    limits: Option<PeerLimits>,
     shutdown: impl Future<Output = ()> + Send + 'static,
-) {
+) where
+    L: axum::serve::Listener,
+    U: Fn(L::Io) -> F,
+    F: Future<Output = Option<Io>> + Send + 'static,
+    Io: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
     let closing = CancellationToken::new();
     let _on_drop = closing.clone().drop_guard();
     let mut connections = tokio::task::JoinSet::new();
+    let slots = limits.map(|limits| Arc::new(Semaphore::new(limits.connections)));
+    let header_timeout = limits.map(|limits| limits.header_timeout);
     tokio::pin!(shutdown);
     loop {
         tokio::select! {
@@ -54,7 +149,19 @@ async fn serve_owned<L: axum::serve::Listener>(
             _ = &mut shutdown => break,
             _ = connections.join_next(), if !connections.is_empty() => {},
             (io, addr) = listener.accept() => {
-                connections.spawn(serve_connection(router.clone(), io, peer(&addr), closing.clone()));
+                let Ok(slot) = take_slot(slots.as_ref()) else {
+                    // Over the cap: closed before any byte is read.
+                    drop(io);
+                    continue;
+                };
+                let connection = Connection {
+                    router: router.clone(),
+                    peer: peer(&addr),
+                    closing: closing.clone(),
+                    header_timeout,
+                    _slot: slot,
+                };
+                connections.spawn(serve_upgraded(connection, upgrade(io)));
             }
         }
     }
@@ -63,29 +170,101 @@ async fn serve_owned<L: axum::serve::Listener>(
     while connections.join_next().await.is_some() {}
 }
 
-async fn serve_connection(
+/// A free connection slot, when connections are capped; `Err` when none is free.
+fn take_slot(slots: Option<&Arc<Semaphore>>) -> Result<Option<OwnedSemaphorePermit>, ()> {
+    match slots {
+        Some(slots) => Arc::clone(slots)
+            .try_acquire_owned()
+            .map(Some)
+            .map_err(|_| ()),
+        None => Ok(None),
+    }
+}
+
+/// One accepted connection and what serves it.
+struct Connection {
     router: Router,
-    io: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
     peer: Option<SocketAddr>,
     closing: CancellationToken,
+    /// HTTP/1.1 only, with this header (and idle) timeout; `None` serves HTTP/1.1 and
+    /// HTTP/2 without one (the main API on loopback and the Unix socket).
+    header_timeout: Option<Duration>,
+    /// The connection's place under the listener's cap, freed when it closes.
+    _slot: Option<OwnedSemaphorePermit>,
+}
+
+async fn serve_upgraded<Io>(connection: Connection, handshake: impl Future<Output = Option<Io>>)
+where
+    Io: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let io = tokio::select! {
+        biased;
+        _ = connection.closing.cancelled() => return,
+        io = handshake => io,
+    };
+    if let Some(io) = io {
+        serve_connection(connection, io).await;
+    }
+}
+
+/// The HTTP connection builder: HTTP/1.1 and HTTP/2, or with a header timeout, HTTP/1.1
+/// only (hyper has no idle timeout for HTTP/2), whose header timer also closes a
+/// connection idle before or between requests.
+fn builder(header_timeout: Option<Duration>) -> Builder<TokioExecutor> {
+    let Some(timeout) = header_timeout else {
+        let mut builder = Builder::new(TokioExecutor::new());
+        builder.http2().enable_connect_protocol();
+        return builder;
+    };
+    let mut builder = Builder::new(TokioExecutor::new()).http1_only();
+    builder
+        .http1()
+        .timer(TokioTimer::new())
+        .header_read_timeout(timeout);
+    builder
+}
+
+async fn serve_connection(
+    connection: Connection,
+    io: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 ) {
-    let mut builder = Builder::new(TokioExecutor::new());
-    builder.http2().enable_connect_protocol();
+    let Connection {
+        router,
+        peer,
+        closing,
+        header_timeout,
+        _slot,
+    } = connection;
+    let builder = builder(header_timeout);
     let service = router.map_request(move |mut req: Request<_>| {
         if let Some(peer) = peer {
             req.extensions_mut().insert(PeerAddr(peer));
         }
         req
     });
-    let connection =
-        builder.serve_connection_with_upgrades(TokioIo::new(io), TowerToHyperService::new(service));
+    let (io, service) = (TokioIo::new(io), TowerToHyperService::new(service));
+    if header_timeout.is_some() {
+        // HTTP/1.1 from the first byte, so the header timer also runs before any byte
+        // arrives (the version sniffing of upgradeable connections waits without one);
+        // the peer routes need no upgrades.
+        let connection = builder.serve_connection(io, service);
+        drive(connection, closing, |c| c.graceful_shutdown()).await;
+    } else {
+        let connection = builder.serve_connection_with_upgrades(io, service);
+        drive(connection, closing, |c| c.graceful_shutdown()).await;
+    }
+}
+
+/// Run `connection` until it ends or `closing` fires, then shut it down gracefully for
+/// up to 2 seconds.
+async fn drive<C: Future>(connection: C, closing: CancellationToken, shutdown: fn(Pin<&mut C>)) {
     tokio::pin!(connection);
     tokio::select! {
         biased;
         _ = closing.cancelled() => {},
         _ = &mut connection => return,
     }
-    connection.as_mut().graceful_shutdown();
+    shutdown(connection.as_mut());
     // On timeout the owned connection future and its IO are dropped before this task ends.
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), connection).await;
 }
@@ -110,6 +289,8 @@ pub async fn serve_unix(
         router.layer(Extension(Transport::Unix)),
         checked,
         |_| None,
+        plain,
+        None,
         shutdown,
     )
     .await;

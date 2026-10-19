@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Direct peer transport
-(P2) The system SHALL connect `cyber` servers the same person controls (another machine on the LAN, a VPN host, an SSH-forwarded port) through a peer listener and scoped peer grants, without a Cyber Account or Relay. `peers.remotes` in user config SHALL list `{ name, url, fingerprint, enabled? }`, with each peer's token stored in the OS keyring or given as `{env:NAME}`. A remote `url` that is not loopback SHALL require `https`, and the client SHALL accept only the server certificate whose SubjectPublicKeyInfo SHA-256 equals the pinned `fingerprint`. An address `X@P` SHALL resolve `P` against `peers.remotes` names and fail with `PeerNotConfiguredError` when none matches. `list_sessions` SHALL include peer Sessions with `kind: "peer"` and address `<name>@<peer>`, and `send_message` and `watch_session` SHALL work on them. The receiving server SHALL name the sender after the grant that authenticated the request (`ses_…@<grant>`, `<title>@<grant>`), never after names in the request body. Peer senders SHALL be treated as off-machine: inbound default `hold`, `message.send ask`, and `remote.attach ask`. The size limit, rate limits, chain hops and recursion depth SHALL apply as for local messages, and both Sessions SHALL record the message with `origin_kind: "peer"`. A peer that does not answer within 5 seconds SHALL be listed offline and a send to it SHALL fail with `PeerUnreachableError`; messages SHALL NOT be queued for later delivery.
+(P2) The system SHALL connect `cyber` servers the same person controls (another machine on the LAN, a VPN host, an SSH-forwarded port) through a peer listener and scoped peer grants, without a Cyber Account or Relay. `peers.remotes` in user config SHALL list `{ name, url, fingerprint, enabled? }`, with each peer's token stored in the OS keyring or given as `{env:NAME}`. A remote `url` that is not loopback SHALL require `https`, and the client SHALL accept only the server certificate whose SubjectPublicKeyInfo SHA-256 equals the pinned `fingerprint`. An address `X@P` SHALL resolve `P` against `peers.remotes` names and fail with `PeerNotConfiguredError` when none matches. `list_sessions` SHALL include peer Sessions with `kind: "peer"` and address `<name>@<peer>`, and `send_message` and `watch_session` SHALL work on them. The receiving server SHALL name the sender after the grant that authenticated the request (`ses_…@<grant>`, `<title>@<grant>`), never after names in the request body. Peer senders SHALL be treated as off-machine: inbound default `hold`, `message.send ask`, and `remote.attach ask`. Only a `deliver` pattern that names a peer (one containing `@`, such as `*@laptop`) SHALL deliver a peer sender at once; `deliver` patterns without `@` and a Session override `deliver` SHALL NOT, though they still refuse or hold. The receiving server SHALL resolve a peer's `to` only among the Sessions the grant is shown (as for its listing): a Session it is not shown SHALL be `AddressNotFoundError` without its ID, and an ambiguous address SHALL list only shown candidates, located as the listing locates them. The size limit, rate limits, chain hops and recursion depth SHALL apply as for local messages, with every Session of one grant counted together as one sender, and both Sessions SHALL record the message with `origin_kind: "peer"`. A peer that does not answer within 5 seconds SHALL be listed offline and a send to it SHALL fail with `PeerUnreachableError`; messages SHALL NOT be queued for later delivery. A peer whose messaging is disabled SHALL fail the send with `ServiceUnavailableError`, and the sender SHALL record nothing.
 
 #### Scenario: Two laptops on one network
 - **WHEN** laptop A has a remote `{ name: "desk", url: "https://desk.local:4748", fingerprint: "sha256:9f2c…" }` paired with a grant on `desk`, and a Session named `migration` runs on `desk`
@@ -19,6 +19,14 @@
 - **WHEN** a request authenticated by grant `laptop` sends `from_name: "build"` to a Session whose inbound rules `refuse` `*@workstation` and `deliver` nothing else
 - **THEN** the sender address is `build@laptop`, the default `hold` applies, and the record names `laptop`
 
+#### Scenario: Local deliver patterns hold peer senders
+- **WHEN** a Location's inbound rules `deliver` `*`, `ses_*` or `build*`, and grant `laptop` sends `from_name: "build"`
+- **THEN** the message is held; with `deliver: ["*@laptop"]` it is delivered
+
+#### Scenario: Ambiguous peer address hides refused Sessions
+- **WHEN** two root Sessions on `desk` are titled `api`, one refuses `laptop`, and `laptop` sends to `api`
+- **THEN** the message reaches the other one, and a third `api` makes the send fail with `AmbiguousAddressError` listing only the two shown Sessions by workspace name
+
 #### Scenario: Unknown peer name
 - **WHEN** a Session sends to `api@nas` and no remote is named `nas`
 - **THEN** the send fails with `PeerNotConfiguredError { peer: "nas" }` before any network request
@@ -26,7 +34,7 @@
 ## ADDED Requirements
 
 ### Requirement: Peer pairing and grants
-(P2) `cyber peers invite <name> [--scope message|attach]... [--expires <duration>]` SHALL create a grant on the receiving machine with a 256-bit random token, store only its SHA-256 hash, and print once a pairing code carrying the peer URL, the machine name, the certificate fingerprint and the token. The default scope SHALL be `message`. `cyber peers add <name> <code>` SHALL store the token in the OS keyring (falling back to a 0600 file with a warning), pin the fingerprint, write the remote to user config and test it. Peer requests SHALL authenticate with `Authorization: Bearer cyp_…`; the peer listener SHALL accept no other credential, and the main API SHALL NOT accept `cyp_` tokens. Unknown, revoked or expired tokens SHALL receive `401`; a token without the route's scope SHALL receive `403` `PeerScopeError`. `cyber peers revoke <name>` SHALL end a grant for the next request. Each grant SHALL be limited to 120 requests per minute.
+(P2) `cyber peers invite <name> [--scope message|attach]... [--expires <duration>]` SHALL create a grant on the receiving machine with a 256-bit random token, store only its SHA-256 hash, and print once a pairing code carrying the peer URL, the machine name, the certificate fingerprint and the token. The default scope SHALL be `message`. `cyber peers add <name> <code>` SHALL store the token in the OS keyring (falling back to a 0600 file with a warning), pin the fingerprint, write the remote to user config and test it. Peer requests SHALL authenticate with `Authorization: Bearer cyp_…`; the peer listener SHALL accept no other credential, and the main API SHALL NOT accept `cyp_` tokens. Unknown, revoked or expired tokens SHALL receive `401`; a token without the route's scope SHALL receive `403` `PeerScopeError`. `cyber peers revoke <name>` SHALL end a grant at once: its next request SHALL be refused and its open attach event streams SHALL end. An open attach event stream SHALL also end when its attach is closed or its grant expires, and SHALL count as use of the attach. Each grant SHALL be limited to 120 requests per minute. The peer listener SHALL serve only HTTP/1.1, at most 64 connections at once (closing any further one on accept), and SHALL close a connection that does not send a request's headers within 10 seconds, before its first request or between requests. An address whose tokens failed verification 30 times in a minute SHALL receive `429` before any token lookup until the minute passes. For a listener bound to every interface, the pairing code SHALL name this host's LAN name (its host name, on `.local` without a domain), which its mDNS record also advertises.
 
 #### Scenario: Pair two machines
 - **WHEN** the user runs `cyber peers invite laptop` on `desk` and `cyber peers add desk '<code>'` on `laptop`
@@ -40,12 +48,20 @@
 - **WHEN** a grant with scope `message` requests an attach route
 - **THEN** the response is `403` `PeerScopeError`
 
+#### Scenario: Idle connections cannot exhaust the server
+- **WHEN** a host opens 64 connections to the peer listener and sends nothing
+- **THEN** a further connection is closed at once, the main API still answers, and the idle ones are closed after 10 seconds
+
 ### Requirement: Peer outcome tracking
-(P2) The sending server SHALL record the synchronous outcome of a peer send and SHALL poll the peer for messages held there, with backoff from 5 seconds to 5 minutes, for up to 7 days, after which the outcome SHALL become `expired`. A change SHALL emit the live `messaging.outcome` event and the durable `messaging.message.released.1` or `messaging.message.dropped.1` in the sender Session. Polling SHALL resume after a server restart. `POST /api/v1/peer/messages` SHALL be idempotent on the grant and message ID.
+(P2) The sending server SHALL record the synchronous outcome of a peer send and SHALL poll the peer for messages held there, with backoff from 5 seconds to 5 minutes, for up to 7 days, after which the outcome SHALL become `expired`. A change SHALL emit the live `messaging.outcome` event and the durable `messaging.message.released.1` or `messaging.message.dropped.1` in the sender Session. Polling SHALL resume after a server restart. A poll pass SHALL ask peers in parallel, at most 5 messages per peer (the oldest due first); after a failure to reach a peer, its other due messages SHALL be rescheduled without a request, and a change that cannot be recorded SHALL be rescheduled without holding up the others. `POST /api/v1/peer/messages` SHALL be idempotent on the grant and message ID.
 
 #### Scenario: Release seen by the sender
 - **WHEN** a message to `migration@desk` is held on `desk` and released there an hour later
 - **THEN** the sender Session receives `messaging.message.released.1` within the next poll interval, including after a restart of the sending server in between
+
+#### Scenario: A silent peer does not delay a release
+- **WHEN** one remote accepts connections and never answers while a message held on another remote is released
+- **THEN** the release reaches the sender within the same poll pass, without waiting for the silent remote's timeouts
 
 #### Scenario: Retry after a timeout
 - **WHEN** the sender retries a send with the same `msgx_` ID after a timeout
@@ -63,7 +79,7 @@
 - **THEN** it does not appear in `laptop`'s `list_sessions`
 
 ### Requirement: Peer attach
-(P2) `cyber attach <session>@<peer>` SHALL open the TUI on one Session of a peer through the peer listener, only with a grant that has scope `attach`. Each attach SHALL raise the `remote.attach` permission in the target Session with resource `peer:<grant>` (default `ask`), wait up to 2 minutes, and fail with `PermissionDeniedError` when refused or unanswered. The attached client SHALL reach only that Session's event stream, prompt, interrupt and permission-reply routes.
+(P2) `cyber attach <session>@<peer>` SHALL open the TUI on one Session of a peer through the peer listener, only with a grant that has scope `attach`. Each attach SHALL raise the `remote.attach` permission in the target Session with resource `peer:<grant>` (default `ask`; only an explicit `remote.attach` allow in user-level config SHALL skip the prompt, while a blanket or wildcard allow and repository, agent or Session rules SHALL still ask, and any deny SHALL refuse), wait up to 2 minutes, and fail with `PermissionDeniedError` when refused or unanswered. The attached client SHALL reach only that Session's event stream, prompt, interrupt and permission-reply routes. A permission reply from an attached client SHALL approve `once` or reject; `always`, which would save an approval that outlives the attach and its grant, SHALL be refused with `InvalidRequestError`.
 
 #### Scenario: Attach approved
 - **WHEN** `laptop` runs `cyber attach migration@desk` with an `attach` grant and the user on `desk` approves the request

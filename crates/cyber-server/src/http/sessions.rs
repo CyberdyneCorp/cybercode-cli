@@ -446,7 +446,7 @@ async fn create(
         .into_response())
 }
 
-async fn show(
+pub(crate) async fn show(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Data<Session>>> {
@@ -556,7 +556,7 @@ async fn stop_delegation(
     }))
 }
 
-async fn prompt(
+pub(crate) async fn prompt(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(body): Json<PromptBody>,
@@ -652,7 +652,10 @@ async fn reopen_subtree(
     Ok(Json(Data { data: report }))
 }
 
-async fn interrupt(State(state): State<AppState>, Path(id): Path<String>) -> Result<StatusCode> {
+pub(crate) async fn interrupt(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode> {
     state.runtime.interrupt(&id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -842,7 +845,7 @@ fn message_of(state: &SessionState, entry: &Entry) -> Message {
     }
 }
 
-async fn messages(
+pub(crate) async fn messages(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Query(q): Query<MessagesQuery>,
@@ -977,7 +980,7 @@ fn owned_request(state: &AppState, session_id: &str, request_id: &str) -> Result
     }
 }
 
-async fn reply_permission(
+pub(crate) async fn reply_permission(
     State(state): State<AppState>,
     Path((id, request_id)): Path<(String, String)>,
     Json(b): Json<PermissionReplyBody>,

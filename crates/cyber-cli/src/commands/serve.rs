@@ -30,7 +30,8 @@ pub struct ServeArgs {
     /// Sandbox policy for model-run commands: read-only, workspace-write or full-access.
     #[arg(long)]
     pub sandbox: Option<String>,
-    /// Publish over mDNS (non-loopback binds only).
+    /// Publish the peer listener (`peers.listen`) over mDNS, as `peers.mdns` does. Only a
+    /// listener off loopback is published; the main API never is.
     #[arg(long)]
     pub mdns: bool,
     /// Speak JSON-RPC over stdin and stdout.
@@ -66,11 +67,6 @@ pub fn serve(args: ServeArgs, ctx: &Context) -> Result<(), CliError> {
     if args.stdio {
         return stdio(args, ctx);
     }
-    if args.mdns
-        && (args.hostname == "127.0.0.1" || args.hostname == "localhost" || args.hostname == "::1")
-    {
-        eprintln!("warning: --mdns ignored for a loopback bind");
-    }
     let password = cyber_app::password(&ctx.paths).map_err(CliError::runtime)?;
     runtime()?.block_on(async {
         let app = App::build(AppOptions {
@@ -95,6 +91,8 @@ pub fn serve(args: ServeArgs, ctx: &Context) -> Result<(), CliError> {
             socket: args.socket,
             no_tcp: args.no_tcp,
             register: args.register,
+            mdns: args.mdns,
+            ..ServeOptions::default()
         };
         cyber_app::run_server(app, opts, |url| println!("cyber server listening on {url}"))
             .await

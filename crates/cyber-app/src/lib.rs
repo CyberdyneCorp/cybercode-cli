@@ -5,6 +5,9 @@
 pub mod backup;
 pub mod git_text;
 mod host;
+pub mod peer_discovery;
+mod peer_listener;
+pub mod peer_tokens;
 mod registered_status;
 mod registration;
 pub mod retention;
@@ -80,6 +83,8 @@ pub struct App {
     pub config: Arc<ConfigFn>,
     /// The MCP OAuth credential store the pool and hook connections use.
     pub mcp_credentials: Arc<dyn McpCredentialStore>,
+    /// The defaults and user layers only, for user-scope keys such as `peers`.
+    global_config: Arc<services::GlobalConfigFn>,
 }
 
 pub fn version() -> &'static str {
@@ -131,6 +136,20 @@ fn global_config_loader(paths: Paths, home: PathBuf) -> Arc<services::GlobalConf
         })
         .map_err(|error| error.to_string())
     })
+}
+
+/// Remotes are read from user config on every send, so `cyber peers add`, `rm` and edits
+/// apply without a restart.
+fn peer_lookup(global: Arc<services::GlobalConfigFn>, paths: Paths) -> Arc<host::PeerLookup> {
+    Arc::new(move |name| {
+        let tokens = peer_tokens::PeerTokenStore::open(&paths);
+        peer_tokens::target(&global()?, name, &tokens)
+    })
+}
+
+/// The enabled remotes, read from user config on every listing like [`peer_lookup`].
+fn peer_names(global: Arc<services::GlobalConfigFn>) -> Arc<host::PeerNames> {
+    Arc::new(move || peer_tokens::enabled_names(&global()?))
 }
 
 pub fn config_loader(paths: Paths, home: PathBuf) -> Arc<ConfigFn> {
@@ -228,9 +247,12 @@ impl App {
         let remote_tools = Arc::new(http::remote_tools::RemoteTools::default());
         // Connected clients' hook handlers run after every configured one.
         host.attach_client_hooks(Arc::clone(&remote_tools) as _)?;
+        let global_config = global_config_loader(opts.paths.clone(), opts.home.clone());
         let tools = host::AppHost {
             builtin: Arc::clone(&host),
             remote: Arc::clone(&remote_tools),
+            peers: peer_lookup(Arc::clone(&global_config), opts.paths.clone()),
+            peer_names: peer_names(Arc::clone(&global_config)),
         };
         let runtime = Runtime::new(RuntimeOptions {
             store: Arc::clone(&store),
@@ -275,6 +297,13 @@ impl App {
         // policy, then admit due iterations every 5 s (`loops-scheduling`).
         runtime.recover_loops().await.map_err(|e| e.to_string())?;
         runtime.spawn_loop_sweep();
+        // Outcomes of messages held on peers, polled from the times the store keeps, so
+        // polling resumes after a restart (`cross-session-messaging` → Peer outcome
+        // tracking).
+        runtime.spawn_outcome_tracker();
+        // Watches on peer Sessions ask those peers every 15 s (`cross-session-messaging`
+        // → Peer watches and listing).
+        runtime.spawn_remote_watch_poller();
         // Index usage stored before the usage ledger existed (resumable, in batches).
         runtime.spawn_usage_backfill();
         let config_for_app = Arc::clone(&config);
@@ -285,7 +314,7 @@ impl App {
             config,
             opts.paths.clone(),
             withheld_hook_loader(opts.paths.clone(), opts.home.clone()),
-            global_config_loader(opts.paths.clone(), opts.home.clone()),
+            Arc::clone(&global_config),
         ));
         // Runs a previous process left executing come back paused (and are resumed with
         // `workflows.resume_after_restart`); queued runs are rebuilt as a resume would and
@@ -331,6 +360,7 @@ impl App {
             paths: opts.paths,
             config: Arc::clone(&config_for_app),
             mcp_credentials,
+            global_config,
         })
     }
 

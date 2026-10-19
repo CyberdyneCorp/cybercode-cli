@@ -1,15 +1,16 @@
 //! Message addressing (`cross-session-messaging` → Addressing, Reachable session listing).
 //!
 //! An address is resolved on the server, relative to the caller (a Session, or none for a
-//! client), in tiers: an exact `ses_` ID of a reachable Session; any address with `@`
-//! (remote, `AccountRequiredError` until a remote transport exists); then names scoped
+//! client), in tiers: an exact `ses_` ID of a reachable Session; any address `X@P` (a
+//! Session `X` of the configured peer `P`, which [`super::Messaging::resolve`] looks up in
+//! `peers.remotes`; `PeerNotConfiguredError` without one); then names scoped
 //! to the caller (its team, an empty extension point until `agent-teams`, then its
 //! subagents by `subagent_name`); then the exact title of a non-archived root Session.
 //! The first tier with a match decides; several matches in it are ambiguous. No ID
 //! prefixes and no fuzzy matches resolve, so a typo never reaches the wrong Session.
 
 use rusqlite::{Connection, OptionalExtension, params};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::inbound::{InboundOverride, SenderAddresses};
 
@@ -17,7 +18,7 @@ use super::inbound::{InboundOverride, SenderAddresses};
 pub const REACHABLE_LIMIT: u32 = 200;
 
 /// How the caller reaches a Session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AddressKind {
     /// A child Session of the caller.
@@ -26,10 +27,12 @@ pub enum AddressKind {
     Teammate,
     /// Another root Session on this server.
     Local,
+    /// A Session of a configured peer (`X@P`), resolved by that peer.
+    Peer,
 }
 
 /// Where a Session runs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SessionLocation {
     pub directory: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -37,7 +40,7 @@ pub struct SessionLocation {
 }
 
 /// One Session an address matched.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Candidate {
     pub session_id: String,
     pub name: String,
@@ -54,6 +57,31 @@ pub struct Target {
     pub archived: bool,
     /// The target's Session-level `messaging.inbound` override.
     pub inbound: Option<InboundOverride>,
+    /// The peer of an `X@P` target. Its candidate is the address itself until the peer
+    /// resolves `X`: `session_id` and `name` are `X@P`, which `message.send` checks.
+    pub peer: Option<String>,
+}
+
+impl Target {
+    /// The target of `session@peer`, before the peer resolves `session`.
+    pub fn remote(session: &str, peer: &str) -> Self {
+        let address = format!("{session}@{peer}");
+        Self {
+            address: address.clone(),
+            candidate: Candidate {
+                session_id: address.clone(),
+                name: address,
+                kind: AddressKind::Peer,
+                location: SessionLocation {
+                    directory: String::new(),
+                    workspace: None,
+                },
+            },
+            archived: false,
+            inbound: None,
+            peer: Some(peer.to_owned()),
+        }
+    }
 }
 
 /// Why an address resolves to no target. Nothing is recorded for any of these.
@@ -66,6 +94,8 @@ pub enum AddressError {
         address: String,
         candidates: Vec<Candidate>,
     },
+    /// Reserved for the Relay transport (P3): an account-routed address no configured peer
+    /// matches. Direct peers fail with `PeerNotConfiguredError` instead.
     #[error("AccountRequiredError: `{0}` names a remote Session; no remote transport is available")]
     AccountRequired(String),
     #[error("InvalidRequestError: Cannot send a message to the current Session")]
@@ -78,17 +108,32 @@ pub enum Address {
     /// An exact `ses_` ID; when no reachable Session has it, it is tried as a name.
     Id(String),
     Name(String),
+    /// `session@peer`: a Session the peer resolves with its own tiers.
+    Remote {
+        session: String,
+        peer: String,
+    },
 }
 
-/// Parse `to`: a leading `@` is stripped once (a mention still addresses a name), and any
-/// remaining `@` names a remote Session.
+/// Parse `to`: a leading `@` is stripped once (a mention still addresses a name), and a
+/// remaining `@` names a Session of a peer (`X@P`). `X` must be a local address there (no
+/// further `@`) and `P` a peer name; anything else addresses nothing.
 pub fn parse(to: &str) -> Result<Address, AddressError> {
     let address = to.strip_prefix('@').unwrap_or(to);
     if address.is_empty() {
         return Err(AddressError::NotFound(to.to_owned()));
     }
-    if address.contains('@') {
-        return Err(AddressError::AccountRequired(address.to_owned()));
+    if let Some((session, peer)) = address.rsplit_once('@') {
+        let remote = !session.is_empty()
+            && !session.contains('@')
+            && cyber_core::config::valid_peer_name(peer);
+        if !remote {
+            return Err(AddressError::NotFound(address.to_owned()));
+        }
+        return Ok(Address::Remote {
+            session: session.to_owned(),
+            peer: peer.to_owned(),
+        });
     }
     if address.starts_with("ses_") {
         return Ok(Address::Id(address.to_owned()));
@@ -115,7 +160,9 @@ pub fn pick(address: &str, tiers: Vec<Vec<Target>>) -> Result<Target, AddressErr
     Ok(matches.remove(0))
 }
 
-/// Resolve `to` from `caller` against the store; the outer error is the store's.
+/// Resolve `to` from `caller` against the store; the outer error is the store's. A
+/// remote address (`X@P`) names nothing here: [`super::Messaging::resolve`] sends it to
+/// the peer, and a peer's own request may not name a further peer.
 pub fn resolve(
     db: &Connection,
     caller: Option<&str>,
@@ -132,6 +179,7 @@ pub fn resolve(
             None => pick(&id, name_tiers(db, caller, &id)?),
         },
         Address::Name(name) => pick(&name, name_tiers(db, caller, &name)?),
+        Address::Remote { .. } => Err(AddressError::NotFound(to.to_owned())),
     };
     Ok(found.and_then(|target| {
         if caller == Some(target.candidate.session_id.as_str()) {
@@ -177,6 +225,7 @@ fn target(row: &rusqlite::Row<'_>, caller: Option<&str>) -> rusqlite::Result<Tar
         },
         archived: row.get::<_, i64>(5)? != 0,
         inbound: inbound_override(row.get(6)?, row.get(7)?),
+        peer: None,
     })
 }
 
@@ -390,6 +439,7 @@ mod tests {
             },
             archived: false,
             inbound: None,
+            peer: None,
         }
     }
 
@@ -397,14 +447,24 @@ mod tests {
     fn a_leading_at_is_stripped_once_and_any_other_at_is_remote() {
         assert_eq!(parse("@migration"), Ok(Address::Name("migration".into())));
         assert_eq!(parse("ses_1"), Ok(Address::Id("ses_1".into())));
+        let remote = |session: &str, peer: &str| {
+            Ok(Address::Remote {
+                session: session.into(),
+                peer: peer.into(),
+            })
+        };
+        assert_eq!(parse("api@laptop"), remote("api", "laptop"));
+        assert_eq!(parse("ses_1@laptop"), remote("ses_1", "laptop"));
+        assert_eq!(parse("@api@laptop"), remote("api", "laptop"));
         assert_eq!(
-            parse("@@migration"),
-            Err(AddressError::AccountRequired("@migration".into()))
+            parse("review notes@desk.lan"),
+            remote("review notes", "desk.lan")
         );
-        for remote in ["api@laptop", "ses_1@laptop", "@api@laptop"] {
+        // No relaying through a peer, no empty parts and no peer name `@` cannot carry.
+        for bad in ["@@migration", "a@b@c", "api@", "api@-x", "api@a b"] {
             assert!(
-                matches!(parse(remote), Err(AddressError::AccountRequired(_))),
-                "{remote}"
+                matches!(parse(bad), Err(AddressError::NotFound(_))),
+                "{bad}"
             );
         }
         assert_eq!(parse("@"), Err(AddressError::NotFound("@".into())));

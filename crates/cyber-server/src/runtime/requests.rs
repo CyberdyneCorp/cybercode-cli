@@ -466,6 +466,9 @@ impl Inner {
             let _ = tx.send(reply.clone());
         }
         match &reply {
+            // Refusing an attach concerns the peer only, not the Session's own work.
+            PermissionReply::Reject { .. } if ask.action == super::peers::attach::REMOTE_ATTACH => {
+            }
             PermissionReply::Reject { message } => {
                 if message.is_none() {
                     self.halt(&session_id).await;

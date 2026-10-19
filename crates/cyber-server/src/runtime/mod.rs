@@ -76,6 +76,7 @@ mod location;
 mod mcp;
 mod mcp_depth;
 pub mod messaging;
+pub mod peers;
 pub use mcp_depth::RunMarker;
 mod memory;
 pub use mcp::{
@@ -175,9 +176,9 @@ pub use events::{AuxiliaryUsage, CompactionTrigger, registry as event_registry};
 pub use host::{
     AgentInference, CatalogResolver, CheckOutcome, ChildContinuation, FileDecision, FileDiff,
     HookEffects, Invocation, LifecycleHook, LifecycleVerdict, LocationGuard, LocationLease,
-    ModelResolver, NoSnapshots, NoTools, Reconciliation, ResolvedModel, RestoreError, RunWorktree,
-    SessionEnvelope, SkillSuggestion, Snapshot, Snapshots, ToolDef, ToolHost, ToolOutcome,
-    ToolScope, TurnContext, TurnWorktree, WorkflowAgentOutput, WorkflowAgentRequest,
+    ModelResolver, NoSnapshots, NoTools, Reconciliation, ResolvedModel, RestoreError, RuleEffect,
+    RunWorktree, SessionEnvelope, SkillSuggestion, Snapshot, Snapshots, ToolDef, ToolHost,
+    ToolOutcome, ToolScope, TurnContext, TurnWorktree, WorkflowAgentOutput, WorkflowAgentRequest,
 };
 pub use model::{
     AssistantEntry, CallState, CallStatus, Delivery, Entry, InboxRow, InputStatus, LastStep,
@@ -231,6 +232,14 @@ pub enum RuntimeError {
     /// A message address that resolves to no target (`cross-session-messaging`).
     #[error(transparent)]
     Address(messaging::AddressError),
+    /// A failure of the direct peer transport (`PeerUnreachableError`, `PeerAuthError`,
+    /// `PeerNotConfiguredError`, `PeerScopeError`).
+    #[error(transparent)]
+    Peer(messaging::PeerError),
+    /// A permission the user refused or did not answer in time, such as `remote.attach`
+    /// (`PermissionDeniedError`); nothing was done.
+    #[error("PermissionDeniedError: {0}")]
+    PermissionDenied(String),
     /// A message text over the content limit; nothing was sent.
     #[error("MessageTooLargeError: the message is {size} bytes; the limit is {limit}")]
     MessageTooLarge { size: usize, limit: usize },
@@ -708,6 +717,9 @@ pub(crate) struct Inner {
     /// One send lock per message target (`cross-session-messaging` → Rate limits):
     /// concurrent senders to one Session pass the checks and admission one at a time.
     message_locks: StdMutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// Peer Sessions of the reachable listing, reused for 15 s (`cross-session-messaging`
+    /// → Peer watches and listing).
+    peer_listings: StdMutex<messaging::listing::ListingCache>,
     /// Issued, unsettled edit-capable workflow agents per canonical Location, across runs
     /// (`workflows` → Write isolation default).
     workflow_writers: StdMutex<HashMap<String, Arc<std::sync::atomic::AtomicUsize>>>,
@@ -795,6 +807,7 @@ impl Runtime {
             workflow_closing: std::sync::atomic::AtomicBool::new(false),
             workflow_locks: StdMutex::default(),
             message_locks: StdMutex::default(),
+            peer_listings: StdMutex::default(),
             workflow_writers: StdMutex::default(),
             workflow_dir: std::sync::OnceLock::new(),
             workflow_relaunch: std::sync::OnceLock::new(),

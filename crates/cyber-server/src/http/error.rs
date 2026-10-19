@@ -6,7 +6,7 @@ use axum::response::{IntoResponse, Response};
 use schemars::JsonSchema;
 use serde::Serialize;
 
-use crate::runtime::messaging::AddressError;
+use crate::runtime::messaging::{AddressError, PeerAuthReason, PeerError, PeerErrorTag, PeerScope};
 use crate::runtime::{CommandPlanError, RuntimeError};
 
 /// The JSON body of every declared failure. Some failures add `reason`, a machine-readable
@@ -40,6 +40,28 @@ pub struct ReviewTargetError {
     pub tag: String,
     pub code: cyber_core::review::ErrorCode,
     pub message: String,
+}
+
+/// The body of a direct peer failure (`cross-session-messaging` → Direct peer transport):
+/// `PeerUnreachableError` and `PeerAuthError` (`502`), `PeerNotConfiguredError` (`404`)
+/// and, on the peer listener, `PeerScopeError` (`403`).
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct PeerErrorBody {
+    #[serde(rename = "_tag")]
+    pub tag: PeerErrorTag,
+    pub message: String,
+    /// The remote name of `peers.remotes` (all but `PeerScopeError`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peer: Option<String>,
+    /// What failed (`PeerUnreachableError`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cause: Option<String>,
+    /// Why the peer refused (`PeerAuthError`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<PeerAuthReason>,
+    /// The scope the grant lacks (`PeerScopeError`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<PeerScope>,
 }
 
 #[derive(Debug, Clone)]
@@ -175,6 +197,10 @@ impl From<RuntimeError> for ApiError {
                 err
             }
             RuntimeError::Address(e) => Self::address(e),
+            RuntimeError::Peer(e) => e.into(),
+            RuntimeError::PermissionDenied(m) => {
+                Self::new(StatusCode::FORBIDDEN, "PermissionDeniedError", m)
+            }
             RuntimeError::MessageTooLarge { size, limit } => Self::new(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "MessageTooLargeError",
@@ -234,6 +260,51 @@ impl ApiError {
     }
 }
 
+impl PeerErrorBody {
+    fn new(error: PeerError) -> Self {
+        let mut body = Self {
+            tag: error.tag(),
+            message: error.to_string(),
+            peer: None,
+            cause: None,
+            reason: None,
+            scope: None,
+        };
+        match error {
+            PeerError::Unreachable { peer, cause } => {
+                body.peer = Some(peer);
+                body.cause = Some(cause);
+            }
+            PeerError::Auth { peer, reason } => {
+                body.peer = Some(peer);
+                body.reason = Some(reason);
+            }
+            PeerError::NotConfigured { peer } => body.peer = Some(peer),
+            PeerError::Scope { scope } => body.scope = Some(scope),
+        }
+        body
+    }
+}
+
+impl From<PeerError> for ApiError {
+    fn from(e: PeerError) -> Self {
+        let status = match e {
+            PeerError::Unreachable { .. } | PeerError::Auth { .. } => StatusCode::BAD_GATEWAY,
+            PeerError::NotConfigured { .. } => StatusCode::NOT_FOUND,
+            PeerError::Scope { .. } => StatusCode::FORBIDDEN,
+        };
+        let body = PeerErrorBody::new(e);
+        let fields = serde_json::to_value(&body).unwrap_or_default();
+        let mut error = Self::new(status, body.tag.as_str(), body.message);
+        for (name, value) in fields.as_object().into_iter().flatten() {
+            if !matches!(name.as_str(), "_tag" | "message") {
+                error = error.with_field(name, value.clone());
+            }
+        }
+        error
+    }
+}
+
 impl From<CommandPlanError> for ApiError {
     fn from(e: CommandPlanError) -> Self {
         match e {
@@ -270,5 +341,68 @@ impl IntoResponse for ApiError {
         let mut body = serde_json::to_value(&self.body).unwrap_or_default();
         body["code"] = serde_json::json!(code);
         (self.status, Json(body)).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn body(error: impl Into<ApiError>) -> (u16, serde_json::Value) {
+        let error = error.into();
+        (
+            error.status.as_u16(),
+            serde_json::to_value(&error.body).unwrap(),
+        )
+    }
+
+    /// Each peer failure keeps its tag, status and fields through the runtime error.
+    #[test]
+    fn peer_errors_map_to_tagged_bodies() {
+        let peer = |e: PeerError| body(RuntimeError::Peer(e));
+        let (status, b) = peer(PeerError::Unreachable {
+            peer: "desk".into(),
+            cause: "connect timed out after 5 s".into(),
+        });
+        assert_eq!(status, 502);
+        assert_eq!(
+            (&b["_tag"], &b["peer"], &b["cause"]),
+            (
+                &json!("PeerUnreachableError"),
+                &json!("desk"),
+                &json!("connect timed out after 5 s")
+            )
+        );
+        let (status, b) = peer(PeerError::Auth {
+            peer: "desk".into(),
+            reason: PeerAuthReason::FingerprintMismatch,
+        });
+        assert_eq!(status, 502);
+        assert_eq!(
+            (&b["_tag"], &b["reason"]),
+            (&json!("PeerAuthError"), &json!("fingerprint_mismatch"))
+        );
+        let (status, b) = peer(PeerError::NotConfigured { peer: "nas".into() });
+        assert_eq!(status, 404);
+        assert_eq!(
+            (&b["_tag"], &b["peer"]),
+            (&json!("PeerNotConfiguredError"), &json!("nas"))
+        );
+        assert!(
+            b["message"]
+                .as_str()
+                .unwrap()
+                .contains("cyber peers add nas")
+        );
+        let (status, b) = body(PeerError::Scope {
+            scope: PeerScope::Attach,
+        });
+        assert_eq!(status, 403);
+        assert_eq!(
+            (&b["_tag"], &b["scope"]),
+            (&json!("PeerScopeError"), &json!("attach"))
+        );
     }
 }

@@ -20,6 +20,7 @@ mod mcp_serve;
 mod merge;
 mod messaging;
 mod modes;
+mod peers;
 mod subst;
 mod validate;
 mod workflows;
@@ -61,6 +62,7 @@ pub use mcp_serve::{
 };
 pub use messaging::{DEFAULT_MAX_HOPS, InboundPolicy, InboundSettings, MessagingSettings};
 pub use modes::{bound_mode, mode_ceiling, mode_rank, never_ask_rules};
+pub use peers::{PeerListen, PeerRemote, PeersSettings, valid_peer_name};
 pub use validate::redact_secrets;
 pub use workflows::{TierTarget, WorkflowSettings};
 

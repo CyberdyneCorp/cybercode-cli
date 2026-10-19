@@ -21,3 +21,12 @@
 #### Scenario: Discover a desktop
 - **WHEN** `desk` publishes its peer listener and `laptop` runs `cyber peers discover`
 - **THEN** `desk` is listed with its address and fingerprint and `not added`
+
+## MODIFIED Requirements
+
+### Requirement: mDNS discovery
+(P0) When `--mdns` is set (or user config sets `peers.mdns`, P2), the server SHALL publish its peer listener as described in "Peer discovery" and SHALL unpublish it on shutdown; the main API SHALL never be published. When there is no peer listener or it is on loopback, the server SHALL log a warning and skip publishing.
+
+#### Scenario: Loopback with mDNS
+- **WHEN** `cyber serve --mdns` binds `127.0.0.1` and the peer listener is on loopback or not configured
+- **THEN** no service is published and a warning is logged

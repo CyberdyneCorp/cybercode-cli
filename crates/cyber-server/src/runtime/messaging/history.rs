@@ -63,9 +63,11 @@ pub struct MessageRecord {
     /// The other side's local Session, when it has one (none for a client).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peer_session_id: Option<String>,
-    /// `session` or `client`; an open set.
+    /// `session`, `client` or `peer`; an open set.
     pub origin_kind: String,
-    /// `delivered`, `held`, `refused`, `released` or `dropped`.
+    /// `delivered`, `held`, `refused`, `released` or `dropped`; a send to a peer that
+    /// failed on the network is `failed`, and one the peer still held after 7 days is
+    /// `expired`.
     pub outcome: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
@@ -84,6 +86,13 @@ pub struct MessageRecord {
     pub updated_at: String,
     /// The event that last changed this record.
     pub seq: i64,
+    /// The other machine of a message between direct peers: the remote's name on the
+    /// sender, the grant's name on the target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_peer: Option<String>,
+    /// The Session on the other machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_session_id: Option<String>,
 }
 
 impl From<MessageRow> for MessageRecord {
@@ -110,6 +119,8 @@ impl From<MessageRow> for MessageRecord {
             created_at: rfc3339_ms(row.created_ms),
             updated_at: rfc3339_ms(row.updated_ms),
             seq: row.seq,
+            remote_peer: row.remote_peer,
+            remote_session_id: row.remote_session_id,
         }
     }
 }
@@ -279,6 +290,8 @@ mod tests {
             created_ms,
             updated_ms: created_ms,
             seq: 1,
+            remote_peer: None,
+            remote_session_id: None,
         }
     }
 

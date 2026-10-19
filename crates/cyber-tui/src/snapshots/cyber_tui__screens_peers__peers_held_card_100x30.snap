@@ -1,0 +1,34 @@
+---
+source: crates/cyber-tui/src/screens_peers.rs
+expression: "shot(&mut app, 100, &ids)"
+---
+ cyber · migration                                                                             idle
+
+            ██████╗██╗   ██╗██████╗ ███████╗██████╗      ██████╗ ██████╗ ██████╗ ███████╗
+           ██╔════╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗    ██╔════╝██╔═══██╗██╔══██╗██╔════╝
+           ██║      ╚████╔╝ ██████╔╝█████╗  ██████╔╝    ██║     ██║   ██║██║  ██║█████╗
+           ██║       ╚██╔╝  ██╔══██╗██╔══╝  ██╔══██╗    ██║     ██║   ██║██║  ██║██╔══╝
+           ╚██████╗   ██║   ██████╔╝███████╗██║  ██║    ╚██████╗╚██████╔╝██████╔╝███████╗
+            ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝     ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝
+
+                                  1.0.0 · local-first coding agent
+
+
+                  Agent  Build
+                  Model  main test
+                  Mode   default
+                  Path   ~/work/app
+                  LSP    LSPs will activate as files are read
+
+
+
+┌ Held message from another machine ───────────────────────────────────────────────────────────────┐
+│ ✉ from review@laptop · 14:05 · 68 B                                                              │
+│ The nightly build on desk is red; can you check the migration order?                             │
+│                                                     tab select · r release · d drop · enter view │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃
+┃ Build · main test · default
+ ~/work/app                                                        $0.00  ✉ 1 held  ctrl+p commands

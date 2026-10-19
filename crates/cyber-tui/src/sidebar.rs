@@ -100,6 +100,14 @@ impl McpServer {
     }
 }
 
+/// An enabled remote of `peers.remotes` (`GET /peers/remotes`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PeerRemote {
+    pub name: String,
+    /// It answered its last listing.
+    pub online: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct LspServer {
     pub id: String,
@@ -305,19 +313,21 @@ pub enum Part {
     Vcs,
     Health,
     Parent,
+    Peers,
     /// `GET /system`; polled while the sidebar shows (see [`MACHINE_POLL`]), not in
     /// [`Part::ALL`].
     Machine,
 }
 
 impl Part {
-    pub const ALL: [Part; 6] = [
+    pub const ALL: [Part; 7] = [
         Part::Mcp,
         Part::Lsp,
         Part::Files,
         Part::Vcs,
         Part::Health,
         Part::Parent,
+        Part::Peers,
     ];
 }
 
@@ -332,6 +342,7 @@ pub enum Loaded {
     /// `/health`: the server's version and build identity.
     Version(Option<String>, Option<String>),
     Parent(Option<String>),
+    Peers(Source<Vec<PeerRemote>>),
     Machine(Source<Machine>),
     /// `GET /system` failed: the last sample stays, or `—` before the first.
     MachineFailed,
@@ -391,6 +402,8 @@ pub struct Sidebar {
     /// for an older server that reports none.
     pub server_build: Option<Option<String>>,
     pub parent_title: Option<String>,
+    /// The server's enabled remotes; the Peers line shows only when there are some.
+    pub peers: Source<Vec<PeerRemote>>,
     pub connection: Connection,
     /// The Workflows section's runs, the current Session's first; set before every frame.
     pub workflows: Vec<WorkflowRow>,
@@ -422,6 +435,7 @@ impl Sidebar {
                 self.server_build = Some(build);
             }
             Loaded::Parent(title) => self.parent_title = title,
+            Loaded::Peers(source) => self.peers = source,
             Loaded::Machine(source) => {
                 self.machine = source;
                 self.machine_failed = false;
@@ -595,6 +609,19 @@ pub fn parse_mcp(data: &Value) -> Vec<McpServer> {
             transport: s["transport"].as_str().map(clean).filter(|t| !t.is_empty()),
             tools: s["tools"].as_array().map_or(0, Vec::len),
         })
+        .collect()
+}
+
+/// `GET /peers/remotes` data.
+pub fn parse_peers(data: &Value) -> Vec<PeerRemote> {
+    data.as_array()
+        .into_iter()
+        .flatten()
+        .map(|p| PeerRemote {
+            name: clean(p["name"].as_str().unwrap_or_default()),
+            online: p["online"] == true,
+        })
+        .filter(|p| !p.name.is_empty())
         .collect()
 }
 

@@ -226,11 +226,15 @@ fn an_exec_session_refuses_messages_unless_it_accepts_them() {
     let accepted = env.cyber(&["messages", "send", "nightly (fork #1)", "ready?"]);
     assert!(exits(&accepted, 0).contains(" delivered to "));
 
-    // Usage errors: an unknown address and an oversized text exit 2, a remote one 6.
+    // Usage errors: an unknown address, an oversized text and an unconfigured peer exit 2.
     exits(&env.cyber(&["messages", "send", "nobody", "hi"]), 2);
     let big = "x".repeat(20 * 1024);
     exits(&env.cyber(&["messages", "send", "open", &big]), 2);
-    exits(&env.cyber(&["messages", "send", "api@laptop", "hi"]), 6);
+    let unpaired = env.cyber(&["messages", "send", "api@laptop", "hi"]);
+    let stderr = String::from_utf8_lossy(&unpaired.stderr).to_string();
+    exits(&unpaired, 2);
+    assert!(stderr.contains("PeerNotConfiguredError"), "{stderr}");
+    assert!(stderr.contains("cyber peers add laptop"), "{stderr}");
 }
 
 /// The scripted model of the cost report: `DELEGATE` starts a background subagent,
@@ -384,8 +388,8 @@ fn recorded(env: &Env, session: &str, text: &str) -> Value {
 /// Tasks 11.1 and 11.2 through the real binary and server: `cyber messages send` from
 /// stdin and `--from` (with `--notify-when-idle`), an ambiguous name (exit 2 with the
 /// candidates), an oversized text (exit 2), `cyber messages list` as a history table and
-/// JSON (with `--direction`, `--limit` and the Location's latest Session by default),
-/// `--reachable`, and `cyber peers` as an unavailable capability.
+/// JSON (with `--direction`, `--limit` and the Location's latest Session by default), and
+/// `--reachable`.
 #[test]
 fn messages_are_sent_and_listed_from_the_cli() {
     let model = scripted_model::ScriptedModel::start(reply);
@@ -397,10 +401,6 @@ fn messages_are_sent_and_listed_from_the_cli() {
     sends(&env);
     history(&env);
     reachable(&env);
-
-    // Direct peers are not here yet.
-    let peers = exits(&env.cyber(&["peers", "list"]), 2);
-    assert!(peers.contains("add-messaging-direct-peers"), "{peers}");
 }
 
 /// `cyber messages send` from stdin, with `--from` and `--notify-when-idle`, to an

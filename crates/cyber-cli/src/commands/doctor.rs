@@ -50,6 +50,7 @@ pub fn run(ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
     checks.push(tool("git", &["--version"], Status::Fail));
     checks.push(tool("rg", &["--version"], Status::Warn));
     checks.push(rt.block_on(server(ctx)));
+    checks.extend(rt.block_on(peer_checks(ctx)));
     report(global, &checks)
 }
 
@@ -334,6 +335,120 @@ async fn server(ctx: &Context) -> Check {
             ),
         ),
     }
+}
+
+/// The peer section (`cross-session-messaging` → Direct peer transport): the listener's
+/// address, TLS and fingerprint with the active grant count, and the remotes whose token
+/// is in the file fallback rather than the OS keyring or config.
+async fn peer_checks(ctx: &Context) -> Vec<Check> {
+    let settings = match super::peers::settings(ctx) {
+        Ok(settings) => settings,
+        Err(error) => return vec![check("peers", Status::Warn, error.message)],
+    };
+    vec![
+        peer_listener(ctx, settings.listen.as_ref()).await,
+        peer_remotes(ctx, &settings.remotes),
+    ]
+}
+
+async fn peer_listener(ctx: &Context, listen: Option<&cyber_core::config::PeerListen>) -> Check {
+    let name = "peers:listener";
+    let running = match cyber_app::read_registration(&ctx.paths) {
+        Some(reg) if cyber_app::registered_health(&reg, cyber_app::version()).await => Some(reg),
+        _ => None,
+    };
+    let Some(reg) = running else {
+        return match listen {
+            None => check(name, Status::Pass, "off (peers.listen not set)"),
+            Some(listen) => check(
+                name,
+                Status::Pass,
+                format!(
+                    "{} · TLS {} · opens when the server starts",
+                    listen.address,
+                    on_off(listen.tls)
+                ),
+            ),
+        };
+    };
+    let overview = match peers_overview(ctx, &reg.url).await {
+        Ok(overview) => overview,
+        Err(error) => return check(name, Status::Warn, format!("unavailable: {error}")),
+    };
+    let grants = overview["grants"]
+        .as_array()
+        .map_or(0, |g| g.iter().filter(|g| g["active"] == true).count());
+    let listener = &overview["listener"];
+    match (listener["url"].as_str(), listen) {
+        (Some(url), _) => check(
+            name,
+            Status::Pass,
+            format!(
+                "{url} · TLS {} · fingerprint {} · {grants} active grant{}",
+                on_off(listener["tls"] == true),
+                listener["fingerprint"].as_str().unwrap_or_default(),
+                if grants == 1 { "" } else { "s" },
+            ),
+        ),
+        (None, None) => check(name, Status::Pass, "off (peers.listen not set)"),
+        (None, Some(listen)) => check(
+            name,
+            Status::Warn,
+            format!(
+                "peers.listen is {} but the server has no peer listener; see `peer listener not started` in its log",
+                listen.address
+            ),
+        ),
+    }
+}
+
+/// `GET /api/v1/peers` of the running server.
+async fn peers_overview(ctx: &Context, url: &str) -> Result<Value, String> {
+    let password = cyber_app::password(&ctx.paths)?;
+    let client = cyber_client::Client::http(url, Some(password));
+    let (status, body) = client
+        .raw("GET", "/peers", None, &[])
+        .await
+        .map_err(|e| e.to_string())?;
+    if status == 200 {
+        Ok(body["data"].clone())
+    } else {
+        Err(format!("GET /peers answered HTTP {status}"))
+    }
+}
+
+fn on_off(on: bool) -> &'static str {
+    if on { "on" } else { "off (loopback only)" }
+}
+
+fn peer_remotes(ctx: &Context, remotes: &[cyber_core::config::PeerRemote]) -> Check {
+    let name = "peers:remotes";
+    if remotes.is_empty() {
+        return check(name, Status::Pass, "none");
+    }
+    let names: Vec<&str> = remotes.iter().map(|r| r.name.as_str()).collect();
+    let stored = match cyber_app::peer_tokens::file_token_names(&ctx.paths) {
+        Ok(stored) => stored,
+        Err(error) => return check(name, Status::Warn, format!("{}; {error}", names.join(", "))),
+    };
+    let in_file: Vec<&str> = remotes
+        .iter()
+        .filter(|r| r.token.is_none() && stored.contains(&r.name))
+        .map(|r| r.name.as_str())
+        .collect();
+    if in_file.is_empty() {
+        return check(name, Status::Pass, names.join(", "));
+    }
+    check(
+        name,
+        Status::Warn,
+        format!(
+            "{}; tokens in the file fallback (no OS keyring): {} in {}",
+            names.join(", "),
+            in_file.join(", "),
+            ctx.paths.peer_tokens_file().display()
+        ),
+    )
 }
 
 fn report(global: &GlobalArgs, checks: &[Check]) -> Result<(), CliError> {

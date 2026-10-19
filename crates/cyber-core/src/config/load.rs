@@ -9,7 +9,8 @@ use super::gate::{self, canonical_json};
 use super::merge::{self, Sources};
 use super::subst::{self, SubstContext};
 use super::{
-    ConfigError, Resolved, SCHEMA_URL, TrustReport, jsonc, managed, mcp_files, mcp_serve, validate,
+    ConfigError, Resolved, SCHEMA_URL, TrustReport, jsonc, managed, mcp_files, mcp_serve, peers,
+    validate,
 };
 use crate::env::EnvSource;
 use crate::paths::Paths;
@@ -44,6 +45,11 @@ pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
     let pure = crate::plugins::pure(req.env);
     let project = read_project_layers(req)?;
     let trust = assess_trust(req, &project)?;
+    // Checked before trust gating, which would hold `peers` back without saying why.
+    let mut issues: Vec<String> = project
+        .iter()
+        .filter_map(|layer| peers::layer_issue(&layer.label, &layer.value))
+        .collect();
     let mut layers = vec![defaults_layer(req)];
     layers.extend(read_global_layers(req)?);
     layers.extend(gate_project(project, trust.trusted));
@@ -56,7 +62,6 @@ pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
     }
     let plugins = add_plugin_layers(req, &managed, pure, &mut layers);
 
-    let mut issues = Vec::new();
     let mut warnings: Vec<String> = layers
         .iter_mut()
         .flat_map(|layer| std::mem::take(&mut layer.warnings))
@@ -66,8 +71,12 @@ pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
     let mut labels = Vec::new();
     let mut templates = Vec::new();
     for layer in &mut layers {
-        if !matches!(layer.label.split(':').next(), Some("default" | "global")) {
+        let scope = layer.label.split(':').next();
+        if !matches!(scope, Some("default" | "global")) {
             mcp_serve::strip(&mut layer.value, &mut warnings);
+        }
+        if !matches!(scope, Some("default" | "global" | "project")) {
+            issues.extend(peers::layer_issue(&layer.label, &layer.value));
         }
         if layer.label.starts_with("project:") {
             subst::templates(&layer.value, "", &layer.label, &mut templates);
@@ -685,7 +694,7 @@ fn parse_override(raw: &str) -> Result<(Vec<String>, Value), String> {
     if path.iter().any(String::is_empty) {
         return Err(format!("--config {raw}: invalid key"));
     }
-    if matches!(path[0].as_str(), "policy" | "profiles") {
+    if matches!(path[0].as_str(), "policy" | "profiles" | "peers") {
         return Err(format!("--config cannot set {}", path[0]));
     }
     let parsed = serde_json::from_str(&jsonc::to_json(value))

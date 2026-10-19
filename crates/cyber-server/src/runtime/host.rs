@@ -251,6 +251,15 @@ pub enum FileDecision {
     Deny,
 }
 
+/// The effect of the permission rules on one action and resource (`permissions-modes` →
+/// Permission rules), before any Mode applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleEffect {
+    Allow,
+    Ask,
+    Deny,
+}
+
 /// The invocation context (`tool-registry` → Invocation context).
 #[derive(Debug, Clone)]
 pub struct Invocation {
@@ -787,6 +796,33 @@ pub trait ToolHost: Send + Sync {
         _directory: Option<&str>,
     ) -> Result<cyber_core::config::MessagingSettings, String> {
         Ok(cyber_core::config::MessagingSettings::default())
+    }
+
+    /// The enabled `peers.remotes` entry `name` of the user configuration with its token
+    /// (`cross-session-messaging` → Direct peer transport); `None` when no enabled remote
+    /// has that name. An error (unreadable user config, no stored token) sends nothing.
+    fn peer_target(&self, _name: &str) -> Result<Option<super::messaging::PeerTarget>, String> {
+        Ok(None)
+    }
+
+    /// What a Session's permission rules (config, agent and Session rules, without its
+    /// Mode) say about `action` on `resource` as a boundary, such as `remote.attach` on
+    /// `peer:laptop` (`cross-session-messaging` → Peer attach): any deny denies, and only
+    /// an explicit user-level allow of that action allows (never a blanket or wildcard
+    /// allow, nor a repository, agent or Session rule). A host without rules asks.
+    fn permission_effect(
+        &self,
+        _turn: &TurnContext,
+        _action: &str,
+        _resource: &str,
+    ) -> Result<RuleEffect, String> {
+        Ok(RuleEffect::Ask)
+    }
+
+    /// The names of the enabled `peers.remotes` entries of the user configuration, in
+    /// config order (`cross-session-messaging` → Peer watches and listing).
+    fn peer_names(&self) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
     }
 
     /// Extra Context Sources this host contributes for a Session, such as `core/skills`.

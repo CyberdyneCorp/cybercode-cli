@@ -28,8 +28,11 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 serde_json.workspace = true
 tokio = { version = "1", features = ["rt", "net", "time", "signal", "sync", "macros", "process", "fs", "io-std", "io-util"] }
 ulid.workspace = true
+mdns-sd = { version = "0.21", default-features = false }
+url = "2"
 
 [dev-dependencies]
+cyber-client = { path = "../cyber-client" }
 rusqlite.workspace = true
 reqwest = { version = "0.13", features = ["json", "stream"] }
 tokio-tungstenite = "0.28"

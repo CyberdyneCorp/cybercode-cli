@@ -100,6 +100,17 @@ pub enum LiveEvent {
         kind: String,
         message: String,
     },
+    /// `messaging.outcome`: the outcome of a message this Session sent to a peer changed
+    /// (`released`, `dropped`, `expired`), next to its durable record; never durable.
+    MessagingOutcome {
+        session_id: String,
+        message_id: String,
+        /// The address the message was sent to (`X@P`).
+        to: String,
+        outcome: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
     Idle {
         session_id: String,
     },

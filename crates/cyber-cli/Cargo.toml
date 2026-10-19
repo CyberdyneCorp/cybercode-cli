@@ -41,8 +41,11 @@ cap-fs-ext = "4.0"
 shell-words = "1.1"
 libc = "0.2"
 tempfile.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 [dev-dependencies]
+url = "2"
+mdns-sd = { version = "0.21", default-features = false }
 axum = "0.8"
 rusqlite.workspace = true
 tempfile.workspace = true

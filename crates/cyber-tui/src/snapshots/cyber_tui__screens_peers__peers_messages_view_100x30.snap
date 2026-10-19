@@ -1,0 +1,34 @@
+---
+source: crates/cyber-tui/src/screens_peers.rs
+expression: "shot(&mut app, 100, &ids)"
+---
+╭ Messages · ses_MIGRAT "migration" ───────────────────────────────────────[all]  in   out   held  ╮
+│  14:05  in   review@laptop    laptop     held          68 B   The nightly build on desk is red; …│
+│      The nightly build on desk is red; can you check the migration order?                        │
+│      msgx_nightly · sha256 bdd735ea1f25dcdc1874315a70ed9caaeca634d4abf70f74313b172f337857e8      │
+│      sent 2026-10-16 14:05:00 · on laptop ses_REVIEWREVIEWREVIEWREVIEWRE                         │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│ ↑↓ move · enter expand · r release · d drop · tab filter · esc close                             │
+│                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ~/work/app                                                        $0.00  ✉ 1 held  ctrl+p commands

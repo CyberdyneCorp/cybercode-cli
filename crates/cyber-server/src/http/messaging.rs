@@ -55,7 +55,8 @@ pub struct SendMessage {
     /// The sending Session; without it the sender is the client (origin `client`).
     #[serde(default)]
     pub from: Option<String>,
-    /// The target's address (`ses_` ID, subagent or Session name).
+    /// The target's address (`ses_` ID, subagent or Session name), or `<session>@<peer>`
+    /// for a Session of a configured peer (which needs `from`).
     pub to: String,
     /// Plain UTF-8 text, at most 16384 bytes.
     pub text: String,
@@ -177,7 +178,8 @@ async fn sessions(
     let data = app
         .runtime
         .messaging()
-        .reachable_as(&sender, directory.as_deref())?;
+        .list_as(&sender, directory.as_deref())
+        .await?;
     Ok(Json(Data { data }))
 }
 

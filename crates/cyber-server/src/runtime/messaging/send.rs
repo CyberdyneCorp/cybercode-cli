@@ -16,8 +16,8 @@ use sha2::{Digest, Sha256};
 
 use super::Messaging;
 use super::address::{self, Target};
-use super::inbound::{SenderAddresses, Verdict};
-use super::limits::{self, Limit};
+use super::inbound::{Reach, SenderAddresses, Verdict};
+use super::limits::{self, Limit, LimitKey};
 use super::records::{
     self, DELIVERED, Direction, HELD, MessageAccepted, MessageRefused, MessageRow, REFUSED,
 };
@@ -45,32 +45,93 @@ pub enum Sender {
     Client(String),
     /// An MCP serve client without a caller Session, by its client label (`mcp:<label>`).
     Mcp(String),
+    /// A Session of another machine, named after the grant that authenticated the
+    /// request (`cross-session-messaging` → Direct peer transport). `session_id` and
+    /// `name` come from the request body: labels inside that grant's namespace, so a
+    /// peer can speak only for its own Sessions.
+    Peer {
+        grant: String,
+        session_id: String,
+        name: Option<String>,
+    },
 }
 
 impl Sender {
+    /// The sending Session of this server, if any (a peer's Session is not one).
     pub fn session_id(&self) -> Option<&str> {
         match self {
             Self::Session(id) => Some(id),
-            Self::Client(_) | Self::Mcp(_) => None,
+            Self::Client(_) | Self::Mcp(_) | Self::Peer { .. } => None,
         }
     }
 
-    /// The rate-limit key (design section 7): the Session ID, `client:<label>` or
-    /// `mcp:<label>`. A client's key is also the `from` its records show.
+    /// The sender key of the records (design section 7): the Session ID,
+    /// `client:<label>`, `mcp:<label>` or `peer:<grant>:<ses_>`. A client's key is also
+    /// the `from` its records show.
     pub(super) fn key(&self) -> String {
         match self {
             Self::Session(id) => id.clone(),
             Self::Client(label) => format!("client:{label}"),
             Self::Mcp(label) => format!("mcp:{label}"),
+            Self::Peer {
+                grant, session_id, ..
+            } => format!("peer:{grant}:{session_id}"),
         }
     }
 
-    /// `origin_kind` of the records: an open set (the peers change adds `peer`). A message
-    /// sent through MCP keeps its Messaging API origin.
-    fn origin_kind(&self) -> &'static str {
+    /// What the rate and refusal limits count as this sender: its [`Self::key`], except
+    /// that a peer's Sessions count together under their grant (`peer:<grant>:*`), since
+    /// the peer chooses their labels and a new label per message must not escape them.
+    pub(super) fn limit_key(&self) -> LimitKey {
+        match self {
+            Self::Peer { grant, .. } => LimitKey::Prefix(format!("peer:{grant}:")),
+            _ => LimitKey::Exact(self.key()),
+        }
+    }
+
+    /// `origin_kind` of the records: an open set. A message sent through MCP keeps its
+    /// Messaging API origin.
+    pub(super) fn origin_kind(&self) -> &'static str {
         match self {
             Self::Session(_) => "session",
             Self::Client(_) | Self::Mcp(_) => "client",
+            Self::Peer { .. } => "peer",
+        }
+    }
+
+    /// Where the sender runs, for the inbound default.
+    pub(super) fn reach(&self) -> Reach {
+        match self {
+            Self::Peer { .. } => Reach::CrossMachine,
+            _ => Reach::SameMachine,
+        }
+    }
+
+    /// A peer sender's addresses: `ses_…@<grant>`, then `<name>@<grant>` when the peer
+    /// gave a name. The first name is the one the target shows and replies to.
+    pub(super) fn peer_addresses(&self) -> Vec<String> {
+        let Self::Peer {
+            grant,
+            session_id,
+            name,
+        } = self
+        else {
+            return Vec::new();
+        };
+        let mut addresses = vec![format!("{session_id}@{grant}")];
+        if let Some(name) = name {
+            addresses.push(format!("{name}@{grant}"));
+        }
+        addresses
+    }
+
+    /// The grant and Session of a peer sender.
+    fn remote(&self) -> (Option<String>, Option<String>) {
+        match self {
+            Self::Peer {
+                grant, session_id, ..
+            } => (Some(grant.clone()), Some(session_id.clone())),
+            _ => (None, None),
         }
     }
 }
@@ -94,7 +155,9 @@ pub struct SendRequest {
 }
 
 /// What became of a message.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 #[schemars(rename = "MessageOutcome")]
 pub enum Outcome {
@@ -152,6 +215,24 @@ pub fn valid_id(id: &str) -> bool {
     })
 }
 
+/// The Session and peer of an `X@P` address.
+pub(super) fn remote_address(to: &str) -> Option<(String, String)> {
+    match address::parse(to) {
+        Ok(address::Address::Remote { session, peer }) => Some((session, peer)),
+        _ => None,
+    }
+}
+
+/// A caller-supplied message ID must be [`valid_id`].
+pub(super) fn check_id(id: Option<&str>) -> Result<(), RuntimeError> {
+    match id.filter(|id| !valid_id(id)) {
+        Some(id) => Err(RuntimeError::Invalid(format!(
+            "message ID {id:?} is not msgx_ followed by 1-120 letters, digits, _ or -"
+        ))),
+        None => Ok(()),
+    }
+}
+
 /// Run `attempt`; a `SessionBusyError` (a settling child) is retried once after `pause`,
 /// and a second one is `None`.
 pub(super) async fn retry_busy<T, F, Fut>(
@@ -198,20 +279,20 @@ impl Runtime {
 }
 
 /// One message being sent: the resolved target and the records both sides get.
-struct Outgoing {
-    id: String,
-    sender: Sender,
-    target: Target,
+pub(super) struct Outgoing {
+    pub(super) id: String,
+    pub(super) sender: Sender,
+    pub(super) target: Target,
     /// The sender as the target shows it and replies to.
-    from: String,
+    pub(super) from: String,
     /// What the target's inbound patterns match for this sender.
-    addresses: SenderAddresses,
-    text: String,
-    depth: u32,
+    pub(super) addresses: SenderAddresses,
+    pub(super) text: String,
+    pub(super) depth: u32,
     /// The message's chain hops: the sending run's hops + 1.
-    hops: u32,
+    pub(super) hops: u32,
     /// The sender Location's `messaging.max_hops`.
-    max_hops: u32,
+    pub(super) max_hops: u32,
 }
 
 impl Outgoing {
@@ -245,6 +326,8 @@ impl Outgoing {
             depth: self.depth,
             hops: self.hops,
             delivery,
+            remote_peer: self.sender.remote().0,
+            remote_session_id: self.sender.remote().1,
         }
     }
 
@@ -266,14 +349,18 @@ impl Outgoing {
             reason: reason.into(),
             limit: None,
             hops: self.hops,
+            remote_peer: self.sender.remote().0,
+            remote_session_id: self.sender.remote().1,
         }
     }
 
     /// The inbox row: one text part holding the untrusted block.
     fn admission(&self, delivery: Delivery) -> Admission {
+        let (_, remote_session) = self.sender.remote();
         let origin = Origin {
             from: &self.from,
-            session_id: self.sender.session_id(),
+            session_id: self.sender.session_id().or(remote_session.as_deref()),
+            remote: remote_session.is_some(),
         };
         let sent_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
         Admission {
@@ -308,6 +395,9 @@ impl Messaging {
     /// error; errors leave nothing written.
     pub async fn send(&self, request: SendRequest) -> Result<SendResult, RuntimeError> {
         let max_hops = self.sender_enabled(&request.from)?.max_hops;
+        if let Some((session, peer)) = remote_address(&request.to) {
+            return self.send_to_peer(request, max_hops, &session, &peer).await;
+        }
         let notify = request.notify_when_idle;
         let outgoing = self.prepare(request, max_hops)?;
         let watch_id = notify.then(|| watch::watch_id_for(&outgoing.id));
@@ -326,7 +416,10 @@ impl Messaging {
     }
 
     /// Steps 5–10 under the target's send lock.
-    async fn send_locked(&self, outgoing: &Outgoing) -> Result<SendResult, RuntimeError> {
+    pub(super) async fn send_locked(
+        &self,
+        outgoing: &Outgoing,
+    ) -> Result<SendResult, RuntimeError> {
         let lock = self
             .runtime
             .message_lock(&outgoing.target.candidate.session_id);
@@ -399,12 +492,12 @@ impl Messaging {
             })
     }
 
-    /// The rate limits (design section 7): the sender key's accepted messages to the
+    /// The rate limits (design section 7): the sender's accepted messages to the
     /// target in the last minute, then the target's unpromoted message rows. An error
     /// sends nothing.
     async fn rate(&self, outgoing: &Outgoing) -> Result<Result<(), Limit>, RuntimeError> {
         let target = outgoing.target.candidate.session_id.clone();
-        let key = outgoing.sender.key();
+        let key = outgoing.sender.limit_key();
         let now_ms = chrono::Utc::now().timestamp_millis();
         let probe = target.clone();
         let accepted = self
@@ -439,11 +532,7 @@ impl Messaging {
     /// Steps 2–3: the text limits, then the address. Nothing is written.
     fn prepare(&self, request: SendRequest, max_hops: u32) -> Result<Outgoing, RuntimeError> {
         limits::check_text(&request.text)?;
-        if let Some(id) = request.id.as_deref().filter(|id| !valid_id(id)) {
-            return Err(RuntimeError::Invalid(format!(
-                "message ID {id:?} is not msgx_ followed by 1-120 letters, digits, _ or -"
-            )));
-        }
+        check_id(request.id.as_deref())?;
         let target = self.resolve(request.from.session_id(), &request.to)?;
         if let Some(expected) = request
             .expected_target
@@ -464,6 +553,11 @@ impl Messaging {
                     .read(move |db| Ok(address::reply_address(db, &target, &sender)?))?
             }
             Sender::Client(_) | Sender::Mcp(_) => request.from.key(),
+            Sender::Peer { .. } => {
+                return Err(RuntimeError::Invalid(
+                    "a peer's message is received through the peer listener".into(),
+                ));
+            }
         };
         let mut addresses = self.sender_addresses(&request.from)?;
         // The reply address is a name the target sees, not one the sender owns.
@@ -526,10 +620,15 @@ impl Messaging {
     fn decide(&self, outgoing: &Outgoing) -> Verdict {
         let target = &outgoing.target;
         let settings = self.settings(Some(&target.candidate.location.directory));
-        super::inbound_verdict(target, settings.as_ref(), &outgoing.addresses)
+        super::inbound_verdict(
+            target,
+            settings.as_ref(),
+            &outgoing.addresses,
+            outgoing.sender.reach(),
+        )
     }
 
-    /// A refusal the target records too, unless this sender key already had
+    /// A refusal the target records too, unless this sender already had
     /// [`limits::MAX_REFUSED_PER_TARGET_MINUTE`] refusals recorded there in the rate
     /// window: then only the sender records it, as `rate_limited`, so refused senders
     /// cannot grow the target's log without bound.
@@ -540,7 +639,7 @@ impl Messaging {
     ) -> Result<SendResult, RuntimeError> {
         let (target, key) = (
             outgoing.target.candidate.session_id.clone(),
-            outgoing.sender.key(),
+            outgoing.sender.limit_key(),
         );
         let now_ms = chrono::Utc::now().timestamp_millis();
         let refused = self

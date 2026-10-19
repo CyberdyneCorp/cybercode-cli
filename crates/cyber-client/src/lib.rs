@@ -1,6 +1,10 @@
 //! A Rust client for the `/api/v1` HTTP API, over TCP or the in-process embedded transport.
-//! Used by `cyber exec` and the TUI; every call goes through the public routes.
+//! Used by `cyber exec` and the TUI; every call goes through the public routes. A third
+//! transport attaches to one Session of a peer through its peer listener ([`peer`]).
 
+mod peer;
+
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Body;
@@ -52,6 +56,7 @@ enum Transport {
         http: reqwest::Client,
     },
     Embedded(EmbeddedClient),
+    Peer(Arc<peer::PeerAttach>),
 }
 
 #[derive(Clone)]
@@ -140,6 +145,37 @@ impl Client {
         }
     }
 
+    /// `cyber attach <session>@<peer>`: ask peer `target` to attach to its Session
+    /// `session` (an ID or a name it shows this machine) and wait while its user decides,
+    /// up to 2 minutes. The client reaches only that Session's routes; a refusal is
+    /// `PermissionDeniedError`.
+    pub async fn attach_peer(
+        target: cyber_server::runtime::messaging::PeerTarget,
+        session: &str,
+    ) -> Result<Self, ClientError> {
+        let attach = peer::PeerAttach::open(target, session).await?;
+        Ok(Self {
+            transport: Transport::Peer(Arc::new(attach)),
+            directory: None,
+        })
+    }
+
+    /// The peer Session this client is attached to.
+    pub fn attached_session(&self) -> Option<&str> {
+        match &self.transport {
+            Transport::Peer(attach) => Some(&attach.session_id),
+            _ => None,
+        }
+    }
+
+    /// End a peer attach; other transports have nothing to end.
+    pub async fn detach(&self) -> Result<(), ClientError> {
+        match &self.transport {
+            Transport::Peer(attach) => attach.close().await,
+            _ => Ok(()),
+        }
+    }
+
     /// A client that sends `directory` as the Location on every request.
     pub fn at(&self, directory: &str) -> Self {
         Self {
@@ -165,14 +201,16 @@ impl Client {
     }
 
     /// Send one request to `/api/v1{path}`. Mutations carry a fresh `Idempotency-Key` and
-    /// are retried up to 3 times on transport failure with the same key.
+    /// are retried up to 3 times on transport failure with the same key, except through a
+    /// peer attach, whose routes keep no idempotency keys.
     pub async fn request(
         &self,
         method: &str,
         path: &str,
         body: Option<Value>,
     ) -> Result<Value, ClientError> {
-        let key = (method != "GET").then(|| ulid::Ulid::new().to_string());
+        let retried = !matches!(self.transport, Transport::Peer(_));
+        let key = (method != "GET" && retried).then(|| ulid::Ulid::new().to_string());
         let mut attempt = 0;
         loop {
             match self.once(method, path, body.as_ref(), key.as_deref()).await {
@@ -231,6 +269,7 @@ impl Client {
                     .to_bytes();
                 (status, bytes.to_vec())
             }
+            Transport::Peer(attach) => attach.call(method, path, body).await?,
         };
         decode(status, &bytes)
     }
@@ -330,6 +369,7 @@ impl Client {
                     .map(|c| c.map(|b| b.to_vec()).map_err(|e| e.to_string()))
                     .boxed())
             }
+            Transport::Peer(attach) => attach.stream(path).await,
         }
     }
 
@@ -353,13 +393,19 @@ impl Client {
         body: Option<Value>,
         headers: &[(String, String)],
     ) -> Result<(u16, Value), ClientError> {
-        let Transport::Http {
-            base,
-            password,
-            http,
-        } = &self.transport
-        else {
-            return self.raw_embedded(method, path, body, headers).await;
+        let (base, password, http) = match &self.transport {
+            Transport::Http {
+                base,
+                password,
+                http,
+            } => (base, password, http),
+            Transport::Embedded(_) => {
+                return self.raw_embedded(method, path, body, headers).await;
+            }
+            Transport::Peer(attach) => {
+                let (status, bytes) = attach.call(method, path, body.as_ref()).await?;
+                return Ok((status, raw_value(&bytes)));
+            }
         };
         let m = reqwest::Method::from_bytes(method.as_bytes())
             .map_err(|e| ClientError::Transport(e.to_string()))?;
@@ -383,9 +429,7 @@ impl Client {
             .bytes()
             .await
             .map_err(|e| ClientError::Transport(e.to_string()))?;
-        let value = serde_json::from_slice(&bytes)
-            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()));
-        Ok((status, value))
+        Ok((status, raw_value(&bytes)))
     }
 
     /// One request whose response body is read as it arrives (the MCP serve bridge
@@ -465,9 +509,7 @@ impl Client {
             .await
             .map_err(|e| ClientError::Transport(e.to_string()))?
             .to_bytes();
-        let value = serde_json::from_slice(&bytes)
-            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()));
-        Ok((status, value))
+        Ok((status, raw_value(&bytes)))
     }
 
     /// Durable events of one Session after `after`, reconnecting with backoff (500 ms to
@@ -531,6 +573,12 @@ fn parse_events(
                 .map(str::to_string),
             data: v["data"].clone(),
         })
+}
+
+/// A raw answer: its JSON, else its text.
+fn raw_value(bytes: &[u8]) -> Value {
+    serde_json::from_slice(bytes)
+        .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(bytes).into_owned()))
 }
 
 fn decode(status: u16, bytes: &[u8]) -> Result<Value, ClientError> {

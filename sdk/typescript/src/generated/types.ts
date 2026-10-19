@@ -2,7 +2,7 @@
 /* eslint-disable */
 
 /** How the caller reaches a Session. */
-export type AddressKind = "subagent" | "teammate" | "local";
+export type AddressKind = "subagent" | "teammate" | "local" | "peer";
 
 export type AgentBody = {
   agent: string;
@@ -50,6 +50,13 @@ export type AssistantEntry = {
   started_ms?: number | null;
   /** Time of `session.step.ended.1` or `session.step.failed.1`; null while running. */
   ended_ms?: number | null;
+};
+
+/** `POST /api/v1/peer/attach/:id`: an approved attach. */
+export type Attach = {
+  /** Sent as `X-Cyber-Attach` on the other attach routes. */
+  attach_id: string;
+  session_id: string;
 };
 
 export type AutoOverrideReceipt = {
@@ -371,6 +378,10 @@ export type Data_Array_of_ReachableSession = {
   data: ReachableSession[];
 };
 
+export type Data_Array_of_RemoteReach = {
+  data: RemoteReach[];
+};
+
 export type Data_Array_of_string = {
   data: string[];
 };
@@ -429,6 +440,18 @@ export type Data_Message = {
 
 export type Data_Nullable_Recap = {
   data?: Recap | null;
+};
+
+export type Data_PeerInvitation = {
+  data: PeerInvitation;
+};
+
+export type Data_PeerRevoked = {
+  data: PeerRevoked;
+};
+
+export type Data_PeersOverview = {
+  data: PeersOverview;
 };
 
 export type Data_PtyTicket = {
@@ -673,6 +696,20 @@ export type GitState = {
   dirty: boolean;
 };
 
+/** A grant as listed; never its token or hash. */
+export type GrantView = {
+  id: string;
+  /** The peer's name on this machine; its senders are named `<session>@<name>`. */
+  name: string;
+  scopes: PeerScope[];
+  created_ms: number;
+  expires_ms?: number | null;
+  last_used_ms?: number | null;
+  revoked_ms?: number | null;
+  /** Neither revoked nor expired. */
+  active: boolean;
+};
+
 export type Health = {
   healthy: boolean;
   version: string;
@@ -693,6 +730,16 @@ export type Health = {
    * (`sandbox` → Container detection: `isolation: container` in the header).
    */
   sandbox?: unknown;
+};
+
+/** `GET /api/v1/peer/hello`: who this machine is and what the caller's grant allows. */
+export type Hello = {
+  machine: string;
+  version: string;
+  fingerprint: string;
+  scopes: PeerScope[];
+  /** The caller's name on this machine. */
+  grant: string;
 };
 
 export type HistoryPage = {
@@ -901,6 +948,23 @@ export type InterruptedResume = {
 export type InvalidMemory = {
   filename: string;
   diagnostic: string;
+};
+
+/** `POST /api/v1/peers/grants`. */
+export type InvitePeer = {
+  /** The peer's name on this machine (what follows `@` in its senders' addresses). */
+  name: string;
+  /** Default `["message"]`. */
+  scopes?: PeerScope[];
+  /** Unix milliseconds; without it the grant does not expire. */
+  expires_ms?: number | null;
+  /** Replace the listener's key first; every existing pairing must then be redone. */
+  rotate_key?: boolean;
+  /**
+   * The host the pairing code names; default the bound IP, or this host's LAN name
+   * (its host name on `.local`) for a listener on all interfaces.
+   */
+  host?: string | null;
 };
 
 /** One ended iteration, as clients list it. */
@@ -1502,9 +1566,13 @@ export type MessageRecord = {
   to: string;
   /** The other side's local Session, when it has one (none for a client). */
   peer_session_id?: string | null;
-  /** `session` or `client`; an open set. */
+  /** `session`, `client` or `peer`; an open set. */
   origin_kind: string;
-  /** `delivered`, `held`, `refused`, `released` or `dropped`. */
+  /**
+   * `delivered`, `held`, `refused`, `released` or `dropped`; a send to a peer that
+   * failed on the network is `failed`, and one the peer still held after 7 days is
+   * `expired`.
+   */
   outcome: string;
   reason?: string | null;
   /** UTF-8 bytes of the text. */
@@ -1521,6 +1589,13 @@ export type MessageRecord = {
   updated_at: string;
   /** The event that last changed this record. */
   seq: number;
+  /**
+   * The other machine of a message between direct peers: the remote's name on the
+   * sender, the grant's name on the target.
+   */
+  remote_peer?: string | null;
+  /** The Session on the other machine. */
+  remote_session_id?: string | null;
 };
 
 /** The `messaging` of `PATCH /api/v1/sessions/:sessionID`. */
@@ -1618,6 +1693,134 @@ export type Page_WorkflowLogEntry = {
 export type Page_WorkflowRunSummary = {
   data: WorkflowRunSummary[];
   cursor: Cursor;
+};
+
+/** Why a peer refused this machine's request, or why its certificate was refused. */
+export type PeerAuthReason = "fingerprint_mismatch" | "unauthorized" | "scope";
+
+/**
+ * The body of a direct peer failure (`cross-session-messaging` → Direct peer transport):
+ * `PeerUnreachableError` and `PeerAuthError` (`502`), `PeerNotConfiguredError` (`404`)
+ * and, on the peer listener, `PeerScopeError` (`403`).
+ */
+export type PeerErrorBody = {
+  _tag: PeerErrorTag;
+  message: string;
+  /** The remote name of `peers.remotes` (all but `PeerScopeError`). */
+  peer?: string | null;
+  /** What failed (`PeerUnreachableError`). */
+  cause?: string | null;
+  /** Why the peer refused (`PeerAuthError`). */
+  reason?: PeerAuthReason | null;
+  /** The scope the grant lacks (`PeerScopeError`). */
+  scope?: PeerScope | null;
+};
+
+/** The `_tag` of a direct peer failure. */
+export type PeerErrorTag = "PeerUnreachableError" | "PeerAuthError" | "PeerNotConfiguredError" | "PeerScopeError";
+
+/** The created grant and its pairing code, which carries the token and is shown only here. */
+export type PeerInvitation = {
+  grant: GrantView;
+  /** `cyberpeer://<host>:<port>/?machine=…&fp=…&t=cyp_…`, for `cyber peers add`. */
+  code: string;
+  listener: PeerListenerInfo;
+};
+
+/** The running peer listener. */
+export type PeerListenerInfo = {
+  /** `https://<bound address>`, or `http://` for a plain listener on loopback. */
+  url: string;
+  machine: string;
+  /** `sha256:<hex>` of the listener's SubjectPublicKeyInfo. */
+  fingerprint: string;
+  tls: boolean;
+};
+
+/** `POST /api/v1/peer/messages`: one message from a Session of the calling machine. */
+export type PeerMessage = {
+  /** The sender's `msgx_` ID; a retry with the same ID returns the first outcome. */
+  id: string;
+  /** The target's address on this machine (`ses_` ID or Session name). */
+  to: string;
+  /** Plain UTF-8 text, at most 16384 bytes. */
+  text: string;
+  /** The sender watches the target itself; accepted for compatibility. */
+  notify_when_idle?: boolean;
+  /** The sending run's MCP recursion depth. */
+  depth?: number;
+  /** The message's chain hops (the sending run's hops + 1). */
+  hops: number;
+  /** The sending Session's ID on the calling machine. */
+  from_session: string;
+  /** The sending Session's unique title there, if it has one. */
+  from_name?: string | null;
+};
+
+/** `GET /api/v1/peer/messages/:id`: the current outcome of a message this grant sent. */
+export type PeerOutcome = {
+  message_id: string;
+  /** `delivered`, `held`, `released`, `dropped` or `refused`. */
+  outcome: string;
+  reason?: string | null;
+  target_session_id: string;
+};
+
+/** What a peer may prompt: text and images, as the Session's user. */
+export type PeerPrompt = {
+  id?: string | null;
+  /** Text and image parts only. */
+  parts: Content[];
+  /** Default `steer`. */
+  delivery?: Delivery | null;
+};
+
+/** `DELETE /api/v1/peers/grants/:name`. */
+export type PeerRevoked = {
+  name: string;
+  /** `false` when no active grant had that name. */
+  revoked: boolean;
+};
+
+/** A grant scope (`message`, `attach`). */
+export type PeerScope = "message" | "attach";
+
+/** The answer to `POST /api/v1/peer/messages`. */
+export type PeerSendResult = {
+  message_id: string;
+  outcome: MessageOutcome;
+  reason?: string | null;
+  /** The limit a `rate_limited` refusal hit. */
+  limit?: string | null;
+  /** The Session the address resolved to on this machine. */
+  target_session_id: string;
+  /** The ID was received before; this is that message's outcome. */
+  replayed?: boolean;
+};
+
+/** `GET /api/v1/peer/sessions/:id/status`: what a peer Session is doing, for watches. */
+export type PeerSessionStatus = {
+  session_id: string;
+  state: ReachableState;
+  /** When its last run ended (milliseconds since the epoch on that machine). */
+  last_idle_ms?: number | null;
+};
+
+/** The listing a peer answers. */
+export type PeerSessions = {
+  /**
+   * Addressed as this machine names them (`<name or ses_>`, no `@`); the asker adds
+   * `@<peer>`.
+   */
+  sessions: ReachableSession[];
+};
+
+/** `GET /api/v1/peers`. */
+export type PeersOverview = {
+  /** `None` when no peer listener runs (`peers.listen` unset, or it could not open). */
+  listener?: PeerListenerInfo | null;
+  /** Every grant, oldest first, revoked and expired ones included. */
+  grants: GrantView[];
 };
 
 /** A request waiting for a client. Its Session remains the owner of replies. */
@@ -1766,7 +1969,7 @@ export type ReachableSession = {
 };
 
 /** What a reachable Session is doing. */
-export type ReachableState = "idle" | "running" | "waiting_input";
+export type ReachableState = "idle" | "running" | "waiting_input" | "offline";
 
 /** The latest Session recap. */
 export type Recap = {
@@ -1803,6 +2006,19 @@ export type RefusedResume = {
 export type ReleaseBody = {
   /** `steer` (default) or `queue`. */
   delivery?: Delivery | null;
+};
+
+/**
+ * An enabled remote and whether it answered its last listing (`GET /api/v1/peers/remotes`,
+ * the TUI sidebar's Peers line).
+ */
+export type RemoteReach = {
+  name: string;
+  /**
+   * It answered within [`LISTING_TIMEOUT`] (the answer may be up to [`LISTING_CACHE`]
+   * old); `false` also when it has no token.
+   */
+  online: boolean;
 };
 
 export type RemovedWorktree = {
@@ -2056,7 +2272,10 @@ export type SendMessage = {
   id?: string | null;
   /** The sending Session; without it the sender is the client (origin `client`). */
   from?: string | null;
-  /** The target's address (`ses_` ID, subagent or Session name). */
+  /**
+   * The target's address (`ses_` ID, subagent or Session name), or `<session>@<peer>`
+   * for a Session of a configured peer (which needs `from`).
+   */
   to: string;
   /** Plain UTF-8 text, at most 16384 bytes. */
   text: string;

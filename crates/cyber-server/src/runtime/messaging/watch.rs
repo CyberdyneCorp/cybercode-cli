@@ -260,7 +260,8 @@ mod query {
     pub fn active_on(db: &Connection, target: &str) -> rusqlite::Result<Vec<WatchRow>> {
         let mut stmt = db.prepare(&format!(
             "SELECT {WATCH_COLUMNS} FROM messaging_watch
-             WHERE target_id = ?1 AND status = 'active' ORDER BY created_ms, id"
+             WHERE target_id = ?1 AND status = 'active' AND target_peer IS NULL
+             ORDER BY created_ms, id"
         ))?;
         stmt.query_map([target], watch_row)?.collect()
     }
@@ -286,7 +287,8 @@ mod query {
     /// The targets that have an active watch.
     pub fn watched_targets(db: &Connection) -> rusqlite::Result<Vec<String>> {
         let mut stmt = db.prepare(
-            "SELECT DISTINCT target_id FROM messaging_watch WHERE status = 'active' ORDER BY target_id",
+            "SELECT DISTINCT target_id FROM messaging_watch
+             WHERE status = 'active' AND target_peer IS NULL ORDER BY target_id",
         )?;
         stmt.query_map([], |r| r.get(0))?.collect()
     }
@@ -297,7 +299,7 @@ impl Messaging {
     /// (`watch_session`, `POST /messaging/watch`, `notify_when_idle`). Nothing happens in
     /// the target; an idle target fires at once.
     pub async fn watch(&self, request: WatchRequest) -> Result<Watch, RuntimeError> {
-        let subscriber = request.subscriber;
+        let subscriber = request.subscriber.clone();
         self.sender_enabled(&Sender::Session(subscriber.clone()))?;
         if let Some(id) = request.id.as_deref().filter(|id| !valid_watch_id(id)) {
             return Err(RuntimeError::Invalid(format!(
@@ -305,6 +307,9 @@ impl Messaging {
             )));
         }
         let target = self.resolve(Some(&subscriber), &request.target)?;
+        if let Some(peer) = target.peer.clone() {
+            return self.watch_remote(request, target, &peer).await;
+        }
         let target_id = target.candidate.session_id.clone();
         if let Some(expected) = request
             .expected_target
@@ -334,6 +339,7 @@ impl Messaging {
             target: request.address.unwrap_or(target.address),
             target_id: target_id.clone(),
             expires_ms: now_ms().saturating_add(WATCH_TTL_MS),
+            target_peer: None,
         };
         self.runtime
             .record_message(&subscriber, event(WATCH_CREATED, &created))
@@ -358,7 +364,12 @@ impl Messaging {
         }
         let addresses = self.sender_addresses(&Sender::Session(subscriber.to_owned()))?;
         let settings = self.settings(Some(&target.candidate.location.directory));
-        match super::inbound_verdict(target, settings.as_ref(), &addresses) {
+        match super::inbound_verdict(
+            target,
+            settings.as_ref(),
+            &addresses,
+            super::inbound::Reach::SameMachine,
+        ) {
             Verdict::Refuse(reason) => Err(RuntimeError::Forbidden {
                 reason,
                 message: format!(
@@ -689,6 +700,11 @@ impl Runtime {
         owners.push(task);
     }
 }
+
+#[path = "watch_remote.rs"]
+mod remote;
+
+pub use remote::REMOTE_POLL_EVERY;
 
 #[cfg(test)]
 #[path = "watch_tests.rs"]

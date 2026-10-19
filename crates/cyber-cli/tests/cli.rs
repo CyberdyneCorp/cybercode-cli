@@ -1241,7 +1241,9 @@ fn doctor_reports_every_check_as_json() {
             "sandbox",
             "git",
             "rg",
-            "server"
+            "server",
+            "peers:listener",
+            "peers:remotes"
         ]
     );
     assert!(names.contains(&"lsp:gopls"));
@@ -3998,7 +4000,7 @@ fn sandbox_run_executes_under_effective_policy() {
 }
 
 /// Regression: the credential files in the data directory (the file-backed plugin secret
-/// store and the MCP OAuth file) were hidden only when an App was built, so `cyber
+/// store, the MCP OAuth file and the peer token file) were hidden only when an App was built, so `cyber
 /// sandbox run` could read them.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
@@ -4007,7 +4009,7 @@ fn sandbox_run_cannot_read_the_credential_files_of_the_data_directory() {
     let repo = env.repo("{}");
     let data = env.root.join("cyber-home/data");
     std::fs::create_dir_all(&data).unwrap();
-    for name in ["plugin-secrets.json", "mcp-auth.json"] {
+    for name in ["plugin-secrets.json", "mcp-auth.json", "peers-secrets.json"] {
         let file = data.join(name);
         std::fs::write(&file, "{\"token\": \"credential-canary\"}").unwrap();
         let o = env

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use cyber_server::runtime::messaging::records::{self, text_sha256};
 use cyber_server::runtime::messaging::{
     AddressError, AddressKind, Direction, InboundOverride, MessageChain, Outcome, OverrideReason,
-    REACHABLE_LIMIT, ReachableState, SendRequest, Sender, WatchRequest, WatchStatus,
+    PeerError, REACHABLE_LIMIT, ReachableState, SendRequest, Sender, WatchRequest, WatchStatus,
 };
 use cyber_server::runtime::{Admission, Delivery, Runtime, RuntimeError};
 use cyber_store::{Expected, NewEvent};
@@ -273,12 +273,13 @@ async fn addresses_resolve_by_tier_and_never_by_prefix() {
     let by_id = h.runtime.messaging().resolve(Some(&caller), &old).unwrap();
     assert!(by_id.archived);
 
-    // Remote addresses need an account; the sender itself is refused.
+    // Remote addresses need a configured peer (this host has none); the sender itself is
+    // refused.
     for to in ["backend@laptop", &format!("{first}@laptop"), "@api@laptop"] {
         assert!(
             matches!(
-                resolved(&h, Some(&caller), to),
-                Err(AddressError::AccountRequired(_))
+                h.runtime.messaging().resolve(Some(&caller), to),
+                Err(RuntimeError::Peer(PeerError::NotConfigured { ref peer })) if peer == "laptop"
             ),
             "{to}"
         );

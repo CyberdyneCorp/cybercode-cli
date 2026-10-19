@@ -3,11 +3,11 @@ source: crates/cyber-tui/src/screens_messages.rs
 expression: "shot(&mut app, &ids)"
 ---
 ╭ Messages · ses_BBBBBB "api-refactor" ────────────────────────────────────[all]  in   out   held  ╮
-│  14:02  in   frontend         delivered     28 B   which port does the API use?                  │
-│  14:03  out  frontend         delivered     48 B   API moved to port 8080; restart your dev serv…│
-│  14:04  in   frontend         notice               frontend is idle                              │
-│  14:05  in   frontend         held          68 B   The nightly build on desk is red; can you che…│
-│  14:06  in   frontend         held          55 B   Please review the schema change before the ne…│
+│  14:02  in   frontend         local      delivered     28 B   which port does the API use?       │
+│  14:03  out  frontend         local      delivered     48 B   API moved to port 8080; restart yo…│
+│  14:04  in   frontend         local      notice               frontend is idle                   │
+│  14:05  in   frontend         local      held          68 B   The nightly build on desk is red; …│
+│  14:06  in   frontend         local      held          55 B   Please review the schema change be…│
 │      Please review the schema change before the next deploy.                                     │
 │      msgx_schema · sha256 4c1fa06945741428f32a509adafc052fad758c46362854215947ec37d8fe1439       │
 │      sent 2026-10-16 14:06:00 · peer ses_AAAAAAAAAAAAAAAAAAAAAAAAAA                              │

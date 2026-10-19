@@ -905,6 +905,24 @@ impl ToolHost for BuiltinHost {
         tools::messaging::settings(self, directory.map(Path::new))
     }
 
+    fn permission_effect(
+        &self,
+        turn: &TurnContext,
+        action: &str,
+        resource: &str,
+    ) -> Result<cyber_server::runtime::RuleEffect, String> {
+        use cyber_server::runtime::RuleEffect;
+        let rules =
+            self.session_rules(Path::new(&turn.directory), Some(&turn.agent), &turn.rules)?;
+        Ok(
+            match permissions::boundary_evaluate(&rules, action, resource) {
+                Effect::Allow => RuleEffect::Allow,
+                Effect::Ask => RuleEffect::Ask,
+                Effect::Deny => RuleEffect::Deny,
+            },
+        )
+    }
+
     fn request_overlay(
         &self,
         turn: &TurnContext,

@@ -38,40 +38,55 @@ impl Limit {
     }
 }
 
-/// The messages `sender_key` had accepted (delivered or held, whatever became of them
-/// since) by `target` in the window ending at `now_ms`. Refusals never count.
+/// The sender keys whose records the limits count together as one sender.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LimitKey {
+    /// One sender key (a local Session, a client).
+    Exact(String),
+    /// Every key starting with this prefix: all Sessions of one peer grant
+    /// (`peer:<grant>:`), whose Session labels the peer chooses.
+    Prefix(String),
+}
+
+/// The messages of `key` that `target` accepted (delivered or held, whatever became of
+/// them since) in the window ending at `now_ms`. Refusals never count.
 pub fn accepted_in_window(
     db: &Connection,
     target: &str,
-    sender_key: &str,
+    key: &LimitKey,
     now_ms: i64,
 ) -> rusqlite::Result<usize> {
-    in_window(db, target, sender_key, now_ms, false)
+    in_window(db, target, key, now_ms, false)
 }
 
-/// The refusals of `sender_key` that `target` recorded in the window ending at `now_ms`.
+/// The refusals of `key` that `target` recorded in the window ending at `now_ms`.
 pub fn refused_in_window(
     db: &Connection,
     target: &str,
-    sender_key: &str,
+    key: &LimitKey,
     now_ms: i64,
 ) -> rusqlite::Result<usize> {
-    in_window(db, target, sender_key, now_ms, true)
+    in_window(db, target, key, now_ms, true)
 }
 
-/// The target's `in` records of `sender_key` in the window, refused or not.
+/// The target's `in` records of `key` in the window, refused or not.
 fn in_window(
     db: &Connection,
     target: &str,
-    sender_key: &str,
+    key: &LimitKey,
     now_ms: i64,
     refused: bool,
 ) -> rusqlite::Result<usize> {
+    let (key, prefix) = match key {
+        LimitKey::Exact(key) => (key, false),
+        LimitKey::Prefix(prefix) => (prefix, true),
+    };
     db.query_row(
         "SELECT COUNT(*) FROM xsession_message
-         WHERE session_id = ?1 AND direction = 'in' AND sender_key = ?2
+         WHERE session_id = ?1 AND direction = 'in'
+           AND (sender_key = ?2 OR (?5 AND substr(sender_key, 1, length(?2)) = ?2))
            AND (outcome = 'refused') = ?4 AND created_ms > ?3",
-        rusqlite::params![target, sender_key, now_ms - RATE_WINDOW_MS, refused],
+        rusqlite::params![target, key, now_ms - RATE_WINDOW_MS, refused, prefix],
         |row| row.get::<_, i64>(0),
     )
     .map(|count| usize::try_from(count).unwrap_or(usize::MAX))
@@ -186,10 +201,30 @@ mod tests {
     }
 
     fn count(store: &Store, key: &str, now_ms: i64) -> usize {
-        let key = key.to_owned();
+        count_as(store, LimitKey::Exact(key.to_owned()), now_ms)
+    }
+
+    fn count_as(store: &Store, key: LimitKey, now_ms: i64) -> usize {
         store
             .read(move |db| Ok(accepted_in_window(db, "ses_t", &key, now_ms)?))
             .unwrap()
+    }
+
+    /// Regression: a peer's limits were keyed on the Session label it sends, so a new
+    /// `from_session` per message escaped them. A grant's Sessions count together.
+    #[test]
+    fn a_prefix_counts_every_session_of_one_grant() {
+        let store = store(DatabaseLocation::Memory);
+        let first = record(&store, "msgx_1", "peer:laptop:ses_a", records::HELD);
+        record(&store, "msgx_2", "peer:laptop:ses_b", records::HELD);
+        record(&store, "msgx_3", "peer:laptop2:ses_a", records::HELD);
+        let grant = |prefix: &str| LimitKey::Prefix(prefix.to_owned());
+        assert_eq!(count_as(&store, grant("peer:laptop:"), first), 2);
+        assert_eq!(count_as(&store, grant("peer:laptop2:"), first), 1);
+        assert_eq!(count(&store, "peer:laptop:ses_a", first), 1);
+        // `%` and `_` are not patterns here.
+        assert_eq!(count_as(&store, grant("peer:lap%"), first), 0);
+        assert_eq!(count_as(&store, grant("peer:l_ptop:"), first), 0);
     }
 
     #[test]

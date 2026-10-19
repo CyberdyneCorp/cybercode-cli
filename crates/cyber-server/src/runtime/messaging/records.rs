@@ -1,4 +1,4 @@
-//! Durable messaging records (`cross-session-messaging` → Transcript and audit): the nine
+//! Durable messaging records (`cross-session-messaging` → Transcript and audit): the
 //! `messaging.*` events of the Session streams, their projector into `xsession_message`
 //! and `messaging_watch`, and the Session state fold that promotion and the inbox badge
 //! read. Every record is validated on append; a refused record never carries text.
@@ -18,8 +18,15 @@ use crate::runtime::Delivery;
 pub const DELIVERED: &str = "messaging.message.delivered.1";
 pub const HELD: &str = "messaging.message.held.1";
 pub const REFUSED: &str = "messaging.message.refused.1";
+/// A send to a peer that failed on the network or was refused by the peer's TLS or guard
+/// (`PeerUnreachableError`, `PeerAuthError`): the sender's `out` record only, outcome
+/// `failed`. A retry with the same ID replaces it.
+pub const FAILED: &str = "messaging.message.failed.1";
 pub const RELEASED: &str = "messaging.message.released.1";
 pub const DROPPED: &str = "messaging.message.dropped.1";
+/// A message a peer still held 7 days after it was sent: the sender's `out` record only,
+/// outcome `expired`, after which the outcome tracker stops polling the peer.
+pub const EXPIRED: &str = "messaging.message.expired.1";
 pub const WATCH_CREATED: &str = "messaging.watch.created.1";
 pub const WATCH_FIRED: &str = "messaging.watch.fired.1";
 pub const WATCH_EXPIRED: &str = "messaging.watch.expired.1";
@@ -58,7 +65,7 @@ pub struct MessageAccepted {
     /// The other side's local Session, when it has one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peer_session_id: Option<String>,
-    /// `session` or `client` today; an open set (the peers change adds `peer`).
+    /// `session`, `client` or `peer`; an open set.
     pub origin_kind: String,
     pub sender_key: String,
     pub size: u32,
@@ -67,6 +74,13 @@ pub struct MessageAccepted {
     pub depth: u32,
     pub hops: u32,
     pub delivery: Delivery,
+    /// The peer of a message between machines: the remote's name on the sender, the
+    /// grant's name on the target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_peer: Option<String>,
+    /// The Session on the other machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_session_id: Option<String>,
 }
 
 /// `messaging.message.refused.1`: metadata only; the text is never stored.
@@ -90,6 +104,13 @@ pub struct MessageRefused {
     /// hop it stopped at).
     #[serde(default = "first_hop")]
     pub hops: u32,
+    /// The peer of a message between machines: the remote's name on the sender, the
+    /// grant's name on the target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_peer: Option<String>,
+    /// The Session on the other machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_session_id: Option<String>,
 }
 
 fn first_hop() -> u32 {
@@ -115,6 +136,14 @@ pub struct MessageDropped {
     pub reason: Option<String>,
 }
 
+/// `messaging.message.expired.1`: the sender stopped following a message a peer holds.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MessageExpired {
+    pub message_id: String,
+    pub direction: Direction,
+}
+
 /// `messaging.watch.created.1`, in the subscriber.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -124,6 +153,9 @@ pub struct WatchCreated {
     pub target: String,
     pub target_id: String,
     pub expires_ms: i64,
+    /// The peer of a watch on a peer Session (`X@P`); its `target_id` is `<ses_>@P`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_peer: Option<String>,
 }
 
 /// `messaging.watch.fired.1`, after the notice `notice_id` was admitted.
@@ -174,6 +206,7 @@ pub(crate) fn register(registry: &mut EventRegistry) {
         .register_with(DELIVERED, validate_accepted)
         .and_then(|r| r.register_with(HELD, validate_accepted))
         .and_then(|r| r.register_with(REFUSED, validate_refused))
+        .and_then(|r| r.register_with(FAILED, validate_failed))
         .and_then(|r| {
             r.register_with(RELEASED, |v| {
                 message_id(&decode::<MessageReleased>(v)?.message_id)
@@ -184,6 +217,7 @@ pub(crate) fn register(registry: &mut EventRegistry) {
                 message_id(&decode::<MessageDropped>(v)?.message_id)
             })
         })
+        .and_then(|r| r.register_with(EXPIRED, validate_expired))
         .and_then(|r| r.register_with(WATCH_CREATED, |v| decode::<WatchCreated>(v).map(drop)))
         .and_then(|r| r.register_with(WATCH_FIRED, |v| decode::<WatchFired>(v).map(drop)))
         .and_then(|r| r.register_with(WATCH_EXPIRED, |v| decode::<WatchExpired>(v).map(drop)))
@@ -259,6 +293,24 @@ fn validate_refused(data: &Value) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_failed(data: &Value) -> Result<(), String> {
+    validate_refused(data)?;
+    let failed: MessageRefused = decode(data)?;
+    if failed.direction != Direction::Out || failed.remote_peer.is_none() {
+        return Err("a failed send is the sender's record of a message to a peer".into());
+    }
+    Ok(())
+}
+
+fn validate_expired(data: &Value) -> Result<(), String> {
+    let expired: MessageExpired = decode(data)?;
+    message_id(&expired.message_id)?;
+    if expired.direction != Direction::Out {
+        return Err("an expiry is the sender's record of a message to a peer".into());
+    }
+    Ok(())
+}
+
 /// Write `xsession_message` and `messaging_watch` in the event transaction.
 pub(crate) fn project(tx: &Transaction<'_>, e: &StoredEvent) -> Result<(), String> {
     if !e.kind.starts_with(PREFIX) {
@@ -267,7 +319,8 @@ pub(crate) fn project(tx: &Transaction<'_>, e: &StoredEvent) -> Result<(), Strin
     match e.kind.as_str() {
         DELIVERED => insert_accepted(tx, e, "delivered"),
         HELD => insert_accepted(tx, e, "held"),
-        REFUSED => insert_refused(tx, e),
+        REFUSED => insert_refused(tx, e, "refused"),
+        FAILED => insert_refused(tx, e, "failed"),
         RELEASED => {
             let released: MessageReleased = decode(&e.data)?;
             update_outcome(
@@ -291,6 +344,17 @@ pub(crate) fn project(tx: &Transaction<'_>, e: &StoredEvent) -> Result<(), Strin
                 reason,
             )
         }
+        EXPIRED => {
+            let expired: MessageExpired = decode(&e.data)?;
+            update_outcome(
+                tx,
+                e,
+                &expired.message_id,
+                expired.direction,
+                "expired",
+                None,
+            )
+        }
         _ => project_watch(tx, e),
     }
 }
@@ -309,59 +373,101 @@ fn peer(direction: Direction, from: &str, to: &str) -> String {
 
 fn insert_accepted(tx: &Transaction<'_>, e: &StoredEvent, outcome: &str) -> Result<(), String> {
     let m: MessageAccepted = decode(&e.data)?;
-    tx.execute(
-        "INSERT INTO xsession_message (session_id, message_id, direction, peer_address, peer_session_id,
-             origin_kind, sender_key, outcome, size, sha256, text, depth, hops, created_ms, updated_ms, seq)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14, ?15)",
-        params![
-            e.aggregate_id,
-            m.message_id,
-            m.direction.as_str(),
-            peer(m.direction, &m.from, &m.to),
-            m.peer_session_id,
-            m.origin_kind,
-            m.sender_key,
-            outcome,
-            m.size,
-            m.sha256,
-            m.text,
-            m.depth,
-            m.hops,
-            e.time_ms,
-            e.seq
-        ],
-    )
-    .map_err(sql)?;
-    Ok(())
+    // The sender follows a message a peer holds (`super::tracker`).
+    let next_poll = (outcome == "held" && m.direction == Direction::Out && m.remote_peer.is_some())
+        .then(|| super::tracker::first_poll_ms(e.time_ms));
+    let changed = tx
+        .execute(
+            &format!(
+                "INSERT INTO xsession_message (session_id, message_id, direction, peer_address, peer_session_id,
+                     origin_kind, sender_key, outcome, size, sha256, text, depth, hops, created_ms, updated_ms, seq,
+                     remote_peer, remote_session_id, next_poll_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14, ?15, ?16, ?17, ?18)
+                 {RETRY_FAILED}"
+            ),
+            params![
+                e.aggregate_id,
+                m.message_id,
+                m.direction.as_str(),
+                peer(m.direction, &m.from, &m.to),
+                m.peer_session_id,
+                m.origin_kind,
+                m.sender_key,
+                outcome,
+                m.size,
+                m.sha256,
+                m.text,
+                m.depth,
+                m.hops,
+                e.time_ms,
+                e.seq,
+                m.remote_peer,
+                m.remote_session_id,
+                next_poll,
+            ],
+        )
+        .map_err(sql)?;
+    inserted(changed, &m.message_id)
 }
 
-fn insert_refused(tx: &Transaction<'_>, e: &StoredEvent) -> Result<(), String> {
+/// A record of a message whose earlier send failed (outcome `failed`) replaces that
+/// record; any other existing record of the message on this side is a defect.
+const RETRY_FAILED: &str = "ON CONFLICT (session_id, message_id, direction) DO UPDATE SET
+     peer_address = excluded.peer_address, peer_session_id = excluded.peer_session_id,
+     origin_kind = excluded.origin_kind, sender_key = excluded.sender_key,
+     outcome = excluded.outcome, reason = excluded.reason, size = excluded.size,
+     sha256 = excluded.sha256, text = excluded.text, depth = excluded.depth,
+     hops = excluded.hops, updated_ms = excluded.updated_ms, seq = excluded.seq,
+     remote_peer = excluded.remote_peer, remote_session_id = excluded.remote_session_id,
+     next_poll_ms = excluded.next_poll_ms
+     WHERE xsession_message.outcome = 'failed'";
+
+fn inserted(changed: usize, message_id: &str) -> Result<(), String> {
+    if changed == 1 {
+        Ok(())
+    } else {
+        Err(format!(
+            "message {message_id} is already recorded on this side"
+        ))
+    }
+}
+
+fn insert_refused(tx: &Transaction<'_>, e: &StoredEvent, outcome: &str) -> Result<(), String> {
     let m: MessageRefused = decode(&e.data)?;
-    tx.execute(
-        "INSERT INTO xsession_message (session_id, message_id, direction, peer_address, peer_session_id,
-             origin_kind, sender_key, outcome, reason, size, sha256, hops, created_ms, updated_ms, seq)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'refused', ?8, ?9, ?10, ?11, ?12, ?12, ?13)",
-        params![
-            e.aggregate_id,
-            m.message_id,
-            m.direction.as_str(),
-            peer(m.direction, &m.from, &m.to),
-            m.peer_session_id,
-            m.origin_kind,
-            m.sender_key,
-            m.reason,
-            m.size,
-            m.sha256,
-            m.hops,
-            e.time_ms,
-            e.seq
-        ],
-    )
-    .map_err(sql)?;
-    Ok(())
+    let changed = tx
+        .execute(
+            &format!(
+                "INSERT INTO xsession_message (session_id, message_id, direction, peer_address, peer_session_id,
+                     origin_kind, sender_key, outcome, reason, size, sha256, hops, created_ms, updated_ms, seq,
+                     remote_peer, remote_session_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13, ?14, ?15, ?16)
+                 {RETRY_FAILED}"
+            ),
+            params![
+                e.aggregate_id,
+                m.message_id,
+                m.direction.as_str(),
+                peer(m.direction, &m.from, &m.to),
+                m.peer_session_id,
+                m.origin_kind,
+                m.sender_key,
+                outcome,
+                m.reason,
+                m.size,
+                m.sha256,
+                m.hops,
+                e.time_ms,
+                e.seq,
+                m.remote_peer,
+                m.remote_session_id,
+            ],
+        )
+        .map_err(sql)?;
+    inserted(changed, &m.message_id)
 }
 
-/// Release and drop change a recorded message; one without a record is a defect.
+/// Release, drop and expiry change a recorded message, which then needs no more polls;
+/// one without a record is a defect.
 fn update_outcome(
     tx: &Transaction<'_>,
     e: &StoredEvent,
@@ -372,7 +478,8 @@ fn update_outcome(
 ) -> Result<(), String> {
     let changed = tx
         .execute(
-            "UPDATE xsession_message SET outcome = ?4, reason = COALESCE(?5, reason), updated_ms = ?6, seq = ?7
+            "UPDATE xsession_message SET outcome = ?4, reason = COALESCE(?5, reason), updated_ms = ?6, seq = ?7,
+                 next_poll_ms = NULL
              WHERE session_id = ?1 AND message_id = ?2 AND direction = ?3",
             params![
                 e.aggregate_id,
@@ -400,9 +507,9 @@ fn project_watch(tx: &Transaction<'_>, e: &StoredEvent) -> Result<(), String> {
         WATCH_CREATED => {
             let w: WatchCreated = decode(&e.data)?;
             tx.execute(
-                "INSERT INTO messaging_watch (id, subscriber_id, target_address, target_id, status, created_ms, expires_ms)
-                 VALUES (?1, ?2, ?3, ?4, 'active', ?5, ?6)",
-                params![w.watch_id, e.aggregate_id, w.target, w.target_id, e.time_ms, w.expires_ms],
+                "INSERT INTO messaging_watch (id, subscriber_id, target_address, target_id, status, created_ms, expires_ms, target_peer)
+                 VALUES (?1, ?2, ?3, ?4, 'active', ?5, ?6, ?7)",
+                params![w.watch_id, e.aggregate_id, w.target, w.target_id, e.time_ms, w.expires_ms, w.target_peer],
             )
         }
         WATCH_FIRED => {
@@ -489,6 +596,11 @@ pub struct MessageRow {
     pub created_ms: i64,
     pub updated_ms: i64,
     pub seq: i64,
+    /// The peer of a message between machines (the remote's name on the sender, the
+    /// grant's on the target).
+    pub remote_peer: Option<String>,
+    /// The Session on the other machine.
+    pub remote_session_id: Option<String>,
 }
 
 /// One `messaging_watch` row.
@@ -503,11 +615,14 @@ pub struct WatchRow {
     pub expires_ms: i64,
     pub fired_ms: Option<i64>,
     pub notice_id: Option<String>,
+    /// The peer of a watch on a peer Session.
+    pub target_peer: Option<String>,
 }
 
 pub(crate) const MESSAGE_COLUMNS: &str =
     "session_id, message_id, direction, peer_address, peer_session_id, origin_kind, sender_key,
-     outcome, reason, size, sha256, text, depth, hops, created_ms, updated_ms, seq";
+     outcome, reason, size, sha256, text, depth, hops, created_ms, updated_ms, seq,
+     remote_peer, remote_session_id";
 
 pub(crate) fn message_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<MessageRow> {
     let direction: String = r.get(2)?;
@@ -533,6 +648,8 @@ pub(crate) fn message_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<MessageRow>
         created_ms: r.get(14)?,
         updated_ms: r.get(15)?,
         seq: r.get(16)?,
+        remote_peer: r.get(17)?,
+        remote_session_id: r.get(18)?,
     })
 }
 
@@ -653,7 +770,7 @@ fn unrecorded_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Unrecorded> {
     })
 }
 
-pub(crate) const WATCH_COLUMNS: &str = "id, subscriber_id, target_address, target_id, status, created_ms, expires_ms, fired_ms, notice_id";
+pub(crate) const WATCH_COLUMNS: &str = "id, subscriber_id, target_address, target_id, status, created_ms, expires_ms, fired_ms, notice_id, target_peer";
 
 pub(crate) fn watch_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<WatchRow> {
     Ok(WatchRow {
@@ -666,6 +783,7 @@ pub(crate) fn watch_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<WatchRow> {
         expires_ms: r.get(6)?,
         fired_ms: r.get(7)?,
         notice_id: r.get(8)?,
+        target_peer: r.get(9)?,
     })
 }
 

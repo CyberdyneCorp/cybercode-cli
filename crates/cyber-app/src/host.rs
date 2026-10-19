@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use cyber_server::http::remote_tools::RemoteTools;
+use cyber_server::runtime::messaging::PeerTarget;
 use cyber_server::runtime::{
     CallState, Invocation, Reconciliation, ToolDef, ToolHost, ToolOutcome, TurnContext,
 };
@@ -14,9 +15,18 @@ use tokio_util::sync::CancellationToken;
 #[cfg(test)]
 mod tests;
 
+/// Looks up a `peers.remotes` entry with its token by name.
+pub(crate) type PeerLookup = dyn Fn(&str) -> Result<Option<PeerTarget>, String> + Send + Sync;
+/// The names of the enabled `peers.remotes` entries.
+pub(crate) type PeerNames = dyn Fn() -> Result<Vec<String>, String> + Send + Sync;
+
 pub struct AppHost {
     pub builtin: Arc<BuiltinHost>,
     pub remote: Arc<RemoteTools>,
+    /// The remotes of the user configuration, with their stored tokens.
+    pub peers: Arc<PeerLookup>,
+    /// The enabled remotes of the user configuration, for the reachable listing.
+    pub peer_names: Arc<PeerNames>,
 }
 
 pub(crate) fn materialize_tools(
@@ -140,6 +150,23 @@ impl ToolHost for AppHost {
         directory: Option<&str>,
     ) -> Result<cyber_core::config::MessagingSettings, String> {
         self.builtin.messaging_settings(directory)
+    }
+
+    fn peer_target(&self, name: &str) -> Result<Option<PeerTarget>, String> {
+        (self.peers)(name)
+    }
+
+    fn peer_names(&self) -> Result<Vec<String>, String> {
+        (self.peer_names)()
+    }
+
+    fn permission_effect(
+        &self,
+        turn: &TurnContext,
+        action: &str,
+        resource: &str,
+    ) -> Result<cyber_server::runtime::RuleEffect, String> {
+        self.builtin.permission_effect(turn, action, resource)
     }
 
     fn request_overlay(

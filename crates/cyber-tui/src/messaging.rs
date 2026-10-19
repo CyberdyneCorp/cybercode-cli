@@ -25,7 +25,15 @@ pub struct Record {
     pub from: String,
     pub to: String,
     pub peer_session_id: Option<String>,
-    /// `delivered`, `held`, `refused`, `released` or `dropped`.
+    /// `session`, `client` or `peer` (another machine).
+    pub origin_kind: String,
+    /// The other machine of a message between direct peers: the remote's name for a sent
+    /// message, the grant's name for a received one.
+    pub remote_peer: Option<String>,
+    /// The Session on that machine.
+    pub remote_session_id: Option<String>,
+    /// `delivered`, `held`, `refused`, `released` or `dropped`; a peer send can also be
+    /// `failed` or `expired`.
     pub outcome: String,
     pub reason: Option<String>,
     pub size: u64,
@@ -49,6 +57,9 @@ impl Record {
             from: s("from"),
             to: s("to"),
             peer_session_id: v["peer_session_id"].as_str().map(str::to_owned),
+            origin_kind: s("origin_kind"),
+            remote_peer: v["remote_peer"].as_str().map(clean),
+            remote_session_id: v["remote_session_id"].as_str().map(clean),
             outcome: s("outcome"),
             reason: v["reason"].as_str().map(str::to_owned),
             size: v["size"].as_u64().unwrap_or(0),
@@ -63,6 +74,33 @@ impl Record {
     /// sent one.
     pub fn peer(&self) -> &str {
         if self.incoming { &self.from } else { &self.to }
+    }
+
+    /// The other machine, for a message between direct peers.
+    pub fn machine(&self) -> Option<&str> {
+        if self.origin_kind != "peer" {
+            return None;
+        }
+        self.remote_peer.as_deref().filter(|m| !m.is_empty())
+    }
+
+    /// The other side's address with its machine: `review@laptop`. The receiving server
+    /// names peer senders after the grant, so the address normally carries it already.
+    pub fn peer_label(&self) -> String {
+        let peer = clean(self.peer());
+        match self.machine() {
+            Some(machine) if !peer.ends_with(&format!("@{machine}")) => {
+                format!("{peer}@{machine}")
+            }
+            _ => peer,
+        }
+    }
+
+    /// The other side's Session: the local one, or the one on the other machine.
+    pub fn other_session(&self) -> Option<&str> {
+        self.peer_session_id
+            .as_deref()
+            .or(self.remote_session_id.as_deref())
     }
 
     /// `delivered`, or `refused: inbound_rule`.
@@ -499,6 +537,36 @@ mod tests {
         assert_eq!(r.created_ms, 1_792_159_320_000);
         assert_eq!(r.updated_ms - r.created_ms, 60_000);
         assert!(Record::parse(&json!({ "message_id": "x", "direction": "sideways" })).is_none());
+        assert_eq!(r.machine(), None, "a local message names no machine");
+    }
+
+    #[test]
+    fn peer_records_name_the_other_machine() {
+        let v = json!({
+            "message_id": "msgx_p", "session_id": "ses_b", "direction": "in",
+            "from": "review@laptop", "to": "ses_b", "origin_kind": "peer",
+            "remote_peer": "laptop", "remote_session_id": "ses_remote\u{1b}[2J",
+            "outcome": "held", "size": 3, "sha256": "ab", "depth": 0, "hops": 1,
+            "created_at": "2026-10-16T14:02:00.000Z", "updated_at": "2026-10-16T14:02:00.000Z",
+        });
+        let r = Record::parse(&v).unwrap();
+        assert_eq!(r.machine(), Some("laptop"));
+        assert_eq!(r.peer_label(), "review@laptop");
+        assert_eq!(r.other_session(), Some("ses_remote[2J"));
+        // A sent record names the remote; an address without it gets it appended.
+        let sent = Record {
+            incoming: false,
+            to: "ses_x".into(),
+            origin_kind: "peer".into(),
+            remote_peer: Some("desk".into()),
+            ..r.clone()
+        };
+        assert_eq!(sent.peer_label(), "ses_x@desk");
+        let claimed = Record {
+            origin_kind: "session".into(),
+            ..r
+        };
+        assert_eq!(claimed.machine(), None, "only peer records name a machine");
     }
 
     #[test]

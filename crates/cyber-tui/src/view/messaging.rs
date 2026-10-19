@@ -18,6 +18,8 @@ use crate::model::Tool;
 /// Rows of the held card: its frame, the sender line, the text and the keys.
 pub const CARD_HEIGHT: u16 = 5;
 const PEER: usize = 16;
+/// The machine column: a peer's name, or `local`.
+const MACHINE: usize = 10;
 const OUTCOME: usize = 10;
 
 /// `ses_X7KQ2M`: an ID's prefix and its last `keep` characters, the random part of a
@@ -77,19 +79,25 @@ fn spread(left: Vec<Span<'static>>, right: Span<'static>, width: usize) -> Line<
     Line::from(spans)
 }
 
-/// ` ✉ frontend · ses_01JABC · 14:02                untrusted`, then the text behind a
-/// gutter.
+/// ` ✉ frontend · ses_01JABC · 14:02                untrusted` (` ✉ from review@laptop`
+/// for another machine), then the text behind a gutter.
 pub(super) fn received(app: &App, record: &Record, width: usize) -> Vec<Line<'static>> {
     let t = &app.theme;
     let muted = Style::default().fg(t.text_muted);
+    // A message from another machine reads `from review@laptop`.
+    let from = if record.machine().is_some() {
+        format!("from {}", record.peer_label())
+    } else {
+        clean(&record.from)
+    };
     let mut head = vec![
         Span::styled(" ✉ ", Style::default().fg(t.info)),
         Span::styled(
-            clean(&record.from),
+            from,
             Style::default().fg(t.text).add_modifier(Modifier::BOLD),
         ),
     ];
-    if let Some(session) = &record.peer_session_id {
+    if let Some(session) = record.other_session() {
         head.push(Span::styled(format!(" · {}", short(session, 6)), muted));
     }
     head.push(Span::styled(
@@ -217,7 +225,11 @@ pub(super) fn card(f: &mut Frame, app: &App, area: Rect) {
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(border))
         .title(Span::styled(
-            " Held message ",
+            if record.machine().is_some() {
+                " Held message from another machine "
+            } else {
+                " Held message "
+            },
             Style::default().fg(t.warning).add_modifier(Modifier::BOLD),
         ))
         .title_top(
@@ -228,7 +240,7 @@ pub(super) fn card(f: &mut Frame, app: &App, area: Rect) {
     let muted = Style::default().fg(t.text_muted);
     let from = format!(
         " ✉ from {} · {} · {}",
-        clean(&record.from),
+        record.peer_label(),
         clock(app, record.created_ms),
         size(record.size)
     );
@@ -373,8 +385,13 @@ fn row_style(app: &App, row: &Row) -> Style {
     }
 }
 
-/// `  14:02  in   frontend          delivered   41 B   which port does the API…`.
+/// `  14:02  in   frontend         local      delivered   41 B   which port does the…`;
+/// the machine column names the peer of a message between machines.
 fn row_text(app: &App, row: &Row) -> String {
+    let machine = match row {
+        Row::Record(r) => r.machine().unwrap_or("local").to_owned(),
+        Row::Notice { .. } => "local".to_owned(),
+    };
     let (direction, peer, outcome, bytes, first) = match row {
         Row::Record(r) => {
             let first = r
@@ -387,7 +404,7 @@ fn row_text(app: &App, row: &Row) -> String {
             let direction = if r.incoming { "in" } else { "out" };
             (
                 direction,
-                clean(r.peer()),
+                r.peer_label(),
                 r.outcome.clone(),
                 size(r.size),
                 first,
@@ -406,9 +423,10 @@ fn row_text(app: &App, row: &Row) -> String {
         }
     };
     format!(
-        "  {}  {direction:<4} {:<PEER$} {:<OUTCOME$} {bytes:>7}   {first}",
+        "  {}  {direction:<4} {:<PEER$} {:<MACHINE$} {:<OUTCOME$} {bytes:>7}   {first}",
         clock(app, row.time_ms()),
         truncate_end(&peer, PEER),
+        truncate_end(&machine, MACHINE),
         truncate_end(&outcome, OUTCOME),
     )
 }
@@ -440,6 +458,12 @@ fn expansion(app: &App, row: &Row, width: usize) -> Vec<Line<'static>> {
             }
             if let Some(session) = &r.peer_session_id {
                 detail.push_str(&format!(" · peer {session}"));
+            }
+            if let Some(machine) = r.machine() {
+                detail.push_str(&format!(" · on {machine}"));
+                if let Some(session) = &r.remote_session_id {
+                    detail.push_str(&format!(" {session}"));
+                }
             }
             out.push(line(detail, muted));
         }

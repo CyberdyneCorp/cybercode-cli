@@ -33,6 +33,10 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
             return preflight(origin);
         }
     }
+    // Peer grant tokens belong to the peer listener only, on every transport.
+    if super::peer::guard::presents_peer_token(&req) {
+        return basic_challenge();
+    }
     if transport != Transport::Embedded
         && super::mcp_serve::is_endpoint(req.uri().path())
         && let Err(error) = local_mcp_client(&req, transport)
@@ -45,12 +49,7 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
         && !super::pty::attach_route(req.uri().path())
         && !authorized(&req, state.options.password.as_deref())
     {
-        let mut response = ApiError::unauthorized().into_response();
-        response.headers_mut().insert(
-            header::WWW_AUTHENTICATE,
-            HeaderValue::from_static("Basic realm=\"cyber\""),
-        );
-        return response;
+        return basic_challenge();
     }
     let mut response = next.run(req).await;
     if let Some(origin) = origin.and_then(|o| HeaderValue::from_str(&o).ok()) {
@@ -61,6 +60,16 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
             .headers_mut()
             .insert(header::VARY, HeaderValue::from_static("Origin"));
     }
+    response
+}
+
+/// `401` with the local password's Basic challenge.
+fn basic_challenge() -> Response {
+    let mut response = ApiError::unauthorized().into_response();
+    response.headers_mut().insert(
+        header::WWW_AUTHENTICATE,
+        HeaderValue::from_static("Basic realm=\"cyber\""),
+    );
     response
 }
 

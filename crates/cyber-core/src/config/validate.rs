@@ -151,6 +151,9 @@ fn settings_issues(value: &Value) -> Vec<String> {
     if let Err(error) = super::MessagingSettings::from_config(value) {
         issues.push(error);
     }
+    if let Err(error) = super::PeersSettings::from_config(value) {
+        issues.push(error);
+    }
     if let Err(error) = super::GitSettings::from_config(value) {
         issues.push(error);
     }
@@ -202,7 +205,7 @@ fn is_model_ref(r: &str) -> bool {
 
 fn check_profiles(profiles: &Map<String, Value>, issues: &mut Vec<String>) {
     for (name, profile) in profiles {
-        for forbidden in ["profiles", "policy"] {
+        for forbidden in ["profiles", "policy", "peers"] {
             if profile.get(forbidden).is_some() {
                 issues.push(format!("profiles.{name}.{forbidden} is not allowed"));
             }

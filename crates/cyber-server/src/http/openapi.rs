@@ -33,6 +33,8 @@ pub struct Op {
     websocket: bool,
     /// Declared error responses beyond the default tagged error.
     errors: Vec<(u16, &'static str, Schema)>,
+    /// Served by the peer listener with a grant's bearer token, not by the main API.
+    peer: bool,
 }
 
 fn op(method: &'static str, path: &'static str, id: &'static str, summary: &'static str) -> Op {
@@ -50,6 +52,20 @@ fn op(method: &'static str, path: &'static str, id: &'static str, summary: &'sta
         stream: false,
         websocket: false,
         errors: Vec::new(),
+        peer: false,
+    }
+}
+
+/// An operation of the peer listener (`/api/v1/peer/*`), under group `peer`.
+fn peer_op(
+    method: &'static str,
+    path: &'static str,
+    id: &'static str,
+    summary: &'static str,
+) -> Op {
+    Op {
+        peer: true,
+        ..op(method, path, id, summary)
     }
 }
 
@@ -968,10 +984,19 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         )
         .body::<super::messaging::SendMessage>(g)
         .ok::<Data<crate::runtime::messaging::SendResult>>(g)
-        .error::<ErrorBody>(g, 404, "AddressNotFoundError or SessionNotFoundError")
+        .error::<ErrorBody>(
+            g,
+            404,
+            "AddressNotFoundError, SessionNotFoundError, or PeerNotConfiguredError with peer",
+        )
         .error::<ErrorBody>(g, 409, "AmbiguousAddressError with candidates, or ConflictError")
         .error::<ErrorBody>(g, 413, "MessageTooLargeError with size and limit")
-        .error::<ErrorBody>(g, 403, "AccountRequiredError"),
+        .error::<ErrorBody>(g, 403, "AccountRequiredError")
+        .error::<super::error::PeerErrorBody>(
+            g,
+            502,
+            "PeerUnreachableError with peer and cause, or PeerAuthError with peer and reason",
+        ),
         op(
             "post",
             "/messaging/watch",
@@ -981,9 +1006,18 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .body::<super::messaging::WatchSession>(g)
         .status(201)
         .ok::<Data<crate::runtime::messaging::Watch>>(g)
-        .error::<ErrorBody>(g, 404, "AddressNotFoundError or SessionNotFoundError")
+        .error::<ErrorBody>(
+            g,
+            404,
+            "AddressNotFoundError, SessionNotFoundError, or PeerNotConfiguredError with peer",
+        )
         .error::<ErrorBody>(g, 409, "AmbiguousAddressError with candidates")
         .error::<ErrorBody>(g, 429, "RateLimitedError with reason watch_quota")
+        .error::<super::error::PeerErrorBody>(
+            g,
+            502,
+            "PeerUnreachableError with peer and cause, or PeerAuthError with peer and reason",
+        )
         .error::<ErrorBody>(
             g,
             403,
@@ -1034,6 +1068,41 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         )
         .ok::<Data<Vec<String>>>(g)
         .error::<ErrorBody>(g, 404, "SessionNotFoundError or LoopNotFoundError"),
+        op(
+            "get",
+            "/peers",
+            "v1.peers.list",
+            "The running peer listener and every peer grant (never a token)",
+        )
+        .ok::<Data<super::peers::PeersOverview>>(g),
+        op(
+            "get",
+            "/peers/remotes",
+            "v1.peers.remotes",
+            "The enabled remotes of user config and whether each answered its last listing (asked at most every 15 s, 5 s timeout)",
+        )
+        .ok::<Data<Vec<crate::runtime::messaging::RemoteReach>>>(g),
+        op(
+            "post",
+            "/peers/grants",
+            "v1.peers.invite",
+            "Create a peer grant and return its pairing code, the only time its token is shown",
+        )
+        .body::<super::peers::InvitePeer>(g)
+        .status(201)
+        .ok::<Data<super::peers::PeerInvitation>>(g)
+        .error::<ErrorBody>(
+            g,
+            409,
+            "ConflictError: no peer listener runs, or an active grant has the name",
+        ),
+        op(
+            "delete",
+            "/peers/grants/{name}",
+            "v1.peers.revoke",
+            "Revoke a peer grant; its next request is refused",
+        )
+        .ok::<Data<super::peers::PeerRevoked>>(g),
         op("get", "/agents", "v1.agent.list", "Selectable agents")
             .located()
             .ok::<Located<Vec<AgentInfo>>>(g),
@@ -1105,6 +1174,142 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
     ]
 }
 
+/// The peer listener's operations (`server-api` → Peer listener): served only on
+/// `peers.listen`, never on the main API, each with an active grant's
+/// `Authorization: Bearer cyp_…`. Group `peer`.
+pub fn peer_operations(g: &mut SchemaGenerator) -> Vec<Op> {
+    use super::error::PeerErrorBody;
+    use crate::runtime::messaging::{
+        PeerMessage, PeerOutcome, PeerSendResult, PeerSessionStatus, listing::PeerSessions,
+    };
+    const ATTACH: &str = "/peer/attach/{sessionID}";
+    let scope = "PeerScopeError: the grant lacks the route's scope";
+    let attached = "PermissionDeniedError: no approved attach ID in X-Cyber-Attach";
+    vec![
+        peer_op(
+            "get",
+            "/peer/hello",
+            "v1.peer.hello",
+            "This machine's name, version and key fingerprint, and the calling grant's name and scopes",
+        )
+        .ok::<super::peer::Hello>(g),
+        peer_op(
+            "post",
+            "/peer/messages",
+            "v1.peer.send",
+            "Receive a message from a Session of the calling machine (scope message); the sender is named after the grant; idempotent on the grant and message ID",
+        )
+        .body::<PeerMessage>(g)
+        .ok::<PeerSendResult>(g)
+        .error::<PeerErrorBody>(g, 403, scope)
+        .error::<ErrorBody>(g, 404, "AddressNotFoundError")
+        .error::<ErrorBody>(g, 413, "MessageTooLargeError with size and limit")
+        .error::<ErrorBody>(g, 429, "RateLimitedError with retryAfterMs"),
+        peer_op(
+            "get",
+            "/peer/messages/{messageID}",
+            "v1.peer.outcome",
+            "The current outcome of a message the calling grant sent: delivered, held, released, dropped or refused",
+        )
+        .ok::<PeerOutcome>(g)
+        .error::<PeerErrorBody>(g, 403, scope)
+        .error::<ErrorBody>(g, 404, "NotFoundError: the grant sent no such message here"),
+        peer_op(
+            "get",
+            "/peer/sessions",
+            "v1.peer.sessions",
+            "Root Sessions the calling grant could message, newest first, at most 50; Locations by workspace name unless peers.share_paths",
+        )
+        .query(&["limit"])
+        .ok::<PeerSessions>(g)
+        .error::<PeerErrorBody>(g, 403, scope),
+        peer_op(
+            "get",
+            "/peer/sessions/{sessionID}/status",
+            "v1.peer.status",
+            "What one Session the grant can see is doing, for watches",
+        )
+        .ok::<PeerSessionStatus>(g)
+        .error::<PeerErrorBody>(g, 403, scope)
+        .error::<ErrorBody>(g, 404, "NotFoundError: no such Session is shown to this grant"),
+        peer_op(
+            "post",
+            ATTACH,
+            "v1.peer.attachOpen",
+            "Ask the Session's user for remote.attach (resource peer:<grant>, up to 2 minutes); an approval returns the attach ID (scope attach)",
+        )
+        .ok::<super::peer::attach::Attach>(g)
+        .error::<PeerErrorBody>(g, 403, "PeerScopeError, or PermissionDeniedError when refused or unanswered")
+        .error::<ErrorBody>(g, 404, "NotFoundError: no such Session is shown to this grant"),
+        peer_op("delete", ATTACH, "v1.peer.attachClose", "End this attach")
+            .status(204)
+            .error::<ErrorBody>(g, 403, attached),
+        peer_op(
+            "get",
+            "/peer/attach/{sessionID}/session",
+            "v1.peer.attachSession",
+            "The attached Session, as GET /sessions/:id shows it",
+        )
+        .ok::<Data<Session>>(g)
+        .error::<ErrorBody>(g, 403, attached),
+        peer_op(
+            "get",
+            "/peer/attach/{sessionID}/messages",
+            "v1.peer.attachMessages",
+            "The attached Session's transcript, as GET /sessions/:id/messages",
+        )
+        .query(&["limit", "cursor", "order"])
+        .ok::<Page<Message>>(g)
+        .error::<ErrorBody>(g, 403, attached),
+        peer_op(
+            "get",
+            "/peer/attach/{sessionID}/events",
+            "v1.peer.attachEvents",
+            "The attached Session's durable events after `after`; without it, its durable and live events from now on, as the instance stream carries them",
+        )
+        .query(&["after"])
+        .stream()
+        .error::<ErrorBody>(g, 403, attached),
+        peer_op(
+            "post",
+            "/peer/attach/{sessionID}/prompt",
+            "v1.peer.attachPrompt",
+            "Prompt the attached Session as its user with text and image parts",
+        )
+        .status(202)
+        .body::<super::peer::attach::PeerPrompt>(g)
+        .ok::<Data<Receipt>>(g)
+        .error::<ErrorBody>(g, 403, attached),
+        peer_op(
+            "post",
+            "/peer/attach/{sessionID}/interrupt",
+            "v1.peer.attachInterrupt",
+            "Interrupt the attached Session's running Drain",
+        )
+        .status(204)
+        .error::<ErrorBody>(g, 403, attached),
+        peer_op(
+            "get",
+            "/peer/attach/{sessionID}/permissions",
+            "v1.peer.attachPermissions",
+            "The attached Session's pending permission requests, attach requests excluded",
+        )
+        .ok::<Data<Vec<PendingRequest>>>(g)
+        .error::<ErrorBody>(g, 403, attached),
+        peer_op(
+            "post",
+            "/peer/attach/{sessionID}/permissions/{requestID}/reply",
+            "v1.peer.attachReply",
+            "Reply once or reject to a permission request the attach lists (`always` is refused); never to an attach request",
+        )
+        .status(204)
+        .body::<PermissionReplyBody>(g)
+        .error::<ErrorBody>(g, 400, "InvalidRequestError")
+        .error::<ErrorBody>(g, 403, attached)
+        .error::<ErrorBody>(g, 404, "RequestNotFoundError"),
+    ]
+}
+
 fn generator() -> SchemaGenerator {
     let mut settings = SchemaSettings::draft2020_12();
     settings.definitions_path = "/components/schemas".into();
@@ -1113,7 +1318,8 @@ fn generator() -> SchemaGenerator {
 
 pub fn document(version: &str) -> Value {
     let mut g = generator();
-    let ops = operations(&mut g);
+    let mut ops = operations(&mut g);
+    ops.extend(peer_operations(&mut g));
     let error = g.subschema_for::<ErrorBody>();
     let envelope = g.subschema_for::<EventEnvelope>();
     let _ = g.subschema_for::<crate::runtime::McpStatusUpdate>();
@@ -1138,7 +1344,10 @@ pub fn document(version: &str) -> Value {
         "servers": [{ "url": "http://127.0.0.1:4747" }],
         "security": [{ "basic": [] }],
         "components": {
-            "securitySchemes": { "basic": { "type": "http", "scheme": "basic" } },
+            "securitySchemes": {
+                "basic": { "type": "http", "scheme": "basic" },
+                "peerBearer": { "type": "http", "scheme": "bearer", "description": "A peer grant's cyp_ token, on the peer listener only" },
+            },
             "schemas": schemas,
         },
         "paths": paths,
@@ -1177,8 +1386,14 @@ fn operation(o: &Op, error: &Schema, envelope: &Schema) -> Value {
         responses.insert(status.to_string(), json!({ "description": description, "content": { "application/json": { "schema": schema } } }));
     }
     responses.insert("default".into(), json!({ "description": "Tagged error", "content": { "application/json": { "schema": error } } }));
+    if o.peer && o.path.starts_with("/peer/attach/{sessionID}/") {
+        parameters.push(json!({ "name": "X-Cyber-Attach", "in": "header", "required": true, "schema": { "type": "string" } }));
+    }
     let mut out = json!({ "operationId": o.id, "summary": o.summary, "tags": [group], "parameters": parameters, "responses": responses });
-    if o.method != "get"
+    if o.peer {
+        out["security"] = json!([{ "peerBearer": [] }]);
+        out["x-cyber-listener"] = json!("peer");
+    } else if o.method != "get"
         && let Some(params) = out["parameters"].as_array_mut()
     {
         params.push(json!({ "name": "Idempotency-Key", "in": "header", "required": false, "schema": { "type": "string" } }));
@@ -1206,6 +1421,14 @@ pub fn lookup(id: &str) -> Option<(&'static str, &'static str)> {
 /// Every operation as `(method, path)`, for route coverage tests.
 pub fn routes() -> Vec<(&'static str, &'static str)> {
     operations(&mut generator())
+        .into_iter()
+        .map(|o| (o.method, o.path))
+        .collect()
+}
+
+/// Every peer listener operation as `(method, path)`, for route coverage tests.
+pub fn peer_routes() -> Vec<(&'static str, &'static str)> {
+    peer_operations(&mut generator())
         .into_iter()
         .map(|o| (o.method, o.path))
         .collect()

@@ -10,7 +10,7 @@ A model-independent, local-first coding agent: a durable server owns your sessio
 - **Other agents can drive whole Sessions.** `cyber mcp serve` lets Claude Code, Codex or another MCP client create, prompt, wait on and interrupt Cyber Sessions, with idempotent receipts and a Mode ceiling. All 10 tools ship, including listing, sending and reading cross-session messages. `claude mcp serve` [exposes Claude Code's tools][C4], and Codex [removed its MCP server][X5]. Partial: unattended approval rules and the recursion-depth markers for hook and PTY processes remain.
 - **Recovery and confinement.** Shadow-git snapshots restore files without overwriting your own edits. Commands run in an OS sandbox on macOS and Linux (Windows is incomplete).
 - **Open contracts.** Behavior is specified as [OpenSpec requirements](openspec/specs) tagged by phase and validated in CI, and implementation evidence is published ([P1](docs/implementation/p1-status.md), [P2](docs/implementation/p2-status.md)).
-- **Many agents, one server.** Subagents run as real child Sessions (in the background or in their own worktree), workflows fan out dozens of agents with fair scheduling across runs, and every agent's transcript stays inspectable. Sessions on one server talk to each other ([how](#sessions-talking-to-each-other)). Agent teams and messaging between machines are not built yet.
+- **Many agents, one server.** Subagents run as real child Sessions (in the background or in their own worktree), workflows fan out dozens of agents with fair scheduling across runs, and every agent's transcript stays inspectable. Sessions talk to each other on one server ([how](#sessions-talking-to-each-other)) and across your own machines over direct peers ([how](#messaging-across-machines)). Agent teams are not built yet.
 - **A full terminal UI.** 18 themes with a live switcher, Markdown with highlighted code, a responsive sidebar with a context-window bar (tokens used, auto-compact point, cost), the MCP servers and machine stats (CPU, memory, disk), the `Ctrl+P` palette, a file explorer, a workflows monitor, Usage/Stats tabs (also as `cyber stats`), and `/rename` to name a Session and resume it later by title.
 
 ## Screenshots
@@ -175,7 +175,45 @@ The receiving side stays in control. `messaging.inbound` rules (and a per-Sessio
 ./target/debug/cyber stats --by origin                  # usage split by user, session, client, job and mcp
 ```
 
-The same operations are on HTTP (`/api/v1/messaging/*`), the TypeScript SDK (`client.messaging`) and `cyber mcp serve` (`cyber_message_list`, `cyber_message_send`, `cyber_message_history`), and the TUI shows received messages, `✉ N queued · M held` in the footer and the `/messages` history view. Messaging between machines (`name@machine`) fails with `AccountRequiredError` until direct peers ship. Details: [cross-session messaging](docs/local-core-guide.md#cross-session-messaging).
+The same operations are on HTTP (`/api/v1/messaging/*`), the TypeScript SDK (`client.messaging`) and `cyber mcp serve` (`cyber_message_list`, `cyber_message_send`, `cyber_message_history`), and the TUI shows received messages, `✉ N queued · M held` in the footer and the `/messages` history view. Sessions on your other machines are reached as `name@machine` ([below](#messaging-across-machines)). Details: [cross-session messaging](docs/local-core-guide.md#cross-session-messaging).
+
+### Messaging across machines
+
+Your own machines can message each other's Sessions directly, with no account or relay: a Session on `laptop` sends to `migration@desk`, `list_sessions` lists desk's Sessions as `<name>@desk`, and `watch_session` and `cyber attach migration@desk` work on them. Each server that should receive opens a second, separate listener (`peers.listen`), which serves only `/api/v1/peer/*`; the main API stays on loopback.
+
+Pair two machines once. On the receiving machine, put the listener in user config (`~/.config/cyber/cyber.jsonc`; `peers` is refused in project, local, environment and `--config` layers) and invite the other one:
+
+```jsonc
+// desk: user config
+{ "peers": { "listen": { "address": "0.0.0.0:4748" }, "machine": "desk" } }
+```
+
+```bash
+desk$   cyber peers invite laptop             # prints a one-line pairing code, once
+laptop$ cyber peers add desk 'cyberpeer://desk-host.local:4748/?machine=desk&fp=sha256:…&t=cyp_…'
+laptop$ cyber peers test desk                 # machine, version, scopes and latency
+laptop$ cyber messages send migration@desk "is the schema migration done?" --from review   # as laptop's Session `review`
+desk$   cyber peers list                      # grants, and which peers cannot be replied to
+```
+
+The code carries the listener's URL, its key fingerprint and a 256-bit token. For a listener on all interfaces the URL names this host's LAN name (its host name on `.local`, here `desk-host`), which `peers.machine` does not change; when the other machine cannot resolve it, invite again with `--host <IP or name>`. `cyber peers add` tests it before storing anything, pins the fingerprint, writes `peers.remotes` and keeps the token in the OS keyring (or `{env:NAME}` with `--token-env NAME` on headless machines; where no keyring exists it falls back to an owner-only file and warns). A grant goes one way: to let desk reply, run `cyber peers invite desk` on laptop and `cyber peers add laptop '<code>'` on desk. `cyber peers discover` lists machines that publish themselves over mDNS (`peers.mdns: true`, off by default); discovery never pairs or trusts anything by itself. `cyber peers revoke <name>` on the receiver ends a grant at once (its next request is refused and its open attach streams end), `cyber peers rm <name>` forgets a remote, `cyber peers invite <name> --rotate-key` replaces the listener's key (every pairing must then be redone), and `cyber doctor` reports the listener, its fingerprint, the active grants and the remotes whose token is in the file fallback.
+
+**Over an SSH tunnel.** Without a LAN or VPN between the machines, keep the listener on loopback and forward its port. Plain HTTP is allowed only on a loopback address, and the tunnel provides the encryption:
+
+```jsonc
+// desk: user config
+{ "peers": { "listen": { "address": "127.0.0.1:4748", "tls": false }, "machine": "desk" } }
+```
+
+```bash
+laptop$ ssh -N -L 4748:127.0.0.1:4748 desk   # keep this running
+desk$   cyber peers invite laptop             # cyberpeer://127.0.0.1:4748/?…&tls=0
+laptop$ cyber peers add desk '<code>'         # reaches desk through the forwarded port
+```
+
+**Security defaults.** No listener opens unless `peers.listen` is set, and it fails closed: with an invalid setting, `tls: false` off loopback, a bad key or a busy port it stays closed and the main API starts without it. Off loopback it serves only TLS 1.3 with a self-signed key in `<state>/peer-tls/`, and senders accept only the certificate whose public key matches the pinned fingerprint. Requests with an `Origin` header (browser pages) are refused, the local password is not accepted there and grant tokens are not accepted on the main API. Grants are stored as SHA-256 hashes, scoped to `message` unless invited with `--scope attach`, can expire (`--expires 7d`), and are limited to 120 requests a minute. The listener serves only HTTP/1.1, at most 64 connections at once, closes a connection that sends no request within 10 seconds, and answers `429` to an address that presented 30 invalid tokens in a minute. The receiver names every sender after the grant that authenticated it (`review@laptop`), never after the request, and treats it as off-machine: messages are held until the user releases them (only a `messaging.inbound` `deliver` pattern naming the peer, such as `*@laptop`, delivers instead; `*` and other patterns without `@` never do), `message.send` asks, and an attach raises `remote.attach` in that Session (default `ask`, up to 2 minutes; an attached peer may approve the Session's requests only once, never `always`). A peer sees, and can address, only the Sessions that would accept its messages. Size, rate and chain limits apply as on one machine, with all Sessions of one grant counted as one sender. A peer that does not answer within 5 seconds is listed offline and a send to it fails with `PeerUnreachableError`; nothing is queued for later. A peer with messaging turned off answers `ServiceUnavailableError` instead. A held message's outcome is polled by the sender (5 s backing off to every 5 min, for up to 7 days, then `expired`), and resumes after a restart. Tokens match the `cyp_` redaction pattern and never reach logs or transcripts.
+
+In the TUI, a message from another machine reads `from review@laptop`, its held card says "from another machine", `/messages` has a machine column, and the sidebar shows a Peers line (`desk ●  nas ○`) when remotes exist. The peer routes are in the OpenAPI document under group `peer` and in the TypeScript SDK (`client.peer`, with the grant's token as `auth: { type: "account", token }`); the local management routes are `client.peers`. Details: the [direct peers guide](docs/peers.md) and the [feature reference](docs/features.md) (Direct peers). Accepted by hand on 2026-10-19 with two real servers on one macOS host (TLS on loopback, scripted provider); the OS keyring path, the SSH-tunnel flow, two physical machines and Linux/Windows runs are not yet demonstrated ([limits](docs/peers.md#evidence-and-limits)).
 
 ## What it does
 
@@ -185,7 +223,7 @@ The same operations are on HTTP (`/api/v1/messaging/*`), the TypeScript SDK (`cl
 | Sessions | Durable admission, streaming, interrupt/resume, crash recovery, compaction; named Sessions (`/rename`, `cyber sessions rename`) resumed by title | [Naming and resuming](docs/local-core-guide.md#naming-and-resuming-sessions) |
 | Safety | Workspace trust, permission rules, protected paths, credential masking, macOS/Linux sandbox | Windows enforcement partial |
 | Recovery | Shadow-git snapshots, restore preserving user edits, backup and retention | Broader rewind UI pending |
-| Multiple agents | Subagents as child Sessions (`agent` tool, `/subtask`, background, isolated worktrees, `/agent`, `/tasks`); custom agent profiles with their own model, tools and skills; workflows fanning out many agents; several workflow runs at once; other agents driving Sessions over `cyber mcp serve`; Sessions on one server messaging each other (`send_message`, `watch_session`, `cyber messages`, `/messages`) | Subagents partial; messaging between machines (direct peers) and agent teams not yet |
+| Multiple agents | Subagents as child Sessions (`agent` tool, `/subtask`, background, isolated worktrees, `/agent`, `/tasks`); custom agent profiles with their own model, tools and skills; workflows fanning out many agents; several workflow runs at once; other agents driving Sessions over `cyber mcp serve`; Sessions messaging each other on one server and across your machines (`send_message`, `watch_session`, `cyber messages`, `/messages`, `cyber peers`, `cyber attach <session>@<peer>`) | Subagents partial; the Relay transport and agent teams not yet |
 | Loops (P2) | `/loop 5m <prompt>` on an interval or self-paced (`schedule_wakeup`), queued without interrupting you; `--max`, `--for`, `--until "<cmd>"`, budgets, overlap skip/coalesce; quiet iterations collapse; survives a server restart | [Guide](docs/local-core-guide.md#loops-p2-m24); in-session cron and persistent `cyber loops` schedules not yet |
 | Workflows (P2) | QuickJS sandbox, `agent()`/`parallel()`/`pipeline()`, determinism guards, durable replay, budgets, model tiers, parallel runs with fair scheduling and a queue | [Guide](docs/local-core-guide.md#workflows-p2-m21); `ask()`, `exec --workflow` not yet |
 | MCP client | stdio and remote servers, OAuth, resources, prompts, elicitation, roots | WebSocket not implemented |

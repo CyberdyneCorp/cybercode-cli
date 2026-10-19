@@ -224,6 +224,8 @@ pub enum Command {
     },
     /// Run one prompt non-interactively (alias: cyber -p).
     Exec(Box<ExecArgs>),
+    /// Open the TUI on a Session of a paired machine: cyber attach <session>@<peer>.
+    Attach(crate::commands::attach::AttachArgs),
     /// Review uncommitted changes, a range, a commit or a pull request.
     Review(Box<ReviewArgs>),
     /// Check out a pull request and resume the Session linked to it.
@@ -242,6 +244,11 @@ pub enum Command {
     },
     /// Send one request to the server API.
     Api(ApiArgs),
+    /// Pair with other machines' cyber servers to message their Sessions.
+    Peers {
+        #[command(subcommand)]
+        cmd: crate::commands::peers::PeersCmd,
+    },
     /// Send messages between Sessions and read their message history.
     Messages {
         #[command(subcommand)]

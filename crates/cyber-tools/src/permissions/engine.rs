@@ -449,17 +449,7 @@ impl Policy {
     /// asking. Wildcard actions (`"permissions": "allow"`) and repository, agent and
     /// Session rules leave it at `ask`.
     fn boundary_effect(&self, req: &Request, ruled: Effect) -> Effect {
-        let explicit: Vec<Rule> = self
-            .rules
-            .iter()
-            .filter(|rule| {
-                rule.action == req.action && (rule.effect != Effect::Allow || trusted(rule))
-            })
-            .cloned()
-            .collect();
-        let explicit_allow =
-            ruled == Effect::Allow && request_effect(&explicit, req) == Effect::Allow;
-        if explicit_allow || self.saved_allows(req) {
+        if explicit_allow(&self.rules, req, ruled) || self.saved_allows(req) {
             Effect::Allow
         } else {
             Effect::Ask
@@ -543,21 +533,7 @@ impl Policy {
 
     /// Explicit denies from user, global or command-line layers cannot be widened.
     fn ceiling_denies(&self, req: &Request) -> bool {
-        let ceilings: Vec<Rule> = self
-            .rules
-            .iter()
-            .filter(|r| {
-                r.effect == Effect::Deny
-                    && !r.source.starts_with("project:")
-                    && r.source != "default"
-                    && r.source != "session"
-                    && !r.source.starts_with("agent:")
-            })
-            .cloned()
-            .collect();
-        req.resources.iter().any(|res| {
-            evaluate_scoped(&ceilings, &req.action, res, req.tool.as_deref()).0 == Effect::Deny
-        })
+        ceiling_denies(&self.rules, req)
     }
 
     pub(super) fn saved_allows(&self, req: &Request) -> bool {
@@ -621,6 +597,58 @@ impl Policy {
                     && rule_matches(r, &req.action, &path, req.tool.as_deref())
             })
         })
+    }
+}
+
+/// A deny from a user, global, command-line or managed layer, which no later layer lifts.
+fn ceiling_denies(rules: &[Rule], req: &Request) -> bool {
+    let ceilings: Vec<Rule> = rules
+        .iter()
+        .filter(|r| {
+            r.effect == Effect::Deny
+                && !r.source.starts_with("project:")
+                && r.source != "default"
+                && r.source != "session"
+                && !r.source.starts_with("agent:")
+        })
+        .cloned()
+        .collect();
+    req.resources.iter().any(|res| {
+        evaluate_scoped(&ceilings, &req.action, res, req.tool.as_deref()).0 == Effect::Deny
+    })
+}
+
+/// Whether `ruled` (the rules' effect on `req`) is an `allow` that an explicit rule for
+/// `req.action` itself from a trusted layer gives: not a wildcard action, not a
+/// repository, agent or Session rule.
+fn explicit_allow(rules: &[Rule], req: &Request, ruled: Effect) -> bool {
+    let explicit: Vec<Rule> = rules
+        .iter()
+        .filter(|rule| rule.action == req.action && (rule.effect != Effect::Allow || trusted(rule)))
+        .cloned()
+        .collect();
+    ruled == Effect::Allow && request_effect(&explicit, req) == Effect::Allow
+}
+
+/// `action` on `resource` as a boundary no Mode crosses, such as `remote.attach`
+/// (`cross-session-messaging` → Peer attach): `deny` when any rule (or a user ceiling)
+/// denies it, `allow` only for an explicit `allow` of that action from a user, global,
+/// command-line or managed layer, else `ask`. A blanket `"permissions": "allow"`, an
+/// `"*": "allow"` action and repository, agent or Session rules leave it at `ask`.
+pub fn boundary_evaluate(rules: &[Rule], action: &str, resource: &str) -> Effect {
+    let req = Request {
+        action: action.into(),
+        resources: vec![resource.into()],
+        sandbox_boundary: true,
+        ..Request::default()
+    };
+    let ruled = request_effect(rules, &req);
+    if ruled == Effect::Deny || ceiling_denies(rules, &req) {
+        Effect::Deny
+    } else if explicit_allow(rules, &req, ruled) {
+        Effect::Allow
+    } else {
+        Effect::Ask
     }
 }
 
@@ -1027,6 +1055,67 @@ mod tests {
             Decision::Allow,
             "exact allow lifts protection"
         );
+    }
+
+    /// Regression (`cross-session-messaging` → Peer attach): `remote.attach` was allowed
+    /// by any rule evaluation that came out `allow`, a blanket `"permissions": "allow"`
+    /// and a repository rule included, so an attach grant took over a Session unasked.
+    /// Only an explicit user-level `remote.attach` allow skips the prompt; a deny from any
+    /// layer denies.
+    #[test]
+    fn remote_attach_needs_an_explicit_user_allow() {
+        let with = |extra: Vec<Rule>| {
+            let mut rules = defaults(&[], true);
+            rules.extend(extra);
+            rules
+        };
+        let attach = |rules: &[Rule]| boundary_evaluate(rules, "remote.attach", "peer:laptop");
+        for rule in [
+            Rule::new("*", "*", Effect::Allow, "global:x"),
+            Rule::new(
+                "remote.attach",
+                "*",
+                Effect::Allow,
+                "project:/repo/cyber.jsonc",
+            ),
+            Rule::new("remote.attach", "*", Effect::Allow, "agent:build"),
+            Rule::new("remote.attach", "peer:laptop", Effect::Allow, "session"),
+        ] {
+            let source = rule.source.clone();
+            assert_eq!(attach(&with(vec![rule])), Effect::Ask, "{source}");
+        }
+        assert_eq!(attach(&with(vec![])), Effect::Ask);
+        let user = Rule::new("remote.attach", "peer:laptop", Effect::Allow, "global:x");
+        assert_eq!(attach(&with(vec![user.clone()])), Effect::Allow);
+        assert_eq!(
+            boundary_evaluate(&with(vec![user.clone()]), "remote.attach", "peer:tablet"),
+            Effect::Ask
+        );
+        for deny in [
+            Rule::new(
+                "remote.attach",
+                "*",
+                Effect::Deny,
+                "project:/repo/cyber.jsonc",
+            ),
+            Rule::new("*", "*", Effect::Deny, "global:x"),
+        ] {
+            let source = deny.source.clone();
+            assert_eq!(
+                attach(&with(vec![user.clone(), deny])),
+                Effect::Deny,
+                "{source}"
+            );
+        }
+        // A user deny is a ceiling a later repository allow does not lift.
+        let ceiling = Rule::new("remote.attach", "*", Effect::Deny, "global:x");
+        let lifted = Rule::new(
+            "remote.attach",
+            "*",
+            Effect::Allow,
+            "project:/r/cyber.jsonc",
+        );
+        assert_eq!(attach(&with(vec![ceiling, lifted])), Effect::Deny);
     }
 
     /// Regression (`sandbox` → Escalation requests): a blanket `allow` (also an

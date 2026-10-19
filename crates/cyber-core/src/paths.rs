@@ -100,6 +100,11 @@ impl Paths {
     pub fn mcp_auth_file(&self) -> PathBuf {
         self.data.join("mcp-auth.json")
     }
+
+    /// Owner-only peer tokens where no OS keyring holds them, keyed `peer:<name>`.
+    pub fn peer_tokens_file(&self) -> PathBuf {
+        self.data.join("peers-secrets.json")
+    }
 }
 
 /// Where the database lives.

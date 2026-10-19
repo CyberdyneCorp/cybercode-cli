@@ -23,6 +23,8 @@ mod mcp_serve;
 mod memory;
 mod messaging;
 pub mod openapi;
+pub mod peer;
+mod peers;
 mod plugins;
 mod pty;
 pub mod remote_tools;
@@ -61,7 +63,7 @@ pub use memory::{
 };
 #[cfg(unix)]
 pub use serve::serve_unix;
-pub use serve::{EmbeddedClient, PeerAddr, serve_tcp};
+pub use serve::{EmbeddedClient, PeerAddr, PeerLimits, serve_peer, serve_peer_with, serve_tcp};
 pub use service::ServiceControl;
 
 /// How a request reached the server.
@@ -616,6 +618,7 @@ pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router 
         .merge(memory::routes())
         .merge(messaging::routes())
         .merge(loops::routes())
+        .merge(peers::routes())
         .merge(usage::routes())
         .merge(vcs::routes())
         .merge(system::routes())

@@ -89,6 +89,7 @@ pub fn top(app: &App, width: usize) -> Vec<Line<'static>> {
     context(app, width, &mut out);
     workflows(app, width, &mut out);
     mcp(app, width, &mut out);
+    peers(app, width, &mut out);
     lsp(app, width, &mut out);
     machine(app, width, &mut out);
     files(app, width, &mut out);
@@ -408,6 +409,31 @@ fn mcp_note(server: &McpServer) -> Option<String> {
         "failed" => server.error.clone(),
         _ => None,
     }
+}
+
+/// `Peers  desk ●  laptop ○`: the remotes and whether each answered, only when there are
+/// some; the MCP section above is unchanged.
+fn peers(app: &App, width: usize, out: &mut Vec<Line<'static>>) {
+    let t = &app.theme;
+    let Some(remotes) = app.sidebar.peers.ready().filter(|r| !r.is_empty()) else {
+        return;
+    };
+    let bold = Style::default().fg(t.text).add_modifier(Modifier::BOLD);
+    let mut spans = vec![Span::styled("Peers", bold)];
+    for remote in remotes {
+        let (dot, color) = if remote.online {
+            ("●", t.success)
+        } else {
+            ("○", t.text_subtle)
+        };
+        spans.push(Span::styled(
+            format!("  {}", remote.name),
+            Style::default().fg(t.text),
+        ));
+        spans.push(Span::styled(format!(" {dot}"), Style::default().fg(color)));
+    }
+    out.push(Line::default());
+    out.extend(wrap(Line::from(spans), width));
 }
 
 fn lsp(app: &App, width: usize, out: &mut Vec<Line<'static>>) {

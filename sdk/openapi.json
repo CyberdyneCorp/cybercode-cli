@@ -19,6 +19,11 @@
       "basic": {
         "type": "http",
         "scheme": "basic"
+      },
+      "peerBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "A peer grant's cyp_ token, on the peer listener only"
       }
     },
     "schemas": {
@@ -8260,6 +8265,11 @@
             "type": "string",
             "const": "local",
             "description": "Another root Session on this server."
+          },
+          {
+            "type": "string",
+            "const": "peer",
+            "description": "A Session of a configured peer (`X@P`), resolved by that peer."
           }
         ],
         "description": "How the caller reaches a Session."
@@ -8281,6 +8291,11 @@
             "type": "string",
             "const": "waiting_input",
             "description": "A permission request or question of the Session waits for a client."
+          },
+          {
+            "type": "string",
+            "const": "offline",
+            "description": "A configured peer that did not answer: one `*@<peer>` entry."
           }
         ],
         "description": "What a reachable Session is doing."
@@ -8325,7 +8340,7 @@
           },
           "to": {
             "type": "string",
-            "description": "The target's address (`ses_` ID, subagent or Session name)."
+            "description": "The target's address (`ses_` ID, subagent or Session name), or `<session>@<peer>`\nfor a Session of a configured peer (which needs `from`)."
           },
           "text": {
             "type": "string",
@@ -8480,6 +8495,96 @@
         ],
         "additionalProperties": true
       },
+      "PeerErrorBody": {
+        "type": "object",
+        "properties": {
+          "_tag": {
+            "$ref": "#/components/schemas/PeerErrorTag"
+          },
+          "message": {
+            "type": "string"
+          },
+          "peer": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The remote name of `peers.remotes` (all but `PeerScopeError`)."
+          },
+          "cause": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What failed (`PeerUnreachableError`)."
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PeerAuthReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why the peer refused (`PeerAuthError`)."
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PeerScope"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The scope the grant lacks (`PeerScopeError`)."
+          }
+        },
+        "required": [
+          "_tag",
+          "message"
+        ],
+        "description": "The body of a direct peer failure (`cross-session-messaging` → Direct peer transport):\n`PeerUnreachableError` and `PeerAuthError` (`502`), `PeerNotConfiguredError` (`404`)\nand, on the peer listener, `PeerScopeError` (`403`)."
+      },
+      "PeerErrorTag": {
+        "type": "string",
+        "enum": [
+          "PeerUnreachableError",
+          "PeerAuthError",
+          "PeerNotConfiguredError",
+          "PeerScopeError"
+        ],
+        "description": "The `_tag` of a direct peer failure."
+      },
+      "PeerAuthReason": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "fingerprint_mismatch",
+            "description": "The peer presented a certificate whose SPKI hash is not the pinned fingerprint;\nno request body was sent."
+          },
+          {
+            "type": "string",
+            "const": "unauthorized",
+            "description": "The peer answered `401`: the token is unknown, revoked or expired."
+          },
+          {
+            "type": "string",
+            "const": "scope",
+            "description": "The peer answered `403 PeerScopeError`: the grant lacks the route's scope."
+          }
+        ],
+        "description": "Why a peer refused this machine's request, or why its certificate was refused."
+      },
+      "PeerScope": {
+        "type": "string",
+        "enum": [
+          "message",
+          "attach"
+        ],
+        "description": "A grant scope (`message`, `attach`)."
+      },
       "WatchSession": {
         "type": "object",
         "additionalProperties": false,
@@ -8614,11 +8719,11 @@
           },
           "origin_kind": {
             "type": "string",
-            "description": "`session` or `client`; an open set."
+            "description": "`session`, `client` or `peer`; an open set."
           },
           "outcome": {
             "type": "string",
-            "description": "`delivered`, `held`, `refused`, `released` or `dropped`."
+            "description": "`delivered`, `held`, `refused`, `released` or `dropped`; a send to a peer that\nfailed on the network is `failed`, and one the peer still held after 7 days is\n`expired`."
           },
           "reason": {
             "type": [
@@ -8665,6 +8770,20 @@
             "type": "integer",
             "format": "int64",
             "description": "The event that last changed this record."
+          },
+          "remote_peer": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The other machine of a message between direct peers: the remote's name on the\nsender, the grant's name on the target."
+          },
+          "remote_session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Session on the other machine."
           }
         },
         "required": [
@@ -9139,6 +9258,260 @@
         "required": [
           "data"
         ]
+      },
+      "Data_PeersOverview": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PeersOverview"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "PeersOverview": {
+        "type": "object",
+        "properties": {
+          "listener": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PeerListenerInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`None` when no peer listener runs (`peers.listen` unset, or it could not open)."
+          },
+          "grants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GrantView"
+            },
+            "description": "Every grant, oldest first, revoked and expired ones included."
+          }
+        },
+        "required": [
+          "grants"
+        ],
+        "description": "`GET /api/v1/peers`."
+      },
+      "PeerListenerInfo": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "`https://<bound address>`, or `http://` for a plain listener on loopback."
+          },
+          "machine": {
+            "type": "string"
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "`sha256:<hex>` of the listener's SubjectPublicKeyInfo."
+          },
+          "tls": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "url",
+          "machine",
+          "fingerprint",
+          "tls"
+        ],
+        "description": "The running peer listener."
+      },
+      "GrantView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "The peer's name on this machine; its senders are named `<session>@<name>`."
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PeerScope"
+            }
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expires_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "last_used_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "revoked_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "active": {
+            "type": "boolean",
+            "description": "Neither revoked nor expired."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "scopes",
+          "created_ms",
+          "active"
+        ],
+        "description": "A grant as listed; never its token or hash."
+      },
+      "Data_Array_of_RemoteReach": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemoteReach"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "RemoteReach": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "online": {
+            "type": "boolean",
+            "description": "It answered within [`LISTING_TIMEOUT`] (the answer may be up to [`LISTING_CACHE`]\nold); `false` also when it has no token."
+          }
+        },
+        "required": [
+          "name",
+          "online"
+        ],
+        "description": "An enabled remote and whether it answered its last listing (`GET /api/v1/peers/remotes`,\nthe TUI sidebar's Peers line)."
+      },
+      "InvitePeer": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The peer's name on this machine (what follows `@` in its senders' addresses)."
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PeerScope"
+            },
+            "description": "Default `[\"message\"]`.",
+            "default": []
+          },
+          "expires_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Unix milliseconds; without it the grant does not expire.",
+            "default": null
+          },
+          "rotate_key": {
+            "type": "boolean",
+            "description": "Replace the listener's key first; every existing pairing must then be redone.",
+            "default": false
+          },
+          "host": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The host the pairing code names; default the bound IP, or this host's LAN name\n(its host name on `.local`) for a listener on all interfaces.",
+            "default": null
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "description": "`POST /api/v1/peers/grants`."
+      },
+      "Data_PeerInvitation": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PeerInvitation"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "PeerInvitation": {
+        "type": "object",
+        "properties": {
+          "grant": {
+            "$ref": "#/components/schemas/GrantView"
+          },
+          "code": {
+            "type": "string",
+            "description": "`cyberpeer://<host>:<port>/?machine=…&fp=…&t=cyp_…`, for `cyber peers add`."
+          },
+          "listener": {
+            "$ref": "#/components/schemas/PeerListenerInfo"
+          }
+        },
+        "required": [
+          "grant",
+          "code",
+          "listener"
+        ],
+        "description": "The created grant and its pairing code, which carries the token and is shown only here."
+      },
+      "Data_PeerRevoked": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PeerRevoked"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "PeerRevoked": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "revoked": {
+            "type": "boolean",
+            "description": "`false` when no active grant had that name."
+          }
+        },
+        "required": [
+          "name",
+          "revoked"
+        ],
+        "description": "`DELETE /api/v1/peers/grants/:name`."
       },
       "Located_Array_of_AgentInfo": {
         "type": "object",
@@ -9752,6 +10125,248 @@
           "truncated"
         ],
         "description": "A file's content, or that it is binary."
+      },
+      "Hello": {
+        "type": "object",
+        "properties": {
+          "machine": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PeerScope"
+            }
+          },
+          "grant": {
+            "type": "string",
+            "description": "The caller's name on this machine."
+          }
+        },
+        "required": [
+          "machine",
+          "version",
+          "fingerprint",
+          "scopes",
+          "grant"
+        ],
+        "description": "`GET /api/v1/peer/hello`: who this machine is and what the caller's grant allows."
+      },
+      "PeerMessage": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The sender's `msgx_` ID; a retry with the same ID returns the first outcome."
+          },
+          "to": {
+            "type": "string",
+            "description": "The target's address on this machine (`ses_` ID or Session name)."
+          },
+          "text": {
+            "type": "string",
+            "description": "Plain UTF-8 text, at most 16384 bytes."
+          },
+          "notify_when_idle": {
+            "type": "boolean",
+            "description": "The sender watches the target itself; accepted for compatibility."
+          },
+          "depth": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "The sending run's MCP recursion depth.",
+            "default": 0
+          },
+          "hops": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "The message's chain hops (the sending run's hops + 1)."
+          },
+          "from_session": {
+            "type": "string",
+            "description": "The sending Session's ID on the calling machine."
+          },
+          "from_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The sending Session's unique title there, if it has one."
+          }
+        },
+        "required": [
+          "id",
+          "to",
+          "text",
+          "hops",
+          "from_session"
+        ],
+        "description": "`POST /api/v1/peer/messages`: one message from a Session of the calling machine."
+      },
+      "PeerSendResult": {
+        "type": "object",
+        "properties": {
+          "message_id": {
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/MessageOutcome"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "limit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The limit a `rate_limited` refusal hit."
+          },
+          "target_session_id": {
+            "type": "string",
+            "description": "The Session the address resolved to on this machine."
+          },
+          "replayed": {
+            "type": "boolean",
+            "description": "The ID was received before; this is that message's outcome."
+          }
+        },
+        "required": [
+          "message_id",
+          "outcome",
+          "target_session_id"
+        ],
+        "description": "The answer to `POST /api/v1/peer/messages`."
+      },
+      "PeerOutcome": {
+        "type": "object",
+        "properties": {
+          "message_id": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string",
+            "description": "`delivered`, `held`, `released`, `dropped` or `refused`."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target_session_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_id",
+          "outcome",
+          "target_session_id"
+        ],
+        "description": "`GET /api/v1/peer/messages/:id`: the current outcome of a message this grant sent."
+      },
+      "PeerSessions": {
+        "type": "object",
+        "properties": {
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReachableSession"
+            },
+            "description": "Addressed as this machine names them (`<name or ses_>`, no `@`); the asker adds\n`@<peer>`."
+          }
+        },
+        "required": [
+          "sessions"
+        ],
+        "description": "The listing a peer answers."
+      },
+      "PeerSessionStatus": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ReachableState"
+          },
+          "last_idle_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When its last run ended (milliseconds since the epoch on that machine)."
+          }
+        },
+        "required": [
+          "session_id",
+          "state"
+        ],
+        "description": "`GET /api/v1/peer/sessions/:id/status`: what a peer Session is doing, for watches."
+      },
+      "Attach": {
+        "type": "object",
+        "properties": {
+          "attach_id": {
+            "type": "string",
+            "description": "Sent as `X-Cyber-Attach` on the other attach routes."
+          },
+          "session_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "attach_id",
+          "session_id"
+        ],
+        "description": "`POST /api/v1/peer/attach/:id`: an approved attach."
+      },
+      "PeerPrompt": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Content"
+            },
+            "description": "Text and image parts only."
+          },
+          "delivery": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Delivery"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Default `steer`."
+          }
+        },
+        "required": [
+          "parts"
+        ],
+        "description": "What a peer may prompt: text and images, as the Session's user."
       },
       "McpToolsChanged": {
         "type": "object",
@@ -15837,7 +16452,7 @@
             }
           },
           "404": {
-            "description": "AddressNotFoundError or SessionNotFoundError",
+            "description": "AddressNotFoundError, SessionNotFoundError, or PeerNotConfiguredError with peer",
             "content": {
               "application/json": {
                 "schema": {
@@ -15872,6 +16487,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "PeerUnreachableError with peer and cause, or PeerAuthError with peer and reason",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PeerErrorBody"
                 }
               }
             }
@@ -15928,7 +16553,7 @@
             }
           },
           "404": {
-            "description": "AddressNotFoundError or SessionNotFoundError",
+            "description": "AddressNotFoundError, SessionNotFoundError, or PeerNotConfiguredError with peer",
             "content": {
               "application/json": {
                 "schema": {
@@ -15953,6 +16578,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "PeerUnreachableError with peer and cause, or PeerAuthError with peer and reason",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PeerErrorBody"
                 }
               }
             }
@@ -16318,6 +16953,180 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/peers": {
+      "get": {
+        "operationId": "v1.peers.list",
+        "summary": "The running peer listener and every peer grant (never a token)",
+        "tags": [
+          "peers"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_PeersOverview"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/peers/remotes": {
+      "get": {
+        "operationId": "v1.peers.remotes",
+        "summary": "The enabled remotes of user config and whether each answered its last listing (asked at most every 15 s, 5 s timeout)",
+        "tags": [
+          "peers"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_RemoteReach"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/peers/grants": {
+      "post": {
+        "operationId": "v1.peers.invite",
+        "summary": "Create a peer grant and return its pairing code, the only time its token is shown",
+        "tags": [
+          "peers"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_PeerInvitation"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ConflictError: no peer listener runs, or an active grant has the name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvitePeer"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/peers/grants/{name}": {
+      "delete": {
+        "operationId": "v1.peers.revoke",
+        "summary": "Revoke a peer grant; its next request is refused",
+        "tags": [
+          "peers"
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_PeerRevoked"
                 }
               }
             }
@@ -16874,6 +17683,959 @@
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/peer/hello": {
+      "get": {
+        "operationId": "v1.peer.hello",
+        "summary": "This machine's name, version and key fingerprint, and the calling grant's name and scopes",
+        "tags": [
+          "peer"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hello"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "peerBearer": []
+          }
+        ],
+        "x-cyber-listener": "peer"
+      }
+    },
+    "/api/v1/peer/messages": {
+      "post": {
+        "operationId": "v1.peer.send",
+        "summary": "Receive a message from a Session of the calling machine (scope message); the sender is named after the grant; idempotent on the grant and message ID",
+        "tags": [
+          "peer"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PeerSendResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PeerScopeError: the grant lacks the route's scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PeerErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "AddressNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "MessageTooLargeError with size and limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RateLimitedError with retryAfterMs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "peerBearer": []
+          }
+        ],
+        "x-cyber-listener": "peer",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PeerMessage"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/peer/messages/{messageID}": {
+      "get": {
+        "operationId": "v1.peer.outcome",
+        "summary": "The current outcome of a message the calling grant sent: delivered, held, released, dropped or refused",
+        "tags": [
+          "peer"
+        ],
+        "parameters": [
+          {
+            "name": "messageID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PeerOutcome"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PeerScopeError: the grant lacks the route's scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PeerErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NotFoundError: the grant sent no such message here",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "peerBearer": []
+          }
+        ],
+        "x-cyber-listener": "peer"
+      }
+    },
+    "/api/v1/peer/sessions": {
+      "get": {
+        "operationId": "v1.peer.sessions",
+        "summary": "Root Sessions the calling grant could message, newest first, at most 50; Locations by workspace name unless peers.share_paths",
+        "tags": [
+          "peer"
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PeerSessions"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PeerScopeError: the grant lacks the route's scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PeerErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "peerBearer": []
+          }
+        ],
+        "x-cyber-listener": "peer"
+      }
+    },
+    "/api/v1/peer/sessions/{sessionID}/status": {
+      "get": {
+        "operationId": "v1.peer.status",
+        "summary": "What one Session the grant can see is doing, for watches",
+        "tags": [
+          "peer"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PeerSessionStatus"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PeerScopeError: the grant lacks the route's scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PeerErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NotFoundError: no such Session is shown to this grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "peerBearer": []
+          }
+        ],
+        "x-cyber-listener": "peer"
+      }
+    },
+    "/api/v1/peer/attach/{sessionID}": {
+      "post": {
+        "operationId": "v1.peer.attachOpen",
+        "summary": "Ask the Session's user for remote.attach (resource peer:<grant>, up to 2 minutes); an approval returns the attach ID (scope attach)",
+        "tags": [
+          "peer"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Attach"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PeerScopeError, or PermissionDeniedError when refused or unanswered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PeerErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NotFoundError: no such Session is shown to this grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "peerBearer": []
+          }
+        ],
+        "x-cyber-listener": "peer"
+      },
+      "delete": {
+        "operationId": "v1.peer.attachClose",
+        "summary": "End this attach",
+        "tags": [
+          "peer"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "OK"
+          },
+          "403": {
+            "description": "PermissionDeniedError: no approved attach ID in X-Cyber-Attach",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "peerBearer": []
+          }
+        ],
+        "x-cyber-listener": "peer"
+      }
+    },
+    "/api/v1/peer/attach/{sessionID}/session": {
+      "get": {
+        "operationId": "v1.peer.attachSession",
+        "summary": "The attached Session, as GET /sessions/:id shows it",
+        "tags": [
+          "peer"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Cyber-Attach",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Session"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PermissionDeniedError: no approved attach ID in X-Cyber-Attach",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "peerBearer": []
+          }
+        ],
+        "x-cyber-listener": "peer"
+      }
+    },
+    "/api/v1/peer/attach/{sessionID}/messages": {
+      "get": {
+        "operationId": "v1.peer.attachMessages",
+        "summary": "The attached Session's transcript, as GET /sessions/:id/messages",
+        "tags": [
+          "peer"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Cyber-Attach",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Message"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PermissionDeniedError: no approved attach ID in X-Cyber-Attach",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "peerBearer": []
+          }
+        ],
+        "x-cyber-listener": "peer"
+      }
+    },
+    "/api/v1/peer/attach/{sessionID}/events": {
+      "get": {
+        "operationId": "v1.peer.attachEvents",
+        "summary": "The attached Session's durable events after `after`; without it, its durable and live events from now on, as the instance stream carries them",
+        "tags": [
+          "peer"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Cyber-Attach",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Server-sent events; each `data` is an EventEnvelope",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PermissionDeniedError: no approved attach ID in X-Cyber-Attach",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "peerBearer": []
+          }
+        ],
+        "x-cyber-listener": "peer"
+      }
+    },
+    "/api/v1/peer/attach/{sessionID}/prompt": {
+      "post": {
+        "operationId": "v1.peer.attachPrompt",
+        "summary": "Prompt the attached Session as its user with text and image parts",
+        "tags": [
+          "peer"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Cyber-Attach",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Receipt"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PermissionDeniedError: no approved attach ID in X-Cyber-Attach",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "peerBearer": []
+          }
+        ],
+        "x-cyber-listener": "peer",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PeerPrompt"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/peer/attach/{sessionID}/interrupt": {
+      "post": {
+        "operationId": "v1.peer.attachInterrupt",
+        "summary": "Interrupt the attached Session's running Drain",
+        "tags": [
+          "peer"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Cyber-Attach",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "OK"
+          },
+          "403": {
+            "description": "PermissionDeniedError: no approved attach ID in X-Cyber-Attach",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "peerBearer": []
+          }
+        ],
+        "x-cyber-listener": "peer"
+      }
+    },
+    "/api/v1/peer/attach/{sessionID}/permissions": {
+      "get": {
+        "operationId": "v1.peer.attachPermissions",
+        "summary": "The attached Session's pending permission requests, attach requests excluded",
+        "tags": [
+          "peer"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Cyber-Attach",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_PendingRequest"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PermissionDeniedError: no approved attach ID in X-Cyber-Attach",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "peerBearer": []
+          }
+        ],
+        "x-cyber-listener": "peer"
+      }
+    },
+    "/api/v1/peer/attach/{sessionID}/permissions/{requestID}/reply": {
+      "post": {
+        "operationId": "v1.peer.attachReply",
+        "summary": "Reply once or reject to a permission request the attach lists (`always` is refused); never to an attach request",
+        "tags": [
+          "peer"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "requestID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Cyber-Attach",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PermissionDeniedError: no approved attach ID in X-Cyber-Attach",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "RequestNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "peerBearer": []
+          }
+        ],
+        "x-cyber-listener": "peer",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PermissionReplyBody"
               }
             }
           }

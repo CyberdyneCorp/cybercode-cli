@@ -15,7 +15,8 @@ use serde_json::{Value, json};
 
 use super::scripted_model::{Reply, ScriptedModel};
 
-const PASSWORD: &str = "mode-app-password";
+/// The local password of the server under test.
+pub const PASSWORD: &str = "mode-app-password";
 
 pub struct ModeApp {
     pub temp: tempfile::TempDir,

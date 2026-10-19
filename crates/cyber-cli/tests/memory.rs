@@ -691,6 +691,8 @@ async fn server_cli_reconciles_paired_reviews_and_retains_receipts_after_cache_l
         build: None,
         binary: None,
         binary_stamp: None,
+        peer_url: None,
+        peer_fingerprint: None,
     };
     std::fs::write(
         paths.state.join("server.json"),

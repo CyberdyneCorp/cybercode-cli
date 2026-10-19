@@ -113,6 +113,22 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         id: "20261019020000_session_loops",
         sql: include_str!("../migrations/20261019020000_session_loops.sql"),
     },
+    Migration {
+        id: "20261020000000_peer_grant",
+        sql: include_str!("../migrations/20261020000000_peer_grant.sql"),
+    },
+    Migration {
+        id: "20261020010000_peer_messages",
+        sql: include_str!("../migrations/20261020010000_peer_messages.sql"),
+    },
+    Migration {
+        id: "20261020020000_peer_outcome_poll",
+        sql: include_str!("../migrations/20261020020000_peer_outcome_poll.sql"),
+    },
+    Migration {
+        id: "20261020030000_peer_watch",
+        sql: include_str!("../migrations/20261020030000_peer_watch.sql"),
+    },
 ];
 
 pub(crate) enum Outcome {

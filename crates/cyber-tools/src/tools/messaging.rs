@@ -128,7 +128,8 @@ async fn list(ctx: &Ctx<'_>) -> Result<String, ToolError> {
     };
     let sessions = runtime
         .messaging()
-        .reachable(Some(&ctx.inv.session_id), directory.as_deref())
+        .list(Some(&ctx.inv.session_id), directory.as_deref())
+        .await
         .map_err(runtime_failed)?;
     Ok(json!({ "sessions": sessions }).to_string())
 }

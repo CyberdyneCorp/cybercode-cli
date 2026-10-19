@@ -1,6 +1,19 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CyberApiError, CyberClientError, isBudgetExceededError, isSessionBusyError, isSessionNotFoundError, isRewindConflictError } from "../src/index.js";
+import {
+  CyberApiError,
+  CyberClientError,
+  errorTags,
+  isBudgetExceededError,
+  isPeerAuthError,
+  isPeerNotConfiguredError,
+  isPeerUnreachableError,
+  isPermissionDeniedError,
+  isSessionBusyError,
+  isSessionNotFoundError,
+  isRewindConflictError,
+  type PeerErrorBody,
+} from "../src/index.js";
 import { json, mockClient } from "./support.js";
 
 test("tagged error bodies reject with CyberApiError", async () => {
@@ -75,4 +88,27 @@ test("BudgetExceededError retains its scope message and typed guard", async () =
   assert.ok(!isSessionBusyError(err));
   assert.equal(err.status, 409);
   assert.match(err.body.message, /ses_parent/);
+});
+
+test("peer failures are tagged errors with their peer fields", async () => {
+  const body: PeerErrorBody = { _tag: "PeerNotConfiguredError", message: "no peer named `nas` is configured", peer: "nas" };
+  const { client } = mockClient(() => json(404, body));
+  const err = await client.messaging.send({ to: "review@nas", text: "hi" }).catch((e: unknown) => e);
+  assert.ok(isPeerNotConfiguredError(err));
+  assert.equal(err.status, 404);
+  assert.equal((err.body as PeerErrorBody).peer, "nas");
+  assert.ok(!isPeerUnreachableError(err) && !isPeerAuthError(err));
+  for (const tag of ["PeerUnreachableError", "PeerAuthError", "PeerNotConfiguredError", "PeerScopeError", "PermissionDeniedError"] as const) {
+    assert.ok(errorTags.includes(tag), tag);
+  }
+});
+
+test("a refused peer attach is a PermissionDeniedError on the peer group", async () => {
+  const body = { _tag: "PermissionDeniedError", message: "remote.attach was refused" };
+  const { client, calls } = mockClient(() => json(403, body), { auth: { type: "account", token: "cyp_pgrx_token" } });
+  const err = await client.peer.attachOpen("ses_migration").catch((e: unknown) => e);
+  assert.ok(isPermissionDeniedError(err));
+  assert.equal(err.status, 403);
+  assert.equal(calls[0]?.url.pathname, "/api/v1/peer/attach/ses_migration");
+  assert.equal(calls[0]?.headers.get("authorization"), "Bearer cyp_pgrx_token");
 });

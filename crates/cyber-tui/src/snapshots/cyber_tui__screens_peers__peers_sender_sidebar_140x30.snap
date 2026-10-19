@@ -1,0 +1,34 @@
+---
+source: crates/cyber-tui/src/screens_peers.rs
+expression: "shot(&mut app, 140, &ids)"
+---
+
+           ██████╗██╗   ██╗██████╗ ███████╗██████╗      ██████╗ ██████╗ ██████╗ ███████╗            review
+          ██╔════╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗    ██╔════╝██╔═══██╗██╔══██╗██╔════╝
+          ██║      ╚████╔╝ ██████╔╝█████╗  ██████╔╝    ██║     ██║   ██║██║  ██║█████╗              Context
+          ██║       ╚██╔╝  ██╔══██╗██╔══╝  ██╔══██╗    ██║     ██║   ██║██║  ██║██╔══╝              window unknown
+          ╚██████╗   ██║   ██████╔╝███████╗██║  ██║    ╚██████╗╚██████╔╝██████╔╝███████╗            $0.00 spent
+           ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝     ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝
+                                                                                                    ▼ MCP
+                                 1.0.0 · local-first coding agent                                   No MCP servers
+                                                                                                    add one: cyber mcp add
+
+                 Agent  Build                                                                       Peers  desk ●  nas ○
+                 Model  main test
+                 Mode   default                                                                     LSP
+                 Path   ~/work/app                                                                  LSPs will activate as files are read
+                 LSP    LSPs will activate as files are read
+
+
+                 Tips
+                 ctrl+p    command palette
+                 ctrl+x b  show or hide the sidebar
+                 ctrl+x m  switch model
+                 ctrl+x l  sessions
+                 ctrl+x h  keys
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃                                                                                                   ~/work/app
+┃ Build · main test · default
+ ~/work/app                                                                $0.00  ctrl+p commands   ● Cyber Code 1.0.0
