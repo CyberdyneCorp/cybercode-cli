@@ -184,6 +184,16 @@ impl ToolScope {
     }
 }
 
+/// How a loop's `--until` check ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckOutcome {
+    /// `None` when the process was killed by a signal or timed out.
+    pub exit_code: Option<i32>,
+    pub timed_out: bool,
+    /// The last lines of its merged output.
+    pub tail: String,
+}
+
 /// A tool offered to the model for one Turn.
 #[derive(Debug, Clone)]
 pub struct ToolDef {
@@ -728,6 +738,44 @@ pub trait ToolHost: Send + Sync {
         _command: &str,
     ) -> BoxFuture<'_, Result<String, String>> {
         Box::pin(async { Err("background shell commands are not supported by this host".into()) })
+    }
+
+    /// Loop limits and the `budgets.loop` default of a Location (`loops-scheduling`).
+    fn loop_settings(
+        &self,
+        _directory: &str,
+    ) -> Result<
+        (
+            cyber_core::loops::LoopSettings,
+            Option<cyber_core::budget::Budget>,
+        ),
+        String,
+    > {
+        Ok((cyber_core::loops::LoopSettings::default(), None))
+    }
+
+    /// Run a loop's `--until` check like a user `!` command (sandboxed, never asking)
+    /// and report its exit code.
+    fn check(
+        &self,
+        _directory: &str,
+        _session_id: &str,
+        _command: &str,
+        _timeout_ms: u64,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<CheckOutcome, String>> {
+        Box::pin(async { Err("checks are not supported by this host".to_string()) })
+    }
+
+    /// Plan a loop iteration's `/command` prompt as the command route does; `None` when
+    /// no command or skill has that name.
+    fn loop_command_plan<'a>(
+        &'a self,
+        _turn: &'a TurnContext,
+        _name: &'a str,
+        _arguments: &'a str,
+    ) -> BoxFuture<'a, Result<Option<super::CommandPlan>, super::CommandPlanError>> {
+        Box::pin(async { Ok(None) })
     }
 
     /// Cross-session messaging settings of a Location (`cross-session-messaging` →

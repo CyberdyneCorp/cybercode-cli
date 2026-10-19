@@ -12,6 +12,7 @@ mod hook_definitions;
 mod hooks;
 mod import_offer;
 mod keys;
+mod loops;
 mod markdown;
 mod memory;
 mod messaging;

@@ -845,6 +845,54 @@ impl ToolHost for BuiltinHost {
         Some(format!("sha256:{:x}", sha2::Sha256::digest(bytes)))
     }
 
+    fn loop_settings(
+        &self,
+        directory: &str,
+    ) -> Result<
+        (
+            cyber_core::loops::LoopSettings,
+            Option<cyber_core::budget::Budget>,
+        ),
+        String,
+    > {
+        let (config, _) = (self.opts.config)(Path::new(directory))?;
+        let budget = cyber_core::budget::Budget::from_config(&config, "loop")?;
+        Ok((
+            cyber_core::loops::LoopSettings::from_config(&config),
+            budget,
+        ))
+    }
+
+    fn check(
+        &self,
+        directory: &str,
+        session_id: &str,
+        command: &str,
+        timeout_ms: u64,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<cyber_server::runtime::CheckOutcome, String>> {
+        let inv = user_invocation(directory, session_id, command);
+        let command = command.to_string();
+        Box::pin(async move {
+            let ctx = self.user_ctx(&inv, cancel).await?;
+            tools::bash::run_check(&ctx, &command, timeout_ms)
+                .await
+                .map_err(user_error)
+        })
+    }
+
+    fn loop_command_plan<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        name: &'a str,
+        arguments: &'a str,
+    ) -> BoxFuture<
+        'a,
+        Result<Option<cyber_server::runtime::CommandPlan>, cyber_server::runtime::CommandPlanError>,
+    > {
+        Box::pin(self.command_plan(turn, name, arguments))
+    }
+
     fn daily_budget(&self, directory: &str) -> Result<Option<cyber_core::budget::Budget>, String> {
         let (config, _) = (self.opts.config)(Path::new(directory))?;
         cyber_core::budget::Budget::from_config(&config, "daily")
@@ -973,6 +1021,13 @@ impl ToolHost for BuiltinHost {
                 !tools::messaging::TOOLS.contains(&d.spec.name.as_str())
                     || *messaging
                         .get_or_init(|| tools::messaging::enabled(self, Path::new(&turn.directory)))
+            })
+            .filter(|d| {
+                // `loops-scheduling`: only while an iteration of an active loop runs.
+                d.spec.name != tools::loops::NAME
+                    || self
+                        .runtime()
+                        .is_some_and(|runtime| runtime.loop_iteration_running(&turn.session_id))
             })
             .filter(|d| {
                 d.spec.name != "powershell"
@@ -1859,6 +1914,15 @@ impl BuiltinHost {
                 tools::messaging::GUIDANCE.into(),
             );
         }
+        if visible.iter().any(|d| {
+            d.spec.name == tools::loops::NAME
+                && d.scope == cyber_server::runtime::ToolScope::Builtin
+        }) {
+            sources.insert(
+                tools::loops::GUIDANCE_KEY.into(),
+                tools::loops::GUIDANCE.into(),
+            );
+        }
         sources
     }
 
@@ -1897,6 +1961,7 @@ impl BuiltinHost {
             AGENT_SKILLS_KEY,
             MCP_INSTRUCTIONS_KEY,
             tools::messaging::GUIDANCE_KEY,
+            tools::loops::GUIDANCE_KEY,
         ] {
             sources
                 .entry(key.into())

@@ -98,6 +98,43 @@ impl ToolHost for AppHost {
         self.builtin.daily_budget(directory)
     }
 
+    fn loop_settings(
+        &self,
+        directory: &str,
+    ) -> Result<
+        (
+            cyber_core::loops::LoopSettings,
+            Option<cyber_core::budget::Budget>,
+        ),
+        String,
+    > {
+        self.builtin.loop_settings(directory)
+    }
+
+    fn check(
+        &self,
+        directory: &str,
+        session_id: &str,
+        command: &str,
+        timeout_ms: u64,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<cyber_server::runtime::CheckOutcome, String>> {
+        self.builtin
+            .check(directory, session_id, command, timeout_ms, cancel)
+    }
+
+    fn loop_command_plan<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        name: &'a str,
+        arguments: &'a str,
+    ) -> BoxFuture<
+        'a,
+        Result<Option<cyber_server::runtime::CommandPlan>, cyber_server::runtime::CommandPlanError>,
+    > {
+        self.builtin.loop_command_plan(turn, name, arguments)
+    }
+
     fn messaging_settings(
         &self,
         directory: Option<&str>,

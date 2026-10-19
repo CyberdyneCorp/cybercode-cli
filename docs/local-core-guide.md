@@ -1046,6 +1046,38 @@ cyber mcp browser cleanup                   # remove profiles no running process
 - **Dev servers.** `bash` (or `powershell`) with `background: true` and `ready_url`, an `http(s)` URL on localhost, starts the command as an owned Job. It returns once `ready_url` answers below HTTP 500 (redirects are not followed: the probe runs outside the sandbox). A call cancelled while it waits stops the Job. A sandboxed dev server with `ready_url` is refused before it starts when the sandbox isolates its loopback from the host, so the check could never connect: always on Windows (the AppContainer), and on Linux (its own network namespace) and macOS (listening is denied) unless `sandbox.network` is `on`. Set `sandbox.network` to `on` or run the Session with `--sandbox full-access` to verify a dev server the agent starts. If the process exits first, or `ready_timeout_seconds` (default 60, at most 600) passes and the Job is stopped, the call fails with the log tail. It then records `startup_failed` evidence that says the page was not tested.
 - **Session end.** Archiving or deleting the Session stops its browser, removes its profile and stops its dev servers without a completion notice, so the Session does not start a Turn.
 
+## Loops (P2 M2.4)
+
+`/loop` re-runs a prompt in the current Session: on an interval, or at a pace the model chooses.
+
+```text
+/loop 5m check the deploy status          # now, then every 5 minutes (minimum 60s)
+/loop 30m /review                         # a command or skill works too
+/loop watch CI until it is green          # self-paced: the model calls schedule_wakeup
+/loop 2m --max 20 --for 1h --until "curl -sf https://staging/health" poll staging
+/loop 10m --overlap coalesce --missed run-once --max-cost 2 summarize new issues
+/loop list                                # Enter on a row stops that loop
+/loop stop [lop_… | all]
+```
+
+- **Iterations are queued input** (`source: "loop"`), so they never interrupt a running Turn; they run when the Session would otherwise go idle. If an iteration is still running when the next tick comes, the tick is skipped (`--overlap skip`, the default) or one tick waits behind it (`coalesce`). A slow iteration never makes ticks drift: the next one is the next multiple of the interval since the loop started.
+- **Self-paced loops** offer the model `schedule_wakeup {delay_seconds, reason, noop}` (delay clamped to 60–3600 s) only while an iteration runs, with a short guidance note. An iteration that ends without calling it completes the loop. In interval loops the tool records only `noop` and the reason.
+- **Quiet checks.** An iteration that reports `noop: true` found nothing new. The TUI collapses consecutive quiet iterations into one `↻ N quiet checks · loop 7xk2` line and shows `↻ loop · next in 4m` in the footer.
+- **Stops.**
+  - `--max N` iterations, or `loops.max_iterations` (default 500) when none is given.
+  - `--for <duration>`.
+  - `--until "<command>"`, run before each iteration, sandboxed in the Location without a permission prompt, like `!` (timeout `loops.until_timeout_seconds`, default 60). The loop stops the first time it exits 0.
+  - A budget: `--max-cost`, `--max-tokens`, `--max-turns` or `--timeout`, else `budgets.loop`. It is checked between iterations.
+  - 3 failed iterations in a row.
+  - `/loop stop`.
+- **Limits.** A Session holds at most `loops.max_per_session` (default 50) active loops.
+- **Restarts.** Loops are `loop.*` events on the Session's stream (`session_loop` indexes their due times), so they survive a server restart:
+  - an iteration cut off by the restart ends `interrupted`;
+  - missed ticks are skipped (`--missed skip`) or one catch-up runs (`run-once`);
+  - a self-paced loop whose wakeup passed runs once.
+- **API:** `GET|POST /api/v1/sessions/{id}/loops` (`POST` takes `{"command": "5m check"}` or the parsed fields), `DELETE /api/v1/sessions/{id}/loops[/{loop_id}]`.
+- **Not yet:** in-session cron tools, persistent `cyber loops add` schedules run by the service, notifications, the `LoopIteration` hook, `--until-goal` (needs goals) and `/loop` in `cyber exec`.
+
 ## Workflows (P2 M2.1)
 
 A Workflow is a JavaScript ES module. It declares a pure-literal `meta` and either a default async function or top-level code, which orchestrates agents through the host API:

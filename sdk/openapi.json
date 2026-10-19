@@ -8693,6 +8693,453 @@
         ],
         "description": "The Session side of a message: `in` in the target, `out` in the sender."
       },
+      "Data_Array_of_LoopState": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LoopState"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "LoopState": {
+        "type": "object",
+        "properties": {
+          "loop_id": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/LoopKind"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "interval_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "overlap": {
+            "$ref": "#/components/schemas/Overlap"
+          },
+          "missed": {
+            "$ref": "#/components/schemas/Missed"
+          },
+          "stop": {
+            "$ref": "#/components/schemas/StopConditions"
+          },
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Budget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "iteration_cap": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string",
+            "description": "`active`, or the [`StopStatus`] that ended it."
+          },
+          "stop_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "ended_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "next_due_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the next iteration is due; `None` while a self-paced iteration runs or after\nthe loop ended."
+          },
+          "inflight": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Inflight"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "wakeup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WakeupState"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The latest `schedule_wakeup` of the in-flight iteration."
+          },
+          "iterations": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "failures": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Consecutive `failed` iterations."
+          },
+          "noop_streak": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Consecutive noop iterations."
+          },
+          "cost_usd": {
+            "type": "number",
+            "format": "double"
+          },
+          "tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "turns": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "history": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IterationRecord"
+            }
+          }
+        },
+        "required": [
+          "loop_id",
+          "kind",
+          "prompt",
+          "overlap",
+          "missed",
+          "stop",
+          "iteration_cap",
+          "status",
+          "created_ms",
+          "iterations",
+          "skipped",
+          "failures",
+          "noop_streak",
+          "cost_usd",
+          "tokens",
+          "turns",
+          "history"
+        ],
+        "description": "A loop as the Session state folds it."
+      },
+      "LoopKind": {
+        "type": "string",
+        "enum": [
+          "interval",
+          "self_paced"
+        ]
+      },
+      "Overlap": {
+        "type": "string",
+        "enum": [
+          "skip",
+          "coalesce"
+        ],
+        "description": "What to do with a tick that arrives while the previous iteration still runs."
+      },
+      "Missed": {
+        "type": "string",
+        "enum": [
+          "skip",
+          "run-once"
+        ],
+        "description": "What to do with ticks missed while the Session was not running."
+      },
+      "StopConditions": {
+        "type": "object",
+        "properties": {
+          "max_iterations": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "for_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "until": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "description": "What stops a loop besides `/loop stop`."
+      },
+      "Inflight": {
+        "type": "object",
+        "properties": {
+          "n": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "started_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "n",
+          "message_id",
+          "started_ms"
+        ],
+        "description": "An iteration that was admitted and has not ended."
+      },
+      "WakeupState": {
+        "type": "object",
+        "properties": {
+          "n": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "delay_seconds": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "reason": {
+            "type": "string"
+          },
+          "noop": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "n",
+          "delay_seconds",
+          "reason",
+          "noop"
+        ]
+      },
+      "IterationRecord": {
+        "type": "object",
+        "properties": {
+          "n": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "message_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`None` for a skipped tick."
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/Outcome"
+          },
+          "noop": {
+            "type": "boolean"
+          },
+          "cost": {
+            "type": "number",
+            "format": "double"
+          },
+          "ended_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "n",
+          "outcome",
+          "noop",
+          "cost",
+          "ended_ms"
+        ],
+        "description": "One ended iteration, as clients list it."
+      },
+      "Outcome": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "completed",
+              "interrupted",
+              "failed"
+            ]
+          },
+          {
+            "type": "string",
+            "const": "skipped_overlap",
+            "description": "A tick that came while the previous iteration still ran (overlap `skip`)."
+          },
+          {
+            "type": "string",
+            "const": "skipped_missed",
+            "description": "Ticks missed while the server was not running (missed-run policy `skip`)."
+          }
+        ],
+        "description": "How an iteration ended."
+      },
+      "CreateLoop": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "command": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "command"
+            ],
+            "description": "`{\"command\": \"5m --max 10 check the deploy\"}`, parsed like `/loop`."
+          },
+          {
+            "$ref": "#/components/schemas/LoopSpec"
+          }
+        ],
+        "description": "`POST /api/v1/sessions/:id/loops`: the `/loop` arguments as typed, or the parsed fields."
+      },
+      "LoopSpec": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "prompt": {
+            "type": "string"
+          },
+          "interval_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "max_iterations": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "for_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "until": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "overlap": {
+            "$ref": "#/components/schemas/Overlap",
+            "default": "skip"
+          },
+          "missed": {
+            "$ref": "#/components/schemas/Missed",
+            "default": "skip"
+          },
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Budget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "description": "A loop to create. `interval_seconds: None` makes it self-paced."
+      },
+      "Data_LoopState": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/LoopState"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "Data_Array_of_string": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
       "Located_Array_of_AgentInfo": {
         "type": "object",
         "properties": {
@@ -15605,6 +16052,268 @@
           },
           "404": {
             "description": "SessionNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/loops": {
+      "get": {
+        "operationId": "v1.session.loops",
+        "summary": "The Session's active loops, then its 20 most recent ended ones, with their last 50 iterations",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_LoopState"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "SessionNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "v1.session.createLoop",
+        "summary": "Create a loop from `/loop` arguments (`command`) or parsed fields; its first iteration is due now",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_LoopState"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError, such as `Loop interval must be at least 60s`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "SessionNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "LoopLimitError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLoop"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "v1.session.stopLoops",
+        "summary": "Stop every active loop of the Session; returns the stopped loop IDs",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "SessionNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/loops/{loopID}": {
+      "delete": {
+        "operationId": "v1.session.stopLoop",
+        "summary": "Stop one active loop; an iteration already admitted still runs",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "loopID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "SessionNotFoundError or LoopNotFoundError",
             "content": {
               "application/json": {
                 "schema": {

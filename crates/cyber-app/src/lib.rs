@@ -271,6 +271,10 @@ impl App {
         // same sweep every 60 s (`cross-session-messaging` → Idle notifications).
         runtime.recover_watches().await.map_err(|e| e.to_string())?;
         runtime.spawn_watch_sweep();
+        // Session loops: end iterations a stopped server cut off, apply the missed-run
+        // policy, then admit due iterations every 5 s (`loops-scheduling`).
+        runtime.recover_loops().await.map_err(|e| e.to_string())?;
+        runtime.spawn_loop_sweep();
         // Index usage stored before the usage ledger existed (resumable, in batches).
         runtime.spawn_usage_backfill();
         let config_for_app = Arc::clone(&config);

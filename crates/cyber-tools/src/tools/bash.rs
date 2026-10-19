@@ -96,6 +96,42 @@ pub(crate) async fn run_user(ctx: &Ctx<'_>, command: &str) -> Result<String, Too
     Ok(output)
 }
 
+/// A loop's `--until` check (`loops-scheduling` → Loop stop conditions): sandboxed like
+/// `!`, never asking; the exit code decides, and the output tail is kept for display.
+pub(crate) async fn run_check(
+    ctx: &Ctx<'_>,
+    command: &str,
+    timeout_ms: u64,
+) -> Result<cyber_server::runtime::CheckOutcome, ToolError> {
+    let shell = shell(&ctx.host.opts.shell, &ctx.location)?;
+    let prepared = crate::sandboxing::prepare_shell(ctx, &shell, command, false).await?;
+    let (capture, ended) = run_process(
+        ctx,
+        prepared,
+        &ctx.location,
+        timeout_ms,
+        Output::Merged,
+        None,
+    )
+    .await?;
+    let tail = String::from_utf8_lossy(&capture.tail)
+        .trim_end()
+        .to_string();
+    match ended {
+        Ended::Exited(exit_code) => Ok(cyber_server::runtime::CheckOutcome {
+            exit_code,
+            timed_out: false,
+            tail,
+        }),
+        Ended::TimedOut => Ok(cyber_server::runtime::CheckOutcome {
+            exit_code: None,
+            timed_out: true,
+            tail,
+        }),
+        Ended::Cancelled | Ended::Handoff | Ended::Handed(_) => Err(ToolError::Aborted),
+    }
+}
+
 /// A user background command (`& cmd`): sandboxed like `!`, never asking, started as a
 /// process Job of the Session. Returns the Job ID.
 pub(crate) async fn run_user_background(ctx: &Ctx<'_>, command: &str) -> Result<String, ToolError> {

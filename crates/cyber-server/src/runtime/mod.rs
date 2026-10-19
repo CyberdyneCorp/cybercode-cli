@@ -53,6 +53,7 @@ mod handoff;
 mod host;
 pub mod instructions;
 mod jobs;
+pub mod loops;
 mod names;
 pub use handoff::Handoff;
 mod process_jobs;
@@ -172,9 +173,9 @@ pub use context::{ContextInputs, Observed as ContextObservation, base_prompt};
 pub use context_meter::ContextMeter;
 pub use events::{AuxiliaryUsage, CompactionTrigger, registry as event_registry};
 pub use host::{
-    AgentInference, CatalogResolver, ChildContinuation, FileDecision, FileDiff, HookEffects,
-    Invocation, LifecycleHook, LifecycleVerdict, LocationGuard, LocationLease, ModelResolver,
-    NoSnapshots, NoTools, Reconciliation, ResolvedModel, RestoreError, RunWorktree,
+    AgentInference, CatalogResolver, CheckOutcome, ChildContinuation, FileDecision, FileDiff,
+    HookEffects, Invocation, LifecycleHook, LifecycleVerdict, LocationGuard, LocationLease,
+    ModelResolver, NoSnapshots, NoTools, Reconciliation, ResolvedModel, RestoreError, RunWorktree,
     SessionEnvelope, SkillSuggestion, Snapshot, Snapshots, ToolDef, ToolHost, ToolOutcome,
     ToolScope, TurnContext, TurnWorktree, WorkflowAgentOutput, WorkflowAgentRequest,
 };
@@ -247,6 +248,12 @@ pub enum RuntimeError {
         reason: &'static str,
         message: String,
     },
+    /// No active loop of the Session has this ID (`loops-scheduling`).
+    #[error("LoopNotFoundError: no active loop {0} in this Session")]
+    LoopNotFound(String),
+    /// The Session already has `loops.max_per_session` active loops.
+    #[error("LoopLimitError: Scheduled task limit reached ({0})")]
+    LoopLimit(u64),
     /// The target refuses this caller (a watch of a Session that refuses its messages,
     /// with the refusal reason); nothing was written.
     #[error("ForbiddenError: {message}")]

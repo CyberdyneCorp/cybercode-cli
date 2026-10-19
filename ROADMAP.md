@@ -82,7 +82,7 @@ The [P1 acceptance audit](docs/implementation/p1-acceptance-audit.md) lists the 
 1. **M2.1 Workflow runtime:** QuickJS sandbox, `agent()/parallel()/pipeline()/phase()`, determinism guards, event-sourced resume, budgets, model tiers (`fast` / `smart` / `verify`). *Status: implemented and accepted end to end with the real binary and a scripted local provider, except the TUI monitor, `ask()`, direct read-only tools, prompt-cache warm-up, `exec --workflow`, Job (`/tasks`) integration, saved-Workflow listing over HTTP and reserved budget enforcement; see [P2 evidence](docs/implementation/p2-status.md).*
 2. **M2.2 Bundled workflows:** review, audit (find → verify), migrate (fan-out with worktrees), research (cross-checked), plan-from-angles.
 3. **M2.3 Goals:** active goal + goal queue, evaluator verdicts, `check` commands, budgets, `exec --goal` exit codes.
-4. **M2.4 Loops & cron:** `/loop` fixed and self-paced, in-session cron, daemon-backed persistent loops.
+4. **M2.4 Loops & cron:** `/loop` fixed and self-paced, in-session cron, daemon-backed persistent loops. **Status: Session loops implemented** (change `implement-m2-4-loops`): fixed-interval and self-paced `/loop` with `schedule_wakeup`, queued delivery with overlap skip/coalesce, noop collapsing, `--max`/`--for`/`--until`/budget stops, restore after restart, HTTP routes and the TUI. In-session cron tools, persistent `cyber loops` schedules, jitter, notifications, loop hooks and `--until-goal` remain.
 5. **M2.5 Agent view & teams:** `cyber agents` dashboard; experimental lead/teammates with a shared task list.
 
 **Exit criteria**

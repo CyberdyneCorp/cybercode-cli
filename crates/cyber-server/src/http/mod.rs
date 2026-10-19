@@ -17,6 +17,7 @@ mod idempotency;
 mod intelligence;
 mod jobs;
 mod jsonrpc;
+mod loops;
 mod mcp;
 mod mcp_serve;
 mod memory;
@@ -614,6 +615,7 @@ pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router 
         .merge(intelligence::routes())
         .merge(memory::routes())
         .merge(messaging::routes())
+        .merge(loops::routes())
         .merge(usage::routes())
         .merge(vcs::routes())
         .merge(system::routes())
