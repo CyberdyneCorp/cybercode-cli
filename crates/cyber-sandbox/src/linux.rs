@@ -76,7 +76,11 @@ pub(crate) fn wrap(
     {
         if path.is_dir() {
             // An empty private overlay must also reject writes, rather than
-            // reporting success for effects that disappear with the sandbox.
+            // reporting success for effects that disappear with the sandbox. Mode 0000
+            // makes listing it fail too, as a denied read, instead of showing it empty.
+            if sealed_tmpfs(&bwrap) {
+                out.extend(["--perms".into(), "0000".into()]);
+            }
             out.extend([
                 "--tmpfs".into(),
                 text(path),
@@ -123,6 +127,32 @@ fn fresh_proc(bwrap: &Path) -> bool {
                 "/dev",
                 "--proc",
                 "/proc",
+                "--",
+                "true",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    })
+}
+
+/// Whether this bubblewrap honours `--perms` for `--tmpfs` (0.6 and later; probed once).
+/// Older ones still hide a denied directory's contents behind an empty overlay.
+fn sealed_tmpfs(bwrap: &Path) -> bool {
+    static WORKS: OnceLock<bool> = OnceLock::new();
+    *WORKS.get_or_init(|| {
+        Command::new(bwrap)
+            .args([
+                "--ro-bind",
+                "/",
+                "/",
+                "--dev",
+                "/dev",
+                "--perms",
+                "0000",
+                "--tmpfs",
+                "/dev/shm",
                 "--",
                 "true",
             ])

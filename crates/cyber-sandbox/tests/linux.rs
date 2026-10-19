@@ -246,6 +246,19 @@ async fn network_off_blocks_everything() {
     assert!(!ok);
 }
 
+/// Regression (`cyber sandbox test` read probe): listing a hidden credential directory
+/// is a denied read, not an empty directory that reads as allowed.
+#[tokio::test]
+async fn hidden_credential_directories_cannot_be_listed() {
+    let s = setup();
+    let l = launch(&s, json!({}), None);
+    let (ok, out) = run(&l, &format!("ls {}", q(&s.home.join(".ssh")))).await;
+    assert!(!ok, "a hidden directory listed: {out}");
+    assert!(!out.contains("id_ed25519"), "{out}");
+    let (ok, out) = run(&l, &format!("ls {}", q(&s.home))).await;
+    assert!(ok && out.contains("notes.txt"), "{out}");
+}
+
 #[tokio::test]
 async fn hidden_credential_directories_reject_writes_without_changing_host_files() {
     let s = setup();
@@ -255,7 +268,12 @@ async fn hidden_credential_directories_reject_writes_without_changing_host_files
         let l = launch(&s, config, None);
         let (ok, output) = run(&l, &format!("printf stolen > {}", q(&target))).await;
         assert!(!ok, "hidden directory accepted a write: {output}");
-        assert!(output.contains("Read-only file system"), "{output}");
+        // A sealed (mode 0000) overlay refuses the lookup; an older bubblewrap's plain
+        // read-only one refuses the write.
+        assert!(
+            output.contains("Permission denied") || output.contains("Read-only file system"),
+            "{output}"
+        );
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "original");
         let fresh = s.home.join(".ssh/new-secret");
         assert!(!run(&l, &format!("touch {}", q(&fresh))).await.0);
