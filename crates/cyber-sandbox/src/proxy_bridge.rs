@@ -25,12 +25,32 @@ pub(super) fn run() -> ExitCode {
         }
         Err(e) => eprintln!("cyber-sandbox-exec: cannot listen for the proxy bridge: {e}"),
     }
-    match Command::new(program).args(&command[1..]).status() {
+    let mut child = match Command::new(program).args(&command[1..]).spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            eprintln!("cyber-sandbox-exec: {program}: {e}");
+            return ExitCode::from(127);
+        }
+    };
+    outlive_termination();
+    match child.wait() {
         Ok(status) => ExitCode::from(exit_code(status)),
         Err(e) => {
             eprintln!("cyber-sandbox-exec: {program}: {e}");
-            ExitCode::from(127)
+            ExitCode::from(1)
         }
+    }
+}
+
+/// A stop sends SIGTERM to the command's process group, which includes this bridge.
+/// Dying then would end the sandbox, killing the command before it handles the signal,
+/// so the bridge ignores it and exits with the command. Set after the spawn, so the
+/// command keeps the default disposition.
+#[allow(unsafe_code)]
+fn outlive_termination() {
+    // SAFETY: SIG_IGN installs no handler code; only this process's disposition changes.
+    unsafe {
+        libc::signal(libc::SIGTERM, libc::SIG_IGN);
     }
 }
 

@@ -871,6 +871,7 @@ dependencies = [
  "cyber-core",
  "futures",
  "git2",
+ "libc",
  "regex",
  "serde_json",
  "tempfile",
