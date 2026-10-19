@@ -493,9 +493,11 @@ pub fn registry() -> EventRegistry {
     super::mcp::register(&mut registry);
     super::memory::register(&mut registry);
     super::messaging::records::register(&mut registry);
+    super::loops::records::register(&mut registry);
     super::workflows::register(&mut registry);
     registry.projector(project);
     registry.projector(super::messaging::records::project);
+    registry.projector(super::loops::records::project);
     crate::worktrees::register(&mut registry);
     registry
 }

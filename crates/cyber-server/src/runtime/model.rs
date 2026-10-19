@@ -402,6 +402,12 @@ pub struct SessionState {
     /// Chain hops of fired idle notices and of input the model caused (a Job's handback
     /// or Monitor line, a delegated prompt, a Workflow summary), by inbox `message_id`.
     pub(crate) notice_hops: BTreeMap<String, u32>,
+    /// The Session's loops by `lop_` ID (`loops-scheduling`), folded from `loop.*` events.
+    pub loops: BTreeMap<String, super::loops::LoopState>,
+    /// Loops with a tick coalesced behind their running iteration (overlap `coalesce`);
+    /// not durable: a restart ends the iteration and the missed-run policy applies.
+    #[serde(skip)]
+    pub(crate) loop_coalesced: BTreeSet<String>,
 }
 
 const MAX_INSTRUCTION_CHARS: usize = 2000;
@@ -588,6 +594,8 @@ impl SessionState {
             finished_seq: 0,
             message_chains: BTreeMap::new(),
             notice_hops: BTreeMap::new(),
+            loops: BTreeMap::new(),
+            loop_coalesced: BTreeSet::new(),
         }
     }
 
@@ -682,6 +690,7 @@ impl SessionState {
                     row.promoted_seq = Some(e.seq);
                 }
             }
+            _ if kind.starts_with("loop.") => super::loops::records::fold(&mut self.loops, e)?,
             _ if kind.starts_with("messaging.") => {
                 super::messaging::records::fold(
                     &mut self.message_chains,

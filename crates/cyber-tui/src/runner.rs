@@ -507,6 +507,7 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
             queued,
             requests,
             messages,
+            loops,
         } => {
             refresh.in_flight = false;
             if session.id != app.session.id || session.seq < app.session.seq {
@@ -517,6 +518,7 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
             app.items = items;
             app.queued = queued;
             app.messaging.set_records(messages);
+            app.loops.replace(loops);
             app.requests = requests;
             app.sync_overlay();
             if std::mem::take(&mut refresh.again) {
@@ -577,6 +579,10 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
                 );
             }
         }
+        Msg::Loops {
+            session_id,
+            choices,
+        } => app.loops_listed(&session_id, choices),
         Msg::Children { session_id, result } => {
             if session_id == app.session.id {
                 match result {
@@ -1229,6 +1235,7 @@ mod mode_tests {
                 queued: Vec::new(),
                 messages: None,
                 requests: Vec::new(),
+                loops: None,
             };
             assert_eq!(
                 apply(&mut app, Ok(snapshot), &mut refresh),
@@ -1261,6 +1268,7 @@ mod mode_tests {
             queued: Vec::new(),
             messages: None,
             requests: Vec::new(),
+            loops: None,
         };
         let actions = apply(&mut app, Ok(snapshot), &mut Refresh::default());
         assert_eq!(actions[0], Action::Refresh);

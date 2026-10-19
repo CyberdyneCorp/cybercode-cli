@@ -327,6 +327,11 @@ export type CreateBody = {
   messaging?: InboundOverride | null;
 };
 
+/** `POST /api/v1/sessions/:id/loops`: the `/loop` arguments as typed, or the parsed fields. */
+export type CreateLoop = {
+  command: string;
+} | LoopSpec;
+
 export type CreateWorktreeBody = {
   /** Generated when omitted. */
   name?: string | null;
@@ -354,12 +359,20 @@ export type Data_Array_of_InboxRow = {
   data: InboxRow[];
 };
 
+export type Data_Array_of_LoopState = {
+  data: LoopState[];
+};
+
 export type Data_Array_of_PendingRequest = {
   data: PendingRequest[];
 };
 
 export type Data_Array_of_ReachableSession = {
   data: ReachableSession[];
+};
+
+export type Data_Array_of_string = {
+  data: string[];
 };
 
 export type Data_AutoOverrideReceipt = {
@@ -404,6 +417,10 @@ export type Data_JobOutput = {
 
 export type Data_LocationInfo = {
   data: LocationInfo;
+};
+
+export type Data_LoopState = {
+  data: LoopState;
 };
 
 export type Data_Message = {
@@ -850,6 +867,13 @@ export type InboxRow = {
   promoted_seq?: number | null;
 };
 
+/** An iteration that was admitted and has not ended. */
+export type Inflight = {
+  n: number;
+  message_id: string;
+  started_ms: number;
+};
+
 export type InputStatus = "pending" | "held" | "promoted" | "refused";
 
 /** What the shares are shares of. */
@@ -877,6 +901,18 @@ export type InterruptedResume = {
 export type InvalidMemory = {
   filename: string;
   diagnostic: string;
+};
+
+/** One ended iteration, as clients list it. */
+export type IterationRecord = {
+  n: number;
+  /** `None` for a skipped tick. */
+  message_id?: string | null;
+  outcome: Outcome;
+  noop: boolean;
+  cost: number;
+  ended_ms: number;
+  reason?: string | null;
 };
 
 export type Job = {
@@ -1176,6 +1212,56 @@ export type LongestSession = {
   duration_ms: number;
 };
 
+export type LoopKind = "interval" | "self_paced";
+
+/** A loop to create. `interval_seconds: None` makes it self-paced. */
+export type LoopSpec = {
+  prompt: string;
+  interval_seconds?: number | null;
+  max_iterations?: number | null;
+  for_seconds?: number | null;
+  until?: string | null;
+  overlap?: Overlap;
+  missed?: Missed;
+  budget?: Budget | null;
+};
+
+/** A loop as the Session state folds it. */
+export type LoopState = {
+  loop_id: string;
+  kind: LoopKind;
+  prompt: string;
+  interval_seconds?: number | null;
+  overlap: Overlap;
+  missed: Missed;
+  stop: StopConditions;
+  budget?: Budget | null;
+  iteration_cap: number;
+  /** `active`, or the [`StopStatus`] that ended it. */
+  status: string;
+  stop_reason?: string | null;
+  created_ms: number;
+  ended_ms?: number | null;
+  /**
+   * When the next iteration is due; `None` while a self-paced iteration runs or after
+   * the loop ended.
+   */
+  next_due_ms?: number | null;
+  inflight?: Inflight | null;
+  /** The latest `schedule_wakeup` of the in-flight iteration. */
+  wakeup?: WakeupState | null;
+  iterations: number;
+  skipped: number;
+  /** Consecutive `failed` iterations. */
+  failures: number;
+  /** Consecutive noop iterations. */
+  noop_streak: number;
+  cost_usd: number;
+  tokens: number;
+  turns: number;
+  history: IterationRecord[];
+};
+
 export type LspState = "starting" | "connected" | "broken";
 
 export type LspStatus = {
@@ -1445,6 +1531,9 @@ export type MessagingPatch = {
   reason?: OverrideReason | null;
 };
 
+/** What to do with ticks missed while the Session was not running. */
+export type Missed = "skip" | "run-once";
+
 export type ModeBody = {
   mode: string;
 };
@@ -1486,6 +1575,12 @@ export type NetworkCapability = {
   kind: "hosts";
   hosts: string[];
 };
+
+/** How an iteration ended. */
+export type Outcome = "completed" | "interrupted" | "failed" | "skipped_overlap" | "skipped_missed";
+
+/** What to do with a tick that arrives while the previous iteration still runs. */
+export type Overlap = "skip" | "coalesce";
 
 /** Why a Session override refuses; the reason a refused sender sees. */
 export type OverrideReason = "non_interactive";
@@ -2370,6 +2465,13 @@ export type StopAccepted = {
   stopping: boolean;
 };
 
+/** What stops a loop besides `/loop stop`. */
+export type StopConditions = {
+  max_iterations?: number | null;
+  for_seconds?: number | null;
+  until?: string | null;
+};
+
 export type StopService = {
   id: string;
 };
@@ -2549,6 +2651,13 @@ export type Vcs = {
 export type Viewport = {
   width: number;
   height: number;
+};
+
+export type WakeupState = {
+  n: number;
+  delay_seconds: number;
+  reason: string;
+  noop: boolean;
 };
 
 /** An idle-notification subscription (`v1.messaging.watch`, `watch_session`). */

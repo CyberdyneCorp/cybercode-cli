@@ -998,6 +998,42 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .query(&["cursor", "limit", "direction", "order"])
         .ok::<Page<crate::runtime::messaging::MessageRecord>>(g)
         .error::<ErrorBody>(g, 404, "SessionNotFoundError"),
+        op(
+            "get",
+            "/sessions/{sessionID}/loops",
+            "v1.session.loops",
+            "The Session's active loops, then its 20 most recent ended ones, with their last 50 iterations",
+        )
+        .ok::<Data<Vec<crate::runtime::loops::LoopState>>>(g)
+        .error::<ErrorBody>(g, 404, "SessionNotFoundError"),
+        op(
+            "post",
+            "/sessions/{sessionID}/loops",
+            "v1.session.createLoop",
+            "Create a loop from `/loop` arguments (`command`) or parsed fields; its first iteration is due now",
+        )
+        .body::<super::loops::CreateLoop>(g)
+        .status(201)
+        .ok::<Data<crate::runtime::loops::LoopState>>(g)
+        .error::<ErrorBody>(g, 400, "InvalidRequestError, such as `Loop interval must be at least 60s`")
+        .error::<ErrorBody>(g, 404, "SessionNotFoundError")
+        .error::<ErrorBody>(g, 409, "LoopLimitError"),
+        op(
+            "delete",
+            "/sessions/{sessionID}/loops",
+            "v1.session.stopLoops",
+            "Stop every active loop of the Session; returns the stopped loop IDs",
+        )
+        .ok::<Data<Vec<String>>>(g)
+        .error::<ErrorBody>(g, 404, "SessionNotFoundError"),
+        op(
+            "delete",
+            "/sessions/{sessionID}/loops/{loopID}",
+            "v1.session.stopLoop",
+            "Stop one active loop; an iteration already admitted still runs",
+        )
+        .ok::<Data<Vec<String>>>(g)
+        .error::<ErrorBody>(g, 404, "SessionNotFoundError or LoopNotFoundError"),
         op("get", "/agents", "v1.agent.list", "Selectable agents")
             .located()
             .ok::<Located<Vec<AgentInfo>>>(g),

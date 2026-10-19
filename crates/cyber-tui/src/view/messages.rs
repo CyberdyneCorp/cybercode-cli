@@ -101,8 +101,17 @@ pub fn transcript(app: &App, width: usize) -> Rendered {
         )));
     }
     let markers = crate::turns::markers(&app.items, app.session.running);
+    let (quiet, hidden) = crate::loops::quiet_runs(&app.items, &app.loops);
     notices(app, None, &mut out);
     for (i, item) in app.items.iter().enumerate() {
+        if hidden.contains(&i) {
+            continue;
+        }
+        if let Some((count, label)) = quiet.get(&i) {
+            out.push(quiet_line(app, *count, label));
+            out.push(Line::default());
+            continue;
+        }
         item_lines(app, item, &mut out);
         out.push(Line::default());
         if let Some(marker) = markers.iter().find(|m| m.after == i) {
@@ -237,12 +246,43 @@ fn item_lines(app: &App, item: &Item, out: &mut Out) {
     }
 }
 
+/// `↻ 6 quiet checks · loop 7xk2`: consecutive iterations that found nothing new.
+fn quiet_line(app: &App, count: usize, label: &str) -> Line<'static> {
+    let t = &app.theme;
+    let checks = if count == 1 { "check" } else { "checks" };
+    Line::from(vec![
+        Span::styled("↻ ", Style::default().fg(t.accent)),
+        Span::styled(
+            format!("{count} quiet {checks} · loop {label}"),
+            Style::default().fg(t.text_muted),
+        ),
+    ])
+}
+
+/// `↻ check the deploy · loop 7xk2 #3`: an iteration's prompt.
+fn iteration_lines(app: &App, id: &str, text: &str) -> Option<Vec<Line<'static>>> {
+    let (label, n) = crate::loops::iteration_label(id)?;
+    let t = &app.theme;
+    let first = text.lines().next().unwrap_or_default().to_string();
+    Some(vec![Line::from(vec![
+        Span::styled("↻ ", Style::default().fg(t.accent)),
+        Span::styled(first, Style::default().fg(t.user)),
+        Span::styled(
+            format!(" · loop {label} #{n}"),
+            Style::default().fg(t.text_muted),
+        ),
+    ])])
+}
+
 /// A received message or an idle notice, drawn as such only when the Session holds its
-/// `in` record or the server named it a notice.
+/// `in` record or the server named it a notice; a loop iteration's prompt.
 fn message_lines(app: &App, item: &Item, width: usize) -> Option<Vec<Line<'static>>> {
-    let Item::User { id, .. } = item else {
+    let Item::User { id, text, .. } = item else {
         return None;
     };
+    if crate::loops::is_iteration(id) {
+        return iteration_lines(app, id, text);
+    }
     if let Some(record) = app.messaging.received(id) {
         return Some(super::messaging::received(app, record, width));
     }

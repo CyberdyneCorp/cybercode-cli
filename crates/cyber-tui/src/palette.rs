@@ -67,6 +67,12 @@ const BUILTINS: &[(&str, &str, Option<&str>, bool)] = &[
     ),
     ("fork", "fork this session", Some("session_fork"), false),
     (
+        "loop",
+        "repeat a prompt on an interval (or self-paced); list, stop",
+        None,
+        true,
+    ),
+    (
         "btw",
         "ask a side question without adding it to the session",
         None,

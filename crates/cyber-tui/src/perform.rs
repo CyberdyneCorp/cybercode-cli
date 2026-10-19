@@ -27,6 +27,8 @@ pub enum Msg {
         requests: Vec<Request>,
         /// The Session's message records; `None` keeps the last ones.
         messages: Option<Vec<crate::messaging::Record>>,
+        /// The Session's loops, read only when the transcript holds loop iterations.
+        loops: Option<Vec<Value>>,
     },
     Cost {
         session_id: String,
@@ -94,6 +96,11 @@ pub enum Msg {
     Children {
         session_id: String,
         result: Result<Vec<Choice>, String>,
+    },
+    /// `/loop list` rows of `session_id`.
+    Loops {
+        session_id: String,
+        choices: Vec<Choice>,
     },
     Sessions(Vec<Choice>),
     Catalog(crate::model::Catalog),
@@ -211,12 +218,26 @@ pub async fn snapshot(client: &Client, id: &str) -> Result<Msg, String> {
                 .filter_map(Request::parse),
         );
     }
+    // Quiet iterations collapse by their noop flags (`loops-scheduling`).
+    let loops = if items
+        .iter()
+        .any(|item| crate::loops::is_iteration(item.id()))
+    {
+        client
+            .get(&format!("/sessions/{id}/loops"))
+            .await
+            .ok()
+            .and_then(|listed| listed["data"].as_array().cloned())
+    } else {
+        None
+    };
     Ok(Msg::Snapshot {
         session,
         items,
         queued,
         requests,
         messages,
+        loops,
     })
 }
 
@@ -779,9 +800,7 @@ pub async fn perform_owned(
         | Action::LoadPlugins { .. }
         | Action::LoadAgents
         | Action::FindFiles(_) => load_choices(client, session, action).await,
-        Action::Workflow(request) => Ok(Msg::Workflow(
-            crate::workflows::perform(client, request).await,
-        )),
+        Action::Loop(_) | Action::Workflow(_) => scheduled(client, action).await,
         Action::SaveTheme(_)
         | Action::SaveProjectTheme(_)
         | Action::SavePreference { .. }
@@ -790,6 +809,17 @@ pub async fn perform_owned(
         | Action::EditFile(_)
         | Action::Quit => Ok(Msg::Done),
         other => converse(client, session, other, context).await,
+    }
+}
+
+/// Repeated and orchestrated work: `/loop` and Workflow Runs.
+async fn scheduled(client: &Client, action: Action) -> Result<Msg, String> {
+    match action {
+        Action::Loop(request) => crate::loops::perform(client, request).await,
+        Action::Workflow(request) => Ok(Msg::Workflow(
+            crate::workflows::perform(client, request).await,
+        )),
+        _ => Ok(Msg::Done),
     }
 }
 

@@ -8,6 +8,7 @@ mod dev_server;
 mod formatters;
 mod fs;
 pub(crate) mod intelligence;
+pub(crate) mod loops;
 mod lsp;
 pub(crate) mod mcp;
 pub(crate) mod memory;
@@ -79,6 +80,7 @@ pub(crate) fn all() -> Vec<Box<dyn Tool>> {
         Box::new(messaging::ListSessions),
         Box::new(messaging::SendMessage),
         Box::new(messaging::WatchSession),
+        Box::new(loops::ScheduleWakeup),
         Box::new(task::TaskStop),
         Box::new(monitor::Monitor),
         Box::new(deliver::Notify),

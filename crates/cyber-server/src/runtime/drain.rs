@@ -106,9 +106,10 @@ pub(crate) async fn run(inner: Arc<Inner>, id: String, forced: bool, cancel: Can
     };
     // `cross-session-messaging` → Idle notifications: the Session went idle.
     let (hops, status) = ended;
-    super::Runtime { inner }
-        .drain_ended(&id, hops, status)
-        .await;
+    let runtime = super::Runtime { inner };
+    // `loops-scheduling`: the iterations this Drain ran end now.
+    runtime.loops_drain_ended(&id, status.as_deref()).await;
+    runtime.drain_ended(&id, hops, status).await;
 }
 
 /// The status line an idle notice reports for a Drain that failed or was interrupted;

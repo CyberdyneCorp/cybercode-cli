@@ -183,6 +183,10 @@ impl From<RuntimeError> for ApiError {
             .with_field("size", size)
             .with_field("limit", limit),
             RuntimeError::Disabled(service) => Self::service_unavailable(service, message),
+            RuntimeError::LoopNotFound(_) => Self::not_found("LoopNotFoundError", message),
+            RuntimeError::LoopLimit(_) => {
+                Self::new(StatusCode::CONFLICT, "LoopLimitError", message)
+            }
             RuntimeError::MessageImmutable(_) => {
                 Self::conflict(message).with_reason("message_immutable")
             }

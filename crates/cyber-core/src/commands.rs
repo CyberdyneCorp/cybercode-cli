@@ -203,6 +203,10 @@ pub const BUILTIN: &[(&str, &str)] = &[
     ("resume", "Open another Session"),
     ("rename", "Rename this Session"),
     (
+        "loop",
+        "Repeat a prompt on an interval or self-paced; /loop list, /loop stop",
+    ),
+    (
         "btw",
         "Ask a side question; the answer is not added to the Session",
     ),

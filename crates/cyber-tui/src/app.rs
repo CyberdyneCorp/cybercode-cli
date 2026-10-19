@@ -184,6 +184,8 @@ pub enum Action {
     Editor(String),
     /// A Workflow monitor read or run operation.
     Workflow(crate::workflows::Request),
+    /// `/loop` (`loops-scheduling`).
+    Loop(crate::loops::LoopRequest),
     /// Open a file in `$VISUAL`/`$EDITOR` (`s` on a Workflow Run: its script).
     EditFile(String),
     Quit,
@@ -199,6 +201,7 @@ pub enum PickerKind {
     Modes,
     Skills,
     Plugins,
+    Loops,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -459,6 +462,8 @@ pub struct App {
     pub workflows: crate::workflows::WorkflowsState,
     /// Cross-session message records, held cards and the `/messages` view.
     pub messaging: crate::messaging::Messages,
+    /// The Session's loops, for quiet-iteration collapsing and the footer.
+    pub loops: crate::loops::Loops,
     /// The runs the indicators show and the notices of their ends.
     pub watch: crate::workflow_watch::Watch,
     /// `tui.notifications`.
@@ -542,6 +547,7 @@ impl App {
             progress: Default::default(),
             workflows: Default::default(),
             messaging: Default::default(),
+            loops: Default::default(),
             watch: Default::default(),
             notifications: Default::default(),
             #[cfg(test)]
@@ -1527,6 +1533,7 @@ impl App {
             .map_or((line, ""), |(n, a)| (n, a.trim()));
         match name {
             "memory" => self.memory_command(args),
+            "loop" => self.loop_command(args),
             "hooks" if args == "history" => {
                 self.overlay = Overlay::HookHistory;
                 self.load_hook_history(None)
@@ -1777,6 +1784,12 @@ impl App {
             PickerKind::Modes => self.select_mode(&choice.key),
             // Plugin rows only inform; changes go through `cyber plugins`.
             PickerKind::Plugins => Vec::new(),
+            // An active loop's row stops it; ended rows only inform.
+            PickerKind::Loops if choice.key.is_empty() => Vec::new(),
+            PickerKind::Loops => vec![Action::Loop(crate::loops::LoopRequest::Stop {
+                session_id: self.session.id.clone(),
+                loop_id: Some(choice.key),
+            })],
             // A user-invocable skill starts its command; other rows only inform.
             PickerKind::Skills => {
                 if !choice.key.is_empty() {

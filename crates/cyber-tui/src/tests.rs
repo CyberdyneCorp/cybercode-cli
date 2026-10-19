@@ -3268,3 +3268,69 @@ async fn memory_readonly_off_on_commands_change_tool_and_context() {
             .contains("/memory on|off|readonly")
     );
 }
+
+/// `/loop` posts to the server only when the arguments parse (`loops-scheduling`).
+#[test]
+fn loop_commands_parse_locally_before_posting() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    let submit = |app: &mut App, line: &str| {
+        typed(app, line);
+        app.completion = None;
+        app.on_key(key(KeyCode::Enter))
+    };
+    let actions = submit(&mut app, "/loop 5m check the deploy");
+    assert!(
+        matches!(actions.as_slice(), [Action::Loop(crate::loops::LoopRequest::Create { command, .. })] if command == "5m check the deploy"),
+        "{actions:?}"
+    );
+    assert!(submit(&mut app, "/loop 10s ping").is_empty());
+    assert_eq!(
+        app.toast.as_ref().unwrap().0,
+        "Loop interval must be at least 60s"
+    );
+    assert!(matches!(
+        submit(&mut app, "/loop list").as_slice(),
+        [Action::Loop(crate::loops::LoopRequest::List { .. })]
+    ));
+    assert!(matches!(
+        submit(&mut app, "/loop stop").as_slice(),
+        [Action::Loop(crate::loops::LoopRequest::Stop {
+            loop_id: None,
+            ..
+        })]
+    ));
+}
+
+/// Quiet iterations collapse into one line; an iteration with news shows its prompt.
+#[test]
+fn quiet_loop_iterations_collapse_in_the_transcript() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    app.items = vec![
+        Item::User {
+            id: "loopi_01ABCD_1".into(),
+            text: "check CI".into(),
+            promoted_ms: None,
+        },
+        Item::User {
+            id: "loopi_01ABCD_2".into(),
+            text: "check CI".into(),
+            promoted_ms: None,
+        },
+        Item::User {
+            id: "loopi_01ABCD_3".into(),
+            text: "check CI".into(),
+            promoted_ms: None,
+        },
+    ];
+    app.loops.set(
+        &[json!({"status": "active", "next_due_ms": null, "history": [
+        {"message_id": "loopi_01ABCD_1", "noop": true},
+        {"message_id": "loopi_01ABCD_2", "noop": true},
+        {"message_id": "loopi_01ABCD_3", "noop": false}]})],
+    );
+    let text = screen(&app);
+    assert!(text.contains("↻ 2 quiet checks · loop abcd"), "{text}");
+    assert!(text.contains("↻ check CI · loop abcd #3"), "{text}");
+    assert!(!text.contains("#1"), "{text}");
+    assert!(text.contains("↻ loop · running"), "{text}");
+}

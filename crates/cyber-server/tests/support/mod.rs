@@ -164,6 +164,10 @@ pub struct Tools {
     pub release: Notify,
     /// The `messaging` settings of every Location (`cross-session-messaging`).
     pub messaging: Mutex<cyber_core::config::MessagingSettings>,
+    /// Exit code every loop `--until` check reports; `None` fails the check.
+    pub check_exit: Mutex<Option<i32>>,
+    /// Loop `--until` commands run, in order.
+    pub checks: Mutex<Vec<String>>,
 }
 
 pub fn def(name: &str, safety: RetrySafety, parallel: bool) -> ToolDef {
@@ -209,6 +213,8 @@ impl Tools {
             started: Notify::new(),
             release: Notify::new(),
             messaging: Mutex::default(),
+            check_exit: Mutex::default(),
+            checks: Mutex::default(),
         })
     }
 
@@ -235,6 +241,26 @@ impl LocationGuard for TestLocationGuard {
 }
 
 impl ToolHost for Tools {
+    fn check(
+        &self,
+        _directory: &str,
+        _session_id: &str,
+        command: &str,
+        _timeout_ms: u64,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<CheckOutcome, String>> {
+        self.checks.lock().unwrap().push(command.to_owned());
+        let exit = *self.check_exit.lock().unwrap();
+        Box::pin(async move {
+            exit.map(|code| CheckOutcome {
+                exit_code: Some(code),
+                timed_out: false,
+                tail: format!("exit {code}"),
+            })
+            .ok_or_else(|| "no check configured".to_string())
+        })
+    }
+
     fn wait_for_required_mcp(
         &self,
         _: &SessionInfo,

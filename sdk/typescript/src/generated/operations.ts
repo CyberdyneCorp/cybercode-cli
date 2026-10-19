@@ -467,6 +467,12 @@ export interface Operations {
     body: S.CreateBody;
     response: S.Located_Session;
   };
+  "v1.session.createLoop": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: S.CreateLoop;
+    response: S.LoopState;
+  };
   "v1.session.delegation": {
     path: { sessionID: string; requestID: string };
     query: Record<string, never>;
@@ -580,6 +586,12 @@ export interface Operations {
     body: undefined;
     response: S.Located_Page_SessionRow;
   };
+  "v1.session.loops": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.LoopState[];
+  };
   "v1.session.messaging": {
     path: { sessionID: string };
     query: {
@@ -680,6 +692,18 @@ export interface Operations {
     query: Record<string, never>;
     body: undefined;
     response: S.Delegation;
+  };
+  "v1.session.stopLoop": {
+    path: { sessionID: string; loopID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: string[];
+  };
+  "v1.session.stopLoops": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: string[];
   };
   "v1.session.stopSubtree": {
     path: { sessionID: string };
@@ -1603,6 +1627,18 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.session.createLoop": {
+    tag: "session",
+    name: "createLoop",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/loops",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.delegation": {
     tag: "session",
     name: "delegation",
@@ -1795,6 +1831,18 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.session.loops": {
+    tag: "session",
+    name: "loops",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/loops",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.messaging": {
     tag: "session",
     name: "messaging",
@@ -1981,6 +2029,30 @@ export const operations = {
     method: "POST",
     path: "/api/v1/sessions/{sessionID}/delegations/{requestID}/stop",
     pathParams: ["sessionID", "requestID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.stopLoop": {
+    tag: "session",
+    name: "stopLoop",
+    method: "DELETE",
+    path: "/api/v1/sessions/{sessionID}/loops/{loopID}",
+    pathParams: ["sessionID", "loopID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.stopLoops": {
+    tag: "session",
+    name: "stopLoops",
+    method: "DELETE",
+    path: "/api/v1/sessions/{sessionID}/loops",
+    pathParams: ["sessionID"],
     query: [],
     body: "none",
     located: false,
@@ -2540,6 +2612,9 @@ export function createGroups(caller: Caller) {
       /** Create a Session (`POST /api/v1/sessions`) */
       create: (body?: Operations["v1.session.create"]["body"], options?: RequestOptions): Promise<Operations["v1.session.create"]["response"]> =>
         caller.call("v1.session.create", { body }, options),
+      /** Create a loop from `/loop` arguments (`command`) or parsed fields; its first iteration is due now (`POST /api/v1/sessions/{sessionID}/loops`) */
+      createLoop: (sessionID: string, body: Operations["v1.session.createLoop"]["body"], options?: RequestOptions): Promise<Operations["v1.session.createLoop"]["response"]> =>
+        caller.call("v1.session.createLoop", { path: { sessionID }, body }, options),
       /** Inspect owned delegation admission or recovery uncertainty (`GET /api/v1/sessions/{sessionID}/delegations/{requestID}`) */
       delegation: (sessionID: string, requestID: string, options?: RequestOptions): Promise<Operations["v1.session.delegation"]["response"]> =>
         caller.call("v1.session.delegation", { path: { sessionID, requestID } }, options),
@@ -2588,6 +2663,9 @@ export function createGroups(caller: Caller) {
       /** List root Sessions of a Location, newest first (`GET /api/v1/sessions`) */
       list: (query?: Operations["v1.session.list"]["query"], options?: RequestOptions): Promise<Operations["v1.session.list"]["response"]> =>
         caller.call("v1.session.list", { query }, options),
+      /** The Session's active loops, then its 20 most recent ended ones, with their last 50 iterations (`GET /api/v1/sessions/{sessionID}/loops`) */
+      loops: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.loops"]["response"]> =>
+        caller.call("v1.session.loops", { path: { sessionID } }, options),
       /** Page the Session's sent and received cross-session messages with their outcomes; refused messages carry no text (`GET /api/v1/sessions/{sessionID}/messaging`) */
       messaging: (sessionID: string, query?: Operations["v1.session.messaging"]["query"], options?: RequestOptions): Promise<Operations["v1.session.messaging"]["response"]> =>
         caller.call("v1.session.messaging", { path: { sessionID }, query }, options),
@@ -2636,6 +2714,12 @@ export function createGroups(caller: Caller) {
       /** Cancel one admission request or its recorded Job (`POST /api/v1/sessions/{sessionID}/delegations/{requestID}/stop`) */
       stopDelegation: (sessionID: string, requestID: string, options?: RequestOptions): Promise<Operations["v1.session.stopDelegation"]["response"]> =>
         caller.call("v1.session.stopDelegation", { path: { sessionID, requestID } }, options),
+      /** Stop one active loop; an iteration already admitted still runs (`DELETE /api/v1/sessions/{sessionID}/loops/{loopID}`) */
+      stopLoop: (sessionID: string, loopID: string, options?: RequestOptions): Promise<Operations["v1.session.stopLoop"]["response"]> =>
+        caller.call("v1.session.stopLoop", { path: { sessionID, loopID } }, options),
+      /** Stop every active loop of the Session; returns the stopped loop IDs (`DELETE /api/v1/sessions/{sessionID}/loops`) */
+      stopLoops: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.stopLoops"]["response"]> =>
+        caller.call("v1.session.stopLoops", { path: { sessionID } }, options),
       /** Close subtree admission and report bounded local stop acknowledgement (`POST /api/v1/sessions/{sessionID}/stop-subtree`) */
       stopSubtree: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.stopSubtree"]["response"]> =>
         caller.call("v1.session.stopSubtree", { path: { sessionID } }, options),
