@@ -188,6 +188,8 @@ pub enum Action {
     Loop(crate::loops::LoopRequest),
     /// `/team`, `/team start|stop|resume` (`agent-teams`).
     Team(crate::team::Request),
+    /// `/goal` (`goals`).
+    Goal(crate::goals::GoalRequest),
     /// Open a file in `$VISUAL`/`$EDITOR` (`s` on a Workflow Run: its script).
     EditFile(String),
     Quit,
@@ -204,6 +206,7 @@ pub enum PickerKind {
     Skills,
     Plugins,
     Loops,
+    Goals,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -470,6 +473,8 @@ pub struct App {
     pub loops: crate::loops::Loops,
     /// The team view's selection and the way back from an opened teammate.
     pub team: crate::team::TeamState,
+    /// The Session's current Goal, for the footer.
+    pub goals: crate::goals::Goals,
     /// The runs the indicators show and the notices of their ends.
     pub watch: crate::workflow_watch::Watch,
     /// `tui.notifications`.
@@ -555,6 +560,7 @@ impl App {
             messaging: Default::default(),
             loops: Default::default(),
             team: Default::default(),
+            goals: Default::default(),
             watch: Default::default(),
             notifications: Default::default(),
             #[cfg(test)]
@@ -1544,6 +1550,7 @@ impl App {
             "memory" => self.memory_command(args),
             "loop" => self.loop_command(args),
             "team" => self.team_command(args),
+            "goal" => self.goal_command(args),
             "hooks" if args == "history" => {
                 self.overlay = Overlay::HookHistory;
                 self.load_hook_history(None)
@@ -1796,6 +1803,11 @@ impl App {
             PickerKind::Plugins => Vec::new(),
             // An active loop's row stops it; ended rows only inform.
             PickerKind::Loops if choice.key.is_empty() => Vec::new(),
+            // A Goal row prefills `/goal edit` for it.
+            PickerKind::Goals => vec![Action::Goal(crate::goals::GoalRequest::Edit {
+                session_id: self.session.id.clone(),
+                goal_id: Some(choice.key),
+            })],
             PickerKind::Loops => vec![Action::Loop(crate::loops::LoopRequest::Stop {
                 session_id: self.session.id.clone(),
                 loop_id: Some(choice.key),

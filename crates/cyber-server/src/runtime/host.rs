@@ -799,6 +799,20 @@ pub trait ToolHost: Send + Sync {
         Box::pin(async { Err("team worktrees are not supported by this host".to_string()) })
     }
 
+    /// The `goals` settings and the `budgets.goal` default of a Location (`goals`).
+    fn goal_settings(
+        &self,
+        _directory: &str,
+    ) -> Result<
+        (
+            cyber_core::goals::GoalSettings,
+            Option<cyber_core::budget::Budget>,
+        ),
+        String,
+    > {
+        Ok((cyber_core::goals::GoalSettings::default(), None))
+    }
+
     /// Loop limits and the `budgets.loop` default of a Location (`loops-scheduling`).
     fn loop_settings(
         &self,

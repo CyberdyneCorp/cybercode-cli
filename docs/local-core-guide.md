@@ -1046,6 +1046,48 @@ cyber mcp browser cleanup                   # remove profiles no running process
 - **Dev servers.** `bash` (or `powershell`) with `background: true` and `ready_url`, an `http(s)` URL on localhost, starts the command as an owned Job. It returns once `ready_url` answers below HTTP 500 (redirects are not followed: the probe runs outside the sandbox). A call cancelled while it waits stops the Job. A sandboxed dev server with `ready_url` is refused before it starts when the sandbox isolates its loopback from the host, so the check could never connect: always on Windows (the AppContainer), and on Linux (its own network namespace) and macOS (listening is denied) unless `sandbox.network` is `on`. Set `sandbox.network` to `on` or run the Session with `--sandbox full-access` to verify a dev server the agent starts. If the process exits first, or `ready_timeout_seconds` (default 60, at most 600) passes and the Job is stopped, the call fails with the log tail. It then records `startup_failed` evidence that says the page was not tested.
 - **Session end.** Archiving or deleting the Session stops its browser, removes its profile and stops its dev servers without a completion notice, so the Session does not start a Turn.
 
+## Goals (P2 M2.3)
+
+A Goal is a condition the Session keeps working toward. After every Turn that leaves nothing to do, an evaluator judges it: `not_met` sends its reason back as the next prompt, `met` completes the Goal (and starts the next queued one), and `impossible` stops.
+
+```text
+/goal all call sites compile against the v2 API and cargo test passes
+/goal --check "cargo test --quiet" the auth tests pass     # met only when the check exits 0
+/goal add the changelog mentions the v2 API                  # queued; runs after the current one
+/goal                                                        # picker: current, queue, totals, last verdict
+/goal pause | resume | skip | next | clear [gol_…|all] | edit [gol_…]
+```
+
+- **One active Goal per Session, plus a queue** (`goals.max_queue`, default 20). `/goal <condition>` replaces the current Goal and starts a Turn toward it at once. User prompts during a Goal are handled as usual and the Goal stays active.
+- **Evaluator.**
+  - Model: `model_roles.evaluator`, else the small model, else the Session's model.
+  - Tools: none.
+  - Input: the condition, the latest answer, the Turn's tool results and earlier verdicts, within `goals.evaluator_max_input_tokens` (8000).
+  - Output: one JSON verdict. A malformed reply is retried once, then counts as `not_met`.
+  - Cost: recorded as hidden `goal_evaluator` usage, counted in the Session cost, and shown as evaluator totals in `/goal`.
+- **Checks.** `--check` runs after a `met` verdict, sandboxed in the Location without a permission prompt like `!` (timeout `goals.check_timeout_seconds`, 600). A non-zero exit turns the verdict into `not_met`, and the last 50 lines go into the continuation.
+- **Stops.**
+  - **Budget:** each Goal has one, `max_turns` 50 by default, plus `budgets.goal` or per-Goal tokens, cost and wall time. It counts from activation and includes subagents; exceeding it gives `budget_exceeded`.
+  - **`impossible`:** stops the queue unless `goals.on_impossible` is `continue`.
+  - **Pause:** a failed Turn, an interrupt or a rejected permission pauses the Goal with the reason. `/goal resume` continues.
+- **Background work.** While Jobs, background subagents or workflow runs the Session started are still running, evaluation waits for their handback.
+- **Restarts.** Goals are `session.goal.*` events, so they survive a restart. An active Goal is evaluated once on its last Turn, and work continues only if it is `not_met`.
+- **Notifications and hooks.** Met, impossible, paused and budget stops send a notification (TUI toast, desktop). `GoalEvaluated` and `GoalCompleted` hooks receive the Goal JSON.
+- **CI.**
+  - `cyber exec --goal "<condition>" [--goal-check "<cmd>"] [--max-turns N]` runs until every Goal is terminal. `--goal` repeats to form a queue, and each `--goal-check` binds to the `--goal` before it.
+  - Exit codes, for the first non-met Goal: `0` all met, `3` impossible, `4` budget exceeded, `1` otherwise, `130` interrupted.
+  - The JSON result lists `goals[]` with status, turns, cost and last reason.
+- **API:**
+  - `GET|POST|DELETE /api/v1/sessions/{id}/goals`
+  - `GET|PATCH|DELETE .../goals/{goal_id}`
+  - `POST .../goals/pause|resume|skip`
+  - `PATCH .../goals/order`
+- **Not yet:**
+  - `/goal fork`, templates, and goals on subagents and workflow `agent()`;
+  - the model-facing `goal` tool;
+  - pausing on an unattended permission ask;
+  - the sidebar Goal section and the panel's keys.
+
 ## Loops (P2 M2.4)
 
 `/loop` re-runs a prompt in the current Session: on an interval, or at a pace the model chooses.

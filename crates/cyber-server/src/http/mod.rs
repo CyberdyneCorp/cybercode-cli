@@ -11,6 +11,7 @@ mod error;
 mod event_location;
 mod events;
 mod files;
+mod goals;
 mod guard;
 mod hooks;
 mod idempotency;
@@ -635,6 +636,7 @@ pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router 
         .merge(messaging::routes())
         .merge(loops::routes())
         .merge(peers::routes())
+        .merge(goals::routes())
         .merge(usage::routes())
         .merge(vcs::routes())
         .merge(system::routes())

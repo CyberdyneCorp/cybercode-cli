@@ -168,6 +168,15 @@ export type Capabilities = {
   "session.prompt": boolean;
 };
 
+/** The `check` that ran after a `met` verdict. */
+export type CheckRun = {
+  command: string;
+  exit_code?: number | null;
+  timed_out: boolean;
+  /** The last 50 lines of its output. */
+  tail: string;
+};
+
 export type ChildSetupInspection = {
   session_id: string;
   worktree_id: string;
@@ -334,6 +343,14 @@ export type CreateBody = {
   messaging?: InboundOverride | null;
 };
 
+/** `POST .../goals`. */
+export type CreateGoal = {
+  condition: string;
+  check?: string | null;
+  budget?: Budget | null;
+  mode?: GoalMode;
+};
+
 /** `POST /api/v1/sessions/:id/loops`: the `/loop` arguments as typed, or the parsed fields. */
 export type CreateLoop = {
   command: string;
@@ -447,6 +464,14 @@ export type Data_Delegation = {
   data: Delegation;
 };
 
+export type Data_Goal = {
+  data: Goal;
+};
+
+export type Data_GoalsView = {
+  data: GoalsView;
+};
+
 export type Data_InterruptedResume = {
   data: InterruptedResume;
 };
@@ -469,6 +494,10 @@ export type Data_LoopState = {
 
 export type Data_Message = {
   data: Message;
+};
+
+export type Data_Nullable_Goal = {
+  data?: Goal | null;
 };
 
 export type Data_Nullable_Recap = {
@@ -626,6 +655,13 @@ export type DurableRef = {
   version: number;
 };
 
+/** `PATCH .../goals/{goal_id}`; `check: null` removes the check. */
+export type EditGoal = {
+  condition?: string | null;
+  check?: string | null;
+  budget?: Budget | null;
+};
+
 export type Enforcement = "soft" | "reserved";
 
 /**
@@ -642,6 +678,22 @@ export type ErrorBody = {
   /** Capability group unavailable in this host or phase. */
   service?: string | null;
   [key: string]: unknown;
+};
+
+/** `session.goal.evaluated.1`. */
+export type Evaluated = {
+  goal_id: string;
+  verdict: Verdict;
+  reason: string;
+  check?: CheckRun | null;
+  /** The goal Turn this verdict closes (1-based). */
+  turn: number;
+  eval_tokens: number;
+  eval_cost_usd: number;
+  /** Work tokens and cost since activation, children included, at this verdict. */
+  tokens: number;
+  cost_usd: number;
+  evaluated_ms: number;
 };
 
 /** One event on any stream. */
@@ -767,6 +819,48 @@ export type GitState = {
   worktree?: string | null;
   /** Staged, unstaged or untracked (not ignored) changes exist. */
   dirty: boolean;
+};
+
+/** One Goal as the Session state folds it and clients list it. */
+export type Goal = {
+  goal_id: string;
+  condition: string;
+  check?: string | null;
+  budget: Budget;
+  status: GoalStatus;
+  /** The last verdict's reason, or why it paused or ended. */
+  reason?: string | null;
+  last_verdict?: Verdict | null;
+  /** Goal Turns: evaluations since activation. */
+  turns: number;
+  tokens: number;
+  cost_usd: number;
+  eval_count: number;
+  eval_tokens: number;
+  eval_cost_usd: number;
+  created_ms: number;
+  activated_ms?: number | null;
+  ended_ms?: number | null;
+  evaluations: Evaluated[];
+};
+
+/** How `POST .../goals` places the new Goal. */
+export type GoalMode = "set" | "add";
+
+/** `PATCH .../goals/order`. */
+export type GoalOrder = {
+  goal_ids: string[];
+};
+
+/** A Goal's status (`goals` → Goal model). */
+export type GoalStatus = "pending" | "active" | "paused" | "met" | "impossible" | "cleared" | "budget_exceeded";
+
+/** `GET .../goals`: the current Goal, the queue in order and the most recent ended ones. */
+export type GoalsView = {
+  current?: Goal | null;
+  queue: Goal[];
+  /** Ended Goals, newest first, at most 20. */
+  ended: Goal[];
 };
 
 /** A grant as listed; never its token or hash. */
@@ -3154,6 +3248,9 @@ export type UsageStats = {
 export type Vcs = {
   vcs?: GitState | null;
 };
+
+/** An evaluator verdict. */
+export type Verdict = "met" | "not_met" | "impossible";
 
 /** The browser viewport, when the server reported or was asked for one. */
 export type Viewport = {

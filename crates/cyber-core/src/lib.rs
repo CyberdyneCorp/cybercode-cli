@@ -10,6 +10,7 @@ pub mod env;
 pub mod eval;
 pub mod features;
 pub mod files;
+pub mod goals;
 pub mod hooks;
 pub mod ids;
 pub mod import;

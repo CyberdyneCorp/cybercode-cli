@@ -412,6 +412,8 @@ pub struct SessionState {
     /// not durable: a restart ends the iteration and the missed-run policy applies.
     #[serde(skip)]
     pub(crate) loop_coalesced: BTreeSet<String>,
+    /// The Session's Goals (`goals`), folded from `session.goal.*` events.
+    pub goals: super::goals::Goals,
 }
 
 const MAX_INSTRUCTION_CHARS: usize = 2000;
@@ -600,6 +602,7 @@ impl SessionState {
             notice_hops: BTreeMap::new(),
             loops: BTreeMap::new(),
             loop_coalesced: BTreeSet::new(),
+            goals: Default::default(),
         }
     }
 
@@ -695,6 +698,9 @@ impl SessionState {
                 }
             }
             _ if kind.starts_with("loop.") => super::loops::records::fold(&mut self.loops, e)?,
+            _ if kind.starts_with("session.goal.") => {
+                super::goals::records::fold(&mut self.goals, e)?;
+            }
             _ if kind.starts_with("messaging.") => {
                 super::messaging::records::fold(
                     &mut self.message_chains,

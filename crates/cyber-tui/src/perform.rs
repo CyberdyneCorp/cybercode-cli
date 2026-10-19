@@ -36,6 +36,8 @@ pub enum Msg {
         messages: Option<Vec<crate::messaging::Record>>,
         /// The Session's loops, read only when the transcript holds loop iterations.
         loops: Option<Vec<Value>>,
+        /// The Session's Goals, read only when the transcript holds goal prompts.
+        goals: Option<Value>,
     },
     Cost {
         session_id: String,
@@ -106,6 +108,11 @@ pub enum Msg {
     },
     /// `/loop list` rows of `session_id`.
     Loops {
+        session_id: String,
+        choices: Vec<Choice>,
+    },
+    /// `/goal` rows of `session_id`.
+    Goals {
         session_id: String,
         choices: Vec<Choice>,
     },
@@ -236,6 +243,18 @@ pub async fn snapshot(client: &Client, id: &str) -> Result<Msg, String> {
     } else {
         None
     };
+    let goals = if items
+        .iter()
+        .any(|item| matches!(item, Item::User { text, .. } if crate::goals::mentioned(text)))
+    {
+        client
+            .get(&format!("/sessions/{id}/goals"))
+            .await
+            .ok()
+            .map(|view| view["data"].clone())
+    } else {
+        None
+    };
     Ok(Msg::Snapshot {
         session,
         items,
@@ -243,6 +262,7 @@ pub async fn snapshot(client: &Client, id: &str) -> Result<Msg, String> {
         requests,
         messages,
         loops,
+        goals,
     })
 }
 
@@ -820,7 +840,7 @@ pub async fn perform_owned(
         | Action::LoadPlugins { .. }
         | Action::LoadAgents
         | Action::FindFiles(_) => load_choices(client, session, action).await,
-        Action::Loop(_) | Action::Workflow(_) | Action::Team(_) => {
+        Action::Loop(_) | Action::Goal(_) | Action::Workflow(_) | Action::Team(_) => {
             scheduled(client, session, action).await
         }
         Action::SaveTheme(_)
@@ -834,11 +854,12 @@ pub async fn perform_owned(
     }
 }
 
-/// Repeated and orchestrated work: `/loop`, Workflow Runs and `/team`.
+/// Repeated and orchestrated work: `/loop`, `/goal`, Workflow Runs and `/team`.
 async fn scheduled(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
     match action {
         Action::Loop(request) => crate::loops::perform(client, request).await,
         Action::Team(request) => crate::team::perform(client, session, request).await,
+        Action::Goal(request) => crate::goals::perform(client, request).await,
         Action::Workflow(request) => Ok(Msg::Workflow(
             crate::workflows::perform(client, request).await,
         )),

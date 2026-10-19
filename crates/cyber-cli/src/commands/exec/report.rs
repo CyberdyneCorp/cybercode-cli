@@ -36,6 +36,8 @@ pub struct Run {
     calls: HashMap<String, (String, Value)>,
     max_tokens: Option<u64>,
     max_cost: Option<f64>,
+    /// `--goal` outcomes, in queue order.
+    pub goals: Option<Vec<Value>>,
 }
 
 impl Run {
@@ -59,6 +61,7 @@ impl Run {
             calls: HashMap::new(),
             max_tokens: args.max_tokens,
             max_cost: args.max_cost,
+            goals: None,
         }
     }
 
@@ -159,9 +162,15 @@ impl Run {
     }
 
     fn exit_code(&self, fail_on_deny: bool) -> u8 {
+        let goal = self
+            .goals
+            .as_deref()
+            .and_then(super::goals::exit_code)
+            .map(|(code, _)| code);
         match self.stop_reason.as_deref() {
             Some("interrupted") => EXIT_INTERRUPTED,
             Some("timeout" | "budget_exceeded") => EXIT_BUDGET,
+            _ if goal.is_some() => goal.unwrap_or(EXIT_ERROR),
             _ if self.error.is_some() => EXIT_ERROR,
             _ if fail_on_deny && !self.denials.is_empty() => EXIT_DENIED,
             _ => 0,
@@ -512,6 +521,9 @@ impl Out {
         if let Some(usage) = &run.usage {
             result["usage"] = usage.clone();
             result["cost_unpriced"] = run.unpriced.into();
+        }
+        if let Some(goals) = &run.goals {
+            result["goals"] = goals.clone().into();
         }
         if self.delegation.is_some() || run.session_baseline.is_some() {
             result["own_cost_usd"] = run.cost.into();

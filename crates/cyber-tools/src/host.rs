@@ -895,6 +895,24 @@ impl ToolHost for BuiltinHost {
         Box::pin(self.command_plan(turn, name, arguments))
     }
 
+    fn goal_settings(
+        &self,
+        directory: &str,
+    ) -> Result<
+        (
+            cyber_core::goals::GoalSettings,
+            Option<cyber_core::budget::Budget>,
+        ),
+        String,
+    > {
+        let (config, _) = (self.opts.config)(Path::new(directory))?;
+        let budget = cyber_core::budget::Budget::from_config(&config, "goal")?;
+        Ok((
+            cyber_core::goals::GoalSettings::from_config(&config)?,
+            budget,
+        ))
+    }
+
     fn daily_budget(&self, directory: &str) -> Result<Option<cyber_core::budget::Budget>, String> {
         let (config, _) = (self.opts.config)(Path::new(directory))?;
         cyber_core::budget::Budget::from_config(&config, "daily")

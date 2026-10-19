@@ -73,6 +73,12 @@ const BUILTINS: &[(&str, &str, Option<&str>, bool)] = &[
         true,
     ),
     (
+        "goal",
+        "keep working until a condition is met; add, pause, resume, skip, clear",
+        None,
+        true,
+    ),
+    (
         "btw",
         "ask a side question without adding it to the session",
         None,

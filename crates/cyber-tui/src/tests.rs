@@ -3497,3 +3497,62 @@ async fn the_tui_opens_a_peer_session_through_an_attach() {
     let _ = stop.send(());
     server.await.unwrap().unwrap();
 }
+
+/// `/goal` posts only parsed commands (`goals` → Goal management commands).
+#[test]
+fn goal_commands_parse_locally_before_posting() {
+    use crate::goals::GoalRequest;
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    let submit = |app: &mut App, line: &str| {
+        typed(app, line);
+        app.completion = None;
+        app.on_key(key(KeyCode::Enter))
+    };
+    let actions = submit(
+        &mut app,
+        r#"/goal --check "npm test" all lint errors fixed"#,
+    );
+    assert!(
+        matches!(actions.as_slice(), [Action::Goal(GoalRequest::Set { condition, check: Some(check), add: false, .. })]
+            if condition == "all lint errors fixed" && check == "npm test"),
+        "{actions:?}"
+    );
+    assert!(matches!(
+        submit(&mut app, "/goal add B").as_slice(),
+        [Action::Goal(GoalRequest::Set { add: true, .. })]
+    ));
+    assert!(matches!(
+        submit(&mut app, "/goal next").as_slice(),
+        [Action::Goal(GoalRequest::Skip { .. })]
+    ));
+    assert!(matches!(
+        submit(&mut app, "/goal").as_slice(),
+        [Action::Goal(GoalRequest::Show { .. })]
+    ));
+    assert!(submit(&mut app, &format!("/goal {}", "x".repeat(5000))).is_empty());
+    assert!(
+        app.toast
+            .as_ref()
+            .unwrap()
+            .0
+            .starts_with("Goal conditions are limited to 4000 characters")
+    );
+}
+
+/// Goal prompts render as `◎` lines and the footer names the active Goal.
+#[test]
+fn goal_prompts_and_the_footer() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    app.items = vec![
+        Item::User { id: "msg_1".into(), text: "<goal id=\"gol_1\">\nWork toward this goal until it is met:\ndocs build cleanly\n</goal>".into(), promoted_ms: None },
+        Item::User { id: "msg_2".into(), text: "<goal_not_met id=\"gol_1\">\nThe goal is not met yet:\ndocs build cleanly\n\nWhy: 2 broken links\n\nKeep working toward it.\n</goal_not_met>".into(), promoted_ms: None },
+    ];
+    app.goals.replace(Some(
+        json!({"current": {"status": "active", "condition": "docs build cleanly"}}),
+    ));
+    let text = screen(&app);
+    assert!(text.contains("◎ goal: docs build cleanly"), "{text}");
+    assert!(text.contains("◎ not met: 2 broken links"), "{text}");
+    assert!(text.contains("◎ goal docs build cleanly"), "{text}");
+    assert!(!text.contains("<goal"), "{text}");
+}

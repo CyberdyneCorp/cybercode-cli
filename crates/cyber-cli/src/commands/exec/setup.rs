@@ -236,7 +236,7 @@ pub async fn session(
     let Some(existing) = reused else {
         let body = json!({
             "model": global.model, "agent": args.agent, "mode": mode(args, global),
-            "title": args.name, "rules": cyber_core::config::never_ask_rules(), "max_steps": args.max_turns,
+            "title": args.name, "rules": cyber_core::config::never_ask_rules(), "max_steps": args.max_turns.filter(|_| args.goals.is_empty()),
             "messaging": inbound(args),
         });
         if let Some(name) = &args.worktree {
