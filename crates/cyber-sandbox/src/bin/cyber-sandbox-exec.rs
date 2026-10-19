@@ -1,4 +1,5 @@
-//! Unix proxy bridge and Windows process-tree owner, selected explicitly.
+//! Unix proxy bridge, Windows process-tree owner and Windows AppContainer launcher,
+//! selected explicitly.
 
 use std::process::ExitCode;
 
@@ -22,6 +23,15 @@ fn main() -> ExitCode {
         .is_some_and(|arg| arg == "--git-review")
     {
         return git_review();
+    }
+
+    #[cfg(windows)]
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == cyber_sandbox::APPCONTAINER_FLAG)
+    {
+        let args: Vec<_> = std::env::args_os().skip(2).collect();
+        std::process::exit(cyber_sandbox::windows_confine::main(&args));
     }
 
     #[cfg(windows)]

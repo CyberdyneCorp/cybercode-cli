@@ -110,13 +110,14 @@ pub(super) fn grant_record_policy(
     profile: &Profile,
     record: FileRecord,
     policy: tree::ObjectPolicy,
+    inherit: bool,
 ) -> io::Result<IdentityGrant> {
     let file = record.open()?;
-    validate_object(&file)?;
+    let directory = validate_object(&file)?;
     merge_acl_entries(
         &file,
         profile.sid(),
-        &policy.entries(profile.sid()),
+        &policy.entries(profile.sid(), inherit && directory),
         true,
         set_acl,
         read_acl,

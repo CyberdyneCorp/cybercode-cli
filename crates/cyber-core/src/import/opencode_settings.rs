@@ -257,6 +257,30 @@ fn agent(
     }
     Ok(Some(output))
 }
+/// One `.opencode/agents/<id>.md` or `.opencode/modes/<id>.md` file as a native agent:
+/// `value` is its frontmatter with the body as `prompt`. Field sources and pending fields
+/// name frontmatter keys as `/<key>`. A mode file (`primary`) defaults to a primary agent.
+pub(super) fn markdown_agent(
+    id: &str,
+    value: &Value,
+    primary: bool,
+) -> Result<(Option<Value>, OpenCodeSettingsConfig), ConversionError> {
+    if !name(id) || id.contains('/') {
+        return Err(error("agent identifier is invalid"));
+    }
+    let mut result = OpenCodeSettingsConfig {
+        config: json!({}),
+        not_imported: vec![],
+        field_sources: BTreeMap::new(),
+    };
+    let agent = agent(id, value, "", primary, &mut result)?;
+    if let Some(agent) = &agent {
+        crate::config::resolve_agents(&json!({"agents":{id:agent}}))
+            .map_err(|_| error("converted agent configuration is invalid"))?;
+    }
+    Ok((agent, result))
+}
+
 fn agents(
     source: &Map<String, Value>,
     result: &mut OpenCodeSettingsConfig,

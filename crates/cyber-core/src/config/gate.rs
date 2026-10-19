@@ -12,6 +12,7 @@ const SENSITIVE_KEYS: &[&str] = &[
     "budgets",
     "providers",
     "mcp",
+    "browser",
     "plugins",
     "hooks",
     "formatters",

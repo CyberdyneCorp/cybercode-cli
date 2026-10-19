@@ -1,4 +1,6 @@
-//! Read-only reviewed proposals; no destination mutation or executable source loading.
+//! Reviewed proposals; nothing is written until [`ImportPreview::write`], and no source is
+//! executed.
+use super::adapted::Adapted;
 use super::provenance::{self, Origins, SourceReference};
 use super::{
     ConversionError, DiscoveryError, RequiredEnvironment, SourceFile, SourceKind, SourceLayer,
@@ -40,18 +42,64 @@ pub struct PreviewOutput {
     pub native_layers: Vec<PathBuf>,
     pub report: Vec<MappingRecord>,
     pub required_environment: Vec<PreviewEnvironment>,
+    /// Source files and discovery issues of the selected tools and scope.
+    pub sources: usize,
     /// This increment does not implement every source adapter or destination transactions.
     pub complete: bool,
+}
+/// The files an import wrote.
+#[derive(Debug, Clone, Serialize)]
+pub struct WrittenImport {
+    pub target: PathBuf,
+    pub report: PathBuf,
 }
 pub struct ImportPreview {
     output: PreviewOutput,
     sources: Vec<SourceSnapshot>,
     destinations: Vec<SourceSnapshot>,
     missing: Vec<PathBuf>,
+    edited: Option<String>,
+    report_dir: PathBuf,
 }
 impl ImportPreview {
     pub fn output(&self) -> &PreviewOutput {
         &self.output
+    }
+    /// The target document as [`Self::write`] would write it; `None` is "nothing to do".
+    pub fn edited_text(&self) -> Option<&str> {
+        self.edited.as_deref()
+    }
+    /// Whether writing would change the target document; `false` is "nothing to do".
+    pub fn has_changes(&self) -> bool {
+        self.edited.is_some()
+    }
+    /// Where [`Self::write`] puts the mapping report: `.cyber/` of the Location for a
+    /// project import, the global config directory for a global one.
+    pub fn report_dir(&self) -> &Path {
+        &self.report_dir
+    }
+    /// Re-verify every reviewed source and destination, then write the mapping report
+    /// `import-report-<timestamp>.md` headed by `title` and the target document. The
+    /// report goes first, so a refused report directory leaves the target untouched; a
+    /// target that cannot be replaced takes its report with it.
+    pub fn write(&self, title: &str) -> Result<WrittenImport, DiscoveryError> {
+        let Some(edited) = &self.edited else {
+            return Err(error(&self.output.target, "nothing to do"));
+        };
+        self.verify()?;
+        let report = super::write::write_report(&self.report_dir, &self.report_markdown(title))?;
+        if let Err(failure) = super::write::replace_file(&self.output.target, edited) {
+            let _ = std::fs::remove_file(&report);
+            return Err(failure);
+        }
+        Ok(WrittenImport {
+            target: self.output.target.clone(),
+            report,
+        })
+    }
+    /// The mapping report as Markdown: every item under its status, with its sources.
+    pub fn report_markdown(&self, title: &str) -> String {
+        super::report_values::markdown(title, &self.output)
     }
     pub fn verify(&self) -> Result<(), DiscoveryError> {
         for snapshot in self.sources.iter().chain(&self.destinations) {
@@ -120,11 +168,15 @@ pub fn preview_import(
     let native = native_config(roots, scope, native_global, &directory)?;
     let existing = native.value;
     let target = native.target;
+    let imported = &native.imported;
+    let mut updated = std::collections::BTreeSet::new();
+    let sources = selected_sources(&inventory, tool, scope);
     let mut proposed = existing.clone();
     let mut report = Vec::new();
     for issue in inventory.issues {
         report.push(record(&issue.path, "source", "not imported", issue.reason));
     }
+    let personal = personal_sources(roots, scope);
     let mut context = SourceContext {
         roots,
         inventory: &inventory.files,
@@ -133,6 +185,7 @@ pub fn preview_import(
         secrets: sensitive_values(&existing),
         remaining: native.remaining,
         report,
+        accepted: Origins::new(),
     };
     for family in [SourceTool::OpenCode, SourceTool::Codex, SourceTool::Claude] {
         if tool.is_some_and(|t| t != family) {
@@ -144,12 +197,13 @@ pub fn preview_import(
         let mut rule_origins = Origins::new();
         let mut representative = None;
         let markdown = markdown_sources(&mut context, &inventory.files, family, scope)?;
+        let mut adapted = Adapted::new();
         for source in inventory.files.iter().filter(|f| {
             f.tool == family
                 && f.kind != SourceKind::Command
                 && (scope == ImportScope::Project || f.layer != SourceLayer::Project)
         }) {
-            let Some(delta) = source_config(&mut context, source)? else {
+            let Some(delta) = source_config(&mut context, source, &mut adapted)? else {
                 continue;
             };
             if source.kind == SourceKind::Rule {
@@ -212,15 +266,34 @@ pub fn preview_import(
             &inventory.files,
             &raw_origins,
         )?;
+        let settings = Raw {
+            value: &raw,
+            origins: &raw_origins,
+            directory: &directory,
+            personal: &personal,
+        };
+        adapt(
+            representative,
+            &settings,
+            &target,
+            (&mut config, &mut origins),
+            &mut context.report,
+            adapted,
+        )?;
         let mut accepted = Origins::new();
         fill_existing(
+            &mut Fill {
+                origins: &origins,
+                accepted: &mut accepted,
+                report: &mut context.report,
+                imported,
+                updated: &mut updated,
+            },
             &mut proposed,
             &config,
             "",
-            &origins,
-            &mut accepted,
-            &mut context.report,
         );
+        context.accepted.append(&mut accepted.clone());
         let environment_origins = provenance::environment_origins(&config, &accepted)
             .map_err(|e| error(&target, e.reason))?;
         context.required.extend(
@@ -253,7 +326,16 @@ pub fn preview_import(
             "combined command definitions exceed the native registry bound",
         ));
     }
-    let diff = render_diff(&target, &existing, &proposed, &context.secrets)?;
+    let (edited, diff) = edited_document(
+        &target,
+        native.target_text.as_deref(),
+        &super::write::changes(&target, &existing, &proposed, &updated)?,
+        &super::write::Annotator {
+            roots,
+            origins: &context.accepted,
+            secrets: &context.secrets,
+        },
+    )?;
     let preview = ImportPreview {
         output: PreviewOutput {
             target,
@@ -265,17 +347,57 @@ pub fn preview_import(
                 .collect(),
             report: context.report,
             required_environment: context.required,
+            sources,
             complete: false,
         },
         sources: context.snapshots,
         destinations: native.snapshots,
         missing: native.missing,
+        edited,
+        report_dir: report_dir(scope, &directory),
     };
     preview.verify()?;
     Ok(preview)
 }
+/// The target document after `changes`, and its redacted unified diff; `None` and an
+/// empty diff when nothing changes.
+fn edited_document(
+    target: &Path,
+    original: Option<&str>,
+    changes: &[super::write::Change],
+    annotator: &super::write::Annotator<'_>,
+) -> Result<(Option<String>, String), DiscoveryError> {
+    let edited = super::write::edit_target(target, original, changes, annotator)?;
+    let diff = edited.as_deref().map_or_else(String::new, |edited| {
+        super::write::file_diff(target, original, edited, annotator.secrets)
+    });
+    Ok((edited, diff))
+}
+/// `.cyber/` of the Location for a project import, the global directory for a global one.
+fn report_dir(scope: ImportScope, directory: &Path) -> PathBuf {
+    match scope {
+        ImportScope::Project => directory.join(".cyber"),
+        ImportScope::Global => directory.to_path_buf(),
+    }
+}
+/// Source files and discovery issues an import of `tool` at `scope` considers.
+fn selected_sources(
+    inventory: &super::SourceInventory,
+    tool: Option<SourceTool>,
+    scope: ImportScope,
+) -> usize {
+    let files = inventory.files.iter().filter(|f| {
+        tool.is_none_or(|t| t == f.tool)
+            && (scope == ImportScope::Project || f.layer != SourceLayer::Project)
+    });
+    inventory.issues.len() + files.count()
+}
 struct NativeConfig {
+    /// `cyber.jsonc` of the Location (or of the global directory): imports write there.
     target: PathBuf,
+    target_text: Option<String>,
+    /// Pointer → digest of each entry an earlier import annotated in the target.
+    imported: std::collections::BTreeMap<String, String>,
     value: Value,
     snapshots: Vec<SourceSnapshot>,
     missing: Vec<PathBuf>,
@@ -308,6 +430,8 @@ fn native_config(
     }
     let mut native = NativeConfig {
         target: directory.join("cyber.jsonc"),
+        target_text: None,
+        imported: Default::default(),
         value: json!({}),
         snapshots: Vec::new(),
         missing: Vec::new(),
@@ -326,14 +450,16 @@ fn native_config(
                 return Err(error(&path, "native configuration must be an object"));
             }
             crate::config::merge_raw_layer(&mut native.value, &document);
-            if path.parent() == Some(directory) {
-                native.target = path.clone();
+            if path == native.target {
+                native.target_text = Some(snapshot.text()?.to_owned());
             }
             native.snapshots.push(snapshot);
         } else {
             native.missing.push(path);
         }
     }
+    native.imported =
+        super::write::imported_digests(&native.target, native.target_text.as_deref())?;
     Ok(native)
 }
 struct SourceContext<'a> {
@@ -344,6 +470,8 @@ struct SourceContext<'a> {
     remaining: usize,
     required: Vec<PreviewEnvironment>,
     report: Vec<MappingRecord>,
+    /// Accepted source fields of every adapter, by proposal pointer.
+    accepted: Origins,
 }
 
 fn command_root(source: &SourceFile) -> Option<&Path> {
@@ -542,10 +670,287 @@ fn merge_markdown_commands(
     }
     Ok(())
 }
+/// Run the settings adapters of a family and fold every adapter's output into its
+/// proposal; items left behind are attributed to the family's settings file, or to the
+/// target when the family has none.
+fn adapt(
+    representative: Option<&SourceFile>,
+    raw: &Raw<'_>,
+    target: &Path,
+    (config, origins): (&mut Value, &mut Origins),
+    report: &mut Vec<MappingRecord>,
+    mut adapted: Adapted,
+) -> Result<(), DiscoveryError> {
+    if let Some(source) = representative {
+        raw_adapters(source, raw, config, &mut adapted)?;
+    }
+    let fallback = representative.map_or(target, |s| s.path.as_path());
+    super::adapted::absorb(config, origins, report, adapted, raw.origins, fallback);
+    Ok(())
+}
+
+/// The admitted text of one source, kept under review and charged to the parse budget.
+fn admitted_text(
+    context: &mut SourceContext<'_>,
+    source: &SourceFile,
+) -> Result<String, DiscoveryError> {
+    let snapshot = SourceSnapshot::read_admitted(context.roots, source, context.inventory)?;
+    context.remaining = context
+        .remaining
+        .checked_sub(snapshot.bytes().len())
+        .ok_or_else(|| {
+            error(
+                &source.path,
+                "preview exceeds aggregate sixteen MiB parse limit",
+            )
+        })?;
+    let text = snapshot.text()?.to_owned();
+    context.snapshots.push(snapshot);
+    Ok(text)
+}
+
+/// Sources the per-file adapters handle: agent and mode files, Codex profile files and
+/// `hooks.json`, and files read in place at runtime. `false` leaves `source` to
+/// [`source_config`].
+fn extra_source(
+    context: &mut SourceContext<'_>,
+    source: &SourceFile,
+    adapted: &mut Adapted,
+) -> Result<bool, DiscoveryError> {
+    match (source.tool, source.kind) {
+        (SourceTool::Claude | SourceTool::OpenCode, SourceKind::Agent | SourceKind::Mode) => {
+            let text = admitted_text(context, source)?;
+            super::agents::convert(source, &text, adapted);
+        }
+        (SourceTool::Codex, SourceKind::Profile | SourceKind::Hook | SourceKind::Policy) => {
+            let text = admitted_text(context, source)?;
+            let document = super::detection::parse_document(source, &text)?;
+            context.secrets.extend(sensitive_values(&document));
+            let mark = adapted.mark();
+            codex_file(source, &document, adapted);
+            adapted.attribute(mark, &source.path);
+        }
+        (_, SourceKind::Skill | SourceKind::Instruction) => read_in_place(context, source),
+        (_, SourceKind::SkillAsset) => (),
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+fn codex_file(source: &SourceFile, document: &Value, adapted: &mut Adapted) {
+    if source.kind == SourceKind::Policy {
+        return super::codex_profiles::requirements(document, adapted);
+    }
+    if source.kind == SourceKind::Hook {
+        match document.get("hooks") {
+            Some(hooks) => super::hooks::convert(hooks, "/hooks", adapted),
+            None => adapted.skip("", "not imported", "hooks.json has no hooks object"),
+        }
+        return;
+    }
+    let name = source
+        .path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.strip_suffix(".config.toml"))
+        .unwrap_or_default();
+    super::codex_profiles::profile_file(name, document, adapted);
+}
+
+/// Skills and instruction files are not copied: report whether the runtime reads them
+/// where they are.
+fn read_in_place(context: &mut SourceContext<'_>, source: &SourceFile) {
+    let (covered, kind) = if source.kind == SourceKind::Skill {
+        let roots = super::detection_sessions::skill_roots(context.roots);
+        (
+            super::detection_sessions::under_any(&source.path, &roots),
+            "skill",
+        )
+    } else {
+        (
+            super::detection_sessions::instruction_covered(context.roots, &source.path),
+            "instruction",
+        )
+    };
+    let (status, reason) = match (covered, kind) {
+        (true, "skill") => (
+            "imported",
+            "read in place by read-time skill compatibility; nothing to copy",
+        ),
+        (true, _) => (
+            "imported",
+            "read in place by read-time instruction compatibility; nothing to copy",
+        ),
+        (false, "skill") => (
+            "not imported",
+            "outside the runtime skill folders; move it under .cyber/skills",
+        ),
+        (false, _) => (
+            "not imported",
+            "not read in place; copy its text into AGENTS.md",
+        ),
+    };
+    context
+        .report
+        .push(record(&source.path, "source", status, reason));
+}
+
+/// The adapters over a family's merged settings document: Claude model/env/hooks
+/// settings, Codex profiles, permission profiles, environment policy, notify and
+/// granular approvals.
+fn raw_adapters(
+    source: &SourceFile,
+    raw: &Raw<'_>,
+    config: &mut Value,
+    adapted: &mut Adapted,
+) -> Result<(), DiscoveryError> {
+    match source.tool {
+        SourceTool::Claude => {
+            let personal = |field: &str| {
+                provenance::references(raw.origins, field)
+                    .iter()
+                    .any(|r| (raw.personal)(&r.source))
+            };
+            super::claude_settings::convert(raw.value, &personal, adapted)
+        }
+        SourceTool::Codex => {
+            super::codex_profiles::convert(raw.value, adapted);
+            granular_approvals(source, raw.value, config, adapted)?;
+        }
+        SourceTool::OpenCode => instructions(raw, adapted),
+    }
+    Ok(())
+}
+
+/// A family's merged settings document and the native directory it imports into.
+struct Raw<'a> {
+    value: &'a Value,
+    origins: &'a Origins,
+    /// Where the target `cyber.jsonc` lives; its relative paths resolve there.
+    directory: &'a Path,
+    /// Whether a source file holds personal settings that a shared document must not
+    /// receive (see [`personal_sources`]).
+    personal: &'a dyn Fn(&Path) -> bool,
+}
+
+/// Claude's `settings.local.json` files, and for a project import the user's
+/// `~/.claude` settings: values from them stay out of a project's `cyber.jsonc`.
+fn personal_sources(roots: &SourceRoots, scope: ImportScope) -> impl Fn(&Path) -> bool {
+    let home = roots
+        .home
+        .canonicalize()
+        .unwrap_or_else(|_| roots.home.clone())
+        .join(".claude");
+    move |source: &Path| {
+        source
+            .file_name()
+            .is_some_and(|name| name == "settings.local.json")
+            || (scope == ImportScope::Project && source.starts_with(&home))
+    }
+}
+
+/// OpenCode `instructions` → `instructions`. URLs and absolute or `~/` paths keep their
+/// meaning anywhere; a relative path or glob is kept only when its source file sits in
+/// the target's directory, since both tools resolve it against the declaring file.
+fn instructions(raw: &Raw<'_>, adapted: &mut Adapted) {
+    let Some(entries) = raw.value.get("instructions") else {
+        return;
+    };
+    let Some(entries) = entries.as_array().filter(|e| e.len() <= 64) else {
+        adapted.skip(
+            "/instructions",
+            "not imported",
+            "expected at most 64 instruction entries",
+        );
+        return;
+    };
+    let beside = provenance::references(raw.origins, "/instructions")
+        .first()
+        .and_then(|r| r.source.parent().map(Path::to_path_buf))
+        .is_some_and(|dir| dir.canonicalize().ok().as_deref() == Some(raw.directory));
+    let mut kept = Vec::new();
+    for (index, entry) in entries.iter().enumerate() {
+        let field = format!("/instructions/{index}");
+        let Some(text) = entry
+            .as_str()
+            .filter(|s| !s.is_empty() && !s.contains('\0'))
+        else {
+            adapted.skip(field, "not imported", "instruction entries must be strings");
+            continue;
+        };
+        let portable =
+            text.starts_with("https://") || text.starts_with("~/") || Path::new(text).is_absolute();
+        let relative = !text.contains("://")
+            && !Path::new(text)
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir));
+        if portable || (beside && relative) {
+            adapted.raw(format!("/instructions/{}", kept.len()), &[field.as_str()]);
+            kept.push(json!(text));
+        } else {
+            adapted.skip(
+                field,
+                "not imported",
+                "relative instruction path resolves elsewhere from the target; port by hand",
+            );
+        }
+    }
+    if !kept.is_empty() {
+        adapted.config["instructions"] = Value::Array(kept);
+    }
+}
+
+/// Granular approvals turned off become `deny` rules; `rules = false` turns execpolicy
+/// `prompt` rules (the only `ask` rules of a Codex proposal) into `deny`.
+fn granular_approvals(
+    source: &SourceFile,
+    raw: &Value,
+    config: &mut Value,
+    adapted: &mut Adapted,
+) -> Result<(), DiscoveryError> {
+    let policy = super::codex_policy_config(raw).map_err(|_| {
+        error(
+            &source.path,
+            "approval/sandbox conversion refused; advanced source policy adapter required",
+        )
+    })?;
+    if !policy.rules.is_empty() {
+        for index in 0..policy.rules.len() {
+            adapted.raw(format!("/permissions/rules/{index}"), &["/approval_policy"]);
+        }
+        adapted.config["permissions"] = json!({"rules": policy.rules});
+    }
+    if policy.reject_rule_prompts {
+        for rule in config
+            .pointer_mut("/permissions/rules")
+            .and_then(Value::as_array_mut)
+            .into_iter()
+            .flatten()
+            .filter(|rule| rule["effect"] == "ask")
+        {
+            rule["effect"] = json!("deny");
+        }
+    }
+    if policy.decline_elicitations {
+        adapted.skip(
+            "/approval_policy",
+            "not imported",
+            "MCP elicitations are always asked; Cyber Code has no automatic decline",
+        );
+    }
+    Ok(())
+}
+
+/// The settings delta of one source; `None` for a source handled (or reported) by
+/// another adapter.
 fn source_config(
     context: &mut SourceContext<'_>,
     source: &SourceFile,
+    adapted: &mut Adapted,
 ) -> Result<Option<Value>, DiscoveryError> {
+    if extra_source(context, source, adapted)? {
+        return Ok(None);
+    }
     let SourceContext {
         roots,
         inventory,
@@ -554,22 +959,14 @@ fn source_config(
         remaining,
         required: _,
         report,
+        accepted: _,
     } = context;
     if !matches!(
         source.kind,
-        SourceKind::Config | SourceKind::Profile | SourceKind::Rule | SourceKind::Mcp
+        SourceKind::Config | SourceKind::Rule | SourceKind::Mcp
     ) {
-        let status = if matches!(source.kind, SourceKind::Plugin | SourceKind::CustomTool) {
-            "requires manual port"
-        } else {
-            "not imported"
-        };
-        report.push(record(
-            &source.path,
-            "source",
-            status,
-            "source kind needs an additional adapter",
-        ));
+        let (status, reason) = unconverted(source.kind);
+        report.push(record(&source.path, "source", status, reason));
         return Ok(None);
     }
     if source.kind == SourceKind::Rule && source.tool != SourceTool::Codex {
@@ -577,16 +974,7 @@ fn source_config(
             &source.path,
             "rules",
             "not imported",
-            "instruction rule-file adapter remains required",
-        ));
-        return Ok(None);
-    }
-    if source.kind == SourceKind::Profile {
-        report.push(record(
-            &source.path,
-            "profiles",
-            "not imported",
-            "named profile and inheritance adapter remains required",
+            "Cyber Code does not load rule files yet (system-context Path-scoped rules); keep it in .claude/rules",
         ));
         return Ok(None);
     }
@@ -627,11 +1015,27 @@ fn source_config(
         &source.path,
         "source",
         "read",
-        "source parsed without execution; conversion/report coverage remains partial",
+        "source parsed without execution",
     ));
     snapshots.push(snapshot);
     Ok(Some(config))
 }
+/// The report entry of a source kind no adapter converts.
+fn unconverted(kind: SourceKind) -> (&'static str, &'static str) {
+    match kind {
+        SourceKind::Plugin | SourceKind::CustomTool => (
+            "requires manual port",
+            "JS/TS plugins and tools use a different protocol; see the plugin kit migration guide: \
+             https://github.com/CyberdyneCorp/cybercode-cli/blob/main/docs/local-core-guide.md#porting-opencode-plugins-and-tools",
+        ),
+        SourceKind::Agent => (
+            "requires manual port",
+            "Codex agent files have no native equivalent; recreate the agent under agents",
+        ),
+        _ => ("not imported", "source kind needs an additional adapter"),
+    }
+}
+
 fn codex_config(
     source: &SourceFile,
     document: &Value,
@@ -662,7 +1066,17 @@ fn codex_config(
         let field = provenance::indexed_field(document, &pending.field);
         if matches!(
             field.as_deref(),
-            Some("/approval_policy" | "/sandbox_mode" | "/mcp_servers")
+            Some(
+                "/approval_policy"
+                    | "/sandbox_mode"
+                    | "/mcp_servers"
+                    | "/profiles"
+                    | "/profile"
+                    | "/permissions"
+                    | "/default_permissions"
+                    | "/shell_environment_policy"
+                    | "/notify"
+            )
         ) {
             continue;
         }
@@ -698,7 +1112,15 @@ fn document_config(
             if let Some(model) = document.get("model") {
                 map_model(source, model, true, &mut config, report)?;
             }
-            &["permissions", "model", "mcpServers"]
+            &[
+                "permissions",
+                "model",
+                "mcpServers",
+                "hooks",
+                "fallbackModel",
+                "env",
+                "apiKeyHelper",
+            ]
         }
         SourceTool::OpenCode => {
             let rules = converted(source, opencode_permissions(document))?;
@@ -746,6 +1168,7 @@ fn document_config(
                 "compaction",
                 "command",
                 "commands",
+                "instructions",
             ]
         }
     };
@@ -793,14 +1216,17 @@ fn map_model(
                     .all(|b| b.is_ascii_alphanumeric() || b"_.:/-".contains(&b))
         })
         .ok_or_else(|| error(&source.path, "model requires manual conversion"))?;
-    if anthropic && !model.starts_with("claude-") {
-        report.push(record(
-            &source.path,
-            "model",
-            "not imported",
-            "model alias needs catalog-aware resolution",
-        ));
-    } else if !anthropic && !model.contains('/') {
+    if anthropic {
+        match super::claude_settings::model(model) {
+            Some(model) => config["model"] = json!(model),
+            None => report.push(record(
+                &source.path,
+                "model",
+                "not imported",
+                "model is not a Claude model or alias",
+            )),
+        }
+    } else if !model.contains('/') {
         report.push(record(
             &source.path,
             "model",
@@ -808,55 +1234,65 @@ fn map_model(
             "model needs provider qualification",
         ));
     } else {
-        config["model"] = json!(if anthropic {
-            format!("anthropic/{model}")
-        } else {
-            model.into()
-        });
+        config["model"] = json!(model);
     }
     Ok(())
 }
-fn fill_existing(
-    base: &mut Value,
-    extra: &Value,
-    pointer: &str,
-    origins: &Origins,
-    accepted: &mut Origins,
-    report: &mut Vec<MappingRecord>,
-) {
+struct Fill<'a> {
+    origins: &'a Origins,
+    accepted: &'a mut Origins,
+    report: &'a mut Vec<MappingRecord>,
+    /// Pointer → digest recorded by an earlier import's annotation in the target.
+    imported: &'a std::collections::BTreeMap<String, String>,
+    /// Annotated entries this import replaces.
+    updated: &'a mut std::collections::BTreeSet<String>,
+}
+impl Fill<'_> {
+    fn accept(&mut self, pointer: &str, reason: &'static str) {
+        for field in provenance::fields(self.origins, pointer) {
+            self.accepted
+                .insert(field.clone(), self.origins[field].clone());
+            report_mapping(self.report, self.origins, field, "imported", reason, None);
+        }
+    }
+    /// An entry an earlier import wrote and nobody has edited since.
+    fn updatable(&self, pointer: &str, current: &Value) -> bool {
+        self.imported
+            .get(pointer)
+            .is_some_and(|digest| *digest == super::write::digest(current))
+    }
+}
+fn fill_existing(fill: &mut Fill<'_>, base: &mut Value, extra: &Value, pointer: &str) {
     for (key, value) in extra.as_object().into_iter().flatten() {
-        let child = format!("{pointer}/{}", key.replace('~', "~0").replace('/', "~1"));
-        if let Some(previous) = base.get_mut(key) {
-            if previous.is_object() && value.is_object() {
-                fill_existing(previous, value, &child, origins, accepted, report);
-            } else {
-                report_mapping(
-                    report,
-                    origins,
-                    &child,
-                    "merged",
-                    "existing native or earlier auto-source key kept",
-                    Some(super::report_values::ValueComparison {
-                        kept: previous.clone(),
-                        ignored: value.clone(),
-                    }),
-                );
-            }
-        } else {
+        let child = provenance::child(pointer, key);
+        let Some(previous) = base.get_mut(key) else {
             base.as_object_mut()
                 .unwrap()
                 .insert(key.clone(), value.clone());
-            for field in provenance::fields(origins, &child) {
-                accepted.insert(field.clone(), origins[field].clone());
-                report_mapping(
-                    report,
-                    origins,
-                    field,
-                    "imported",
-                    "supported source field proposed without writing",
-                    None,
-                );
-            }
+            fill.accept(&child, "supported source field");
+            continue;
+        };
+        if previous == value {
+            continue;
+        }
+        if fill.updatable(&child, previous) {
+            *previous = value.clone();
+            fill.updated.insert(child.clone());
+            fill.accept(&child, "entry of an earlier import updated from its source");
+        } else if previous.is_object() && value.is_object() {
+            fill_existing(fill, previous, value, &child);
+        } else {
+            report_mapping(
+                fill.report,
+                fill.origins,
+                &child,
+                "merged",
+                "existing native or earlier auto-source key kept",
+                Some(super::report_values::ValueComparison {
+                    kept: previous.clone(),
+                    ignored: value.clone(),
+                }),
+            );
         }
     }
 }
@@ -919,19 +1355,23 @@ pub(super) fn sensitive_values(value: &Value) -> Vec<String> {
                         .filter(|c| c.is_ascii_alphanumeric())
                         .flat_map(char::to_lowercase)
                         .collect();
+                    // A path or glob key (`"secrets/**" = "none"`) names files, not a
+                    // credential field.
+                    let field = !key.contains(['/', '*', '\\']);
                     let sensitive = force
                         || key == "headers"
                         || key == "http_headers"
-                        || [
-                            "apikey",
-                            "token",
-                            "secret",
-                            "password",
-                            "authorization",
-                            "cookie",
-                        ]
-                        .iter()
-                        .any(|s| normalized.contains(s));
+                        || (field
+                            && [
+                                "apikey",
+                                "token",
+                                "secret",
+                                "password",
+                                "authorization",
+                                "cookie",
+                            ]
+                            .iter()
+                            .any(|s| normalized.contains(s)));
                     collect(value, sensitive, out);
                 }
             }
@@ -1014,37 +1454,4 @@ pub(super) fn reject_unsafe_strings(
         ));
     }
     Ok(())
-}
-fn render_diff(
-    target: &Path,
-    existing: &Value,
-    proposed: &Value,
-    secrets: &[String],
-) -> Result<String, DiscoveryError> {
-    if existing == proposed {
-        return Ok(String::new());
-    }
-    let render = |value: &Value| -> Result<String, DiscoveryError> {
-        let mut text = serde_json::to_string_pretty(&crate::config::redact_secrets(value))
-            .map_err(|_| error(target, "proposal cannot be rendered"))?;
-        let mut secrets: Vec<_> = secrets.iter().collect();
-        secrets.sort_by_key(|s| std::cmp::Reverse(s.len()));
-        for secret in secrets {
-            let encoded = serde_json::to_string(secret)
-                .map_err(|_| error(target, "secret cannot be redacted"))?;
-            text = text.replace(&encoded[1..encoded.len() - 1], "***");
-            text = text.replace(secret, "***");
-        }
-        text.push('\n');
-        Ok(text)
-    };
-    let old = render(existing)?;
-    let new = render(proposed)?;
-    Ok(similar::TextDiff::from_lines(&old, &new)
-        .unified_diff()
-        .header(
-            "native configuration (redacted)",
-            "import proposal (redacted)",
-        )
-        .to_string())
 }

@@ -116,3 +116,75 @@
 - **WHEN** a source contains literal API keys or static header values
 - **THEN** serialized/debug plan output SHALL omit those values
 - **AND** the plan SHALL name the environment variables the user must populate
+
+## MODIFIED Requirements
+
+### Requirement: Claude Code sources
+(P1) The `claude` importer SHALL read:
+- `~/.claude/settings.json`, `.claude/settings.json`, `.claude/settings.local.json`
+- `~/.claude.json` and `.mcp.json` (MCP servers)
+- `.claude/agents/*.md` and `~/.claude/agents/*.md`
+- `.claude/commands/**/*.md`
+- `.claude/skills/**/SKILL.md`
+- `.claude/rules/*.md` and `~/.claude/rules/*.md`
+- `CLAUDE.md` files
+- hook definitions under `hooks` in settings
+
+It SHALL map them as follows:
+- `permissions.allow`/`deny`/`ask` → `permissions` rules, emitted in the order `allow`, `ask`, `deny` so that last-match-wins reproduces Claude Code's deny-over-ask-over-allow precedence
+- `defaultMode` → `mode` (`acceptEdits` → `accept-edits`, `bypassPermissions` → `bypass`, `dontAsk` → `dont-ask`)
+- `model` aliases → `anthropic/<model>`; `fallbackModel` → `fallback_models`
+- `apiKeyHelper` → a `command` credential; `env` → `sandbox.env.set`, with credential-named variables and personal values (`settings.local.json`, and `~/.claude` for a project import) withheld and reported
+- `.claude/agents/*.md` → `agents.<name>` subagent profiles (the body as `system`; `tools`, `disallowedTools`, `model`, `color`, `permissionMode` and `skills` mapped field by field)
+- `.claude/rules/*.md` → `.cyber/rules/*.md`, keeping `paths` frontmatter
+- skills, commands and `CLAUDE.md` files that read-time compatibility already loads are reported as imported without being copied
+- hooks → the native `hooks` key, with the groups of every settings file kept in layer order and event names mapped one-to-one where an equivalent exists (PascalCase tool matchers lower-cased, `statusMessage` renamed, `CLAUDE_PROJECT_DIR` in commands replaced by `CYBER_PROJECT_DIR`), and `Setup`, `PermissionDenied`, `InstructionsLoaded`, `PreModelSwitch`/`PostModelSwitch`, `Elicitation`, `DirectoryAdded` and `PostToolBatch` mapped to their Cyber events
+
+#### Scenario: Permission rule conversion
+- **WHEN** `.claude/settings.json` has `"permissions": {"allow": ["Bash(npm run test:*)"], "deny": ["Read(./.env)"]}`
+- **THEN** the import produces rules `{ "action": "bash", "resource": "npm run test *", "effect": "allow" }` followed by `{ "action": "read", "resource": ".env", "effect": "deny" }`, in that order
+
+#### Scenario: Unmappable hook event
+- **WHEN** a Claude hook uses an event with no Cyber equivalent
+- **THEN** the hook is skipped and the import report lists it under `not imported` with the reason
+
+### Requirement: Codex sources
+(P1) The `codex` importer SHALL read `~/.codex/config.toml` (and `$CODEX_HOME`), `~/.codex/<name>.config.toml` profile files, `.codex/config.toml` project layers, `AGENTS.md` and `AGENTS.override.md` files, `~/.codex/skills` and `~/.agents/skills`, `[mcp_servers.*]` tables, `[agents]` and custom agent TOML files, `[profiles.*]`, `[model_providers.*]`, `[permissions.*]` profiles, `rules/*.rules` execpolicy files, `hooks.json`, `[shell_environment_policy]`, `notify` and `requirements.toml`. It SHALL map:
+- `model` and `model_provider` → `model`
+- `approval_policy` + `sandbox_mode` → `mode` + `sandbox` (`on-request` → `default`, `never` + `workspace-write` → `dont-ask` with the sandbox enabled, `danger-full-access` → `bypass` with the sandbox disabled; the retired `untrusted` → `default` with a deprecation note; `granular` approvals → equivalent `ask`/`deny` rules)
+- `[permissions.*]` → `sandbox.profiles.*`; `default_permissions` → `sandbox.profile`, selecting `read-only` when the named profile cannot be converted; `[shell_environment_policy]` → `sandbox.env`
+- `rules/*.rules` `prefix_rule` entries → `bash` permission rules (`allow`/`prompt`/`forbidden` → `allow`/`ask`/`deny`)
+- `hooks.json` → the native `hooks` key; `notify` → a `Notification` command hook
+- `model_providers` → `providers` in the `provider-catalog` shape: `base_url` → `api.url`, `wire_api` `chat` → `api.type: "openai-compatible"` and `responses` → `api.type: "openai-responses"`, `env_key` → `api.settings.api_key: "{env:NAME}"`
+- profiles → `profiles`; `profile` → `default_profile`
+- `requirements.toml` → a report of equivalent `org-policy` settings (not written, because policy files are admin-owned)
+
+#### Scenario: Custom OpenAI-compatible provider
+- **WHEN** `config.toml` has `[model_providers.local] base_url = "http://localhost:8000/v1" env_key = "LOCAL_KEY" wire_api = "chat"`
+- **THEN** the import creates `providers.local = { "api": { "type": "openai-compatible", "url": "http://localhost:8000/v1", "settings": { "api_key": "{env:LOCAL_KEY}" } } }`
+
+#### Scenario: Execpolicy rule converted
+- **WHEN** `rules/git.rules` contains `prefix_rule(pattern=["git","push"], decision="forbidden")`
+- **THEN** the import produces `{ "action": "bash", "resource": "git push *", "effect": "deny" }`
+
+### Requirement: Read-time MCP compatibility
+(P1) When `compat.mcp_files = true` (default), the system SHALL load project `.mcp.json` servers as if declared under `mcp`, at a priority below `cyber.jsonc`: a server that any configuration document names SHALL keep that definition whole. The file SHALL be a project layer, withheld until the checkout is trusted, and its values SHALL be converted, never evaluated, so a server holding a placeholder other than `${VAR}`/`${VAR:-default}` is skipped. The first time each new project server is used, it SHALL require one-time user approval of its definition digest, recorded per project in the trust store.
+
+#### Scenario: New project MCP server approval
+- **WHEN** a freshly cloned repo contains `.mcp.json` with server `db-tools`
+- **THEN** the TUI asks `Enable MCP server "db-tools" from .mcp.json?` before starting it
+
+### Requirement: Mapping report
+(P1) Every import SHALL end with a report of `imported`, `merged` (an existing key was kept and the source value was ignored), `requires manual port` and `not imported` items, each with the source path, and SHALL write it to `.cyber/import-report-<timestamp>.md` (the global configuration directory for `--scope global`) when files were written. The report SHALL be created before the target document is replaced, so a report that cannot be written leaves `cyber.jsonc` unchanged, and a target that cannot be replaced removes its report. A missing target directory (the global configuration directory on a first global import) SHALL be created; a linked or non-directory one SHALL be refused.
+
+#### Scenario: Existing key kept
+- **WHEN** `cyber.jsonc` already sets `model` and the Codex config sets a different `model`
+- **THEN** the existing value is kept and the report lists `model` under `merged` with both values
+
+#### Scenario: Report cannot be written
+- **WHEN** `cyber import claude --yes` runs and `.cyber/` is not writable
+- **THEN** the command fails with `import report could not be written` and `cyber.jsonc` is byte-identical
+
+#### Scenario: First global import
+- **WHEN** the global configuration directory does not exist and the user runs `cyber import codex --scope global --yes`
+- **THEN** the directory is created with `cyber.jsonc` and the mapping report in it

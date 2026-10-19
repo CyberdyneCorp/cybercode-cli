@@ -30,6 +30,9 @@ impl Context {
         })?;
         let paths = Paths::resolve(&env, &home);
         paths.ensure()?;
+        // Before any command can start a sandboxed process (`sandbox run`, hooks, MCP
+        // servers, LSP), not only when an App is built.
+        cyber_tools::plugin_host::hide_credential_files(&paths);
         config::ensure_global_config(&paths)?;
         Ok(Self {
             location: location(global)?,

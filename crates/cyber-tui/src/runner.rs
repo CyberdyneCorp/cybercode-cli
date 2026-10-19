@@ -52,7 +52,13 @@ pub(crate) async fn start(
 ) -> Result<(App, bool), String> {
     let (session, open_picker) = open(client, opts).await?;
     let dirs = crate::prefs::config_dirs(&opts.config_dir, std::path::Path::new(&opts.directory));
-    let prefs = crate::prefs::load(store, &dirs, env);
+    let plugins = client
+        .get("/plugins")
+        .await
+        .map(|body| body["data"].clone())
+        .unwrap_or_default();
+    let plugin_themes = crate::plugins::theme_dirs(&plugins);
+    let prefs = crate::prefs::load_with_plugins(store, &dirs, &plugin_themes, env);
     let mut app = App::new(session, store.history(&opts.directory), "cyber");
     app.reduced_motion = prefs.reduced_motion;
     app.screen_reader = prefs.screen_reader;
@@ -74,6 +80,14 @@ pub(crate) async fn start(
     app.set_theme(&prefs.theme);
     if let Some(first) = warnings.first() {
         app.toast(first.clone());
+    } else if let Some(offer) = crate::import_offer::offer(
+        store,
+        std::path::Path::new(&opts.directory),
+        app.home.as_deref(),
+    ) {
+        app.toast(offer);
+    } else if let Some(offer) = crate::plugins::offer(store, &opts.directory, &plugins) {
+        app.toast(offer);
     }
     app.composer.set_text(&store.draft(&app.session.id));
     Ok((app, open_picker))
@@ -576,6 +590,11 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
         Msg::Sessions(items) => app.open_picker(PickerKind::Sessions, "Sessions", items),
         Msg::Models(items) => app.open_picker(PickerKind::Models, "Models", items),
         Msg::Skills { directory, result } => open_skills(app, &directory, result),
+        Msg::Plugins {
+            directory,
+            reload,
+            result,
+        } => crate::plugins::show(app, &directory, reload, result),
         Msg::Commands {
             items,
             palette,

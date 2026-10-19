@@ -99,7 +99,7 @@ impl TreeInventory {
         self.verify()?;
         let mut owner = ExistingTreeGrant { leases: Vec::new() };
         for (node, access) in self.nodes.drain(..).zip(policies) {
-            match identity::grant_record_policy(profile, node.record, access.policy()) {
+            match identity::grant_record_policy(profile, node.record, access.policy(), false) {
                 Ok(lease) => owner.leases.push(lease),
                 Err(setup) => return Err(owner.rollback_error(setup)),
             }
@@ -254,7 +254,13 @@ pub(super) enum ObjectPolicy {
 }
 
 impl ObjectPolicy {
-    pub(super) fn entries(self, sid: PSID) -> Vec<EXPLICIT_ACCESS_W> {
+    /// `inherit` also passes the entries to objects created later inside a directory.
+    pub(super) fn entries(self, sid: PSID, inherit: bool) -> Vec<EXPLICIT_ACCESS_W> {
+        let inheritance = if inherit {
+            OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE
+        } else {
+            0
+        };
         let security = WRITE_DAC | WRITE_OWNER;
         // Generic write includes READ_CONTROL and SYNCHRONIZE, which reads need.
         let writes = (FILE_GENERIC_WRITE & !(READ_CONTROL | SYNCHRONIZE))
@@ -266,14 +272,14 @@ impl ObjectPolicy {
             Self::Writable => security | FILE_DELETE_CHILD,
             Self::Unreadable => FILE_ALL_ACCESS,
         };
-        let mut entries = vec![policy_entry(sid, denied, DENY_ACCESS)];
+        let mut entries = vec![policy_entry(sid, denied, DENY_ACCESS, inheritance)];
         let allowed = match self {
             Self::ReadOnly => Some(Access::Read.mask()),
             Self::Writable => Some(Access::Write.mask()),
             Self::Unreadable => None,
         };
         if let Some(mask) = allowed {
-            entries.push(policy_entry(sid, mask, GRANT_ACCESS));
+            entries.push(policy_entry(sid, mask, GRANT_ACCESS, inheritance));
         }
         entries
     }
@@ -283,11 +289,12 @@ fn policy_entry(
     sid: PSID,
     mask: u32,
     mode: windows_sys::Win32::Security::Authorization::ACCESS_MODE,
+    inheritance: u32,
 ) -> EXPLICIT_ACCESS_W {
     EXPLICIT_ACCESS_W {
         grfAccessPermissions: mask,
         grfAccessMode: mode,
-        grfInheritance: 0,
+        grfInheritance: inheritance,
         Trustee: TRUSTEE_W {
             TrusteeForm: TRUSTEE_IS_SID,
             ptstrName: sid.cast(),
@@ -354,10 +361,10 @@ impl ForestPreparation {
         Ok(())
     }
 
-    fn grant(mut self, profile: &Profile) -> io::Result<ExistingTreeGrant> {
+    fn grant(mut self, profile: &Profile, inherit: bool) -> io::Result<ExistingTreeGrant> {
         let mut owner = ExistingTreeGrant { leases: Vec::new() };
         for (node, rule) in self.nodes.drain(..) {
-            match identity::grant_record_policy(profile, node.record, rule.policy()) {
+            match identity::grant_record_policy(profile, node.record, rule.policy(), inherit) {
                 Ok(lease) => owner.leases.push(lease),
                 Err(setup) => return Err(owner.rollback_error(setup)),
             }
@@ -369,10 +376,12 @@ impl ForestPreparation {
     }
 }
 
+/// `inherit` makes each directory's entries apply to objects created inside it later.
 pub(super) fn grant_forest(
     profile: &Profile,
     roots: &[ExistingTreeRoot],
     limit: usize,
+    inherit: bool,
 ) -> io::Result<ExistingTreeGrant> {
     if roots.is_empty() || limit == 0 {
         return Err(io::Error::new(
@@ -388,5 +397,5 @@ pub(super) fn grant_forest(
     for root in roots {
         forest.add(root, limit)?;
     }
-    forest.grant(profile)
+    forest.grant(profile, inherit)
 }

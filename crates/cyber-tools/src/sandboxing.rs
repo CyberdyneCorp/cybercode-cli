@@ -26,6 +26,10 @@ pub(crate) struct Prepared {
     pub asks: Option<mpsc::Receiver<NetworkAsk>>,
     /// What the OS sandbox enforces; `None` when the command runs unsandboxed.
     pub boundary: Option<Boundary>,
+    /// The command cannot serve on the host's loopback: below a sandbox network other
+    /// than `on`, Linux gives it its own network namespace and macOS denies listening,
+    /// and a Windows AppContainer never reaches the host's loopback.
+    pub loopback_isolated: bool,
     /// Hosts the proxy refused while the command ran.
     pub refused: Arc<Mutex<Vec<String>>>,
     _proxy: Option<Proxy>,
@@ -224,6 +228,8 @@ async fn prepare_scoped_command(
         .collect();
     env.extend(wrapped.env);
     env.push(("TMPDIR".into(), tmp.display().to_string()));
+    let loopback_isolated = sandbox.policy != Policy::FullAccess
+        && (cfg!(windows) || sandbox.network != NetworkMode::On);
     let boundary = (sandbox.policy != Policy::FullAccess).then(|| Boundary {
         writable: launch.writable,
         read_only: launch.read_only,
@@ -236,6 +242,7 @@ async fn prepare_scoped_command(
         env,
         asks,
         boundary,
+        loopback_isolated,
         refused,
         _proxy: proxy,
     })
@@ -352,7 +359,13 @@ pub(crate) struct Denial {
 
 /// Messages the OS reports for sandbox refusals, lowercase: Seatbelt answers `EPERM`,
 /// bubblewrap's read-only binds `EROFS`.
-const DENIAL_MARKERS: &[&str] = &["operation not permitted", "read-only file system"];
+/// Refusal texts: POSIX errno messages, and the .NET message Windows tools print when an
+/// AppContainer ACL refuses access (`Access to the path 'C:\x' is denied.`).
+const DENIAL_MARKERS: &[&str] = &[
+    "operation not permitted",
+    "read-only file system",
+    "access to the path",
+];
 
 /// The denials in a sandboxed command's output and the proxy's refusals. A path error
 /// counts only when the boundary explains it: an unreadable or `deny_read` path, or a
@@ -425,7 +438,7 @@ fn denied_path(line: &str, workdir: &Path) -> Option<PathBuf> {
         })
     })?;
     let raw = raw.trim();
-    if raw.is_empty() || (raw.contains(char::is_whitespace) && !raw.contains('/')) {
+    if raw.is_empty() || (raw.contains(char::is_whitespace) && !raw.contains(['/', '\\'])) {
         return None;
     }
     let path = Path::new(raw);
@@ -779,6 +792,14 @@ mod tests {
             ),
             ("zsh:1: operation not permitted: /usr/x", "/usr/x"),
             ("cat: key.pem: Operation not permitted", "/repo/key.pem"),
+            (
+                "Set-Content: Access to the path '/usr/x' is denied.",
+                "/usr/x",
+            ),
+            (
+                "Out-File: Access to the path 'out dir/x.txt' is denied.",
+                "/repo/out dir/x.txt",
+            ),
         ] {
             assert_eq!(
                 denied_path(line, workdir),

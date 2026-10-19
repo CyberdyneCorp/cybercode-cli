@@ -158,22 +158,34 @@ impl SecretVault for MemoryVault {
 /// The OS keyring: the login Keychain on macOS, Credential Manager on Windows. Secrets are
 /// stored as bytes (`set_secret`), never as passwords, which Windows stores as UTF-16 and
 /// would halve the entry limit.
+/// Each vault keeps its entries under one keyring service.
 #[cfg(any(target_os = "macos", windows))]
-pub struct OsVault;
+pub struct OsVault {
+    service: &'static str,
+}
 
 #[cfg(any(target_os = "macos", windows))]
 impl OsVault {
+    /// The MCP OAuth credentials' vault ([`SERVICE`]).
+    pub const MCP: Self = Self { service: SERVICE };
+
+    pub const fn for_service(service: &'static str) -> Self {
+        Self { service }
+    }
+
     #[cfg(target_os = "macos")]
-    fn entry(account: &str) -> Result<keyring::Entry, OAuthError> {
-        let credential = keyring::macos::MacCredential::new_with_target(None, SERVICE, account)
-            .map_err(|error| os_failure("open", &error))?;
+    fn entry(&self, account: &str) -> Result<keyring::Entry, OAuthError> {
+        let credential =
+            keyring::macos::MacCredential::new_with_target(None, self.service, account)
+                .map_err(|error| os_failure("open", &error))?;
         Ok(keyring::Entry::new_with_credential(Box::new(credential)))
     }
 
     #[cfg(windows)]
-    fn entry(account: &str) -> Result<keyring::Entry, OAuthError> {
-        let credential = keyring::windows::WinCredential::new_with_target(None, SERVICE, account)
-            .map_err(|error| os_failure("open", &error))?;
+    fn entry(&self, account: &str) -> Result<keyring::Entry, OAuthError> {
+        let credential =
+            keyring::windows::WinCredential::new_with_target(None, self.service, account)
+                .map_err(|error| os_failure("open", &error))?;
         Ok(keyring::Entry::new_with_credential(Box::new(credential)))
     }
 }
@@ -181,12 +193,12 @@ impl OsVault {
 #[cfg(any(target_os = "macos", windows))]
 impl SecretVault for OsVault {
     fn put(&self, account: &str, secret: &[u8]) -> Result<(), OAuthError> {
-        Self::entry(account)?
+        self.entry(account)?
             .set_secret(secret)
             .map_err(|error| os_failure("write", &error))
     }
     fn get(&self, account: &str) -> Result<Option<Vec<u8>>, OAuthError> {
-        match Self::entry(account)?.get_secret() {
+        match self.entry(account)?.get_secret() {
             Ok(secret) => Ok(Some(secret)),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(error) => Err(os_failure("read", &error)),
@@ -196,7 +208,7 @@ impl SecretVault for OsVault {
     /// denied prompt, an ACL that no longer trusts this binary) and reports success; the
     /// store's read-back (see [`SecretVault::delete`]) catches that.
     fn delete(&self, account: &str) -> Result<(), OAuthError> {
-        match Self::entry(account)?.delete_credential() {
+        match self.entry(account)?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(error) => Err(os_failure("delete", &error)),
         }
@@ -219,7 +231,7 @@ pub fn open_store(paths: &Paths) -> Arc<dyn McpCredentialStore> {
     #[cfg(any(target_os = "macos", windows))]
     {
         Arc::new(
-            VaultCredentialStore::new(index_file(paths), Arc::new(OsVault))
+            VaultCredentialStore::new(index_file(paths), Arc::new(OsVault::MCP))
                 .with_legacy(FileCredentialStore::new(paths.mcp_auth_file())),
         )
     }

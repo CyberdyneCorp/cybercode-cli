@@ -178,3 +178,121 @@ fn native_drive_paths_produce_external_and_protected_facts() {
     assert_eq!(analysis.commands[1].mutates, vec![protected]);
     assert!(matches!(risk, Some(RemovalRisk::Critical(path)) if path == repo));
 }
+
+#[test]
+fn abbreviated_and_aliased_parameters_bind_like_their_full_names() {
+    for code in [
+        "Set-Content -Lit '/outside/a' -Val '/repo/data'",
+        "Set-Content -LP '/outside/a' -Value '/repo/data'",
+        "Set-Content -PSPath '/outside/a' -Value '/repo/data'",
+        "Set-Content -Path:'/outside/a' -Value '/repo/data'",
+        "Out-File -File '/outside/a' -InputObj '/repo/data'",
+        "Set-Content -EA Stop '/outside/a' -Value '/repo/data'",
+    ] {
+        let (analysis, _) = inspect(code);
+        assert_eq!(
+            analysis.commands[0].mutates,
+            vec![PathBuf::from("/outside/a")],
+            "{code}"
+        );
+    }
+    let (analysis, _) = inspect("Copy-Item '/repo/a' -Dest '/outside/b'");
+    let paths = &analysis.commands[0].mutates;
+    assert!(paths.contains(&PathBuf::from("/outside/b")), "{paths:?}");
+}
+
+#[test]
+fn unknown_parameters_of_mutating_commands_keep_their_values_as_possible_targets() {
+    let (analysis, _) = inspect("Set-Content -Bogus '/outside/a' -Value 'x'");
+    assert!(
+        analysis.commands[0]
+            .mutates
+            .contains(&PathBuf::from("/outside/a")),
+        "{:?}",
+        analysis.commands[0].mutates
+    );
+    for code in [
+        "Invoke-WebRequest 'https://example.org/x' -OutFile '/outside/a'",
+        "Export-Csv -InputObject $x -Path '/outside/a'",
+        "Expand-Archive '/repo/a.zip' -DestinationPath '/outside/a'",
+        "Start-Transcript '/outside/a'",
+    ] {
+        let (analysis, _) = inspect(code);
+        assert!(
+            analysis.commands[0]
+                .mutates
+                .contains(&PathBuf::from("/outside/a")),
+            "{code}: {:?}",
+            analysis.commands[0].mutates
+        );
+        assert!(
+            !analysis.commands[0]
+                .mutates
+                .iter()
+                .any(|p| p.to_string_lossy().contains("example.org")),
+            "{code}"
+        );
+    }
+}
+
+/// Regression: abbreviations resolved against one table shared by every cmdlet, so a
+/// prefix naming a value parameter of another cmdlet (`-U` → `-Uri`, `-Inc` →
+/// `-Include`) swallowed the path that binds positionally after a switch of this one.
+#[test]
+fn abbreviations_resolve_against_the_cmdlets_own_parameters() {
+    for code in [
+        "Start-Transcript -U '/outside/a'",
+        "Start-Transcript -Inc '/outside/a'",
+        "Start-Transcript -Include '/outside/a'",
+        "Export-Csv -Inc '/outside/a' -InputObject $x",
+        "Compress-Archive '/repo/src' -U '/outside/a'",
+        "Start-Transcript -OutputDirectory '/outside/a'",
+    ] {
+        let (analysis, _) = inspect(code);
+        assert!(
+            analysis.commands[0]
+                .mutates
+                .contains(&PathBuf::from("/outside/a")),
+            "{code}: {:?}",
+            analysis.commands[0].mutates
+        );
+    }
+}
+
+#[test]
+fn dotnet_file_members_are_mutation_facts() {
+    for code in [
+        "[IO.File]::WriteAllText('/outside/a', 'x')",
+        "[System.IO.File]::AppendAllText('/outside/a', 'x')",
+        "[IO.File]::Copy('/repo/b', '/outside/a')",
+        "[IO.Directory]::CreateDirectory('/outside/a')",
+    ] {
+        let (analysis, risk) = inspect(code);
+        let paths: Vec<_> = analysis
+            .commands
+            .iter()
+            .flat_map(|c| c.mutates.clone())
+            .collect();
+        assert!(
+            paths.contains(&PathBuf::from("/outside/a")),
+            "{code}: {paths:?}"
+        );
+        assert!(matches!(risk, Some(RemovalRisk::Unresolved(_))), "{code}");
+    }
+}
+
+#[test]
+fn abbreviated_removal_switches_are_understood() {
+    assert_eq!(
+        inspect("Remove-Item -Rec -Fo -Lit '/repo'").1,
+        Some(RemovalRisk::Critical(PathBuf::from("/repo")))
+    );
+    assert_eq!(
+        inspect("Remove-Item -LiteralPath '/repo/build[1]' -Rec -Fo").1,
+        None
+    );
+    assert!(matches!(
+        inspect("Remove-Item -Fil '*.tmp' '/repo/out'").1,
+        Some(RemovalRisk::Unresolved(_))
+    ));
+}

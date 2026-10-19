@@ -31,6 +31,7 @@ reqwest = { version = "0.13", features = ["json"] }
 ulid.workspace = true
 sha2.workspace = true
 clap.workspace = true
+crossterm = "0.29"
 serde.workspace = true
 serde_json.workspace = true
 strsim.workspace = true

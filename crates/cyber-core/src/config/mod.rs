@@ -3,6 +3,7 @@
 
 mod agent_profiles;
 mod agents;
+pub(crate) mod annotated;
 mod auto_mode;
 mod deferred_tools;
 mod edit;
@@ -14,6 +15,7 @@ mod jsonc;
 mod load;
 mod managed;
 mod mcp;
+mod mcp_files;
 mod mcp_serve;
 mod merge;
 mod modes;
@@ -22,6 +24,7 @@ mod validate;
 mod workflows;
 
 pub(crate) use hooks::is_event_name;
+pub(crate) use mcp_files::convert as convert_mcp_file;
 pub(crate) use subst::has_placeholder;
 pub(crate) use validate::is_mode;
 
@@ -122,6 +125,11 @@ pub struct Resolved {
     pub layers: Vec<String>,
     /// OS-managed policy state; its hooks are merged with `managed:` origins.
     pub managed: ManagedPolicy,
+    /// Every plugin a scope lists and whether it loaded (`plugins-marketplace`).
+    pub plugins: Vec<crate::plugins::PluginStatus>,
+    /// `--pure` or `CYBER_PURE=1`: no plugins, and hooks and MCP servers only from
+    /// organization policy.
+    pub pure: bool,
 }
 
 /// Merge raw file layers without substitution, validation or trust side effects.

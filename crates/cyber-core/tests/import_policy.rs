@@ -44,7 +44,9 @@ fn approval_defaults_are_only_introduced_for_explicit_source_policy() {
 #[test]
 fn advanced_and_malformed_policy_forms_refuse_without_returning_source_values() {
     for value in [
-        json!({"approval_policy":{"granular":{"rules":false}}}),
+        json!({"approval_policy":{"granular":{"rules":"private-source-secret"}}}),
+        json!({"approval_policy":{"granular":{"private-source-secret":false}}}),
+        json!({"approval_policy":{"granular":{},"private-source-secret":1}}),
         json!({"approval_policy":"on-failure"}),
         json!({"approval_policy":"private-source-secret"}),
         json!({"approval_policy":null}),
@@ -55,4 +57,31 @@ fn advanced_and_malformed_policy_forms_refuse_without_returning_source_values() 
         let error = codex_policy_config(&value).unwrap_err();
         assert!(!error.to_string().contains("private-source-secret"));
     }
+}
+
+#[test]
+fn granular_approvals_become_deny_rules_and_reject_rule_prompts() {
+    let mapped = codex_policy_config(&json!({"approval_policy":{"granular":{
+        "sandbox_approval":true,"request_permissions":false,"skill_approval":false,"rules":false,"mcp_elicitations":false
+    }},"sandbox_mode":"workspace-write"}))
+    .unwrap();
+    assert_eq!(
+        mapped.config,
+        json!({"mode":"default","sandbox":{"policy":"workspace-write"}})
+    );
+    assert_eq!(
+        mapped.rules,
+        [
+            json!({"action":"sandbox.escalate","resource":"*","effect":"deny"}),
+            json!({"action":"skill","resource":"*","effect":"deny"}),
+        ]
+    );
+    assert!(mapped.reject_rule_prompts && mapped.decline_elicitations);
+    let open = codex_policy_config(&json!({"approval_policy":{"granular":{}}})).unwrap();
+    assert!(open.rules.is_empty() && !open.reject_rule_prompts && !open.decline_elicitations);
+    // A named permission profile, not the legacy default, decides the sandbox.
+    let named =
+        codex_policy_config(&json!({"approval_policy":"never","default_permissions":"build"}))
+            .unwrap();
+    assert_eq!(named.config, json!({"mode":"dont-ask"}));
 }

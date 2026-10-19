@@ -652,11 +652,14 @@ async fn bundled_review_in_a_subdirectory_withholds_denied_external_paths() {
     flow.runtime.shutdown().await;
 }
 
-/// Without an explicit full-access selection, review resolution fails closed
-/// on Windows like every other native git helper (no AppContainer route yet).
+/// Without an explicit full-access selection and without the AppContainer helper, review
+/// resolution fails closed on Windows like every other native git helper.
 #[cfg(windows)]
 #[tokio::test]
 async fn bundled_review_refuses_unavailable_windows_enforcement_without_explicit_opt_out() {
+    if cyber_sandbox::available() {
+        return;
+    }
     let flow = Flow::new(vec![text("unused")], false);
     init_repo(&flow.f);
     flow.f.write("a.rs", "baseline\n");

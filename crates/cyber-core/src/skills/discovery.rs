@@ -125,7 +125,10 @@ impl Scanner {
         let (name, path, origin) = (skill.name.clone(), skill.source_label(), skill.origin);
         if let Some(previous) = self.out.skills.insert(name.clone(), skill) {
             self.out.diagnostics.push(SkillDiagnostic {
-                message: format!("replaces skill {name} from {}", previous.source_label()),
+                message: format!(
+                    "duplicate skill: replaces skill {name} from {}",
+                    previous.source_label()
+                ),
                 path,
                 origin,
                 replaces: Some(name),

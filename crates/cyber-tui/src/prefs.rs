@@ -427,9 +427,21 @@ fn preferences(
 }
 
 /// Read the preferences. `env` is the process environment.
+#[cfg(test)]
 pub fn load(store: &LocalStore, dirs: &[PathBuf], env: &dyn Fn(&str) -> Option<String>) -> Loaded {
+    load_with_plugins(store, dirs, &[], env)
+}
+
+/// [`load`], with loaded plugins' theme folders as `(plugin, dir)` below every config
+/// directory's.
+pub fn load_with_plugins(
+    store: &LocalStore,
+    dirs: &[PathBuf],
+    plugin_themes: &[(String, PathBuf)],
+    env: &dyn Fn(&str) -> Option<String>,
+) -> Loaded {
     let theme_dirs: Vec<PathBuf> = dirs.iter().map(|d| d.join("themes")).collect();
-    let mut themes = Catalog::load(&theme_dirs);
+    let mut themes = Catalog::load_with_plugins(plugin_themes, &theme_dirs);
     let layers = layers(dirs, &mut themes.warnings);
     let settings = merged(&layers);
     let preferences = preferences(store, &layers, env, &mut themes.warnings);

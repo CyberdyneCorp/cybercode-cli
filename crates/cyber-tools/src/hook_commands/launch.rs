@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use cyber_core::config::{HookKind, Resolved};
-use cyber_core::hooks::{HookDefinition, HookEvent};
+use cyber_core::hooks::{HookDefinition, HookEvent, HookScope};
 use cyber_core::trust::{HookInvocationTrust, TrustStore};
 use cyber_sandbox::proxy::{Decide, Proxy};
 use cyber_sandbox::{Launch, NetworkMode, Policy, SandboxConfig};
@@ -419,8 +419,14 @@ impl HookCommandRunner<'_> {
         } else {
             Policy::FullAccess
         };
+        // A plugin's hook reaches only what the plugin declares, never the Session's
+        // network (`plugins-marketplace` → Capability declaration and enforcement).
+        let reach = (definition.scope == HookScope::Plugin).then(|| {
+            let network = plugin_capabilities(&definition.source).network;
+            crate::plugin_host::network::narrow(&mut sandbox, &network)
+        });
         let scratch = Scratch::new(self.temp_dir).map_err(|error| error.to_string())?;
-        let proxy = start_proxy(&sandbox, &scratch.path)
+        let proxy = start_proxy(&sandbox, reach.flatten(), &scratch.path)
             .await
             .map_err(|error| error.to_string())?;
         let writable = vec![
@@ -502,13 +508,32 @@ struct Prepared {
     _proxy: Option<Proxy>,
 }
 
-async fn start_proxy(config: &SandboxConfig, scratch: &Path) -> std::io::Result<Option<Proxy>> {
+/// The declared capabilities of the plugin a `plugin:<name>@<version>:<root>` hook comes
+/// from; none at all when its manifest cannot be read.
+fn plugin_capabilities(source: &str) -> cyber_core::plugins::Capabilities {
+    source
+        .strip_prefix("plugin:")
+        .and_then(|rest| rest.split_once('@'))
+        .and_then(|(_, rest)| rest.split_once(':'))
+        .and_then(|(_, root)| cyber_core::plugins::Manifest::read(Path::new(root)).ok())
+        .map(|manifest| manifest.capabilities)
+        .unwrap_or_default()
+}
+
+async fn start_proxy(
+    config: &SandboxConfig,
+    plugin: Option<crate::plugin_host::network::PluginReach>,
+    scratch: &Path,
+) -> std::io::Result<Option<Proxy>> {
     if config.policy == Policy::FullAccess || config.network != NetworkMode::Proxy {
         return Ok(None);
     }
     let domains = config.allowed_domains.clone();
     let decide: Decide = Arc::new(move |host| {
-        let allowed = cyber_sandbox::matches_domain(&host, &domains);
+        let allowed = match &plugin {
+            Some(plugin) => plugin.allows(&host),
+            None => cyber_sandbox::matches_domain(&host, &domains),
+        };
         Box::pin(async move { allowed })
     });
     #[cfg(unix)]

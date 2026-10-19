@@ -82,6 +82,9 @@ fn info(ctx: &Context) -> Result<(), CliError> {
     let resolved = ctx.config()?;
     report_warnings(&resolved.warnings, &resolved.trust);
     let (database, durability) = database_label(ctx);
+    if resolved.pure {
+        eprintln!("external extensions disabled (--pure)");
+    }
     output::json(&json!({
         "build": ctx.build,
         "paths": ctx.paths,
@@ -89,6 +92,8 @@ fn info(ctx: &Context) -> Result<(), CliError> {
         "database": { "location": database, "durability": durability },
         "config": { "layers": resolved.layers, "warnings": resolved.warnings },
         "trust": resolved.trust,
+        "plugins": resolved.plugins,
+        "extensions": if resolved.pure { "external extensions disabled (--pure)" } else { "enabled" },
     }))
 }
 

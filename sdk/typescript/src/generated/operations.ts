@@ -363,6 +363,12 @@ export interface Operations {
     body: undefined;
     response: S.Located_AnyValue;
   };
+  "v1.plugin.list": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_PluginList;
+  };
   "v1.question.list": {
     path: Record<string, never>;
     query: {
@@ -406,6 +412,12 @@ export interface Operations {
     query: Record<string, never>;
     body: undefined;
     response: S.BackgroundResult;
+  };
+  "v1.session.browserEvidence": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.BrowserEvidenceReport;
   };
   "v1.session.children": {
     path: { id: string };
@@ -1367,6 +1379,18 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.plugin.list": {
+    tag: "plugin",
+    name: "list",
+    method: "GET",
+    path: "/api/v1/plugins",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
   "v1.question.list": {
     tag: "question",
     name: "list",
@@ -1444,6 +1468,18 @@ export const operations = {
     name: "background",
     method: "POST",
     path: "/api/v1/sessions/{sessionID}/background",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.browserEvidence": {
+    tag: "session",
+    name: "browserEvidence",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/browser/evidence",
     pathParams: ["sessionID"],
     query: [],
     body: "none",
@@ -2367,6 +2403,11 @@ export function createGroups(caller: Caller) {
       test: (query?: Operations["v1.permission.test"]["query"], options?: RequestOptions): Promise<Operations["v1.permission.test"]["response"]> =>
         caller.call("v1.permission.test", { query }, options),
     },
+    plugin: {
+      /** List the Location's plugins with scope, state and trust without loading them (`GET /api/v1/plugins`) */
+      list: (options?: RequestOptions): Promise<Operations["v1.plugin.list"]["response"]> =>
+        caller.call("v1.plugin.list", {}, options),
+    },
     question: {
       /** Pending questions (`GET /api/v1/questions/requests`) */
       list: (query?: Operations["v1.question.list"]["query"], options?: RequestOptions): Promise<Operations["v1.question.list"]["response"]> =>
@@ -2393,6 +2434,9 @@ export function createGroups(caller: Caller) {
       /** Move the Session's running foreground command to a background Job (`POST /api/v1/sessions/{sessionID}/background`) */
       background: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.background"]["response"]> =>
         caller.call("v1.session.background", { path: { sessionID } }, options),
+      /** Browser verification evidence of the Session, each record marked stale when the workspace changed since (`GET /api/v1/sessions/{sessionID}/browser/evidence`) */
+      browserEvidence: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.browserEvidence"]["response"]> =>
+        caller.call("v1.session.browserEvidence", { path: { sessionID } }, options),
       /** List direct child threads across Locations with observed state (`GET /api/v1/sessions/{id}/children`) */
       children: (id: string, query?: Operations["v1.session.children"]["query"], options?: RequestOptions): Promise<Operations["v1.session.children"]["response"]> =>
         caller.call("v1.session.children", { path: { id }, query }, options),

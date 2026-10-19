@@ -61,6 +61,50 @@ export type BackgroundResult = {
   call_ids: string[];
 };
 
+/** A stored screenshot, console or network capture, or a dev server log tail. */
+export type BrowserArtifact = {
+  /** `screenshot`, `console`, `network`, `snapshot` or `log`. */
+  kind: string;
+  sha256: string;
+  size: number;
+  media_type: string;
+  /** The managed local copy. */
+  path: string;
+};
+
+/** `GET /sessions/{id}/browser/evidence`. */
+export type BrowserEvidenceReport = {
+  /** The workspace content hash now. */
+  workspace_hash: string;
+  evidence: BrowserEvidenceView[];
+};
+
+/**
+ * One record in a report: stale once the workspace hash it was recorded under differs
+ * from the current one (or either is unavailable).
+ */
+export type BrowserEvidenceView = {
+  id: string;
+  session_id: string;
+  /** The tool call that recorded it. */
+  call_id: string;
+  status: EvidenceStatus;
+  /** The workspace content hash when it was recorded (`sha256:…`), or `unavailable`. */
+  workspace_hash: string;
+  /** The page URL (for a startup failure, the readiness URL). */
+  url: string;
+  viewport?: Viewport | null;
+  time_ms: number;
+  /** What was done, oldest first (`navigate http://…`, `click Submit`, …). */
+  actions: string[];
+  /** What the browser actually returned. */
+  observed: string[];
+  /** Checks that did not run, so a report never presents them as passed. */
+  not_run: string[];
+  artifacts: BrowserArtifact[];
+  stale: boolean;
+};
+
 export type Budget = {
   max_turns?: number | null;
   max_tokens?: number | null;
@@ -103,6 +147,16 @@ export type CallState = {
 };
 
 export type CallStatus = "ok" | "error" | "called" | "dispatched" | "interrupted" | "outcome_unknown";
+
+/** The declared capabilities; anything not declared is denied. */
+export type Capabilities = {
+  "fs.read": boolean;
+  "fs.write": boolean;
+  network: NetworkCapability;
+  shell: boolean;
+  secrets: boolean;
+  "session.prompt": boolean;
+};
 
 export type ChildSetupInspection = {
   session_id: string;
@@ -174,7 +228,7 @@ export type CommandResult = {
 
 export type CommandSourceKind = "native_markdown" | "compatibility_markdown" | "configuration";
 
-export type CommandSourceScope = "global" | "project" | "runtime";
+export type CommandSourceScope = "global" | "project" | "runtime" | "plugin";
 
 export type CommandStatus = {
   status: "not_started";
@@ -302,6 +356,10 @@ export type Data_AutoOverrideReceipt = {
 
 export type Data_BackgroundResult = {
   data: BackgroundResult;
+};
+
+export type Data_BrowserEvidenceReport = {
+  data: BrowserEvidenceReport;
 };
 
 export type Data_ChildSetupInspection = {
@@ -475,6 +533,9 @@ export type EventEnvelope = {
   location?: string | null;
   durable?: DurableRef | null;
 };
+
+/** What an evidence record is about. */
+export type EvidenceStatus = "observed" | "startup_failed";
 
 export type FavoriteModel = {
   provider: string;
@@ -721,6 +782,21 @@ export type HookScope = "managed" | "global" | "project" | "local" | "plugin" | 
 
 export type HookTrustBody = {
   digest: string;
+};
+
+/** Where a plugin host process is in its lifecycle. */
+export type HostState = "starting" | "running" | "not_started" | "restarting" | "disabled" | "failed";
+
+/** A plugin host's runtime status (`plugins-marketplace` → Plugin host process). */
+export type HostStatus = {
+  state: HostState;
+  runtime: Runtime;
+  capabilities: Capabilities;
+  error?: string | null;
+  /** Tools the host contributed in `initialize`. */
+  tools: string[];
+  /** Crashes within the last 10 minutes. */
+  crashes: number;
 };
 
 export type InboxEditBody = {
@@ -1010,6 +1086,12 @@ export type Located_Page_SessionRow = {
 };
 
 /** A Location-scoped response. */
+export type Located_PluginList = {
+  location: LocationInfo;
+  data: PluginList;
+};
+
+/** A Location-scoped response. */
 export type Located_PrDescription = {
   location: LocationInfo;
   data: PrDescription;
@@ -1101,6 +1183,8 @@ export type ManagedPolicy = {
   managed_only: boolean;
   /** Why a present policy could not be used. Every non-managed hook is refused. */
   error?: string | null;
+  /** `policy.plugins.disabled`: plugin names no scope may enable. */
+  plugins_disabled: string[];
 };
 
 export type McpClosed = {
@@ -1311,6 +1395,16 @@ export type ModelUsage = {
   steps: number;
 };
 
+/** Network access a plugin declares. */
+export type NetworkCapability = {
+  kind: "none";
+} | {
+  kind: "any";
+} | {
+  kind: "hosts";
+  hosts: string[];
+};
+
 export type Page_HookExecutionRecord = {
   data: HookExecutionRecord[];
   cursor: Cursor;
@@ -1368,6 +1462,33 @@ export type PermissionAsk = {
 export type PermissionReplyBody = {
   reply: ReplyKind;
   message?: string | null;
+};
+
+/** Every listed plugin of a Location and whether pure mode is on (`GET /plugins`). */
+export type PluginList = {
+  plugins: PluginStatus[];
+  pure: boolean;
+};
+
+export type PluginScope = "user" | "project" | "local";
+
+/** Why a listed plugin is or is not loaded. */
+export type PluginState = "active" | "disabled" | "not_installed" | "invalid" | "untrusted" | "pure" | "policy" | "changed" | "shadowed";
+
+export type PluginStatus = {
+  name: string;
+  scope: PluginScope;
+  state: PluginState;
+  reason?: string | null;
+  source: Source;
+  version?: string | null;
+  commit?: string | null;
+  digest?: string | null;
+  root?: string | null;
+  /** Signatures are not verified yet, so every plugin is listed as `unsigned`. */
+  unsigned: boolean;
+  /** The host process of a loaded plugin that runs code (`main`). */
+  host?: HostStatus | null;
 };
 
 /** A 1-based source position in the Workflow script. */
@@ -1715,6 +1836,9 @@ export type RunUsageReport = {
   tiers: RunUsageGroup[];
 };
 
+/** How the host process of `main` is started. */
+export type Runtime = "node" | "bun" | "deno" | "python" | "native";
+
 /** One of the usage reports a scope returns, discriminated by `scope`. */
 export type ScopeUsage = SessionUsage | RunUsageReport;
 
@@ -1978,7 +2102,21 @@ export type SkillInfo = {
 };
 
 /** The scope a skill was discovered in. */
-export type SkillOrigin = "builtin" | "user" | "project" | "config";
+export type SkillOrigin = "builtin" | "user" | "project" | "config" | "plugin";
+
+/** Where a plugin comes from. */
+export type Source = {
+  path: string;
+  type: "path";
+} | {
+  package: string;
+  type: "npm";
+} | {
+  url: string;
+  ref?: string | null;
+  path?: string | null;
+  type: "git";
+};
 
 /** A user statement with its source, kept outside generated prose. */
 export type Sourced = {
@@ -2221,6 +2359,12 @@ export type UsageStats = {
 /** `{ "vcs": null }` outside a git repository. */
 export type Vcs = {
   vcs?: GitState | null;
+};
+
+/** The browser viewport, when the server reported or was asked for one. */
+export type Viewport = {
+  width: number;
+  height: number;
 };
 
 /**

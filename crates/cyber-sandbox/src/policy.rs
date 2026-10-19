@@ -60,6 +60,23 @@ const CREDENTIAL_PATHS: &[&str] = &[
     ".ssh",
 ];
 
+/// Cyber's own credential files (plugin secrets and MCP OAuth tokens in the data
+/// directory, which need not be under home), hidden from every sandboxed process this
+/// process launches. Sandboxed processes run as the same user, so owner-only modes do
+/// not keep them out.
+static HIDDEN: std::sync::RwLock<Vec<PathBuf>> = std::sync::RwLock::new(Vec::new());
+
+/// Keep `path` unreadable in every sandboxed launch of this process; `readable_paths`
+/// never re-exposes it.
+pub fn hide_credential_file(path: PathBuf) {
+    let mut hidden = HIDDEN
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !hidden.contains(&path) {
+        hidden.push(path);
+    }
+}
+
 /// `sandbox.env` (`sandbox` → Environment policy).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EnvPolicy {
@@ -230,8 +247,13 @@ impl SandboxConfig {
         }
     }
 
-    /// Credential files that stay unreadable.
+    /// Credential files that stay unreadable: the home ones `readable_paths` does not
+    /// re-expose, and every [`hide_credential_file`] path.
     pub fn unreadable(&self, home: &Path) -> Vec<PathBuf> {
+        let hidden = HIDDEN
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         CREDENTIAL_PATHS
             .iter()
             .map(|p| home.join(p))
@@ -241,6 +263,7 @@ impl SandboxConfig {
                     .iter()
                     .any(|r| p.starts_with(r) || r.starts_with(p))
             })
+            .chain(hidden)
             .collect()
     }
 

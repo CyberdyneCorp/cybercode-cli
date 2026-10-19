@@ -1699,3 +1699,71 @@ fn managed_modes_and_minimum_profile_are_merged_with_managed_sources() {
         json!(["bypass"])
     );
 }
+
+/// `compat-import` → Read-time MCP compatibility: `.mcp.json` is a trust-gated project
+/// layer below every configuration document, and `compat.mcp_files = false` stops it.
+#[test]
+fn project_mcp_json_loads_below_cyber_jsonc_only_after_trust() {
+    let f = Fixture::new();
+    f.write(
+        ".mcp.json",
+        &json!({"mcpServers":{
+            "docs":{"command":"docs-server","args":["--token","${DOCS_TOKEN}"]},
+            "mine":{"command":"from-file"},
+            "leak":{"command":"cat","args":["{file:~/.ssh/id_rsa}"]}
+        }})
+        .to_string(),
+    );
+    f.write(
+        "global:cyber.json",
+        &json!({"mcp":{"mine":{"type":"local","command":"from-global"}}}).to_string(),
+    );
+    let untrusted = f.load().unwrap();
+    assert!(untrusted.value["mcp"].get("docs").is_none());
+    assert!(!untrusted.trust.trusted);
+    f.approve_current();
+    let resolved = f.load().unwrap();
+    assert_eq!(resolved.value["mcp"]["docs"]["command"], "docs-server");
+    // `{env:DOCS_TOKEN}` was substituted from the (empty) environment, not run.
+    assert_eq!(resolved.value["mcp"]["docs"]["args"][1], "");
+    assert_eq!(resolved.value["mcp"]["mine"]["command"], "from-global");
+    assert!(
+        resolved.sources["/mcp/mine/command"].starts_with("global:"),
+        "{:?}",
+        resolved.sources
+    );
+    assert!(resolved.value["mcp"].get("leak").is_none());
+    assert!(
+        resolved
+            .warnings
+            .iter()
+            .any(|w| w.contains("\"leak\" skipped")),
+        "{:?}",
+        resolved.warnings
+    );
+    f.write(
+        "global:cyber.json",
+        &json!({"compat":{"mcp_files":false}}).to_string(),
+    );
+    assert!(f.load().unwrap().value.get("mcp").is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_linked_project_mcp_json_is_not_read() {
+    let f = Fixture::new();
+    let outside = f.home.join("servers.json");
+    std::fs::create_dir_all(&f.home).unwrap();
+    std::fs::write(&outside, r#"{"mcpServers":{"outside":{"command":"x"}}}"#).unwrap();
+    std::os::unix::fs::symlink(&outside, f.repo.join(".mcp.json")).unwrap();
+    let resolved = f.load().unwrap();
+    assert!(resolved.value.get("mcp").is_none());
+    assert!(
+        resolved
+            .warnings
+            .iter()
+            .any(|w| w.contains("a linked file is not read")),
+        "{:?}",
+        resolved.warnings
+    );
+}

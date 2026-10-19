@@ -612,7 +612,7 @@ async fn refresh_lists(
     Ok(())
 }
 
-fn tool_binding(id: &str, tool: &DiscoveredTool) -> String {
+pub(crate) fn tool_binding(id: &str, tool: &DiscoveredTool) -> String {
     use sha2::{Digest, Sha256};
     let digest = Sha256::digest(cyber_core::config::canonical_json(&tool.definition));
     format!("{id}:{}:{digest:x}", tool.remote_name)
@@ -754,8 +754,10 @@ impl BuiltinHost {
         if !pool.admits_start(&directory, reopen) {
             return;
         }
+        // The browser server runs per Session (`crate::browser`), never shared.
+        let browser = crate::browser::reserved_server(&resolved.value);
         for (name, definition) in settings.servers {
-            if !definition.enabled() {
+            if !definition.enabled() || browser.as_deref() == Some(name.as_str()) {
                 continue;
             }
             let key = (directory.clone(), name.clone());
@@ -1141,6 +1143,7 @@ impl BuiltinHost {
                     serde_json::Value::Null => json!({}),
                     annotations => annotations.clone(),
                 },
+                network_target: None,
             },
             cancel,
             move |inv, cancel| {

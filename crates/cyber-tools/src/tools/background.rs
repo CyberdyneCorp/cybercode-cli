@@ -191,6 +191,28 @@ pub(super) async fn launch(admitted: Admitted, mut owned: Owned) -> Result<Job, 
     .await
 }
 
+/// The process's exit code, or its failure, once the Job's process ended; `None` when it
+/// was stopped.
+pub(super) type Exit = tokio::sync::oneshot::Receiver<Result<Option<i32>, String>>;
+
+/// [`launch`], also returning a receiver that settles when the process ends.
+pub(super) async fn launch_observed(
+    admitted: Admitted,
+    mut owned: Owned,
+) -> Result<(Job, Exit), ToolError> {
+    let asks = owned.prepared.asks.take();
+    let (exited, exit) = tokio::sync::oneshot::channel();
+    let job = launch_with(admitted, move |io, sink| {
+        Box::pin(async move {
+            let result = run(owned, asks, sink, io).await;
+            let _ = exited.send(result.clone());
+            result
+        })
+    })
+    .await?;
+    Ok((job, exit))
+}
+
 /// Start the admitted Job with `work`, which gets the Job's `io` and log.
 pub(super) async fn launch_with(
     admitted: Admitted,
@@ -271,7 +293,7 @@ pub(super) async fn stop_tree(process: &mut Process) {
     let _ = process.wait().await;
 }
 
-async fn pump(mut stream: ReadStream, sink: SharedSink) {
+pub(super) async fn pump(mut stream: ReadStream, sink: SharedSink) {
     let mut buf = vec![0_u8; 8192];
     while let Ok(n) = stream.read(&mut buf).await {
         if n == 0 {

@@ -13,7 +13,8 @@ use windows_sys::Win32::System::SystemServices::SE_GROUP_ENABLED;
 
 #[derive(Default)]
 pub(super) struct CapabilitySet {
-    _sid: Vec<u32>,
+    // Each entry points into one of these buffers; moving a Vec keeps its heap storage.
+    _sid: Vec<Vec<u32>>,
     pub entries: Vec<SID_AND_ATTRIBUTES>,
 }
 
@@ -25,9 +26,21 @@ impl CapabilitySet {
         Self::derive("registryRead")
     }
 
+    /// Outbound network access (`sandbox.network: "on"`).
+    pub fn internet() -> io::Result<Self> {
+        Self::derive("internetClient")
+    }
+
     #[cfg(feature = "windows-test-controls")]
     pub fn network_control() -> io::Result<Self> {
-        Self::derive("internetClient")
+        Self::internet()
+    }
+
+    /// Both sets, in order; token verification expects the same order.
+    pub fn with(mut self, mut other: Self) -> Self {
+        self._sid.append(&mut other._sid);
+        self.entries.append(&mut other.entries);
+        self
     }
 
     fn derive(name: &str) -> io::Result<Self> {
@@ -67,7 +80,10 @@ impl CapabilitySet {
             Sid: sid.as_mut_ptr().cast(),
             Attributes: SE_GROUP_ENABLED as u32,
         }];
-        Ok(Self { _sid: sid, entries })
+        Ok(Self {
+            _sid: vec![sid],
+            entries,
+        })
     }
 
     pub fn verify(&self, token: &OwnedHandle) -> io::Result<()> {

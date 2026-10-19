@@ -77,6 +77,11 @@ pub struct GlobalArgs {
     /// Output format. The only output-format flag.
     #[arg(long, global = true, value_enum)]
     pub format: Option<Format>,
+
+    /// Disable plugins and every hook and MCP server not managed by organization policy
+    /// for this process. Also CYBER_PURE=1.
+    #[arg(long, global = true)]
+    pub pure: bool,
 }
 
 /// TUI launch flags (`tui` → Launch flags).
@@ -123,7 +128,7 @@ pub enum Format {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Detect sources or preview migration without writing.
+    /// Import Claude Code, Codex or OpenCode configuration: detect, preview or write.
     Import(crate::commands::import::ImportArgs),
     /// Inspect installed language servers for the current Location.
     Lsp {
@@ -188,6 +193,11 @@ pub enum Command {
     Db {
         #[command(subcommand)]
         cmd: DbCmd,
+    },
+    /// Install, list, enable, disable, update and remove plugins.
+    Plugins {
+        #[command(subcommand)]
+        cmd: crate::commands::plugins::PluginsCmd,
     },
     /// Review hook definitions and individual handler trust.
     Hooks {

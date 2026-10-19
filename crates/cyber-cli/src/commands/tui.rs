@@ -25,6 +25,7 @@ pub fn run(
         format: global.format,
         log_level: global.log_level.clone(),
         print_logs: global.print_logs,
+        pure: global.pure,
     };
     if let Some(p) = project {
         global.cwd = Some(global.cwd.clone().unwrap_or_default().join(p));

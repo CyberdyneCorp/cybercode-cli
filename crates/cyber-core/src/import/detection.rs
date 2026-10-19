@@ -1,4 +1,5 @@
 //! Definition counts only: no source values, trust grants or execution.
+pub use super::detection_sessions::ReadTimeCoverage;
 use super::{
     DiscoveryError, DiscoveryIssue, SourceFile, SourceKind, SourceRoots, SourceSnapshot,
     SourceTool, discover_sources,
@@ -13,7 +14,7 @@ pub struct DefinitionCounts {
     pub skills: usize,
     pub mcp_servers: usize,
     pub hooks: usize,
-    /// Session databases/transcripts are not inspected by this implementation.
+    /// Sessions recorded for this project; `None` when they cannot be counted.
     pub sessions: Option<usize>,
 }
 #[derive(Debug, Serialize)]
@@ -23,8 +24,9 @@ pub struct DetectedTool {
     /// Raw definitions, including definitions repeated in different layers.
     pub counts: DefinitionCounts,
     pub counts_complete: bool,
-    /// Effective compatibility depends on configuration and precedence, not existence.
-    pub read_time_coverage: Option<bool>,
+    /// How many of the counted items the runtime already reads without an import, under
+    /// its default compatibility settings.
+    pub read_time: ReadTimeCoverage,
 }
 #[derive(Debug, Serialize)]
 pub struct DetectionReport {
@@ -49,8 +51,13 @@ pub fn detect_sources(roots: &SourceRoots) -> Result<DetectionReport, DiscoveryE
             continue;
         }
         let mut counts = DefinitionCounts::default();
+        let mut project_mcp = 0;
         for source in &files {
+            let before = counts.mcp_servers;
             match count_file(roots, source, &inventory.files, &mut remaining, &mut counts) {
+                Ok(()) if super::detection_sessions::project_mcp_file(roots, &source.path) => {
+                    project_mcp += counts.mcp_servers - before;
+                }
                 Ok(()) => (),
                 Err(error) => issues.push(DiscoveryIssue {
                     path: error.path,
@@ -58,13 +65,16 @@ pub fn detect_sources(roots: &SourceRoots) -> Result<DetectionReport, DiscoveryE
                 }),
             }
         }
+        counts.sessions = super::detection_sessions::sessions(roots, tool);
+        let mut read_time = super::detection_sessions::read_time(roots, &files);
+        read_time.mcp_servers = project_mcp;
         tools.push(DetectedTool {
             tool,
             files,
             counts,
-            // Referenced sources, session counts and effective coverage still need resolution.
+            // Config-referenced custom sources still need resolution.
             counts_complete: false,
-            read_time_coverage: None,
+            read_time,
         });
     }
     Ok(DetectionReport {

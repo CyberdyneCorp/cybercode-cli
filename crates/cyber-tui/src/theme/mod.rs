@@ -307,6 +307,12 @@ impl Default for Catalog {
 impl Catalog {
     /// Built-ins plus `<dir>/*.json` from each directory, lowest precedence first.
     pub fn load(dirs: &[PathBuf]) -> Self {
+        Self::load_with_plugins(&[], dirs)
+    }
+
+    /// Built-ins, then each loaded plugin's theme folders as `(plugin, dir)`, then `dirs`.
+    /// A plugin theme never replaces another: a taken name becomes `<plugin>:<name>`.
+    pub fn load_with_plugins(plugins: &[(String, PathBuf)], dirs: &[PathBuf]) -> Self {
         let mut catalog = Self {
             docs: Vec::new(),
             warnings: Vec::new(),
@@ -316,22 +322,44 @@ impl Catalog {
                 ThemeDoc::parse(name, text, &mut catalog.warnings).expect("built-in themes parse");
             catalog.insert(doc);
         }
+        for (plugin, dir) in plugins {
+            catalog.load_plugin_dir(plugin, dir);
+        }
         for dir in dirs {
             catalog.load_dir(dir);
         }
         catalog
     }
 
+    fn load_plugin_dir(&mut self, plugin: &str, dir: &Path) {
+        for path in theme_files(dir) {
+            let mut doc = match read_theme(&path, &mut self.warnings) {
+                Ok(doc) => doc,
+                Err(error) => {
+                    self.warnings.push(error);
+                    continue;
+                }
+            };
+            let taken = |docs: &[ThemeDoc], name: &str| docs.iter().any(|d| d.name == name);
+            if taken(&self.docs, &doc.name) {
+                doc.name = format!("{plugin}:{}", doc.name);
+            }
+            if taken(&self.docs, &doc.name) {
+                self.warnings.push(format!(
+                    "theme {}: the name is already used",
+                    path.display()
+                ));
+                continue;
+            }
+            self.docs.push(ThemeDoc {
+                custom: true,
+                ..doc
+            });
+        }
+    }
+
     fn load_dir(&mut self, dir: &Path) {
-        let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
-            .collect();
-        files.sort();
-        for path in files {
+        for path in theme_files(dir) {
             match read_theme(&path, &mut self.warnings) {
                 Ok(doc) => self.insert(ThemeDoc {
                     custom: true,
@@ -360,6 +388,19 @@ impl Catalog {
             .find(|d| d.name == name)
             .unwrap_or(&self.docs[0])
     }
+}
+
+/// `<dir>/*.json`, sorted.
+fn theme_files(dir: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .collect();
+    files.sort();
+    files
 }
 
 fn read_theme(path: &Path, warnings: &mut Vec<String>) -> Result<ThemeDoc, String> {

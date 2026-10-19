@@ -11,11 +11,14 @@ pub mod hooks;
 pub mod import;
 pub mod intelligence;
 pub mod mcp;
+pub mod mcp_browser;
 pub mod mcp_config;
 pub mod mcp_serve;
 pub mod memory;
 pub mod models;
 pub mod permissions;
+pub mod plugin_config;
+pub mod plugins;
 pub mod pr;
 pub mod providers;
 pub mod review;
@@ -42,6 +45,9 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
     }
     if cli.version {
         return version(&cli.global);
+    }
+    if cli.global.pure || cyber_core::plugins::pure(&cyber_core::env::ProcessEnv) {
+        pure(&mut cli)?;
     }
     let Some(command) = cli.command else {
         return tui::run(&cli.launch, &cli.global, None);
@@ -86,6 +92,7 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
         Command::Trust { cmd } => trust::run(cmd, &ctx, &cli.global),
         Command::Sandbox { cmd } => sandbox::run(cmd, &ctx, &cli.global),
         Command::Hooks { cmd } => hooks::run(cmd, &ctx, &cli.global),
+        Command::Plugins { cmd } => plugins::run(cmd, &ctx, &cli.global),
         Command::Serve(args) => serve::serve(args, &ctx),
         Command::Service { cmd } => serve::service(cmd, &ctx, &cli.global),
         Command::Api(args) => api::run(args, &ctx),
@@ -97,6 +104,62 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
         Command::Stats(args) => stats::run(args, &ctx, &cli.global),
         Command::Eval { cmd } => eval::run(cmd, &ctx),
         Command::External(_) | Command::Import(_) => unreachable!("handled above"),
+    }
+}
+
+/// `--pure` (`plugins-marketplace` → Pure mode): every configuration load in this
+/// process leaves out plugins and non-managed hooks and MCP servers. A shared server
+/// cannot honor that for one client, so every command that runs Turns runs its own
+/// in-process server, and the ones that can only start Turns on the shared server are
+/// refused.
+fn pure(cli: &mut Cli) -> Result<(), CliError> {
+    cyber_core::plugins::force_pure();
+    match &mut cli.command {
+        Some(Command::Exec(args)) => in_process(&mut args.embedded, args.ephemeral, &args.attach),
+        Some(Command::Review(args)) => in_process(&mut args.embedded, args.ephemeral, &args.attach),
+        None | Some(Command::External(_)) => {
+            cli.launch.embedded = true;
+            Ok(())
+        }
+        Some(command) => match shared_turns(command) {
+            Some(name) => Err(CliError::usage(format!(
+                "--pure cannot run `cyber {name}`: it starts Turns on the shared server"
+            ))),
+            None => Ok(()),
+        },
+    }
+}
+
+/// Exec and review under `--pure`: never attach, run in process unless ephemeral.
+fn in_process(
+    embedded: &mut bool,
+    ephemeral: bool,
+    attach: &Option<String>,
+) -> Result<(), CliError> {
+    if attach.is_some() {
+        return Err(CliError::usage(
+            "--pure cannot attach to a shared server; it runs an in-process one",
+        ));
+    }
+    *embedded |= !ephemeral;
+    Ok(())
+}
+
+/// The commands that start Turns on the shared server and have no in-process form.
+fn shared_turns(command: &Command) -> Option<&'static str> {
+    match command {
+        Command::Api(_) => Some("api"),
+        Command::Pr(_) => Some("pr"),
+        Command::Mcp {
+            cmd: mcp::McpCmd::Serve(_),
+        } => Some("mcp serve"),
+        Command::Workflows {
+            cmd: workflows::WorkflowsCmd::Run(_),
+        } => Some("workflows run"),
+        Command::Workflows {
+            cmd: workflows::WorkflowsCmd::Resume { .. },
+        } => Some("workflows resume"),
+        _ => None,
     }
 }
 

@@ -83,6 +83,10 @@ pub struct BuiltinHost {
     network: Mutex<HashMap<String, Arc<Mutex<HashSet<String>>>>>,
     pub(crate) subagents: crate::subagents::Slots,
     pub(crate) mcp: crate::mcp::pool::Pool,
+    /// Plugin host processes, by Location and plugin.
+    pub(crate) plugins: crate::plugin_host::PluginHosts,
+    /// Per-Session browser servers and the dev servers they own.
+    pub(crate) browsers: crate::browser::Browsers,
     pub(crate) lsp: OnceLock<crate::lsp::Locations>,
     /// Per-command limit for template shell injections.
     pub(crate) injection_timeout_ms: std::sync::atomic::AtomicU64,
@@ -153,6 +157,8 @@ impl BuiltinHost {
         Arc::new_cyclic(|weak| Self {
             weak: weak.clone(),
             mcp: Default::default(),
+            plugins: Default::default(),
+            browsers: Default::default(),
             lsp: OnceLock::new(),
             opts,
             tools: tools::all(),
@@ -173,6 +179,14 @@ impl BuiltinHost {
             remote_skills: OnceLock::new(),
             client_hooks: OnceLock::new(),
         })
+    }
+
+    /// Every built-in tool name, offered or not, and the runtime's `return_result`.
+    pub(crate) fn builtin_tool_names(&self) -> std::collections::BTreeSet<String> {
+        let mut names: std::collections::BTreeSet<String> =
+            self.tools.iter().map(|tool| tool.def().spec.name).collect();
+        names.insert("return_result".into());
+        names
     }
 
     pub(crate) fn read_only_tool(&self, name: &str) -> bool {
@@ -376,6 +390,7 @@ impl BuiltinHost {
                 global_config_dir: self.opts.global_config_dir.clone(),
                 project: !self.opts.env.flag("CYBER_DISABLE_PROJECT_CONFIG"),
                 compat: true,
+                plugins: cyber_core::plugins::component_dirs(&config, "commands"),
             },
             &config,
             &sources,
@@ -441,7 +456,7 @@ impl BuiltinHost {
         Arc::clone(map.entry(session.to_string()).or_default())
     }
 
-    /// Skills visible from a Location, honoring `skills.compat` and `skills.paths`.
+    /// Skills visible from a Location, honoring `skills.compat`, `compat.<tool>` and `skills.paths`.
     pub(crate) fn skills(&self, location: &Path) -> Discovery {
         let (config, sources) = (self.opts.config)(location).unwrap_or_default();
         self.skills_for(location, &config, &sources)
@@ -484,11 +499,9 @@ impl BuiltinHost {
             location: location.to_path_buf(),
             home: self.opts.home.clone(),
             global_config_dir: self.opts.global_config_dir.clone(),
-            compat: settings
-                .get("compat")
-                .and_then(Value::as_bool)
-                .unwrap_or(true),
+            compat: skills::SkillCompat::from_config(config),
             extra,
+            plugins: skills::PluginSkills::from_config(config),
         });
         found.diagnostics.extend(notes);
         found
@@ -669,19 +682,32 @@ impl BuiltinHost {
 impl ToolHost for BuiltinHost {
     fn open_location(&self, info: &cyber_server::runtime::SessionInfo) {
         self.start_mcp(info);
+        self.reconcile_plugins(&info.directory, true);
+        self.start_browser(info);
     }
 
     fn refresh_location(&self, info: &cyber_server::runtime::SessionInfo) {
         self.refresh_mcp(info);
+        self.reconcile_plugins(&info.directory, false);
+        self.start_browser(info);
     }
 
+    /// Required MCP servers, then every plugin host of the Location and the Session's
+    /// browser settling their start.
     fn wait_for_required_mcp(
         &self,
         info: &cyber_server::runtime::SessionInfo,
         cancel: CancellationToken,
     ) -> BoxFuture<'_, Result<(), cyber_server::runtime::RuntimeError>> {
         let directory = info.directory.clone();
-        Box::pin(async move { self.wait_required_mcp(Path::new(&directory), cancel).await })
+        let session = info.id.clone();
+        Box::pin(async move {
+            self.wait_required_mcp(Path::new(&directory), cancel.clone())
+                .await?;
+            self.wait_plugins(&directory, cancel.clone()).await;
+            self.wait_browser(&session, cancel).await;
+            Ok(())
+        })
     }
 
     fn lifecycle_hooks(
@@ -755,8 +781,18 @@ impl ToolHost for BuiltinHost {
                     }
                 }
             };
-            tokio::join!(self.shutdown_mcp(), lsp);
+            tokio::join!(
+                self.shutdown_mcp(),
+                lsp,
+                self.shutdown_plugins(),
+                self.shutdown_browsers()
+            );
         })
+    }
+
+    fn end_session(&self, session_id: &str) -> BoxFuture<'_, ()> {
+        let session_id = session_id.to_string();
+        Box::pin(async move { self.end_browser_session(&session_id).await })
     }
     /// A config that fails to load turns `CLAUDE.md` off rather than on: `config_for`'s
     /// `Null` fallback would read as the default `true` and override an opt-out.
@@ -937,6 +973,8 @@ impl ToolHost for BuiltinHost {
         tools.extend(
             self.mcp_definitions(turn)
                 .into_iter()
+                .chain(self.browser_definitions(turn))
+                .chain(self.plugin_definitions(turn))
                 .filter(|d| !fully_denied(&rules, &d.spec.name)),
         );
         let tools = self.filter_agent_tools(turn, tools);
@@ -972,13 +1010,19 @@ impl ToolHost for BuiltinHost {
     fn execute(&self, inv: Invocation, cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome> {
         Box::pin(async move {
             if inv.name.starts_with("mcp__") {
-                return self.execute_mcp(inv, cancel).await;
+                return match self.browser_binding(&inv) {
+                    Some(binding) => self.execute_browser(inv, binding, cancel).await,
+                    None => self.execute_mcp(inv, cancel).await,
+                };
             }
             let mut inv = inv;
             if let Err(error) = inv.asker.validate_auto_override(&inv.name, &inv.input) {
                 return ToolOutcome::Failed(error.to_string());
             }
             let Some(tool) = self.tools.iter().find(|t| t.def().spec.name == inv.name) else {
+                if let Some(offered) = self.plugin_tool(&inv) {
+                    return self.execute_plugin(inv, offered, cancel).await;
+                }
                 return ToolOutcome::Failed(format!("Unknown tool: {}", inv.name));
             };
             if let Err(error) = self.check_skill_tool(&inv).await {

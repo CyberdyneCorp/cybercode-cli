@@ -301,6 +301,46 @@ impl LocalLauncher<'_> {
     where
         F: Future<Output = Result<McpLocationPin, String>>,
     {
+        self.connect_owned_as(name, name, store, observer, first, claim)
+            .await
+    }
+
+    /// [`Self::connect_owned`] under a durable connection name other than the server's:
+    /// a Location holds one unsettled connection per name, so a server run once per
+    /// Session (the browser) owns each process under its own name.
+    pub async fn connect_owned_named<F>(
+        &self,
+        name: &str,
+        owner_name: &str,
+        store: Arc<Store>,
+        claim: impl FnOnce(String) -> F,
+    ) -> Result<OwnedLocalServer, LocalLaunchError>
+    where
+        F: Future<Output = Result<McpLocationPin, String>>,
+    {
+        self.connect_owned_as(
+            name,
+            owner_name,
+            store,
+            None,
+            RemoteTransport::default(),
+            claim,
+        )
+        .await
+    }
+
+    async fn connect_owned_as<F>(
+        &self,
+        name: &str,
+        owner_name: &str,
+        store: Arc<Store>,
+        observer: Option<McpConnectionObserver>,
+        first: RemoteTransport,
+        claim: impl FnOnce(String) -> F,
+    ) -> Result<OwnedLocalServer, LocalLaunchError>
+    where
+        F: Future<Output = Result<McpLocationPin, String>>,
+    {
         let selected = authorize_server(self.resolved, self.trust, self.location, name)
             .map_err(LocalLaunchError::before_launch)?;
         let deadline =
@@ -309,7 +349,7 @@ impl LocalLauncher<'_> {
             store,
             self.location,
             &self.resolved.trust.checkout_root,
-            name,
+            owner_name,
             &selected.digest,
             observer,
         )

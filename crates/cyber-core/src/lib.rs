@@ -2,6 +2,7 @@
 //! configuration loading with workspace trust, and evaluation manifests.
 
 pub mod agent_mentions;
+pub mod browser;
 pub mod budget;
 pub mod commands;
 pub mod config;
@@ -15,6 +16,7 @@ pub mod intelligence;
 pub mod log;
 pub mod memory;
 pub mod paths;
+pub mod plugins;
 pub mod project;
 pub mod review;
 pub mod skills;

@@ -3778,6 +3778,72 @@ async fn skills_listing_respects_agent_profile_and_session_rules() {
     application.runtime.shutdown().await;
 }
 
+/// `compat-import` → Read-time skill compatibility over the app's HTTP API: `.agents` beats
+/// `.claude`, which beats `.opencode`; the duplicate notice names both folders; and
+/// `compat.opencode = false` hides the `.opencode` folder on the next request.
+#[tokio::test]
+async fn skill_compat_precedence_and_switches_apply_over_http() {
+    use reqwest::Method;
+    use serde_json::{Value, json};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let repo = root.join("repo");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    for (folder, description) in [
+        (".agents/skills", "Agents deploy"),
+        (".claude/skills", "Claude deploy"),
+        (".opencode/skills", "OpenCode deploy"),
+    ] {
+        write_skill(
+            &repo.join(folder).join("deploy"),
+            &format!("---\nname: deploy\ndescription: {description}\n---\nD\n"),
+        );
+    }
+    write_skill(
+        &repo.join(".opencode/skills/lint"),
+        "---\nname: lint\ndescription: OpenCode lint\n---\nL\n",
+    );
+    let application = app(&root).await;
+    let (api, stop, server) = serve_app(&application).await;
+    let catalog = || async {
+        let (status, body) = api_call(&api, &repo, Method::GET, "/skills", None).await;
+        assert!(status.is_success(), "{body}");
+        body["data"]["skills"].as_array().unwrap().clone()
+    };
+    let find = |skills: &[Value], name: &str| skills.iter().find(|s| s["name"] == name).cloned();
+    let skills = catalog().await;
+    let deploy = find(&skills, "deploy").unwrap();
+    assert_eq!(deploy["description"], "Agents deploy");
+    let notices = deploy["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        notices.contains("duplicate skill: replaces skill deploy"),
+        "{notices}"
+    );
+    let claude = repo.join(".claude/skills").join("deploy");
+    assert!(notices.contains(&claude.display().to_string()), "{notices}");
+    assert!(find(&skills, "lint").is_some());
+    std::fs::write(
+        paths(&root).config.join("cyber.json"),
+        json!({"compat":{"opencode":false,"agents":false}}).to_string(),
+    )
+    .unwrap();
+    let skills = catalog().await;
+    assert_eq!(
+        find(&skills, "deploy").unwrap()["description"],
+        "Claude deploy"
+    );
+    assert!(find(&skills, "lint").is_none(), "{skills:?}");
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
+    application.runtime.shutdown().await;
+}
+
 /// `skills-commands` → Skill and command inspection ("Diagnose missing skill"), SKILL.md
 /// format ("Invalid frontmatter"), discovery locations ("Project overrides global") and
 /// argument hints, over the app's HTTP API, including hot reload after an edit.
@@ -3863,7 +3929,10 @@ async fn get_skills_reports_diagnostics_scope_and_permission_effect() {
             .join("\n")
     };
     let notice = joined(&deploy);
-    assert!(notice.contains("replaces skill deploy"), "{notice}");
+    assert!(
+        notice.contains("duplicate skill: replaces skill deploy"),
+        "{notice}"
+    );
     assert!(notice.contains(&project.display().to_string()), "{notice}");
     assert!(notice.contains(&global.display().to_string()), "{notice}");
     let invalid = entry(&ops, "broken", "invalid");

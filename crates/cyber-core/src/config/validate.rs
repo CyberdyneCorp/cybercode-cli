@@ -25,6 +25,7 @@ const KNOWN_KEYS: &[&str] = &[
     "instructions",
     "references",
     "memory",
+    "browser",
     "compaction",
     "snapshots",
     "worktrees",
@@ -148,6 +149,9 @@ fn settings_issues(value: &Value) -> Vec<String> {
         issues.push(error);
     }
     if let Err(error) = super::GitSettings::from_config(value) {
+        issues.push(error);
+    }
+    if let Err(error) = crate::browser::BrowserSettings::from_config(value) {
         issues.push(error);
     }
     issues

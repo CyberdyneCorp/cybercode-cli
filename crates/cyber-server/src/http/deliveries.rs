@@ -1,5 +1,6 @@
-//! Side chat and delivered files (`session-runtime` → Side chat, `background-tasks` →
-//! Send file to user).
+//! Side chat, delivered files and browser evidence (`session-runtime` → Side chat,
+//! `background-tasks` → Send file to user, `browser-verification` → Verification
+//! artifacts and lifecycle).
 
 use axum::body::Body;
 use axum::extract::{Path, State};
@@ -11,12 +12,22 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use super::{ApiError, AppState, envelope::Data};
-use crate::runtime::{RuntimeError, SideAnswer};
+use crate::runtime::{BrowserEvidenceReport, RuntimeError, SideAnswer};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/sessions/{session_id}/side", post(side))
         .route("/sessions/{session_id}/files/{file_id}", get(file))
+        .route("/sessions/{session_id}/browser/evidence", get(evidence))
+}
+
+/// The Session's browser evidence, each record marked stale against the workspace now.
+async fn evidence(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Data<BrowserEvidenceReport>>, ApiError> {
+    let data = state.runtime.browser_evidence(&id).await?;
+    Ok(Json(Data { data }))
 }
 
 /// `POST /sessions/{id}/side`.

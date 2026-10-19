@@ -51,6 +51,8 @@ pub enum SkillOrigin {
     Project,
     /// A local path from the `skills` configuration.
     Config,
+    /// A loaded plugin's `skills/` folder.
+    Plugin,
 }
 
 impl SkillOrigin {
@@ -60,6 +62,7 @@ impl SkillOrigin {
             SkillOrigin::User => "user",
             SkillOrigin::Project => "project",
             SkillOrigin::Config => "config",
+            SkillOrigin::Plugin => "plugin",
         }
     }
 }
@@ -88,10 +91,87 @@ pub struct SkillScope {
     pub home: PathBuf,
     /// `~/.config/cyber`.
     pub global_config_dir: PathBuf,
-    /// `skills.compat`: include `.claude`, `.agents` and `.codex` folders.
-    pub compat: bool,
+    /// Which other tools' skill folders are searched (`skills.compat`, `compat.<tool>`).
+    pub compat: SkillCompat,
     /// `skills` config entries that are local paths: a skill directory or a folder of them.
     pub extra: Vec<PathBuf>,
+    /// Loaded plugins' skill folders, by plugin name.
+    pub plugins: Vec<PluginSkills>,
+}
+
+/// One loaded plugin's skill folders (`plugins-marketplace` → Component discovery defaults).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginSkills {
+    pub plugin: String,
+    pub dirs: Vec<PathBuf>,
+}
+
+impl PluginSkills {
+    /// The skill folders the loader recorded under `plugin_components`.
+    pub fn from_config(config: &serde_json::Value) -> Vec<Self> {
+        crate::plugins::component_dirs(config, "skills")
+            .into_iter()
+            .map(|(plugin, dirs)| Self { plugin, dirs })
+            .collect()
+    }
+}
+
+/// The other tools whose skill folders are read in place (`compat-import` → Read-time
+/// skill compatibility). Each is on unless `skills.compat` or `compat.<tool>` is false.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SkillCompat {
+    pub agents: bool,
+    pub claude: bool,
+    pub opencode: bool,
+    pub codex: bool,
+}
+
+impl SkillCompat {
+    pub const ALL: Self = Self {
+        agents: true,
+        claude: true,
+        opencode: true,
+        codex: true,
+    };
+    pub const NONE: Self = Self {
+        agents: false,
+        claude: false,
+        opencode: false,
+        codex: false,
+    };
+
+    /// `skills.compat = false` turns every folder off; `compat.<tool> = false` turns off one.
+    pub fn from_config(config: &serde_json::Value) -> Self {
+        let on = |pointer: &str| {
+            config
+                .pointer(pointer)
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(true)
+        };
+        if !on("/skills/compat") {
+            return Self::NONE;
+        }
+        Self {
+            agents: on("/compat/agents"),
+            claude: on("/compat/claude"),
+            opencode: on("/compat/opencode"),
+            codex: on("/compat/codex"),
+        }
+    }
+
+    /// The enabled `<dir>/skills` folder names, lowest precedence first: `.codex`,
+    /// `.opencode`, `.claude`, `.agents`. `home` drops `.opencode`, which has no user folder.
+    fn folders(self, home: bool) -> Vec<&'static str> {
+        [
+            (self.codex, ".codex/skills"),
+            (self.opencode && !home, ".opencode/skills"),
+            (self.claude, ".claude/skills"),
+            (self.agents, ".agents/skills"),
+        ]
+        .into_iter()
+        .filter_map(|(on, folder)| on.then_some(folder))
+        .collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -186,18 +266,20 @@ impl Tools {
     }
 }
 
-/// Folders searched, in precedence order (later wins). Bases are canonical so the fenced
-/// reads below can refuse any link inside a skill root.
+/// Folders searched, in precedence order (later wins): user folders, then each project
+/// directory from the root down. Within one directory `.cyber` > `.agents` > `.claude` >
+/// `.opencode` > `.codex`. Bases are canonical so the fenced reads below can refuse any
+/// link inside a skill root.
 pub fn roots(scope: &SkillScope) -> Vec<(PathBuf, SkillOrigin)> {
     let global = discovery::canonical(&scope.global_config_dir);
     let home = discovery::canonical(&scope.home);
-    let mut roots = vec![(global.join("skills"), SkillOrigin::User)];
-    if scope.compat {
-        roots.extend(
-            [".claude/skills", ".agents/skills", ".codex/skills"]
-                .map(|d| (home.join(d), SkillOrigin::User)),
-        );
-    }
+    let mut roots: Vec<_> = scope
+        .compat
+        .folders(true)
+        .into_iter()
+        .map(|d| (home.join(d), SkillOrigin::User))
+        .collect();
+    roots.push((global.join("skills"), SkillOrigin::User));
     let location = discovery::canonical(&scope.location);
     let project = crate::config::project_root(&location);
     let mut dirs: Vec<&Path> = location
@@ -205,16 +287,8 @@ pub fn roots(scope: &SkillScope) -> Vec<(PathBuf, SkillOrigin)> {
         .take_while(|d| d.starts_with(&project))
         .collect();
     dirs.reverse();
-    let names: &[&str] = if scope.compat {
-        &[
-            ".claude/skills",
-            ".agents/skills",
-            ".codex/skills",
-            ".cyber/skills",
-        ]
-    } else {
-        &[".cyber/skills"]
-    };
+    let mut names = scope.compat.folders(false);
+    names.push(".cyber/skills");
     for dir in dirs {
         roots.extend(names.iter().map(|n| (dir.join(n), SkillOrigin::Project)));
     }
@@ -232,7 +306,43 @@ pub fn discover(scope: &SkillScope) -> Discovery {
     for (root, origin) in roots(scope) {
         scanner.root(&root, origin);
     }
-    scanner.out
+    let mut found = scanner.out;
+    for plugin in &scope.plugins {
+        add_plugin_skills(&mut found, plugin);
+    }
+    found
+}
+
+/// The names of the skills embedded in the binary.
+pub fn bundled_names() -> Vec<String> {
+    bundled::discover().skills.into_keys().collect()
+}
+
+/// Plugin skills never replace another skill: one whose name is taken is available as
+/// `<plugin>:<name>` instead.
+fn add_plugin_skills(found: &mut Discovery, plugin: &PluginSkills) {
+    let mut scanner = discovery::Scanner::new(Discovery::default());
+    for dir in &plugin.dirs {
+        scanner.root(dir, SkillOrigin::Plugin);
+    }
+    found.diagnostics.extend(scanner.out.diagnostics);
+    for (name, mut skill) in scanner.out.skills {
+        let qualified = format!("{}:{name}", plugin.plugin);
+        let Some(name) = [name, qualified]
+            .into_iter()
+            .find(|name| !found.skills.contains_key(name))
+        else {
+            found.diagnostics.push(SkillDiagnostic {
+                path: skill.source_label(),
+                origin: SkillOrigin::Plugin,
+                replaces: None,
+                message: "plugin skill skipped: its name is already used".into(),
+            });
+            continue;
+        };
+        skill.name = name.clone();
+        found.skills.insert(name, skill);
+    }
 }
 
 /// Load one skill directory through the fenced reader; only the directory itself is resolved.
@@ -527,8 +637,9 @@ mod tests {
             location: repo.clone(),
             home: home.clone(),
             global_config_dir: home.join(".config/cyber"),
-            compat: true,
+            compat: SkillCompat::ALL,
             extra: Vec::new(),
+            plugins: Vec::new(),
         };
         let found = discover(&scope);
         assert_eq!(found.skills["notes"].description, "project notes");
@@ -539,7 +650,7 @@ mod tests {
             vec!["template.md".to_string()]
         );
         let strict = discover(&SkillScope {
-            compat: false,
+            compat: SkillCompat::NONE,
             ..scope
         });
         assert!(!strict.skills.contains_key("legacy"));
@@ -555,8 +666,9 @@ mod tests {
             location: tmp.path().join("nowhere"),
             home: tmp.path().join("h"),
             global_config_dir: tmp.path().join("g"),
-            compat: false,
+            compat: SkillCompat::NONE,
             extra: vec![tmp.path().to_path_buf()],
+            plugins: Vec::new(),
         };
         let found = discover(&scope);
         assert_eq!(found.skills.len(), 5);
@@ -569,8 +681,9 @@ mod tests {
             location: root.join("repo"),
             home: root.join("home"),
             global_config_dir: root.join("global"),
-            compat: false,
+            compat: SkillCompat::NONE,
             extra: Vec::new(),
+            plugins: Vec::new(),
         }
     }
 

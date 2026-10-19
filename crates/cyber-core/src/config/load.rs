@@ -8,7 +8,9 @@ use sha2::{Digest, Sha256};
 use super::gate::{self, canonical_json};
 use super::merge::{self, Sources};
 use super::subst::{self, SubstContext};
-use super::{ConfigError, Resolved, SCHEMA_URL, TrustReport, jsonc, managed, mcp_serve, validate};
+use super::{
+    ConfigError, Resolved, SCHEMA_URL, TrustReport, jsonc, managed, mcp_files, mcp_serve, validate,
+};
 use crate::env::EnvSource;
 use crate::paths::Paths;
 use crate::trust::TrustStore;
@@ -32,18 +34,33 @@ struct Layer {
     path: Option<PathBuf>,
     base_dir: PathBuf,
     value: Value,
+    /// Notes from reading the layer, such as skipped `.mcp.json` servers.
+    warnings: Vec<String>,
 }
 
 pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
+    let mut managed_warnings = Vec::new();
+    let managed = managed::read(req.env, &mut managed_warnings);
+    let pure = crate::plugins::pure(req.env);
     let project = read_project_layers(req)?;
     let trust = assess_trust(req, &project)?;
     let mut layers = vec![defaults_layer(req)];
     layers.extend(read_global_layers(req)?);
     layers.extend(gate_project(project, trust.trusted));
     layers.extend(read_env_layers(req)?);
+    shadow_mcp_file(&mut layers);
+    if pure {
+        layers
+            .iter_mut()
+            .for_each(|layer| strip_external(&mut layer.value));
+    }
+    let plugins = add_plugin_layers(req, &managed, pure, &mut layers);
 
     let mut issues = Vec::new();
-    let mut warnings = Vec::new();
+    let mut warnings: Vec<String> = layers
+        .iter_mut()
+        .flat_map(|layer| std::mem::take(&mut layer.warnings))
+        .collect();
     let mut value = Value::Object(Map::new());
     let mut sources = Sources::new();
     let mut labels = Vec::new();
@@ -68,6 +85,9 @@ pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
     ));
     for (label, mut layer) in cli_layers(req, &mut issues) {
         mcp_serve::strip(&mut layer, &mut warnings);
+        if pure {
+            strip_external(&mut layer);
+        }
         merge::merge_layer(&mut value, &layer, &label, &mut sources);
         labels.push(label);
     }
@@ -76,8 +96,9 @@ pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
     if !issues.is_empty() {
         return Err(ConfigError::Invalid { issues });
     }
+    set_plugin_components(&mut value, &mut sources, plugins.components);
+    warnings.extend(managed_warnings);
     // Policy layers apply last and are read only from the OS-managed directory.
-    let managed = managed::read(req.env, &mut warnings);
     for (label, settings) in managed.settings {
         merge::merge_layer(
             &mut value,
@@ -114,7 +135,105 @@ pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
         trust,
         layers: labels,
         managed: managed.policy,
+        plugins: plugins.statuses,
+        pure,
     })
+}
+
+/// `--pure`: hooks and MCP servers come only from organization policy.
+fn strip_external(value: &mut Value) {
+    let Some(map) = value.as_object_mut() else {
+        return;
+    };
+    map.remove("hooks");
+    map.remove("mcp");
+    for profile in map
+        .get_mut("profiles")
+        .and_then(Value::as_object_mut)
+        .into_iter()
+        .flat_map(|profiles| profiles.values_mut())
+    {
+        if let Some(profile) = profile.as_object_mut() {
+            profile.remove("hooks");
+            profile.remove("mcp");
+        }
+    }
+}
+
+struct PluginLoad {
+    statuses: Vec<crate::plugins::PluginStatus>,
+    components: Vec<Value>,
+}
+
+/// One `plugin:` layer per loaded plugin, just above the defaults: plugin hooks still run
+/// last (hooks are ordered by scope), and every other layer outranks plugin values.
+fn add_plugin_layers(
+    req: &LoadRequest<'_>,
+    managed: &managed::ManagedRead,
+    pure: bool,
+    layers: &mut Vec<Layer>,
+) -> PluginLoad {
+    let locations = crate::plugins::Locations::new(req.paths, req.location);
+    let project = !req.env.flag("CYBER_DISABLE_PROJECT_CONFIG");
+    let resolution = crate::plugins::resolve(&locations, &managed.policy, pure, project);
+    let mut agents = super::agent_profiles::builtin_names();
+    let mut servers = std::collections::BTreeSet::new();
+    for value in layers.iter().map(|layer| &layer.value) {
+        let names = |key: &str| {
+            value
+                .get(key)
+                .and_then(Value::as_object)
+                .into_iter()
+                .flat_map(|map| map.keys().cloned())
+                .collect::<Vec<_>>()
+        };
+        agents.extend(names("agents"));
+        servers.extend(names("mcp"));
+    }
+    for (_, managed_servers) in &managed.mcp {
+        servers.extend(
+            managed_servers
+                .as_object()
+                .into_iter()
+                .flat_map(|m| m.keys().cloned()),
+        );
+    }
+    let mut components = Vec::new();
+    let mut plugin_layers = Vec::new();
+    for plugin in &resolution.active {
+        let built = crate::plugins::plugin_layer(plugin, &mut agents, &mut servers);
+        components.push(built.components);
+        plugin_layers.push(Layer {
+            label: built.label,
+            path: Some(built.root.join(crate::plugins::MANIFEST_FILE)),
+            base_dir: built.root,
+            value: built.value,
+            warnings: built.warnings,
+        });
+    }
+    if let Some(defaults) = layers.first_mut() {
+        defaults.warnings.extend(resolution.warnings);
+    }
+    layers.splice(1..1, plugin_layers);
+    PluginLoad {
+        statuses: resolution.statuses,
+        components,
+    }
+}
+
+/// Only the loader sets [`crate::plugins::COMPONENTS_KEY`]; a layer's value is dropped.
+fn set_plugin_components(value: &mut Value, sources: &mut Sources, components: Vec<Value>) {
+    let key = crate::plugins::COMPONENTS_KEY;
+    let pointer = format!("/{key}");
+    let prefix = format!("{pointer}/");
+    sources.retain(|path, _| path != &pointer && !path.starts_with(&prefix));
+    let Some(map) = value.as_object_mut() else {
+        return;
+    };
+    map.remove(key);
+    if !components.is_empty() {
+        map.insert(key.into(), Value::Array(components));
+    }
 }
 
 /// Drop every leaf of `mcp.<name>` and its origins before a managed definition merges.
@@ -244,6 +363,7 @@ fn defaults_layer(req: &LoadRequest<'_>) -> Layer {
         path: None,
         base_dir: req.location.to_path_buf(),
         value: json!({"mode": "default", "share": "manual", "snapshots": true, "autoupdate": "notify"}),
+        warnings: Vec::new(),
     }
 }
 
@@ -258,7 +378,63 @@ fn read_project_layers(req: &LoadRequest<'_>) -> Result<Vec<Layer>, ConfigError>
         return Ok(Vec::new());
     }
     let root = project_root(req.location);
-    read_layers(&project_layer_paths(req.location, &root), "project")
+    let mut layers = read_layers(&project_layer_paths(req.location, &root), "project")?;
+    let file = root.join(mcp_files::FILE);
+    if std::fs::symlink_metadata(&file).is_err() {
+        return Ok(layers);
+    }
+    let global = read_global_layers(req)?;
+    let values = global.iter().chain(&layers).map(|layer| &layer.value);
+    if mcp_files::enabled(values)
+        && let Some(layer) = read_mcp_file(&file)
+    {
+        layers.insert(0, layer);
+    }
+    Ok(layers)
+}
+
+/// The project `.mcp.json` as the lowest project layer; a file that cannot be read or
+/// parsed loads nothing and says why.
+fn read_mcp_file(path: &Path) -> Option<Layer> {
+    let label = format!("project:{}", path.display());
+    let linked = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
+    let document = if linked {
+        Err(format!(
+            "{} ignored: a linked file is not read",
+            path.display()
+        ))
+    } else {
+        read_document(path).map_err(|error| format!("{} ignored: {error}", path.display()))
+    };
+    let (value, warnings) = match document {
+        Ok(None) => return None,
+        Ok(Some(document)) => mcp_files::convert(&document, path),
+        Err(warning) => (json!({}), vec![warning]),
+    };
+    let mut layer = layer(label, Some(path.to_path_buf()), value);
+    layer.warnings = warnings;
+    Some(layer)
+}
+
+/// Drop `.mcp.json` servers that any configuration document also names.
+fn shadow_mcp_file(layers: &mut [Layer]) {
+    let is_file = |layer: &Layer| {
+        layer
+            .path
+            .as_deref()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == mcp_files::FILE)
+    };
+    let Some(index) = layers.iter().position(is_file) else {
+        return;
+    };
+    let declared: Vec<Value> = layers
+        .iter()
+        .filter(|layer| !is_file(layer))
+        .map(|layer| layer.value.clone())
+        .collect();
+    let declared: Vec<&Value> = declared.iter().collect();
+    mcp_files::shadow(&mut layers[index].value, &declared);
 }
 
 pub(crate) fn global_layer_paths(directory: &Path) -> [PathBuf; 2] {
@@ -303,6 +479,7 @@ fn read_env_layers(req: &LoadRequest<'_>) -> Result<Vec<Layer>, ConfigError> {
             path: None,
             base_dir: req.location.to_path_buf(),
             value,
+            warnings: Vec::new(),
         });
     }
     Ok(layers)
@@ -333,6 +510,7 @@ fn layer(label: String, path: Option<PathBuf>, value: Value) -> Layer {
         path,
         base_dir,
         value,
+        warnings: Vec::new(),
     }
 }
 

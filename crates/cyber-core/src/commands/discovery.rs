@@ -18,7 +18,12 @@ pub struct CommandScope {
     pub global_config_dir: PathBuf,
     pub project: bool,
     pub compat: bool,
+    /// Loaded plugins' command folders, by plugin name.
+    pub plugins: Vec<(String, Vec<PathBuf>)>,
 }
+
+/// Plugin commands rank below every other source; they are only added under free names.
+const PLUGIN: Priority = (3, 0, 3);
 
 #[derive(Debug, Clone)]
 pub struct CommandIssue {
@@ -290,6 +295,7 @@ fn source_scope(priority: Priority) -> CommandSourceScope {
     match priority.0 {
         0 => CommandSourceScope::Global,
         1 => CommandSourceScope::Project,
+        3 => CommandSourceScope::Plugin,
         _ => CommandSourceScope::Runtime,
     }
 }
@@ -436,6 +442,63 @@ fn inline_sources(
     }
 }
 
+/// Names a plugin command cannot take: built-in commands and skills and reserved names.
+fn builtin_names() -> std::collections::BTreeSet<String> {
+    let mut names: std::collections::BTreeSet<String> = super::BUILTIN
+        .iter()
+        .map(|(name, _)| name)
+        .chain(super::RESERVED)
+        .map(|name| (*name).to_owned())
+        .collect();
+    names.extend(crate::skills::bundled_names());
+    names
+}
+
+/// Each plugin's commands, after every other source: a command whose name is taken is
+/// available as `<plugin>:<name>` (`plugins-marketplace` → Component discovery defaults).
+fn plugin_sources(scanner: &mut Scanner, scope: &CommandScope) {
+    let builtin = builtin_names();
+    for (plugin, dirs) in &scope.plugins {
+        let mut own = Scanner {
+            candidates: BTreeMap::new(),
+            agents: scanner.agents.clone(),
+            issues: Vec::new(),
+            entries: scanner.entries,
+            remaining: scanner.remaining,
+            failed: false,
+        };
+        for dir in dirs {
+            own.root(dir, PLUGIN);
+        }
+        scanner.issues.append(&mut own.issues);
+        scanner.entries = own.entries;
+        scanner.remaining = own.remaining;
+        if own.failed {
+            scanner.failed = true;
+            return;
+        }
+        for (name, candidate) in own.candidates {
+            let qualified = format!("{plugin}:{name}");
+            let free =
+                |name: &String| !builtin.contains(name) && !scanner.candidates.contains_key(name);
+            match [name, qualified].into_iter().find(free) {
+                Some(name) => {
+                    scanner.candidates.insert(name, candidate);
+                }
+                None => scanner.issue(
+                    candidate
+                        .provenance
+                        .winner
+                        .paths
+                        .first()
+                        .map_or(&scope.location, |p| p),
+                    "plugin command name is already used",
+                ),
+            }
+        }
+    }
+}
+
 /// Inputs must be the runtime's already layered, substituted and trust-filtered configuration.
 /// Files are observed independently; returned definitions own no filesystem handles.
 pub fn discover(
@@ -468,6 +531,7 @@ pub fn discover(
         &project,
         global.as_deref(),
     );
+    plugin_sources(&mut scanner, scope);
     let mut result = Commands {
         issues: scanner.issues,
         ..Commands::default()

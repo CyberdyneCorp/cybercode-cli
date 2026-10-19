@@ -221,3 +221,38 @@ async fn blanket_allow_does_not_approve_an_escalation() {
         "{outputs:?}"
     );
 }
+
+/// Regression: cyber's own credential files in the data directory (the plugin secret
+/// file and the MCP OAuth file of the file backend) were not in any launch's unreadable
+/// set, and sandboxed processes run as the same user, so the model could `cat` them
+/// past the `secrets/get` capability gate. Every sandboxed launch hides them.
+#[tokio::test]
+async fn sandboxed_commands_cannot_read_cyber_credential_files() {
+    let app = ModeApp::start(Setup::default()).await;
+    let marker = format!("cyber-secret-{}", ulid::Ulid::new());
+    let data = app.root.join("data");
+    let files = [data.join("plugin-secrets.json"), data.join("mcp-auth.json")];
+    for file in &files {
+        std::fs::write(file, format!("{{\"marker\":\"{marker}\"}}")).unwrap();
+        let mut mode = std::fs::metadata(file).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut mode, 0o600);
+        std::fs::set_permissions(file, mode).unwrap();
+    }
+    let id = bypass_session(&app).await;
+    for file in &files {
+        app.run(
+            &id,
+            &format!("RUN<<cat '{}'; echo read-attempted>>", file.display()),
+        )
+        .await;
+    }
+    let outputs = app.outputs(&id).await;
+    assert_eq!(outputs.len(), files.len(), "{outputs:?}");
+    for output in &outputs {
+        assert!(output.contains("read-attempted"), "{outputs:?}");
+        assert!(
+            !output.contains(&marker),
+            "a credential file was read: {outputs:?}"
+        );
+    }
+}

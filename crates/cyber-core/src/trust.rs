@@ -33,6 +33,10 @@ struct TrustFile {
     /// Remote skill sources from project config, bound to their URL and fetched content.
     #[serde(default)]
     remote_skill_approvals: Vec<Approval>,
+    /// Plugins, keyed by the checkout (project and local scope) or `user:<config dir>`,
+    /// bound to the plugin name, version and content digest.
+    #[serde(default)]
+    plugin_approvals: Vec<Approval>,
 }
 
 /// Explicitly reviewed handler digests for one invocation; never persisted.
@@ -270,6 +274,45 @@ impl TrustStore {
         })
     }
 
+    /// Whether a plugin trust digest is approved under `key` (`plugins-marketplace` →
+    /// Trust and signing). `key` is a canonical checkout root or `user:<config dir>`.
+    pub fn is_plugin_approved(&self, key: &str, digest: &str) -> io::Result<bool> {
+        validate_hook_digest(digest)?;
+        Ok(self
+            .load()?
+            .plugin_approvals
+            .iter()
+            .any(|a| a.checkout_root == key && a.digest == digest))
+    }
+
+    /// Approve one plugin digest, replacing any earlier approval of `previous` digests
+    /// under the same key, so an update leaves exactly one trusted version.
+    pub fn approve_plugin(&self, key: &str, digest: &str, previous: &[String]) -> io::Result<()> {
+        validate_hook_digest(digest)?;
+        self.update(|file| {
+            file.plugin_approvals.retain(|a| {
+                a.checkout_root != key || (a.digest != digest && !previous.contains(&a.digest))
+            });
+            file.plugin_approvals.push(Approval {
+                checkout_root: key.into(),
+                digest: digest.into(),
+                approved_at: unix_seconds(),
+            });
+            ((), true)
+        })
+    }
+
+    /// Revoke plugin digests under `key`; returns whether any approval was removed.
+    pub fn revoke_plugin(&self, key: &str, digests: &[String]) -> io::Result<bool> {
+        self.update(|file| {
+            let before = file.plugin_approvals.len();
+            file.plugin_approvals
+                .retain(|a| a.checkout_root != key || !digests.contains(&a.digest));
+            let removed = file.plugin_approvals.len() != before;
+            (removed, removed)
+        })
+    }
+
     fn update<T>(&self, change: impl FnOnce(&mut TrustFile) -> (T, bool)) -> io::Result<T> {
         let lock_path = self.path.with_extension("lock");
         if let Some(parent) = lock_path.parent() {
@@ -303,6 +346,7 @@ impl TrustStore {
                 mcp_approvals: Vec::new(),
                 template_approvals: Vec::new(),
                 remote_skill_approvals: Vec::new(),
+                plugin_approvals: Vec::new(),
             }),
             Err(e) => Err(e),
         }

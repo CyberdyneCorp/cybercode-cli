@@ -287,6 +287,8 @@ impl Inner {
             )
             .await;
         self.observe_lifecycle(hook).await;
+        let session_id = handle.state.lock().await.info.id.clone();
+        self.tools.end_session(&session_id).await;
     }
 
     /// Observational TaskCreated once a background Job is durably registered. Its

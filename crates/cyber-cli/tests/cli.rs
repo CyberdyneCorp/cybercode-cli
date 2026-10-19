@@ -2298,15 +2298,15 @@ fn import_detection_is_read_only_and_outputs_counts_without_configuration_secret
     let v = json(&o);
     assert_eq!(v["tools"][0]["tool"], "claude");
     assert_eq!(v["tools"][0]["counts"]["agents"], 1);
-    assert!(v["tools"][0]["counts"]["sessions"].is_null());
+    assert_eq!(v["tools"][0]["counts"]["sessions"], 0);
+    assert_eq!(v["tools"][0]["read_time"]["agents"], 0);
     assert_eq!(v["complete"], false);
     assert!(!stdout(&o).contains("private-secret"));
     assert!(!e.root.join("cyber-home").exists());
     assert!(!e.root.join(".cyber").exists());
     let text = e.cyber(&["import", "--detect"]);
     assert!(text.status.success(), "{}", stderr(&text));
-    assert!(stdout(&text).contains("claude: 1 agents"));
-    assert!(stdout(&text).contains("sessions: unknown"));
+    assert!(stdout(&text).contains("claude: 1 agents; read-time: no"));
     assert!(!e.root.join("cyber-home").exists());
 }
 
@@ -2426,6 +2426,786 @@ fn import_kept_credentials_do_not_ask_to_set_ignored_variables() {
     assert!(!e.root.join("cyber-home").exists());
 }
 
+fn put(root: &Path, path: &str, text: &str) {
+    let file = root.join(path);
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(file, text).unwrap();
+}
+
+/// A path as `cyber import` prints it: one line, control characters escaped.
+fn shown(path: &Path) -> String {
+    path.to_string_lossy()
+        .chars()
+        .flat_map(char::escape_debug)
+        .collect()
+}
+
+fn import_reports(root: &Path) -> Vec<PathBuf> {
+    std::fs::read_dir(root.join(".cyber"))
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.file_name()
+                        .is_some_and(|n| n.to_string_lossy().starts_with("import-report-"))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+const CODEX_SOURCE: &str = "model='coder'\nmodel_provider='local'\n[model_providers.local]\nbase_url='http://localhost:8000/v1'\napi_key='sk-private-literal-key'\n[mcp_servers.first]\ncommand='do-not-run'\n";
+
+#[test]
+fn import_claude_dry_run_prints_a_file_diff_and_writes_nothing() {
+    let e = Env::new();
+    std::fs::create_dir_all(e.root.join("home")).unwrap();
+    put(
+        &e.root,
+        ".claude/settings.json",
+        r#"{"model":"claude-sonnet-4-5","permissions":{"allow":["Bash(git status)"]}}"#,
+    );
+    let o = e.cyber(&["import", "claude", "--dry-run"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    let out = stdout(&o);
+    let target = e.root.join("cyber.jsonc");
+    assert!(out.contains("--- /dev/null\n"), "{out}");
+    assert!(
+        out.contains(&format!("+++ {}\n", target.display())),
+        "{out}"
+    );
+    assert!(
+        out.contains("+  \"model\": \"anthropic/claude-sonnet-4-5\""),
+        "{out}"
+    );
+    let source = Path::new(".claude").join("settings.json");
+    assert!(
+        out.contains(&format!("+  // x-imported-from: {}", shown(&source))),
+        "{out}"
+    );
+    assert!(out.contains("imported: "), "{out}");
+    let report = e.root.join(".cyber").join("import-report-<timestamp>.md");
+    assert!(
+        out.contains(&format!(
+            "New file: {} (the mapping report below)",
+            shown(&report)
+        )),
+        "{out}"
+    );
+    assert!(out.ends_with("Dry run: no files written.\n"), "{out}");
+    assert!(!target.exists());
+    assert!(!e.root.join(".cyber").exists());
+    assert!(!e.root.join("cyber-home").exists());
+    existing_document_is_diffed_byte_for_byte(&e, &target);
+}
+
+/// An existing document is diffed byte for byte and keeps its comments.
+fn existing_document_is_diffed_byte_for_byte(e: &Env, target: &Path) {
+    let native = "{\n  // keep this comment\n  \"mode\": \"plan\"\n}\n";
+    std::fs::write(target, native).unwrap();
+    let o = e.cyber(&["import", "claude", "--dry-run"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    let out = stdout(&o);
+    assert!(
+        out.contains(&format!("--- {}\n", target.display())),
+        "{out}"
+    );
+    assert!(out.contains("   // keep this comment\n"), "{out}");
+    assert_eq!(std::fs::read_to_string(target).unwrap(), native);
+    assert!(!e.root.join(".cyber").exists());
+}
+
+#[test]
+fn import_with_no_sources_prints_none_found_and_exits_zero() {
+    let e = Env::new();
+    std::fs::create_dir_all(e.root.join("home")).unwrap();
+    let o = e.cyber(&["import", "claude"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert_eq!(
+        stdout(&o),
+        format!(
+            "no claude configuration found in {} or ~/.claude\n",
+            shown(&e.root)
+        )
+    );
+    let o = e.cyber(&["import", "auto", "--yes"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(
+        stdout(&o).starts_with("no opencode, codex or claude configuration found in "),
+        "{}",
+        stdout(&o)
+    );
+    let v = json(&e.cyber(&["import", "codex", "--dry-run", "--format", "json"]));
+    assert_eq!(v["found"], false);
+    assert!(v["message"].as_str().unwrap().ends_with("or ~/.codex"));
+    assert!(!e.root.join("cyber.jsonc").exists());
+    assert!(!e.root.join(".cyber").exists());
+}
+
+#[test]
+fn import_codex_yes_twice_writes_once_then_reports_nothing_to_do() {
+    let e = Env::new();
+    std::fs::create_dir_all(e.root.join("home")).unwrap();
+    put(&e.root, ".codex/config.toml", CODEX_SOURCE);
+    let first = e.cyber(&["import", "codex", "--yes"]);
+    assert!(first.status.success(), "{}", stderr(&first));
+    let target = e.root.join("cyber.jsonc");
+    assert!(
+        stdout(&first).contains(&format!("Wrote {}\n", shown(&target))),
+        "{}",
+        stdout(&first)
+    );
+    let written = std::fs::read_to_string(&target).unwrap();
+    let source = Path::new(".codex").join("config.toml");
+    assert_eq!(
+        written
+            .matches(&format!("// x-imported-from: {} sha256:", shown(&source)))
+            .count(),
+        3,
+        "{written}"
+    );
+    assert_eq!(import_reports(&e.root).len(), 1);
+    written_codex_config_loads_untrusted(&e);
+
+    let second = e.cyber(&["import", "codex", "--yes"]);
+    assert!(second.status.success(), "{}", stderr(&second));
+    assert!(
+        stdout(&second).ends_with("nothing to do\n"),
+        "{}",
+        stdout(&second)
+    );
+    assert!(!stdout(&second).contains("+++"), "{}", stdout(&second));
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), written);
+    assert_eq!(import_reports(&e.root).len(), 1);
+    let v = json(&e.cyber(&["import", "codex", "--yes", "--format", "json"]));
+    assert_eq!(v["nothing_to_do"], true);
+    assert!(v["written"].is_null());
+}
+
+/// Regression: a global import never created the global configuration directory, so on
+/// a machine without one the write failed with "native configuration could not be
+/// written".
+#[test]
+fn import_global_scope_creates_the_missing_global_configuration_directory() {
+    let e = Env::new();
+    put(&e.root, "home/.codex/config.toml", CODEX_SOURCE);
+    let global = e.root.join("cyber-home").join("config");
+    assert!(!global.exists());
+    let o = e.cyber(&["import", "codex", "--scope", "global", "--yes"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    let written = std::fs::read_to_string(global.join("cyber.jsonc")).unwrap();
+    assert!(written.contains("x-imported-from:"), "{written}");
+    let reports: Vec<_> = std::fs::read_dir(&global)
+        .unwrap()
+        .flatten()
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("import-report-")
+        })
+        .collect();
+    assert_eq!(reports.len(), 1);
+}
+
+/// Regression: the target was replaced before the mapping report was created, so a
+/// report that could not be written failed the import after `cyber.jsonc` had already
+/// changed. (A linked or non-directory `.cyber` is refused earlier, by the preview.)
+#[cfg(unix)]
+#[test]
+fn import_whose_report_cannot_be_written_leaves_the_target_untouched() {
+    use std::os::unix::fs::PermissionsExt;
+    let e = Env::new();
+    std::fs::create_dir_all(e.root.join("home")).unwrap();
+    put(
+        &e.root,
+        ".claude/settings.json",
+        r#"{"model":"claude-sonnet-4-5","permissions":{"allow":["Bash(git status)"]}}"#,
+    );
+    let native = "{\n  // keep this comment\n  \"mode\": \"plan\"\n}\n";
+    let target = e.root.join("cyber.jsonc");
+    std::fs::write(&target, native).unwrap();
+    let reports = e.root.join(".cyber");
+    std::fs::create_dir(&reports).unwrap();
+    std::fs::set_permissions(&reports, std::fs::Permissions::from_mode(0o555)).unwrap();
+    if std::fs::write(reports.join("probe"), "").is_ok() {
+        return; // Permissions are not enforced for this user (root).
+    }
+    let o = e.cyber(&["import", "claude", "--yes"]);
+    std::fs::set_permissions(&reports, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(!o.status.success(), "{}", stdout(&o));
+    assert!(
+        stderr(&o).contains("import report could not be written"),
+        "{}",
+        stderr(&o)
+    );
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), native);
+}
+
+#[test]
+fn import_without_yes_writes_only_after_an_explicit_yes() {
+    use std::io::Write;
+    let e = Env::new();
+    std::fs::create_dir_all(e.root.join("home")).unwrap();
+    put(&e.root, ".codex/config.toml", CODEX_SOURCE);
+    let declined = e.cyber(&["import", "codex"]);
+    assert_eq!(declined.status.code(), Some(1), "{}", stderr(&declined));
+    assert!(stderr(&declined).contains("[y/N]"), "{}", stderr(&declined));
+    assert!(stderr(&declined).contains("Import cancelled; no files written."));
+    assert!(stdout(&declined).contains("+++"), "{}", stdout(&declined));
+    assert!(!e.root.join("cyber.jsonc").exists());
+    assert!(!e.root.join(".cyber").exists());
+
+    let mut child = e
+        .command(&["import", "codex"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"y\n").unwrap();
+    let accepted = child.wait_with_output().unwrap();
+    assert!(accepted.status.success(), "{}", stderr(&accepted));
+    assert!(e.root.join("cyber.jsonc").exists());
+    assert_eq!(import_reports(&e.root).len(), 1);
+}
+
+#[test]
+fn import_reimport_updates_its_own_annotated_entries_and_keeps_edited_ones() {
+    let e = Env::new();
+    std::fs::create_dir_all(e.root.join("home")).unwrap();
+    put(&e.root, ".codex/config.toml", CODEX_SOURCE);
+    assert!(e.cyber(&["import", "codex", "--yes"]).status.success());
+    let target = e.root.join("cyber.jsonc");
+    put(
+        &e.root,
+        ".codex/config.toml",
+        &CODEX_SOURCE.replace("do-not-run", "still-not-run"),
+    );
+    let updated = e.cyber(&["import", "codex", "--yes"]);
+    assert!(updated.status.success(), "{}", stderr(&updated));
+    assert!(
+        stdout(&updated).contains("entry of an earlier import updated from its source"),
+        "{}",
+        stdout(&updated)
+    );
+    let text = std::fs::read_to_string(&target).unwrap();
+    assert!(text.contains("\"still-not-run\"") && !text.contains("\"do-not-run\""));
+    assert_eq!(text.matches("\"mcp\"").count(), 1, "{text}");
+
+    // A hand-edited entry is the user's now: it is kept and reported as merged.
+    std::fs::write(&target, text.replace("still-not-run", "my-own-server")).unwrap();
+    put(
+        &e.root,
+        ".codex/config.toml",
+        &CODEX_SOURCE.replace("do-not-run", "third-server"),
+    );
+    let kept = e.cyber(&["import", "codex", "--yes"]);
+    assert!(kept.status.success(), "{}", stderr(&kept));
+    assert!(
+        stdout(&kept).contains("kept: \"my-own-server\""),
+        "{}",
+        stdout(&kept)
+    );
+    assert!(
+        stdout(&kept).ends_with("nothing to do\n"),
+        "{}",
+        stdout(&kept)
+    );
+    assert!(
+        std::fs::read_to_string(&target)
+            .unwrap()
+            .contains("my-own-server")
+    );
+}
+
+#[test]
+fn import_writes_report_file_listing_merged_model_with_both_values() {
+    let e = Env::new();
+    std::fs::create_dir_all(e.root.join("home")).unwrap();
+    std::fs::write(e.root.join("cyber.jsonc"), r#"{"model":"native/kept"}"#).unwrap();
+    put(&e.root, ".codex/config.toml", CODEX_SOURCE);
+    let o = e.cyber(&["import", "codex", "--yes", "--format", "json"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    let v = json(&o);
+    let report = PathBuf::from(v["written"]["report"].as_str().unwrap());
+    assert_eq!(import_reports(&e.root), vec![report.clone()]);
+    let name = report.file_name().unwrap().to_string_lossy().into_owned();
+    assert!(
+        name.len() == "import-report-20260101T000000Z.md".len() && name.ends_with("Z.md"),
+        "{name}"
+    );
+    let text = std::fs::read_to_string(&report).unwrap();
+    let merged = text.split("\n## merged\n").nth(1).unwrap();
+    let merged = merged.split("\n## ").next().unwrap();
+    assert!(merged.contains("- `/model` from `"), "{text}");
+    assert!(merged.contains("  - kept: `\"native/kept\"`"), "{text}");
+    assert!(merged.contains("  - ignored: `\"local/coder\"`"), "{text}");
+    assert!(text.contains("\n## imported\n"), "{text}");
+    assert!(text.contains(&shown(&e.root.join(".codex").join("config.toml"))));
+    assert_eq!(
+        crate_config(&e)["model"],
+        "native/kept",
+        "the existing key is kept"
+    );
+}
+
+/// The real configuration loader accepts the written document, and the imported provider
+/// and MCP server stay inactive until the project is trusted.
+fn written_codex_config_loads_untrusted(e: &Env) {
+    let config = e.cyber(&["debug", "config", "--format", "json"]);
+    assert!(config.status.success(), "{}", stderr(&config));
+    assert_eq!(json(&config)["model"], "local/coder");
+    assert!(json(&config).get("mcp").is_none());
+    assert!(
+        stderr(&config).contains("2 project definition(s) are inactive until approved"),
+        "{}",
+        stderr(&config)
+    );
+}
+
+fn crate_config(e: &Env) -> Value {
+    json(&e.cyber(&["debug", "config", "--format", "json"]))
+}
+
+#[test]
+fn import_literal_codex_api_key_never_reaches_cyber_jsonc() {
+    let e = Env::new();
+    std::fs::create_dir_all(e.root.join("home")).unwrap();
+    // The user's own literal key in the existing document is redacted from the diff too.
+    std::fs::write(
+        e.root.join("cyber.jsonc"),
+        "{\n  \"providers\": {\"own\": {\"api\": {\"settings\": {\"api_key\": \"sk-native-own-key\"}}}}\n}\n",
+    )
+    .unwrap();
+    put(&e.root, ".codex/config.toml", CODEX_SOURCE);
+    let o = e.cyber(&["import", "codex", "--yes"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    let out = stdout(&o);
+    for text in [&out, &stderr(&o)] {
+        assert!(!text.contains("sk-private-literal-key"), "{text}");
+        assert!(!text.contains("sk-native-own-key"), "{text}");
+    }
+    let written = std::fs::read_to_string(e.root.join("cyber.jsonc")).unwrap();
+    assert!(!written.contains("sk-private-literal-key"), "{written}");
+    let variable = "CYBER_IMPORT_CODEX_6C6F63616C_API_KEY";
+    assert!(
+        written.contains(&format!("\"api_key\": \"{{env:{variable}}}\"")),
+        "{written}"
+    );
+    let report = std::fs::read_to_string(&import_reports(&e.root)[0]).unwrap();
+    assert!(!report.contains("sk-private-literal-key"), "{report}");
+    assert!(!report.contains("sk-native-own-key"), "{report}");
+    assert!(
+        report.contains(&format!(
+            "- `{variable}` from the source field `/model_providers/local/api_key`"
+        )),
+        "{report}"
+    );
+    assert!(out.contains(&format!("Set {variable} from the source field")));
+    // No other file the import touched holds the key either.
+    assert!(!e.root.join("cyber-home").exists());
+}
+
+/// Copy the checked-in tree at `from` into `to`.
+fn copy_tree(from: &Path, to: &Path) {
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            std::fs::create_dir_all(&target).unwrap();
+            copy_tree(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+/// The M1.5 exit criterion (ROADMAP): `cyber import claude` reproduces a reference Claude
+/// Code setup — agents, skills, a command, hooks, MCP servers, permissions and settings —
+/// with nothing left to port by hand. After the workspace-trust approval every security
+/// review requires, the binary's own inspection commands show each item live.
+#[test]
+fn import_claude_reproduces_reference_setup_without_manual_edits() {
+    let e = Env::new();
+    std::fs::create_dir_all(e.root.join("home")).unwrap();
+    std::fs::create_dir_all(e.root.join(".git")).unwrap();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/claude-reference");
+    copy_tree(&fixture, &e.root);
+    let o = e.cyber(&["import", "claude", "--yes"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    reference_report_leaves_nothing_to_port(&e);
+    let cwd = e.root.to_str().unwrap();
+    approve_checkout(&e);
+
+    reference_settings_are_live(&e);
+    reference_extensions_are_live(&e, cwd);
+    // A second import finds nothing left to do.
+    let again = e.cyber(&["import", "claude", "--yes"]);
+    assert!(
+        stdout(&again).ends_with("nothing to do\n"),
+        "{}",
+        stdout(&again)
+    );
+}
+
+/// The mapping report imports every reference item and lists nothing to port or set.
+fn reference_report_leaves_nothing_to_port(e: &Env) {
+    let reports = import_reports(&e.root);
+    assert_eq!(reports.len(), 1);
+    let report = std::fs::read_to_string(&reports[0]).unwrap();
+    for section in [
+        "## requires manual port",
+        "## not imported",
+        "## merged",
+        "## Environment to set",
+    ] {
+        assert!(!report.contains(section), "{section}:\n{report}");
+    }
+    for item in [
+        "`/agents/reviewer`",
+        "`/hooks/PreToolUse/0`",
+        "`/mcp/docs/command`",
+        "`/commands/ship/template`",
+        "`/fallback_models`",
+    ] {
+        assert!(report.contains(item), "{item}:\n{report}");
+    }
+    assert!(
+        report.contains("SKILL.md`: read in place by read-time skill compatibility"),
+        "{report}"
+    );
+}
+
+/// Model, fallback, mode, environment, permission rules and the agent, as loaded.
+fn reference_settings_are_live(e: &Env) {
+    let config = crate_config(e);
+    assert_eq!(config["model"], "anthropic/claude-sonnet-5-5");
+    assert_eq!(
+        config["fallback_models"],
+        serde_json::json!(["anthropic/claude-haiku-4-5"])
+    );
+    assert_eq!(config["mode"], "accept-edits");
+    assert_eq!(config["sandbox"]["env"]["set"]["NODE_ENV"], "development");
+    let rules = config["permissions"]["rules"].to_string();
+    for rule in [
+        r#"{"action":"bash","effect":"allow","resource":"npm run test *"}"#,
+        r#"{"action":"read","effect":"deny","resource":".env"}"#,
+    ] {
+        let rule: Value = serde_json::from_str(rule).unwrap();
+        assert!(
+            config["permissions"]["rules"]
+                .as_array()
+                .unwrap()
+                .contains(&rule),
+            "{rules}"
+        );
+    }
+    let reviewer = &config["agents"]["reviewer"];
+    assert_eq!(reviewer["model"], "anthropic/claude-opus-5-5");
+    assert_eq!(reviewer["mode"], "subagent");
+    assert!(
+        reviewer["system"]
+            .as_str()
+            .unwrap()
+            .starts_with("You are a careful code reviewer.")
+    );
+}
+
+/// Hooks, MCP servers, the skill and the command, through the binary's inspection commands.
+fn reference_extensions_are_live(e: &Env, cwd: &str) {
+    let hooks = json(&e.cyber(&["hooks", "list", "--cwd", cwd, "--format", "json"]));
+    let events: Vec<_> = hooks["hooks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| {
+            (
+                h["event"].as_str().unwrap().to_owned(),
+                h["matcher"].clone(),
+            )
+        })
+        .collect();
+    for (event, matcher) in [
+        ("PreToolUse", serde_json::json!("bash")),
+        ("PostToolUse", serde_json::json!("{edit,write}")),
+        ("SessionStart", Value::Null),
+    ] {
+        assert!(
+            events.contains(&(event.to_owned(), matcher.clone())),
+            "{event} {matcher}: {hooks}"
+        );
+    }
+    assert!(
+        hooks
+            .to_string()
+            .contains("$CYBER_PROJECT_DIR/.claude/hooks/guard.sh"),
+        "{hooks}"
+    );
+
+    let mcp = json(&e.cyber(&["mcp", "definitions", "--cwd", cwd, "--format", "json"]));
+    let names: Vec<_> = mcp["servers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    assert!(
+        names.contains(&"docs") && names.contains(&"tracker"),
+        "{mcp}"
+    );
+
+    let skills = json(&e.cyber(&["skills", "list", "--cwd", cwd, "--format", "json"]));
+    assert!(skills.to_string().contains("\"release-notes\""), "{skills}");
+    let commands = json(&e.cyber(&["commands", "list", "--cwd", cwd, "--format", "json"]));
+    assert!(commands.to_string().contains("\"ship\""), "{commands}");
+}
+
+/// Approve the checkout's project configuration, as `cyber trust approve` does.
+fn approve_checkout(e: &Env) {
+    let cwd = e.root.to_str().unwrap();
+    let inspect = json(&e.cyber(&["trust", "inspect", "--cwd", cwd, "--format", "json"]));
+    if let Some(digest) = inspect["digest"].as_str() {
+        assert!(
+            e.cyber(&["trust", "approve", "--cwd", cwd, "--digest", digest])
+                .status
+                .success()
+        );
+    }
+}
+
+const CODEX_PROFILES: &str = r#"profile = "careful"
+notify = ["notify-send", "Codex"]
+default_permissions = "build"
+approval_policy = { granular = { sandbox_approval = false } }
+[profiles.careful]
+model = "gpt-6"
+approval_policy = "on-request"
+sandbox_mode = "read-only"
+[permissions.build]
+extends = ":workspace"
+filesystem = { "secrets/**" = "none" }
+network = { enabled = false }
+[shell_environment_policy]
+inherit = "core"
+set = { CI = "1" }
+"#;
+
+/// `compat-import` → Codex sources through the binary: profiles, a named permission
+/// profile, the environment policy, granular approvals and `notify` load as native
+/// settings, and `requirements.toml` is reported with its org-policy equivalents.
+#[test]
+fn import_codex_profiles_permissions_and_notify_load_through_the_binary() {
+    let e = Env::new();
+    std::fs::create_dir_all(e.root.join("home")).unwrap();
+    std::fs::create_dir_all(e.root.join(".git")).unwrap();
+    put(&e.root, ".codex/config.toml", CODEX_PROFILES);
+    put(
+        &e.root,
+        ".codex/requirements.toml",
+        "allowed_approval_policies = [\"on-request\"]\n",
+    );
+    put(
+        &e.root,
+        ".codex/rules/git.rules",
+        "prefix_rule(pattern=[\"git\",\"push\"], decision=\"forbidden\")\n",
+    );
+    let o = e.cyber(&["import", "codex", "--yes"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    let report = std::fs::read_to_string(&import_reports(&e.root)[0]).unwrap();
+    assert!(
+        report.contains("`/allowed_approval_policies`")
+            && report.contains("the org-policy equivalent is modes.disable"),
+        "{report}"
+    );
+    approve_checkout(&e);
+    let config = crate_config(&e);
+    // `profile = "careful"` is the default profile, so it applies.
+    assert_eq!(config["default_profile"], "careful");
+    assert_eq!(config["model"], "openai/gpt-6");
+    assert_eq!(config["sandbox"]["policy"], "read-only");
+    assert_eq!(config["sandbox"]["profile"], "build");
+    let rules = config["permissions"]["rules"].as_array().unwrap();
+    assert!(
+        rules
+            .iter()
+            .any(|r| r["action"] == "sandbox.escalate" && r["effect"] == "deny"),
+        "{rules:?}"
+    );
+    // "Execpolicy rule converted".
+    assert!(
+        rules.iter().any(|r| r["action"] == "bash"
+            && r["resource"] == "git push *"
+            && r["effect"] == "deny"),
+        "{rules:?}"
+    );
+    let explain = json(&e.cyber(&[
+        "sandbox",
+        "explain",
+        "--profile",
+        "build",
+        "--format",
+        "json",
+    ]));
+    assert_eq!(explain["network"], "off", "{explain}");
+    assert_eq!(explain["env_mode"], "none", "{explain}");
+    assert_eq!(explain["env_set"]["CI"], "1", "{explain}");
+    assert!(
+        explain["deny_read"].to_string().contains("secrets/**"),
+        "{explain}"
+    );
+    let cwd = e.root.to_str().unwrap();
+    let hooks = json(&e.cyber(&["hooks", "list", "--cwd", cwd, "--format", "json"]));
+    assert!(
+        hooks["hooks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|h| h["event"] == "Notification"),
+        "{hooks}"
+    );
+}
+
+/// `compat-import` → OpenCode sources through the binary: Markdown agents and modes,
+/// `instructions` and skills, with plugins reported for a manual port with the guide link.
+#[test]
+fn import_opencode_agents_modes_and_plugins_through_the_binary() {
+    let e = Env::new();
+    std::fs::create_dir_all(e.root.join("home")).unwrap();
+    std::fs::create_dir_all(e.root.join(".git")).unwrap();
+    put(
+        &e.root,
+        "opencode.json",
+        r#"{"instructions":["CONTRIBUTING.md"]}"#,
+    );
+    put(
+        &e.root,
+        ".opencode/agents/docs.md",
+        "---\ndescription: Writes docs\nmodel: anthropic/claude-sonnet-5-5\n---\nWrite the docs.\n",
+    );
+    put(&e.root, ".opencode/modes/focus.md", "Stay on the task.\n");
+    put(
+        &e.root,
+        ".opencode/plugins/notify.ts",
+        "export default {}\n",
+    );
+    put(
+        &e.root,
+        ".opencode/skills/lint/SKILL.md",
+        "---\nname: lint\ndescription: Lint the code\n---\nRun the linter.\n",
+    );
+    let o = e.cyber(&["import", "opencode", "--yes"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    let report = std::fs::read_to_string(&import_reports(&e.root)[0]).unwrap();
+    assert!(report.contains("## requires manual port"), "{report}");
+    assert!(
+        report.contains("plugin kit migration guide: https://"),
+        "{report}"
+    );
+    assert!(
+        report.contains("SKILL.md`: read in place by read-time skill compatibility"),
+        "{report}"
+    );
+    approve_checkout(&e);
+    let config = crate_config(&e);
+    assert_eq!(config["agents"]["docs"]["mode"], "all");
+    assert_eq!(config["agents"]["docs"]["system"], "Write the docs.\n");
+    assert_eq!(config["agents"]["focus"]["mode"], "primary");
+    assert_eq!(
+        config["instructions"],
+        serde_json::json!(["CONTRIBUTING.md"])
+    );
+    let cwd = e.root.to_str().unwrap();
+    let skills = json(&e.cyber(&["skills", "list", "--cwd", cwd, "--format", "json"]));
+    assert!(skills.to_string().contains("\"lint\""), "{skills}");
+}
+
+#[test]
+fn import_detect_reports_read_time_coverage_per_item() {
+    let e = Env::new();
+    let home = e.root.join("home");
+    for agent in ["a", "b", "c"] {
+        put(
+            &e.root,
+            &format!(".claude/agents/{agent}.md"),
+            "private-agent",
+        );
+    }
+    put(
+        &e.root,
+        ".claude/skills/check/SKILL.md",
+        "---\nname: check\ndescription: d\n---\n",
+    );
+    put(&e.root, ".claude/commands/test.md", "private-command");
+    put(
+        &e.root,
+        ".mcp.json",
+        r#"{"mcpServers":{"docs":{"command":"never-run"}}}"#,
+    );
+    put(
+        &home,
+        ".codex/config.toml",
+        "[mcp_servers.one]\ncommand='x'\n[mcp_servers.two]\ncommand='y'\n",
+    );
+    let plain = e.root.to_string_lossy().replace(r"\\?\", "");
+    let encoded: String = plain
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    for session in ["one", "two"] {
+        put(
+            &home,
+            &format!(".claude/projects/{encoded}/{session}.jsonl"),
+            "{}\n",
+        );
+    }
+    put(&home, ".claude/projects/-elsewhere/three.jsonl", "{}\n");
+    let meta = |cwd: &str| {
+        format!(
+            "{}\n",
+            serde_json::json!({"type":"session_meta","payload":{"cwd":cwd}})
+        )
+    };
+    put(
+        &home,
+        ".codex/sessions/2026/10/01/rollout-here.jsonl",
+        &meta(&plain),
+    );
+    put(
+        &home,
+        ".codex/sessions/2026/10/01/rollout-elsewhere.jsonl",
+        &meta("/elsewhere"),
+    );
+    let o = e.cyber(&["import", "--detect"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    let out = stdout(&o);
+    for line in [
+        "claude: 3 agents; read-time: no",
+        "claude: 1 commands; read-time: yes",
+        "claude: 1 skills; read-time: yes",
+        "claude: 1 mcp servers; read-time: yes",
+        "claude: 2 sessions; read-time: no",
+        "codex: 2 mcp servers; read-time: no",
+        "codex: 1 sessions; read-time: no",
+    ] {
+        assert!(out.contains(&format!("{line}\n")), "{line}: {out}");
+    }
+    let v = json(&e.cyber(&["import", "--detect", "--format", "json"]));
+    let claude = v["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["tool"] == "claude")
+        .unwrap();
+    assert_eq!(claude["counts"]["sessions"], 2);
+    assert_eq!(claude["read_time"]["skills"], 1);
+    assert_eq!(claude["read_time"]["agents"], 0);
+    assert!(!out.contains("private-agent"));
+    assert!(!e.root.join("cyber-home").exists());
+    assert!(!e.root.join(".cyber").exists());
+}
+
 #[test]
 fn opencode_provider_import_reports_credentials_without_writing_or_loading_packages() {
     let e = Env::new();
@@ -2483,7 +3263,8 @@ fn inline_agent_and_compaction_imports_are_source_linked_without_runtime_state()
     );
     let diff = view["diff"].as_str().unwrap();
     assert!(diff.contains("12000"));
-    assert!(!diff.contains("never-read-source-instruction"));
+    // The instruction entry is imported as a path; the file it names is never read.
+    assert!(diff.contains("never-read-source-instruction"));
     assert!(diff.contains("never-execute-source-command"));
     assert!(
         report
@@ -2785,8 +3566,7 @@ fn keep_worktrees(env: &Env) {
 }
 
 /// Write the global config, with explicit `full-access` on Windows: worktree Sessions
-/// run tools, and Windows has no sandbox enforcement, so without the opt-out every run
-/// fails closed with `SandboxUnavailableError`.
+/// run git tools, and these tests cover worktrees, not the AppContainer launch.
 fn write_global_config(env: &Env, mut config: Value) {
     if cfg!(windows) {
         config["sandbox"] = serde_json::json!({"policy": "full-access"});
@@ -3206,6 +3986,35 @@ fn sandbox_run_executes_under_effective_policy() {
     );
 }
 
+/// Regression: the credential files in the data directory (the file-backed plugin secret
+/// store and the MCP OAuth file) were hidden only when an App was built, so `cyber
+/// sandbox run` could read them.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn sandbox_run_cannot_read_the_credential_files_of_the_data_directory() {
+    let env = Env::new();
+    let repo = env.repo("{}");
+    let data = env.root.join("cyber-home/data");
+    std::fs::create_dir_all(&data).unwrap();
+    for name in ["plugin-secrets.json", "mcp-auth.json"] {
+        let file = data.join(name);
+        std::fs::write(&file, "{\"token\": \"credential-canary\"}").unwrap();
+        let o = env
+            .command(&[
+                "sandbox",
+                "run",
+                "--",
+                "/bin/cat",
+                &file.display().to_string(),
+            ])
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        assert!(!o.status.success(), "{name}: {}", stdout(&o));
+        assert!(!stdout(&o).contains("credential-canary"), "{name}");
+    }
+}
+
 /// A checkout whose database holds the saved approval `bash: npm test *`.
 #[cfg(unix)]
 fn saved_approval_env() -> (Env, PathBuf, PathBuf) {
@@ -3432,4 +4241,39 @@ fn sandbox_test_probes_match_the_effective_policy() {
         })
         .collect();
     assert!(leftovers.is_empty(), "probe files are removed");
+}
+
+/// `--pure` (and `CYBER_PURE=1`) refuses the commands that can only start Turns on the
+/// shared server, whose configuration still carries plugins, hooks and MCP servers,
+/// before any server starts.
+#[test]
+fn pure_refuses_commands_that_run_turns_on_the_shared_server() {
+    let env = Env::new();
+    for args in [
+        &["--pure", "api", "GET", "/sessions"][..],
+        &["--pure", "pr", "3"],
+        &["--pure", "mcp", "serve"],
+        &["--pure", "workflows", "run", "x"],
+        &["--pure", "workflows", "resume", "wr_1"],
+        &["--pure", "review", "--attach", "http://127.0.0.1:9"],
+    ] {
+        let o = env.cyber(args);
+        assert_eq!(o.status.code(), Some(2), "{args:?}: {}", stderr(&o));
+        assert!(
+            stderr(&o).contains("--pure cannot"),
+            "{args:?}: {}",
+            stderr(&o)
+        );
+    }
+    let o = env
+        .command(&["api", "GET", "/sessions"])
+        .env("CYBER_PURE", "1")
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(2), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("--pure cannot run `cyber api`"),
+        "{}",
+        stderr(&o)
+    );
 }

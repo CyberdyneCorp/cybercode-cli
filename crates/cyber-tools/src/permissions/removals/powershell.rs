@@ -6,6 +6,7 @@ use tree_sitter::{Node, Parser};
 
 mod command_line;
 mod facts;
+mod parameters;
 use command_line::Source;
 
 pub(super) fn recognizes(name: &str) -> bool {
@@ -186,6 +187,11 @@ fn walk(
             command(node, source, scope, state, risks);
         }
         "invokation_expression" | "invokation_foreach_expression" => {
+            if let Some(commands) = commands
+                && let Some(member) = facts::member(node, source, scope, state)
+            {
+                commands.push(member);
+            }
             member_removal(node, source, scope, state, risks)
         }
         "script_block_expression"
@@ -307,6 +313,19 @@ fn has_parameters(node: Node<'_>) -> bool {
         .any(|n| n.kind() == "command_parameter")
 }
 
+/// `Remove-Item` parameters other than the common ones.
+const REMOVAL: &[&str] = &[
+    "path",
+    "literalpath",
+    "filter",
+    "include",
+    "exclude",
+    "recurse",
+    "force",
+    "credential",
+    "stream",
+];
+
 fn removal(
     node: Node<'_>,
     source: &[u8],
@@ -326,15 +345,10 @@ fn removal(
             continue;
         }
         if arg.kind() == "command_parameter" {
-            match arg
-                .utf8_text(source)
-                .unwrap_or_default()
-                .to_ascii_lowercase()
-                .as_str()
-            {
-                "-literalpath" => literal_path = true,
-                "-path" => literal_path = false,
-                "-recurse" | "-force" => {}
+            match parameters::resolve(arg.utf8_text(source).unwrap_or_default(), REMOVAL) {
+                Some("literalpath") => literal_path = true,
+                Some("path") => literal_path = false,
+                Some("recurse" | "force" | "verbose" | "debug" | "whatif" | "confirm") => {}
                 _ => unresolved(risks, "unsupported removal option"),
             }
             continue;

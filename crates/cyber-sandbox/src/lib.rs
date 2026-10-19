@@ -1,6 +1,7 @@
 //! OS sandbox for model-run commands (`sandbox`): policy resolution, credential masking,
 //! the network allowlist proxy and per-platform enforcement.
 
+pub mod container_plan;
 mod deny_read;
 mod env;
 mod isolation;
@@ -11,6 +12,8 @@ mod profiles;
 pub mod proxy;
 #[cfg(target_os = "macos")]
 mod seatbelt;
+#[cfg(windows)]
+pub mod windows_confine;
 #[cfg(windows)]
 pub mod windows_container;
 #[cfg(windows)]
@@ -23,12 +26,13 @@ pub mod windows_streams;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+pub use container_plan::{APPCONTAINER_FLAG, ContainerPlan};
 pub use deny_read::DenyRead;
 pub use env::{BASE_VARS, mask_env, policy_env};
 pub use isolation::{BYPASS_REQUIREMENT, Isolation, container_markers, in_container};
 pub use policy::{
-    DEFAULT_DOMAINS, EnvPolicy, MANAGED_NOTICE, NetworkMode, Policy, SandboxConfig, matches_domain,
-    protected_in,
+    DEFAULT_DOMAINS, EnvPolicy, MANAGED_NOTICE, NetworkMode, Policy, SandboxConfig,
+    hide_credential_file, matches_domain, protected_in,
 };
 pub use profiles::BUILTIN_PROFILES;
 
@@ -136,7 +140,42 @@ fn platform_wrap(
     linux::wrap(launch, program, args, env)
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+/// Windows: `cyber-sandbox-exec --appcontainer <plan> -- program args`. The helper grants
+/// the plan to a fresh less-privileged AppContainer identity, runs the command inside it
+/// with the helper's own standard streams and revokes every grant when it exits.
+#[cfg(windows)]
+fn platform_wrap(
+    launch: &Launch,
+    program: &str,
+    args: &[String],
+    env: BTreeMap<String, String>,
+) -> Result<Wrapped, SandboxError> {
+    let helper = launch
+        .helper
+        .clone()
+        .or_else(find_helper)
+        .filter(|helper| helper.is_file())
+        .ok_or_else(|| {
+            SandboxError::Unavailable(
+                "the sandbox helper cyber-sandbox-exec.exe was not found; run with --sandbox full-access to opt out explicitly".into(),
+            )
+        })?;
+    let plan = ContainerPlan::from_launch(launch)?.encode()?;
+    let mut full = vec![
+        APPCONTAINER_FLAG.to_string(),
+        plan,
+        "--".to_string(),
+        program.to_string(),
+    ];
+    full.extend_from_slice(args);
+    Ok(Wrapped {
+        program: helper.display().to_string(),
+        args: full,
+        env,
+    })
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn platform_wrap(
     _launch: &Launch,
     _program: &str,
@@ -155,7 +194,9 @@ pub fn available() -> bool {
     return std::path::Path::new(seatbelt::SANDBOX_EXEC).exists();
     #[cfg(target_os = "linux")]
     return linux::bwrap().is_some();
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(windows)]
+    return find_helper().is_some_and(|helper| helper.is_file());
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     return false;
 }
 

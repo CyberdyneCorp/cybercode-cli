@@ -309,6 +309,9 @@ pub struct SessionState {
     /// Files delivered to the user by ID (`session.files.sent.1`).
     #[serde(skip)]
     pub(crate) sent_files: BTreeMap<String, super::deliveries::SentFile>,
+    /// Browser verification evidence, oldest first (`session.browser.evidence.1`).
+    #[serde(skip)]
+    pub(crate) browser_evidence: Vec<super::browser_evidence::BrowserEvidence>,
     #[serde(skip)]
     pub(crate) first_turn_started: bool,
     /// SessionStart's durable marker was replayed; it never runs again.
@@ -528,6 +531,7 @@ impl SessionState {
             pull_requests: BTreeSet::new(),
             notifications: Vec::new(),
             sent_files: BTreeMap::new(),
+            browser_evidence: Vec::new(),
             first_turn_started: false,
             session_started: false,
             hook_stop_step: None,
@@ -770,6 +774,7 @@ impl SessionState {
                 self.sent_files
                     .extend(sent.files.into_iter().map(|f| (f.id.clone(), f)));
             }
+            "session.browser.evidence" => self.browser_evidence.push(decode(e)?),
             "session.recap.generated" => {
                 let recap: super::recap::RecapGenerated = decode(e)?;
                 // Recaps stored before control characters were stripped stay safe.

@@ -92,10 +92,17 @@ fn prefix(name: &str, args: &[Node<'_>], source: &[u8], state: &State) -> Option
     Some(format!("{name} {}", argument.utf8_text(source).ok()?))
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Argument {
-    Path { literal: bool, slot: usize },
+    /// A target path; `slot` is the positional parameter it also binds.
+    Path {
+        literal: bool,
+        slot: Option<usize>,
+    },
     Name,
+    /// A switch without a value.
+    Flag,
+    /// A value that is never a filesystem target.
     Skip,
 }
 
@@ -103,31 +110,135 @@ fn mutator(name: &str) -> Option<usize> {
     match name.to_ascii_lowercase().as_str() {
         "set-content" | "sc" | "add-content" | "ac" | "clear-content" | "clc" | "out-file"
         | "tee-object" | "tee" | "new-item" | "ni" | "remove-item" | "ri" | "rm" | "rmdir"
-        | "rd" | "del" | "erase" => Some(1),
+        | "rd" | "del" | "erase" | "export-csv" | "epcsv" | "export-clixml" | "set-item" | "si"
+        | "start-transcript" => Some(1),
         "copy-item" | "cpi" | "cp" | "copy" | "move-item" | "mi" | "mv" | "move"
-        | "rename-item" | "rni" | "ren" => Some(2),
+        | "rename-item" | "rni" | "ren" | "expand-archive" | "compress-archive" => Some(2),
+        // The positional parameter is a URI; only `-OutFile` names a target.
+        "invoke-webrequest" | "iwr" | "invoke-restmethod" | "irm" | "curl" | "wget" => Some(0),
         _ => None,
     }
 }
 
-fn parameter(text: &str) -> Option<Argument> {
-    match text.to_ascii_lowercase().as_str() {
-        "-literalpath" => Some(Argument::Path {
-            literal: true,
-            slot: 0,
-        }),
-        "-path" | "-filepath" => Some(Argument::Path {
+/// The parameters of the mutating cmdlets above, beyond the common ones.
+const PARAMETERS: &[(&str, Argument)] = &[
+    ("literalpath", PATH_LITERAL),
+    ("path", PATH),
+    ("filepath", PATH),
+    ("destination", DESTINATION),
+    ("destinationpath", DESTINATION),
+    (
+        "outfile",
+        Argument::Path {
             literal: false,
-            slot: 0,
-        }),
-        "-destination" => Some(Argument::Path {
+            slot: None,
+        },
+    ),
+    ("name", Argument::Name),
+    ("newname", Argument::Name),
+    ("force", Argument::Flag),
+    ("recurse", Argument::Flag),
+    ("append", Argument::Flag),
+    ("noclobber", Argument::Flag),
+    ("nonewline", Argument::Flag),
+    ("passthru", Argument::Flag),
+    ("asbytestream", Argument::Flag),
+    ("container", Argument::Flag),
+    ("notypeinformation", Argument::Flag),
+    ("nti", Argument::Flag),
+    ("includetypeinformation", Argument::Flag),
+    ("iti", Argument::Flag),
+    ("useculture", Argument::Flag),
+    ("noheader", Argument::Flag),
+    ("includeinvocationheader", Argument::Flag),
+    ("useminimalheader", Argument::Flag),
+    ("update", Argument::Flag),
+    (
+        "outputdirectory",
+        Argument::Path {
             literal: false,
-            slot: 1,
-        }),
-        "-name" | "-newname" => Some(Argument::Name),
-        "-force" | "-recurse" | "-append" | "-noclobber" | "-nonewline" | "-whatif"
-        | "-confirm" | "-passthru" => None,
-        _ => Some(Argument::Skip),
+            slot: None,
+        },
+    ),
+    ("variable", Argument::Skip),
+    ("quotefields", Argument::Skip),
+    ("qf", Argument::Skip),
+    ("usequotes", Argument::Skip),
+    ("uq", Argument::Skip),
+    ("fromsession", Argument::Skip),
+    ("tosession", Argument::Skip),
+    ("value", Argument::Skip),
+    ("encoding", Argument::Skip),
+    ("inputobject", Argument::Skip),
+    ("itemtype", Argument::Skip),
+    ("type", Argument::Skip),
+    ("credential", Argument::Skip),
+    ("filter", Argument::Skip),
+    ("include", Argument::Skip),
+    ("exclude", Argument::Skip),
+    ("stream", Argument::Skip),
+    ("width", Argument::Skip),
+    ("delimiter", Argument::Skip),
+    ("uri", Argument::Skip),
+    ("method", Argument::Skip),
+    ("body", Argument::Skip),
+    ("headers", Argument::Skip),
+    ("compressionlevel", Argument::Skip),
+    ("depth", Argument::Skip),
+];
+
+const PATH: Argument = Argument::Path {
+    literal: false,
+    slot: Some(0),
+};
+const PATH_LITERAL: Argument = Argument::Path {
+    literal: true,
+    slot: Some(0),
+};
+const DESTINATION: Argument = Argument::Path {
+    literal: false,
+    slot: Some(1),
+};
+
+fn kind(name: &str) -> Argument {
+    PARAMETERS.iter().find(|(known, _)| *known == name).map_or(
+        // Common parameters: switches or values that never name a target.
+        if matches!(name, "verbose" | "debug" | "whatif" | "confirm") {
+            Argument::Flag
+        } else {
+            Argument::Skip
+        },
+        |(_, kind)| *kind,
+    )
+}
+
+/// What a parameter token of `cmdlet` binds, resolved against that cmdlet's own
+/// parameters when they are known. An unknown or ambiguous parameter keeps its value as a
+/// possible target, so an unrecognized spelling never hides a mutated path.
+fn parameter(cmdlet: &str, text: &str) -> Argument {
+    const NAMES: [&str; PARAMETERS.len()] = {
+        let mut names = [""; PARAMETERS.len()];
+        let mut index = 0;
+        while index < PARAMETERS.len() {
+            names[index] = PARAMETERS[index].0;
+            index += 1;
+        }
+        names
+    };
+    if text == "--" {
+        return Argument::Flag;
+    }
+    let names = super::parameters::of_cmdlet(cmdlet).unwrap_or(&NAMES);
+    let kinds: Vec<_> = super::parameters::candidates(text, names)
+        .into_iter()
+        .map(kind)
+        .collect();
+    match kinds.split_first() {
+        Some((first, rest)) if rest.iter().all(|kind| kind == first) => *first,
+        _ => Argument::Path {
+            literal: false,
+            slot: None,
+        },
     }
 }
 
@@ -155,7 +266,10 @@ fn operands(
         }
         let Some(arity) = arity else { continue };
         if argument.kind() == "command_parameter" {
-            pending = parameter(argument.utf8_text(source).unwrap_or_default());
+            pending = match parameter(name, argument.utf8_text(source).unwrap_or_default()) {
+                Argument::Flag => None,
+                selected => Some(selected),
+            };
             continue;
         }
         let selection = pending.take().unwrap_or_else(|| {
@@ -165,7 +279,7 @@ fn operands(
             } else if slot < arity {
                 Argument::Path {
                     literal: false,
-                    slot,
+                    slot: Some(slot),
                 }
             } else {
                 Argument::Skip
@@ -173,14 +287,16 @@ fn operands(
         });
         match selection {
             Argument::Path { literal, slot } => {
-                bound[slot] = true;
+                if let Some(slot) = slot {
+                    bound[slot] = true;
+                }
                 paths.extend(path_values(*argument, source, scope, state, literal, 0))
             }
             Argument::Name => {
                 bound[1] = true;
                 item_name = scalar(*argument, source, state, 0, false);
             }
-            Argument::Skip => {}
+            Argument::Flag | Argument::Skip => {}
         }
     }
     append_name(name, &mut paths, item_name.as_deref());
@@ -270,4 +386,92 @@ fn path(text: &str, scope: &RemovalScope<'_>, state: &State, literal: bool) -> O
     Some(normalize(&crate::host::canonical(
         &scope.workdir.join(path),
     )))
+}
+
+/// The targets of a .NET file-system member call such as `[IO.File]::WriteAllText(p, x)`.
+/// Unknown members return nothing; removal analysis still marks them unresolved.
+pub(super) fn member(
+    node: Node<'_>,
+    source: &[u8],
+    scope: &RemovalScope<'_>,
+    state: &State,
+) -> Option<SimpleCommand> {
+    let owner = node
+        .named_child(0)?
+        .utf8_text(source)
+        .ok()?
+        .to_ascii_lowercase();
+    let member = node
+        .named_child(1)?
+        .utf8_text(source)
+        .ok()?
+        .to_ascii_lowercase();
+    let file = matches!(owner.as_str(), "[system.io.file]" | "[io.file]");
+    let directory = matches!(owner.as_str(), "[system.io.directory]" | "[io.directory]");
+    let targets: &[usize] = match member.as_str() {
+        "copy" if file => &[1],
+        "move" if file || directory => &[0, 1],
+        "replace" if file => &[0, 1, 2],
+        "writealltext" | "writealllines" | "writeallbytes" | "appendalltext" | "appendalllines"
+        | "create" | "createtext" | "appendtext" | "openwrite" | "delete" | "setattributes"
+        | "encrypt" | "decrypt"
+            if file =>
+        {
+            &[0]
+        }
+        "createdirectory" | "delete" if directory => &[0],
+        _ => return None,
+    };
+    let list = node
+        .named_child(2)?
+        .child_by_field_name("argument_expression_list")?;
+    let mut cursor = list.walk();
+    let arguments: Vec<_> = list.named_children(&mut cursor).collect();
+    let mutates: Vec<_> = targets
+        .iter()
+        .filter_map(|index| arguments.get(*index))
+        .flat_map(|argument| path_values(*argument, source, scope, state, true, 0))
+        .collect();
+    let text = node.utf8_text(source).ok()?.trim().to_string();
+    (!mutates.is_empty()).then(|| SimpleCommand {
+        always: text.clone(),
+        text,
+        mutates,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every parameter a cmdlet declares has a known kind: a name missing from
+    /// [`PARAMETERS`] would silently bind as a common value parameter.
+    #[test]
+    fn every_cmdlet_parameter_has_a_kind() {
+        for cmdlet in [
+            "set-content",
+            "clear-content",
+            "out-file",
+            "tee-object",
+            "new-item",
+            "remove-item",
+            "export-csv",
+            "export-clixml",
+            "set-item",
+            "start-transcript",
+            "copy-item",
+            "move-item",
+            "rename-item",
+            "expand-archive",
+            "compress-archive",
+        ] {
+            assert!(mutator(cmdlet).is_some(), "{cmdlet}");
+            for name in super::super::parameters::of_cmdlet(cmdlet).unwrap() {
+                assert!(
+                    PARAMETERS.iter().any(|(known, _)| known == name),
+                    "{cmdlet} -{name}"
+                );
+            }
+        }
+    }
 }

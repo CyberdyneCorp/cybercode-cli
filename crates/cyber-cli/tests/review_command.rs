@@ -908,3 +908,24 @@ fn review_target_resolution_runs_no_pre_tool_use_hook() {
         "{calls:?}"
     );
 }
+
+/// `--pure` keeps global hooks out of a review that names no `--embedded`: the review
+/// runs on an in-process server (its own database) instead of the shared background
+/// service, which loads hooks, plugins and MCP servers for everyone.
+#[cfg(unix)]
+#[test]
+fn pure_review_runs_in_process_without_global_hooks() {
+    let provider = Provider::start(script(unsorted()));
+    let env = Env::new(&provider);
+    env.hooks(
+        &provider,
+        json!({"SubagentStart":[{"matcher":"reviewer","hooks":[hook(r#"{"decision":"deny","reason":"reviews frozen"}"#)]}]}),
+    );
+    env.write("a.rs", "fn a() { changed() }\n");
+    let output = env.run(env.command(&["--pure", "--format", "json"]));
+    let detail = describe(&output, &provider);
+    assert!(output.status.success(), "{detail}");
+    let result = result(&output, &detail);
+    assert_completed_review(&result, "uncommitted", &detail);
+    assert_eq!(env.databases().len(), 1, "not in process\n{detail}");
+}

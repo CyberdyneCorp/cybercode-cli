@@ -110,6 +110,7 @@ const ALL: &[&str] = &[
     super::sandbox_events::ESCALATED,
     super::deliveries::NOTIFICATION_SENT,
     super::deliveries::FILES_SENT,
+    super::browser_evidence::BROWSER_EVIDENCE,
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

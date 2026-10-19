@@ -119,6 +119,33 @@ jobs:
       - name: Native read-only migration previews
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test import_preview
+      - name: Native read-time skill compatibility
+        if: ${{ !cancelled() }}
+        run: |
+          cargo test --locked -p cyber-core --test skills_compat
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-app --test server skill_compat_precedence_and_switches_apply_over_http
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Native plugin resolution
+        if: ${{ !cancelled() }}
+        run: |
+          cargo test --locked -p cyber-core --test plugins
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-core --lib plugins::
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-tools --lib plugin_host::
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Native browser verification
+        if: ${{ !cancelled() }}
+        run: |
+          cargo test --locked -p cyber-core --lib browser::
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-server --lib browser_evidence::
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-tools --lib -- browser:: dev_server::
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-cli --test browser_cli
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native MCP migration and disabled configuration
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test import_mcp --test mcp_config
@@ -514,6 +541,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-cli --test exec_hooks_windows
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # Path, git and npm sources, scopes, trust and pure mode through the binary.
+      - name: Native plugins
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        run: cargo test --locked -p cyber-cli --test plugins_cli
       - name: Native HTTP lifecycle hooks through the app host
         if: ${{ !cancelled() }}
         timeout-minutes: 20
@@ -558,6 +590,19 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test windows_container_process -- --nocapture
+      # Production dispatch: `cyber-sandbox-exec --appcontainer` plans, program resolution
+      # and refusals; the tool and hook launches run in the windows_powershell and
+      # exec_hooks_windows steps.
+      - name: Native AppContainer dispatch helper
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        run: 'cargo test --locked -p cyber-sandbox --lib -- windows_confine:: container_plan::'
+      # A helper killed with its command (timeouts, cancels, host shutdown) leaves a grant
+      # journal; the next launch revokes its entries and deletes its profile.
+      - name: Native AppContainer grant recovery after a killed helper
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        run: cargo test --locked -p cyber-sandbox --test windows_confine
       - name: Native tool proxy transport
         if: ${{ !cancelled() }}
         timeout-minutes: 20
@@ -924,6 +969,23 @@ jobs:
         working-directory: .
         run: cargo build --locked -p cyber-cli --bin cyber
       - run: npm test
+        env:
+          CYBER_BIN: ${{ github.workspace }}/target/debug/cyber
+      # The plugin kit's end-to-end test runs a plugin host, which is always sandboxed:
+      # bubblewrap, and the helper that bridges its network proxy.
+      - name: Plugin host sandbox prerequisites
+        working-directory: .
+        run: |
+          sudo apt-get update && sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec
+      - name: TypeScript plugin kit
+        working-directory: sdk/plugin
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+          npm test
         env:
           CYBER_BIN: ${{ github.workspace }}/target/debug/cyber
 

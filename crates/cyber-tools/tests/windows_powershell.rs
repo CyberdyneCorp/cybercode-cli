@@ -63,8 +63,7 @@ async fn native_powershell_uses_bash_rules_for_filtering_and_compound_denies() {
 }
 
 #[tokio::test]
-async fn native_powershell_critical_roots_override_allows_and_unavailable_confinement_refuses_launch()
- {
+async fn native_powershell_critical_roots_override_allows() {
     let f = fixture();
     // Nonrecursive deletion of this nonempty owned repo is harmless even if the guard regresses.
     let command = format!(
@@ -79,16 +78,49 @@ async fn native_powershell_critical_roots_override_allows_and_unavailable_confin
         assert!(result.contains("critical path"), "{mode}: {result}");
         assert!(f.repo.join(".git").is_dir());
     }
-    f.set_config(json!({"permissions": {"bash": "allow"}}));
-    let result = failed(
-        f.call(
+}
+
+fn quoted(path: &std::path::Path) -> String {
+    format!("'{}'", path.display().to_string().replace('\'', "''"))
+}
+
+/// `sandbox` → Windows enforcement, "Windows restricted write", and `builtin-tools` →
+/// powershell tool: under the default `workspace-write` sandbox the command runs in the
+/// AppContainer. It writes inside the checkout, and a write to `C:\Windows\Temp` is
+/// denied and reported as a sandbox denial.
+#[tokio::test]
+async fn native_sandboxed_powershell_write_outside_roots_is_denied() {
+    let f = Fixture::new();
+    f.set_config(json!({"permissions": {"bash": "allow", "external_directory": "allow"}}));
+    let outside = std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+        .join("Temp")
+        .join(format!("cyber-sandbox-{}.txt", std::process::id()));
+    let _ = std::fs::remove_file(&outside);
+    let source = format!(
+        "Write-Output 'contained' > 'inside.txt'; Write-Output 'escaped' > {}",
+        quoted(&outside)
+    );
+    let output = match f
+        .call(
             "default",
             "powershell",
-            json!({"command": "Write-Output 'never launched'"}),
+            json!({"command": source, "timeout_ms": 120000}),
         )
-        .await,
+        .await
+    {
+        ToolOutcome::Ok(text) | ToolOutcome::Failed(text) => text,
+        other => panic!("unexpected outcome {other:?}"),
+    };
+    // Windows PowerShell redirects as UTF-16; PowerShell 7 as UTF-8.
+    let mut inside = std::fs::read(f.repo.join("inside.txt")).unwrap_or_default();
+    inside.retain(|byte| *byte != 0);
+    assert!(
+        String::from_utf8_lossy(&inside).contains("contained"),
+        "the command ran in the container\n{output}"
     );
-    assert!(result.contains("SandboxUnavailableError"), "{result}");
+    assert!(!outside.exists(), "write outside the roots\n{output}");
+    assert!(output.contains("Sandbox denied: write"), "{output}");
+    assert!(!output.contains("SandboxUnavailableError"), "{output}");
 }
 
 #[tokio::test]

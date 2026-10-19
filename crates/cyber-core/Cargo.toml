@@ -16,6 +16,9 @@ ignore = "0.4"
 globset = "0.4"
 same-file = "=1.0.6"
 regex = "1"
+semver = "1"
+flate2 = "1"
+jsonschema = { version = "0.58.6", default-features = false }
 url = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 schemars = "1"
@@ -37,7 +40,6 @@ windows-sys = { version = "0.61.2", features = ["Wdk_Foundation", "Wdk_Storage_F
 
 [dev-dependencies]
 futures = "0.3"
-jsonschema = { version = "0.58.6", default-features = false }
 tempfile.workspace = true
 
 [target.'cfg(windows)'.dev-dependencies]

@@ -54,6 +54,10 @@ impl ToolHost for AppHost {
     fn shutdown(&self) -> BoxFuture<'_, ()> {
         self.builtin.shutdown()
     }
+
+    fn end_session(&self, session_id: &str) -> BoxFuture<'_, ()> {
+        self.builtin.end_session(session_id)
+    }
     fn claude_compat(&self, directory: &str) -> Option<bool> {
         self.builtin.claude_compat(directory)
     }

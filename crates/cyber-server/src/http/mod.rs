@@ -21,6 +21,7 @@ mod mcp;
 mod mcp_serve;
 mod memory;
 pub mod openapi;
+mod plugins;
 mod pty;
 pub mod remote_tools;
 pub mod rpc;
@@ -353,6 +354,14 @@ pub trait Services: Send + Sync {
         })
     }
 
+    fn plugins(&self, _location: &Path) -> Result<cyber_core::plugins::PluginList, ApiError> {
+        Err(ApiError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "ServiceUnavailableError",
+            "Plugin review is unavailable in this host",
+        ))
+    }
+
     fn review_hooks(&self, _location: &Path) -> Result<cyber_core::hooks::HookReview, ApiError> {
         Err(ApiError::new(
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
@@ -599,6 +608,7 @@ pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router 
         .merge(pty::routes())
         .merge(deliveries::routes())
         .merge(hooks::routes())
+        .merge(plugins::routes())
         .merge(mcp::routes(mcp_serve))
         .merge(intelligence::routes())
         .merge(memory::routes())

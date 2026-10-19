@@ -28,11 +28,12 @@ impl Tool for Bash {
     fn def(&self) -> ToolDef {
         def(
             "bash",
-            "Run a shell command in the project. stdout and stderr are combined. timeout_ms defaults to 120000 (max 600000). When the sandbox denies an operation the result says `Sandbox denied: <operation> <target>`; to ask the user to run that one command outside the sandbox, call again with sandbox: \"escalate\" and a justification. background: true starts a background Job and returns its job_id and log path at once; the Job keeps running after the Turn, its output is read with `read` on that path, `task_stop` stops it, and a completion notice arrives as a queued message unless notify is false.",
+            "Run a shell command in the project. stdout and stderr are combined. timeout_ms defaults to 120000 (max 600000). When the sandbox denies an operation the result says `Sandbox denied: <operation> <target>`; to ask the user to run that one command outside the sandbox, call again with sandbox: \"escalate\" and a justification. background: true starts a background Job and returns its job_id and log path at once; the Job keeps running after the Turn, its output is read with `read` on that path, `task_stop` stops it, and a completion notice arrives as a queued message unless notify is false. For a dev server add ready_url (an http(s) URL on localhost): the call then returns once that URL answers, or fails with the log tail when the server exits first or ready_timeout_seconds (default 60, max 600) passes.",
             json!({"type": "object", "required": ["command"], "properties": {
                 "command": {"type": "string"}, "timeout_ms": {"type": "integer"}, "workdir": {"type": "string"},
                 "description": {"type": "string"}, "background": {"type": "boolean"},
                 "notify": {"type": "boolean"},
+                "ready_url": {"type": "string"}, "ready_timeout_seconds": {"type": "integer"},
                 "sandbox": {"type": "string", "enum": ["escalate"]},
                 "justification": {"type": "string"}}}),
             RetrySafety::Never,
@@ -48,6 +49,7 @@ impl Tool for Bash {
                 return Err(failed("command is empty"));
             }
             let background = super::background::requested(input)?;
+            let ready = super::dev_server::Readiness::parse(input, background)?;
             let escalation = escalation(input)?;
             let raw = text(input, "workdir");
             let workdir = ctx.resolve(if raw.is_empty() { "." } else { raw });
@@ -65,7 +67,13 @@ impl Tool for Bash {
                 let shell = shell(&ctx.host.opts.shell, &ctx.location)?;
                 let prepared =
                     crate::sandboxing::prepare_shell(ctx, &shell, command, unsandboxed).await?;
-                return super::background::start(ctx, prepared, &workdir, command, "bash").await;
+                return super::dev_server::start_background(
+                    ctx,
+                    prepared,
+                    (&workdir, command, "bash"),
+                    ready,
+                )
+                .await;
             }
             // Ctrl+B may move this call to the background while it runs.
             let handoff = ctx

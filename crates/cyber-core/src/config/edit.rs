@@ -278,7 +278,7 @@ fn find_value(bytes: &[u8], at: usize, key: &str) -> Result<Option<(usize, usize
 
 /// Where member `key` starts (its name), and its value's byte range, scanning an object
 /// from just inside its `{`.
-fn find_member(
+pub(super) fn find_member(
     bytes: &[u8],
     mut at: usize,
     key: &str,
@@ -309,7 +309,7 @@ fn find_member(
     }
 }
 
-fn skip_whitespace(bytes: &[u8], mut at: usize) -> usize {
+pub(super) fn skip_whitespace(bytes: &[u8], mut at: usize) -> usize {
     while bytes.get(at).is_some_and(u8::is_ascii_whitespace) {
         at += 1;
     }
@@ -317,7 +317,7 @@ fn skip_whitespace(bytes: &[u8], mut at: usize) -> usize {
 }
 
 /// One past the closing quote of the string starting at `at`.
-fn string_end(bytes: &[u8], at: usize) -> Option<usize> {
+pub(super) fn string_end(bytes: &[u8], at: usize) -> Option<usize> {
     let mut i = at + 1;
     while i < bytes.len() {
         match bytes[i] {
@@ -330,7 +330,7 @@ fn string_end(bytes: &[u8], at: usize) -> Option<usize> {
 }
 
 /// One past the end of the JSON value starting at `at`.
-fn value_end(bytes: &[u8], at: usize) -> Option<usize> {
+pub(super) fn value_end(bytes: &[u8], at: usize) -> Option<usize> {
     match bytes.get(at)? {
         b'"' => string_end(bytes, at),
         b'{' | b'[' => container_end(bytes, at),

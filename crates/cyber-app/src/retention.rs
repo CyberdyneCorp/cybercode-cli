@@ -19,6 +19,8 @@ pub struct Sweep {
     /// Logs of ended process Jobs and copies of sent files, under the tool-output window.
     pub job_logs: usize,
     pub sent_files: usize,
+    /// Browser evidence artifacts (`browser/artifacts/<session_id>/`), under the same window.
+    pub browser_artifacts: usize,
     pub archived_sessions: usize,
     /// Usage ledger rows folded into daily aggregates.
     pub usage_rows_folded: usize,
@@ -68,6 +70,7 @@ pub fn spawn(
                     "tool_output_files": swept.tool_output_files,
                     "job_logs": swept.job_logs,
                     "sent_files": swept.sent_files,
+                    "browser_artifacts": swept.browser_artifacts,
                     "archived_sessions": swept.archived_sessions,
                     "usage_rows_folded": swept.usage_rows_folded,
                 }),
@@ -96,6 +99,12 @@ pub async fn sweep(
             now,
         ),
         sent_files: old_entries(&data_dir.join("sent"), retention.tool_output_days, now, &[]),
+        browser_artifacts: old_entries(
+            &data_dir.join("browser").join("artifacts"),
+            retention.tool_output_days,
+            now,
+            &[],
+        ),
         archived_sessions: old_archived_sessions(runtime, retention.archived_days, now).await,
         usage_rows_folded: old_usage(runtime, retention.usage_days, now),
     }

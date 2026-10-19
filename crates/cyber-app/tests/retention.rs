@@ -73,9 +73,14 @@ async fn sweeps_remove_only_expired_items() {
     std::fs::write(paths.data.join("jobs/job_1.log"), "output").unwrap();
     std::fs::create_dir_all(paths.data.join("sent/file_1")).unwrap();
     std::fs::write(paths.data.join("sent/file_1/report.txt"), "copy").unwrap();
+    // Browser evidence artifacts follow the same window.
+    let artifacts = paths.data.join("browser/artifacts/ses_old");
+    std::fs::create_dir_all(&artifacts).unwrap();
+    std::fs::write(artifacts.join("shot.png"), "png").unwrap();
     let soon = retention::sweep(&app.runtime, &paths.data, policy, now).await;
     assert_eq!((soon.tool_output_files, soon.archived_sessions), (1, 0));
     assert_eq!((soon.job_logs, soon.sent_files), (0, 0));
+    assert_eq!(soon.browser_artifacts, 0);
     assert!(out.join("tool_new").exists() && !out.join("tool_old").exists());
 
     let disabled = Retention {
@@ -101,6 +106,8 @@ async fn sweeps_remove_only_expired_items() {
     let backfilling = retention::sweep(&app.runtime, &paths.data, policy, now + 91 * DAY).await;
     assert_eq!(backfilling.archived_sessions, 0);
     assert_eq!((backfilling.job_logs, backfilling.sent_files), (1, 1));
+    assert_eq!(backfilling.browser_artifacts, 1);
+    assert!(!artifacts.exists());
     assert!(!paths.data.join("jobs/job_1.log").exists());
     assert!(!paths.data.join("sent/file_1").exists());
     assert!(app.runtime.state(&archived).await.is_ok());

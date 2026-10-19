@@ -121,17 +121,12 @@ async fn explicit_user_shell_is_independent_of_model_agent_permissions() {
         "build":{"permissions":{"bash":"deny"}},
         "user":{"permissions":{"bash":"deny"}}
     }});
-    f.set_config(config.clone());
+    // This covers permissions, not confinement: Windows keeps explicit full access so the
+    // Git Bash launch does not depend on the AppContainer.
     if cfg!(windows) {
-        let error = f
-            .host
-            .shell(&f.repo.display().to_string(), "ses_test", "echo user-shell")
-            .await
-            .unwrap_err();
-        assert!(error.contains("SandboxUnavailableError"), "{error}");
         config["sandbox"] = json!({"policy":"full-access"});
-        f.set_config(config);
     }
+    f.set_config(config);
     let output = f
         .host
         .shell(&f.repo.display().to_string(), "ses_test", "echo user-shell")

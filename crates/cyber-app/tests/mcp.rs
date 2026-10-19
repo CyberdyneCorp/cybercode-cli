@@ -750,6 +750,104 @@ async fn project_remote_server_is_not_contacted_before_digest_approval() {
     app.runtime.shutdown().await;
 }
 
+/// `compat-import` → Read-time MCP compatibility ("New project MCP server approval"): a
+/// freshly cloned repository's `.mcp.json` server loads as a project server below
+/// `cyber.jsonc`, is not contacted before the checkout and the server's own digest are
+/// approved, and is approved once per project.
+#[tokio::test]
+async fn project_mcp_json_server_requires_one_time_approval() {
+    let http = mcp_http::McpHttp::start(mcp_http::Behavior::default()).await;
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().canonicalize().unwrap();
+    std::fs::create_dir_all(directory.join(".git")).unwrap();
+    let app = application(&directory).await;
+    std::fs::write(
+        app.paths.config.join("cyber.json"),
+        json!({"providers":provider()}).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join(".mcp.json"),
+        json!({"mcpServers":{
+            "db-tools":{"type":"http","url":http.url},
+            "shadowed":{"command":"never-started"}
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join("cyber.jsonc"),
+        json!({"mcp":{"shadowed":{"type":"local","command":"native","enabled":false}}}).to_string(),
+    )
+    .unwrap();
+    let loader = cyber_app::hook_config_loader(app.paths.clone(), directory.join("home"));
+    let trust = cyber_core::trust::TrustStore::new(app.paths.trust_file());
+    let idle = || tokio::time::sleep(std::time::Duration::from_millis(300));
+    open_session(&app, &directory).await;
+    idle().await;
+    assert!(http.requests().is_empty());
+    let resolved = loader(&directory).unwrap();
+    assert!(!resolved.trust.trusted);
+    assert!(
+        resolved
+            .trust
+            .definitions
+            .iter()
+            .any(|d| d.contains(".mcp.json#/mcp")),
+        "{:?}",
+        resolved.trust.definitions
+    );
+    trust
+        .approve(
+            &resolved.trust.checkout_root,
+            resolved.trust.digest.as_deref().unwrap(),
+        )
+        .unwrap();
+    let resolved = loader(&directory).unwrap();
+    let label = &resolved.sources["/mcp/db-tools/url"];
+    assert!(
+        label.starts_with("project:") && label.ends_with(".mcp.json"),
+        "{label}"
+    );
+    // The cyber.jsonc definition wins whole: no `.mcp.json` leaf survives.
+    assert_eq!(resolved.value["mcp"]["shadowed"]["command"], "native");
+    assert!(
+        !resolved
+            .sources
+            .iter()
+            .any(|(pointer, source)| pointer.starts_with("/mcp/shadowed")
+                && source.ends_with(".mcp.json"))
+    );
+    open_session(&app, &directory).await;
+    idle().await;
+    assert!(
+        http.requests().is_empty(),
+        "contacted before its own approval"
+    );
+    let selection = cyber_tools::mcp::inspect_server(&resolved, &directory, "db-tools").unwrap();
+    assert!(selection.requires_approval);
+    let refused = cyber_tools::mcp::authorize_server(&resolved, &trust, &directory, "db-tools");
+    assert_eq!(
+        refused.err().as_deref(),
+        Some("MCP server definition digest is untrusted")
+    );
+    trust
+        .approve_mcp(&resolved.trust.checkout_root, &selection.digest)
+        .unwrap();
+    open_session(&app, &directory).await;
+    wait_running(&app, &directory).await;
+    assert!(!http.posts("initialize").is_empty());
+    // Recorded per project: another checkout with the same file is not approved.
+    let other = tempfile::tempdir().unwrap();
+    let other = other.path().canonicalize().unwrap();
+    assert!(!trust.is_mcp_approved(&other, &selection.digest).unwrap());
+    // Recorded once: a fresh load of the same file needs no new approval.
+    let again = loader(&directory).unwrap();
+    assert!(cyber_tools::mcp::authorize_server(&again, &trust, &directory, "db-tools").is_ok());
+    app.host.close_mcp_location(&directory).await.unwrap();
+    app.runtime.shutdown().await;
+}
+
 async fn wait_record(
     app: &App,
     directory: &Path,

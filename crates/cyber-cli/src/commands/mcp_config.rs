@@ -165,7 +165,7 @@ pub fn list(ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
     Ok(())
 }
 
-fn valid_name(name: &str) -> Result<(), CliError> {
+pub(crate) fn valid_name(name: &str) -> Result<(), CliError> {
     let ok = !name.is_empty()
         && name.len() <= 64
         && name
@@ -226,7 +226,7 @@ fn pairs(items: &[String], flag: &str) -> Result<Map<String, Value>, CliError> {
 }
 
 /// The document a scope edits; an existing `.json` is kept when there is no `.jsonc`.
-fn document(ctx: &Context, scope: Scope) -> Result<PathBuf, CliError> {
+pub(crate) fn document(ctx: &Context, scope: Scope) -> Result<PathBuf, CliError> {
     let (directory, stem) = match scope {
         Scope::User => (ctx.paths.config.clone(), "cyber"),
         Scope::Project | Scope::Local => {

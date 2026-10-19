@@ -688,16 +688,20 @@ impl LocalLauncher<'_> {
             self.home,
             self.location,
             server.requires_sandbox,
-            launch.required_sandbox,
+            launch.required_sandbox || server.plugin.is_some(),
         )
         .map_err(|error| LocalLaunchError::before_launch(error.to_string()))?;
         let sampling = self.sampling()?;
         let mut resources = self
-            .prepare(server.requires_sandbox, launch.required_sandbox)
+            .prepare(
+                server.requires_sandbox,
+                launch.required_sandbox,
+                server.plugin.as_ref().map(|plugin| &plugin.capabilities),
+            )
             .await?;
         resources.scratch.cleanup = false;
         let prepared = self
-            .wrap(&resources, command, args)
+            .wrap(&resources, command, args, server.plugin.as_ref())
             .and_then(|wrapped| self.admit_effect(launch, before_spawn).map(|()| wrapped));
         let wrapped = match prepared {
             Ok(wrapped) => wrapped,
@@ -815,7 +819,13 @@ impl LocalLauncher<'_> {
         }
         let command = self.header_refresh(server);
         let sampling = self.sampling()?;
-        let (mut resources, client) = self.prepare_remote(&url, restricted).await?;
+        let (mut resources, client) = self
+            .prepare_remote(
+                &url,
+                restricted,
+                server.plugin.as_ref().map(|plugin| &plugin.capabilities),
+            )
+            .await?;
         resources.scratch.cleanup = false;
         if let Err(error) = self.admit_effect(launch, before_spawn) {
             return Err(resources.fail(error.diagnostic).await);
@@ -1029,13 +1039,17 @@ impl LocalLauncher<'_> {
         &self,
         url: &reqwest::Url,
         restricted: bool,
+        plugin: Option<&cyber_core::plugins::Capabilities>,
     ) -> Result<(Resources, reqwest::Client), LocalLaunchError> {
-        let config = SandboxConfig::resolve(
+        let mut config = SandboxConfig::resolve(
             &self.resolved.value,
             &self.resolved.sources,
             None,
             self.home,
         );
+        if let Some(capabilities) = plugin {
+            plugin_remote_network(&mut config, &capabilities.network, url)?;
+        }
         let network = if restricted {
             config.network
         } else {
@@ -1066,16 +1080,31 @@ impl LocalLauncher<'_> {
         &self,
         required: bool,
         required_sandbox: bool,
+        plugin: Option<&cyber_core::plugins::Capabilities>,
     ) -> Result<Resources, LocalLaunchError> {
-        let (mut config, effective) =
-            launch_sandbox(self.resolved, self.home, required, required_sandbox);
+        let (mut config, effective) = launch_sandbox(
+            self.resolved,
+            self.home,
+            required,
+            required_sandbox || plugin.is_some(),
+        );
         config.policy = effective;
+        let reach = plugin.and_then(|capabilities| {
+            crate::plugin_host::network::narrow(&mut config, &capabilities.network)
+        });
         let scratch = Scratch::new(self.temp_dir)
             .map_err(|_| LocalLaunchError::before_launch("MCP scratch creation failed"))?;
         let proxy = if config.policy != Policy::FullAccess && config.network == NetworkMode::Proxy {
             let domains = config.allowed_domains.clone();
+            let denied = config.denied_domains.clone();
             let decide: Decide = Arc::new(move |host| {
-                let allowed = cyber_sandbox::matches_domain(&host, &domains);
+                let allowed = match &reach {
+                    Some(reach) => reach.allows(&host),
+                    None => {
+                        cyber_sandbox::matches_domain(&host, &domains)
+                            && !cyber_sandbox::matches_domain(&host, &denied)
+                    }
+                };
                 Box::pin(async move { allowed })
             });
             #[cfg(unix)]
@@ -1104,17 +1133,32 @@ impl LocalLauncher<'_> {
         resources: &Resources,
         command: &str,
         args: &[String],
+        plugin: Option<&super::authority::PluginServer>,
     ) -> Result<cyber_sandbox::Wrapped, LocalLaunchError> {
-        let writable = [self.location.to_path_buf(), resources.scratch.path.clone()]
+        // A plugin's server writes the Location only with `fs.write`, and reads its own
+        // plugin root (listed for the Windows AppContainer, which grants only listed
+        // paths), never re-exposing a credential file.
+        let location_writable = plugin.is_none_or(|plugin| plugin.capabilities.fs_write);
+        let location = location_writable.then(|| self.location.to_path_buf());
+        let writable = location
             .into_iter()
+            .chain([resources.scratch.path.clone()])
             .collect::<Vec<_>>();
+        let unreadable = resources.config.unreadable(self.home);
+        let mut config = resources.config.clone();
+        if let Some(plugin) = plugin {
+            config.readable_paths.push(plugin.root.clone());
+            if !location_writable {
+                config.readable_paths.push(self.location.to_path_buf());
+            }
+        }
         let launch = Launch {
-            config: resources.config.clone(),
+            config,
             read_only: writable
                 .iter()
                 .flat_map(|root| cyber_sandbox::protected_in(root))
                 .collect(),
-            unreadable: resources.config.unreadable(self.home),
+            unreadable,
             deny_read: resources.config.deny_read_for(self.location, self.home),
             writable,
             proxy: resources.proxy.as_ref().map(|proxy| proxy.endpoint.clone()),
@@ -1173,8 +1217,33 @@ struct Connected {
     environment: Option<String>,
 }
 
+/// A plugin's remote server: the declared network narrowed to the resolved one
+/// ([`crate::plugin_host::network`]). The URL's host is checked here, and the proxy
+/// then admits only that host, since the client follows no redirect.
+fn plugin_remote_network(
+    config: &mut SandboxConfig,
+    network: &cyber_core::plugins::NetworkCapability,
+    url: &reqwest::Url,
+) -> Result<(), LocalLaunchError> {
+    let Some(reach) = crate::plugin_host::network::narrow(config, network) else {
+        return Ok(());
+    };
+    let host = url.host_str().unwrap_or_default();
+    let host = host
+        .strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(host);
+    if !reach.allows(host) {
+        return Err(LocalLaunchError::before_launch(
+            "MCP remote server destination is outside the plugin's network capability",
+        ));
+    }
+    config.allowed_domains = vec![host.to_owned()];
+    Ok(())
+}
+
 /// The configured sandbox and the policy a server process actually runs under: a
-/// sandboxed hook forces workspace-write, and a server `sandbox.apply_to` does not select
+/// sandboxed hook (or a plugin's server) forces workspace-write, and a server `sandbox.apply_to` does not select
 /// runs full-access.
 fn launch_sandbox(
     resolved: &Resolved,
@@ -1226,7 +1295,8 @@ pub(crate) fn environment_fingerprint(
     if !matches!(server.definition, McpServer::Local { .. }) {
         return Ok(None);
     }
-    local_environment(resolved, home, location, server.requires_sandbox, false)
+    let plugin = server.plugin.is_some();
+    local_environment(resolved, home, location, server.requires_sandbox, plugin)
         .map(|(_, fingerprint)| Some(fingerprint))
 }
 

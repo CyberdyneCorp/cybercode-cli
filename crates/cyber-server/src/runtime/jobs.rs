@@ -609,21 +609,27 @@ impl Runtime {
             .into_iter()
             .filter(|job| ids.contains(&job.session_id) && job.status == JobStatus::Running)
         {
-            if let Some(control) = self
-                .inner
-                .jobs
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .get(&job.id)
-                .cloned()
-            {
-                control
-                    .notify
-                    .store(false, std::sync::atomic::Ordering::SeqCst);
-            }
-            self.cancel_job(&job.id).await?;
+            self.cancel_job_quietly(&job.id).await?;
         }
         Ok(())
+    }
+
+    /// Cancel a Job without queueing its completion notice: its Session is ending, and
+    /// a notice would start a Turn there.
+    pub async fn cancel_job_quietly(&self, id: &str) -> Result<Job, RuntimeError> {
+        if let Some(control) = self
+            .inner
+            .jobs
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(id)
+            .cloned()
+        {
+            control
+                .notify
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+        self.cancel_job(id).await
     }
 
     /// Must run once during application construction, before external admission.

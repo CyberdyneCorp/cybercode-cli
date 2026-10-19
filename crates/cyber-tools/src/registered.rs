@@ -7,6 +7,7 @@ use cyber_server::runtime::{Invocation, ToolDef, ToolOutcome, TurnContext};
 use futures::future::BoxFuture;
 use serde_json::Value;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 pub(crate) struct RegisteredOptions {
@@ -16,7 +17,15 @@ pub(crate) struct RegisteredOptions {
     /// The tool's MCP annotations; `Null` for a tool that declares none (an
     /// application-registered tool).
     pub annotations: Value,
+    /// The host a call reaches (a browser navigation), read from the input that runs:
+    /// after PreToolUse hooks, and again for a PermissionDenied retry. The sandbox
+    /// network policy and the `network` permission apply to it after the tool's own
+    /// permission.
+    pub network_target: Option<NetworkTarget>,
 }
+
+/// The host an input reaches, `None` for one that reaches none; an error refuses it.
+pub(crate) type NetworkTarget = Arc<dyn Fn(&Value) -> Result<Option<String>, String> + Send + Sync>;
 
 /// How a registered tool's annotations drive permission modes (`tool-registry` →
 /// Annotations drive modes and hooks). MCP hints take their protocol defaults when
@@ -84,6 +93,7 @@ impl BuiltinHost {
                 metadata,
                 output_token_limit: None,
                 annotations: Value::Null,
+                network_target: None,
             },
             cancel,
             execute,
@@ -103,6 +113,7 @@ impl BuiltinHost {
             metadata,
             output_token_limit,
             annotations,
+            network_target,
         } = options;
         let hints = ToolHints::of(&annotations, read_only);
         Box::pin(async move {
@@ -147,7 +158,10 @@ impl BuiltinHost {
                 )
                 .await
             {
-                Ok(()) if hints.open_world => open_world_gate(&ctx, &server).await,
+                Ok(()) => {
+                    let target = network_target.as_ref().map(|target| (target, &inv.input));
+                    reach_gate(&ctx, &server, hints, target).await
+                }
                 other => other,
             };
             let retry = match &authorized {
@@ -165,6 +179,7 @@ impl BuiltinHost {
                         hints,
                         decision,
                         metadata,
+                        network_target: network_target.as_ref(),
                     };
                     self.retry_registered(&inv, retry, input, &cancel).await
                 }
@@ -230,7 +245,7 @@ impl BuiltinHost {
 
     /// Re-validate and re-authorize a PermissionDenied retry exactly once; its
     /// denial is final, a hook allow does not carry, and changed input passes
-    /// PreToolUse again.
+    /// PreToolUse again. The retried input passes the same network gates.
     async fn retry_registered(
         &self,
         inv: &Invocation,
@@ -268,7 +283,10 @@ impl BuiltinHost {
                     )
                     .await
                 {
-                    Ok(()) if retry.hints.open_world => open_world_gate(&ctx, &server).await,
+                    Ok(()) => {
+                        let target = retry.network_target.map(|target| (target, &retried.input));
+                        reach_gate(&ctx, &server, retry.hints, target).await
+                    }
                     other => other,
                 }
             }
@@ -326,6 +344,7 @@ struct Retry<'a> {
     hints: ToolHints,
     decision: Option<HookAction>,
     metadata: Value,
+    network_target: Option<&'a NetworkTarget>,
 }
 
 fn request(inv: &Invocation, read_only: bool, hints: ToolHints) -> Request {
@@ -340,6 +359,50 @@ fn request(inv: &Invocation, read_only: bool, hints: ToolHints) -> Request {
 
 /// An open-world tool reaches beyond the workspace, so with the sandbox network off it
 /// needs a `network` permission (resource `mcp:<server>`) before it runs.
+/// The network checks after the tool's own permission: the open-world gate, then the
+/// host a call reaches.
+async fn reach_gate(
+    ctx: &Ctx<'_>,
+    server: &str,
+    hints: ToolHints,
+    target: Option<(&NetworkTarget, &Value)>,
+) -> Result<(), crate::tools::ToolError> {
+    if hints.open_world {
+        open_world_gate(ctx, server).await?;
+    }
+    let host = match target {
+        Some((target, input)) => target(input).map_err(crate::tools::failed)?,
+        None => None,
+    };
+    match host {
+        Some(host) => host_gate(ctx, &host).await,
+        None => Ok(()),
+    }
+}
+
+/// A host a registered call reaches: refused when the sandbox denies the domain, or turns
+/// the network off for anything but this machine; else the `network` permission for the
+/// host, as for a monitored WebSocket.
+async fn host_gate(ctx: &Ctx<'_>, host: &str) -> Result<(), crate::tools::ToolError> {
+    let loopback = host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback());
+    let denied = crate::sandboxing::effective(ctx).domain_denied(host)
+        || (!loopback && crate::sandboxing::network_off(ctx));
+    if denied {
+        return Err(crate::tools::failed(format!(
+            "Sandbox denied: network {host}"
+        )));
+    }
+    if !crate::sandboxing::answer(ctx, host.to_string()).await {
+        return Err(crate::tools::failed(format!(
+            "Network access to {host} was not allowed"
+        )));
+    }
+    Ok(())
+}
+
 async fn open_world_gate(ctx: &Ctx<'_>, server: &str) -> Result<(), crate::tools::ToolError> {
     if !crate::sandboxing::network_off(ctx) {
         return Ok(());

@@ -3,6 +3,7 @@
 
 mod auto_permissions;
 pub mod bash_analysis;
+mod browser;
 mod budget;
 mod hook_async;
 mod hook_authority;
@@ -20,6 +21,7 @@ mod memory_context;
 mod net_client;
 mod parent_permissions;
 pub mod permissions;
+pub mod plugin_host;
 mod reconcile;
 mod registered;
 pub mod remote_skills;
@@ -33,6 +35,8 @@ pub use tool_hooks::HookConfigFn;
 mod tools;
 mod worktrees;
 
+pub use browser::health::{BrowserHealth, HealthCheck as BrowserHealthCheck, browser_health};
+pub use browser::profiles::{Cleanup as BrowserCleanup, cleanup as cleanup_browser_profiles};
 pub use budget::Budget;
 pub use host::{
     BuiltinHost, ConfigFn, HostOptions, IsolationOptions, PermissionTest, PermissionTestReport,

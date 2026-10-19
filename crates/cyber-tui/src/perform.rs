@@ -100,6 +100,12 @@ pub enum Msg {
         directory: String,
         result: Result<Vec<Choice>, String>,
     },
+    /// `GET /plugins`: rows, the active count and pure mode.
+    Plugins {
+        directory: String,
+        reload: bool,
+        result: Result<(Vec<Choice>, usize, bool), String>,
+    },
     Commands {
         items: Vec<Choice>,
         /// The same commands with their source, for the palette.
@@ -744,6 +750,7 @@ pub async fn perform_owned(
         Action::LoadModels
         | Action::LoadSkills
         | Action::LoadCommands
+        | Action::LoadPlugins { .. }
         | Action::LoadAgents
         | Action::FindFiles(_) => load_choices(client, session, action).await,
         Action::Workflow(request) => Ok(Msg::Workflow(
@@ -793,6 +800,21 @@ async fn load_choices(client: &Client, session: &Session, action: Action) -> Res
             })
         }
         Action::LoadCommands => commands(client).await,
+        Action::LoadPlugins { reload } => {
+            let result = client
+                .get("/plugins")
+                .await
+                .map(|body| {
+                    let (items, active) = crate::plugins::choices(&body["data"]);
+                    (items, active, body["data"]["pure"] == true)
+                })
+                .map_err(err);
+            Ok(Msg::Plugins {
+                directory: session.directory.clone(),
+                reload,
+                result,
+            })
+        }
         Action::LoadAgents => {
             let items = agent_choices(&client.get("/agents").await.map_err(err)?["data"]);
             Ok(Msg::Agents {

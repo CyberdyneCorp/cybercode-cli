@@ -58,67 +58,7 @@ impl AppServices {
 }
 
 /// Built-in slash commands handled by clients or the server.
-const BUILTIN_COMMANDS: &[(&str, &str)] = &[
-    ("compact", "Summarize older history to free context"),
-    ("model", "Switch the model"),
-    ("mode", "Switch the permission mode"),
-    (
-        "approve",
-        "Confirm and replay the last classifier-blocked call once",
-    ),
-    ("resume", "Open another Session"),
-    ("rename", "Rename this Session"),
-    (
-        "btw",
-        "Ask a side question; the answer is not added to the Session",
-    ),
-    ("fork", "Fork this Session into a new one"),
-    ("new", "Start a new Session"),
-    ("rewind", "Rewind code and conversation to a message"),
-    (
-        "subtask",
-        "Fork a background child with the current context",
-    ),
-    ("tasks", "List background tasks and open or stop a child"),
-    (
-        "hooks",
-        "Review definitions/trust with /hooks; receipts with /hooks history",
-    ),
-    ("ps", "List background tasks"),
-    (
-        "skills",
-        "List skills with source, scope, permission and diagnostics",
-    ),
-    ("stop", "Confirm stopping this Session's background tasks"),
-    ("agent", "List this Session's subagents"),
-    ("admissions", "Show queued and admitted prompts"),
-    (
-        "memory",
-        "Open project memory (/memory global); /memory on|off|readonly toggles it",
-    ),
-    ("workflows", "Monitor workflow runs"),
-    ("files", "Browse project files"),
-    ("settings", "Open settings"),
-    ("status", "Show Session, server and machine status"),
-    ("config", "Edit TUI preferences"),
-    ("usage", "Show this Session's usage and cost"),
-    ("cost", "Show this Session's usage and cost"),
-    ("stats", "Show usage statistics"),
-    ("theme", "Switch the color theme"),
-    ("sidebar", "Show or hide the sidebar"),
-    ("timestamps", "Show or hide message times"),
-    ("recap", "Summarize this Session so far"),
-    (
-        "commit",
-        "Draft a commit message for the staged changes with the small model",
-    ),
-    (
-        "pr-description",
-        "Draft a PR title and body for base..HEAD with the small model",
-    ),
-    ("help", "Show commands and keys"),
-    ("exit", "Quit"),
-];
+use cyber_core::commands::BUILTIN as BUILTIN_COMMANDS;
 
 impl Services for AppServices {
     fn sandbox_status(&self, location: &Path) -> Option<serde_json::Value> {
@@ -358,6 +298,15 @@ impl Services for AppServices {
                     }
                 })
         })
+    }
+
+    fn plugins(
+        &self,
+        location: &Path,
+    ) -> Result<cyber_core::plugins::PluginList, cyber_server::http::ApiError> {
+        self.host
+            .plugins(location)
+            .map_err(cyber_server::http::ApiError::invalid)
     }
 
     fn review_hooks(

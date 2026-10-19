@@ -73,10 +73,16 @@ pub(super) enum AppendStyle {
 fn append_at(style: AppendStyle, pointer: &str) -> bool {
     match style {
         AppendStyle::None => false,
-        AppendStyle::Claude => matches!(
-            pointer,
-            "/permissions/rules" | "/permissions/allow" | "/permissions/ask" | "/permissions/deny"
-        ),
+        // Claude Code concatenates the hook groups of every settings file.
+        AppendStyle::Claude => {
+            matches!(
+                pointer,
+                "/permissions/rules"
+                    | "/permissions/allow"
+                    | "/permissions/ask"
+                    | "/permissions/deny"
+            ) || (pointer.starts_with("/hooks/") && pointer.split('/').count() == 3)
+        }
         AppendStyle::OpenCode => {
             pointer == "/permissions"
                 || (pointer.starts_with("/agents/")

@@ -19,6 +19,7 @@ fn fixture(root: &Path) -> CommandScope {
         global_config_dir: global,
         project: true,
         compat: true,
+        plugins: Vec::new(),
     }
 }
 fn write(root: &Path, name: &str, body: &str) -> PathBuf {

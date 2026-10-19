@@ -24,6 +24,22 @@ Dated sections below are history. These statements in them are superseded:
 - The `mcp/instructions` Context Source is now `core/mcp-instructions`; the legacy key is withdrawn.
 - "All 225 P1 contracts remain in scope". This was correct when written; the in-scope count is now 214, which is 227 canonical minus the 13 editor-integration requirements deferred by the still-open change `defer-editor-integration`.
 
+## P1 batch C sign-off, increments 10–15 (2026-10-18)
+
+The 22 requirements that [plan increments 10–15](p1-acceptance-plan.md#implementation-increments) moved to class (a) (M1.5: 6, M1.3: 14, M1.4: 2) were demonstrated end to end on macOS in 47 scenarios with the real debug `cyber` binary and a real `cyber serve` (HTTP and SSE), against a scripted local OpenAI-compatible provider, real Python and Node plugin host processes (the TypeScript plugin used the `@cyber-code/plugin` kit packed with `npm pack` and installed offline), local git repositories and npm packages as plugin sources, and the App tests' fake browser MCP server in place of the pinned `@playwright/mcp@0.0.41` (no live model, no internet). TUI scenarios ran in a pty and were captured as screens (`/plugins`, `/reload-plugins`, the namespaced command, the teammate plugin review toast, `cyber --pure` `/plugins`, the first-run import offer). All 47 passed after the fix below; the [plan's batch C section](p1-acceptance-plan.md#batch-c-acceptance-run-increments-1015-2026-10-18) lists what each one observed. No row changed class, so the counts stay 140 (a), 5 (b), 25 (c), 41 (d) and 3 (e) of 214. Linux (bubblewrap) and native Windows were not run, so no milestone is signed off natively.
+
+| Milestone | (a) after batch C | Moved by batch C increments | Left for sign-off |
+|---|--:|---|---|
+| M1.1 | 15 of 18 | none (increment 15 moved Windows enforcement and the `powershell` tool from (c) to (b)) | Native Windows CI for both, live auto classifier (e) |
+| M1.2 | 41 of 41 | none | Unchanged since batch B |
+| M1.3 | 48 of 53 | 12 (8 rows), 13 (5 rows), 15 (1 row) | Host protocol, Capability declaration and enforcement, Supported events (c); User configuration and OAuth keyring evidence (e); the Windows hook sandbox test has not run |
+| M1.4 | 28 of 28 | 14 (2 rows) | One run of the real pinned browser package (e) |
+| M1.5 | 6 of 10 | 10 (3 rows), 11 (3 rows) | Claude Code sources (`apiKeyHelper`, `.claude/rules`), Read-time MCP compatibility (TUI `.mcp.json` approval prompt), Secret safety (keyring), Source detection (OpenCode SQLite counts) (c) |
+
+One bug found by the run was fixed, with a regression test that fails without the fix: a dev server started with `bash` `background` + `ready_url` below the default sandbox (`sandbox.network` other than `on`) could never become ready, because macOS denies the bind and Linux isolates loopback, so the call started the command and then failed or timed out; only Windows refused up front. `Prepared::loopback_isolated` (`cyber-tools/src/sandboxing.rs`) now drives `dev_server::loopback_reachable`, which refuses before anything starts and names `sandbox.network: on` and `--sandbox full-access`; no sandbox permission was widened (`cyber-app` `browser.rs::a_sandboxed_dev_server_needs_the_sandbox_network_on`, production App over HTTP, Unix-only; unit `dev_server::tests::a_dev_server_with_isolated_loopback_is_refused_before_it_starts`, portable, in the Windows job's *Native browser verification* step).
+
+Follow-ups observed, not fixed (none breaks a SHALL clause): a project import counts a key set in the global `cyber.jsonc` as existing and reports it `merged`, so a source `model` is not written into the project file when the user has a global model; when the project scope already dropped a git plugin, a teammate's `cyber plugins remove` finds no entry and leaves their cached tree; path plugin sources are used in place and not cached (as specified for development).
+
 ## P1 batch B sign-off, increments 6–9 (2026-10-18)
 
 The 33 requirements that [plan increments 6–9](p1-acceptance-plan.md#implementation-increments) moved to class (a) were demonstrated end to end on macOS in 46 scenarios with the real debug `cyber` binary and a real `cyber serve` (HTTP, SSE and the ticketed PTY WebSocket), against a scripted local provider, a local WebSocket fixture and local TCP listeners (no live model, no internet). TUI scenarios ran in a pty and were captured as screens. All 46 passed after the three fixes below; the [plan's batch B section](p1-acceptance-plan.md#batch-b-acceptance-run-increments-69-2026-10-18) lists what each one observed. No row changed class, so the counts stay 118 (a), 3 (b), 32 (c), 59 (d) and 2 (e) of 214. Linux (bubblewrap) and native Windows were not run, so no milestone is signed off natively.
@@ -47,6 +63,126 @@ Three bugs found by the run were fixed, each with a regression test that fails w
 - `/tasks` lost its selection and filter on every `job.*` reload, so it could not be navigated while a task produced output; the reload now refreshes the open picker in place (`cyber-tui` `screens_tasks.rs::tasks_reload_keeps_the_filter_and_the_selected_task`, production App over HTTP, Unix-only).
 
 Follow-ups observed, not fixed (none breaks a SHALL clause): on an attended server a `bypass` proxy network ask blocks the Turn until a person answers (the intended ceiling); a Tasks row with a long command hides the last-log-line column at 160 columns; a Tasks reload response that arrives just after Esc can reopen the list.
+
+## Windows enforcement, P1 increment 15 (2026-10-18)
+
+[Plan increment 15](p1-acceptance-plan.md#15-windows-enforcement-m11-and-m13-3-requirements) moved Sandboxing of command hooks (hooks) from (c) to (a), and Windows enforcement (sandbox) and the powershell tool (builtin-tools) from (c) to (b). The Windows code is implemented and type-checks for `x86_64-pc-windows-gnu`, and its native tests are written and wired into Windows CI, but none of it has run on Windows, so the two Windows-only rows cannot be (a). The plan's counts are now 140 (a), 5 (b), 25 (c), 41 (d) and 3 (e); M1.1 is 15 (a), 2 (b), 1 (e) of 18 and M1.3 is 48 (a), 3 (c), 2 (e) of 53.
+
+What exists now:
+
+- **Production dispatch.** On Windows, `cyber_sandbox::wrap` no longer answers `SandboxUnavailableError`. It returns `cyber-sandbox-exec --appcontainer <plan> -- program args`, so shell tools, hooks, LSP, MCP, plugin hosts and `cyber sandbox run` all reach the AppContainer. The plan holds the roots, whether they are writable, `sandbox.readable_paths`, the protected read-only paths, the credential and `deny_read` paths, and network only for `on`. It is decoded strictly (unknown keys and relative paths are refused).
+- **Confinement.** The helper creates a fresh LPAC identity and grants the existing roots as one forest: read-write or read-only by policy, with exclusions inside each root, at most 100,000 objects, and links and junctions refused. Directory entries are inherited by objects created later, so the command can keep using files it creates. The program's directory gets read access unless it is under the Windows or Program Files directories. The command runs with duplicates of the helper's standard streams. On exit every grant is revoked and the identity deleted. Any setup error exits 69 with `SandboxUnavailableError`. `internetClient` is added, and checked on the suspended token, only for `network: on`.
+- **Hooks profile.** Project, local, plugin and `sandbox_all` command hooks already selected `workspace-write` and called `wrap`; on Windows that now yields the AppContainer route instead of a refusal.
+- **PowerShell analysis.** Startup switches use the interpreter's shortest-prefix table (`-Enco`, `-NoP`, `-Com`; `-encodeda…` is EncodedArguments and stays unresolved). Cmdlet parameters resolve by exact name, alias or unique prefix (`-Lit`, `-LP`, `-PSPath`, `-Dest`, `-Rec`, `-Fo`, `-EA`). An unknown or ambiguous parameter of a mutating cmdlet keeps its value as a possible target. New mutation facts cover `Export-Csv`, `Export-Clixml`, `Set-Item`, `Start-Transcript`, `Expand-Archive`, `Compress-Archive`, `Invoke-WebRequest`/`Invoke-RestMethod -OutFile`, and `[IO.File]`/`[IO.Directory]` write, copy, move, replace and create members.
+- **Denial reports.** `Access to the path '…' is denied.` lines become `Sandbox denied: write <path>` and `sandbox.denied.1`.
+
+Evidence through the production path: the real `cyber` binary on macOS, `exec_lifecycle_hooks.rs::exec_project_post_tool_hook_cannot_write_home` (a trusted project `PostToolUse` hook writes its workspace marker, `~/.ssh/config` stays unwritten, the receipt is `outcome: error`, `scope: project`, and the Turn finishes). The tests that would prove the Windows rows have not run yet, because they need native Windows: `exec_hooks_windows.rs::exec_project_post_tool_hook_cannot_write_home` and `exec_sandboxed_powershell_write_outside_roots_is_denied` (both through the binary), `windows_powershell.rs::native_sandboxed_powershell_write_outside_roots_is_denied`, `windows_confine::tests` (new CI step *Native AppContainer dispatch helper*) and `windows_shell.rs::missing_helper_refuses_and_sandboxed_bash_cannot_write_outside_roots`. Local unit and analysis tests: `container_plan::tests`, `parameters::tests`, four new `powershell_analysis.rs` tests, `inline_removals.rs::abbreviated_startup_options_select_the_same_powershell_source`, and two new denial-line cases.
+
+Left open:
+- Native Windows CI of everything above.
+- The Windows allowlist proxy. The container cannot reach the loopback proxy, so `proxy` confines like `off` and raises no domain prompts. This is stricter than specified, not looser.
+- Absent protected names are not protected, the same as on Linux.
+- Tools that load files outside their own directory and the system directories fail inside the sandbox.
+- Grants cost one ACL write per object per command.
+- Plugin hosts on Windows need their plugin directory granted.
+
+## Browser verification, P1 increment 14 (2026-10-18)
+
+[Plan increment 14](p1-acceptance-plan.md#14-browser-verification-m14-2-requirements) moved both browser-verification requirements from (d) to (a): Supported optional browser integration, and Verification artifacts and lifecycle. The plan's counts are now 139 (a), 3 (b), 28 (c), 41 (d) and 3 (e); M1.4 is 28 (a) of 28.
+
+What exists now:
+
+- **Optional and pinned.** Browser support is off unless `browser.enabled` is `true`. `cyber mcp browser install` writes the version-pinned `@playwright/mcp@0.0.41` (`--headless --isolated`) under `mcp.<server>` and enables it; `health` starts it once and checks the navigation, DOM, input, screenshot, console and network tools; `cleanup` removes abandoned profiles. The commands sit under `cyber mcp` because the command tree admits no new top-level command (the plan named `cyber browser`).
+- **Trust.** The browser is an MCP server, so checkout trust, the per-server digest approval and the managed MCP policy decide whether it starts. The `browser` key is trust-gated in project layers. A project install is refused while the checkout has unapproved configuration.
+- **Per-Session profiles.** The shared pool never starts the browser server. Each Session gets its own owned process (`<server>-<session ULID>`), with `TMPDIR` in `<data>/browser/profiles/<session_id>/`, which is emptied at start and locked while it runs. The pinned definition keeps the browser profile in memory, away from the user's default profile and cookies.
+- **Permissions and network.** Browser tools reach only their Session, through the registered-tool path (schema, hooks, permission per tool name, output budget, plan-mode read-only filter). Each `browser_navigate` host also passes the sandbox network policy and the `network` permission. Only vetted tools are published (`EXPOSED_TOOLS`): `browser_evaluate`, `browser_file_upload`, `browser_tabs` and `browser_navigate_back` are neither offered nor callable.
+- **Evidence.** Every call that captures a screenshot, console, network or snapshot output records `session.browser.evidence.1`. The record holds the Session ID, the workspace content hash, URL, viewport, time, action summary, observed results, checks not run, and the SHA-256 of each artifact. Artifacts are stored content-addressed under `<data>/browser/artifacts/<session_id>/`, with text captures redacted. `GET /sessions/{id}/browser/evidence` marks a record `stale` once the workspace hash differs. Deleting the Session and retention remove the artifacts; nothing uploads them.
+- **Dev servers.** `bash`/`powershell` `background: true` with `ready_url` (localhost) and `ready_timeout_seconds` is an owned Job with an explicit readiness check. An early exit or a timeout (the Job is then stopped) fails the call with the log tail and records `startup_failed` evidence: the page was not tested. A cancelled call stops the Job, the probe follows no redirect, and a sandboxed dev server is refused before it starts where the sandbox isolates its loopback (always on Windows; on Linux and macOS unless `sandbox.network` is `on`, fixed in the batch C acceptance run). Windows browser verification is not proven natively: the pinned `npx.cmd` runs only unsandboxed.
+- **Cleanup.** `ToolHost::end_session` (archive or delete, after SessionEnd hooks; `AppHost` forwards it) stops the browser, removes its profile and stops the Session's dev servers without a completion notice.
+
+Evidence through the production path: the App with its HTTP router, a fake browser MCP server and real `python3 -m http.server` dev servers (`cyber-app/tests/browser.rs`: `dev_server_exiting_before_readiness_records_startup_failure_with_logs`, `session_close_stops_owned_dev_server_and_browser`, `evidence_records_hashes_and_marks_stale_after_edit`, `untrusted_project_browser_server_is_not_installed`), and the `cyber` binary (`browser_cli.rs`, 4 tests). Also covered: `retention.rs` (browser artifacts), the AppHost forwarding guard, and unit tests in `browser`, `browser_evidence`, `browser::{profiles,evidence,calls}` and `dev_server`.
+
+Bug fixed with a regression test: a dev server stopped at archive queued its completion notice, which started a Turn in the archived Session and a new browser with it (`Runtime::cancel_job_quietly`; asserted in `session_close_stops_owned_dev_server_and_browser`).
+
+Left open:
+- A run of the real pinned package against an approved local URL is owed as external evidence; tests never download it.
+- Pages that a link or redirect opens are not network-checked.
+- No Session export exists to carry artifacts.
+- The App browser tests are Unix-only (Python fixtures). The new Windows step *Native browser verification* runs the unit tests and `browser_cli`. Cross-target clippy passes; nothing ran natively on Windows.
+
+## Plugin host runtime, P1 increment 13 (2026-10-18)
+
+[Plan increment 13](p1-acceptance-plan.md#13-plugin-host-runtime-m13-8-requirements) moved 5 requirements to class (a): Plugin host process, Restart and backoff, Scoped registrations, TypeScript plugin kit and Deferred tools and tool search (its plugin tail; the row was (c)). Host protocol and Capability declaration and enforcement move from (d) to (c); User configuration moves from (d) to (e). The plan's counts are now 137 (a), 3 (b), 28 (c), 43 (d) and 3 (e); M1.3 is 47 (a), 4 (c), 2 (e) of 53.
+
+What exists now:
+
+- **Host process.** A loaded plugin whose manifest names `main` (with `runtime` `node`, `bun`, `deno`, `python` or `native`) runs in its own host process for each Location a Session opens (`cyber-tools/src/plugin_host/`). The core speaks JSON-RPC 2.0 to it over stdio and never loads its code. The first Turn waits for hosts to start; a host started later offers its tools from the step after it is running. A call whose host exits settles `plugin <name> crashed` and the Session goes on.
+- **Protocol.** `initialize` negotiates version `1` (a mismatch is reported with both versions and the host stays down), carries the validated settings and returns the tools; calls go out as `tool/execute`, cancellations as `$/cancelRequest`, setting changes as `config/changed`, and `shutdown` ends a host with a 2 s grace. The host may send `log`, `secrets/get` (with `secrets`), `permission/ask` (during one of its calls) and `session/prompt` (refused). Hooks, providers and catalog transforms a host declares are logged and ignored: the core does not dispatch them yet.
+- **Restart.** 1 s, doubling per crash of a streak to 60 s; the fifth crash in 10 minutes disables the plugin for the process (`plugin <name> disabled after repeated crashes`, also in `GET /plugins`).
+- **Ownership.** Host tools are `ToolScope::Plugin`, registered against the plugin's content digest and offered only while that plugin's host runs and the configuration still loads it, so disabling, removing, updating or crashing a plugin removes exactly its tools before the next step. Its hooks, commands and agents are its configuration layer and leave with it. Plugin tools defer like MCP tools.
+- **Capabilities.** Strictly parsed and shown before install. The host always runs sandboxed: writes only to its scratch directory (and the Location with `fs.write`); network off unless declared, with `{ hosts }` enforced by the allowlist proxy, whose refusals add a warning naming the plugin to the call's result. Without sandbox enforcement (Windows today) no host starts. `fs.read` and `shell` are not enforced.
+- **Settings.** `plugins.<name>.config` is validated against `userConfig`; secret properties come only from the plugin secret store (OS keyring on macOS and Windows, owner-only file on Linux) and reach the host only through `secrets/get`. `install`, `enable` and `update` ask for missing required values (secrets without echo on a terminal); `cyber plugins configure` sets them; `remove` deletes stored secrets.
+- **TypeScript kit.** `sdk/plugin` publishes `@cyber-code/plugin` (`definePlugin`, `tool` with JSON Schema or Zod-style schemas, typed hook handlers, `provider`, `createHarness`).
+
+Evidence through the production path: the App with its HTTP router and real sandboxed Python hosts (`cyber-app/tests/plugins.rs`, 8 tests: forwarding, crash, crash loop, disable, undeclared network, version mismatch, deferral, settings and secrets), the `cyber` binary (`plugins_cli.rs::install_shows_capabilities_and_asks_for_required_settings`; Linux-only `secret_settings_are_stored_outside_configuration_files` and `secret_settings_are_read_without_echo_on_a_terminal`, which only CI runs), and the SDK kit (`kit.test.ts::define_plugin_tool_round_trip` and three more; `host.e2e.test.ts` installs a TypeScript plugin with `--scope local` and has a scripted model call its tool through `cyber exec`). Unit tests: `plugins::{capabilities,user_config}`, `plugin_host::{connection,launch,restart,secrets}`.
+
+Left open: core dispatch of plugin hooks, providers, catalog transforms and `session/prompt`; `fs.read` and `shell` enforcement; plugin hosts on Windows (increment 15); native keyring round trips of plugin secrets (class e). The App plugin tests are Unix-only (Python fixture); the Windows *Native plugin resolution* step also runs `cyber-tools --lib plugin_host::`. Cross-target clippy passes; nothing ran natively on Windows.
+
+## Plugin foundation, P1 increment 12 (2026-10-18)
+
+[Plan increment 12](p1-acceptance-plan.md#12-plugin-foundation-m13-8-requirements) moved 8 requirements to class (a): Plugin manifest, Component discovery defaults, Install scopes, Plugin sources, Plugin CLI, Pure mode, Trust and signing (its P1 part) and Hook scopes and merge order. The plan's counts are now 132 (a), 3 (b), 27 (c), 50 (d) and 2 (e); M1.3 is 42 (a), 3 (c), 7 (d), 1 (e) of 53. The 7 plugin rows left are the plugin host (increment 13).
+
+What exists now:
+
+- **Manifest and components.** `cyber-plugin.json` is parsed strictly (`cyber-core/src/plugins/manifest.rs`); a bad field fails the plugin naming it. Skills, commands, agents (Claude agent format), `hooks/hooks.json`, `.mcp.json` and TUI themes load from their declared paths or the conventional ones. A component never replaces another: a taken name is `<plugin>:<name>`, a taken MCP server name `<plugin>-<name>`. Tools, providers, workflows, channels and mods are reported as not loaded.
+- **Scopes, sources and the lockfile.** User (`<config>/plugins.json`), project (`.cyber/plugins.json` with `.cyber/plugins.lock`) and local (`.cyber/plugins.local.json`) scopes are unioned; managed `policy.plugins.disabled` overrides them, and a malformed managed policy loads no plugin. Path sources are used in place; git sources are checked out at the resolved commit (no submodules, links as plain files) and npm sources packed with `--ignore-scripts`, both copied to `<cache>/plugins/<name>/<version>-<digest>/` (content-addressed, shared by every scope and checkout). The lockfile records the commit and the SHA-256 tree digest; a repeated install keeps the pinned commit until `cyber plugins update`.
+- **Trust.** A plugin loads only while its tree matches the installed digest and that exact name, version and digest is approved in the trust store, keyed by the checkout (project, local) or the user config directory. `enable` of an unapproved project or local plugin shows what it loads and asks first; every listing says `unsigned`.
+- **Runtime.** One `plugin:` configuration layer per loaded plugin carries its hooks, MCP servers and agents; plugin hooks are scope `plugin`, always sandboxed, run after managed, global, project and local hooks and are skipped under managed-only policy. Skills and commands come from the loader-written `plugin_components` key. Pure mode (`--pure`, `CYBER_PURE=1`) loads no plugin and keeps hooks and MCP servers only from organization policy; exec, review and the TUI then run an in-process server, and `api`, `pr`, `mcp serve` and `workflows run|resume` are refused.
+- **Surfaces.** `cyber plugins install|list|info|update|remove|enable|disable|validate`, `GET /api/v1/plugins` (SDK `client.plugin.list()`), TUI `/plugins`, `/reload-plugins` and a once-per-project startup prompt for project plugins that need review, `cyber debug info` (`external extensions disabled (--pure)`).
+
+Evidence through the production path: the `cyber` binary (`plugins_cli.rs`: the six named tests and `npm_install_packs_without_lifecycle_scripts`; `exec_lifecycle_hooks.rs::exec_runs_plugin_hooks_last_and_skips_them_under_managed_only`, a real `cyber exec` against a scripted provider: hooks ran global, project, plugin; none under `--pure`; only the managed one under managed-only with three `skipped` receipts) and the TUI against a real App over HTTP (`plugins::tests`: `/plugins` and `/reload-plugins`, the startup prompt, plugin themes, and `/plugins` under `CYBER_PURE=1` in a child process). Core: `tests/plugins.rs` (3) and unit tests in `plugins::{manifest,digest,registry,install,npm,components}`.
+
+Left on purpose, each owned by another requirement: the plugin host and everything it runs (increment 13), plugin-tool deferral (*Deferred tools and tool search*, still (c)), marketplace sources and Sigstore (P4 *Marketplaces*, *Trust and signing* P4 part), managed force-installs (P4 *Organization plugin controls*) and plugin workflows (P2). Core plugin tests run in the new Windows step *Native plugin resolution* and `plugins_cli` in *Native plugins*; the TUI tests run in the existing `cyber-tui --lib` step. Cross-target clippy passes; nothing ran natively on Windows.
+
+## Source adapters and read-time compatibility, P1 increment 11 (2026-10-18)
+
+[Plan increment 11](p1-acceptance-plan.md#11-source-adapters-and-read-time-compatibility-m15-5-requirements) moved 3 requirements to class (a): Codex sources, OpenCode sources and Read-time skill compatibility. Claude Code sources stays (c); Read-time MCP compatibility moves from (d) to (c). The plan's counts are now 124 (a), 3 (b), 28 (c), 57 (d) and 2 (e); M1.5 is 6 (a), 4 (c) of 10. The ROADMAP M1.5 exit criterion ("`cyber import claude` reproduces a reference Claude Code setup (agents, skills, MCP, hooks) with no manual edits") holds locally.
+
+`cyber import` now converts, besides permissions, models, providers, MCP servers and commands:
+
+- **Claude.** Model aliases (`opus`, `sonnet`, `haiku`), `fallbackModel` → `fallback_models`, `env` → `sandbox.env.set` (credential-named variables withheld), hooks of every settings file → native `hooks` with events one to one and tool matchers renamed (`CLAUDE_PROJECT_DIR` → `CYBER_PROJECT_DIR`), and `.claude/agents/*.md` → `agents.<name>`. Unknown hook events, `agent` handlers, header-carrying handlers and regex matchers are listed `not imported` with the reason. Skills, commands and `CLAUDE.md` that the runtime reads in place are reported `imported` without a copy.
+- **Codex.** Profiles (tables and `<name>.config.toml`), `profile`, `[permissions.*]` and `default_permissions` (an unconvertible selected profile selects `read-only`), `[shell_environment_policy]`, granular approvals (escalation and skill denies; `rules = false` turns execpolicy prompts into denies), `hooks.json`, `notify` and a `requirements.toml` report naming each key's org-policy equivalent.
+- **OpenCode.** `.opencode/agents/*.md` and `.opencode/modes/*.md`, `instructions`, and a `requires manual port` entry for plugins and tools that links the guide's porting section.
+
+At runtime, skills are read from `.opencode/skills` too, with the precedence `.cyber` > `.agents` > `.claude` > `.opencode` > `.codex` and `compat.<tool>` switches, and the project's `.mcp.json` loads below `cyber.jsonc` as a trust-gated project layer whose servers each need a one-time digest approval.
+
+Evidence through the production path: the `cyber` binary (`cli.rs::import_claude_reproduces_reference_setup_without_manual_edits` over the checked-in `crates/cyber-cli/tests/fixtures/claude-reference`, `import_codex_profiles_permissions_and_notify_load_through_the_binary`, `import_opencode_agents_modes_and_plugins_through_the_binary`, `import_detect_reports_read_time_coverage_per_item`), the App HTTP API (`server.rs::skill_compat_precedence_and_switches_apply_over_http`) and the App MCP pool (`mcp.rs::project_mcp_json_server_requires_one_time_approval`). Core: `import_preview.rs` (`claude_hooks_map_events_and_list_unmappable_under_not_imported`, `codex_profiles_and_notify_become_profiles_and_notification_hook`, `markdown_agents_modes_and_settings_map_and_plugins_link_the_migration_guide`), `skills_compat.rs` (3), `import_policy.rs::granular_approvals_become_deny_rules_and_reject_rule_prompts` and unit tests of each adapter.
+
+One bug was fixed: a path or glob key containing `secret` (`filesystem = { "secrets/**" = "none" }`) turned its value into a declared secret, so the importer refused the whole proposal; path and glob keys are no longer credential field names (regression: `import_codex_profiles_permissions_and_notify_load_through_the_binary`).
+
+Remaining, and why two rows stay (c):
+
+- *Claude Code sources*: `apiKeyHelper` → a `command` credential needs provider-credentials *Command credentials* (class d), and `.claude/rules` → `.cyber/rules` needs a rule-file loader (system-context *Path-scoped rules*, class c); both are reported `not imported`.
+- *Read-time MCP compatibility*: the TUI does not ask `Enable MCP server "db-tools" from .mcp.json?`; approval is through `cyber mcp trust <name> --digest <digest>`, and no TUI or HTTP surface approves MCP digests. Approvals are recorded per checkout in the trust store rather than the database; the change's spec delta says so.
+
+The change's spec delta records the native targets that differ from the canonical text: hooks go to `hooks` (nothing loads `.cyber/hooks.jsonc`) and Claude `env` to `sandbox.env.set`. `skills_compat` and the App skill test run in the new Windows step *Native read-time skill compatibility*; the `cli.rs` and `mcp.rs` tests run in the existing Windows `cyber-cli --test cli` and `cyber-app --test mcp` steps. Cross-target clippy passes; nothing ran natively on Windows.
+
+## Import write path, P1 increment 10 (2026-10-18)
+
+[Plan increment 10](p1-acceptance-plan.md#10-import-write-path-m15-5-requirements) moved 3 requirements to class (a): Import command, Mapping report and Idempotent re-import. Secret safety during import and Source detection stay (c). The plan's counts are now 121 (a), 3 (b), 30 (c), 58 (d) and 2 (e); M1.5 is 3 (a), 6 (c), 1 (d) of 10.
+
+`cyber import <tool>` now writes. It prints a unified diff of the real bytes of the target `cyber.jsonc` (comments kept, known secrets redacted, the report file it would create named), asks `Write these changes to <path>? [y/N]` unless `--yes` (anything else, end of input included, writes nothing and exits 1), and `--dry-run` never writes. `ImportPreview::write` re-verifies every reviewed source and native file, replaces the document through a new sibling file and writes `.cyber/import-report-<UTC timestamp>.md` with `create_new`; linked targets and report directories are refused. With no source files it prints `no <tool> configuration found in <project> or ~/.<tool>` and exits 0. `--include sessions` is accepted and reported as not imported (session conversion is P2).
+
+Every inserted entry carries `// x-imported-from: <sources> sha256:<digest>`. A repeated import writes nothing and prints `nothing to do`. A changed source replaces an entry only while the annotation's digest still matches the entry's value; an edited entry is kept and reported `merged` with both values. `cyber import --detect` now counts sessions (Claude transcripts, Codex rollouts inside the project, OpenCode JSON sessions) and reports per-item read-time coverage from the runtime's own skill and Claude command roots; the TUI startup offers `cyber import auto --dry-run` once per project that holds project-layer source files.
+
+Evidence through the real `cyber` binary (`cyber-cli/tests/cli.rs`): `import_claude_dry_run_prints_a_file_diff_and_writes_nothing`, `import_with_no_sources_prints_none_found_and_exits_zero`, `import_codex_yes_twice_writes_once_then_reports_nothing_to_do` (the written document loads in `cyber debug config`, its provider and MCP server inactive until the project is trusted), `import_without_yes_writes_only_after_an_explicit_yes`, `import_reimport_updates_its_own_annotated_entries_and_keeps_edited_ones`, `import_writes_report_file_listing_merged_model_with_both_values`, `import_literal_codex_api_key_never_reaches_cyber_jsonc` and `import_detect_reports_read_time_coverage_per_item`; the TUI through `runner::start` against the production App: `import_offer.rs::first_run_offers_import_auto_dry_run_once`. Unit tests: `config::annotated::tests` and `import::write::tests`.
+
+Remaining, and why the two rows stay (c):
+
+- *Secret safety during import*: literal keys become `{env:NAME}` references named in the report and never reach `cyber.jsonc`, the report or the output, but the scenario's keyring branch is not built. No provider credential store exists and the runtime never reads a stored provider key (provider-credentials *Secure storage* and the stored-connection step of *Credential precedence*, both P0, are unimplemented), so a key moved into a keyring would leave the provider without a credential. A native Keychain/Credential Manager round trip stays class (e) once that store exists.
+- *Source detection*: OpenCode sessions kept in its SQLite store (`opencode.db`) are reported unknown, because the schema is not read, and config-referenced custom sources are not resolved.
+
+The new `cli.rs` and TUI tests run in the Windows job's existing `cyber-cli --test cli` and `cyber-tui --lib` steps; cross-target clippy passes, nothing ran natively on Windows.
 
 ## PTY, notify, send file and side chat, P1 increment 9 (2026-10-18)
 
@@ -694,15 +830,15 @@ Canonical source: [background-tasks](../../openspec/specs/background-tasks/spec.
 
 Canonical source: [browser-verification](../../openspec/specs/browser-verification/spec.md).
 
-- [ ] Supported optional browser integration
-- [ ] Verification artifacts and lifecycle
+- [x] Supported optional browser integration — 2026-10-18 (increment 14): `untrusted_project_browser_server_is_not_installed`, `session_close_stops_owned_dev_server_and_browser`, `evidence_records_hashes_and_marks_stale_after_edit`, `browser_cli.rs` (4). A run against the real pinned package is still owed as external evidence.
+- [x] Verification artifacts and lifecycle — 2026-10-18 (increment 14): `dev_server_exiting_before_readiness_records_startup_failure_with_logs`, `evidence_records_hashes_and_marks_stale_after_edit`, `session_close_stops_owned_dev_server_and_browser`, `retention.rs::sweeps_remove_only_expired_items`.
 
 ### builtin-tools (4)
 
 Canonical source: [builtin-tools](../../openspec/specs/builtin-tools/spec.md).
 
 - [x] Capability-owned tool catalog — 2026-10-18 (increment 8): `advertised_tool_names_are_a_subset_of_the_canonical_registry`; phase-gated tools clarified as absent in `implement-m1-1-sandbox-modes`.
-- [ ] powershell tool
+- [ ] powershell tool — 2026-10-18 (increment 15): (b). AppContainer sandboxing and the finished analysis are implemented; proof is native `windows_powershell.rs::native_sandboxed_powershell_write_outside_roots_is_denied` and `exec_hooks_windows.rs::exec_sandboxed_powershell_write_outside_roots_is_denied`, not yet run.
 - [ ] notebook_edit tool — local implementation and tests pass; fresh native CI remains pending.
 - [x] monitor tool — 2026-10-18 (increment 8): `monitor_command_and_file_sources_need_bash_permission`, `monitor_url_needs_network_permission_and_streams_websocket_lines`, `monitor_tail_filter_admits_error_lines_rate_limited`.
 
@@ -747,16 +883,16 @@ Canonical source: [compaction](../../openspec/specs/compaction/spec.md).
 
 Canonical source: [compat-import](../../openspec/specs/compat-import/spec.md).
 
-- [ ] Import command
-- [ ] Claude Code sources
-- [ ] Codex sources
-- [ ] OpenCode sources
-- [ ] Read-time skill compatibility
-- [ ] Read-time MCP compatibility
-- [ ] Mapping report
-- [ ] Secret safety during import
-- [ ] Source detection
-- [ ] Idempotent re-import
+- [x] Import command — 2026-10-18 (increment 10): `import_claude_dry_run_prints_a_file_diff_and_writes_nothing`, `import_with_no_sources_prints_none_found_and_exits_zero`, `import_without_yes_writes_only_after_an_explicit_yes`.
+- [ ] Claude Code sources — 2026-10-18 (increment 11): agents, hooks, model aliases, `fallbackModel`, `env`, skills and commands are done (`import_claude_reproduces_reference_setup_without_manual_edits`, `claude_hooks_map_events_and_list_unmappable_under_not_imported`); `apiKeyHelper` waits for command credentials and `.claude/rules` for a rule-file loader.
+- [x] Codex sources — 2026-10-18 (increment 11): `import_codex_profiles_permissions_and_notify_load_through_the_binary`, `codex_profiles_and_notify_become_profiles_and_notification_hook`, `import_codex_yes_twice_writes_once_then_reports_nothing_to_do`.
+- [x] OpenCode sources — 2026-10-18 (increment 11): `import_opencode_agents_modes_and_plugins_through_the_binary`, `markdown_agents_modes_and_settings_map_and_plugins_link_the_migration_guide`.
+- [x] Read-time skill compatibility — 2026-10-18 (increment 11): `skill_compat_precedence_and_switches_apply_over_http`, `skills_compat.rs::duplicate_skill_precedence_follows_cyber_agents_claude_opencode_codex`.
+- [ ] Read-time MCP compatibility — 2026-10-18 (increment 11): loading below `cyber.jsonc`, trust gating and the one-time per-checkout digest approval are done (`cyber-app/tests/mcp.rs::project_mcp_json_server_requires_one_time_approval`); the TUI approval prompt is missing.
+- [x] Mapping report — 2026-10-18 (increment 10): `import_writes_report_file_listing_merged_model_with_both_values`, `import_merged_reports_include_comparisons_in_json_and_text_without_writing`.
+- [ ] Secret safety during import — 2026-10-18 (increment 10): the `{env:NAME}` branch is done (`import_literal_codex_api_key_never_reaches_cyber_jsonc`); the keyring branch waits for a provider credential store.
+- [ ] Source detection — 2026-10-18 (increment 10): session counts, read-time coverage and the TUI offer are done (`import_detect_reports_read_time_coverage_per_item`, `first_run_offers_import_auto_dry_run_once`); OpenCode SQLite session counts remain.
+- [x] Idempotent re-import — 2026-10-18 (increment 10): `import_codex_yes_twice_writes_once_then_reports_nothing_to_do`, `import_reimport_updates_its_own_annotated_entries_and_keeps_edited_ones`.
 
 ### configuration (2)
 
@@ -807,7 +943,7 @@ Canonical source: [exec-mode](../../openspec/specs/exec-mode/spec.md).
 Canonical source: [hooks](../../openspec/specs/hooks/spec.md).
 
 - [x] Hook configuration
-- [ ] Hook scopes and merge order
+- [x] Hook scopes and merge order — 2026-10-18 (increment 12): `exec_lifecycle_hooks.rs::exec_runs_plugin_hooks_last_and_skips_them_under_managed_only`, `exec_applies_managed_only_policy_and_invocation_trust`.
 - [ ] Supported events — 2026-10-17 increment 1: `Setup`, `ConfigChange` and `WorktreeRemove` now emitted; `DirectoryAdded`, `FileChanged` and `CwdChanged` still have no producer.
 - [x] Matchers — rechecked 2026-10-17 (increment 1): `mcp_runtime.rs::regex_matcher_runs_for_mcp_tool_and_not_for_bash`.
 - [x] Command handlers — 2026-10-17 (increment 1): `exit_two_pre_tool_command_blocks_with_stderr_reason`, `post_tool_command_exit_one_warns_with_hook_id_and_continues`.
@@ -820,7 +956,7 @@ Canonical source: [hooks](../../openspec/specs/hooks/spec.md).
 - [x] Stop hooks and loop prevention
 - [x] Timeouts and async hooks
 - [x] Parallel execution within a group — rechecked 2026-10-17 (increment 1): `exec_runs_a_command_defined_in_global_and_trusted_project_once`.
-- [ ] Sandboxing of command hooks
+- [x] Sandboxing of command hooks — 2026-10-18 (increment 15): `exec_lifecycle_hooks.rs::exec_project_post_tool_hook_cannot_write_home` through the binary; the Windows AppContainer profile's counterpart in `exec_hooks_windows.rs` awaits native CI.
 - [x] Trust for project hooks — rechecked 2026-10-17 (increment 1): TUI `hook_notice_event_shows_untrusted_review_hint` against a real App.
 - [x] Hooks viewer and CLI
 - [x] Hook context injection on lifecycle events
@@ -893,20 +1029,20 @@ Canonical source: [permissions-modes](../../openspec/specs/permissions-modes/spe
 
 Canonical source: [plugins-marketplace](../../openspec/specs/plugins-marketplace/spec.md).
 
-- [ ] Plugin manifest
-- [ ] Component discovery defaults
-- [ ] Install scopes
-- [ ] Plugin sources
-- [ ] Plugin CLI
-- [ ] Plugin host process
-- [ ] Host protocol
-- [ ] Restart and backoff
-- [ ] Scoped registrations
-- [ ] Capability declaration and enforcement
-- [ ] User configuration
-- [ ] TypeScript plugin kit
-- [ ] Pure mode
-- [ ] Trust and signing
+- [x] Plugin manifest — 2026-10-18 (increment 12): `plugins_cli.rs::invalid_manifest_name_fails_naming_the_field` (install and `validate` name the field; a declared `hooks` path loads), `plugins::manifest::tests`.
+- [x] Component discovery defaults — 2026-10-18 (increment 12): `install_path_plugin_registers_hooks_and_namespaces_colliding_command` (`/review-kit:review` beside the built-in `/review`, skill, agent, `.mcp.json` server), TUI `plugin_themes_load_at_startup_namespaced_on_collision`; plugin workflows are the P2 *Plugin-contributed workflows and channels*.
+- [x] Install scopes — 2026-10-18 (increment 12): `project_plugin_requires_trust_before_enable`, managed `disabled` in `install_path_plugin_registers_hooks_and_namespaces_colliding_command`, TUI `project_plugin_needing_review_is_offered_once_at_startup`, `tests/plugins.rs`.
+- [x] Plugin sources — 2026-10-18 (increment 12): `git_install_writes_lockfile_commit_and_digest`, `npm_install_packs_without_lifecycle_scripts`; `<plugin>@<marketplace>` waits for the P4 marketplaces.
+- [x] Plugin CLI — 2026-10-18 (increment 12): all of `plugins_cli.rs`, `engine_mismatch_refuses_install_without_force`, TUI `plugins_command_lists_installed_plugins_from_the_real_api`.
+- [x] Plugin host process — 2026-10-18 (increment 13): `cyber-app/tests/plugins.rs::plugin_crash_fails_the_call_and_session_continues` (`plugin fragile crashed`, the Session continues and calls the restarted host), `plugin_tool_is_forwarded_via_tool_execute`; Python and Node hosts run (`sdk/plugin` `host.e2e.test.ts`); one host per plugin and Location.
+- [ ] Host protocol — 2026-10-18 (increment 13): `initialize` (version `1`, both versions on a refusal: `protocol_version_mismatch_reports_both_versions`), `tool/execute` (`plugin_tool_is_forwarded_via_tool_execute`), `config/changed`, `shutdown`, `$/cancelRequest`, host `log`, `secrets/get`, `permission/ask`; open: core dispatch of `hook/<event>`, `provider/stream`, `catalog/transform`, and `session/prompt` (refused).
+- [x] Restart and backoff — 2026-10-18 (increment 13): `crash_loop_disables_plugin_and_removes_tools_next_turn` (five crashes → `plugin looping disabled after repeated crashes`, tools gone next Turn, stays disabled for the process), unit `plugin_host::restart::tests` (1 s doubling to 60 s).
+- [x] Scoped registrations — 2026-10-18 (increment 13): `disable_removes_only_that_plugins_registrations` (tool and command of the disabled plugin gone, the other plugin's host process unchanged); plugins cannot register providers or catalog transforms yet.
+- [ ] Capability declaration and enforcement — 2026-10-18 (increment 13): declared capabilities are shown before install (`install_shows_capabilities_and_asks_for_required_settings`) and the host is always sandboxed (`undeclared_network_is_a_sandbox_denial`: direct connect refused, proxy 403, warning naming the plugin; `fs.write` for Location writes); open: `fs.read` and `shell` are not enforced.
+- [ ] User configuration — 2026-10-18 (increment 13), class (e): `user_config_is_validated_and_secrets_come_from_the_store`, `install_shows_capabilities_and_asks_for_required_settings`, Linux-only `secret_settings_are_stored_outside_configuration_files` and `secret_settings_are_read_without_echo_on_a_terminal` (CI only); open: native Keychain and Credential Manager round trips.
+- [x] TypeScript plugin kit — 2026-10-18 (increment 13): `sdk/plugin` `kit.test.ts::define_plugin_tool_round_trip` (in-memory harness), `host.e2e.test.ts` (`cyber plugins install ./my-plugin --scope local`, the model calls `hello` in `cyber exec`).
+- [x] Pure mode — 2026-10-18 (increment 12): `pure_flag_disables_plugins_project_hooks_and_project_mcp`, `exec_runs_plugin_hooks_last_and_skips_them_under_managed_only` (`--pure`), TUI `pure_plugins_command_shows_disabled_by_pure`, `tests/plugins.rs::pure_mode_keeps_only_managed_hooks_and_servers`.
+- [ ] Trust and signing — 2026-10-18 (increment 12): the P1 part is done (`project_plugin_requires_trust_before_enable`: digest-bound approval, the enable prompt, `changed` refusal; `unsigned` in every listing); Sigstore verification is P4.
 
 ### provider-catalog (4)
 
@@ -929,7 +1065,7 @@ Canonical source: [provider-credentials](../../openspec/specs/provider-credentia
 
 Canonical source: [sandbox](../../openspec/specs/sandbox/spec.md).
 
-- [ ] Windows enforcement
+- [ ] Windows enforcement — 2026-10-18 (increment 15): (b). Production dispatch runs in a per-command AppContainer through `cyber-sandbox-exec --appcontainer`; proof is the native tests named in the increment 15 section, not yet run. The Windows proxy is open.
 - [x] Escalation requests — 2026-10-18 (increment 6): `escalation_prompt_shows_command_and_justification_and_runs_once_unsandboxed`, `escalation_denied_in_dont_ask`, `bypass_session_cannot_escalate_without_a_person`.
 - [x] Excluded commands — 2026-10-18 (increment 6): `excluded_command_runs_unsandboxed_and_asks_even_with_allow_rule`.
 - [x] Container detection — 2026-10-18 (increment 6): `container_marker_allows_bypass_and_header_shows_isolation_container`, real binary `CYBER_CONTAINER=1` in `exec_yolo_needs_isolation_or_the_explicit_flag`.
@@ -985,7 +1121,7 @@ Canonical source: [system-context](../../openspec/specs/system-context/spec.md).
 
 Canonical source: [tool-registry](../../openspec/specs/tool-registry/spec.md).
 
-- [ ] Deferred tools and tool search
+- [x] Deferred tools and tool search — 2026-10-18 (increment 13): `cyber-app/tests/plugins.rs::plugin_tools_are_deferred_above_threshold` (plugin tail), MCP `deferred_search_loads_only_selected_schema_on_following_steps`.
 - [x] Eager execution during streaming — 2026-10-17 (increment 4): `runtime.rs::complete_tool_call_is_durable_before_the_stream_finishes`.
 - [x] Annotations drive modes and hooks — 2026-10-17 (increment 4): `mcp_runtime.rs::open_world_tool_asks_network_when_sandbox_network_off`, `destructive_tool_is_always_classified_in_auto_mode`.
 

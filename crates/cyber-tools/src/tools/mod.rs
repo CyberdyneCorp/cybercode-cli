@@ -4,6 +4,7 @@ pub(crate) mod agent;
 mod background;
 pub(crate) mod bash;
 mod deliver;
+mod dev_server;
 mod formatters;
 mod fs;
 pub(crate) mod intelligence;

@@ -54,6 +54,11 @@ pub enum McpCmd {
     /// Remove every stored OAuth credential of a server (at any URL, from any issuer) and
     /// ask a running server to reconnect without it. Tokens are not revoked remotely.
     Logout { name: String },
+    /// Install, check and clean up the optional browser verification server.
+    Browser {
+        #[command(subcommand)]
+        cmd: super::mcp_browser::BrowserCmd,
+    },
 }
 
 /// How long `cyber mcp auth` waits for the browser to reach the loopback callback.
@@ -77,6 +82,7 @@ pub fn run(cmd: McpCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliErr
         McpCmd::Remove { name, scope } => {
             return super::mcp_config::remove(&name, scope, ctx, global);
         }
+        McpCmd::Browser { cmd } => return super::mcp_browser::run(cmd, ctx, global),
         _ => {}
     }
     let resolved = ctx.config()?;
@@ -123,7 +129,8 @@ pub fn run(cmd: McpCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliErr
         | McpCmd::Serve(_)
         | McpCmd::List
         | McpCmd::Add(_)
-        | McpCmd::Remove { .. } => {
+        | McpCmd::Remove { .. }
+        | McpCmd::Browser { .. } => {
             unreachable!("handled before configuration loading")
         }
     }

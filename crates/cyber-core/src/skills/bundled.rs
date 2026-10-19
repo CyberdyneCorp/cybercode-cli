@@ -118,8 +118,9 @@ mod tests {
             location: tmp.join("repo"),
             home: tmp.join("home"),
             global_config_dir: tmp.join("global"),
-            compat: false,
+            compat: crate::skills::SkillCompat::NONE,
             extra: vec![],
+            plugins: Vec::new(),
         };
         let initial = all(&scope);
         assert_eq!(initial.skills.len(), 5);

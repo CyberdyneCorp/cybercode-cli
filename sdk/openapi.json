@@ -5559,6 +5559,189 @@
         ],
         "description": "The answer to a side question."
       },
+      "Data_BrowserEvidenceReport": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/BrowserEvidenceReport"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "BrowserEvidenceReport": {
+        "type": "object",
+        "properties": {
+          "workspace_hash": {
+            "type": "string",
+            "description": "The workspace content hash now."
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserEvidenceView"
+            }
+          }
+        },
+        "required": [
+          "workspace_hash",
+          "evidence"
+        ],
+        "description": "`GET /sessions/{id}/browser/evidence`."
+      },
+      "BrowserEvidenceView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "call_id": {
+            "type": "string",
+            "description": "The tool call that recorded it."
+          },
+          "status": {
+            "$ref": "#/components/schemas/EvidenceStatus"
+          },
+          "workspace_hash": {
+            "type": "string",
+            "description": "The workspace content hash when it was recorded (`sha256:…`), or `unavailable`."
+          },
+          "url": {
+            "type": "string",
+            "description": "The page URL (for a startup failure, the readiness URL)."
+          },
+          "viewport": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Viewport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "time_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What was done, oldest first (`navigate http://…`, `click Submit`, …)."
+          },
+          "observed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What the browser actually returned."
+          },
+          "not_run": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Checks that did not run, so a report never presents them as passed."
+          },
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserArtifact"
+            }
+          },
+          "stale": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "call_id",
+          "status",
+          "workspace_hash",
+          "url",
+          "time_ms",
+          "actions",
+          "observed",
+          "not_run",
+          "artifacts",
+          "stale"
+        ],
+        "description": "One record in a report: stale once the workspace hash it was recorded under differs\nfrom the current one (or either is unavailable)."
+      },
+      "EvidenceStatus": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "observed",
+            "description": "The browser observed the page; see `observed` and `not_run`."
+          },
+          {
+            "type": "string",
+            "const": "startup_failed",
+            "description": "The dev server exited, or its readiness check timed out, before the page could be\ntested: nothing was observed."
+          }
+        ],
+        "description": "What an evidence record is about."
+      },
+      "Viewport": {
+        "type": "object",
+        "properties": {
+          "width": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "height": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "width",
+          "height"
+        ],
+        "description": "The browser viewport, when the server reported or was asked for one."
+      },
+      "BrowserArtifact": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "`screenshot`, `console`, `network`, `snapshot` or `log`."
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string",
+            "description": "The managed local copy."
+          }
+        },
+        "required": [
+          "kind",
+          "sha256",
+          "size",
+          "media_type",
+          "path"
+        ],
+        "description": "A stored screenshot, console or network capture, or a dev server log tail."
+      },
       "Page_Message": {
         "type": "object",
         "properties": {
@@ -6474,6 +6657,399 @@
         ],
         "description": "A model offered to clients."
       },
+      "Located_PluginList": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PluginList"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "PluginList": {
+        "type": "object",
+        "properties": {
+          "plugins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PluginStatus"
+            }
+          },
+          "pure": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "plugins",
+          "pure"
+        ],
+        "description": "Every listed plugin of a Location and whether pure mode is on (`GET /plugins`)."
+      },
+      "PluginStatus": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/PluginScope"
+          },
+          "state": {
+            "$ref": "#/components/schemas/PluginState"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/Source"
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "commit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "root": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unsigned": {
+            "type": "boolean",
+            "description": "Signatures are not verified yet, so every plugin is listed as `unsigned`."
+          },
+          "host": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HostStatus"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The host process of a loaded plugin that runs code (`main`)."
+          }
+        },
+        "required": [
+          "name",
+          "scope",
+          "state",
+          "source",
+          "unsigned"
+        ]
+      },
+      "PluginScope": {
+        "type": "string",
+        "enum": [
+          "user",
+          "project",
+          "local"
+        ]
+      },
+      "PluginState": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "active",
+              "disabled",
+              "not_installed",
+              "invalid",
+              "untrusted"
+            ]
+          },
+          {
+            "type": "string",
+            "const": "pure",
+            "description": "`--pure` or `CYBER_PURE=1`."
+          },
+          {
+            "type": "string",
+            "const": "policy",
+            "description": "A managed `policy.plugins.disabled` entry, or a malformed managed policy."
+          },
+          {
+            "type": "string",
+            "const": "changed",
+            "description": "The tree no longer matches the installed digest."
+          },
+          {
+            "type": "string",
+            "const": "shadowed",
+            "description": "Another scope supplies the plugin of this name."
+          }
+        ],
+        "description": "Why a listed plugin is or is not loaded."
+      },
+      "Source": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "const": "path"
+              }
+            },
+            "required": [
+              "type",
+              "path"
+            ],
+            "description": "A local directory, used in place. A relative path is relative to the project root\n(project and local scope) or the config directory (user scope)."
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "package": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "const": "npm"
+              }
+            },
+            "required": [
+              "type",
+              "package"
+            ],
+            "description": "An npm package spec, packed with lifecycle scripts disabled: a registry name\n(`@scope/name@range`), a tarball or a local package directory."
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "ref": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "const": "git"
+              }
+            },
+            "required": [
+              "type",
+              "url"
+            ],
+            "description": "A git repository; `ref` is a branch, tag or commit and `path` a subdirectory."
+          }
+        ],
+        "description": "Where a plugin comes from."
+      },
+      "HostStatus": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/HostState"
+          },
+          "runtime": {
+            "$ref": "#/components/schemas/Runtime"
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/Capabilities"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tools the host contributed in `initialize`."
+          },
+          "crashes": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "Crashes within the last 10 minutes."
+          }
+        },
+        "required": [
+          "state",
+          "runtime",
+          "capabilities",
+          "tools",
+          "crashes"
+        ],
+        "description": "A plugin host's runtime status (`plugins-marketplace` → Plugin host process)."
+      },
+      "HostState": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "starting",
+              "running"
+            ]
+          },
+          {
+            "type": "string",
+            "const": "not_started",
+            "description": "No Session has opened this Location yet."
+          },
+          {
+            "type": "string",
+            "const": "restarting",
+            "description": "Waiting for its backoff after a crash."
+          },
+          {
+            "type": "string",
+            "const": "disabled",
+            "description": "Crashed too often; off for the rest of the process."
+          },
+          {
+            "type": "string",
+            "const": "failed",
+            "description": "Cannot start: a protocol mismatch, invalid settings, a missing runtime or sandbox."
+          }
+        ],
+        "description": "Where a plugin host process is in its lifecycle."
+      },
+      "Runtime": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "node",
+              "bun",
+              "deno",
+              "python"
+            ]
+          },
+          {
+            "type": "string",
+            "const": "native",
+            "description": "`main` is itself an executable."
+          }
+        ],
+        "description": "How the host process of `main` is started."
+      },
+      "Capabilities": {
+        "type": "object",
+        "properties": {
+          "fs.read": {
+            "type": "boolean"
+          },
+          "fs.write": {
+            "type": "boolean"
+          },
+          "network": {
+            "$ref": "#/components/schemas/NetworkCapability"
+          },
+          "shell": {
+            "type": "boolean"
+          },
+          "secrets": {
+            "type": "boolean"
+          },
+          "session.prompt": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "fs.read",
+          "fs.write",
+          "network",
+          "shell",
+          "secrets",
+          "session.prompt"
+        ],
+        "description": "The declared capabilities; anything not declared is denied."
+      },
+      "NetworkCapability": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "none"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "description": "Not declared: every connection is a sandbox denial."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "any"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "description": "`\"network\": true`."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "hosts"
+              },
+              "hosts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "kind",
+              "hosts"
+            ],
+            "description": "`\"network\": { \"hosts\": [...] }`: only these hosts, through the allowlist proxy."
+          }
+        ],
+        "description": "Network access a plugin declares."
+      },
       "Located_HookReview": {
         "type": "object",
         "properties": {
@@ -6810,11 +7386,19 @@
               "null"
             ],
             "description": "Why a present policy could not be used. Every non-managed hook is refused."
+          },
+          "plugins_disabled": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "`policy.plugins.disabled`: plugin names no scope may enable."
           }
         },
         "required": [
           "sources",
-          "managed_only"
+          "managed_only",
+          "plugins_disabled"
         ],
         "description": "The hook-related state of the managed policy for one configuration load."
       },
@@ -7631,7 +8215,8 @@
         "enum": [
           "global",
           "project",
-          "runtime"
+          "runtime",
+          "plugin"
         ]
       },
       "CommandSourceKind": {
@@ -7773,6 +8358,11 @@
             "type": "string",
             "const": "config",
             "description": "A local path from the `skills` configuration."
+          },
+          {
+            "type": "string",
+            "const": "plugin",
+            "description": "A loaded plugin's `skills/` folder."
           }
         ],
         "description": "The scope a skill was discovered in."
@@ -12423,6 +13013,47 @@
         }
       }
     },
+    "/api/v1/sessions/{sessionID}/browser/evidence": {
+      "get": {
+        "operationId": "v1.session.browserEvidence",
+        "summary": "Browser verification evidence of the Session, each record marked stale when the workspace changed since",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_BrowserEvidenceReport"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{sessionID}/messages": {
       "get": {
         "operationId": "v1.message.list",
@@ -13315,6 +13946,55 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Located_Array_of_ModelInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins": {
+      "get": {
+        "operationId": "v1.plugin.list",
+        "summary": "List the Location's plugins with scope, state and trust without loading them",
+        "tags": [
+          "plugin"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_PluginList"
                 }
               }
             }

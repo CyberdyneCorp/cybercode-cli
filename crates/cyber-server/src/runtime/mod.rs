@@ -13,10 +13,15 @@ mod auto;
 mod auto_override;
 pub use auto_override::AutoOverrideReceipt;
 pub mod auto_statistics;
+pub mod browser_evidence;
 mod budget;
 mod bus;
 mod child_ownership;
 mod child_usage;
+pub use browser_evidence::{
+    BrowserArtifact, BrowserEvidence, BrowserEvidenceReport, BrowserEvidenceView, EvidenceStatus,
+    Viewport,
+};
 mod client_hooks;
 pub use client_hooks::{ClientHook, ClientHooks};
 mod compaction;

@@ -12,6 +12,15 @@ pub struct ServerSelection {
     /// Provided by the OS-managed policy (`mcp` → Organization MCP controls); exempt
     /// from `policy.mcp` and from checkout approval.
     pub managed: bool,
+    /// The plugin whose `.mcp.json` contributed the server. Such a server always runs
+    /// sandboxed to exactly the plugin's declared capabilities, like the plugin's host.
+    pub plugin: Option<PluginServer>,
+}
+
+/// A plugin-contributed server's plugin.
+pub struct PluginServer {
+    pub root: std::path::PathBuf,
+    pub capabilities: cyber_core::plugins::Capabilities,
 }
 
 /// Inspect all contributing leaves; a global command with project-controlled arguments
@@ -66,7 +75,8 @@ pub fn inspect_server(
         .remove(name)
         .ok_or("MCP server is absent from loaded configuration")?;
     let origin = provenance(resolved, name)?;
-    let requires_sandbox = sandbox_selected(resolved, location)?;
+    let plugin = origin.plugin.as_deref().map(plugin_server).transpose()?;
+    let requires_sandbox = plugin.is_some() || sandbox_selected(resolved, location)?;
     let digest = definition
         .digest(name)
         .map_err(|_| "MCP server digest unavailable")?;
@@ -76,6 +86,18 @@ pub fn inspect_server(
         requires_sandbox,
         requires_approval: origin.project,
         managed: origin.managed,
+        plugin,
+    })
+}
+
+/// The capabilities a plugin root's manifest declares; an unreadable manifest refuses
+/// the server rather than running it unconfined.
+fn plugin_server(root: &Path) -> Result<PluginServer, String> {
+    let manifest = cyber_core::plugins::Manifest::read(root)
+        .map_err(|_| "MCP server's plugin manifest is unreadable")?;
+    Ok(PluginServer {
+        root: root.to_path_buf(),
+        capabilities: manifest.capabilities,
     })
 }
 
@@ -84,6 +106,8 @@ pub fn inspect_server(
 struct Origin {
     project: bool,
     managed: bool,
+    /// The root of a plugin that contributed a leaf.
+    plugin: Option<std::path::PathBuf>,
 }
 
 fn provenance(resolved: &Resolved, name: &str) -> Result<Origin, String> {
@@ -93,6 +117,7 @@ fn provenance(resolved: &Resolved, name: &str) -> Result<Origin, String> {
     let mut origin = Origin {
         project: false,
         managed: true,
+        plugin: None,
     };
     let mut found = false;
     for (key, source) in &resolved.sources {
@@ -105,7 +130,10 @@ fn provenance(resolved: &Resolved, name: &str) -> Result<Origin, String> {
         }
         origin.managed &= source.starts_with("managed:");
         origin.project |= source.starts_with("project:");
-        if !["global:", "project:", "managed:", "env:", "cli:"]
+        if let Some(root) = plugin_root(source) {
+            origin.plugin = Some(root);
+        }
+        if !["global:", "project:", "managed:", "env:", "cli:", "plugin:"]
             .iter()
             .any(|prefix| source.starts_with(prefix))
         {
@@ -116,6 +144,12 @@ fn provenance(resolved: &Resolved, name: &str) -> Result<Origin, String> {
         return Err("MCP server provenance is absent".into());
     }
     Ok(origin)
+}
+
+/// The root of a `plugin:<name>@<version>:<root>` layer, which only the loader writes.
+fn plugin_root(source: &str) -> Option<std::path::PathBuf> {
+    let (_, root) = source.strip_prefix("plugin:")?.split_once(':')?;
+    Some(std::path::PathBuf::from(root))
 }
 
 fn sandbox_selected(resolved: &Resolved, location: &Path) -> Result<bool, String> {

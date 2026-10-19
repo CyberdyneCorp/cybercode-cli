@@ -254,6 +254,13 @@ fn scope(source: &str) -> Result<HookScope, String> {
     if source.starts_with("cli:") || source.starts_with("env:") {
         return Ok(HookScope::Invocation);
     }
+    // `plugin:<name>@<version>:<root>`, written only by the loader for a trusted plugin.
+    if source
+        .strip_prefix("plugin:")
+        .is_some_and(|rest| rest.contains('@'))
+    {
+        return Ok(HookScope::Plugin);
+    }
     Err(format!("unsupported hook origin: {source}"))
 }
 

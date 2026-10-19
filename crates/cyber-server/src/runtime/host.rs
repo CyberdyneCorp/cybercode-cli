@@ -519,6 +519,11 @@ pub trait ToolHost: Send + Sync {
     fn shutdown(&self) -> BoxFuture<'_, ()> {
         Box::pin(async {})
     }
+    /// The Session ended (archived or deleted): stop what it owns outside the runtime,
+    /// such as its browser and dev servers. Runs after SessionEnd hooks observed it.
+    fn end_session(&self, _session_id: &str) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
     /// A digest of the Location's resolved configuration, compared at each Safe
     /// Boundary to fire `ConfigChange`; `None` (no configuration resolver) never fires.
     fn config_digest(&self, _directory: &str) -> Option<String> {

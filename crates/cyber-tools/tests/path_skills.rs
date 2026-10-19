@@ -342,6 +342,8 @@ async fn post_hook_failure_keeps_the_mutation_failure_and_durable_reminder() {
                     warnings: Vec::new(),
                     layers: Vec::new(),
                     managed: Default::default(),
+                    plugins: Vec::new(),
+                    pure: false,
                     trust: TrustReport {
                         checkout_root: root.clone(),
                         trusted: true,

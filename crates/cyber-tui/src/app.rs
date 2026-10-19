@@ -154,6 +154,10 @@ pub enum Action {
     LoadSkills,
     /// Refetch `/commands`, as MCP prompt commands come and go with connections.
     LoadCommands,
+    /// `/plugins` (`reload: false`) or `/reload-plugins`: the Location's plugins.
+    LoadPlugins {
+        reload: bool,
+    },
     SwitchModel(String),
     SwitchMode(String),
     Fork,
@@ -190,6 +194,7 @@ pub enum PickerKind {
     Models,
     Modes,
     Skills,
+    Plugins,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1539,6 +1544,8 @@ impl App {
             }
             "model" | "models" => vec![Action::LoadModels],
             "skills" => vec![Action::LoadSkills],
+            "plugins" => vec![Action::LoadPlugins { reload: false }],
+            "reload-plugins" => vec![Action::LoadPlugins { reload: true }, Action::LoadCommands],
             "resume" | "sessions" => vec![Action::LoadSessions],
             "rename" => self.rename_command(args),
             "btw" | "side" => self.side_command(args),
@@ -1743,6 +1750,8 @@ impl App {
             PickerKind::Sessions | PickerKind::Children => vec![Action::Open(choice.key)],
             PickerKind::Models => vec![Action::SwitchModel(choice.key)],
             PickerKind::Modes => self.select_mode(&choice.key),
+            // Plugin rows only inform; changes go through `cyber plugins`.
+            PickerKind::Plugins => Vec::new(),
             // A user-invocable skill starts its command; other rows only inform.
             PickerKind::Skills => {
                 if !choice.key.is_empty() {

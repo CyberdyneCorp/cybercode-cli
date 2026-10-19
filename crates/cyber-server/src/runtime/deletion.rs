@@ -79,14 +79,25 @@ impl Runtime {
     }
 
     /// What the Sessions own outside the database: the copies of the files they sent
-    /// (`<data>/sent/<file_id>/`) and their process Job logs (`<data>/jobs/<id>.log`).
+    /// (`<data>/sent/<file_id>/`), their browser evidence artifacts
+    /// (`<data>/browser/artifacts/<session_id>/`) and their process Job logs
+    /// (`<data>/jobs/<id>.log`).
     async fn owned_artifacts(&self, ids: &[String]) -> Result<Vec<PathBuf>, RuntimeError> {
         let mut artifacts = Vec::new();
         for id in ids {
             let handle = self.inner.handle(id).await?;
             let state = handle.state.lock().await;
             artifacts.extend(state.sent_files.values().filter_map(sent_copy));
+            artifacts.extend(
+                state
+                    .browser_evidence
+                    .iter()
+                    .flat_map(|evidence| &evidence.artifacts)
+                    .filter_map(|artifact| browser_artifacts(id, artifact)),
+            );
         }
+        artifacts.sort();
+        artifacts.dedup();
         artifacts.extend(
             self.jobs(None)?
                 .iter()
@@ -201,6 +212,17 @@ fn job_log(job: &super::Job) -> Option<PathBuf> {
     let managed = path.file_name()? == format!("{}.log", job.id).as_str()
         && path.parent()?.file_name()? == "jobs";
     managed.then(|| path.to_path_buf())
+}
+
+/// The directory of a browser artifact, when it has the managed shape
+/// `browser/artifacts/<session_id>/<file>`: nothing else is ever removed.
+fn browser_artifacts(session_id: &str, artifact: &super::BrowserArtifact) -> Option<PathBuf> {
+    let dir = Path::new(&artifact.path).parent()?;
+    let artifacts = dir.parent()?;
+    let managed = dir.file_name()? == session_id
+        && artifacts.file_name()? == "artifacts"
+        && artifacts.parent()?.file_name()? == "browser";
+    managed.then(|| dir.to_path_buf())
 }
 
 fn remove_artifacts(artifacts: &[PathBuf]) {

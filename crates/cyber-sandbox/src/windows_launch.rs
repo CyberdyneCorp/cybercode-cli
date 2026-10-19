@@ -1,4 +1,5 @@
-//! LPAC launch with fixed registry initialization authority. Tool dispatch remains disabled.
+//! LPAC launch with fixed registry initialization authority. Production dispatch reaches
+//! it through `cyber-sandbox-exec --appcontainer` ([`crate::windows_confine`]).
 #![allow(unsafe_code)]
 
 mod capabilities;
@@ -82,6 +83,33 @@ pub fn spawn_with_stdio(
     )
 }
 
+/// Launch with the supplied streams for a sandboxed command. `network` adds only the
+/// `internetClient` capability (`sandbox.network: "on"`); without it the identity has no
+/// network access at all.
+pub fn spawn_confined(
+    profile: &Profile,
+    program: &Path,
+    args: &[OsString],
+    environment: &BTreeMap<String, String>,
+    directory: &Path,
+    streams: StandardStreams<'_>,
+    network: bool,
+) -> io::Result<ContainerChild> {
+    spawn_inner(
+        profile,
+        program,
+        args,
+        environment,
+        directory,
+        Some(streams),
+        if network {
+            LaunchPolicy::Network
+        } else {
+            LaunchPolicy::Isolated
+        },
+    )
+}
+
 /// Ordinary AppContainer positive control; never used by tool dispatch.
 #[cfg(feature = "windows-test-controls")]
 pub fn spawn_with_package_allowances_for_test(
@@ -105,6 +133,7 @@ pub fn spawn_with_package_allowances_for_test(
 #[derive(Clone, Copy)]
 enum LaunchPolicy {
     Isolated,
+    Network,
     #[cfg(feature = "windows-test-controls")]
     PackageAllowance,
     #[cfg(feature = "windows-test-controls")]
@@ -153,11 +182,11 @@ fn spawn_inner(
     environment_block(environment)?;
     let temp = PrivateTemp::new(profile)?;
     let environment = temp.environment(environment)?;
-    #[cfg(feature = "windows-test-controls")]
-    let runtime_capabilities = !matches!(policy, LaunchPolicy::PackageAllowance);
-    #[cfg(not(feature = "windows-test-controls"))]
-    let runtime_capabilities = matches!(policy, LaunchPolicy::Isolated);
-    let capability_owner = capabilities::CapabilitySet::new(runtime_capabilities)?;
+    let isolated = !package_allowance(policy);
+    let mut capability_owner = capabilities::CapabilitySet::new(isolated)?;
+    if matches!(policy, LaunchPolicy::Network) {
+        capability_owner = capability_owner.with(capabilities::CapabilitySet::internet()?);
+    }
     #[cfg(feature = "windows-test-controls")]
     let extra = if matches!(policy, LaunchPolicy::UnexpectedNetworkCapability) {
         capabilities::CapabilitySet::network_control()?
@@ -181,11 +210,7 @@ fn spawn_inner(
     let jobs = [job.handle()];
     let streams = streams.map(InheritedStreams::new).transpose()?;
     let handles = streams.as_ref().map(InheritedStreams::handles);
-    #[cfg(feature = "windows-test-controls")]
-    let opt_out = !matches!(policy, LaunchPolicy::PackageAllowance);
-    #[cfg(not(feature = "windows-test-controls"))]
-    let opt_out = matches!(policy, LaunchPolicy::Isolated);
-    let package_policy = opt_out.then_some(PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT);
+    let package_policy = isolated.then_some(PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT);
     let mut attributes = Attributes::new(
         &capabilities,
         &jobs,
@@ -238,6 +263,14 @@ fn spawn_inner(
     // User code cannot run until both ownership and identity checks have succeeded.
     child._temp._reservation.resume(thread.as_handle())?;
     Ok(child)
+}
+
+/// The broad application-package positive control, which keeps package allowances.
+fn package_allowance(_policy: LaunchPolicy) -> bool {
+    #[cfg(feature = "windows-test-controls")]
+    return matches!(_policy, LaunchPolicy::PackageAllowance);
+    #[cfg(not(feature = "windows-test-controls"))]
+    false
 }
 
 struct InheritedStreams([OwnedHandle; 3]);

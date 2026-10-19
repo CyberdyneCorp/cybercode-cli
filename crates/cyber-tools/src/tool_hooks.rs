@@ -77,6 +77,21 @@ impl BuiltinHost {
         cyber_core::hooks::HookReview::from_config(&(config.resolve)(location)?, &config.trust)
     }
 
+    /// Every plugin the Location's scopes list, with its state (`plugins-marketplace` →
+    /// Plugin CLI, `/plugins`), from the same resolution hooks and MCP use.
+    pub fn plugins(&self, location: &Path) -> Result<cyber_core::plugins::PluginList, String> {
+        let config = self
+            .hook_config
+            .get()
+            .ok_or("Plugin configuration resolver is unavailable")?;
+        let mut resolved = (config.resolve)(location)?;
+        self.plugin_host_status(location, &mut resolved.plugins);
+        Ok(cyber_core::plugins::PluginList {
+            plugins: resolved.plugins,
+            pure: resolved.pure,
+        })
+    }
+
     /// Approve only an exact, currently resolved checkout-scoped definition.
     pub fn trust_hook(&self, location: &Path, digest: &str) -> Result<(), String> {
         let config = self

@@ -90,6 +90,11 @@ pub fn resolve_agents(config: &Value) -> Result<BTreeMap<String, AgentProfile>, 
     Ok(resolved)
 }
 
+/// The names of the built-in and system agents.
+pub(crate) fn builtin_names() -> std::collections::BTreeSet<String> {
+    builtins().into_keys().collect()
+}
+
 fn builtin_agent(name: &str) -> bool {
     matches!(name, "build" | "explore" | "general" | "reviewer") || system_agent(name)
 }

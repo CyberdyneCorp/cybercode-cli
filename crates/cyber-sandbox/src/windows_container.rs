@@ -3,8 +3,10 @@
 #![allow(unsafe_code)]
 
 mod identity;
+mod journal;
 mod tree;
 pub use identity::IdentityGrant;
+pub use journal::{GrantJournal, has_entries, profile_registered, sweep};
 pub use tree::{ExistingTreeGrant, ExistingTreePolicy, ExistingTreeRoot, TreeInventory};
 
 use std::fs::{File, OpenOptions};
@@ -175,7 +177,25 @@ impl Profile {
             .lock()
             .map_err(|_| io::Error::other("Profile preparation lock poisoned"))?;
         self.ensure_unstarted()?;
-        tree::grant_forest(self, roots, limit)
+        tree::grant_forest(self, roots, limit, false)
+    }
+
+    /// As [`Self::grant_existing_forest`], and objects created later inside a granted
+    /// directory inherit its entries, so a command can keep using the files it creates.
+    /// The parent entries are revoked on close; inherited copies name only this
+    /// single-use identity.
+    pub fn grant_existing_forest_inheritable(
+        &self,
+        roots: &[ExistingTreeRoot],
+        limit: usize,
+    ) -> io::Result<ExistingTreeGrant> {
+        let _preparation = self
+            .0
+            .preparation
+            .lock()
+            .map_err(|_| io::Error::other("Profile preparation lock poisoned"))?;
+        self.ensure_unstarted()?;
+        tree::grant_forest(self, roots, limit, true)
     }
 
     fn grant_relocatable_object(

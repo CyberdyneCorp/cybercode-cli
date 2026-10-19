@@ -150,8 +150,11 @@ async fn native_bash_preserves_output_environment_and_closed_stdin() {
     assert!(output.contains("Exit code: 23"), "{output}");
 }
 
+/// Without the helper nothing launches. With it the default sandbox confines Git Bash in
+/// the AppContainer, so a write outside the roots never lands, whether the shell starts
+/// inside the container or the launch is refused.
 #[tokio::test]
-async fn missing_helper_and_unavailable_confinement_refuse_execution() {
+async fn missing_helper_refuses_and_sandboxed_bash_cannot_write_outside_roots() {
     let f = fixture(None);
     let outcome = f
         .call(
@@ -163,16 +166,20 @@ async fn missing_helper_and_unavailable_confinement_refuse_execution() {
     assert!(failed(outcome).contains("required for Windows process ownership"));
     assert!(!f.repo.join("unexpected-launch").exists());
     let f = fixture(cyber_sandbox::find_helper());
-    f.set_config(json!({"permissions": {"bash": "allow"}}));
+    f.set_config(json!({"permissions": {"bash": "allow", "external_directory": "allow"}}));
+    let outside = std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+        .join("Temp")
+        .join(format!("cyber-bash-{}.txt", std::process::id()));
+    let _ = std::fs::remove_file(&outside);
+    let target = outside.display().to_string().replace('\\', "/");
     let outcome = f
         .call(
             "default",
             "bash",
-            json!({"command": "touch unexpected-launch"}),
+            json!({"command": format!("echo escaped > '{target}'")}),
         )
         .await;
-    assert!(failed(outcome).contains("SandboxUnavailableError"));
-    assert!(!f.repo.join("unexpected-launch").exists());
+    assert!(!outside.exists(), "{outcome:?}");
 }
 
 fn publish(root: &Path, name: &str) {

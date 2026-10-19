@@ -67,9 +67,21 @@ fn detection_parses_three_source_shapes_and_reports_raw_counts_without_values() 
         report
             .tools
             .iter()
-            .map(|t| (t.counts_complete, t.counts.sessions, t.read_time_coverage))
+            .map(|t| {
+                let r = &t.read_time;
+                (
+                    t.counts_complete,
+                    t.counts.sessions,
+                    (r.agents, r.commands, r.skills, r.mcp_servers, r.hooks),
+                )
+            })
             .collect::<Vec<_>>(),
-        vec![(false, None, None); 3]
+        // Only the Claude skill and command sit in roots the runtime reads by itself.
+        vec![
+            (false, Some(0), (0, 0, 0, 0, 0)),
+            (false, Some(0), (0, 0, 0, 0, 0)),
+            (false, Some(0), (0, 1, 1, 0, 0)),
+        ]
     );
     assert!(!serde_json::to_string(&report).unwrap().contains("private-"));
     assert!(!project.join(".cyber").exists());

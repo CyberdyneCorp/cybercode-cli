@@ -566,7 +566,7 @@ fn appended_selector_indices_and_pending_inherited_fields_reference_original_doc
     write(
         &roots.home,
         ".claude/settings.json",
-        r#"{"permissions":{"allow":["Bash(git status)"]},"env":{"EXAMPLE":"global-only"}}"#,
+        r#"{"permissions":{"allow":["Bash(git status)"]},"outputStyle":"global-only"}"#,
     );
     write(
         &roots.directory,
@@ -595,7 +595,7 @@ fn appended_selector_indices_and_pending_inherited_fields_reference_original_doc
         .output()
         .report
         .iter()
-        .find(|r| r.status == "not imported" && r.sources.iter().any(|s| s.field == "/env/EXAMPLE"))
+        .find(|r| r.status == "not imported" && r.sources.iter().any(|s| s.field == "/outputStyle"))
         .unwrap();
     assert_eq!(pending.source, roots.home.join(".claude/settings.json"));
     assert!(
@@ -1359,7 +1359,7 @@ fn layered_opencode_agents_append_permissions_with_original_indices_and_keep_nat
     write(
         &roots.directory,
         "opencode.json",
-        r#"{"agents":{"review":{"system":"Review the code.","permissions":[{"action":"shell","resource":"git push *","effect":"deny"}]}},"permissions":[{"action":"read","resource":".env","effect":"deny"}],"compaction":{"preserve_recent_tokens":12000},"instructions":["private-instruction-path"],"commands":{"audit":{"template":"private-command-template"}}}"#,
+        r#"{"agents":{"review":{"system":"Review the code.","permissions":[{"action":"shell","resource":"git push *","effect":"deny"}]}},"permissions":[{"action":"read","resource":".env","effect":"deny"}],"compaction":{"preserve_recent_tokens":12000},"instructions":["docs/guidelines.md","../outside.md"],"commands":{"audit":{"template":"private-command-template"}}}"#,
     );
     write(
         &roots.directory,
@@ -1411,7 +1411,16 @@ fn layered_opencode_agents_append_permissions_with_original_indices_and_keep_nat
             .iter()
             .any(|r| r.field == "/compaction/keep/tokens" && r.status == "merged")
     );
-    assert!(!output.diff.contains("private-instruction-path"));
+    // A relative instruction path beside the target keeps its meaning; one leaving it
+    // would resolve elsewhere and is reported.
+    assert!(output.diff.contains("docs/guidelines.md"));
+    assert!(!output.diff.contains("outside.md"));
+    assert!(
+        output
+            .report
+            .iter()
+            .any(|r| r.field == "/instructions/1" && r.status == "not imported")
+    );
     assert!(output.diff.contains("private-command-template"));
     assert!(output.report.iter().any(|r| {
         r.field == "/commands/audit/template"
@@ -1661,4 +1670,321 @@ fn unsupported_higher_priority_commands_suppress_static_fallbacks() {
         )
         .is_err()
     );
+}
+
+fn record<'a>(
+    output: &'a cyber_core::import::PreviewOutput,
+    field: &str,
+) -> &'a cyber_core::import::MappingRecord {
+    output
+        .report
+        .iter()
+        .find(|r| r.field == field)
+        .unwrap_or_else(|| panic!("{field}: {:#?}", output.report))
+}
+
+#[test]
+fn claude_hooks_map_events_and_list_unmappable_under_not_imported() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    write(
+        &roots.directory,
+        ".claude/settings.json",
+        r#"{"hooks":{
+            "PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"$CLAUDE_PROJECT_DIR/.claude/guard.sh","timeout":10}]}],
+            "Setup":[{"hooks":[{"type":"command","command":"./bootstrap.sh"}]}],
+            "PostModelSwitch":[{"hooks":[{"type":"command","command":"./model.sh"}]}],
+            "WorktreeCheckout":[{"hooks":[{"type":"command","command":"./never.sh"}]}]
+        }}"#,
+    );
+    write(
+        &roots.home,
+        ".claude/settings.json",
+        r#"{"hooks":{"PreToolUse":[{"matcher":"Edit|Write","hooks":[{"type":"command","command":"fmt.sh"}]}]}}"#,
+    );
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::Claude),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .unwrap();
+    let output = preview.output();
+    // Settings files contribute hook groups in layer order; no file loses its hooks.
+    assert!(
+        output.diff.contains("\"matcher\": \"{edit,write}\""),
+        "{}",
+        output.diff
+    );
+    assert!(output.diff.contains("\"matcher\": \"bash\""));
+    assert!(output.diff.contains("$CYBER_PROJECT_DIR/.claude/guard.sh"));
+    for event in ["\"Setup\"", "\"PostModelSwitch\""] {
+        assert!(output.diff.contains(event), "{event}: {}", output.diff);
+    }
+    assert!(!output.diff.contains("never.sh"));
+    let skipped = record(output, "/hooks/WorktreeCheckout");
+    assert_eq!(skipped.status, "not imported");
+    assert_eq!(skipped.reason, "hook event has no Cyber Code equivalent");
+    assert_eq!(
+        skipped.source,
+        roots.directory.join(".claude/settings.json")
+    );
+    let global = record(output, "/hooks/PreToolUse/0");
+    assert_eq!(global.status, "imported");
+    assert_eq!(
+        global.sources[0].source,
+        roots.home.join(".claude/settings.json")
+    );
+    let project = record(output, "/hooks/PreToolUse/1");
+    // The project group is the first of its own file.
+    assert!(project.sources[0].field.starts_with("/hooks/PreToolUse/0/"));
+    assert_eq!(
+        project.sources[0].source,
+        roots.directory.join(".claude/settings.json")
+    );
+    // The proposal is a valid native hook configuration.
+    let proposed = proposed(&preview);
+    cyber_core::config::HookSettings::from_config(&proposed).unwrap();
+}
+
+/// The document an import would write, parsed.
+fn proposed(preview: &cyber_core::import::ImportPreview) -> serde_json::Value {
+    let text = preview
+        .edited_text()
+        .expect("the preview changes the target");
+    cyber_core::config::parse_jsonc("proposal", text).unwrap()
+}
+
+#[test]
+fn codex_profiles_and_notify_become_profiles_and_notification_hook() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    write(
+        &roots.home,
+        ".codex/config.toml",
+        r#"profile = "deep"
+notify = ["notify-send", "Codex"]
+approval_policy = { granular = { sandbox_approval = false, rules = false } }
+sandbox_mode = "workspace-write"
+[profiles.deep]
+model = "gpt-6"
+approval_policy = "on-request"
+sandbox_mode = "read-only"
+model_reasoning_effort = "high"
+[shell_environment_policy]
+inherit = "core"
+set = { CI = "1" }
+"#,
+    );
+    write(
+        &roots.home,
+        ".codex/fast.config.toml",
+        "model = \"gpt-6-mini\"\napproval_policy = \"never\"\n",
+    );
+    write(
+        &roots.home,
+        ".codex/hooks.json",
+        r#"{"hooks":{"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"log.sh"}]}]}}"#,
+    );
+    write(
+        &roots.directory,
+        ".codex/rules/git.rules",
+        "prefix_rule(pattern=[\"git\",\"push\"], decision=\"prompt\")\n",
+    );
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::Codex),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .unwrap();
+    let output = preview.output();
+    let proposed = proposed(&preview);
+    codex_proposal_is_native(&proposed);
+    codex_sources_are_attributed(output, &roots);
+    // Every converted field is accepted by the native loader.
+    cyber_core::config::HookSettings::from_config(&proposed).unwrap();
+    profile_keys_are_native(&proposed);
+}
+
+/// The Codex proposal: profiles, notify and hooks.json hooks, environment policy and the
+/// rules of granular approvals.
+fn codex_proposal_is_native(proposed: &serde_json::Value) {
+    assert_eq!(proposed["default_profile"], "deep");
+    assert_eq!(
+        proposed["profiles"]["deep"],
+        serde_json::json!({"model":"openai/gpt-6","mode":"default","sandbox":{"policy":"read-only"}})
+    );
+    assert_eq!(proposed["profiles"]["fast"]["mode"], "dont-ask");
+    let notification = &proposed["hooks"]["Notification"][0]["hooks"][0];
+    assert_eq!(notification["type"], "command");
+    assert!(
+        notification["command"]
+            .as_str()
+            .unwrap()
+            .contains("notify-send")
+    );
+    assert_eq!(proposed["hooks"]["PostToolUse"][0]["matcher"], "bash");
+    assert_eq!(
+        proposed["sandbox"]["env"],
+        serde_json::json!({"mode":"none","set":{"CI":"1"}})
+    );
+    // `granular.rules = false` rejects execpolicy prompts; `sandbox_approval = false`
+    // denies escalation.
+    let rules = proposed["permissions"]["rules"].as_array().unwrap();
+    assert!(
+        rules
+            .iter()
+            .any(|r| r["resource"] == "git push *" && r["effect"] == "deny")
+    );
+    assert!(!rules.iter().any(|r| r["effect"] == "ask"));
+    assert!(
+        rules
+            .iter()
+            .any(|r| r["action"] == "sandbox.escalate" && r["effect"] == "deny")
+    );
+}
+
+fn codex_sources_are_attributed(output: &cyber_core::import::PreviewOutput, roots: &SourceRoots) {
+    assert!(
+        record(output, "/profiles/deep")
+            .sources
+            .iter()
+            .all(|s| s.field.starts_with("/profiles/deep/"))
+    );
+    assert_eq!(
+        record(output, "/profiles/fast").sources[0].source,
+        roots.home.join(".codex/fast.config.toml")
+    );
+    assert!(
+        record(output, "/hooks/Notification/0").sources[0]
+            .field
+            .starts_with("/notify")
+    );
+    assert_eq!(
+        record(output, "/hooks/PostToolUse/0").sources[0].source,
+        roots.home.join(".codex/hooks.json")
+    );
+    assert_eq!(
+        record(output, "/profiles/deep/model_reasoning_effort").status,
+        "not imported"
+    );
+}
+
+/// The native profile overlay keys are valid profile contents.
+fn profile_keys_are_native(config: &serde_json::Value) {
+    for profile in config["profiles"].as_object().unwrap().values() {
+        let keys: Vec<_> = profile.as_object().unwrap().keys().cloned().collect();
+        assert!(
+            keys.iter()
+                .all(|k| ["model", "mode", "sandbox"].contains(&k.as_str())),
+            "{keys:?}"
+        );
+    }
+}
+
+#[test]
+fn markdown_agents_modes_and_settings_map_and_plugins_link_the_migration_guide() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    write(
+        &roots.directory,
+        ".claude/agents/reviewer.md",
+        "---\nname: reviewer\ndescription: Reviews diffs\ntools: Read, Grep\nmodel: opus\n---\nReview the diff.\n",
+    );
+    write(
+        &roots.directory,
+        ".claude/settings.json",
+        r#"{"model":"sonnet","fallbackModel":"haiku","env":{"CI":"1","ANTHROPIC_API_KEY":"sk-private-literal"},"apiKeyHelper":"~/bin/key.sh"}"#,
+    );
+    write(
+        &roots.directory,
+        ".claude/settings.local.json",
+        r#"{"env":{"PERSONAL":"private-local-value"}}"#,
+    );
+    write(
+        &roots.directory,
+        ".claude/skills/deploy/SKILL.md",
+        "---\nname: deploy\ndescription: Deploy\n---\nD\n",
+    );
+    write(
+        &roots.directory,
+        ".opencode/agents/docs.md",
+        "---\ndescription: Writes docs\n---\nWrite docs.\n",
+    );
+    write(
+        &roots.directory,
+        ".opencode/modes/focus.md",
+        "Stay focused.\n",
+    );
+    write(
+        &roots.directory,
+        ".opencode/plugins/notify.ts",
+        "export default {}\n",
+    );
+    let preview = preview_import(&roots, None, ImportScope::Project, &global(&root)).unwrap();
+    let output = preview.output();
+    let proposed = proposed(&preview);
+    settings_and_agents_are_native(&proposed);
+    cyber_core::config::resolve_agents(&proposed).unwrap();
+    assert!(
+        !serde_json::to_string(output)
+            .unwrap()
+            .contains("sk-private-literal")
+    );
+    assert_eq!(record(output, "/apiKeyHelper").status, "not imported");
+    // A personal value stays out of the shared document.
+    assert_eq!(record(output, "/env/PERSONAL").status, "not imported");
+    assert!(!output.diff.contains("private-local-value"));
+    assert_eq!(
+        record(output, "/env/ANTHROPIC_API_KEY").status,
+        "not imported"
+    );
+    let skill = output
+        .report
+        .iter()
+        .find(|r| r.source.ends_with(".claude/skills/deploy/SKILL.md"))
+        .unwrap();
+    assert_eq!(skill.status, "imported");
+    assert!(skill.reason.contains("read-time skill compatibility"));
+    let plugin = output
+        .report
+        .iter()
+        .find(|r| r.source.ends_with(".opencode/plugins/notify.ts"))
+        .unwrap();
+    assert_eq!(plugin.status, "requires manual port");
+    assert!(
+        plugin.reason.contains("migration guide: https://"),
+        "{}",
+        plugin.reason
+    );
+    assert_eq!(
+        record(output, "/agents/reviewer").sources[0].source,
+        roots.directory.join(".claude/agents/reviewer.md")
+    );
+}
+
+/// The Claude settings and the Claude and OpenCode Markdown agents, as native settings.
+fn settings_and_agents_are_native(proposed: &serde_json::Value) {
+    assert_eq!(proposed["model"], "anthropic/claude-sonnet-5-5");
+    assert_eq!(
+        proposed["fallback_models"],
+        serde_json::json!(["anthropic/claude-haiku-4-5"])
+    );
+    assert_eq!(
+        proposed["sandbox"]["env"]["set"],
+        serde_json::json!({"CI":"1"})
+    );
+    let reviewer = &proposed["agents"]["reviewer"];
+    assert_eq!(reviewer["system"], "Review the diff.\n");
+    assert_eq!(reviewer["model"], "anthropic/claude-opus-5-5");
+    assert_eq!(
+        reviewer["tools"]["allow"],
+        serde_json::json!(["read", "grep"])
+    );
+    assert_eq!(proposed["agents"]["docs"]["mode"], "all");
+    assert_eq!(proposed["agents"]["focus"]["mode"], "primary");
 }

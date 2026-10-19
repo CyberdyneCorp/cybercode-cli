@@ -48,6 +48,8 @@ pub struct ManagedPolicy {
     #[serde(skip)]
     #[schemars(skip)]
     pub mcp: McpPolicy,
+    /// `policy.plugins.disabled`: plugin names no scope may enable.
+    pub plugins_disabled: Vec<String>,
 }
 
 /// `policy.mcp`: `allow` (when present, only matching servers may start) and `deny`
@@ -221,6 +223,19 @@ impl ManagedPolicy {
         self.error.is_some() || self.mcp.blocks(name, server)
     }
 
+    /// Why organization policy refuses plugin `name` (`plugins-marketplace` → Install
+    /// scopes): a managed `disabled` entry overrides every scope, and a malformed policy
+    /// refuses every plugin.
+    pub fn blocks_plugin(&self, name: &str) -> Option<String> {
+        if let Some(error) = &self.error {
+            return Some(format!("managed policy is malformed ({error})"));
+        }
+        self.plugins_disabled
+            .iter()
+            .any(|disabled| disabled == name)
+            .then(|| MCP_BLOCKED.to_owned())
+    }
+
     /// The diagnostic shown when non-managed hooks are refused.
     pub fn skip_reason(&self) -> String {
         match &self.error {
@@ -310,6 +325,7 @@ fn malformed(sources: Vec<String>, error: String) -> ManagedRead {
             managed_only: false,
             error: Some(error),
             mcp: McpPolicy::default(),
+            plugins_disabled: Vec::new(),
         },
         hooks: Vec::new(),
         mcp: Vec::new(),
@@ -404,17 +420,48 @@ fn absorb(read: &mut ManagedRead, label: &str, value: Value) -> Result<(), Strin
 
 fn absorb_policy(read: &mut ManagedPolicy, policy: &Value) -> Result<(), String> {
     let policy = policy.as_object().ok_or("policy: expected an object")?;
-    if let Some(key) = policy
-        .keys()
-        .find(|key| !matches!(key.as_str(), "hooks" | "mcp" | "modes" | "sandbox"))
-    {
+    if let Some(key) = policy.keys().find(|key| {
+        !matches!(
+            key.as_str(),
+            "hooks" | "mcp" | "modes" | "plugins" | "sandbox"
+        )
+    }) {
         return Err(format!("policy.{key}: unsupported managed policy key"));
     }
     read.managed_only |= managed_only(policy)?;
     if let Some(mcp) = policy.get("mcp") {
         mcp_policy(&mut read.mcp, mcp)?;
     }
+    if let Some(plugins) = policy.get("plugins") {
+        read.plugins_disabled.extend(disabled_plugins(plugins)?);
+    }
     Ok(())
+}
+
+/// `policy.plugins.disabled`: a list of plugin names.
+fn disabled_plugins(plugins: &Value) -> Result<Vec<String>, String> {
+    let plugins = plugins
+        .as_object()
+        .ok_or("policy.plugins: expected an object")?;
+    if let Some(key) = plugins.keys().find(|key| *key != "disabled") {
+        return Err(format!(
+            "policy.plugins.{key}: unsupported managed policy key"
+        ));
+    }
+    let Some(disabled) = plugins.get("disabled") else {
+        return Ok(Vec::new());
+    };
+    disabled
+        .as_array()
+        .ok_or("policy.plugins.disabled: expected an array")?
+        .iter()
+        .map(|name| {
+            name.as_str()
+                .filter(|name| crate::plugins::valid_name(name))
+                .map(str::to_owned)
+                .ok_or_else(|| format!("policy.plugins.disabled: invalid plugin name {name}"))
+        })
+        .collect()
 }
 
 /// `policy.modes.disable` (a list of Modes) and `policy.sandbox.min_profile` (a profile

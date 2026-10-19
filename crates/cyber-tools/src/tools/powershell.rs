@@ -18,12 +18,13 @@ impl Tool for PowerShell {
     fn def(&self) -> ToolDef {
         def(
             "powershell",
-            "Run a native PowerShell command in the project. stdout and stderr are combined. timeout_ms defaults to 120000 (max 600000). background: true starts a background Job and returns its job_id and log path at once; `task_stop` stops it and a completion notice arrives as a queued message unless notify is false.",
+            "Run a native PowerShell command in the project. stdout and stderr are combined. timeout_ms defaults to 120000 (max 600000). background: true starts a background Job and returns its job_id and log path at once; `task_stop` stops it and a completion notice arrives as a queued message unless notify is false. For a dev server add ready_url (an http(s) URL on localhost): the call then returns once that URL answers, or fails with the log tail when the server exits first or ready_timeout_seconds (default 60, max 600) passes.",
             json!({
                 "type": "object", "required": ["command"], "properties": {
                     "command": {"type": "string"}, "timeout_ms": {"type": "integer"}, "workdir": {"type": "string"},
                     "description": {"type": "string"}, "background": {"type": "boolean"},
-                    "notify": {"type": "boolean"}
+                    "notify": {"type": "boolean"},
+                    "ready_url": {"type": "string"}, "ready_timeout_seconds": {"type": "integer"}
                 }
             }),
             RetrySafety::Never,
@@ -42,6 +43,7 @@ impl Tool for PowerShell {
                 return Err(failed("PowerShell source exceeds the 1 MiB analysis limit"));
             }
             let background = super::background::requested(input)?;
+            let ready = super::dev_server::Readiness::parse(input, background)?;
             let program = installed(&ctx.location).ok_or_else(|| {
                 failed("Neither pwsh.exe nor powershell.exe is installed outside the checkout")
             })?;
@@ -89,8 +91,13 @@ impl Tool for PowerShell {
             )
             .await?;
             if background {
-                return super::background::start(ctx, prepared, &workdir, command, "powershell")
-                    .await;
+                return super::dev_server::start_background(
+                    ctx,
+                    prepared,
+                    (&workdir, command, "powershell"),
+                    ready,
+                )
+                .await;
             }
             let timeout = number(input, "timeout_ms")
                 .unwrap_or(bash::DEFAULT_TIMEOUT_MS)

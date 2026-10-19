@@ -490,3 +490,27 @@ fn launchers_xargs_and_find_exec_cannot_hide_critical_removals() {
         assert_eq!(risk(command), None, "{command}");
     }
 }
+
+#[test]
+fn abbreviated_startup_options_select_the_same_powershell_source() {
+    let critical = encoded_powershell("Remove-Item -LiteralPath /repo");
+    for flags in [
+        format!("-NoP -Enco {critical}"),
+        format!("-nopro -encodedcommand {critical}"),
+        format!("-noprofile -encoded {critical} -nolo -nonint"),
+        "-NoProf -Com 'Remove-Item -LiteralPath /repo'".to_string(),
+    ] {
+        let command = format!("pwsh {flags}");
+        assert_eq!(
+            risk(&command),
+            Some(RemovalRisk::Critical(PathBuf::from("/repo"))),
+            "{command}"
+        );
+    }
+    // `-encodeda…` selects EncodedArguments, never the encoded source.
+    let command = format!("pwsh -NoProfile -EncodedA {critical}");
+    assert!(
+        matches!(risk(&command), Some(RemovalRisk::Unresolved(_))),
+        "{command}"
+    );
+}

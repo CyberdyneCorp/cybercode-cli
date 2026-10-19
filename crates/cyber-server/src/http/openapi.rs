@@ -714,6 +714,13 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         ),
         op(
             "get",
+            "/sessions/{sessionID}/browser/evidence",
+            "v1.session.browserEvidence",
+            "Browser verification evidence of the Session, each record marked stale when the workspace changed since",
+        )
+        .ok::<Data<crate::runtime::BrowserEvidenceReport>>(g),
+        op(
+            "get",
             "/sessions/{sessionID}/messages",
             "v1.message.list",
             "List messages",
@@ -839,6 +846,14 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         op("get", "/models", "v1.model.list", "Models, available first")
             .located()
             .ok::<Located<Vec<ModelInfo>>>(g),
+        op(
+            "get",
+            "/plugins",
+            "v1.plugin.list",
+            "List the Location's plugins with scope, state and trust without loading them",
+        )
+        .located()
+        .ok::<Located<cyber_core::plugins::PluginList>>(g),
         op(
             "get",
             "/hooks",
