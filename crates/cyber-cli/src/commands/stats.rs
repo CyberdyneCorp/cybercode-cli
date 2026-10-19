@@ -27,6 +27,15 @@ pub struct StatsArgs {
     /// Tool calls by name.
     #[arg(long)]
     pub tools: bool,
+    /// One row per usage origin (`user`, `session`, `client`, `job`, `mcp`, ...).
+    #[arg(long = "by", value_enum, value_name = "GROUP")]
+    pub by: Option<Group>,
+}
+
+/// What `--by` groups usage by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum Group {
+    Origin,
 }
 
 pub fn run(args: StatsArgs, ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
@@ -238,6 +247,9 @@ fn print_text(s: &Value, args: &StatsArgs) {
     if args.models {
         print_models(s);
     }
+    if args.by == Some(Group::Origin) {
+        print_origins(s);
+    }
     if let Some(tools) = s["tools"].as_array() {
         println!();
         println!("Tools");
@@ -267,6 +279,28 @@ fn print_models(s: &Value) {
             share,
             n(&m["turns"]),
             n(&m["sessions"])
+        );
+    }
+}
+
+fn print_origins(s: &Value) {
+    println!();
+    println!(
+        "{:<16} {:>14} {:>12} {:>7} {:>9}",
+        "Origin", "Tokens", "Cost", "Turns", "Sessions"
+    );
+    for o in s["origins"].as_array().into_iter().flatten() {
+        let cost = match (o["cost"].as_f64(), n(&o["unpriced_steps"])) {
+            (None, _) => "—".to_owned(),
+            (Some(c), 0) => money(c),
+            (Some(c), _) => format!("≥ {}", money(c)),
+        };
+        println!(
+            "{:<16} {:>14} {cost:>12} {:>7} {:>9}",
+            text(&o["origin"]),
+            n(&o["total_tokens"]),
+            n(&o["turns"]),
+            n(&o["sessions"])
         );
     }
 }

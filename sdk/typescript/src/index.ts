@@ -30,6 +30,7 @@ export type {
   QuestionHandler,
   QuestionRequest,
 } from "./requests.js";
+export type { MessageHistoryFilter, MessagingGroup } from "./messaging.js";
 export { SseParser, type SseMessage } from "./sse.js";
 export type { CyberHandle, StartOptions } from "./start.js";
 export {

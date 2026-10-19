@@ -5153,6 +5153,15 @@ async fn remote_sampling_routes_to_small_model_through_app_host() {
     assert_eq!(usage.len(), 1, "{usage:?}");
     assert_eq!(usage[0].data["purpose"], "mcp_sampling:remote");
     assert_eq!(usage[0].data["call_id"], "call_sample");
+    // The in-Turn call carries the Turn's origin (`cross-session-messaging` → Usage
+    // attribution), as do the Turn's steps.
+    assert_eq!(usage[0].data["origin"], "user");
+    assert!(
+        events
+            .iter()
+            .filter(|e| e.kind.starts_with("session.step."))
+            .all(|e| e.data["origin"] == "user")
+    );
     app.host.close_mcp_location(&directory).await.unwrap();
     app.runtime.shutdown().await;
 }
@@ -5372,5 +5381,99 @@ async fn managed_policy_server_child() {
         app.host.close_mcp_location(directory).await.unwrap();
     }
     assert_eq!(http.posts("initialize").len(), 2);
+    app.runtime.shutdown().await;
+}
+
+/// One MCP serve request to the app served at `api` with its local password; the
+/// response's `Mcp-Session-Id` and JSON body.
+async fn serve_request(
+    http: &reqwest::Client,
+    api: &str,
+    session: Option<&str>,
+    frame: serde_json::Value,
+) -> (Option<String>, serde_json::Value) {
+    let mut request = http
+        .post(format!("{api}/mcp/serve"))
+        .basic_auth("cyber", Some("mcp-test-password"))
+        .header("accept", "application/json, text/event-stream")
+        .header("x-cyber-mcp-client", "zed")
+        .json(&frame);
+    if let Some(session) = session {
+        request = request
+            .header("mcp-session-id", session)
+            .header("mcp-protocol-version", "2025-06-18");
+    }
+    let response = request.send().await.unwrap();
+    assert!(response.status().is_success(), "{}", response.status());
+    let id = response
+        .headers()
+        .get("mcp-session-id")
+        .map(|value| value.to_str().unwrap().to_owned());
+    (id, response.json().await.unwrap())
+}
+
+/// `mcp-server` → Usage attribution through the production app host: a message sent with
+/// `cyber_message_send` wakes the Session, and the in-Turn sampling call its MCP server
+/// makes is recorded (`usage.recorded.1`) with origin `mcp` and the client's label, like
+/// the Turn's steps.
+#[tokio::test]
+async fn usage_in_a_turn_woken_through_mcp_serve_is_attributed_to_mcp() {
+    let (_http, _model, _root, directory, app, session) = sampling_app(true).await;
+    wait_definition(
+        &app,
+        &remote_turn(&directory, &session),
+        "mcp__remote__echo",
+        None,
+    )
+    .await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api = format!("http://{}/api/v1", listener.local_addr().unwrap());
+    let server = tokio::spawn(cyber_server::http::serve_tcp(
+        app.router(),
+        listener,
+        std::future::pending::<()>(),
+    ));
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    let initialize = json!({"jsonrpc":"2.0","id":0,"method":"initialize","params":{
+        "protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"Zed","version":"1"}}});
+    let (mcp, _) = serve_request(&http, &api, None, initialize).await;
+    let send = json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+        "name":"cyber_message_send","arguments":{"to": session, "text": "use the server"}}});
+    let (_, sent) = serve_request(&http, &api, mcp.as_deref(), send).await;
+    assert_eq!(
+        sent["result"]["structuredContent"]["outcome"], "delivered",
+        "{sent}"
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        while !app
+            .store
+            .read_events(&session, -1, 500)
+            .unwrap()
+            .events
+            .iter()
+            .any(|e| e.kind == "session.step.ended.1" && e.data["finish"] == "stop")
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the Turn finished");
+    let events = app.store.read_events(&session, -1, 500).unwrap().events;
+    let usage: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == "usage.recorded.1")
+        .map(|e| (&e.data["purpose"], &e.data["origin"], &e.data["mcp_client"]))
+        .collect();
+    assert_eq!(
+        usage,
+        [(&json!("mcp_sampling:remote"), &json!("mcp"), &json!("zed"))],
+        "{events:?}"
+    );
+    let steps = events
+        .iter()
+        .filter(|e| e.kind.starts_with("session.step."));
+    assert!(steps.into_iter().all(|e| e.data["origin"] == "mcp"));
+    server.abort();
+    app.host.close_mcp_location(&directory).await.unwrap();
     app.runtime.shutdown().await;
 }

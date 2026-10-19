@@ -25,6 +25,9 @@ pub struct Session {
     pub children_incomplete: bool,
     /// The context window meter after the last finished step.
     pub context: Option<ContextMeter>,
+    /// Why the Session's `messaging.inbound` override refuses messages
+    /// (`non_interactive`), which `a` in `/messages` clears.
+    pub inbound_reason: Option<String>,
 }
 
 /// `observability-costs` → Context window meter, as the server reports it.
@@ -113,6 +116,7 @@ impl Session {
             children_cost: v["children_cost"].as_f64().unwrap_or(0.0),
             children_incomplete: v["children_usage_complete"] == false,
             context: ContextMeter::parse(&v["context"]),
+            inbound_reason: v["messaging"]["reason"].as_str().map(str::to_string),
         }
     }
 }
@@ -265,18 +269,23 @@ pub struct Queued {
     pub message_id: String,
     pub text: String,
     pub delivery: String,
+    /// Recorded but not promotable until released.
+    pub held: bool,
 }
 
 impl Queued {
     /// Unpromoted rows only.
     pub fn parse(v: &Value) -> Option<Self> {
-        if !matches!(v["status"].as_str(), Some("pending" | "held")) {
-            return None;
-        }
+        let held = match v["status"].as_str() {
+            Some("pending") => false,
+            Some("held") => true,
+            _ => return None,
+        };
         Some(Self {
             message_id: v["message_id"].as_str()?.into(),
             text: parts_text(&v["parts"]),
             delivery: v["delivery"].as_str().unwrap_or_default().into(),
+            held,
         })
     }
 }

@@ -30,6 +30,8 @@ pub struct Inputs {
     /// Screen-reader mode draws no sidebar.
     pub screen_reader: bool,
     pub queued: u16,
+    /// Rows of the held message card.
+    pub held: u16,
     /// Rows of the progress line above the composer.
     pub progress: u16,
     pub composer: u16,
@@ -42,6 +44,7 @@ pub struct LayoutPlan {
     pub header: Rect,
     pub transcript: Rect,
     pub queued: Rect,
+    pub held: Rect,
     pub progress: Rect,
     pub composer: Rect,
     pub footer: Rect,
@@ -63,6 +66,7 @@ pub fn plan(area: Rect, inputs: &Inputs) -> LayoutPlan {
             header: empty,
             transcript: empty,
             queued: empty,
+            held: empty,
             progress: empty,
             composer: empty,
             footer: empty,
@@ -88,10 +92,11 @@ pub fn plan(area: Rect, inputs: &Inputs) -> LayoutPlan {
         (area, None)
     };
     let header_height = u16::from(mode != SidebarMode::Docked);
-    let [header, transcript, queued, progress, composer, footer] = Layout::vertical([
+    let [header, transcript, queued, held, progress, composer, footer] = Layout::vertical([
         Constraint::Length(header_height),
         Constraint::Min(3),
         Constraint::Length(inputs.queued.min(4)),
+        Constraint::Length(inputs.held),
         Constraint::Length(inputs.progress),
         Constraint::Length(inputs.composer),
         Constraint::Length(1),
@@ -114,6 +119,7 @@ pub fn plan(area: Rect, inputs: &Inputs) -> LayoutPlan {
         header,
         transcript,
         queued,
+        held,
         progress,
         composer,
         footer,

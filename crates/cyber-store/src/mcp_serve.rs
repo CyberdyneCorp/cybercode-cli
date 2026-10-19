@@ -68,10 +68,20 @@ pub fn session_clients(
 
 /// Keep the first record of an admitted input.
 pub fn record_input(store: &Store, input: &McpServeInput) -> Result<(), StoreError> {
+    write_input(store, input, "INSERT OR IGNORE")
+}
+
+/// Replace the record of an input that was never admitted: a retried send whose first
+/// attempt was recorded and then refused or failed before any message existed.
+pub fn replace_input(store: &Store, input: &McpServeInput) -> Result<(), StoreError> {
+    write_input(store, input, "INSERT OR REPLACE")
+}
+
+fn write_input(store: &Store, input: &McpServeInput, verb: &'static str) -> Result<(), StoreError> {
     let input = input.clone();
     store.transaction(move |tx| {
         tx.execute(
-            "INSERT OR IGNORE INTO mcp_serve_input (message_id, session_id, mcp_client, depth, admitted_ms, idempotency_key) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            &format!("{verb} INTO mcp_serve_input (message_id, session_id, mcp_client, depth, admitted_ms, idempotency_key) VALUES (?1, ?2, ?3, ?4, ?5, ?6)"),
             params![
                 input.message_id,
                 input.session_id,

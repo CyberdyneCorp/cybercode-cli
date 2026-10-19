@@ -1700,6 +1700,134 @@ fn managed_modes_and_minimum_profile_are_merged_with_managed_sources() {
     );
 }
 
+/// `cross-session-messaging` → Disable switch: `policy.messaging.enabled` reaches the
+/// resolved config only from the managed policy, a user `messaging.enabled: true` cannot
+/// re-enable it, an unknown policy key fails closed, and a malformed policy disables
+/// messaging. Invalid `messaging` settings fail the load naming their path.
+#[test]
+fn managed_policy_disables_messaging_and_config_cannot_re_enable_it() {
+    let mut f = Fixture::new();
+    f.write(
+        "global:cyber.jsonc",
+        &json!({"messaging": {"enabled": true, "max_hops": 4},
+            "policy": {"messaging": {"enabled": true}}})
+        .to_string(),
+    );
+    let settings = |f: &Fixture| config::MessagingSettings::from_config(&f.load().unwrap().value);
+    assert!(
+        settings(&f).unwrap().enabled,
+        "a user layer cannot write policy"
+    );
+    let path = f.managed(&json!({"policy": {"messaging": {"enabled": false}}}).to_string());
+    let resolved = f.load().unwrap();
+    assert_eq!(
+        resolved.sources["/policy/messaging/enabled"],
+        format!("managed:{}", path.display())
+    );
+    let disabled = settings(&f).unwrap();
+    assert_eq!((disabled.enabled, disabled.max_hops), (false, 4));
+    f.managed(&json!({"policy": {"messaging": {"enabled": "no"}}}).to_string());
+    let malformed = f.load().unwrap();
+    assert!(malformed.managed.error.is_some());
+    assert!(
+        !settings(&f).unwrap().enabled,
+        "a malformed policy fails closed"
+    );
+    f.managed(&json!({"policy": {"messaging": {"inbound": {}}}}).to_string());
+    assert!(!settings(&f).unwrap().enabled);
+
+    for (value, path) in [
+        (json!({"max_hops": 65}), "messaging.max_hops"),
+        (
+            json!({"inbound": {"default": "drop"}}),
+            "messaging.inbound.default",
+        ),
+        (
+            json!({"inbound": {"refuse": [1]}}),
+            "messaging.inbound.refuse[0]",
+        ),
+        (json!({"enabled": 1}), "messaging.enabled"),
+    ] {
+        let f = Fixture::new();
+        f.write(
+            "global:cyber.jsonc",
+            &json!({ "messaging": value }).to_string(),
+        );
+        let error = f.load().unwrap_err().to_string();
+        assert!(error.contains(path), "{value}: {error}");
+    }
+}
+
+/// Regression (`workspace-trust` → Trust before interpretation): an untrusted project
+/// cannot widen the inbound boundary of the Sessions in its checkout. Its
+/// `messaging.enabled: true`, `inbound.default: "deliver"`, `deliver`/`hold` lists and
+/// `max_hops` are held back until the checkout is approved; its `refuse` patterns add to
+/// the user's (they concatenate, so the user's refusals stay) and apply at once, as does
+/// `enabled: false`.
+#[test]
+fn untrusted_project_messaging_is_held_back_until_approved() {
+    let f = Fixture::new();
+    f.write(
+        "global:cyber.jsonc",
+        &json!({"messaging": {"enabled": false, "max_hops": 4,
+            "inbound": {"default": "refuse", "hold": ["client"], "refuse": ["mcp:*"]}}})
+        .to_string(),
+    );
+    f.write(
+        "cyber.jsonc",
+        &json!({"messaging": {"enabled": true, "max_hops": 64,
+            "inbound": {"default": "deliver", "deliver": ["*"], "hold": [],
+                        "refuse": ["spammer"]}}})
+        .to_string(),
+    );
+    let settings = |f: &Fixture| {
+        let resolved = f.load().unwrap();
+        let settings = config::MessagingSettings::from_config(&resolved.value).unwrap();
+        (resolved.trust.trusted, settings)
+    };
+    let list = |items: &[&str]| items.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+    let refuse = list(&["mcp:*", "spammer"]);
+    // Untrusted: the user's values stay, and the project's refusals add to the user's.
+    let held = config::MessagingSettings {
+        enabled: false,
+        max_hops: 4,
+        inbound: config::InboundSettings {
+            default: config::InboundPolicy::Refuse,
+            deliver: Vec::new(),
+            hold: list(&["client"]),
+            refuse: refuse.clone(),
+        },
+    };
+    assert_eq!(settings(&f), (false, held));
+    f.approve_current();
+    let approved = config::MessagingSettings {
+        enabled: true,
+        max_hops: 64,
+        inbound: config::InboundSettings {
+            default: config::InboundPolicy::Deliver,
+            deliver: list(&["*"]),
+            hold: Vec::new(),
+            refuse,
+        },
+    };
+    assert_eq!(settings(&f), (true, approved));
+}
+
+/// A project that only restricts messaging needs no approval.
+#[test]
+fn untrusted_project_can_restrict_messaging() {
+    let f = Fixture::new();
+    f.write(
+        "cyber.jsonc",
+        &json!({"messaging": {"enabled": false, "inbound": {"default": "refuse"}}}).to_string(),
+    );
+    let resolved = f.load().unwrap();
+    let restricted = config::MessagingSettings::from_config(&resolved.value).unwrap();
+    assert!(resolved.trust.definitions.is_empty());
+    assert!(!restricted.enabled);
+    assert_eq!(restricted.inbound.default, config::InboundPolicy::Refuse);
+}
+
 /// `compat-import` → Read-time MCP compatibility: `.mcp.json` is a trust-gated project
 /// layer below every configuration document, and `compat.mcp_files = false` stops it.
 #[test]

@@ -98,6 +98,13 @@ impl ToolHost for AppHost {
         self.builtin.daily_budget(directory)
     }
 
+    fn messaging_settings(
+        &self,
+        directory: Option<&str>,
+    ) -> Result<cyber_core::config::MessagingSettings, String> {
+        self.builtin.messaging_settings(directory)
+    }
+
     fn request_overlay(
         &self,
         turn: &TurnContext,

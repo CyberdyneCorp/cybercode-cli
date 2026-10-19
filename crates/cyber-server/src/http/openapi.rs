@@ -952,6 +952,52 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         )
         .located()
         .ok::<Located<crate::runtime::McpServerStatus>>(g),
+        op(
+            "get",
+            "/messaging/sessions",
+            "v1.messaging.sessions",
+            "Sessions the caller (`from`, else a client) can message, newest first",
+        )
+        .query(&["from", "directory"])
+        .ok::<Data<Vec<crate::runtime::messaging::ReachableSession>>>(g),
+        op(
+            "post",
+            "/messaging/send",
+            "v1.messaging.send",
+            "Send a message to a Session as `from`, else as the client; a refusal is a 200 outcome",
+        )
+        .body::<super::messaging::SendMessage>(g)
+        .ok::<Data<crate::runtime::messaging::SendResult>>(g)
+        .error::<ErrorBody>(g, 404, "AddressNotFoundError or SessionNotFoundError")
+        .error::<ErrorBody>(g, 409, "AmbiguousAddressError with candidates, or ConflictError")
+        .error::<ErrorBody>(g, 413, "MessageTooLargeError with size and limit")
+        .error::<ErrorBody>(g, 403, "AccountRequiredError"),
+        op(
+            "post",
+            "/messaging/watch",
+            "v1.messaging.watch",
+            "Subscribe `from` to one notice when the target next goes idle or exits; an idle target fires at once",
+        )
+        .body::<super::messaging::WatchSession>(g)
+        .status(201)
+        .ok::<Data<crate::runtime::messaging::Watch>>(g)
+        .error::<ErrorBody>(g, 404, "AddressNotFoundError or SessionNotFoundError")
+        .error::<ErrorBody>(g, 409, "AmbiguousAddressError with candidates")
+        .error::<ErrorBody>(g, 429, "RateLimitedError with reason watch_quota")
+        .error::<ErrorBody>(
+            g,
+            403,
+            "AccountRequiredError, or ForbiddenError when the target refuses the subscriber's messages (reason non_interactive, inbound_rule or disabled)",
+        ),
+        op(
+            "get",
+            "/sessions/{sessionID}/messaging",
+            "v1.session.messaging",
+            "Page the Session's sent and received cross-session messages with their outcomes; refused messages carry no text",
+        )
+        .query(&["cursor", "limit", "direction", "order"])
+        .ok::<Page<crate::runtime::messaging::MessageRecord>>(g)
+        .error::<ErrorBody>(g, 404, "SessionNotFoundError"),
         op("get", "/agents", "v1.agent.list", "Selectable agents")
             .located()
             .ok::<Located<Vec<AgentInfo>>>(g),

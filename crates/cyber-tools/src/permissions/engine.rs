@@ -259,6 +259,10 @@ pub fn evaluate_all(rules: &[Rule], action: &str, resources: &[String]) -> Effec
 /// for runs).
 pub const WORKFLOW_RUN: &str = "workflow.run";
 
+/// Sending a cross-session message, with the target's canonical address and its name as
+/// resources (`cross-session-messaging` → Send message tool).
+pub const MESSAGE_SEND: &str = "message.send";
+
 /// The `workflow.run` resource of a module (`workflows` → Permissions for runs): the
 /// name of a global or bundled saved Workflow, `project:<name>` for a project one and
 /// `inline:<name>@<digest>` for an inline script. A script declares its own name, so a
@@ -295,6 +299,8 @@ pub fn defaults(allowed_dirs: &[PathBuf], primary_agent: bool) -> Vec<Rule> {
         "wait_for_mcp",
         "tool_search",
         "notify",
+        "list_sessions",
+        "watch_session",
     ] {
         rules.push(Rule::new(action, "*", Effect::Allow, "default"));
     }
@@ -306,6 +312,9 @@ pub fn defaults(allowed_dirs: &[PathBuf], primary_agent: bool) -> Vec<Rule> {
     rules.push(Rule::new("external_directory", "*", Effect::Ask, "default"));
     // Explicit, so inspection names its source; `auto` and `bypass` allow it.
     rules.push(Rule::new(WORKFLOW_RUN, "*", Effect::Ask, "default"));
+    // Same-server targets are allowed; a cross-machine address (`name@machine`) asks.
+    rules.push(Rule::new(MESSAGE_SEND, "*", Effect::Allow, "default"));
+    rules.push(Rule::new(MESSAGE_SEND, "*@*", Effect::Ask, "default"));
     for dir in allowed_dirs {
         rules.push(Rule::new(
             "external_directory",
@@ -861,6 +870,56 @@ mod tests {
         let mut denied = base;
         denied.push(Rule::new(WORKFLOW_RUN, "audit", Effect::Deny, "user"));
         assert!(matches!(decide(denied, Mode::Bypass), Decision::Deny(_)));
+    }
+
+    /// `permissions-modes` → Default rules: same-server messages are allowed, an `@`
+    /// address asks, listing and watching are allowed, and a deny rule on a name pattern
+    /// refuses a target addressed by its ID and name.
+    #[test]
+    fn message_send_defaults_and_a_name_pattern_deny() {
+        let base = defaults(&[], true);
+        let send = |resources: &[&str]| Request {
+            action: MESSAGE_SEND.into(),
+            resources: resources.iter().map(|r| (*r).to_owned()).collect(),
+            ..Default::default()
+        };
+        let decide = |rules: Vec<Rule>, req: &Request| policy(rules, Mode::Default).decide(req);
+        assert_eq!(
+            decide(base.clone(), &send(&["ses_01JB", "backend"])),
+            Decision::Allow
+        );
+        let (effect, rule) = evaluate(&base, MESSAGE_SEND, "migration@desk");
+        assert_eq!(
+            (effect, rule.map(|r| r.source.as_str())),
+            (Effect::Ask, Some("default"))
+        );
+        assert_eq!(
+            decide(base.clone(), &send(&["migration@desk"])),
+            Decision::Ask
+        );
+        for action in ["list_sessions", "watch_session"] {
+            assert_eq!(evaluate(&base, action, "*").0, Effect::Allow, "{action}");
+        }
+        let mut denied = base.clone();
+        denied.push(Rule::new(MESSAGE_SEND, "noisy-*", Effect::Deny, "user"));
+        assert!(matches!(
+            decide(denied.clone(), &send(&["ses_01JN", "noisy-bot"])),
+            Decision::Deny(_)
+        ));
+        assert_eq!(
+            decide(denied.clone(), &send(&["ses_01JB", "backend"])),
+            Decision::Allow
+        );
+        assert!(matches!(
+            policy(denied, Mode::Bypass).decide(&send(&["ses_01JN", "noisy-bot"])),
+            Decision::Deny(_)
+        ));
+        let mut asked = base;
+        asked.push(Rule::new(MESSAGE_SEND, "*", Effect::Ask, "user"));
+        assert_eq!(
+            decide(asked, &send(&["ses_01JB", "backend"])),
+            Decision::Ask
+        );
     }
 
     #[test]

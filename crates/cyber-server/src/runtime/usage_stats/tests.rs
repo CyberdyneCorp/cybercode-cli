@@ -34,6 +34,7 @@ fn row(when: i64, root: &str, model: &str, tokens: u64) -> Row {
             cache_write: 0,
         },
         cost: 0.5,
+        origin: "user".into(),
     }
 }
 
@@ -259,4 +260,36 @@ fn folded_days_are_flagged_approximate() {
     assert!(stats.approximate_days);
     assert_eq!(stats.days[0].date, "2026-10-10");
     assert_eq!(stats.days[0].total_tokens, 7);
+}
+
+/// Task 9.3: each origin is its own entry with its tokens, most tokens first.
+#[test]
+fn usage_splits_by_origin() {
+    let zone = "UTC";
+    let now = ms(zone, 2026, 10, 19, 12);
+    let mut rows = vec![row(now - HOUR, "ses_a", "main", 300)];
+    for (origin, tokens) in [("session", 200), ("client", 100), ("job", 50)] {
+        let mut r = row(now - HOUR, "ses_b", "main", tokens);
+        r.origin = origin.into();
+        rows.push(r);
+    }
+    let mut unpriced = row(now - HOUR, "ses_b", "main", 7);
+    (unpriced.origin, unpriced.unpriced) = ("mcp".into(), 1);
+    rows.push(unpriced);
+    let stats = aggregate(&rows, &[], &window(zone, Period::Days(1), now));
+    let origins: Vec<(&str, u64, Option<f64>, u64)> = stats
+        .origins
+        .iter()
+        .map(|o| (o.origin.as_str(), o.total_tokens, o.cost, o.sessions))
+        .collect();
+    assert_eq!(
+        origins,
+        [
+            ("user", 300, Some(0.5), 1),
+            ("session", 200, Some(0.5), 1),
+            ("client", 100, Some(0.5), 1),
+            ("job", 50, Some(0.5), 1),
+            ("mcp", 7, None, 1),
+        ]
+    );
 }

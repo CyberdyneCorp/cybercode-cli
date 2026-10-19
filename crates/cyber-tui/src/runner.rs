@@ -506,6 +506,7 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
             items,
             queued,
             requests,
+            messages,
         } => {
             refresh.in_flight = false;
             if session.id != app.session.id || session.seq < app.session.seq {
@@ -515,6 +516,7 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
             app.set_session(session);
             app.items = items;
             app.queued = queued;
+            app.messaging.set_records(messages);
             app.requests = requests;
             app.sync_overlay();
             if std::mem::take(&mut refresh.again) {
@@ -1225,6 +1227,7 @@ mod mode_tests {
                 },
                 items: Vec::new(),
                 queued: Vec::new(),
+                messages: None,
                 requests: Vec::new(),
             };
             assert_eq!(
@@ -1256,6 +1259,7 @@ mod mode_tests {
             },
             items: Vec::new(),
             queued: Vec::new(),
+            messages: None,
             requests: Vec::new(),
         };
         let actions = apply(&mut app, Ok(snapshot), &mut Refresh::default());

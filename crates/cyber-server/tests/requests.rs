@@ -307,6 +307,74 @@ async fn identical_calls_raise_a_doom_loop_request() {
     );
 }
 
+/// Regression: repeats are counted since the last promoted input, so the same call in
+/// the run of a later prompt (or message) is not a third identical call.
+#[tokio::test]
+async fn identical_calls_in_separate_runs_are_not_a_doom_loop() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                tools(&[("c1", "read", "{}")]),
+                tools(&[("c2", "read", "{}")]),
+                text("first"),
+                tools(&[("c3", "read", "{}")]),
+                text("second"),
+            ],
+        )],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    bounded("admit", h.runtime.admit(&id, admit("read twice")))
+        .await
+        .unwrap();
+    h.settle(&id).await;
+    bounded("admit", h.runtime.admit(&id, admit("read again")))
+        .await
+        .unwrap();
+    h.settle(&id).await;
+    assert!(h.runtime.pending_requests(Some(&id)).is_empty());
+    assert_eq!(h.state(&id).await.calls["c3"].status, CallStatus::Ok);
+    assert_eq!(h.tools.executed_names().len(), 3);
+}
+
+/// Regression: an interrupt while a `doom_loop` request waits used to hang, because the
+/// Drain awaited the reply without watching its cancellation and the interrupt abandons
+/// requests only after the Drain ends.
+#[tokio::test]
+async fn interrupt_ends_a_waiting_doom_loop_request() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                tools(&[("c1", "read", "{}")]),
+                tools(&[("c2", "read", "{}")]),
+                tools(&[("c3", "read", "{}")]),
+                text("never"),
+            ],
+        )],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    bounded("admit", h.runtime.admit(&id, admit("read")))
+        .await
+        .unwrap();
+    let p = wait_pending(&h, &id, 1).await;
+    assert!(matches!(&p[0].kind, PendingKind::Permission(a) if a.action == "doom_loop"));
+    bounded("interrupt", h.runtime.interrupt(&id))
+        .await
+        .unwrap();
+    assert!(!h.runtime.is_running(&id));
+    assert!(h.runtime.pending_requests(Some(&id)).is_empty());
+    let state = h.state(&id).await;
+    assert_eq!(state.calls["c3"].status, CallStatus::Interrupted);
+    assert_eq!(
+        h.tools.executed_names().len(),
+        2,
+        "the third call never ran"
+    );
+}
+
 #[tokio::test]
 async fn doom_loop_in_dont_ask_mode_halts() {
     let h = Harness::new(Setup {

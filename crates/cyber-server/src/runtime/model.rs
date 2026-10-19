@@ -82,6 +82,10 @@ pub struct SessionInfo {
     pub max_steps: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget: Option<cyber_core::budget::Budget>,
+    /// Session-level `messaging.inbound` override (`cross-session-messaging` → Inbound
+    /// controls): it replaces the Location's default; sender patterns still win.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub messaging: Option<super::messaging::InboundOverride>,
 }
 
 /// One entry of model-visible history.
@@ -372,6 +376,9 @@ pub struct SessionState {
     pub children_usage: super::ChildrenUsage,
     pub steps_since_input: u64,
     pub open_step: Option<String>,
+    /// The origin of the last started step; its end, failure and in-Turn usage copy it.
+    #[serde(skip)]
+    pub(crate) step_origin: super::usage_origin::StepOrigin,
     /// Last Turn mode, retained while its tool groups settle.
     pub turn_mode: Option<String>,
     #[serde(skip)]
@@ -388,6 +395,13 @@ pub struct SessionState {
     pub recap: Option<super::recap::Recap>,
     /// Sequence of the latest finished (ended or failed) step; 0 before the first.
     pub finished_seq: i64,
+    /// Received cross-session messages by inbox `message_id`, with the depth and hops
+    /// their promotion carries into the run that reads them.
+    #[serde(skip)]
+    pub(crate) message_chains: BTreeMap<String, super::messaging::MessageChain>,
+    /// Chain hops of fired idle notices and of input the model caused (a Job's handback
+    /// or Monitor line, a delegated prompt, a Workflow summary), by inbox `message_id`.
+    pub(crate) notice_hops: BTreeMap<String, u32>,
 }
 
 const MAX_INSTRUCTION_CHARS: usize = 2000;
@@ -563,6 +577,7 @@ impl SessionState {
             children_usage: Default::default(),
             steps_since_input: 0,
             open_step: None,
+            step_origin: Default::default(),
             turn_mode: None,
             turn_agent: None,
             last_step: None,
@@ -571,6 +586,8 @@ impl SessionState {
             revert: None,
             recap: None,
             finished_seq: 0,
+            message_chains: BTreeMap::new(),
+            notice_hops: BTreeMap::new(),
         }
     }
 
@@ -665,9 +682,48 @@ impl SessionState {
                     row.promoted_seq = Some(e.seq);
                 }
             }
+            _ if kind.starts_with("messaging.") => {
+                super::messaging::records::fold(
+                    &mut self.message_chains,
+                    &mut self.notice_hops,
+                    e,
+                )?;
+            }
             _ => self.apply_runtime(kind, e)?,
         }
         Ok(())
+    }
+
+    /// Held cross-session messages in the inbox, awaiting release or drop.
+    pub fn held_messages(&self) -> usize {
+        self.count_messages(InputStatus::Held)
+    }
+
+    /// Admitted cross-session messages waiting for promotion.
+    pub fn queued_messages(&self) -> usize {
+        self.count_messages(InputStatus::Pending)
+    }
+
+    /// The depth and hops of a received message, by inbox `message_id`.
+    pub fn message_chain(&self, message_id: &str) -> Option<super::messaging::MessageChain> {
+        self.message_chains.get(message_id).copied()
+    }
+
+    /// The chain hops an inbox row carries into the run that promotes it: a received
+    /// message's, a fired idle notice's or an inherited chain's
+    /// (`messaging.chain.inherited.1`); `None` for any other row.
+    pub fn chain_hops(&self, message_id: &str) -> Option<u32> {
+        self.message_chains
+            .get(message_id)
+            .map(|chain| chain.hops)
+            .or_else(|| self.notice_hops.get(message_id).copied())
+    }
+
+    fn count_messages(&self, status: InputStatus) -> usize {
+        self.inbox
+            .iter()
+            .filter(|row| row.status == status && self.message_chains.contains_key(&row.message_id))
+            .count()
     }
 
     fn apply_runtime(&mut self, kind: &str, e: &StoredEvent) -> Result<(), String> {
@@ -924,6 +980,9 @@ impl SessionState {
                 self.info.default_title = false;
             }
             "session.archived" => self.info.archived = decode::<Archived>(e)?.archived,
+            "session.messaging.updated" => {
+                self.info.messaging = decode::<super::events::MessagingUpdated>(e)?.messaging;
+            }
             "session.agent.switched" => self.info.agent = decode::<Switched>(e)?.to,
             "session.model.switched" => {
                 let switched: Switched = decode(e)?;
@@ -1116,6 +1175,7 @@ impl SessionState {
         let agent = s.agent.unwrap_or_else(|| self.info.agent.clone());
         self.turn_agent = Some(agent.clone());
         self.open_step = Some(s.message_id.clone());
+        self.step_origin = s.origin;
         self.steps.push(StepSnapshot {
             step_id: s.message_id.clone(),
             user_message_id: self.current_user_message().map(str::to_string),

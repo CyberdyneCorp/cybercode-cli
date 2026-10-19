@@ -47,6 +47,15 @@ struct Call {
     model: String,
     agent: Option<String>,
     started_ms: i64,
+    /// `(origin, mcp_client)` of a step or an in-Turn call; none reads as `user`.
+    origin: (Option<String>, Option<String>),
+}
+
+/// The `origin` and `mcp_client` an event payload carries (`cross-session-messaging` →
+/// Usage attribution).
+fn origin_of(data: &Value) -> (Option<String>, Option<String>) {
+    let text = |key: &str| data[key].as_str().map(str::to_owned);
+    (text("origin"), text("mcp_client"))
 }
 
 /// Write the ledger row of `e`, if it records a model call. Idempotent per event.
@@ -67,8 +76,10 @@ pub(super) fn project(tx: &Connection, e: &StoredEvent) -> rusqlite::Result<()> 
     tx.execute(
         "INSERT INTO usage_step (event_id, session_id, root_id, parent_id, workflow_run_id, agent,
             purpose, failed, provider, model, started_ms, ended_ms, input_tokens, output_tokens,
-            reasoning_tokens, cache_read_tokens, cache_write_tokens, prompt_tokens, cost, directory)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)
+            reasoning_tokens, cache_read_tokens, cache_write_tokens, prompt_tokens, cost, directory,
+            origin, mcp_client)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,
+            COALESCE(?21, 'user'),?22)
          ON CONFLICT(event_id) DO NOTHING",
         params![
             e.id,
@@ -93,6 +104,8 @@ pub(super) fn project(tx: &Connection, e: &StoredEvent) -> rusqlite::Result<()> 
                 .saturating_add(n("cache_write")),
             cost,
             owner.directory,
+            call.origin.0,
+            call.origin.1,
         ],
     )?;
     Ok(())
@@ -149,6 +162,7 @@ fn call(tx: &Connection, e: &StoredEvent, owner: &Owner) -> rusqlite::Result<Opt
         model,
         agent: None,
         started_ms: e.time_ms.saturating_sub(duration.max(0)),
+        origin: origin_of(d),
     }))
 }
 
@@ -177,9 +191,15 @@ fn step(tx: &Connection, e: &StoredEvent, owner: &Owner) -> rusqlite::Result<Opt
             model,
             agent: None,
             started_ms: e.time_ms,
+            origin: origin_of(&e.data),
         }));
     };
     let data: Value = serde_json::from_str(&data).unwrap_or_default();
+    // The end copies the started step's origin; the start is the fallback.
+    let origin = match origin_of(&e.data) {
+        (None, _) => origin_of(&data),
+        copied => copied,
+    };
     let (provider, model) = match (data["provider"].as_str(), data["model"].as_str()) {
         (Some(provider), Some(model)) => split(Some(provider), model),
         _ => split(None, &owner.model),
@@ -191,6 +211,7 @@ fn step(tx: &Connection, e: &StoredEvent, owner: &Owner) -> rusqlite::Result<Opt
         model,
         agent: data["agent"].as_str().map(str::to_owned),
         started_ms: time,
+        origin,
     }))
 }
 
@@ -330,16 +351,16 @@ pub(super) fn project_unreached(tx: &Connection, session_id: &str) -> rusqlite::
 /// Fold rows that ended before `before_ms` into `usage_daily` by UTC day.
 fn fold(tx: &Transaction<'_>, before_ms: i64) -> rusqlite::Result<usize> {
     tx.execute(
-        "INSERT INTO usage_daily (day, root_id, agent, provider, model, directory, steps, turns,
-            input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens,
-            cost, unpriced_steps, max_prompt_tokens, api_duration_ms)
+        "INSERT INTO usage_daily (day, root_id, agent, provider, model, origin, directory, steps,
+            turns, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens,
+            cache_write_tokens, cost, unpriced_steps, max_prompt_tokens, api_duration_ms)
          SELECT strftime('%Y-%m-%d', ended_ms / 1000, 'unixepoch'), root_id, agent, provider, model,
-            MAX(directory), SUM(failed = 0), SUM(purpose = 'turn' AND failed = 0),
+            origin, MAX(directory), SUM(failed = 0), SUM(purpose = 'turn' AND failed = 0),
             SUM(input_tokens), SUM(output_tokens), SUM(reasoning_tokens), SUM(cache_read_tokens),
             SUM(cache_write_tokens), TOTAL(cost), SUM(cost IS NULL), MAX(prompt_tokens),
             SUM(ended_ms - started_ms)
-         FROM usage_step WHERE ended_ms < ?1 GROUP BY 1, 2, 3, 4, 5
-         ON CONFLICT(day, root_id, agent, provider, model) DO UPDATE SET
+         FROM usage_step WHERE ended_ms < ?1 GROUP BY 1, 2, 3, 4, 5, 6
+         ON CONFLICT(day, root_id, agent, provider, model, origin) DO UPDATE SET
             steps = steps + excluded.steps, turns = turns + excluded.turns,
             input_tokens = input_tokens + excluded.input_tokens,
             output_tokens = output_tokens + excluded.output_tokens,

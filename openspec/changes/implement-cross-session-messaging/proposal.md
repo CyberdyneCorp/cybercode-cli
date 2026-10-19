@@ -39,10 +39,11 @@ None.
 - `tui`: added "Cross-session message surfaces".
 - `cli-commands`: "Stats command" (`--by origin`).
 - `observability-costs`: "Usage commands" (`--by origin`).
+- `system-context`: "Typed Context Sources" (the built-in `core/messaging` guidance source).
 
 ## Impact
 
 - Code: `crates/cyber-store/migrations` (new tables, usage origin columns), `crates/cyber-server/src/runtime/messaging/` (new), `runtime/drain.rs` (promotion-time depth and hops), `runtime/mod.rs` (admission with extra events, inbox actions on message rows, deletion), `runtime/usage_ledger.rs`, `crates/cyber-server/src/http/messaging.rs` (new) and `http/openapi.rs`, `http/mcp_serve/` (3 tools), `crates/cyber-tools/src/tools/messaging.rs` (new) and permission defaults, `crates/cyber-core/src/config/` (`messaging`), `crates/cyber-cli/src/commands/messages.rs` (new), `exec`, `stats.rs`, `crates/cyber-tui` (rendering, footer, `/messages`), `sdk/openapi.json` and `sdk/typescript`.
 - Docs: README feature rows (messaging and MCP serve "7 of 10" lines), `docs/features.md`, `docs/implementation/p1-status.md` and `p2-status.md`.
 - Sequencing: archive after `add-mcp-session-server`, because both modify `cross-session-messaging` "Usage attribution" and this change restates that change's text.
-- Canonical inventory after archive: +3 P1 requirements (`cross-session-messaging` "Messaging CLI" and "Message chain limit", `tui` "Cross-session message surfaces"); 6 requirements of `cross-session-messaging` and 4 of other capabilities modified, with no phase changes.
+- Canonical inventory after archive: +3 P1 requirements (`cross-session-messaging` "Messaging CLI" and "Message chain limit", `tui` "Cross-session message surfaces"); 6 requirements of `cross-session-messaging` and 5 of other capabilities modified, with no phase changes.

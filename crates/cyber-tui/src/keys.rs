@@ -75,6 +75,12 @@ const DEFAULTS: &[(&str, &str, &str, &str)] = &[
         "move the running command to the background",
     ),
     (
+        "global",
+        "messages_view",
+        "none",
+        "cross-session message history",
+    ),
+    (
         "composer",
         "history_previous",
         "up",

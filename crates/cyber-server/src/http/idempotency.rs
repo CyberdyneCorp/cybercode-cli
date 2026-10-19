@@ -25,7 +25,7 @@ pub struct MemoryHttpIdentity {
 pub(super) const RETENTION_MS: i64 = 24 * 3600 * 1000;
 const MAX_BODY: usize = 32 * 1024 * 1024;
 /// Single-user server: every authenticated caller is the same principal.
-const PRINCIPAL: &str = "cyber";
+pub(super) const PRINCIPAL: &str = "cyber";
 
 struct Stored {
     hash: String,

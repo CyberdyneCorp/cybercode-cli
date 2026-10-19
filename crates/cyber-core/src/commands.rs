@@ -231,6 +231,10 @@ pub const BUILTIN: &[(&str, &str)] = &[
         "Open project memory (/memory global); /memory on|off|readonly toggles it",
     ),
     ("workflows", "Monitor workflow runs"),
+    (
+        "messages",
+        "Show messages to and from other Sessions; release or drop held ones",
+    ),
     ("files", "Browse project files"),
     ("settings", "Open settings"),
     ("status", "Show Session, server and machine status"),

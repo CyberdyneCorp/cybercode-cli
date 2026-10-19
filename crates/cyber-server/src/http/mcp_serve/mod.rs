@@ -9,6 +9,7 @@
 mod caller;
 mod connection;
 mod create;
+mod messaging;
 mod progress;
 mod prompt;
 mod protocol;

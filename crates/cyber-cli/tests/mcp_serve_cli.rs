@@ -840,3 +840,86 @@ fn a_wait_dropped_by_a_restart_fails_with_the_prompt_receipt() {
     assert_jsonrpc_frames(&lines);
     drop(model);
 }
+
+/// `mcp-server` → Messaging over MCP through the real stdio bridge: list, send (origin
+/// `client` with the bridge's label), replay, an oversized message and history.
+#[test]
+fn the_bridge_sends_and_reads_messages() {
+    let env = Env::new();
+    let repo = env.root.join("repo");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    let model = Model::start();
+    env.write_global_config(&json!({
+        "providers":{"test":{"api":{"type":"openai-compatible","url":model.url,
+            "settings":{"auth":"none"}},"models":{"main":{}}}},
+    }));
+    let _service = Service(&env);
+    let mut bridge = Bridge::spawn(&env, &["--client", "claude-code"]);
+    bridge.initialize("Claude Code");
+    let created = bridge.call(
+        2,
+        "cyber_session_create",
+        json!({"directory": repo.display().to_string(), "model": "test/main",
+            "title": "migration"}),
+    );
+    let session = created["result"]["structuredContent"]["session"]["session_id"].clone();
+    assert!(session.is_string(), "{created}");
+
+    let listed = bridge.call(3, "cyber_message_list", json!({}));
+    let sessions = &listed["result"]["structuredContent"]["sessions"];
+    assert_eq!(sessions[0]["address"], "migration", "{listed}");
+    assert_eq!(sessions[0]["canReceive"], true, "{listed}");
+
+    let arguments =
+        json!({"to": "migration", "text": "schema v2 is merged", "idempotency_key": "bridge-m1"});
+    let sent = bridge.call(4, "cyber_message_send", arguments.clone());
+    let sent = &sent["result"]["structuredContent"];
+    assert_eq!(sent["outcome"], "delivered", "{sent}");
+    let again = bridge.call(5, "cyber_message_send", arguments);
+    let again = &again["result"]["structuredContent"];
+    assert_eq!(again["replayed"], true, "{again}");
+    assert_eq!(again["message_id"], sent["message_id"]);
+    let large = bridge.call(
+        6,
+        "cyber_message_send",
+        json!({"to": "migration", "text": "x".repeat(20 * 1024)}),
+    );
+    assert_eq!(large["result"]["isError"], true, "{large}");
+    let text = large["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("MessageTooLargeError"), "{text}");
+
+    let history = bridge.call(7, "cyber_message_history", json!({"session_id": session}));
+    assert_one_client_message(&history, &sent["message_id"]);
+    let (status, lines, err) = bridge.close();
+    assert_eq!(status.code(), Some(0), "{err}");
+    assert_jsonrpc_frames(&lines);
+
+    // The message woke the Session, whose Turn answered it, as `cyber api` shows.
+    let session = session.as_str().unwrap();
+    wait_answered(&env, &repo, session, sent["message_id"].as_str().unwrap());
+    let records = api(&env, &repo, "v1.session.messaging", session);
+    assert_eq!(records["data"][0]["origin_kind"], "client", "{records}");
+    drop(model);
+}
+
+/// Wait until the Session answered `message`.
+fn wait_answered(env: &Env, repo: &std::path::Path, session: &str, message: &str) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !answered_after(env, repo, session, message) {
+        assert!(
+            Instant::now() < deadline,
+            "{}",
+            api(env, repo, "v1.message.list", session)
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+/// A `cyber_message_history` reply holding only the bridge client's message `id`.
+fn assert_one_client_message(history: &Value, id: &Value) {
+    let messages = &history["result"]["structuredContent"]["messages"];
+    assert_eq!(messages.as_array().map(Vec::len), Some(1), "{history}");
+    assert_eq!(&messages[0]["message_id"], id);
+    assert_eq!(messages[0]["from"], "mcp:claude-code");
+    assert_eq!(messages[0]["text"], "schema v2 is merged");
+}

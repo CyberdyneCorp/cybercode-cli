@@ -74,6 +74,7 @@ pub use subtree_stop::{SubtreeStopReport, SubtreeStopStatus};
 mod location;
 mod mcp;
 mod mcp_depth;
+pub mod messaging;
 pub use mcp_depth::RunMarker;
 mod memory;
 pub use mcp::{
@@ -106,6 +107,7 @@ mod usage_breakdown;
 mod usage_insights;
 mod usage_ledger;
 mod usage_limits;
+mod usage_origin;
 pub use usage_limits::{LimitReading, UsageLimits, UsageWindow, WindowPeriod};
 mod usage_stats;
 pub use usage_breakdown::{BudgetLimit, BudgetScope, BudgetUsage, ModelUsage, SessionUsage};
@@ -115,8 +117,8 @@ pub use usage_insights::{
     UsageInsights,
 };
 pub use usage_stats::{
-    FavoriteModel, LongestSession, MAX_PERIOD_DAYS, Period, StatsDay, StatsModel, StatsRequest,
-    StatsTotals, UsageStats,
+    FavoriteModel, LongestSession, MAX_PERIOD_DAYS, Period, StatsDay, StatsModel, StatsOrigin,
+    StatsRequest, StatsTotals, UsageStats,
 };
 mod view;
 pub use usage::{
@@ -225,6 +227,33 @@ pub enum RuntimeError {
     RewindConflict(Vec<String>),
     #[error("HookError: {0}")]
     Hook(String),
+    /// A message address that resolves to no target (`cross-session-messaging`).
+    #[error(transparent)]
+    Address(messaging::AddressError),
+    /// A message text over the content limit; nothing was sent.
+    #[error("MessageTooLargeError: the message is {size} bytes; the limit is {limit}")]
+    MessageTooLarge { size: usize, limit: usize },
+    /// A capability the configuration, the managed policy or the environment disables
+    /// (`messaging`); nothing was written.
+    #[error("ServiceUnavailableError: {0} is disabled")]
+    Disabled(&'static str),
+    /// An edit of a received cross-session message: it can be released or dropped, not
+    /// rewritten (`ConflictError`, reason `message_immutable`).
+    #[error("ConflictError: {0} is another Session's message; release or drop it instead")]
+    MessageImmutable(String),
+    /// A per-caller quota is full (`watch_quota`); nothing was written.
+    #[error("RateLimitedError: {message}")]
+    RateLimited {
+        reason: &'static str,
+        message: String,
+    },
+    /// The target refuses this caller (a watch of a Session that refuses its messages,
+    /// with the refusal reason); nothing was written.
+    #[error("ForbiddenError: {message}")]
+    Forbidden {
+        reason: &'static str,
+        message: String,
+    },
 }
 
 pub struct RuntimeOptions {
@@ -290,6 +319,9 @@ pub struct CreateSession {
     /// Session ruleset in the `permissions` config shape.
     pub rules: Option<serde_json::Value>,
     pub max_steps: Option<u32>,
+    /// Session-level `messaging.inbound` override, committed with the Session
+    /// (`cyber exec` refuses messages with `non_interactive`).
+    pub messaging: Option<messaging::InboundOverride>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -632,6 +664,8 @@ pub(crate) struct Inner {
     drains: StdMutex<HashMap<String, DrainEntry>>,
     /// MCP serve recursion depth by Session, for the run (Drain) it was raised in.
     mcp_depths: StdMutex<HashMap<String, (CancellationToken, u32)>>,
+    /// Cross-session message chain hops by Session, for the run they were raised in.
+    message_hops: StdMutex<HashMap<String, (CancellationToken, u32)>>,
     idle: Notify,
     lifecycle: Arc<RwLock<()>>,
     shutdown_lock: Mutex<()>,
@@ -664,6 +698,9 @@ pub(crate) struct Inner {
     /// One lifecycle lock per run (`workflows` → Concurrent runs): pause, stop, resume and
     /// the record of a script's own end serialize per run, never across runs.
     workflow_locks: StdMutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// One send lock per message target (`cross-session-messaging` → Rate limits):
+    /// concurrent senders to one Session pass the checks and admission one at a time.
+    message_locks: StdMutex<HashMap<String, Arc<Mutex<()>>>>,
     /// Issued, unsettled edit-capable workflow agents per canonical Location, across runs
     /// (`workflows` → Write isolation default).
     workflow_writers: StdMutex<HashMap<String, Arc<std::sync::atomic::AtomicUsize>>>,
@@ -728,6 +765,7 @@ impl Runtime {
             sessions: StdMutex::default(),
             drains: StdMutex::default(),
             mcp_depths: StdMutex::default(),
+            message_hops: StdMutex::default(),
             idle: Notify::new(),
             lifecycle: Arc::new(RwLock::new(())),
             shutdown_lock: Mutex::new(()),
@@ -749,6 +787,7 @@ impl Runtime {
             workflow_controls: StdMutex::default(),
             workflow_closing: std::sync::atomic::AtomicBool::new(false),
             workflow_locks: StdMutex::default(),
+            message_locks: StdMutex::default(),
             workflow_writers: StdMutex::default(),
             workflow_dir: std::sync::OnceLock::new(),
             workflow_relaunch: std::sync::OnceLock::new(),
@@ -1001,6 +1040,7 @@ impl Runtime {
             rules: req.rules.unwrap_or_default(),
             max_steps: req.max_steps,
             budget: req.budget,
+            messaging: req.messaging,
         };
         if info.budget.is_none() {
             info.budget = self
@@ -1137,17 +1177,20 @@ impl Runtime {
 
     /// Admit a delegated child's prompt with the UserPromptSubmit context the
     /// parent-side delegation already obtained; the hook does not run again.
+    /// It carries the chain hops of the parent's run (`messaging::hops`).
     pub async fn admit_with_hook_context(
         &self,
         session_id: &str,
-        admission: Admission,
+        mut admission: Admission,
         hook_context: Option<String>,
     ) -> Result<Receipt, RuntimeError> {
-        self.admit_attempt(
+        let inherited = self.delegated_chain(session_id, &mut admission).await;
+        self.admit_attempt_with(
             session_id,
             admission,
             None,
             PromptCheck::Checked(hook_context),
+            inherited,
         )
         .await
     }
@@ -1258,6 +1301,38 @@ impl Runtime {
         attempt: Option<names::Resumed>,
         check: PromptCheck,
     ) -> Result<Receipt, RuntimeError> {
+        self.admit_attempt_with(session_id, admission, attempt, check, Vec::new())
+            .await
+    }
+
+    /// Admit a cross-session message with its `in` record (`extra`) in the same commit.
+    /// A message is not user input: no UserPromptSubmit, template or `@` resolution runs,
+    /// so its mentions stay literal text (`cross-session-messaging` → Message content
+    /// limits). An exact retry returns the original receipt and commits nothing.
+    pub(crate) async fn admit_message(
+        &self,
+        session_id: &str,
+        admission: Admission,
+        extra: Vec<NewEvent>,
+    ) -> Result<Receipt, RuntimeError> {
+        self.admit_attempt_with(
+            session_id,
+            admission,
+            None,
+            PromptCheck::Checked(None),
+            extra,
+        )
+        .await
+    }
+
+    async fn admit_attempt_with(
+        &self,
+        session_id: &str,
+        admission: Admission,
+        attempt: Option<names::Resumed>,
+        check: PromptCheck,
+        extra: Vec<NewEvent>,
+    ) -> Result<Receipt, RuntimeError> {
         let message_id = admission
             .message_id
             .clone()
@@ -1322,12 +1397,10 @@ impl Runtime {
                 events.push(event(events::RESUMED, &attempt));
             }
             events.push(event(ADMITTED, &payload));
+            let admitted = events.len() - 1;
+            events.extend(extra);
             let stored = self.inner.commit_locked(&mut state, events)?;
-            receipt_for(
-                &state,
-                &message_id,
-                stored.last().expect("admission event").seq,
-            )
+            receipt_for(&state, &message_id, stored[admitted].seq)
         };
         if genuine {
             handle
@@ -1381,6 +1454,7 @@ impl Runtime {
                 .input(message_id)
                 .ok_or_else(|| RuntimeError::Invalid(format!("no inbox row {message_id}")))?;
             check_inbox_action(row, InboxAction::Edited)?;
+            messaging::inbox::inbox_record(&state, message_id, InboxAction::Edited, None)?;
             let fork = row.skill_command.as_ref().is_some_and(|skill| skill.fork);
             (row.source.clone(), fork)
         };
@@ -1397,7 +1471,8 @@ impl Runtime {
         Ok((effects, resources))
     }
 
-    /// Withdraw an unpromoted `queue` or `hold` row; it never reaches the model.
+    /// Withdraw an unpromoted `queue` or `hold` row; it never reaches the model. A
+    /// dropped cross-session message is recorded in its sender too.
     pub async fn remove_input(
         &self,
         session_id: &str,
@@ -1411,7 +1486,9 @@ impl Runtime {
             None,
             (PromptEffects::default(), Vec::new()),
         )
-        .await
+        .await?;
+        self.complete_sent(Some(message_id)).await?;
+        Ok(())
     }
 
     /// Release a held row as `steer` or `queue`, waking the Session.
@@ -1431,6 +1508,8 @@ impl Runtime {
             .continue_child_input(session_id, Some((message_id, delivery)), false)
             .await?
         {
+            // A released cross-session message: the sender's record follows.
+            self.complete_sent(Some(message_id)).await?;
             return Ok(());
         }
         let _admission = self.inner.open().await?;
@@ -1444,6 +1523,8 @@ impl Runtime {
         )
         .await?;
         self.inner.start_drain(session_id, false);
+        // A released cross-session message: the sender's record follows.
+        self.complete_sent(Some(message_id)).await?;
         Ok(())
     }
 
@@ -1457,7 +1538,9 @@ impl Runtime {
             None,
             (PromptEffects::default(), Vec::new()),
         )
-        .await
+        .await?;
+        self.complete_sent(Some(message_id)).await?;
+        Ok(())
     }
 
     async fn update_input(
@@ -1481,6 +1564,7 @@ impl Runtime {
                 return Err(RuntimeError::Busy(session_id.into()));
             }
         }
+        let record = messaging::inbox::inbox_record(&state, message_id, action, delivery)?;
         let payload = InboxUpdated {
             message_id: message_id.into(),
             action,
@@ -1490,8 +1574,12 @@ impl Runtime {
             hook_stop: effects.stop,
             resources,
         };
-        self.inner
-            .commit_locked(&mut state, vec![event(INBOX_UPDATED, &payload)])?;
+        // A cross-session message's `in` record commits with the change; the caller then
+        // completes the sender's record.
+        let events = std::iter::once(event(INBOX_UPDATED, &payload))
+            .chain(record)
+            .collect();
+        self.inner.commit_locked(&mut state, events)?;
         Ok(())
     }
 
@@ -1762,6 +1850,8 @@ impl Runtime {
         };
         if ended {
             self.inner.session_end(&handle, "archive").await;
+            // `cross-session-messaging` → Idle notifications: an archived target exited.
+            self.target_archived(session_id).await;
         }
         Ok(())
     }

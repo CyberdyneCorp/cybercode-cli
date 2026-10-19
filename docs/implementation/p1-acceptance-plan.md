@@ -1,4 +1,4 @@
-# P1 acceptance plan (2026-10-17)
+# P1 acceptance plan (2026-10-17, updated 2026-10-19)
 
 This plan closes the [P1 acceptance audit](p1-acceptance-audit.md) so that ROADMAP milestones M1.1–M1.5 can be signed off. Every one of the 214 in-scope P1 requirements was re-checked against the code and tests on `main` at `3ed02a3`, not only against the docs. The 214 are the 227 canonical P1 requirements minus the 13 `editor-integration` requirements that the open change `defer-editor-integration` moves to P3. That change is not archived yet, so `openspec/specs/editor-integration/spec.md` still tags them P1. Nothing was built or run for this audit (no cargo): the classification rests on reading the source, the test bodies and the specs. Rows moved to (a) by increments 1–15 were later demonstrated on the real binary and server; see [Batch A acceptance run](#batch-a-acceptance-run-increments-15-2026-10-18), [Batch B acceptance run](#batch-b-acceptance-run-increments-69-2026-10-18) and [Batch C acceptance run](#batch-c-acceptance-run-increments-1015-2026-10-18).
 
@@ -62,8 +62,8 @@ The milestone mapping follows the ROADMAP milestone text and the `implement-m1-*
 | M1.3 Extensibility | hooks 20, client-sdk 1, plugins-marketplace 14, mcp 6, skills-commands 5, tool-registry 3, cli-commands review 1, vcs-integration 3 | 48 | 0 | 3 | 0 | 2 | 53 |
 | M1.4 Memory + intelligence | memory 13, code-intelligence 12, browser-verification 2, builtin-tools notebook_edit 1 | 28 | 0 | 0 | 0 | 0 | 28 |
 | M1.5 Migration | compat-import 10 | 6 | 0 | 4 | 0 | 0 | 10 |
-| Other P1 | cross-session-messaging 18, observability-costs 10, provider-catalog 4, provider-credentials 3, exec-mode 5, session-runtime 3, system-context 5, configuration 2, compaction 3, snapshots-checkpoints 3, storage-events 2, tui 4, installation-upgrade 1, web-client 1 | 2 | 3 | 18 | 41 | 0 | 64 |
-| **Total** | | **140** | **5** | **25** | **41** | **3** | **214** |
+| Other P1 | cross-session-messaging 18, observability-costs 10, provider-catalog 4, provider-credentials 3, exec-mode 5, session-runtime 3, system-context 5, configuration 2, compaction 3, snapshots-checkpoints 3, storage-events 2, tui 4, installation-upgrade 1, web-client 1 | 20 | 3 | 18 | 23 | 0 | 64 |
+| **Total** | | **158** | **5** | **25** | **23** | **3** | **214** |
 
 Highlights per milestone:
 
@@ -167,6 +167,22 @@ Observed and not fixed (none breaks a SHALL clause):
 Validation of the whole working tree after the run (macOS): `cargo test --workspace --no-fail-fast` 3,575 passed, 0 failed, 9 ignored; workspace all-target Clippy and `x86_64-pc-windows-gnu` all-target Clippy (stub CC/AR, type-check only) for `cyber-app`, `cyber-cli`, `cyber-core`, `cyber-sandbox`, `cyber-server`, `cyber-tools` and `cyber-tui` with warnings denied; `cargo fmt --check`; `generate_sdk.py --check`, the SDK typecheck and 97 SDK tests; the plugin kit typecheck, build and 5 tests against the debug binary; `openspec validate --all --strict` (75 items); `spec_lint.py` 0 errors, 21 warnings.
 
 Still open after batch C: Windows enforcement and the `powershell` tool (M1.1, b) until their native Windows CI tests pass, and the written but never-run Windows hook sandbox test; Host protocol, Capability declaration and enforcement and Supported events (M1.3, c); the four M1.5 (c) rows (keyring credentials, OpenCode SQLite counts, `apiKeyHelper` and `.claude/rules`, the TUI `.mcp.json` approval prompt); the (e) evidence (live auto classifier, real keyrings for OAuth and plugin secrets, one real pinned `@playwright/mcp` run); every Other P1 row not in (a); and Linux and native Windows runs of batches A–C.
+
+## Messaging acceptance run (`implement-cross-session-messaging`, 2026-10-19)
+
+The 18 P1 `cross-session-messaging` rows (Other P1, increments 21 and 22) moved from (d) to (a). Each has the production-path test named in its row (the App over authenticated HTTP with the scripted OpenAI-compatible provider, the real `cyber` binary, the TUI against a real server) and was demonstrated by hand on macOS with the real debug `cyber` binary and `cyber serve --register` against a scripted local provider (no network, no live model), in 18 scenarios that all passed: listing, send by name and by `ses_` ID (idle and running targets), replies, watches and `notify_when_idle`, inbound hold/release/drop/refuse, the 11th-message rate limit, the 31st pending message, the `max_hops` 8 chain limit, `name@machine` → `AccountRequiredError`, the CLI, HTTP sends as a Session, `cyber exec` with and without `--accept-messages`, `cyber stats --by origin`, the MCP serve tools from a stdio client, a `SIGKILL` restart with held, queued and watch state, `CYBER_DISABLE_MESSAGING=1` and the TUI surfaces captured from a pty. Three bugs were found and fixed with regression tests (an interrupt hanging on an open `doom_loop` request, which also affects `main`; doom-loop history never reset across runs; an idle notice naming its target by `ses_` ID); see the change's [tasks](../../openspec/changes/implement-cross-session-messaging/tasks.md) section 14.
+
+| Milestone | a | b | c | d | e | Total |
+|---|--:|--:|--:|--:|--:|--:|
+| M1.1 | 15 | 2 | 0 | 0 | 1 | 18 |
+| M1.2 | 41 | 0 | 0 | 0 | 0 | 41 |
+| M1.3 | 48 | 0 | 3 | 0 | 2 | 53 |
+| M1.4 | 28 | 0 | 0 | 0 | 0 | 28 |
+| M1.5 | 6 | 0 | 4 | 0 | 0 | 10 |
+| Other P1 | 20 | 3 | 18 | 23 | 0 | 64 |
+| **Total** | **158** | **5** | **25** | **23** | **3** | **214** |
+
+Still open for messaging: the automated end-to-end suite (`crates/cyber-cli/tests/messages_acceptance.rs`, tasks 14.1–14.4), Linux and native Windows CI runs (the Windows job runs the messaging suites), and the archive. Direct peers (P2, `add-messaging-direct-peers`) and cross-machine transport (P3) are separate.
 
 ## Requirement table
 
@@ -351,24 +367,24 @@ The order is milestone, then spec order. "Native Windows CI pending" applies to 
 
 | Requirement | Capability | Class | Evidence | Gap |
 |---|---|---|---|---|
-| Reachable session listing | cross-session-messaging | d | Only the `messaging` config key (`cyber-core/src/config/validate.rs:37`) | Whole contract |
-| Addressing | cross-session-messaging | d | — | Whole contract |
-| Send message tool | cross-session-messaging | d | — | Whole contract |
-| Message content limits | cross-session-messaging | d | — | Whole contract |
-| Delivery semantics | cross-session-messaging | d | Inbox steer/hold exists (`runtime/continuation.rs:40`) | Session-origin admission |
-| Inbound controls | cross-session-messaging | d | Hold and release routes exist (`http/sessions.rs:276,839`) | Policy, per-sender rules |
-| Outcome reporting | cross-session-messaging | d | — | Whole contract |
-| Replies | cross-session-messaging | d | — | Whole contract |
-| Idle notifications | cross-session-messaging | d | — | Whole contract |
-| Rate limits | cross-session-messaging | d | — | Whole contract |
-| Permission boundaries stay per session | cross-session-messaging | d | — | Whole contract |
-| Untrusted content | cross-session-messaging | d | — | Whole contract |
-| Local transport | cross-session-messaging | d | — | Whole contract |
-| Non-interactive sessions | cross-session-messaging | d | No `--accept-messages` | Whole contract |
-| Transcript and audit | cross-session-messaging | d | — | Whole contract |
-| Usage attribution | cross-session-messaging | d | No `origin` in the usage ledger | `origin: session/mcp`, `cyber stats --by origin` |
-| Disable switch | cross-session-messaging | d | — | Whole contract |
-| Messaging API | cross-session-messaging | d | No `messaging` route group, not even 503 (`http/mod.rs:506-522`) | Four routes, OpenAPI, SDK |
+| Reachable session listing | cross-session-messaging | a | `cyber-app/tests/messaging.rs` `reachable_sessions_are_listed_over_http`, `addresses_resolve_in_tiers_on_the_production_app`; `cyber-cli/tests/messages_cli.rs` `messages_are_sent_and_listed_from_the_cli` (`--reachable`) (change `implement-cross-session-messaging`, 2026-10-19) | — |
+| Addressing | cross-session-messaging | a | `cyber-app/tests/messaging.rs` `addresses_resolve_in_tiers_on_the_production_app`; `cyber-cli/tests/messages_cli.rs` `messages_are_sent_and_listed_from_the_cli` (ambiguous name exit 2); `name@machine` → `AccountRequiredError` until direct peers (change `implement-cross-session-messaging`, 2026-10-19) | — |
+| Send message tool | cross-session-messaging | a | `cyber-app/tests/messaging.rs` `two_models_exchange_messages_through_send_message`, `a_configured_ask_prompts_before_the_message_leaves`; `cyber-tools/tests/messaging_tools.rs` (goldens) (change `implement-cross-session-messaging`, 2026-10-19) | — |
+| Message content limits | cross-session-messaging | a | `cyber-app/tests/messaging.rs` `a_message_starts_a_turn_in_an_idle_session_and_waits_for_a_safe_boundary_in_a_busy_one` (20 KiB → `MessageTooLargeError`); `cyber-cli/tests/messages_cli.rs` `messages_are_sent_and_listed_from_the_cli` (change `implement-cross-session-messaging`, 2026-10-19) | — |
+| Delivery semantics | cross-session-messaging | a | `cyber-app/tests/messaging.rs` `a_message_starts_a_turn_in_an_idle_session_and_waits_for_a_safe_boundary_in_a_busy_one` (idle target starts a Turn; mid-tool target waits for the Safe Boundary) (change `implement-cross-session-messaging`, 2026-10-19) | — |
+| Inbound controls | cross-session-messaging | a | `cyber-app/tests/messaging.rs` `held_messages_are_released_or_dropped_through_the_inbox_routes`; `cyber-cli/tests/messages_cli.rs` `an_exec_session_refuses_messages_unless_it_accepts_them` (change `implement-cross-session-messaging`, 2026-10-19) | — |
+| Outcome reporting | cross-session-messaging | a | `cyber-app/tests/messaging.rs` `history_pages_both_directions_with_outcomes`, `held_messages_are_released_or_dropped_through_the_inbox_routes` (refused sender, `released` in the sender) (change `implement-cross-session-messaging`, 2026-10-19) | — |
+| Replies | cross-session-messaging | a | `cyber-app/tests/messaging.rs` `two_models_exchange_messages_through_send_message` (the reply is a `send_message`; no automatic reply) (change `implement-cross-session-messaging`, 2026-10-19) | — |
+| Idle notifications | cross-session-messaging | a | `cyber-app/tests/messaging.rs` `a_watch_notifies_once_when_the_target_goes_idle_and_expires_after_twelve_hours`; `cyber-server/tests/messaging.rs` `a_notify_when_idle_notice_names_the_target_as_addressed` (change `implement-cross-session-messaging`, 2026-10-19) | — |
+| Rate limits | cross-session-messaging | a | `cyber-app/tests/messaging.rs` `a_message_storm_is_rate_limited_and_a_ping_pong_hits_the_chain_limit` (11th `per_target_minute`, 31st `inbox_pending`, `chain_limit` at hop 9) (change `implement-cross-session-messaging`, 2026-10-19) | — |
+| Permission boundaries stay per session | cross-session-messaging | a | `cyber-app/tests/messaging.rs` `a_denied_action_is_not_laundered_through_a_message`, `a_configured_ask_prompts_before_the_message_leaves` (change `implement-cross-session-messaging`, 2026-10-19) | — |
+| Untrusted content | cross-session-messaging | a | `cyber-app/tests/messaging.rs` `two_models_exchange_messages_through_send_message` (injection attempt leaves the Mode unchanged); `render.rs` unit test (the block cannot be closed from the text) (change `implement-cross-session-messaging`, 2026-10-19) | — |
+| Local transport | cross-session-messaging | a | `cyber-app/tests/messaging.rs` `a_message_starts_a_turn_in_an_idle_session_and_waits_for_a_safe_boundary_in_a_busy_one` (in-process through the durable inbox) (change `implement-cross-session-messaging`, 2026-10-19) | — |
+| Non-interactive sessions | cross-session-messaging | a | `cyber-cli/tests/messages_cli.rs` `an_exec_session_refuses_messages_unless_it_accepts_them` (`non_interactive`, `--accept-messages`) (change `implement-cross-session-messaging`, 2026-10-19) | — |
+| Transcript and audit | cross-session-messaging | a | `cyber-app/tests/messaging.rs` `history_pages_both_directions_with_outcomes`, `message_records_project_survive_a_restart_and_leave_with_their_session` (change `implement-cross-session-messaging`, 2026-10-19) | — |
+| Usage attribution | cross-session-messaging | a | `cyber-cli/tests/messages_cli.rs` `stats_separate_message_driven_usage` (`cyber stats --by origin`: `user`, `session`, `client`, `job`); `cyber-app/tests/mcp.rs` `usage_in_a_turn_woken_through_mcp_serve_is_attributed_to_mcp` (change `implement-cross-session-messaging`, 2026-10-19) | — |
+| Disable switch | cross-session-messaging | a | `cyber-app/tests/messaging.rs` `messaging_enabled_false_removes_the_tools_and_closes_the_routes`, `an_org_policy_disables_messaging_and_user_config_cannot_re_enable_it`, `the_environment_switch_disables_messaging_for_the_process` (change `implement-cross-session-messaging`, 2026-10-19) | — |
+| Messaging API | cross-session-messaging | a | `cyber-app/tests/messaging.rs` `history_pages_both_directions_with_outcomes`, `reachable_sessions_are_listed_over_http`; `sdk/typescript/test/messaging.e2e.test.ts` (change `implement-cross-session-messaging`, 2026-10-19) | — |
 | Permission denial log | exec-mode | c | `exec/report.rs:161,268,467-478`; `exec_delegation.rs` (mock), `a_permission_denied_review_prints_the_review_object_without_a_job` | `action` field, `policy` reason, `--fail-on-deny` stop after the Turn. Add `exec_denials.rs::fail_on_deny_stops_after_the_sandbox_denied_turn` |
 | Background work owned by the run | exec-mode | b | `exec/background.rs:90,159`, `exec/mod.rs:287-380`; `exec_forked_command.rs` (4), `exec_owned_jobs.rs` (4, mock), `exec_delegation.rs` SIGINT and `--max-tokens` (mock) | Real-server `exec_sigint_cancels_the_owned_forked_child_and_exits_130`, `exec_handback_grace_expiry_names_the_job`, `exec_reused_session_background_job_is_not_awaited` |
 | Structured final output | exec-mode | d | No `--output-schema` (server mechanism exists for children) | Whole contract |
@@ -810,10 +826,14 @@ This increment is under the size target because the work is self-contained.
 
 ### 21. Messaging core (other, 10 requirements)
 
+- **Status (2026-10-19): done locally** by `implement-cross-session-messaging`; every row is (a). The production tests carry the names in the requirement table above, not the provisional names below.
+
 - **Requirements:** Reachable session listing, Addressing, Send message tool, Message content limits, Delivery semantics, Local transport, Untrusted content, Replies, Permission boundaries stay per session, Disable switch.
 - **Tests:** `cyber-app/tests/messaging.rs`: `local_sessions_list_each_other_as_local`, `ambiguous_name_fails_listing_both_ids`, `oversized_message_refused_before_transmit`, `message_to_mid_tool_session_waits_for_safe_boundary`, `message_to_idle_session_starts_a_turn`, `message_text_is_delimited_and_cannot_change_mode`, `send_message_ask_prompts_before_leaving`, `disabled_messaging_hides_tools_and_refuses_inbound`.
 
 ### 22. Messaging policy, API and idle notifications (other, 8 requirements)
+
+- **Status (2026-10-19): done locally** by `implement-cross-session-messaging`; every row is (a). The production tests carry the names in the requirement table above, not the provisional names below.
 
 - **Requirements:** Inbound controls, Outcome reporting, Rate limits, Non-interactive sessions, Transcript and audit, Messaging API, Usage attribution, Idle notifications.
 - **Note:** this increment also unblocks the deferred messaging tools of `add-mcp-session-server`.
@@ -862,7 +882,7 @@ Automatic memory generation, Staleness notice and Explicit remember requests are
 
 ## Top gaps
 
-1. **Cross-session messaging is absent** (18 rows, d). The ROADMAP lists it under P1 capabilities, and `add-mcp-session-server` defers its messaging tools on it.
+1. ~~**Cross-session messaging is absent** (18 rows, d).~~ Closed locally by `implement-cross-session-messaging` (2026-10-19): all 18 rows are (a), demonstrated on the real binary ([messaging acceptance run](#messaging-acceptance-run-implement-cross-session-messaging-2026-10-19)), and `cyber mcp serve` has its three messaging tools. Left: the change's automated end-to-end suite, native Linux/Windows CI and direct peers (P2).
 2. **Plugin host tail** (2 rows, c). Increments 12 and 13 (2026-10-18) closed the declarative foundation and the JSON-RPC host locally (process, protocol core, restart and backoff, scoped tools, network and write capabilities, settings, the TypeScript kit, deferral). Open: core dispatch of plugin hooks, providers, catalog transforms and `session/prompt`, `fs.read` and `shell` enforcement, plugin hosts on Windows (they now reach the AppContainer route, but the plugin directory is not among the granted roots), and native keyring round trips of plugin secrets (e).
 3. ~~**Background process Jobs are absent.**~~ Closed locally by increment 7 (2026-10-18): `bash`/`powershell` `background: true`, the registry, notices, log cap, tree kill, limits and job events. Increment 8 (2026-10-18) added the monitor, the tasks view and the `&`/Ctrl+B handoff, and increment 9 (2026-10-18) PTYs, `notify` and `send_file`: background-tasks has no open row.
 4. ~~**Most of the sandbox policy surface has no code.**~~ Closed locally by increment 6 (2026-10-18): escalation, excluded commands, container detection, the sandbox CLI, `sandbox.*` events, named profiles, the environment policy and the `bypass` gate (also for `exec --yolo`). The escape exit criterion was demonstrated on macOS in the [batch B run](#batch-b-acceptance-run-increments-69-2026-10-18); Linux and native Windows were not run.

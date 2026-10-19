@@ -167,6 +167,10 @@ pub enum Action {
     FindFiles(String),
     LoadAgents,
     RemoveQueued(String),
+    /// Release a held message to the inbox (`r` on its card or in `/messages`).
+    ReleaseHeld(String),
+    /// `a` in `/messages`: clear the Session's `non_interactive` refusal override.
+    AcceptMessages,
     SaveTheme(String),
     /// Write `theme` to the project's `.cyber/tui.jsonc` (`p` in the theme switcher).
     SaveProjectTheme(String),
@@ -312,6 +316,8 @@ pub enum Overlay {
     },
     /// `/btw`: a side question and its answer.
     SideChat(crate::side_chat::SideChat),
+    /// `/messages`: the Session's message history; its state is `App::messaging`.
+    Messages,
 }
 
 /// Text the small model drafts for the user (`vcs-integration` → Commit and PR text
@@ -451,6 +457,8 @@ pub struct App {
     pub progress: crate::progress::Progress,
     /// The Workflow monitor's runs, views and the transcript opened from it.
     pub workflows: crate::workflows::WorkflowsState,
+    /// Cross-session message records, held cards and the `/messages` view.
+    pub messaging: crate::messaging::Messages,
     /// The runs the indicators show and the notices of their ends.
     pub watch: crate::workflow_watch::Watch,
     /// `tui.notifications`.
@@ -533,6 +541,7 @@ impl App {
             announcement: None,
             progress: Default::default(),
             workflows: Default::default(),
+            messaging: Default::default(),
             watch: Default::default(),
             notifications: Default::default(),
             #[cfg(test)]
@@ -668,6 +677,10 @@ impl App {
     /// Another Session is shown: views of the previous one close and forget it.
     fn forget_session_views(&mut self) {
         self.forget_settings();
+        self.messaging = Default::default();
+        if matches!(self.overlay, Overlay::Messages) {
+            self.overlay = Overlay::None;
+        }
         self.progress.forget_session();
         self.watch.fed = None;
         self.cost.invalidate();
@@ -902,6 +915,7 @@ impl App {
                 self.side_key(key);
                 Vec::new()
             }
+            Overlay::Messages => self.messages_key(key),
         }
     }
 
@@ -1001,6 +1015,7 @@ impl App {
             "reasoning_toggle" => self.show_reasoning = !self.show_reasoning,
             "tool_details" => self.expand_tools = !self.expand_tools,
             "background_command" => return self.move_to_background(),
+            "messages_view" => return self.open_messages(),
             _ => {}
         }
         Vec::new()
@@ -1212,6 +1227,9 @@ impl App {
         if let Some(actions) = self.code_select_key(key) {
             return actions;
         }
+        if let Some(actions) = self.held_card_key(key) {
+            return actions;
+        }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         if key.code == KeyCode::Tab && self.composer.text() == "/" {
@@ -1300,11 +1318,17 @@ impl App {
         Vec::new()
     }
 
-    /// Pull the newest queued message back into the composer for editing.
+    /// Pull the newest queued input back into the composer for editing. Received
+    /// messages are not the user's input and stay queued.
     fn take_back(&mut self) -> Vec<Action> {
-        let Some(last) = self.queued.pop() else {
+        let Some(at) = self
+            .queued
+            .iter()
+            .rposition(|row| !self.messaging.is_message(row))
+        else {
             return Vec::new();
         };
+        let last = self.queued.remove(at);
         self.composer.set_text(&last.text);
         vec![Action::RemoveQueued(last.message_id)]
     }
@@ -1589,6 +1613,7 @@ impl App {
             }
             "files" => self.open_explorer(),
             "workflows" => self.open_workflows(),
+            "messages" => self.open_messages(),
             "help" => {
                 self.overlay = Overlay::Help;
                 Vec::new()

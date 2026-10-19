@@ -40,6 +40,8 @@ pub const AUXILIARY_USAGE: &str = "usage.recorded.1";
 pub const TITLE_GENERATED: &str = "session.title.generated.1";
 pub const RENAMED: &str = "session.renamed.1";
 pub const ARCHIVED: &str = "session.archived.1";
+/// The Session-level `messaging.inbound` override changed (`cross-session-messaging`).
+pub const MESSAGING_UPDATED: &str = "session.messaging.updated.1";
 pub const AGENT_SWITCHED: &str = "session.agent.switched.1";
 pub const MODEL_SWITCHED: &str = "session.model.switched.1";
 pub const MODE_SWITCHED: &str = "session.mode.switched.1";
@@ -247,6 +249,9 @@ pub struct StepStarted {
     /// The working-tree snapshot taken before the Turn.
     #[serde(default)]
     pub snapshot: Option<String>,
+    /// What drove this step (`cross-session-messaging` → Usage attribution).
+    #[serde(flatten)]
+    pub origin: super::usage_origin::StepOrigin,
 }
 
 /// The working tree after a Turn's tool settlements (`snapshots-checkpoints` → Snapshot events).
@@ -354,6 +359,9 @@ pub struct StepEnded {
     pub usage: Usage,
     /// `None` when the model is unpriced.
     pub cost: Option<f64>,
+    /// The started step's origin.
+    #[serde(flatten)]
+    pub origin: super::usage_origin::StepOrigin,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -361,6 +369,9 @@ pub struct StepFailed {
     pub message_id: String,
     pub kind: String,
     pub message: String,
+    /// The started step's origin.
+    #[serde(flatten)]
+    pub origin: super::usage_origin::StepOrigin,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -423,9 +434,25 @@ pub struct AuxiliaryUsage {
     pub cost: Option<f64>,
 }
 
+/// `usage.recorded.1` of a model call made inside a Turn: it carries the Turn's origin.
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct AttributedUsage {
+    #[serde(flatten)]
+    pub usage: AuxiliaryUsage,
+    #[serde(flatten)]
+    pub origin: super::usage_origin::StepOrigin,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Archived {
     pub archived: bool,
+}
+
+/// `session.messaging.updated.1`: the new override, or none to clear it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MessagingUpdated {
+    pub messaging: Option<super::messaging::InboundOverride>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -452,14 +479,23 @@ pub fn registry() -> EventRegistry {
     registry
         .register(super::auto_statistics::RESET)
         .expect("valid auto statistics reset event");
+    registry
+        .register_with(MESSAGING_UPDATED, |data| {
+            serde_json::from_value::<MessagingUpdated>(data.clone())
+                .map(drop)
+                .map_err(|e| e.to_string())
+        })
+        .expect("valid messaging override event");
     super::budget::register(&mut registry);
     super::hooks::register(&mut registry);
     super::jobs::register(&mut registry);
     super::delegations::register(&mut registry);
     super::mcp::register(&mut registry);
     super::memory::register(&mut registry);
+    super::messaging::records::register(&mut registry);
     super::workflows::register(&mut registry);
     registry.projector(project);
+    registry.projector(super::messaging::records::project);
     crate::worktrees::register(&mut registry);
     registry
 }
@@ -508,6 +544,7 @@ fn project_event(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()> 
             )?;
         }
         INBOX_UPDATED => project_inbox(tx, d)?,
+        MESSAGING_UPDATED => project_inbound(tx, id, &d["messaging"])?,
         PROMOTED | SKILL_FORWARDED => {
             tx.execute(
                 "UPDATE session_input SET status = 'promoted', promoted_seq = ?2 WHERE message_id = ?1",
@@ -604,12 +641,26 @@ fn insert_session(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()>
             info["workflow_run_id"].as_str()
         ],
     )?;
+    project_inbound(tx, &e.aggregate_id, &info["messaging"])?;
     if let Some(budget) = info.get("budget").filter(|v| !v.is_null()) {
         tx.execute(
             "INSERT INTO session_budget(session_id,spec) VALUES (?1,?2)",
             params![e.aggregate_id, budget.to_string()],
         )?;
     }
+    Ok(())
+}
+
+/// The Session's `messaging.inbound` override columns; null clears them.
+fn project_inbound(tx: &Transaction<'_>, id: &str, messaging: &Value) -> rusqlite::Result<()> {
+    tx.execute(
+        "UPDATE session SET inbound = ?2, inbound_reason = ?3 WHERE id = ?1",
+        params![
+            id,
+            messaging["inbound"].as_str(),
+            messaging["reason"].as_str()
+        ],
+    )?;
     Ok(())
 }
 

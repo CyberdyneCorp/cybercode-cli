@@ -15,6 +15,7 @@ pub mod mcp_browser;
 pub mod mcp_config;
 pub mod mcp_serve;
 pub mod memory;
+pub mod messages;
 pub mod models;
 pub mod permissions;
 pub mod plugin_config;
@@ -96,6 +97,7 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
         Command::Serve(args) => serve::serve(args, &ctx),
         Command::Service { cmd } => serve::service(cmd, &ctx, &cli.global),
         Command::Api(args) => api::run(args, &ctx),
+        Command::Messages { cmd } => messages::run(cmd, &ctx, &cli.global),
         Command::Exec(args) => exec::run(*args, &ctx, &cli.global),
         Command::Review(args) => review::run(*args, &ctx, &cli.global),
         Command::Git { cmd } => git::run(cmd, &ctx, &cli.global),
@@ -149,6 +151,7 @@ fn in_process(
 fn shared_turns(command: &Command) -> Option<&'static str> {
     match command {
         Command::Api(_) => Some("api"),
+        Command::Messages { .. } => Some("messages"),
         Command::Pr(_) => Some("pr"),
         Command::Mcp {
             cmd: mcp::McpCmd::Serve(_),

@@ -160,7 +160,8 @@ fn downgrade_and_reopen(h: &mut Harness) -> Runtime {
     let db = rusqlite::Connection::open(&path).unwrap();
     db.execute_batch(
         "DROP TABLE usage_step; DROP TABLE usage_daily; DROP TABLE usage_backfill;
-         DELETE FROM migration WHERE id = '20261018000000_usage_ledger';",
+         DELETE FROM migration
+         WHERE id IN ('20261018000000_usage_ledger', '20261019010000_usage_origin');",
     )
     .unwrap();
     drop(db);
@@ -273,4 +274,103 @@ async fn retention_folds_old_rows_into_daily_aggregates_without_losing_totals() 
     assert_eq!(after.by_model, before.by_model);
     assert_eq!(after.api_duration_ms, before.api_duration_ms);
     assert_eq!(h.runtime.fold_usage(i64::MAX).unwrap(), 0);
+}
+
+/// Tasks 9.1 and 9.2: a ledger row takes the origin its step end copied, else its started
+/// step's, and an in-Turn call keeps its own; rows without one read as `user`. Folding
+/// into daily aggregates keeps the split.
+#[tokio::test]
+async fn ledger_rows_carry_their_origin_through_projection_and_folding() {
+    let h = Harness::new(Setup::default());
+    let id = h
+        .runtime
+        .create_session(CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let started = |message: &str, origin: serde_json::Value| {
+        let mut data = json!({"agent":"build","message_id":message,"provider":"test",
+            "model":"main","tools":false});
+        data.as_object_mut()
+            .unwrap()
+            .extend(origin.as_object().unwrap().clone());
+        NewEvent::new("session.step.started.1", data)
+    };
+    let ended = |message: &str, origin: serde_json::Value| {
+        let mut data = json!({"message_id":message,"finish":"stop","usage":usage(100, 20),
+            "cost":0.5});
+        data.as_object_mut()
+            .unwrap()
+            .extend(origin.as_object().unwrap().clone());
+        NewEvent::new("session.step.ended.1", data)
+    };
+    let mcp = json!({"origin":"mcp","mcp_client":"claude-code"});
+    append(
+        &h,
+        &id,
+        vec![
+            started("msg_s", json!({"origin":"session"})),
+            ended("msg_s", json!({})),
+            started("msg_m", mcp.clone()),
+            ended("msg_m", mcp),
+            NewEvent::new(
+                "usage.recorded.1",
+                json!({"provider":"test","model":"main","purpose":"web_fetch","call_id":"call_1",
+                    "duration_ms":5,"usage":usage(10, 2),"cost":0.1,"origin":"client"}),
+            ),
+        ],
+    );
+    append(&h, &id, step("msg_u", "test", "main", Some(0.5)));
+    let rows: Vec<(String, Option<String>)> = h
+        .store
+        .read(|db| {
+            let mut statement =
+                db.prepare("SELECT origin, mcp_client FROM usage_step ORDER BY ended_ms, rowid")?;
+            let rows = statement
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<Result<_, _>>()?;
+            Ok(rows)
+        })
+        .unwrap();
+    assert_eq!(
+        rows,
+        [
+            ("session".into(), None),
+            ("mcp".into(), Some("claude-code".into())),
+            ("client".into(), None),
+            ("user".into(), None),
+        ]
+    );
+    let request = cyber_server::runtime::StatsRequest {
+        period: cyber_server::runtime::Period::All,
+        project: None,
+        zone: Some("UTC".into()),
+    };
+    let split = |stats: cyber_server::runtime::UsageStats| -> Vec<(String, u64)> {
+        let mut origins: Vec<_> = stats
+            .origins
+            .into_iter()
+            .map(|o| (o.origin, o.tokens.input))
+            .collect();
+        origins.sort();
+        origins
+    };
+    let live = split(h.runtime.usage_stats(&request).unwrap());
+    assert_eq!(
+        live,
+        [
+            ("client".into(), 10),
+            ("mcp".into(), 100),
+            ("session".into(), 100),
+            ("user".into(), 100),
+        ]
+    );
+    assert_eq!(h.runtime.fold_usage(i64::MAX).unwrap(), 4);
+    let folded = h.runtime.usage_stats(&request).unwrap();
+    assert!(folded.approximate_days);
+    assert_eq!(split(folded), live);
 }

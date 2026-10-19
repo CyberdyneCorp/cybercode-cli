@@ -20,8 +20,11 @@ use serde_json::{Value, json};
 use support::{Behavior, Harness, Setup, text, tools};
 
 const PASSWORD: &str = "s3cret";
-const TOOLS: [&str; 7] = [
+const TOOLS: [&str; 10] = [
     "cyber_interrupt",
+    "cyber_message_history",
+    "cyber_message_list",
+    "cyber_message_send",
     "cyber_prompt",
     "cyber_prompt_wait",
     "cyber_session_create",
@@ -624,6 +627,9 @@ async fn tools_are_strict_and_map_route_errors_unchanged() {
     assert_eq!(hints("cyber_session_create"), [false, false, false, false]);
     assert_eq!(hints("cyber_prompt"), [false, true, false, true]);
     assert_eq!(hints("cyber_interrupt"), [false, true, true, false]);
+    assert_eq!(hints("cyber_message_list"), [true, false, true, false]);
+    assert_eq!(hints("cyber_message_history"), [true, false, true, false]);
+    assert_eq!(hints("cyber_message_send"), [false, false, false, true]);
 
     let error = tool_error(
         &server

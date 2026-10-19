@@ -194,7 +194,7 @@ fn preflight(origin: &str) -> Response {
     );
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("authorization, content-type, idempotency-key, last-event-id, x-cyber-directory, x-cyber-workspace, x-cyber-ticket"),
+        HeaderValue::from_static("authorization, content-type, idempotency-key, last-event-id, x-cyber-client, x-cyber-directory, x-cyber-workspace, x-cyber-ticket"),
     );
     headers.insert(
         header::ACCESS_CONTROL_MAX_AGE,

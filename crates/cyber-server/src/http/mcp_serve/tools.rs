@@ -11,7 +11,7 @@ use super::super::jsonrpc::INVALID_PARAMS;
 use super::caller::Caller;
 use super::connection::Connection;
 use super::progress::Progress;
-use super::{create, prompt, read, schema, wait};
+use super::{create, messaging, prompt, read, schema, wait};
 
 /// The `_meta` key marking results that carry model, tool or message text.
 const UNTRUSTED: &str = "dev.cyber-code/untrusted";
@@ -48,13 +48,34 @@ struct Tool {
 }
 
 /// Every served tool, sorted by name.
-const TOOLS: [Tool; 7] = [
+const TOOLS: [Tool; 10] = [
     Tool {
         name: "cyber_interrupt",
         description: "Interrupt a Session's running Turn (inbox rows are kept). Interrupting an idle Session succeeds with was_running false. stop_background also stops its background tasks.",
         hints: [false, true, true, false],
         input: interrupt_input,
         output: interrupt_output,
+    },
+    Tool {
+        name: "cyber_message_history",
+        description: "Read a Session's cross-session message history (received and sent), oldest first, paged by cursor and bounded by max_bytes.",
+        hints: [true, false, true, false],
+        input: message_history_input,
+        output: message_history_output,
+    },
+    Tool {
+        name: "cyber_message_list",
+        description: "List the Sessions a message can be sent to, newest first, optionally in one directory; canReceive false means a message would be refused.",
+        hints: [true, false, true, false],
+        input: message_list_input,
+        output: message_list_output,
+    },
+    Tool {
+        name: "cyber_message_send",
+        description: "Send a plain-text message (at most 16 KiB) to a Session by address (ses_ ID, subagent or Session name). It is read at the target's next safe boundary as untrusted data; the outcome is delivered, held or refused with a reason. You have no message address: read replies through the transcript. Pass a random unique idempotency_key so a retry never sends twice.",
+        hints: [false, false, false, true],
+        input: message_send_input,
+        output: message_send_output,
     },
     Tool {
         name: "cyber_prompt",
@@ -180,6 +201,9 @@ async fn run(
         "cyber_session_create" => create::create(connection, arguments, caller).await,
         "cyber_prompt" => prompt::prompt(connection, arguments, caller, progress).await,
         "cyber_prompt_wait" => wait::prompt_wait(connection, arguments, progress).await,
+        "cyber_message_list" => messaging::list(connection, arguments, caller).await,
+        "cyber_message_send" => messaging::send(connection, arguments, caller).await,
+        "cyber_message_history" => messaging::history(connection, arguments).await,
         _ => Err(ApiError::service_unavailable(
             "mcp_serve",
             format!("{name} is not available on this server"),
@@ -530,6 +554,106 @@ fn prompt_output() -> Value {
             "finished_at": timestamp(),
         }),
         &["session_id", "message_id", "status", "done", "admitted_at"],
+    )
+}
+
+fn message_list_input() -> Value {
+    strict(json!({ "directory": directory() }), &[])
+}
+
+fn message_list_output() -> Value {
+    let location = shape(
+        json!({ "directory": { "type": "string" }, "workspace": { "type": "string" } }),
+        &["directory"],
+    );
+    let session = shape(
+        json!({
+            "address": { "type": "string", "description": "What to pass as to." },
+            "session_id": { "type": "string" },
+            "name": { "type": "string" },
+            "kind": { "type": "string", "description": "local, subagent or teammate; an open set." },
+            "state": { "type": "string", "enum": ["idle", "running", "waiting_input"] },
+            "location": location,
+            "canReceive": { "type": "boolean" },
+        }),
+        &["address", "name", "kind", "state", "location", "canReceive"],
+    );
+    shape(
+        json!({ "sessions": { "type": "array", "items": session } }),
+        &["sessions"],
+    )
+}
+
+fn message_send_input() -> Value {
+    strict(
+        json!({
+            "to": { "type": "string", "minLength": 1,
+                "description": "The target's address: a ses_ ID, a subagent name or a Session name." },
+            "text": { "type": "string", "minLength": 1, "description": "Plain text, at most 16 KiB." },
+            "idempotency_key": idempotency_key(),
+        }),
+        &["to", "text"],
+    )
+}
+
+fn message_outcome() -> Value {
+    json!({ "type": "string", "enum": ["delivered", "held", "refused"] })
+}
+
+fn message_send_output() -> Value {
+    shape(
+        json!({
+            "message_id": { "type": "string" },
+            "outcome": message_outcome(),
+            "reason": { "type": "string" },
+            "limit": { "type": "string", "description": "The limit a rate_limited refusal hit." },
+            "to": shape(
+                json!({ "address": { "type": "string" }, "session_id": { "type": "string" } }),
+                &["address"],
+            ),
+            "replayed": { "type": "boolean" },
+        }),
+        &["message_id", "outcome"],
+    )
+}
+
+fn message_history_input() -> Value {
+    strict(
+        json!({
+            "session_id": id("The Session whose messages to read."),
+            "cursor": { "type": "string" },
+            "limit": integer(1, 100, 50),
+            "max_bytes": max_bytes(),
+        }),
+        &["session_id"],
+    )
+}
+
+fn message_history_output() -> Value {
+    page(
+        "messages",
+        shape(
+            json!({
+                "message_id": { "type": "string" },
+                "direction": { "type": "string", "enum": ["in", "out"] },
+                "from": { "type": "string" },
+                "to": { "type": "string" },
+                "outcome": { "type": "string", "enum": ["delivered", "held", "released", "dropped", "refused"] },
+                "reason": { "type": "string" },
+                "size": { "type": "integer", "minimum": 0 },
+                "text": { "type": "string", "description": "Absent for a refused message." },
+                "created_at": timestamp(),
+            }),
+            &[
+                "message_id",
+                "direction",
+                "from",
+                "to",
+                "outcome",
+                "size",
+                "created_at",
+            ],
+        ),
     )
 }
 

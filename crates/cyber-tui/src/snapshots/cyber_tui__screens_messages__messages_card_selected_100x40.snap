@@ -1,0 +1,44 @@
+---
+source: crates/cyber-tui/src/screens_messages.rs
+expression: "shot(&mut app, &ids)"
+---
+ cyber · api-refactor                                                                          idle
+ ✉ frontend · ses_AAAAAA · 14:02                                                         untrusted
+ │ which port does the API use?
+
+ ● send_message → frontend                                                   delivered · msgx_5d1e
+   │ API moved to port 8080; restart your dev server.
+
+  Sent.
+
+  ▣ Build · main · 11.3s
+
+ ◷ frontend is idle · 14:04 · "Noted."
+
+  Noted.
+
+  ▣ Build · main · 11.3s
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+┌ Held message ──────────────────────────────────────────────────────────────────────────── 2 of 2 ┐
+│ ✉ from frontend · 14:06 · 55 B                                                                   │
+│ Please review the schema change before the next deploy.                                          │
+│                                                       r release · d drop · enter view · esc back │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃
+┃ Build · main test · default
+ ~/work/app                                                      100 · —  ✉ 2 held  ctrl+p commands

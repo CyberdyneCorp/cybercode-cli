@@ -200,6 +200,7 @@ pub async fn session(
         let body = json!({
             "model": global.model, "agent": args.agent, "mode": mode(args, global),
             "title": args.name, "rules": cyber_core::config::never_ask_rules(), "max_steps": args.max_turns,
+            "messaging": inbound(args),
         });
         if let Some(name) = &args.worktree {
             return crate::commands::worktrees::start(client, name, body, args.quiet).await;
@@ -209,14 +210,7 @@ pub async fn session(
     };
     let mut id = existing["id"].as_str().unwrap_or_default().to_string();
     if args.fork {
-        let forked = client
-            .post(&format!("/sessions/{id}/fork"), json!({}))
-            .await
-            .map_err(api)?;
-        id = forked["data"]["id"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
+        id = fork(client, &id, args).await?;
     }
     if args.non_interactive_rules {
         eprintln!("warning: --non-interactive-rules cannot change a reused Session in this build");
@@ -237,7 +231,66 @@ pub async fn session(
             .map_err(api)?;
     }
     let s = client.get(&format!("/sessions/{id}")).await.map_err(api)?;
+    if let Some(warning) = reused_inbound_warning(&s["data"], args.accept_messages)
+        && !args.fork
+        && !args.quiet
+    {
+        eprintln!("warning: {warning}");
+    }
     Ok(s["data"].clone())
+}
+
+/// Fork `source`: the fork is a Session exec creates, so it takes this run's messaging
+/// policy instead of the one it copied from its source.
+async fn fork(client: &Client, source: &str, args: &ExecArgs) -> Result<String, CliError> {
+    let forked = client
+        .post(&format!("/sessions/{source}/fork"), json!({}))
+        .await
+        .map_err(api)?;
+    let id = forked["data"]["id"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let messaging = match inbound(args) {
+        Value::Null => json!({ "inbound": null }),
+        refuse => refuse,
+    };
+    client
+        .patch(
+            &format!("/sessions/{id}"),
+            json!({ "messaging": messaging }),
+        )
+        .await
+        .map_err(api)?;
+    Ok(id)
+}
+
+/// The `messaging` override of a Session exec creates: it refuses messages from other
+/// Sessions (`non_interactive`) unless `--accept-messages`.
+fn inbound(args: &ExecArgs) -> Value {
+    if args.accept_messages {
+        Value::Null
+    } else {
+        json!({ "inbound": "refuse", "reason": "non_interactive" })
+    }
+}
+
+/// A reused Session keeps its messaging policy; say so when it differs from what this
+/// run asked for.
+fn reused_inbound_warning(session: &Value, accept_messages: bool) -> Option<String> {
+    let id = session["id"].as_str().unwrap_or_default();
+    let refuses = session["messaging"]["inbound"] == "refuse";
+    match (accept_messages, refuses) {
+        (true, true) => Some(format!(
+            "--accept-messages cannot change the reused Session {id}; it keeps refusing messages \
+             (clear its override with PATCH /api/v1/sessions/{id})"
+        )),
+        (false, false) => Some(format!(
+            "the reused Session {id} keeps its messaging policy and may receive messages from \
+             other Sessions; exec refuses them only in the Sessions it creates"
+        )),
+        _ => None,
+    }
 }
 
 async fn reuse(client: &Client, args: &ExecArgs) -> Result<Option<Value>, CliError> {

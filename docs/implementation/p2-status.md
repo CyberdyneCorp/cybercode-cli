@@ -2,6 +2,10 @@
 
 P2 evidence lives here and is kept separate from the P1 files (`p1-status.md`, `p1-handoff.md` and `p1-acceptance-audit.md`). The plan, the requirement-to-task mapping and the scope exclusions are in [`openspec/changes/implement-m2-1-workflow-runtime`](../../openspec/changes/implement-m2-1-workflow-runtime/proposal.md).
 
+## Cross-session messaging: direct peers are next (2026-10-19)
+
+Same-server messaging (the 18 P1 requirements of `cross-session-messaging`) is implemented by `implement-cross-session-messaging`; its evidence is in the [P1 status](p1-status.md#cross-session-messaging-2026-10-19). The P2 requirement "Direct peer transport" is not implemented. It is the follow-up change [`add-messaging-direct-peers`](../../openspec/changes/add-messaging-direct-peers/proposal.md) (specified, not implemented), and the P1 code keeps its extension points: an address with `@` (`name@machine`) is parsed into its own tier and fails with `AccountRequiredError` on every surface (model tool, CLI exit 6, HTTP, MCP serve) with nothing sent; the inbound default for a cross-machine sender is `hold` (unit-tested only, since no such sender exists); `message.send` is `ask` for `*@*` targets; the record's `origin_kind` is an open set; `cyber peers` is a stub that exits 2. The team address tier is an empty extension point for agent teams (M2.5).
+
 ## Parallel workflow runs (`add-parallel-workflow-runs`, 2026-10-16)
 
 Sections 1–10 of [`add-parallel-workflow-runs`](../../openspec/changes/add-parallel-workflow-runs/tasks.md) are implemented and tested, with production-path tests per section (App over authenticated HTTP with the gated scripted provider, the real `cyber` binary, the SDK against the real binary, and the TUI through `TestBackend` against the production server):

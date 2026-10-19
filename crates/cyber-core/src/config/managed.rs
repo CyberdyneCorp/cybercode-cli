@@ -331,7 +331,10 @@ fn malformed(sources: Vec<String>, error: String) -> ManagedRead {
         mcp: Vec::new(),
         settings: vec![(
             "managed:malformed".into(),
-            serde_json::json!({"modes": {"disable": MALFORMED_DISABLED_MODES}}),
+            serde_json::json!({
+                "modes": {"disable": MALFORMED_DISABLED_MODES},
+                "messaging": {"enabled": false},
+            }),
         )],
     }
 }
@@ -423,7 +426,7 @@ fn absorb_policy(read: &mut ManagedPolicy, policy: &Value) -> Result<(), String>
     if let Some(key) = policy.keys().find(|key| {
         !matches!(
             key.as_str(),
-            "hooks" | "mcp" | "modes" | "plugins" | "sandbox"
+            "hooks" | "messaging" | "mcp" | "modes" | "plugins" | "sandbox"
         )
     }) {
         return Err(format!("policy.{key}: unsupported managed policy key"));
@@ -464,10 +467,13 @@ fn disabled_plugins(plugins: &Value) -> Result<Vec<String>, String> {
         .collect()
 }
 
-/// `policy.modes.disable` (a list of Modes) and `policy.sandbox.min_profile` (a profile
-/// name), validated strictly so a typo fails closed.
+/// `policy.modes.disable` (a list of Modes), `policy.sandbox.min_profile` (a profile
+/// name) and `policy.messaging.enabled`, validated strictly so a typo fails closed.
 fn policy_settings(policy: &Value) -> Result<Map<String, Value>, String> {
     let mut out = Map::new();
+    if let Some(messaging) = policy.get("messaging") {
+        out.insert("messaging".into(), messaging_policy(messaging)?);
+    }
     if let Some(modes) = policy.get("modes") {
         let modes = modes
             .as_object()
@@ -512,6 +518,24 @@ fn policy_settings(policy: &Value) -> Result<Map<String, Value>, String> {
         }
     }
     Ok(out)
+}
+
+/// `policy.messaging`: only `enabled`, a boolean (`cross-session-messaging` → Disable
+/// switch).
+fn messaging_policy(messaging: &Value) -> Result<Value, String> {
+    let messaging = messaging
+        .as_object()
+        .ok_or("policy.messaging: expected an object")?;
+    if let Some(key) = messaging.keys().find(|key| *key != "enabled") {
+        return Err(format!(
+            "policy.messaging.{key}: unsupported managed policy key"
+        ));
+    }
+    match messaging.get("enabled") {
+        None => Ok(serde_json::json!({})),
+        Some(Value::Bool(enabled)) => Ok(serde_json::json!({ "enabled": enabled })),
+        Some(_) => Err("policy.messaging.enabled: expected a boolean".into()),
+    }
 }
 
 /// `policy.mcp`: `allow` and `deny` arrays of patterns; several documents add up.

@@ -36,6 +36,15 @@ impl Runtime {
                 return Err(error);
             }
         };
+        // Held messages are dropped and their senders notified before the records go;
+        // the send locks keep new messages out until the deletion ends.
+        let _sends = match self.drop_held_messages(&ids).await {
+            Ok(locks) => locks,
+            Err(error) => {
+                self.lift_deletion_fence(&ids);
+                return Err(error);
+            }
+        };
         let doomed = ids.clone();
         let deleted = self.inner.store.transaction(move |tx| {
             // Ledger rows outlive the Session: index what the backfill has not yet
@@ -70,6 +79,9 @@ impl Runtime {
         }
         self.lift_deletion_fence(&ids);
         remove_artifacts(&artifacts);
+        // Watches of surviving Sessions on the deleted ones fire with `exited`; the send
+        // locks are still held.
+        self.targets_deleted(&ids).await;
         for id in ids {
             self.inner
                 .bus

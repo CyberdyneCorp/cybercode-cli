@@ -262,6 +262,15 @@ impl App {
         // Inline scripts and return values larger than 1 MiB (`workflows` → Run results).
         runtime.configure_workflow_dir(opts.paths.state.join("workflows"));
         runtime.recover_jobs().await.map_err(|e| e.to_string())?;
+        // Sender records of messages a crash left half-recorded (`cross-session-messaging`).
+        runtime
+            .recover_messages()
+            .await
+            .map_err(|e| e.to_string())?;
+        // Idle notices a crash left unsent and subscriptions past their 12 hours, then the
+        // same sweep every 60 s (`cross-session-messaging` → Idle notifications).
+        runtime.recover_watches().await.map_err(|e| e.to_string())?;
+        runtime.spawn_watch_sweep();
         // Index usage stored before the usage ledger existed (resumable, in batches).
         runtime.spawn_usage_backfill();
         let config_for_app = Arc::clone(&config);

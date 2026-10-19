@@ -20,6 +20,7 @@ mod jsonrpc;
 mod mcp;
 mod mcp_serve;
 mod memory;
+mod messaging;
 pub mod openapi;
 mod plugins;
 mod pty;
@@ -612,6 +613,7 @@ pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router 
         .merge(mcp::routes(mcp_serve))
         .merge(intelligence::routes())
         .merge(memory::routes())
+        .merge(messaging::routes())
         .merge(usage::routes())
         .merge(vcs::routes())
         .merge(system::routes())

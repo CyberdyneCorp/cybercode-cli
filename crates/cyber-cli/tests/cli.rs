@@ -4263,6 +4263,7 @@ fn pure_refuses_commands_that_run_turns_on_the_shared_server() {
     for args in [
         &["--pure", "api", "GET", "/sessions"][..],
         &["--pure", "pr", "3"],
+        &["--pure", "messages", "list"],
         &["--pure", "mcp", "serve"],
         &["--pure", "workflows", "run", "x"],
         &["--pure", "workflows", "resume", "wr_1"],

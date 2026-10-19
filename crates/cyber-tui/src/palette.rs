@@ -151,6 +151,12 @@ const BUILTINS: &[(&str, &str, Option<&str>, bool)] = &[
         None,
         false,
     ),
+    (
+        "messages",
+        "messages to and from other Sessions; release held ones",
+        Some("messages_view"),
+        false,
+    ),
     ("exit", "quit", None, false),
 ];
 

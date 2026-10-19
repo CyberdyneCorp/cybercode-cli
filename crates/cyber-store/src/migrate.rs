@@ -97,6 +97,18 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         id: "20261018000000_usage_ledger",
         sql: include_str!("../migrations/20261018000000_usage_ledger.sql"),
     },
+    Migration {
+        id: "20261019000000_messaging",
+        sql: include_str!("../migrations/20261019000000_messaging.sql"),
+    },
+    Migration {
+        id: "20261019005000_session_inbound",
+        sql: include_str!("../migrations/20261019005000_session_inbound.sql"),
+    },
+    Migration {
+        id: "20261019010000_usage_origin",
+        sql: include_str!("../migrations/20261019010000_usage_origin.sql"),
+    },
 ];
 
 pub(crate) enum Outcome {
@@ -194,5 +206,112 @@ mod tests {
             .query_row("SELECT count(*) FROM migration", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, MIGRATIONS.len() as i64);
+    }
+
+    /// The messaging tables apply over a database holding P1 data, keep that data, and
+    /// are removed with their Session.
+    #[test]
+    fn messaging_applies_over_p1_data_and_cascades_from_session() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON").unwrap();
+        let at = MIGRATIONS
+            .iter()
+            .position(|m| m.id == "20261019000000_messaging")
+            .unwrap();
+        migrate(&mut conn, &MIGRATIONS[..at]).unwrap();
+        conn.execute_batch(
+            "INSERT INTO session (id, title, directory, agent, model, mode, created_at, updated_at, last_seq)
+             VALUES ('ses_a', 'backend', '/r', 'build', 'test/main', 'default', 1, 1, 0),
+                    ('ses_b', 'frontend', '/r', 'build', 'test/main', 'default', 1, 1, 0);
+             INSERT INTO event (id, aggregate_id, seq, type, data, time)
+             VALUES ('evt_1', 'ses_a', 0, 'session.created.1', '{}', 1);
+             INSERT INTO session_input (message_id, session_id, delivery, status, source, digest, admitted_seq)
+             VALUES ('msg_1', 'ses_a', 'queue', 'pending', 'user', 'sha256:x', 0);",
+        )
+        .unwrap();
+        migrate(&mut conn, MIGRATIONS).unwrap();
+        let kept: i64 = conn
+            .query_row(
+                "SELECT (SELECT count(*) FROM session) + (SELECT count(*) FROM event) + (SELECT count(*) FROM session_input)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(kept, 4);
+        conn.execute_batch(
+            "INSERT INTO xsession_message (session_id, message_id, direction, peer_address, peer_session_id,
+                 origin_kind, sender_key, outcome, size, sha256, text, created_ms, updated_ms, seq)
+             VALUES ('ses_a', 'msgx_1', 'in', 'frontend', 'ses_b', 'session', 'ses_b', 'delivered', 2, 'h', 'hi', 1, 1, 1),
+                    ('ses_b', 'msgx_1', 'out', 'backend', 'ses_a', 'session', 'ses_b', 'delivered', 2, 'h', 'hi', 1, 1, 1);
+             INSERT INTO messaging_watch (id, subscriber_id, target_address, target_id, status, created_ms, expires_ms)
+             VALUES ('wch_1', 'ses_a', 'frontend', 'ses_b', 'active', 1, 2);",
+        )
+        .unwrap();
+        let defaults: (i64, i64) = conn
+            .query_row(
+                "SELECT depth, hops FROM xsession_message WHERE session_id = 'ses_a'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(defaults, (0, 1));
+        let orphan = conn.execute(
+            "INSERT INTO messaging_watch (id, subscriber_id, target_address, target_id, status, created_ms, expires_ms)
+             VALUES ('wch_2', 'ses_gone', 'x', 'ses_b', 'active', 1, 2)",
+            [],
+        );
+        assert!(orphan.is_err(), "a watch needs its subscriber Session");
+        conn.execute("DELETE FROM session WHERE id = 'ses_a'", [])
+            .unwrap();
+        let rows = |sql: &str| -> Vec<String> {
+            let mut stmt = conn.prepare(sql).unwrap();
+            stmt.query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert_eq!(rows("SELECT session_id FROM xsession_message"), ["ses_b"]);
+        assert!(rows("SELECT id FROM messaging_watch").is_empty());
+    }
+
+    /// Task 9.2: ledger rows and folded days recorded before origins existed read as
+    /// `user`, and a folded day keys on its origin.
+    #[test]
+    fn usage_origin_reads_old_ledger_rows_as_user() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let at = MIGRATIONS
+            .iter()
+            .position(|m| m.id == "20261019010000_usage_origin")
+            .unwrap();
+        migrate(&mut conn, &MIGRATIONS[..at]).unwrap();
+        conn.execute_batch(
+            "INSERT INTO usage_step (event_id, session_id, root_id, agent, purpose, provider, model,
+                started_ms, ended_ms, input_tokens, output_tokens, reasoning_tokens,
+                cache_read_tokens, cache_write_tokens, prompt_tokens, cost, directory)
+             VALUES ('evt_1', 'ses_a', 'ses_a', 'build', 'turn', 'test', 'main', 1, 2, 100, 10,
+                0, 0, 0, 100, 0.5, '/r');
+             INSERT INTO usage_daily VALUES ('2026-10-01', 'ses_a', 'build', 'test', 'main', '/r',
+                1, 1, 100, 10, 0, 0, 0, 0.5, 0, 100, 1);",
+        )
+        .unwrap();
+        migrate(&mut conn, MIGRATIONS).unwrap();
+        let origin = |sql: &str| -> (String, i64) {
+            conn.query_row(sql, [], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+        };
+        assert_eq!(
+            origin("SELECT origin, input_tokens FROM usage_step"),
+            ("user".into(), 100)
+        );
+        assert_eq!(
+            origin("SELECT origin, input_tokens FROM usage_daily"),
+            ("user".into(), 100)
+        );
+        conn.execute(
+            "INSERT INTO usage_daily VALUES ('2026-10-01', 'ses_a', 'build', 'test', 'main',
+                'session', '/r', 1, 1, 7, 1, 0, 0, 0, 0.1, 0, 7, 1)",
+            [],
+        )
+        .expect("the same day, root and model with another origin is its own row");
     }
 }

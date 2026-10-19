@@ -436,3 +436,105 @@ fn checked_append_rolls_back_decision_mutations_when_events_are_invalid() {
         .unwrap();
     assert_eq!(stored_value, 2);
 }
+
+/// A projection rebuilt from its events: the tables are cleared and only events of the
+/// prefix are re-projected, upcast and in commit order; a failing projector leaves the
+/// previous rows in place.
+#[test]
+fn reproject_rebuilds_a_projection_from_its_events() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut reg = registry();
+    reg.register("other.thing.happened.1").unwrap();
+    reg.register("test.thing.renamed.1").unwrap();
+    reg.register("test.thing.renamed.2").unwrap();
+    reg.upcaster("test.thing.renamed.1", |mut data| {
+        data["i"] = json!(data["old"].as_i64().unwrap_or(0) * 10);
+        data
+    })
+    .unwrap();
+    let store = open(dir.path(), reg);
+    store
+        .transaction(|tx| {
+            tx.execute(
+                "CREATE TABLE seen (aggregate TEXT, seq INTEGER, i INTEGER)",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    store.append("b", Expected::Any, vec![event(1)]).unwrap();
+    store
+        .append(
+            "a",
+            Expected::Any,
+            vec![
+                NewEvent::new("other.thing.happened.1", json!({ "i": 99 })),
+                NewEvent::new("test.thing.renamed.1", json!({ "old": 2 })),
+            ],
+        )
+        .unwrap();
+    store
+        .transaction(|tx| {
+            tx.execute("INSERT INTO seen VALUES ('stale', 0, 0)", [])?;
+            Ok(())
+        })
+        .unwrap();
+    let project: cyber_store::Projector = Arc::new(|tx, e| {
+        tx.execute(
+            "INSERT INTO seen VALUES (?1, ?2, ?3)",
+            rusqlite::params![e.aggregate_id, e.seq, e.data["i"].as_i64()],
+        )
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+    });
+    assert_eq!(store.reproject(&["seen"], "test.", project).unwrap(), 2);
+    let db = dir.path().join("cyber.db");
+    let rows = cyber_store::query_readonly(&db, "SELECT aggregate, seq, i FROM seen").unwrap();
+    assert_eq!(
+        rows.rows,
+        [
+            vec![json!("b"), json!(0), json!(1)],
+            vec![json!("a"), json!(1), json!(20)]
+        ]
+    );
+
+    let failing: cyber_store::Projector = Arc::new(|_, _| Err("broken".into()));
+    let err = store.reproject(&["seen"], "test.", failing).unwrap_err();
+    assert!(matches!(err, StoreError::Projector { .. }), "{err}");
+    let kept = cyber_store::query_readonly(&db, "SELECT count(*) FROM seen").unwrap();
+    assert_eq!(kept.rows[0][0], json!(2));
+    let noop: cyber_store::Projector = Arc::new(|_, _| Ok(()));
+    assert!(
+        store
+            .reproject(&["seen; DROP TABLE event"], "test.", noop)
+            .is_err()
+    );
+}
+
+/// The crash-injection hook fails matching appends before anything is written, leaves
+/// other aggregates alone, and stops once cleared.
+#[test]
+fn an_append_fault_fails_matching_appends_without_writing() {
+    let store = Store::open(StoreOptions::new(DatabaseLocation::Memory, registry())).unwrap();
+    store.set_append_fault(Some(Arc::new(|aggregate, e| {
+        aggregate == "ses_B" && e.data["i"] == 1
+    })));
+    let failed = store.append("ses_B", Expected::Any, vec![event(0), event(1)]);
+    assert!(
+        matches!(failed, Err(StoreError::Unavailable(_))),
+        "{failed:?}"
+    );
+    assert!(
+        !store.has_failed(),
+        "an injected fault is not a storage failure"
+    );
+    assert_eq!(store.aggregate_seq("ses_B").unwrap(), None);
+    store
+        .append("ses_A", Expected::Any, vec![event(1)])
+        .unwrap();
+    store.set_append_fault(None);
+    store
+        .append("ses_B", Expected::Any, vec![event(1)])
+        .unwrap();
+    assert_eq!(store.aggregate_seq("ses_B").unwrap(), Some(0));
+}

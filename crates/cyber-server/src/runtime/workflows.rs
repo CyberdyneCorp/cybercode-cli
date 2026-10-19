@@ -875,6 +875,9 @@ impl Runtime {
         let lock = self.workflow_lock(&run.id);
         let lifecycle = lock.lock().await;
         self.record_start(&run, &start.module.source, &budget)?;
+        // The summary continues the message chain of the run that started the Workflow.
+        let summary = super::workflow_results::handback_message_id(&run.id);
+        self.record_caused_input(&owner.id, &summary).await?;
         self.workflow_hook(&run, "WorkflowRunStart").await;
         let engine = Engine {
             module: start.module,

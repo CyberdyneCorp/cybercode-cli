@@ -162,6 +162,8 @@ pub struct Tools {
     pub prompt_reached: tokio::sync::Semaphore,
     pub started: Notify,
     pub release: Notify,
+    /// The `messaging` settings of every Location (`cross-session-messaging`).
+    pub messaging: Mutex<cyber_core::config::MessagingSettings>,
 }
 
 pub fn def(name: &str, safety: RetrySafety, parallel: bool) -> ToolDef {
@@ -206,6 +208,7 @@ impl Tools {
             prompt_reached: tokio::sync::Semaphore::new(0),
             started: Notify::new(),
             release: Notify::new(),
+            messaging: Mutex::default(),
         })
     }
 
@@ -283,6 +286,12 @@ impl ToolHost for Tools {
     }
     fn agent_inference(&self, _turn: &TurnContext) -> Result<AgentInference, String> {
         Ok(self.inference.lock().unwrap().clone())
+    }
+    fn messaging_settings(
+        &self,
+        _directory: Option<&str>,
+    ) -> Result<cyber_core::config::MessagingSettings, String> {
+        Ok(self.messaging.lock().unwrap().clone())
     }
     fn definitions(&self, _turn: &TurnContext) -> Vec<ToolDef> {
         self.defs.lock().unwrap().clone()

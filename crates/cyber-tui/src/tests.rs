@@ -340,11 +340,41 @@ fn queued_messages_are_listed_and_can_be_taken_back() {
         message_id: "m5".into(),
         text: "then update docs".into(),
         delivery: "queue".into(),
+        held: false,
     }];
     assert!(screen(&app).contains("then update docs"));
     let actions = app.on_key(with(KeyCode::Up, KeyModifiers::ALT));
     assert_eq!(actions, vec![Action::RemoveQueued("m5".into())]);
     assert_eq!(app.composer.text(), "then update docs");
+}
+
+/// Alt+Up takes back the user's own queued input, never a received message: taking
+/// one back would drop another Session's message and paste its untrusted block into
+/// the composer.
+#[test]
+fn taking_back_skips_received_messages() {
+    let mut app = App::new(session(true), Vec::new(), "cyber");
+    let row = |id: &str, text: &str| Queued {
+        message_id: id.into(),
+        text: text.into(),
+        delivery: "queue".into(),
+        held: false,
+    };
+    app.queued = vec![
+        row("m5", "then update docs"),
+        row("msgx_q", "<cross_session_message>"),
+    ];
+    app.messaging.records = vec![crate::messaging::Record {
+        message_id: "msgx_q".into(),
+        incoming: true,
+        ..Default::default()
+    }];
+    let actions = app.on_key(with(KeyCode::Up, KeyModifiers::ALT));
+    assert_eq!(actions, vec![Action::RemoveQueued("m5".into())]);
+    assert_eq!(app.composer.text(), "then update docs");
+    assert_eq!(app.queued.len(), 1);
+    assert!(app.on_key(with(KeyCode::Up, KeyModifiers::ALT)).is_empty());
+    assert_eq!(app.queued[0].message_id, "msgx_q");
 }
 
 #[test]

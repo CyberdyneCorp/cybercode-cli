@@ -72,13 +72,17 @@ impl JobIo {
     }
 
     /// Admit `text` into the Job's Session as a queued prompt from `source` (a monitor's
-    /// line uses `monitor`), so it never interrupts a running Turn.
+    /// line uses `monitor`), so it never interrupts a running Turn. It carries the chain
+    /// hops of the run that started the Job.
     pub async fn queue(&self, source: &str, text: String) -> Result<(), String> {
         let runtime = self.runtime.upgrade().ok_or("The server is stopping")?;
         let mut admission = super::Admission::text(text, super::Delivery::Queue);
         admission.source = source.into();
+        let hops = runtime
+            .job_message_hops(&self.session_id, &self.job_id)
+            .await;
         runtime
-            .admit(&self.session_id, admission)
+            .admit_caused(&self.session_id, admission, hops)
             .await
             .map(drop)
             .map_err(|error| error.to_string())
@@ -178,7 +182,8 @@ impl Runtime {
             // A suppressed notice is never delivered, not even after a restart.
             notified: !spec.notify,
         };
-        self.record_job(STARTED, &job).await?;
+        let chain = self.job_chain(&job.session_id, &job.id);
+        self.record_job_with(STARTED, &job, chain).await?;
         let control = Arc::new(Control {
             stop: CancellationToken::new(),
             done: CancellationToken::new(),

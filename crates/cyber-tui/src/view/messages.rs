@@ -192,6 +192,12 @@ fn marker_line(app: &App, m: &crate::turns::Marker) -> Line<'static> {
 
 fn item_lines(app: &App, item: &Item, out: &mut Out) {
     let t = &app.theme;
+    if let Some(lines) = message_lines(app, item, out.ctx.width) {
+        for line in lines {
+            out.push(line);
+        }
+        return;
+    }
     match item {
         Item::User { text, .. } => {
             let bold = Style::default().fg(t.user).add_modifier(Modifier::BOLD);
@@ -231,6 +237,19 @@ fn item_lines(app: &App, item: &Item, out: &mut Out) {
     }
 }
 
+/// A received message or an idle notice, drawn as such only when the Session holds its
+/// `in` record or the server named it a notice.
+fn message_lines(app: &App, item: &Item, width: usize) -> Option<Vec<Line<'static>>> {
+    let Item::User { id, .. } = item else {
+        return None;
+    };
+    if let Some(record) = app.messaging.received(id) {
+        return Some(super::messaging::received(app, record, width));
+    }
+    let notice = crate::messaging::Notice::of(item)?;
+    Some(vec![super::messaging::notice(app, &notice)])
+}
+
 fn assistant(
     app: &App,
     id: &str,
@@ -268,7 +287,10 @@ fn assistant(
     };
     out.markdown(&rendered);
     for tool in tools {
-        tool_card(app, tool, out);
+        match super::messaging::sent(app, tool, out.ctx.width) {
+            Some(lines) => lines.into_iter().for_each(|line| out.push(line)),
+            None => tool_card(app, tool, out),
+        }
     }
     if let Some(e) = error {
         out.push(Line::from(Span::styled(

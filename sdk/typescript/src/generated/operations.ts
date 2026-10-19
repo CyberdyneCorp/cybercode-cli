@@ -331,6 +331,27 @@ export interface Operations {
     body: undefined;
     response: S.Page_Message;
   };
+  "v1.messaging.send": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.SendMessage;
+    response: S.SendResult;
+  };
+  "v1.messaging.sessions": {
+    path: Record<string, never>;
+    query: {
+      from?: QueryValue;
+      directory?: QueryValue;
+    };
+    body: undefined;
+    response: S.ReachableSession[];
+  };
+  "v1.messaging.watch": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.WatchSession;
+    response: S.Watch;
+  };
   "v1.model.list": {
     path: Record<string, never>;
     query: Record<string, never>;
@@ -558,6 +579,17 @@ export interface Operations {
     };
     body: undefined;
     response: S.Located_Page_SessionRow;
+  };
+  "v1.session.messaging": {
+    path: { sessionID: string };
+    query: {
+      cursor?: QueryValue;
+      limit?: QueryValue;
+      direction?: QueryValue;
+      order?: QueryValue;
+    };
+    body: undefined;
+    response: S.Page_MessageRecord;
   };
   "v1.session.mode": {
     path: { sessionID: string };
@@ -1331,6 +1363,42 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.messaging.send": {
+    tag: "messaging",
+    name: "send",
+    method: "POST",
+    path: "/api/v1/messaging/send",
+    pathParams: [],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.messaging.sessions": {
+    tag: "messaging",
+    name: "sessions",
+    method: "GET",
+    path: "/api/v1/messaging/sessions",
+    pathParams: [],
+    query: ["from", "directory"],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.messaging.watch": {
+    tag: "messaging",
+    name: "watch",
+    method: "POST",
+    path: "/api/v1/messaging/watch",
+    pathParams: [],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.model.list": {
     tag: "model",
     name: "list",
@@ -1724,6 +1792,18 @@ export const operations = {
     query: ["limit", "cursor", "search", "children", "archived", "pr"],
     body: "none",
     located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.session.messaging": {
+    tag: "session",
+    name: "messaging",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/messaging",
+    pathParams: ["sessionID"],
+    query: ["cursor", "limit", "direction", "order"],
+    body: "none",
+    located: false,
     unwrap: false,
     stream: false,
   },
@@ -2387,6 +2467,17 @@ export function createGroups(caller: Caller) {
       list: (sessionID: string, query?: Operations["v1.message.list"]["query"], options?: RequestOptions): Promise<Operations["v1.message.list"]["response"]> =>
         caller.call("v1.message.list", { path: { sessionID }, query }, options),
     },
+    messaging: {
+      /** Send a message to a Session as `from`, else as the client; a refusal is a 200 outcome (`POST /api/v1/messaging/send`) */
+      send: (body: Operations["v1.messaging.send"]["body"], options?: RequestOptions): Promise<Operations["v1.messaging.send"]["response"]> =>
+        caller.call("v1.messaging.send", { body }, options),
+      /** Sessions the caller (`from`, else a client) can message, newest first (`GET /api/v1/messaging/sessions`) */
+      sessions: (query?: Operations["v1.messaging.sessions"]["query"], options?: RequestOptions): Promise<Operations["v1.messaging.sessions"]["response"]> =>
+        caller.call("v1.messaging.sessions", { query }, options),
+      /** Subscribe `from` to one notice when the target next goes idle or exits; an idle target fires at once (`POST /api/v1/messaging/watch`) */
+      watch: (body: Operations["v1.messaging.watch"]["body"], options?: RequestOptions): Promise<Operations["v1.messaging.watch"]["response"]> =>
+        caller.call("v1.messaging.watch", { body }, options),
+    },
     model: {
       /** Models, available first (`GET /api/v1/models`) */
       list: (options?: RequestOptions): Promise<Operations["v1.model.list"]["response"]> =>
@@ -2497,6 +2588,9 @@ export function createGroups(caller: Caller) {
       /** List root Sessions of a Location, newest first (`GET /api/v1/sessions`) */
       list: (query?: Operations["v1.session.list"]["query"], options?: RequestOptions): Promise<Operations["v1.session.list"]["response"]> =>
         caller.call("v1.session.list", { query }, options),
+      /** Page the Session's sent and received cross-session messages with their outcomes; refused messages carry no text (`GET /api/v1/sessions/{sessionID}/messaging`) */
+      messaging: (sessionID: string, query?: Operations["v1.session.messaging"]["query"], options?: RequestOptions): Promise<Operations["v1.session.messaging"]["response"]> =>
+        caller.call("v1.session.messaging", { path: { sessionID }, query }, options),
       /** Switch the permission mode (`POST /api/v1/sessions/{sessionID}/mode`) */
       mode: (sessionID: string, body: Operations["v1.session.mode"]["body"], options?: RequestOptions): Promise<Operations["v1.session.mode"]["response"]> =>
         caller.call("v1.session.mode", { path: { sessionID }, body }, options),

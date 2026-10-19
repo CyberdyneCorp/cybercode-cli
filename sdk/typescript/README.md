@@ -268,6 +268,24 @@ for await (const active of client.workflows.list({ status: ["running", "queued"]
 }
 ```
 
+## Cross-session messaging
+
+`client.messaging` holds the generated `sessions({ from?, directory? })`, `send({ id?, from?, to,
+text, notify_when_idle? })` and `watch({ from, target })`, plus `history(sessionId, { direction?,
+order?, limit? })`, which yields a Session's sent and received messages
+(`GET /api/v1/sessions/:id/messaging`) as `MessageRecord`s, reading further pages lazily. Without
+`from`, `send()` sends as the client (`client:api`, or the `X-Cyber-Client` label); a refused
+message is a result with `outcome: "refused"`, not an error, and its records carry no `text`. A
+repeated `id` returns the first result with `replayed: true`. `MessageRecord` and `SendResult` are
+also exported from `@cyber-code/sdk/schema`.
+
+```ts
+const sent = await client.messaging.send({ to: "backend", text: "deploy at noon" });
+for await (const record of client.messaging.history(sent.to.session_id!, { direction: "in" })) {
+  console.log(record.created_at, record.from, record.outcome, record.text ?? "");
+}
+```
+
 
 `await client.mcp.close()` stops shared MCP connections for the client's Location and returns a Location envelope with `{ closed: true }` after verified settlement. A later Session open may establish fresh connections. Unresolved ownership returns `ConflictError` and keeps the Location fenced for retry or recovery; the operation does not clear unknown effects. Requests use the ordinary authentication, Location routing and idempotency handling.
 

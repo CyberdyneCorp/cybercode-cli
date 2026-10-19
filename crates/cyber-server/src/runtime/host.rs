@@ -730,6 +730,17 @@ pub trait ToolHost: Send + Sync {
         Box::pin(async { Err("background shell commands are not supported by this host".into()) })
     }
 
+    /// Cross-session messaging settings of a Location (`cross-session-messaging` →
+    /// Disable switch, Inbound controls); `None` is the process scope (the environment,
+    /// the managed policy and the global configuration). Callers treat an error as
+    /// disabled.
+    fn messaging_settings(
+        &self,
+        _directory: Option<&str>,
+    ) -> Result<cyber_core::config::MessagingSettings, String> {
+        Ok(cyber_core::config::MessagingSettings::default())
+    }
+
     /// Extra Context Sources this host contributes for a Session, such as `core/skills`.
     fn context_sources(&self, _turn: &TurnContext) -> std::collections::BTreeMap<String, String> {
         std::collections::BTreeMap::new()

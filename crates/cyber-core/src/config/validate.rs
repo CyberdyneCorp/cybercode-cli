@@ -148,6 +148,9 @@ fn settings_issues(value: &Value) -> Vec<String> {
     if let Err(error) = super::WorkflowSettings::from_config(value) {
         issues.push(error);
     }
+    if let Err(error) = super::MessagingSettings::from_config(value) {
+        issues.push(error);
+    }
     if let Err(error) = super::GitSettings::from_config(value) {
         issues.push(error);
     }

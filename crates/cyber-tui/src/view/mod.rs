@@ -5,6 +5,7 @@ mod explorer;
 pub(crate) mod footer;
 pub mod layout;
 mod messages;
+mod messaging;
 mod overlays;
 pub(crate) mod progress;
 mod rename;
@@ -19,6 +20,12 @@ mod wrap;
 pub(crate) use messages::transcript;
 #[cfg(test)]
 pub(crate) use settings::lines as settings_lines;
+
+/// The held card's rows, for the layout property test.
+#[cfg(test)]
+pub(crate) fn messaging_card_height() -> u16 {
+    messaging::CARD_HEIGHT
+}
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -37,7 +44,8 @@ pub fn draw(f: &mut Frame, app: &App) {
             docked: app.sidebar.docked(area.width),
             drawer: app.sidebar.drawer,
             screen_reader: app.screen_reader,
-            queued: app.queued.len() as u16,
+            queued: queued_rows(app).len() as u16,
+            held: messaging::card_height(app),
             progress: progress::height(app, area.height),
             composer: composer::height(app),
         },
@@ -51,7 +59,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     }
     if matches!(
         app.overlay,
-        Overlay::Settings | Overlay::Files | Overlay::Workflows
+        Overlay::Settings | Overlay::Files | Overlay::Workflows | Overlay::Messages
     ) {
         // Full screen over the transcript, composer and sidebar; the footer stays.
         app.set_screen_links(Vec::new());
@@ -68,6 +76,8 @@ pub fn draw(f: &mut Frame, app: &App) {
             explorer::draw(f, app, panel);
         } else if matches!(app.overlay, Overlay::Workflows) {
             workflows::draw(f, app, panel);
+        } else if matches!(app.overlay, Overlay::Messages) {
+            messaging::view(f, app, panel);
         } else {
             settings::draw(f, app, panel);
         }
@@ -85,6 +95,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         messages::draw(f, app, transcript);
     }
     draw_queued(f, app, plan.queued);
+    messaging::card(f, app, plan.held);
     progress::draw(f, app, plan.progress);
     composer::draw(f, app, plan.composer);
     footer::draw(f, app, plan.footer, plan.compact_footer);
@@ -95,7 +106,11 @@ pub fn draw(f: &mut Frame, app: &App) {
         overlays::completion(f, app, c, plan.composer);
     }
     match &app.overlay {
-        Overlay::None | Overlay::Settings | Overlay::Files | Overlay::Workflows => {}
+        Overlay::None
+        | Overlay::Settings
+        | Overlay::Files
+        | Overlay::Workflows
+        | Overlay::Messages => {}
         Overlay::Themes(s) => themes::draw(f, app, s, area),
         Overlay::Picker(p) => overlays::picker(f, app, p, area),
         Overlay::Palette(p) => overlays::palette(f, app, p, area),
@@ -213,19 +228,41 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-fn draw_queued(f: &mut Frame, app: &App, area: Rect) {
-    let lines: Vec<Line> = app
-        .queued
+/// Queued inputs; a received message shows its sender and text, and held messages
+/// are drawn as cards instead.
+fn queued_rows(app: &App) -> Vec<(String, String)> {
+    app.queued
         .iter()
+        .filter(|q| !(q.held && app.messaging.is_message(q)))
+        .map(|q| match app.messaging.received(&q.message_id) {
+            Some(record) => {
+                let first = record.text.as_deref().unwrap_or_default();
+                let first = crate::messaging::clean(first.lines().next().unwrap_or_default());
+                (
+                    format!(
+                        " ⏳ {} ✉ {} ",
+                        q.delivery,
+                        crate::messaging::clean(&record.from)
+                    ),
+                    first,
+                )
+            }
+            None => (
+                format!(" ⏳ {} ", q.delivery),
+                q.text.lines().next().unwrap_or_default().to_string(),
+            ),
+        })
+        .collect()
+}
+
+fn draw_queued(f: &mut Frame, app: &App, area: Rect) {
+    let lines: Vec<Line> = queued_rows(app)
+        .into_iter()
         .take(area.height as usize)
-        .map(|q| {
-            let first = q.text.lines().next().unwrap_or_default();
+        .map(|(label, first)| {
             Line::from(vec![
-                Span::styled(
-                    format!(" ⏳ {} ", q.delivery),
-                    Style::default().fg(app.theme.warning),
-                ),
-                Span::raw(first.to_string()),
+                Span::styled(label, Style::default().fg(app.theme.warning)),
+                Span::raw(first),
             ])
         })
         .collect();

@@ -20,6 +20,9 @@ use crate::runtime::{
     SessionRow, SessionState, TaskState, Totals,
 };
 
+use crate::runtime::messaging::{InboundOverride, OverrideReason};
+use cyber_core::config::InboundPolicy;
+
 type Result<T> = std::result::Result<T, ApiError>;
 
 /// A Session with its live status.
@@ -88,6 +91,9 @@ pub struct CreateBody {
     /// Session ruleset in the `permissions` config shape.
     pub rules: Option<Value>,
     pub max_steps: Option<u32>,
+    /// Session-level `messaging.inbound` override (`cyber exec` refuses messages with
+    /// `{ "inbound": "refuse", "reason": "non_interactive" }`).
+    pub messaging: Option<InboundOverride>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -100,6 +106,30 @@ pub struct ReopenSubtreeBody {
 pub struct UpdateBody {
     pub title: Option<String>,
     pub archived: Option<bool>,
+    /// Set the Session's `messaging.inbound` override; `{ "inbound": null }` clears it.
+    pub messaging: Option<MessagingPatch>,
+}
+
+/// The `messaging` of `PATCH /api/v1/sessions/:sessionID`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MessagingPatch {
+    /// The policy replacing the Location's default; null clears the override.
+    pub inbound: Option<InboundPolicy>,
+    /// Why the Session refuses (`non_interactive`); only with an `inbound` policy.
+    #[serde(default)]
+    pub reason: Option<OverrideReason>,
+}
+
+impl MessagingPatch {
+    fn into_override(self) -> Result<Option<InboundOverride>> {
+        match (self.inbound, self.reason) {
+            (None, Some(_)) => Err(ApiError::invalid(
+                "messaging.reason needs an inbound policy",
+            )),
+            (inbound, reason) => Ok(inbound.map(|inbound| InboundOverride { inbound, reason })),
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -402,6 +432,7 @@ async fn create(
         rules: body.rules,
         max_steps: body.max_steps,
         worktree_id: None,
+        messaging: body.messaging,
     };
     let info = state.runtime.create_session(req).await?;
     let data = session(&state, state.runtime.state(&info.id).await?);
@@ -434,6 +465,12 @@ async fn update(
     }
     if let Some(archived) = body.archived {
         state.runtime.archive(&id, archived).await?;
+    }
+    if let Some(messaging) = body.messaging {
+        state
+            .runtime
+            .set_inbound(&id, messaging.into_override()?)
+            .await?;
     }
     show(State(state), Path(id)).await
 }

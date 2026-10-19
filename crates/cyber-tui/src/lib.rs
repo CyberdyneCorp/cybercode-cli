@@ -14,6 +14,7 @@ mod import_offer;
 mod keys;
 mod markdown;
 mod memory;
+mod messaging;
 mod model;
 mod osc;
 mod palette;
@@ -54,6 +55,8 @@ mod screens_machine;
 mod screens_markdown;
 #[cfg(test)]
 mod screens_mcp;
+#[cfg(test)]
+mod screens_messages;
 #[cfg(test)]
 mod screens_parallel;
 #[cfg(test)]

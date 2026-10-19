@@ -1,7 +1,9 @@
 //! A production App on a temporary checkout, served over HTTP with a scripted model, for
 //! Mode admission and sandbox escape tests. The model runs what the prompt asks for:
 //! `RUN<<command>>` calls `bash` with that command, `TOOL<<name>>{json}` calls `name`
-//! with that input, and a tool result is answered with `done`.
+//! with that input, `GATE<<label>>` answers through the scripted model's gate `label`
+//! (the Turn runs until [`ScriptedModel::open_gate`]), and a tool result is answered with
+//! `done`.
 #![allow(dead_code)]
 
 use std::path::PathBuf;
@@ -11,7 +13,7 @@ use cyber_app::{App, AppOptions};
 use cyber_core::paths::{DatabaseLocation, Paths};
 use serde_json::{Value, json};
 
-use super::scripted_model::ScriptedModel;
+use super::scripted_model::{Reply, ScriptedModel};
 
 const PASSWORD: &str = "mode-app-password";
 
@@ -34,6 +36,8 @@ pub struct Setup {
     pub config: Value,
     /// A file database, so a second App can reopen it.
     pub database: Option<PathBuf>,
+    /// The scripted model's answers; [`prompted_call`] when unset.
+    pub reply: Option<Reply>,
 }
 
 impl Default for Setup {
@@ -44,6 +48,7 @@ impl Default for Setup {
             interactive: false,
             config: json!({}),
             database: None,
+            reply: None,
         }
     }
 }
@@ -72,6 +77,9 @@ pub fn prompted_call(body: &Value) -> Value {
             text[start + end + 2..].to_string(),
         ))
     };
+    if let Some((label, _)) = between("GATE<<") {
+        return json!({ "gate": label });
+    }
     let (name, arguments) = if let Some((command, _)) = between("RUN<<") {
         (
             "bash".to_string(),
@@ -91,7 +99,7 @@ impl ModeApp {
     pub async fn start(setup: Setup) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
-        let model = ScriptedModel::start(prompted_call);
+        let model = ScriptedModel::start(setup.reply.unwrap_or(prompted_call));
         let repo = root.join("repo");
         std::fs::create_dir_all(repo.join(".git/hooks")).unwrap();
         let app = Self::build(&root, &repo, &model, &setup).await;
@@ -169,12 +177,26 @@ impl ModeApp {
 
     /// The status and JSON body of an API request in the checkout's Location.
     pub async fn send(&self, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
+        self.send_with(method, path, body, &[]).await
+    }
+
+    /// [`ModeApp::send`] with extra request headers.
+    pub async fn send_with(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+        headers: &[(&str, &str)],
+    ) -> (u16, Value) {
         let method = reqwest::Method::from_bytes(method.as_bytes()).unwrap();
         let mut request = self
             .http
             .request(method, format!("{}/api/v1{path}", self.base))
             .basic_auth("cyber", Some(PASSWORD))
             .header("x-cyber-directory", self.repo.display().to_string());
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
         if let Some(body) = body {
             request = request.json(&body);
         }

@@ -1,14 +1,15 @@
 //! Run identity and the MCP serve recursion depth of each run (`mcp-server` → Recursion
 //! guard). A run is one Drain of a Session, from its start until the Session is idle; its
 //! `mcp_depth` is the depth of the MCP input that started it, raised by deeper MCP input
-//! admitted into it, and 0 for a run nothing deeper joined (user input). Depths live in
-//! memory only: a server restart ends every run.
+//! admitted into it or carried by a cross-session message promoted into it, and 0 for a
+//! run nothing deeper joined (user input). Depths live in memory; a Drain that continues
+//! a run after a restart restores the depth of the messages promoted into it.
 
 use std::sync::PoisonError;
 
 use tokio_util::sync::CancellationToken;
 
-use super::Runtime;
+use super::{Inner, Runtime};
 
 /// Ancestors examined at most when walking a Session's parents.
 const MAX_ANCESTORS: usize = 64;
@@ -20,6 +21,28 @@ pub struct RunMarker(CancellationToken);
 impl std::fmt::Debug for RunMarker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("RunMarker")
+    }
+}
+
+impl Inner {
+    /// Raise the `mcp_depth` of the Session's running Drain to at least `depth`; a no-op
+    /// when the Session is idle. Promotion calls it for received messages, so a message
+    /// raises the run that reads it, never the run it was admitted into.
+    pub(crate) fn raise_mcp_depth(&self, session_id: &str, depth: u32) {
+        let Some(run) = self.run_token(session_id) else {
+            return;
+        };
+        let mut depths = self
+            .mcp_depths
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let entry = depths
+            .entry(session_id.to_owned())
+            .or_insert_with(|| (run.clone(), 0));
+        if entry.0 != run {
+            *entry = (run, 0);
+        }
+        entry.1 = entry.1.max(depth);
     }
 }
 
@@ -37,21 +60,7 @@ impl Runtime {
     /// Raise the `mcp_depth` of the Session's running Drain to at least `depth`; a no-op
     /// when the Session is idle.
     pub fn raise_mcp_depth(&self, session_id: &str, depth: u32) {
-        let Some(RunMarker(run)) = self.run_marker(session_id) else {
-            return;
-        };
-        let mut depths = self
-            .inner
-            .mcp_depths
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let entry = depths
-            .entry(session_id.to_owned())
-            .or_insert_with(|| (run.clone(), 0));
-        if entry.0 != run {
-            *entry = (run, 0);
-        }
-        entry.1 = entry.1.max(depth);
+        self.inner.raise_mcp_depth(session_id, depth);
     }
 
     /// The `mcp_depth` of the Session's running Drain (0 when idle or when no MCP input

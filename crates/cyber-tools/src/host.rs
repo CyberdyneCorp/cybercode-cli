@@ -850,6 +850,13 @@ impl ToolHost for BuiltinHost {
         cyber_core::budget::Budget::from_config(&config, "daily")
     }
 
+    fn messaging_settings(
+        &self,
+        directory: Option<&str>,
+    ) -> Result<cyber_core::config::MessagingSettings, String> {
+        tools::messaging::settings(self, directory.map(Path::new))
+    }
+
     fn request_overlay(
         &self,
         turn: &TurnContext,
@@ -942,6 +949,7 @@ impl ToolHost for BuiltinHost {
         };
         let mode = Mode::parse(&turn.mode);
         let resources = std::cell::OnceCell::new();
+        let messaging = std::cell::OnceCell::new();
         let mut tools: Vec<_> = self
             .tools
             .iter()
@@ -960,6 +968,11 @@ impl ToolHost for BuiltinHost {
             .filter(|d| !fully_denied_scoped(&rules, tools::action_of(&d.spec.name), &d.spec.name))
             .filter(|d| {
                 d.spec.name != "websearch" || self.websearch_available(Path::new(&turn.directory))
+            })
+            .filter(|d| {
+                !tools::messaging::TOOLS.contains(&d.spec.name.as_str())
+                    || *messaging
+                        .get_or_init(|| tools::messaging::enabled(self, Path::new(&turn.directory)))
             })
             .filter(|d| {
                 d.spec.name != "powershell"
@@ -1836,6 +1849,16 @@ impl BuiltinHost {
         if let Some(instructions) = self.mcp_instructions(turn, visible) {
             sources.insert(MCP_INSTRUCTIONS_KEY.into(), instructions);
         }
+        // `cross-session-messaging` → Permission boundaries stay per session: the guidance
+        // rides with the built-in messaging tools, never with a client tool of that name.
+        if visible.iter().any(|d| {
+            d.spec.name == "send_message" && d.scope == cyber_server::runtime::ToolScope::Builtin
+        }) {
+            sources.insert(
+                tools::messaging::GUIDANCE_KEY.into(),
+                tools::messaging::GUIDANCE.into(),
+            );
+        }
         sources
     }
 
@@ -1869,7 +1892,12 @@ impl BuiltinHost {
             .into_iter()
             .map(|(key, value)| (key, ContextObservation::Value(value)))
             .collect();
-        for key in [SKILLS_KEY, AGENT_SKILLS_KEY, MCP_INSTRUCTIONS_KEY] {
+        for key in [
+            SKILLS_KEY,
+            AGENT_SKILLS_KEY,
+            MCP_INSTRUCTIONS_KEY,
+            tools::messaging::GUIDANCE_KEY,
+        ] {
             sources
                 .entry(key.into())
                 .or_insert(ContextObservation::Absent);

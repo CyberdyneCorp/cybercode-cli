@@ -11,7 +11,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::error::StoreError;
-use crate::events::{EventRegistry, Expected, NewEvent, StoredEvent, append_in_tx};
+use crate::events::{EventRegistry, Expected, NewEvent, Projector, StoredEvent, append_in_tx};
 use crate::migrate::{self, MIGRATIONS, Outcome};
 use crate::writer::Writer;
 use crate::{MAX_PAGE_LIMIT, fs_check};
@@ -72,8 +72,13 @@ pub struct Committed {
     pub seq: i64,
 }
 
+/// Test hook: decides, per aggregate and event, whether an append fails as if the process
+/// had died before it committed (`Store::set_append_fault`).
+pub type AppendFault = Arc<dyn Fn(&str, &NewEvent) -> bool + Send + Sync>;
+
 pub struct Store {
     writer: Writer,
+    append_fault: Mutex<Option<AppendFault>>,
     reader: Option<Mutex<Connection>>,
     registry: Arc<EventRegistry>,
     subscribers: Mutex<Vec<Sender<Committed>>>,
@@ -96,6 +101,7 @@ impl Store {
         };
         Ok(Self {
             writer: Writer::spawn(conn, options.queue_capacity, options.admission_timeout)?,
+            append_fault: Mutex::default(),
             reader,
             registry: Arc::new(options.registry),
             subscribers: Mutex::default(),
@@ -135,6 +141,30 @@ impl Store {
         self.writer.transaction(f)
     }
 
+    /// Test hook: fail every [`Store::append`] whose events `fault` matches, before
+    /// anything is written, to inject a crash between two commits. `None` clears it.
+    #[doc(hidden)]
+    pub fn set_append_fault(&self, fault: Option<AppendFault>) {
+        *self
+            .append_fault
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = fault;
+    }
+
+    fn injected_fault(&self, aggregate_id: &str, events: &[NewEvent]) -> Result<(), StoreError> {
+        let fault = self
+            .append_fault
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        match fault {
+            Some(fault) if events.iter().any(|e| fault(aggregate_id, e)) => Err(
+                StoreError::Unavailable(format!("injected append fault on {aggregate_id}")),
+            ),
+            _ => Ok(()),
+        }
+    }
+
     /// Append events to one aggregate with gapless sequence numbers.
     pub fn append(
         &self,
@@ -145,6 +175,7 @@ impl Store {
         for event in &events {
             self.registry.check(event)?;
         }
+        self.injected_fault(aggregate_id, &events)?;
         let registry = Arc::clone(&self.registry);
         let aggregate = aggregate_id.to_string();
         let stored =
@@ -200,6 +231,49 @@ impl Store {
             .map(|row| self.upcast(row))
             .collect::<Result<_, _>>()?;
         Ok(EventPage { events, has_more })
+    }
+
+    /// Rebuild projection tables from their events: in one transaction, clear `tables` and
+    /// run `project` over every event whose type starts with `prefix`, upcast, in commit
+    /// order. Returns the number of events projected.
+    pub fn reproject(
+        &self,
+        tables: &[&str],
+        prefix: &str,
+        project: Projector,
+    ) -> Result<usize, StoreError> {
+        let valid =
+            |t: &&str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_lowercase() || b == b'_');
+        if prefix.is_empty() || !tables.iter().all(valid) {
+            return Err(StoreError::Unavailable(format!(
+                "invalid projection rebuild of {tables:?} from {prefix:?}"
+            )));
+        }
+        let tables: Vec<String> = tables.iter().map(|t| (*t).to_string()).collect();
+        let prefix = prefix.to_string();
+        let registry = Arc::clone(&self.registry);
+        self.transaction(move |tx| {
+            for table in &tables {
+                tx.execute(&format!("DELETE FROM {table}"), [])?;
+            }
+            let rows = {
+                let mut stmt = tx.prepare(
+                    "SELECT id, aggregate_id, seq, type, data, time, causation_id FROM event
+                     WHERE substr(type, 1, length(?1)) = ?1 ORDER BY rowid",
+                )?;
+                stmt.query_map([&prefix], raw_event)?
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+            let count = rows.len();
+            for row in rows {
+                let event = upcast(&registry, row)?;
+                project(tx, &event).map_err(|reason| StoreError::Projector {
+                    kind: event.kind.clone(),
+                    reason,
+                })?;
+            }
+            Ok(count)
+        })
     }
 
     /// Latest committed seq of an aggregate.
@@ -274,22 +348,25 @@ impl Store {
     }
 
     fn upcast(&self, row: RawEvent) -> Result<StoredEvent, StoreError> {
-        let data: Value =
-            serde_json::from_str(&row.data).map_err(|e| StoreError::CorruptEvent {
-                id: row.id.clone(),
-                reason: e.to_string(),
-            })?;
-        let (kind, data) = self.registry.upcast(&row.kind, data);
-        Ok(StoredEvent {
-            id: row.id,
-            aggregate_id: row.aggregate_id,
-            seq: row.seq,
-            kind,
-            data,
-            time_ms: row.time_ms,
-            causation_id: row.causation_id,
-        })
+        upcast(&self.registry, row)
     }
+}
+
+fn upcast(registry: &EventRegistry, row: RawEvent) -> Result<StoredEvent, StoreError> {
+    let data: Value = serde_json::from_str(&row.data).map_err(|e| StoreError::CorruptEvent {
+        id: row.id.clone(),
+        reason: e.to_string(),
+    })?;
+    let (kind, data) = registry.upcast(&row.kind, data);
+    Ok(StoredEvent {
+        id: row.id,
+        aggregate_id: row.aggregate_id,
+        seq: row.seq,
+        kind,
+        data,
+        time_ms: row.time_ms,
+        causation_id: row.causation_id,
+    })
 }
 
 /// A gapless follower of one aggregate (`storage-events` → Event replay and subscription).
@@ -348,19 +425,21 @@ fn read_rows(
          WHERE aggregate_id = ?1 AND seq > ?2 ORDER BY seq LIMIT ?3",
     )?;
     let rows = stmt
-        .query_map(params![aggregate, after, limit], |r| {
-            Ok(RawEvent {
-                id: r.get(0)?,
-                aggregate_id: r.get(1)?,
-                seq: r.get(2)?,
-                kind: r.get(3)?,
-                data: r.get(4)?,
-                time_ms: r.get(5)?,
-                causation_id: r.get(6)?,
-            })
-        })?
+        .query_map(params![aggregate, after, limit], raw_event)?
         .collect::<Result<_, _>>()?;
     Ok(rows)
+}
+
+fn raw_event(r: &rusqlite::Row<'_>) -> rusqlite::Result<RawEvent> {
+    Ok(RawEvent {
+        id: r.get(0)?,
+        aggregate_id: r.get(1)?,
+        seq: r.get(2)?,
+        kind: r.get(3)?,
+        data: r.get(4)?,
+        time_ms: r.get(5)?,
+        causation_id: r.get(6)?,
+    })
 }
 
 fn open_writer(options: &StoreOptions) -> Result<Connection, StoreError> {

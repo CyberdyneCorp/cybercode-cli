@@ -21,6 +21,7 @@ import {
   type PermissionHandler,
   type QuestionHandler,
 } from "./requests.js";
+import { messagingGroup, type MessagingGroup } from "./messaging.js";
 import { eventStream } from "./stream.js";
 import type { AppTool, ClientHookHandler, ClientHookOptions } from "./tools.js";
 import { HttpTransport, type Transport } from "./transport.js";
@@ -45,12 +46,15 @@ export interface SessionEventsOptions extends StreamOptions {
   after?: number;
 }
 
-export interface CyberClient extends Groups {}
+export interface CyberClient extends Omit<Groups, "messaging"> {
+  /** The generated messaging operations plus `history()` (`cross-session-messaging` → Messaging API). */
+  readonly messaging: MessagingGroup;
+}
 
 /**
  * A client for one Location. Generated methods live in per-tag groups (`client.session.list()`,
  * `client.message.get()`, ...); the plural groups (`sessions`, `events`, `permissions`,
- * `questions`, `workflows`) hold hand-written helpers.
+ * `questions`, `workflows`) hold hand-written helpers, and `messaging` adds `history()`.
  */
 export class CyberClient implements Caller {
   readonly #transport: Transport;
@@ -120,7 +124,8 @@ export class CyberClient implements Caller {
 
   constructor(transport: Transport) {
     this.#transport = transport;
-    Object.assign(this, createGroups(this));
+    const groups = createGroups(this);
+    Object.assign(this, groups, { messaging: messagingGroup(this, groups.messaging) });
   }
 
   /** The Location sent as `x-cyber-directory`, if any. */

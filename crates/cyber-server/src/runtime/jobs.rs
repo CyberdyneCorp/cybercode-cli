@@ -10,6 +10,11 @@ use tokio_util::sync::CancellationToken;
 
 use super::{Admission, Delivery, LiveEvent, Runtime, RuntimeError, WeakRuntime};
 
+/// The inbox ID of a Job's completion notice in its Session.
+pub(crate) fn handback_id(job_id: &str) -> String {
+    format!("msg_handback_{job_id}")
+}
+
 pub(super) const STARTED: &str = "job.started.1";
 pub(super) const ENDED: &str = "job.ended.1";
 pub(super) const CANCELLED: &str = "job.cancelled.1";
@@ -372,9 +377,9 @@ impl Runtime {
             serde_json::to_value(&_reservation.authority.bindings).expect("authority serializes");
         started["usage_baseline"] = serde_json::to_value(usage).expect("usage serializes");
         let handle = self.inner.handle(parent).await?;
-        self.inner
-            .commit(&handle, vec![super::events::event(STARTED, &started)])
-            .await?;
+        let mut events = vec![super::events::event(STARTED, &started)];
+        events.extend(self.job_chain(parent, &job.id));
+        self.inner.commit(&handle, events).await?;
         let control = Arc::new(Control {
             stop: CancellationToken::new(),
             done: CancellationToken::new(),
@@ -465,11 +470,28 @@ impl Runtime {
     }
 
     pub(super) async fn record_job(&self, kind: &str, job: &Job) -> Result<(), RuntimeError> {
+        self.record_job_with(kind, job, Vec::new()).await
+    }
+
+    /// Record a Job event with `extra` events in the same commit.
+    pub(super) async fn record_job_with(
+        &self,
+        kind: &str,
+        job: &Job,
+        extra: Vec<cyber_store::NewEvent>,
+    ) -> Result<(), RuntimeError> {
         let handle = self.inner.handle(&job.session_id).await?;
-        self.inner
-            .commit(&handle, vec![super::events::event(kind, job)])
-            .await?;
+        let mut events = vec![super::events::event(kind, job)];
+        events.extend(extra);
+        self.inner.commit(&handle, events).await?;
         Ok(())
+    }
+
+    /// The chain record of a Job starting now in `session_id`: its handback carries the
+    /// hops of the run that started it (`messaging::hops`).
+    pub(super) fn job_chain(&self, session_id: &str, job_id: &str) -> Vec<cyber_store::NewEvent> {
+        let hops = self.effective_message_hops(session_id);
+        super::messaging::hops::inherited_chain(&handback_id(job_id), hops)
     }
 
     async fn finish_job(
@@ -581,7 +603,7 @@ impl Runtime {
             ),
             Delivery::Queue,
         );
-        admission.message_id = Some(format!("msg_handback_{}", job.id));
+        admission.message_id = Some(handback_id(&job.id));
         admission.source = "session".into();
         self.admit(&job.session_id, admission).await?;
         job.notified = true;

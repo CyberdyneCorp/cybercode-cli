@@ -99,9 +99,27 @@ fn classify(path: &[String], value: &Value) -> Class {
         }
         // An agent's sandbox profile is a boundary, as `sandbox` is.
         ["worktrees", "setup"] | ["agents", _, "request" | "sandbox"] => Class::Sensitive,
+        ["messaging", rest @ ..] => messaging_class(rest, value),
         _ if value.is_object() => Class::Recurse,
         _ => sensitive_if(has_placeholder_deep(value)),
     }
+}
+
+/// `messaging` widens the inbound boundary of the checkout's Sessions unless it only
+/// restricts: `enabled: false`, `inbound.default: "refuse"`, an empty `inbound.deliver`
+/// and `inbound.refuse` (which concatenates, so it only adds refusals). `inbound.hold`
+/// replaces a list (and can turn a refusal into a hold) and `max_hops` may raise the
+/// limit, so both are sensitive, as is anything unknown.
+fn messaging_class(rest: &[&str], value: &Value) -> Class {
+    let restricts = match rest {
+        [] | ["inbound"] if value.is_object() => return Class::Recurse,
+        ["enabled"] => value == &Value::Bool(false),
+        ["inbound", "default"] => value.as_str() == Some("refuse"),
+        ["inbound", "deliver"] => value.as_array().is_some_and(Vec::is_empty),
+        ["inbound", "refuse"] => value.is_array() && !has_placeholder_deep(value),
+        _ => false,
+    };
+    sensitive_if(!restricts)
 }
 
 fn sensitive_if(condition: bool) -> Class {
@@ -227,6 +245,32 @@ mod tests {
         assert_eq!(split.safe["agents"]["docs"]["permission_mode"], "plan");
         assert_eq!(split.safe["worktrees"]["root"], "../wt");
         assert!(split.safe.get("mcp").is_none());
+    }
+
+    #[test]
+    fn messaging_is_sensitive_unless_it_only_restricts() {
+        let restricting = json!({"messaging": {"enabled": false,
+            "inbound": {"default": "refuse", "deliver": [], "refuse": ["mcp:*"]}}});
+        let split = split_sensitive(&restricting);
+        assert!(split.pointers.is_empty(), "{:?}", split.pointers);
+        let widening = json!({"messaging": {"enabled": true, "max_hops": 64,
+            "inbound": {"default": "deliver", "deliver": ["*"], "hold": [],
+                        "refuse": "{env:REFUSE}"}}});
+        let split = split_sensitive(&widening);
+        let mut pointers = split.pointers.clone();
+        pointers.sort();
+        assert_eq!(
+            pointers,
+            [
+                "/messaging/enabled",
+                "/messaging/inbound/default",
+                "/messaging/inbound/deliver",
+                "/messaging/inbound/hold",
+                "/messaging/inbound/refuse",
+                "/messaging/max_hops",
+            ]
+        );
+        assert_eq!(split.safe["messaging"]["inbound"], json!({}));
     }
 
     #[test]

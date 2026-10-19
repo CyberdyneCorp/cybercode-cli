@@ -79,6 +79,12 @@ fn right_side(app: &App) -> Vec<Span<'static>> {
         }
         spans.push(span);
     }
+    if let Some(badge) = super::messaging::badge(app) {
+        if !spans.is_empty() {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(badge);
+    }
     if let Some(key) = app.keymap.label("global", "command_palette") {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(key, Style::default().fg(t.text)));

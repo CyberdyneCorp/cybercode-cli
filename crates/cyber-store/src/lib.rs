@@ -21,7 +21,9 @@ pub use events::{EventRegistry, EventType, Expected, NewEvent, Projector, Stored
 pub use fs_check::network_filesystem;
 pub use lock::OwnershipLock;
 pub use query::{QueryResult, query_readonly};
-pub use store::{Committed, Durability, EventPage, Pragmas, Store, StoreOptions, Tail};
+pub use store::{
+    AppendFault, Committed, Durability, EventPage, Pragmas, Store, StoreOptions, Tail,
+};
 
 /// Default and maximum page sizes for event replay.
 pub const DEFAULT_PAGE_LIMIT: u32 = 100;

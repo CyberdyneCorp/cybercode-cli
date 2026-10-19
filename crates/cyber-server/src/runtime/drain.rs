@@ -61,9 +61,11 @@ pub(crate) async fn run(inner: Arc<Inner>, id: String, forced: bool, cancel: Can
             .store(0, std::sync::atomic::Ordering::SeqCst);
     }
     let mut forced = forced;
-    loop {
-        // A defect must not leave the Session registered as running forever.
-        let outcome = std::panic::AssertUnwindSafe(pass(&inner, &id, forced, &cancel))
+    let ended = loop {
+        // A defect must not leave the Session registered as running forever. Boxed: the
+        // pass state would otherwise be copied through this frame, which nested
+        // foreground subagents stack up.
+        let outcome = std::panic::AssertUnwindSafe(Box::pin(pass(&inner, &id, forced, &cancel)))
             .catch_unwind()
             .await;
         let failure = match outcome {
@@ -75,6 +77,14 @@ pub(crate) async fn run(inner: Arc<Inner>, id: String, forced: bool, cancel: Can
             )),
         };
         let succeeded = failure.is_none();
+        // What idle notices report about this pass, read while its run still counts.
+        let ended = (
+            inner.run_message_hops(&id),
+            ended_status(
+                failure.as_ref().map(|(_, message)| message.as_str()),
+                &cancel,
+            ),
+        );
         if let Some((kind, message)) = failure {
             publish_failure(&inner, &id, kind, message, &cancel).await;
         }
@@ -90,9 +100,26 @@ pub(crate) async fn run(inner: Arc<Inner>, id: String, forced: bool, cancel: Can
                 }
                 .dispatch_queued_child(&id);
             }
-            break;
+            break ended;
         }
         forced = false;
+    };
+    // `cross-session-messaging` → Idle notifications: the Session went idle.
+    let (hops, status) = ended;
+    super::Runtime { inner }
+        .drain_ended(&id, hops, status)
+        .await;
+}
+
+/// The status line an idle notice reports for a Drain that failed or was interrupted;
+/// `None` takes it from the last run.
+fn ended_status(failure: Option<&str>, cancel: &CancellationToken) -> Option<String> {
+    match failure {
+        Some(message) => Some(super::messaging::watch::status_text(&format!(
+            "failed: {message}"
+        ))),
+        None if cancel.is_cancelled() => Some("interrupted".into()),
+        None => None,
     }
 }
 
@@ -151,7 +178,15 @@ async fn pass_owned(
     cancel: &CancellationToken,
 ) -> Result<(), RuntimeError> {
     inner.ensure_admission_open(&handle.state.lock().await.info.id)?;
-    inner.recover(handle).await?;
+    // A resumed run, or one a previous process left unfinished, keeps its chain hops and
+    // the MCP depth its messages carried.
+    if inner.recover(handle).await? || forced {
+        let state = handle.state.lock().await;
+        let hops = super::messaging::hops::restored_hops(&state);
+        inner.raise_message_hops(&state.info.id, hops);
+        let depth = super::messaging::hops::restored_depth(&state);
+        inner.raise_mcp_depth(&state.info.id, depth);
+    }
     let mut continue_tools = false;
     let mut first = forced;
     let mut overflow_retried = false;
@@ -440,6 +475,8 @@ async fn promote(
     if ids.is_empty() {
         return Ok(false);
     }
+    let hops = super::messaging::hops::promoted_hops(&state, &ids);
+    let depth = super::messaging::hops::promoted_depth(&state, &ids);
     let mut events = Vec::new();
     let mut stops = Vec::new();
     for message_id in ids {
@@ -455,7 +492,21 @@ async fn promote(
         events.push(event(PROMOTED, &Promoted { message_id }));
     }
     inner.commit_locked(&mut state, events)?;
+    // New input starts a new exchange: repeats are counted since the last promoted input,
+    // so a Session answering several messages alike is not taken for a loop.
+    handle
+        .recent_calls
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clear();
     let session_id = state.info.id.clone();
+    if let Some(hops) = hops {
+        inner.raise_message_hops(&session_id, hops);
+    }
+    // A message raises the run that reads it, so held and queued messages count too.
+    if let Some(depth) = depth {
+        inner.raise_mcp_depth(&session_id, depth);
+    }
     let wants_title = state.info.default_title && state.info.parent_id.is_none();
     drop(state);
     for reason in stops {
@@ -867,6 +918,7 @@ impl Inner {
         request.tools_disabled |= limited;
         request.cache_key = Some(state.info.id.clone());
         let message_id = cyber_core::ids::new_id("msg");
+        let origin = super::usage_origin::step_origin(&self.store, &state)?;
         let payload = StepStarted {
             agent: Some(state.info.agent.clone()),
             mode: Some(state.info.mode.clone()),
@@ -875,6 +927,7 @@ impl Inner {
             model: resolved.model.clone(),
             tools: !defs.is_empty(),
             snapshot,
+            origin,
         };
         self.commit_locked(&mut state, vec![event(STEP_STARTED, &payload)])?;
         Ok(Some((request, defs, limited, message_id)))
@@ -1018,17 +1071,18 @@ impl Inner {
         let mut events = content_events(message_id, acc);
         let cost = compute_cost(resolved.cost.as_ref(), &acc.usage);
         let finish = acc.finish.clone().unwrap_or(FinishReason::Stop);
-        events.push(event(
-            STEP_ENDED,
-            &StepEnded {
-                message_id: message_id.into(),
-                finish,
-                usage: acc.usage,
-                cost,
-            },
-        ));
         let session_id = {
             let mut state = handle.state.lock().await;
+            events.push(event(
+                STEP_ENDED,
+                &StepEnded {
+                    message_id: message_id.into(),
+                    finish,
+                    usage: acc.usage,
+                    cost,
+                    origin: state.step_origin.clone(),
+                },
+            ));
             self.commit_locked(&mut state, events)?;
             state.info.id.clone()
         };
@@ -1063,13 +1117,14 @@ impl Inner {
         message_id: &str,
         e: LlmError,
     ) -> Result<TurnEnd, RuntimeError> {
-        let payload = StepFailed {
-            message_id: message_id.into(),
-            kind: kind_name(e.kind).into(),
-            message: e.message.clone(),
-        };
         let session_id = {
             let mut state = handle.state.lock().await;
+            let payload = StepFailed {
+                message_id: message_id.into(),
+                kind: kind_name(e.kind).into(),
+                message: e.message.clone(),
+                origin: state.step_origin.clone(),
+            };
             self.commit_locked(&mut state, vec![event(STEP_FAILED, &payload)])?;
             state.info.id.clone()
         };
@@ -1102,6 +1157,7 @@ impl Inner {
                 message_id: message_id.into(),
                 kind: kind.into(),
                 message: message.into(),
+                origin: state.step_origin.clone(),
             },
         ));
         events.extend(
@@ -1205,7 +1261,7 @@ impl Inner {
                 let checked = self.precheck(call, defs, limited, &paused, &turn);
                 let checked = match checked {
                     Ok(ok) => self
-                        .doom_check(handle, &turn, message_id, call)
+                        .doom_check(handle, &turn, message_id, call, cancel)
                         .await
                         .map(|()| ok),
                     Err(e) => Err(e),
@@ -1301,6 +1357,7 @@ impl Inner {
         turn: &TurnContext,
         message_id: &str,
         call: &ToolCall,
+        cancel: &CancellationToken,
     ) -> Result<(), (CallStatus, String)> {
         let repeated = {
             let mut recent = handle
@@ -1337,7 +1394,15 @@ impl Inner {
             always_patterns: vec![call.name.clone()],
             metadata: serde_json::json!({ "arguments": call.arguments }),
         };
-        match asker.permission(ask).await {
+        // An interrupt abandons requests only after the Drain ends, so the wait must
+        // end with the Drain's cancellation instead of waiting for that.
+        let reply = tokio::select! {
+            reply = asker.permission(ask) => reply,
+            () = cancel.cancelled() => {
+                return Err((CallStatus::Interrupted, INTERRUPTED.to_string()));
+            }
+        };
+        match reply {
             PermissionReply::Once | PermissionReply::Always => Ok(()),
             PermissionReply::Reject { message: Some(m) } => {
                 Err((CallStatus::Error, format!("Rejected by user: {m}")))
@@ -1541,8 +1606,9 @@ impl Inner {
     }
 
     /// Settle what a previous process left unfinished (`session-runtime` → Drain loop).
-    pub(crate) async fn recover(&self, handle: &Handle) -> Result<(), RuntimeError> {
-        let (open_step, unfinished, directory) = {
+    /// Returns whether anything was left unfinished.
+    pub(crate) async fn recover(&self, handle: &Handle) -> Result<bool, RuntimeError> {
+        let (open_step, origin, unfinished, directory) = {
             let state = handle.state.lock().await;
             let unfinished: Vec<CallState> = state
                 .calls
@@ -1552,6 +1618,7 @@ impl Inner {
                 .collect();
             (
                 state.open_step.clone(),
+                state.step_origin.clone(),
                 unfinished,
                 state.info.directory.clone(),
             )
@@ -1564,14 +1631,16 @@ impl Inner {
                     message_id,
                     kind: "interrupted".into(),
                     message: "Provider turn interrupted".into(),
+                    origin,
                 },
             ));
         }
         for call in unfinished {
             events.push(self.recover_call(&directory, &call).await);
         }
+        let recovered = !events.is_empty();
         self.commit(handle, events).await?;
-        Ok(())
+        Ok(recovered)
     }
 
     async fn recover_call(&self, directory: &str, call: &CallState) -> cyber_store::NewEvent {

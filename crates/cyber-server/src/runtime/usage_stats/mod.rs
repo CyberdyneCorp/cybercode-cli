@@ -125,6 +125,21 @@ pub struct LongestSession {
     pub duration_ms: u64,
 }
 
+/// Usage of one origin (`cross-session-messaging` → Usage attribution): `user`,
+/// `session`, `client`, `job`, `mcp`, or the admission source (`workflow`, `hook`, ...).
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
+pub struct StatsOrigin {
+    pub origin: String,
+    pub tokens: Usage,
+    pub total_tokens: u64,
+    /// Known priced cost; null when every call of this origin was unpriced.
+    pub cost: Option<f64>,
+    pub unpriced_steps: u64,
+    pub steps: u64,
+    pub turns: u64,
+    pub sessions: u64,
+}
+
 /// The `GET /usage/stats` response.
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct UsageStats {
@@ -152,6 +167,8 @@ pub struct UsageStats {
     pub most_active_day: Option<String>,
     /// Sorted by tokens, highest first.
     pub models: Vec<StatsModel>,
+    /// One entry per usage origin, sorted by tokens, highest first.
+    pub origins: Vec<StatsOrigin>,
     /// True when part of the period was served from daily aggregates (UTC days).
     pub approximate_days: bool,
     /// True while stored history is still being indexed.
@@ -204,6 +221,7 @@ fn row(r: &rusqlite::Row<'_>, when: When) -> rusqlite::Result<Row> {
         unpriced: n(7)?,
         tokens: usage(r, 8)?,
         cost: r.get(13)?,
+        origin: r.get(14)?,
     })
 }
 
@@ -213,8 +231,8 @@ fn buckets(db: &Connection, since_ms: i64) -> rusqlite::Result<Vec<Row>> {
         "SELECT (started_ms / ?2) * ?2, root_id, provider, model, directory,
             SUM(failed = 0), SUM(purpose = 'turn' AND failed = 0), SUM(cost IS NULL AND failed = 0),
             SUM(input_tokens), SUM(output_tokens), SUM(reasoning_tokens), SUM(cache_read_tokens),
-            SUM(cache_write_tokens), TOTAL(cost)
-         FROM usage_step WHERE started_ms >= ?1 GROUP BY 1, 2, 3, 4, 5",
+            SUM(cache_write_tokens), TOTAL(cost), origin
+         FROM usage_step WHERE started_ms >= ?1 GROUP BY 1, 2, 3, 4, 5, 15",
     )?;
     statement
         .query_map([since_ms, BUCKET_MS], |r| row(r, When::Bucket(r.get(0)?)))?
@@ -225,7 +243,8 @@ fn buckets(db: &Connection, since_ms: i64) -> rusqlite::Result<Vec<Row>> {
 fn folded(db: &Connection, since: &str) -> rusqlite::Result<Vec<Row>> {
     let mut statement = db.prepare(
         "SELECT day, root_id, provider, model, directory, steps, turns, unpriced_steps,
-            input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost
+            input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost,
+            origin
          FROM usage_daily WHERE day >= ?1",
     )?;
     let rows = statement

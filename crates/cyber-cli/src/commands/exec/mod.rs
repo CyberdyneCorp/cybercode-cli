@@ -67,6 +67,10 @@ pub struct ExecArgs {
     /// Add the never-ask rules to a reused Session too.
     #[arg(long)]
     pub non_interactive_rules: bool,
+    /// Let other Sessions message the Session this run creates (by default it refuses
+    /// them with `non_interactive`).
+    #[arg(long)]
+    pub accept_messages: bool,
     /// Run a skill or custom command with the prompt as its arguments.
     #[arg(long)]
     pub command: Option<String>,

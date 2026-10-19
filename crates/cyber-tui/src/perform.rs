@@ -25,6 +25,8 @@ pub enum Msg {
         items: Vec<Item>,
         queued: Vec<Queued>,
         requests: Vec<Request>,
+        /// The Session's message records; `None` keeps the last ones.
+        messages: Option<Vec<crate::messaging::Record>>,
     },
     Cost {
         session_id: String,
@@ -184,6 +186,7 @@ pub async fn snapshot(client: &Client, id: &str) -> Result<Msg, String> {
             break;
         }
     }
+    let messages = message_records(client, id).await;
     let inbox = client
         .get(&format!("/sessions/{id}/inbox"))
         .await
@@ -213,7 +216,30 @@ pub async fn snapshot(client: &Client, id: &str) -> Result<Msg, String> {
         items,
         queued,
         requests,
+        messages,
     })
+}
+
+/// Every message record of the Session, oldest first; `None` when the history cannot
+/// be read, so the last records stay.
+async fn message_records(client: &Client, id: &str) -> Option<Vec<crate::messaging::Record>> {
+    let mut records = Vec::new();
+    let mut cursor = String::new();
+    loop {
+        let path = format!("/sessions/{id}/messaging?order=asc&limit=200{cursor}");
+        let page = client.get(&path).await.ok()?;
+        records.extend(
+            page["data"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(crate::messaging::Record::parse),
+        );
+        match page["cursor"]["next"].as_str() {
+            Some(next) => cursor = format!("&cursor={}", encode(next)),
+            None => return Some(records),
+        }
+    }
 }
 
 /// A sidebar source; 404 or 503 omits its section and any other failure keeps the last
@@ -841,6 +867,28 @@ async fn load_choices(client: &Client, session: &Session, action: Action) -> Res
     }
 }
 
+/// `r` on a held message and `a` in `/messages` (`tui` → Cross-session message
+/// surfaces): the inbox release route and the Session's `messaging` override.
+async fn messaging(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
+    let id = encode(&session.id);
+    match action {
+        Action::ReleaseHeld(message) => {
+            let path = format!("/sessions/{id}/inbox/{}/release", encode(&message));
+            client.post(&path, json!({})).await.map_err(err)?;
+            Ok(Msg::Done)
+        }
+        Action::AcceptMessages => {
+            let body = json!({ "messaging": { "inbound": null } });
+            client
+                .patch(&format!("/sessions/{id}"), body)
+                .await
+                .map_err(err)?;
+            Ok(Msg::Toast("this Session accepts messages".into()))
+        }
+        _ => Err("Unsupported messaging action".into()),
+    }
+}
+
 /// Actions on the open Session's conversation.
 async fn converse(
     client: &Client,
@@ -899,6 +947,7 @@ async fn converse(
             )
             .await
         }
+        Action::ReleaseHeld(_) | Action::AcceptMessages => messaging(client, session, action).await,
         Action::RemoveQueued(message) => {
             post(
                 client,

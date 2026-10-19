@@ -11,6 +11,7 @@ pub(crate) mod intelligence;
 mod lsp;
 pub(crate) mod mcp;
 pub(crate) mod memory;
+pub(crate) mod messaging;
 mod monitor;
 mod notebook;
 pub(crate) mod patch;
@@ -75,6 +76,9 @@ pub(crate) fn all() -> Vec<Box<dyn Tool>> {
         Box::new(session::PlanExit),
         Box::new(agent::Agent),
         Box::new(workflow::Workflow),
+        Box::new(messaging::ListSessions),
+        Box::new(messaging::SendMessage),
+        Box::new(messaging::WatchSession),
         Box::new(task::TaskStop),
         Box::new(monitor::Monitor),
         Box::new(deliver::Notify),
@@ -114,6 +118,7 @@ pub(crate) fn action_of(name: &str) -> &str {
         "send_file" => "read",
         "enter_worktree" | "exit_worktree" => "worktree",
         "workflow" => crate::permissions::WORKFLOW_RUN,
+        "send_message" => crate::permissions::MESSAGE_SEND,
         "mcp_list_resources" | "mcp_list_resource_templates" | "mcp_read_resource" => "read",
         other => other,
     }

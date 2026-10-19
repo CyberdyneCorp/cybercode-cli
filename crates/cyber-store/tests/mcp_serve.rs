@@ -74,6 +74,18 @@ fn inputs_are_listed_newest_first() {
     let one = mcp_serve::input(&db, "msg_2").unwrap().unwrap();
     assert_eq!((one.session_id.as_str(), one.admitted_ms), ("ses_a", 2));
     assert_eq!(mcp_serve::input(&db, "msg_9").unwrap(), None);
+
+    // `record_input` keeps the first record; `replace_input` (a retried send that was
+    // never admitted) replaces it.
+    let retried = McpServeInput {
+        session_id: "ses_b".into(),
+        depth: 2,
+        ..one
+    };
+    mcp_serve::record_input(&db, &retried).unwrap();
+    assert_eq!(mcp_serve::input(&db, "msg_2").unwrap().unwrap().depth, 1);
+    mcp_serve::replace_input(&db, &retried).unwrap();
+    assert_eq!(mcp_serve::input(&db, "msg_2").unwrap(), Some(retried));
 }
 
 #[test]

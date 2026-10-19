@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use cyber_app::{App, AppOptions};
 use cyber_core::paths::{DatabaseLocation, Paths};
+use cyber_server::runtime::messaging::{Direction, MessageRow};
 use serde_json::{Value, json};
 
 const PASSWORD: &str = "test-password-123456";
@@ -764,6 +765,32 @@ async fn production_server_runs_prompts_over_mcp_and_rewaits_after_a_restart() {
         "{read}"
     );
     assert_eq!(read["session"]["mcp_client"], "codex");
+    // Usage attribution: the Turns MCP prompts started are `mcp` with the client label
+    // (the title call is not part of a Turn).
+    let stats = fixture
+        .client
+        .sdk(reqwest::Method::GET, "/usage/stats?period=all", None)
+        .await;
+    let origins: Vec<(&Value, &Value)> = stats["data"]["origins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|o| o["turns"] != 0)
+        .map(|o| (&o["origin"], &o["turns"]))
+        .collect();
+    assert_eq!(origins, [(&json!("mcp"), &json!(2))], "{stats}");
+    let events = fixture
+        .application
+        .store
+        .read_events(&session, -1, 500)
+        .unwrap()
+        .events;
+    let steps: Vec<(&Value, &Value)> = events
+        .iter()
+        .filter(|e| e.kind == "session.step.ended.1")
+        .map(|e| (&e.data["origin"], &e.data["mcp_client"]))
+        .collect();
+    assert_eq!(steps, [(&json!("mcp"), &json!("codex")); 2]);
     fixture.close().await;
 }
 
@@ -1004,5 +1031,531 @@ async fn production_mcp_pool_calls_cannot_prompt_their_own_session() {
         1,
         "only the external prompt was admitted"
     );
+    fixture.close().await;
+}
+
+/// The text of the request's last user message (a prompt or a cross-session message).
+fn last_user_text(body: &Value) -> String {
+    let messages = body["messages"].as_array().cloned().unwrap_or_default();
+    messages
+        .iter()
+        .rev()
+        .find(|m| m["role"] == "user")
+        .map(|m| m["content"].to_string())
+        .unwrap_or_default()
+}
+
+/// One tool call with its own ID, so repeated calls in a Session stay distinct.
+fn call(id: &str, name: &str, arguments: Value) -> Value {
+    json!({"tool_calls":[{"index":0,"id":id,"type":"function",
+        "function":{"name":name,"arguments":arguments.to_string()}}]})
+}
+
+/// The `mcp-server` ping-pong: A (`PING-A sid=<B>|`) prompts B through the `self` MCP
+/// server without waiting; B (`PONG-B`) wakes A with the native `send_message`; A, woken
+/// by the message, prompts B again. `AGAIN dir=<path>|` prompts a new Session there.
+fn ping_pong(body: &Value) -> Value {
+    if body["messages"].to_string().contains("Write a short title") {
+        return json!({"content": "Ping"});
+    }
+    if last_tool_result(body).is_some() {
+        return json!({"content": "finished"});
+    }
+    let (first, last) = (first_user_text(body), last_user_text(body));
+    let b = || marked_directory(&first.replace("sid=", "dir="));
+    if last.contains("PONG-B") {
+        call(
+            "call_send",
+            "send_message",
+            json!({"to": "alpha", "text": "PING-BACK"}),
+        )
+    } else if last.contains("cross_session_message") {
+        call(
+            "call_prompt_2",
+            "mcp__self__cyber_prompt",
+            json!({"session_id": b(), "prompt": "PONG-AGAIN", "wait": false}),
+        )
+    } else if last.contains("PING-A") {
+        call(
+            "call_prompt_1",
+            "mcp__self__cyber_prompt",
+            json!({"session_id": b(), "prompt": "PONG-B", "wait": false}),
+        )
+    } else if last.contains("AGAIN") {
+        call(
+            "call_prompt_3",
+            "mcp__self__cyber_prompt",
+            json!({"directory": marked_directory(&last), "model": "test/main",
+                "prompt": "LEAF", "wait": false}),
+        )
+    } else {
+        json!({"content": "finished"})
+    }
+}
+
+/// The tool results of the requests made for Session `marker`'s first prompt, in order.
+async fn results_until(model: &Model, marker: &str, count: usize) -> Vec<String> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        let results = tool_results(model, marker);
+        if results.len() >= count || tokio::time::Instant::now() > deadline {
+            return results;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// Task 7 (`mcp-server` → MCP recursion guard, scenarios "Ping-pong between existing
+/// Sessions" and "Messaged Session uses MCP again after its run") on the production
+/// application: a `send_message` leg carries the sender's depth into the run it wakes.
+#[tokio::test]
+async fn a_send_message_leg_carries_the_depth_and_the_ping_pong_is_refused() {
+    let model = Model::scripted(ping_pong);
+    let fixture = recursive_fixture(&model).await;
+    let (client, runtime) = (&fixture.client, &fixture.application.runtime);
+    let create = |title: &'static str| {
+        client.sdk(
+            reqwest::Method::POST,
+            "/sessions",
+            Some(json!({"model": "test/main", "title": title})),
+        )
+    };
+    let a = create("alpha").await["data"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let b = create("beta").await["data"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let path = format!("/sessions/{a}/prompt");
+    let prompt = |text: String| {
+        client.sdk(
+            reqwest::Method::POST,
+            &path,
+            Some(json!({"parts":[{"type":"text","text":text}]})),
+        )
+    };
+    prompt(format!("PING-A sid={b}|")).await;
+
+    // A (run at depth 0) prompted idle B (depth 1); B's `send_message` woke A, whose run
+    // then had depth 1, so A's `cyber_prompt` on B was depth 2 and refused.
+    let from_a = results_until(&model, "PING-A", 2).await;
+    assert_eq!(from_a.len(), 2, "{from_a:?}");
+    assert!(!from_a[0].contains("depth_exceeded"), "{}", from_a[0]);
+    assert!(from_a[1].contains("depth_exceeded"), "{}", from_a[1]);
+    assert!(from_a[1].contains(r#"\"depth\":2"#), "{}", from_a[1]);
+    let from_b = results_until(&model, "PONG-B", 1).await;
+    assert!(from_b[0].contains("delivered"), "{from_b:?}");
+    let received = runtime.message_rows(&a).unwrap();
+    assert_eq!(received.len(), 1, "{received:?}");
+    assert_eq!(received[0].depth, 1, "the message stores B's run depth");
+    let wait = |id: String| async move {
+        tokio::time::timeout(Duration::from_secs(60), runtime.wait_idle(&id))
+            .await
+            .expect("the Session settled");
+    };
+    wait(a.clone()).await;
+    wait(b.clone()).await;
+    let b_state = runtime.state(&b).await.unwrap();
+    assert!(
+        !b_state.inbox.iter().any(|row| row
+            .parts
+            .iter()
+            .any(|p| { serde_json::to_string(p).unwrap().contains("PONG-AGAIN") })),
+        "the refused prompt admitted nothing"
+    );
+
+    // After that run, a user prompt starts A at depth 0: its request is depth 1 and works.
+    let other = fixture.root.join("other");
+    std::fs::create_dir_all(other.join(".git")).unwrap();
+    prompt(format!("AGAIN dir={}|", other.display())).await;
+    let from_a = results_until(&model, "PING-A", 3).await;
+    assert_eq!(from_a.len(), 3, "{from_a:?}");
+    assert!(!from_a[2].contains("depth_exceeded"), "{}", from_a[2]);
+    assert!(from_a[2].contains("ses_"), "{}", from_a[2]);
+    wait(a.clone()).await;
+    fixture.close().await;
+}
+
+impl Client {
+    /// A `tools/call` with `extra` params (such as the caller `_meta`); its `result`.
+    async fn call_with(&self, session: &str, name: &str, arguments: Value, extra: Value) -> Value {
+        let mut params = json!({"name": name, "arguments": arguments});
+        for (key, value) in extra.as_object().into_iter().flatten() {
+            params[key] = value.clone();
+        }
+        let frame = json!({"jsonrpc":"2.0","id":name,"method":"tools/call","params":params});
+        let (status, _, body) = self.mcp(Some(session), frame).await;
+        assert_eq!(status, 200, "{body}");
+        body["result"].clone()
+    }
+
+    async fn session(&self, body: Value) -> String {
+        let created = self
+            .sdk(reqwest::Method::POST, "/sessions", Some(body))
+            .await;
+        created["data"]["id"].as_str().unwrap().to_owned()
+    }
+}
+
+/// The JSON of a tool result's text content (the error body of an `isError` result).
+fn content(result: &Value) -> Value {
+    serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap()
+}
+
+/// The `_meta` caller marker Cyber's own MCP client adds for Session `id`.
+fn as_caller(id: &str) -> Value {
+    json!({"_meta": {"dev.cyber-code/caller": {"session_id": id, "depth": 0}}})
+}
+
+struct Messaging<'a> {
+    fixture: &'a Fixture,
+    mcp: String,
+}
+
+impl Messaging<'_> {
+    async fn send(&self, arguments: Value) -> Value {
+        self.fixture
+            .client
+            .tool(&self.mcp, "cyber_message_send", arguments)
+            .await["structuredContent"]
+            .clone()
+    }
+
+    async fn send_error(&self, arguments: Value) -> Value {
+        self.fixture
+            .client
+            .tool_error(&self.mcp, "cyber_message_send", arguments)
+            .await
+    }
+
+    async fn history(&self, arguments: Value) -> Value {
+        self.fixture
+            .client
+            .tool(&self.mcp, "cyber_message_history", arguments)
+            .await["structuredContent"]
+            .clone()
+    }
+
+    async fn settle(&self, id: &str) {
+        tokio::time::timeout(
+            Duration::from_secs(30),
+            self.fixture.application.runtime.wait_idle(id),
+        )
+        .await
+        .expect("the Session settled");
+    }
+
+    /// `cyber_message_send` marked as called by Session `caller` at `depth`; its result.
+    async fn send_as(&self, caller: &str, arguments: Value, depth: u32) -> Value {
+        let meta =
+            json!({"_meta": {"dev.cyber-code/caller": {"session_id": caller, "depth": depth}}});
+        self.fixture
+            .client
+            .call_with(&self.mcp, "cyber_message_send", arguments, meta)
+            .await
+    }
+
+    fn records(&self, id: &str) -> Vec<MessageRow> {
+        self.fixture.application.runtime.message_rows(id).unwrap()
+    }
+}
+
+/// "Send to a running Session" with an idle target, and the replay: one message, its
+/// history entry, origin `client`, and the Turn it starts attributed to `mcp`.
+async fn a_client_message_is_delivered_once(m: &Messaging<'_>, b: &str) {
+    let arguments = json!({"to": "migration", "text": "schema v2 is merged",
+        "idempotency_key": "send-1"});
+    let sent = m.send(arguments.clone()).await;
+    assert_eq!(sent["outcome"], "delivered", "{sent}");
+    assert_eq!(sent["to"]["session_id"], json!(b));
+    let replayed = m.send(arguments.clone()).await;
+    assert_eq!(replayed["replayed"], true, "{replayed}");
+    assert_eq!(replayed["message_id"], sent["message_id"]);
+    let mut other = arguments;
+    other["text"] = json!("schema v3 is merged");
+    let mismatch = m.send_error(other).await;
+    assert_eq!(mismatch["reason"], "idempotency_mismatch", "{mismatch}");
+    m.settle(b).await;
+    the_client_message_is_recorded_once(m, b, &sent["message_id"]).await;
+    the_message_turn_is_mcp_usage(m, b);
+}
+
+async fn the_client_message_is_recorded_once(m: &Messaging<'_>, b: &str, message_id: &Value) {
+    let records = m.records(b);
+    assert_eq!(records.len(), 1, "one message: {records:?}");
+    assert_eq!(records[0].origin_kind, "client");
+    assert_eq!(records[0].peer_address, "mcp:zed");
+    assert_eq!(records[0].sender_key, "mcp:zed");
+    let history = m.history(json!({"session_id": b})).await;
+    let messages = history["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 1, "{history}");
+    let message = &messages[0];
+    assert_eq!(&message["message_id"], message_id);
+    assert_eq!(message["direction"], "in");
+    assert_eq!(message["outcome"], "delivered");
+    assert_eq!(message["text"], "schema v2 is merged");
+    assert!(message["created_at"].is_i64(), "{history}");
+    assert_eq!(history["truncated"], false);
+}
+
+/// The Turn the message started is MCP-driven usage with the client label.
+fn the_message_turn_is_mcp_usage(m: &Messaging<'_>, b: &str) {
+    let events = m
+        .fixture
+        .application
+        .store
+        .read_events(b, -1, 500)
+        .unwrap()
+        .events;
+    let steps: Vec<(&Value, &Value)> = events
+        .iter()
+        .filter(|e| e.kind == "session.step.ended.1")
+        .map(|e| (&e.data["origin"], &e.data["mcp_client"]))
+        .collect();
+    assert_eq!(steps, [(&json!("mcp"), &json!("zed"))], "{events:?}");
+}
+
+/// "Cyber Session sends as itself": A's address is refused by B's rule.
+async fn a_caller_session_sends_as_itself(m: &Messaging<'_>, a: &str, b: &str) {
+    let result = m
+        .send_as(a, json!({"to": "migration", "text": "from alpha"}), 0)
+        .await;
+    assert_eq!(result["isError"], false, "{result}");
+    let sent = &result["structuredContent"];
+    assert_eq!(sent["outcome"], "refused", "{sent}");
+    assert_eq!(sent["reason"], "inbound_rule");
+    let out = m.records(a);
+    assert_eq!(out.len(), 1, "{out:?}");
+    assert_eq!(out[0].direction, Direction::Out);
+    assert_eq!(out[0].origin_kind, "session");
+    let refused = m
+        .records(b)
+        .into_iter()
+        .find(|r| r.origin_kind == "session");
+    assert!(
+        refused.is_some_and(|r| r.text.is_none()),
+        "metadata only in B"
+    );
+}
+
+/// The self-target and depth guards refuse before anything is sent; a message A sends is
+/// stored with the request depth (A's run depth + 1), which the run that reads it takes.
+async fn the_recursion_guard_applies_to_sends(m: &Messaging<'_>, a: &str, d: &str) {
+    let sent_before = m.records(a).len();
+    let itself = m.send_as(a, json!({"to": a, "text": "me"}), 0).await;
+    assert_eq!(content(&itself)["reason"], "self_target", "{itself}");
+    let deep = m
+        .send_as(a, json!({"to": "migration", "text": "deep"}), 2)
+        .await;
+    assert_eq!(content(&deep)["reason"], "depth_exceeded", "{deep}");
+    assert_eq!(
+        m.records(a).len(),
+        sent_before,
+        "the refused calls sent nothing"
+    );
+
+    let probe = m.send_as(a, json!({"to": d, "text": "how deep?"}), 0).await;
+    let outcome = &probe["structuredContent"]["outcome"];
+    assert_eq!(outcome, "delivered", "{probe}");
+    let received = m.records(d);
+    assert_eq!((received.len(), received[0].depth), (1, 1), "{received:?}");
+    assert_eq!(received[0].origin_kind, "session");
+    m.settle(d).await;
+}
+
+/// "Exec Session refuses", "Oversized message" and an ambiguous address.
+async fn refusals_and_errors_pass_through(m: &Messaging<'_>, exec: &str) {
+    let sent = m.send(json!({"to": exec, "text": "are you there?"})).await;
+    assert_eq!(
+        (sent["outcome"].as_str(), sent["reason"].as_str()),
+        (Some("refused"), Some("non_interactive")),
+        "{sent}"
+    );
+    let large = m
+        .send_error(json!({"to": "migration", "text": "x".repeat(20 * 1024)}))
+        .await;
+    assert_eq!(large["_tag"], "MessageTooLargeError", "{large}");
+    let ambiguous = m.send_error(json!({"to": "twin", "text": "which?"})).await;
+    assert_eq!(ambiguous["_tag"], "AmbiguousAddressError", "{ambiguous}");
+    assert_eq!(ambiguous["candidates"].as_array().map(Vec::len), Some(2));
+    let missing = m.send_error(json!({"to": "nobody", "text": "hi"})).await;
+    assert_eq!(missing["_tag"], "AddressNotFoundError", "{missing}");
+}
+
+/// Regression: a client's `rate_limited` refusal records nothing, so a retry with its
+/// idempotency key is no replay: it is checked again in full, and at a depth over the
+/// limit it fails with `depth_exceeded` and sends nothing.
+async fn a_retry_after_an_unrecorded_refusal_is_checked_again(m: &Messaging<'_>, e: &str) {
+    for n in 0..10 {
+        let sent = m.send(json!({"to": e, "text": format!("burst {n}")})).await;
+        assert_eq!(sent["outcome"], "delivered", "{sent}");
+    }
+    let arguments = json!({"to": e, "text": "one more", "idempotency_key": "burst-11"});
+    let limited = m.send(arguments.clone()).await;
+    assert_eq!(
+        (limited["outcome"].as_str(), limited["reason"].as_str()),
+        (Some("refused"), Some("rate_limited")),
+        "{limited}"
+    );
+    let deep = json!({"_meta": {"dev.cyber-code/caller": {"depth": 50}}});
+    let retried = m
+        .fixture
+        .client
+        .call_with(&m.mcp, "cyber_message_send", arguments, deep)
+        .await;
+    assert_eq!(retried["isError"], true, "{retried}");
+    assert_eq!(content(&retried)["reason"], "depth_exceeded", "{retried}");
+    assert_eq!(m.records(e).len(), 10, "the retry sent nothing");
+    m.settle(e).await;
+}
+
+/// Regression: without a caller Session the sender is the MCP client `mcp:<label>`, so a
+/// target's `refuse: ["mcp:*"]` refuses it (it used to be `client:mcp:<label>`, which the
+/// pattern never matched, and the message was delivered), and its key is `mcp:<label>`.
+async fn an_mcp_client_matches_mcp_patterns(m: &Messaging<'_>, guarded: &str) {
+    let sent = m.send(json!({"to": guarded, "text": "let me in"})).await;
+    assert_eq!(
+        (sent["outcome"].as_str(), sent["reason"].as_str()),
+        (Some("refused"), Some("inbound_rule")),
+        "{sent}"
+    );
+    let records = m.records(guarded);
+    assert_eq!(records.len(), 1, "{records:?}");
+    assert_eq!(records[0].direction, Direction::In);
+    assert_eq!(records[0].sender_key, "mcp:zed");
+    assert_eq!(records[0].peer_address, "mcp:zed");
+    assert!(records[0].text.is_none(), "metadata only");
+    let state = m.fixture.application.runtime.state(guarded).await.unwrap();
+    assert!(state.inbox.is_empty(), "nothing admitted");
+}
+
+/// History pages bounded by `max_bytes`: one record per page, every record once, in order.
+async fn history_pages_fit_max_bytes(m: &Messaging<'_>, c: &str) {
+    let mut sent = Vec::new();
+    for n in 0..3 {
+        let text = format!("{n} {}", "y".repeat(600));
+        sent.push(m.send(json!({"to": c, "text": text})).await["message_id"].clone());
+    }
+    let mut seen = Vec::new();
+    let mut cursor: Option<Value> = None;
+    loop {
+        let mut arguments = json!({"session_id": c, "max_bytes": 1024});
+        if let Some(cursor) = &cursor {
+            arguments["cursor"] = cursor.clone();
+        }
+        let page = m.history(arguments).await;
+        assert!(page.to_string().len() < 1024 + 200, "{page}");
+        let messages = page["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 1, "{page}");
+        seen.push(messages[0]["message_id"].clone());
+        match page.get("next_cursor") {
+            Some(next) => cursor = Some(next.clone()),
+            None => break,
+        }
+    }
+    assert_eq!(seen, sent);
+    let long = m.send(json!({"to": c, "text": "z".repeat(4000)})).await;
+    assert_eq!(long["outcome"], "delivered", "{long}");
+    let cut = m
+        .history(json!({"session_id": c, "cursor": cursor_after(m, c, 3).await, "max_bytes": 1024}))
+        .await;
+    assert_eq!(cut["truncated"], true, "{cut}");
+    assert!(
+        cut["messages"][0]["text"]
+            .as_str()
+            .unwrap()
+            .ends_with("bytes]")
+    );
+}
+
+/// The history cursor after the first `n` records of `session`.
+async fn cursor_after(m: &Messaging<'_>, session: &str, n: u64) -> Value {
+    let page = m.history(json!({"session_id": session, "limit": n})).await;
+    page["next_cursor"].clone()
+}
+
+/// `mcp-server` → Messaging over MCP on the production application: every scenario of
+/// the requirement, plus the replay, the guards and history paging.
+#[tokio::test]
+async fn messaging_tools_map_onto_the_messaging_api() {
+    let model = Model::scripted(short_answer);
+    let project = json!({"messaging": {"inbound": {"refuse": ["alpha"]}}});
+    let fixture = Fixture::start(&model, json!({}), project).await;
+    let client = &fixture.client;
+    let titled = |title: &str| json!({"model": "test/main", "title": title});
+    let a = client.session(titled("alpha")).await;
+    let b = client.session(titled("migration")).await;
+    let c = client.session(titled("archive-notes")).await;
+    // In another Location, outside the project rule that refuses alpha.
+    let other = fixture.root.join("other");
+    std::fs::create_dir_all(other.join(".git")).unwrap();
+    let elsewhere = Client {
+        http: client.http.clone(),
+        api: client.api.clone(),
+        directory: other.display().to_string(),
+    };
+    let d = elsewhere.session(titled("depth-probe")).await;
+    let exec = client
+        .session(json!({"model": "test/main", "title": "exec run",
+            "messaging": {"inbound": "refuse", "reason": "non_interactive"}}))
+        .await;
+    let e = client.session(titled("rate-probe")).await;
+    // A Location whose project refuses every MCP client.
+    let guarded_dir = fixture.root.join("guarded");
+    std::fs::create_dir_all(guarded_dir.join(".git")).unwrap();
+    let refuse_mcp = json!({"messaging": {"inbound": {"refuse": ["mcp:*"]}}});
+    std::fs::write(guarded_dir.join("cyber.jsonc"), refuse_mcp.to_string()).unwrap();
+    let guarded = Client {
+        http: client.http.clone(),
+        api: client.api.clone(),
+        directory: guarded_dir.display().to_string(),
+    }
+    .session(titled("guarded"))
+    .await;
+    client.session(titled("twin")).await;
+    client.session(titled("twin")).await;
+    let m = Messaging {
+        mcp: client.initialize(Some("zed")).await,
+        fixture: &fixture,
+    };
+
+    let listed = client
+        .call_with(&m.mcp, "cyber_message_list", json!({}), as_caller(&a))
+        .await;
+    let sessions = listed["structuredContent"]["sessions"].as_array().unwrap();
+    assert!(
+        sessions.iter().all(|s| s["session_id"] != json!(a)),
+        "{listed}"
+    );
+    let exec_row = sessions
+        .iter()
+        .find(|s| s["session_id"] == json!(exec))
+        .unwrap();
+    assert_eq!(exec_row["canReceive"], false, "{exec_row}");
+    let b_row = sessions
+        .iter()
+        .find(|s| s["address"] == "migration")
+        .unwrap();
+    assert_eq!(b_row["canReceive"], false, "B refuses alpha: {b_row}");
+
+    a_client_message_is_delivered_once(&m, &b).await;
+    an_mcp_client_matches_mcp_patterns(&m, &guarded).await;
+    a_caller_session_sends_as_itself(&m, &a, &b).await;
+    the_recursion_guard_applies_to_sends(&m, &a, &d).await;
+    refusals_and_errors_pass_through(&m, &exec).await;
+    history_pages_fit_max_bytes(&m, &c).await;
+    m.settle(&c).await;
+    a_retry_after_an_unrecorded_refusal_is_checked_again(&m, &e).await;
+
+    // The served tools are never offered to Cyber's own agents.
+    let offered = model
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|body| body["tools"].to_string().contains("cyber_message_send"));
+    assert!(!offered, "cyber_message_send is not an agent tool");
     fixture.close().await;
 }

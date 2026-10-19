@@ -6,6 +6,7 @@ use axum::response::{IntoResponse, Response};
 use schemars::JsonSchema;
 use serde::Serialize;
 
+use crate::runtime::messaging::AddressError;
 use crate::runtime::{CommandPlanError, RuntimeError};
 
 /// The JSON body of every declared failure. Some failures add `reason`, a machine-readable
@@ -173,12 +174,58 @@ impl From<RuntimeError> for ApiError {
                 err.body.paths = Some(paths);
                 err
             }
+            RuntimeError::Address(e) => Self::address(e),
+            RuntimeError::MessageTooLarge { size, limit } => Self::new(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "MessageTooLargeError",
+                message,
+            )
+            .with_field("size", size)
+            .with_field("limit", limit),
+            RuntimeError::Disabled(service) => Self::service_unavailable(service, message),
+            RuntimeError::MessageImmutable(_) => {
+                Self::conflict(message).with_reason("message_immutable")
+            }
+            // A quota frees up when a subscription fires or expires, not after a delay.
+            RuntimeError::RateLimited { reason, .. } => Self::rate_limited(reason, 60_000, message),
+            RuntimeError::Forbidden { reason, message } => {
+                Self::forbidden(message).with_reason(reason)
+            }
             RuntimeError::Store(cyber_store::StoreError::Busy) => Self::new(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "ServiceUnavailableError",
                 message,
             ),
             other => Self::unknown(other),
+        }
+    }
+}
+
+impl ApiError {
+    /// A message address that resolves to no target; nothing was recorded.
+    fn address(e: AddressError) -> Self {
+        let message = e.to_string();
+        match e {
+            AddressError::NotFound(address) => {
+                Self::not_found("AddressNotFoundError", message).with_field("address", address)
+            }
+            AddressError::Ambiguous {
+                address,
+                candidates,
+            } => Self::new(StatusCode::CONFLICT, "AmbiguousAddressError", message)
+                .with_field("address", address)
+                .with_field(
+                    "candidates",
+                    serde_json::to_value(candidates).unwrap_or_default(),
+                ),
+            AddressError::AccountRequired(address) => {
+                Self::new(StatusCode::FORBIDDEN, "AccountRequiredError", message)
+                    .with_field("address", address)
+            }
+            AddressError::SelfTarget => {
+                Self::invalid("Cannot send a message to the current Session")
+                    .with_reason("self_target")
+            }
         }
     }
 }

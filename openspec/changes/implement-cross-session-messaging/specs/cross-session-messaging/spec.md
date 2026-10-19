@@ -16,7 +16,7 @@
 - **THEN** the send fails with `AddressNotFoundError`, even if one Session ID starts with `ses_01J`
 
 ### Requirement: Inbound controls
-(P1) Each Session SHALL apply `messaging.inbound` with a default policy and optional per-sender rules. The policy SHALL be `deliver`, `hold` or `refuse`. `messaging.inbound` SHALL accept `default` and the pattern lists `deliver`, `hold` and `refuse`, matched with the permission wildcard syntax against each of the sender's addresses (its Session ID, its name, `name@machine` for off-machine senders, `client` or `mcp:<label>` for clients). A `refuse` match SHALL win over a `hold` match, and a `hold` match over a `deliver` match. Without a match, a Session-level override (set at creation or with `PATCH /api/v1/sessions/:sessionID`) SHALL apply when present, then `default`. Defaults SHALL be `deliver` for same-machine senders and `hold` for cross-machine senders, including peers once "Direct peer transport" is available. A `hold` outcome SHALL admit the message with `delivery: "hold"`, so it reaches the model only after the user releases it or a later mode or settings change allows it. A held cross-session message SHALL NOT be editable; it SHALL only be released or dropped.
+(P1) Each Session SHALL apply `messaging.inbound` with a default policy and optional per-sender rules. The policy SHALL be `deliver`, `hold` or `refuse`. `messaging.inbound` SHALL accept `default` and the pattern lists `deliver`, `hold` and `refuse`, matched with the permission wildcard syntax against each of the sender's addresses (its Session ID, its name, `name@machine` for off-machine senders, `client` or `mcp:<label>` for clients). A `refuse` match SHALL win over a `hold` match, and a `hold` match over a `deliver` match. Only addresses no other Session can claim SHALL satisfy a `deliver` or `hold` pattern: the sender's Session ID, the title of a root Session that no other non-archived root Session shares when that title is a plain name (not shaped like a Session ID, a remote address, `client` or a `client:`/`mcp:` label), and a client's labels. The sender's other names (a shared title, its subagent name, the address the target replies to) and every ancestor's Session ID and names SHALL match only to restrict: a `refuse` match refuses, and a `hold` match holds a message that would otherwise be delivered. Without a match, a Session-level override (set at creation or with `PATCH /api/v1/sessions/:sessionID`) SHALL apply when present, then `default`. Defaults SHALL be `deliver` for same-machine senders and `hold` for cross-machine senders, including peers once "Direct peer transport" is available. A `hold` outcome SHALL admit the message with `delivery: "hold"`, so it reaches the model only after the user releases it or a later mode or settings change allows it. A held cross-session message SHALL NOT be editable; it SHALL only be released or dropped.
 
 #### Scenario: Held message released
 - **WHEN** a cross-machine message is held and the user approves it in the TUI
@@ -30,8 +30,16 @@
 - **WHEN** `messaging.inbound.deliver` lists `front*` and `messaging.inbound.refuse` lists `frontend`
 - **THEN** a message from `frontend` is refused with reason `inbound_rule`
 
+#### Scenario: Subagent of a refused sender
+- **WHEN** `messaging.inbound.refuse` lists `noisy-*` and a subagent of the root Session `noisy-bot` messages the target
+- **THEN** the message is refused with reason `inbound_rule`
+
+#### Scenario: Borrowed allowlisted name
+- **WHEN** `messaging.inbound` has `default: refuse` and `deliver: ["lead"]`, and a subagent named `lead` (or a second root Session titled `lead`) messages the target
+- **THEN** the message is refused with reason `inbound_rule`
+
 ### Requirement: Rate limits
-(P1) The system SHALL accept at most 10 messages per minute from one sender to one target, and at most 30 pending undelivered messages per target inbox. Excess messages SHALL be refused with reason `rate_limited` in the sending Session. The per-minute limit SHALL count messages with outcome `delivered` or `held` in a sliding 60-second window kept in durable records, so a restart does not reset it, and refused messages SHALL NOT count. A sender SHALL be its Session ID, `client:<label>` for a Messaging API client, `mcp:<mcp_client>` for MCP serve without a caller Session, or its `name@machine` for an off-machine sender. Pending messages SHALL be the target's unpromoted cross-session messages, held ones included. The refusal SHALL carry `limit: "per_target_minute"` or `limit: "inbox_pending"` and SHALL be recorded only in the sending Session.
+(P1) The system SHALL accept at most 10 messages per minute from one sender to one target, and at most 30 pending undelivered messages per target inbox. Excess messages SHALL be refused with reason `rate_limited` in the sending Session. The per-minute limit SHALL count messages with outcome `delivered` or `held` in a sliding 60-second window kept in durable records, so a restart does not reset it, and refused messages SHALL NOT count. A sender SHALL be its Session ID, `client:<label>` for a Messaging API client, `mcp:<mcp_client>` for MCP serve without a caller Session, or its `name@machine` for an off-machine sender. Pending messages SHALL be the target's unpromoted cross-session messages, held ones included. The refusal SHALL carry `limit: "per_target_minute"` or `limit: "inbox_pending"` and SHALL be recorded only in the sending Session. A refusal the target records too (for example `inbound_rule` or `non_interactive`) SHALL be bounded the same way: past 10 such records of one sender in one target within the window, the message SHALL be refused with `rate_limited` and `limit: "per_target_minute"`, recorded only in the sending Session.
 
 #### Scenario: Message storm
 - **WHEN** a looping agent sends its 11th message within a minute to the same target
@@ -46,11 +54,15 @@
 - **THEN** an 11th message within that minute is still refused with `rate_limited`
 
 ### Requirement: Non-interactive sessions
-(P1) A `cyber exec` Session SHALL default to `messaging.inbound: refuse` unless `--accept-messages` is passed. `cyber exec` SHALL apply this by creating its Session with the Session-level inbound override `refuse` and reason `non_interactive`; a Session it reuses SHALL keep its policy, with a warning. Held messages in Sessions with no attached client SHALL remain held until a client attaches or the Session ends, at which point they SHALL be dropped and the senders notified. Deleting a Session SHALL drop its held messages and notify their senders with reason `session_deleted` before the Session's records are removed.
+(P1) A `cyber exec` Session SHALL default to `messaging.inbound: refuse` unless `--accept-messages` is passed. `cyber exec` SHALL apply this by creating its Session with the Session-level inbound override `refuse` and reason `non_interactive`; a Session it reuses SHALL keep its policy, with a warning, while a Session it forks (`--fork`) SHALL take this run's policy (the override, or none with `--accept-messages`). Held messages in Sessions with no attached client SHALL remain held until a client attaches or the Session ends, at which point they SHALL be dropped and the senders notified. Deleting a Session SHALL drop its held messages and notify their senders with reason `session_deleted` before the Session's records are removed.
 
 #### Scenario: Exec session receives a message
 - **WHEN** a message targets a running `cyber exec` Session started without `--accept-messages`
 - **THEN** the message is refused with reason `non_interactive`
+
+#### Scenario: Forked exec session
+- **WHEN** `cyber exec --session <id> --fork` runs without `--accept-messages` and the source Session accepts messages
+- **THEN** a message to the fork is refused with reason `non_interactive`
 
 #### Scenario: Deleted Session with held messages
 - **WHEN** a Session holding two held messages is deleted
@@ -94,10 +106,29 @@
 - **WHEN** a script sends a message through `POST /api/v1/messaging/send` without `from` and the receiving Session spends one Turn on it
 - **THEN** that Turn's usage is tagged `origin: client`
 
+### Requirement: Idle notifications
+(P1) `send_message` with `notify_when_idle: true`, or the standalone tool `watch_session({ target })`, SHALL subscribe the caller to exactly one notice when the target next finishes a Turn with nothing queued, or exits. Subscribing SHALL NOT start a Turn or spend tokens in the watched Session. If the target is already idle, the notice SHALL be sent immediately. The notice SHALL include the target, the time its Turn finished, and a one-line status (≤ 200 characters) from that Turn. Subscriptions SHALL expire after 12 hours with an expiry notice to the subscriber. Because a notice carries the target's output, a target that would refuse the subscriber's messages (its Location disables messaging, or its inbound rules or Session override refuse this subscriber) SHALL NOT be watchable: the subscription SHALL fail with `ForbiddenError` and the refusal reason, and nothing SHALL be written. `send_message` with `notify_when_idle: true` SHALL also check the `watch_session` permission action on the target before anything is sent.
+
+#### Scenario: Wait for migration
+- **WHEN** a Session subscribes to `migration` and that Session finishes its work 40 minutes later
+- **THEN** the subscriber receives a single notice and, if idle, starts a Turn with it
+
+#### Scenario: Subscription expiry
+- **WHEN** 12 hours pass without the target going idle
+- **THEN** the subscription is dropped and the subscriber is told so
+
+#### Scenario: Watching a refusing Session
+- **WHEN** a Session watches a `cyber exec` Session started without `--accept-messages`
+- **THEN** the watch fails with `ForbiddenError` and reason `non_interactive`, and no subscription exists
+
+#### Scenario: Notify under a watch deny rule
+- **WHEN** `permissions.watch_session` denies the target and the model calls `send_message` with `notify_when_idle: true`
+- **THEN** the call fails as denied and neither a message nor a subscription is written
+
 ## ADDED Requirements
 
 ### Requirement: Message chain limit
-(P1) Each message SHALL carry `hops`: one more than the hops of the sending run, where a run's hops is the largest `hops` among the messages and idle notices promoted into it, and 0 for a run that none joined. A send whose `hops` would exceed `messaging.max_hops` (default 8, range 1–64) SHALL be refused with reason `chain_limit` in the sending Session. Hops SHALL be run-scoped, so a later run started by user input begins at 0.
+(P1) Each message SHALL carry `hops`: one more than the hops of the sending run, where a run's hops is the largest `hops` among the messages and idle notices promoted into it, and 0 for a run that none joined. A send whose `hops` would exceed `messaging.max_hops` (default 8, range 1–64) SHALL be refused with reason `chain_limit` in the sending Session. Hops SHALL be run-scoped, so a later run started by user input begins at 0. Input the model causes (a background Job's handback or Monitor line, a prompt delegated to a subagent, a Workflow run's summary) SHALL carry the hops of the run that caused it into the run that promotes it, so only user input restarts a chain.
 
 #### Scenario: Ping-pong between two models
 - **WHEN** Sessions A and B each answer every message they receive with a message to the other, starting from a user prompt in A

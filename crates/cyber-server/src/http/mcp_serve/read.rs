@@ -18,16 +18,16 @@ use super::tools::{Outcome, ToolError, ToolOutput};
 use crate::runtime::{ListFilter, Runtime, SessionRow};
 
 /// Cap of each transcript `text` and tool `output`.
-const ITEM_CAP: usize = 16 * 1024;
+pub(super) const ITEM_CAP: usize = 16 * 1024;
 const PREVIEW_CAP: usize = 2 * 1024;
 const SUMMARY_CHARS: usize = 512;
 const PENDING_CAP: usize = 20;
 const RECENT_CAP: usize = 20;
-const DEFAULT_MAX_BYTES: u64 = 65_536;
+pub(super) const DEFAULT_MAX_BYTES: u64 = 65_536;
 /// Rows one `cyber_session_list` call examines at most while filtering by state.
 const SCAN_CAP: usize = 1000;
 
-fn count(args: &Value, key: &str, default: u64) -> usize {
+pub(super) fn count(args: &Value, key: &str, default: u64) -> usize {
     usize::try_from(args[key].as_u64().unwrap_or(default)).unwrap_or(usize::MAX)
 }
 
@@ -99,10 +99,10 @@ fn cap(text: &str, limit: usize) -> (String, bool) {
 }
 
 /// A page item whose text fields may be shortened, in order, to fit a byte budget.
-struct Cuttable {
-    base: Value,
+pub(super) struct Cuttable {
+    pub base: Value,
     /// `(parent key, key, full text)`; the parent is `None` for a top-level field.
-    fields: Vec<(Option<&'static str>, &'static str, String)>,
+    pub fields: Vec<(Option<&'static str>, &'static str, String)>,
 }
 
 impl Cuttable {
@@ -141,15 +141,15 @@ impl Cuttable {
 }
 
 /// Items of one page, bounded by the serialized size of the item array.
-struct Pager {
+pub(super) struct Pager {
     max_bytes: usize,
     used: usize,
-    items: Vec<Value>,
-    truncated: bool,
+    pub items: Vec<Value>,
+    pub truncated: bool,
 }
 
 impl Pager {
-    fn new(max_bytes: usize) -> Self {
+    pub fn new(max_bytes: usize) -> Self {
         Self {
             max_bytes,
             used: 2,
@@ -160,7 +160,7 @@ impl Pager {
 
     /// Add the next item, cut to fit when it is the first; `false` (nothing added) when
     /// the page is full.
-    fn push(&mut self, item: &Cuttable, cap: usize) -> bool {
+    pub fn push(&mut self, item: &Cuttable, cap: usize) -> bool {
         let separator = usize::from(!self.items.is_empty());
         let room = self.max_bytes.saturating_sub(self.used + separator);
         let budget = if self.items.is_empty() {
@@ -206,7 +206,7 @@ pub(super) async fn list(connection: &Connection, args: &Value) -> Outcome {
     })
 }
 
-fn absolute_directory(directory: &str) -> Result<String, ApiError> {
+pub(super) fn absolute_directory(directory: &str) -> Result<String, ApiError> {
     let path = std::path::Path::new(directory);
     if !path.is_absolute() {
         return Err(
@@ -439,7 +439,11 @@ async fn recent_prompts(connection: &Connection, id: &str) -> Result<Value, Tool
     let inputs = cyber_store::mcp_serve::recent_inputs(&connection.state.store, id, RECENT_CAP)
         .map_err(ApiError::unknown)?;
     let mut prompts = Vec::with_capacity(inputs.len());
-    for input in inputs {
+    // Messages sent through `cyber_message_send` are MCP serve inputs too, not prompts.
+    for input in inputs
+        .into_iter()
+        .filter(|input| !is_message(&input.message_id))
+    {
         let facts = super::wait::observe(connection, id, &input.message_id).await?;
         prompts.push(json!({
             "message_id": input.message_id,
@@ -448,6 +452,11 @@ async fn recent_prompts(connection: &Connection, id: &str) -> Result<Value, Tool
         }));
     }
     Ok(Value::Array(prompts))
+}
+
+/// Whether an MCP serve input is a cross-session message (`msgx_`), not a prompt.
+fn is_message(message_id: &str) -> bool {
+    message_id.starts_with("msgx_")
 }
 
 /// `Usage` from a `UsageAmount`; `cost_usd` is null when any counted step is unpriced.

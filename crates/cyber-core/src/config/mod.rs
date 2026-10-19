@@ -18,6 +18,7 @@ mod mcp;
 mod mcp_files;
 mod mcp_serve;
 mod merge;
+mod messaging;
 mod modes;
 mod subst;
 mod validate;
@@ -58,6 +59,7 @@ pub use mcp_serve::{
     FALLBACK_CLIENT_LABEL, McpServeLimits, McpServeSettings, derive_client_label,
     valid_client_label,
 };
+pub use messaging::{DEFAULT_MAX_HOPS, InboundPolicy, InboundSettings, MessagingSettings};
 pub use modes::{bound_mode, mode_ceiling, mode_rank, never_ask_rules};
 pub use validate::redact_secrets;
 pub use workflows::{TierTarget, WorkflowSettings};

@@ -9,8 +9,8 @@ use jiff::civil::Date;
 use jiff::tz::TimeZone;
 
 use super::{
-    FavoriteModel, LongestSession, MAX_PERIOD_DAYS, Period, StatsDay, StatsModel, StatsTotals,
-    UsageStats, local_date,
+    FavoriteModel, LongestSession, MAX_PERIOD_DAYS, Period, StatsDay, StatsModel, StatsOrigin,
+    StatsTotals, UsageStats, local_date,
 };
 
 /// When a ledger group happened: a bucket start (ms), or a folded UTC day.
@@ -33,6 +33,8 @@ pub(super) struct Row {
     pub unpriced: u64,
     pub tokens: Usage,
     pub cost: f64,
+    /// `user` for rows recorded before origins existed.
+    pub origin: String,
 }
 
 /// The first and last call of a root tree in one directory.
@@ -122,6 +124,7 @@ impl Acc {
 struct Sums {
     days: BTreeMap<Date, Acc>,
     models: BTreeMap<(String, String), Acc>,
+    origins: BTreeMap<String, Acc>,
     totals: Acc,
     approximate: bool,
 }
@@ -130,6 +133,7 @@ fn sum(rows: &[Row], window: &Window) -> Sums {
     let mut sums = Sums {
         days: BTreeMap::new(),
         models: BTreeMap::new(),
+        origins: BTreeMap::new(),
         totals: Acc::default(),
         approximate: false,
     };
@@ -143,6 +147,7 @@ fn sum(rows: &[Row], window: &Window) -> Sums {
             .entry((row.provider.clone(), row.model.clone()))
             .or_default()
             .add(row);
+        sums.origins.entry(row.origin.clone()).or_default().add(row);
         sums.totals.add(row);
     }
     sums
@@ -227,6 +232,30 @@ fn models(sums: &Sums) -> Vec<StatsModel> {
     models
 }
 
+fn origins(sums: &Sums) -> Vec<StatsOrigin> {
+    let mut origins: Vec<StatsOrigin> = sums
+        .origins
+        .iter()
+        .filter(|(_, acc)| acc.steps > 0)
+        .map(|(origin, acc)| StatsOrigin {
+            origin: origin.clone(),
+            tokens: acc.tokens,
+            total_tokens: total(&acc.tokens),
+            cost: acc.known_cost(),
+            unpriced_steps: acc.unpriced,
+            steps: acc.steps,
+            turns: acc.turns,
+            sessions: acc.roots.len() as u64,
+        })
+        .collect();
+    origins.sort_by(|a, b| {
+        b.total_tokens
+            .cmp(&a.total_tokens)
+            .then_with(|| a.origin.cmp(&b.origin))
+    });
+    origins
+}
+
 /// The root tree with the longest span from its first to its last call.
 fn longest(spans: &[Span]) -> Option<LongestSession> {
     let mut trees: BTreeMap<&str, (i64, i64)> = BTreeMap::new();
@@ -297,6 +326,7 @@ pub(super) fn aggregate(rows: &[Row], spans: &[Span], window: &Window) -> UsageS
         current_streak,
         most_active_day: most_active(&days),
         models,
+        origins: origins(&sums),
         approximate_days: sums.approximate,
         backfilling: false,
         days: days.into_iter().skip(keep).collect(),

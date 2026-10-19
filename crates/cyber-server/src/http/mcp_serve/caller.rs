@@ -77,13 +77,16 @@ impl Caller {
         };
         let runtime = &connection.state.runtime;
         if caller == target || runtime.ancestor_ids(caller).iter().any(|id| id == target) {
-            return Err(ApiError::forbidden(
-                "a Session cannot drive itself or its ancestors through MCP serve",
-            )
-            .with_reason("self_target"));
+            return Err(self_target());
         }
         Ok(())
     }
+}
+
+/// `ForbiddenError self_target`: the call targets the caller Session or an ancestor.
+pub(super) fn self_target() -> ApiError {
+    ApiError::forbidden("a Session cannot drive itself or its ancestors through MCP serve")
+        .with_reason("self_target")
 }
 
 #[cfg(test)]

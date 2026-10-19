@@ -5,7 +5,15 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 
 /// Top-level keys whose arrays concatenate (de-duplicated) instead of being replaced.
-const CONCAT_KEYS: [&str; 4] = ["/instructions", "/plugins", "/skills", "/skills/paths"];
+/// Lists every layer adds to. `messaging.inbound.refuse` is one, so no layer can drop
+/// another's refusals (a project's list only restricts, and needs no trust).
+const CONCAT_KEYS: [&str; 5] = [
+    "/instructions",
+    "/plugins",
+    "/skills",
+    "/skills/paths",
+    "/messaging/inbound/refuse",
+];
 
 pub type Sources = BTreeMap<String, String>;
 

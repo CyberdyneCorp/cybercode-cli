@@ -173,6 +173,57 @@ jobs:
       - name: Native delegation receipt reconciliation
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test delegation_recovery
+      - name: Native cross-session message records, addressing, listing, sends, model tools, inbound controls, limits, MCP depth, idle notifications, usage attribution, history, CLI, TUI and MCP serve tools
+        if: ${{ !cancelled() }}
+        run: |
+          cargo test --locked -p cyber-core --lib config::messaging
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-core --test config managed_policy_disables_messaging
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-tools --lib permissions::engine::tests::message_send
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-tools --test messaging_tools
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-store --lib migrate::tests::messaging_
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-store --lib migrate::tests::usage_origin_
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-server --lib runtime::usage_origin
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-server --test usage_ledger ledger_rows_carry_their_origin
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-store --test store reproject_
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-store --test store an_append_fault_
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-server --lib runtime::messaging
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-server --test messaging
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-app --test messaging
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-app --test mcp_serve a_send_message_leg_carries_the_depth
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-server --lib http::mcp_serve::messaging
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-app --test mcp_serve messaging_tools_map_onto_the_messaging_api
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-cli --test mcp_serve_cli the_bridge_sends_and_reads_messages
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-app --test mcp usage_in_a_turn_woken_through_mcp_serve_is_attributed_to_mcp
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-cli --bin cyber commands::messages
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-cli --bin cyber tree::tests::peers
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-cli --test messages_cli
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-tui --lib messaging
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-tui --lib taking_back_skips_received_messages
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-tui --lib screens_messages
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native bundled skill discovery and agent profiles
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --lib --test agent_profiles

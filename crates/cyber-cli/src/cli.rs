@@ -234,6 +234,11 @@ pub enum Command {
     },
     /// Send one request to the server API.
     Api(ApiArgs),
+    /// Send messages between Sessions and read their message history.
+    Messages {
+        #[command(subcommand)]
+        cmd: crate::commands::messages::MessagesCmd,
+    },
     /// Check configuration, skills, commands, credentials, catalog, database, sandbox, tools and server.
     Doctor,
     /// Usage statistics: activity, streaks, tokens, cost and per-model totals.

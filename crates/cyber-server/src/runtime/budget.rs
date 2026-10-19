@@ -385,12 +385,29 @@ impl super::Asker {
     ) -> Result<(), RuntimeError> {
         let inner = self.inner.upgrade().ok_or(RuntimeError::ShuttingDown)?;
         let handle = inner.handle(&self.session_id).await?;
-        inner
-            .commit(
-                &handle,
-                vec![super::events::event(super::events::AUXILIARY_USAGE, &usage)],
-            )
-            .await?;
+        {
+            // A call made inside a Turn carries the Turn's origin (`cross-session-messaging`
+            // → Usage attribution).
+            let mut state = handle.state.lock().await;
+            let running = inner
+                .drains
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains_key(&self.session_id);
+            let origin = if running {
+                state.step_origin.clone()
+            } else {
+                Default::default()
+            };
+            let record = super::events::AttributedUsage { usage, origin };
+            inner.commit_locked(
+                &mut state,
+                vec![super::events::event(
+                    super::events::AUXILIARY_USAGE,
+                    &record,
+                )],
+            )?;
+        }
         inner.observe_budget(&handle).await
     }
 }

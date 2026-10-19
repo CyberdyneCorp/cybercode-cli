@@ -7,10 +7,10 @@ A model-independent, local-first coding agent: a durable server owns your sessio
 - **Any model, no account.** OpenAI, Anthropic or any OpenAI-compatible endpoint, including a local model server. No Cyber account; hosted models need their own provider credentials. A ChatGPT Plus/Pro plan can pay for OpenAI models instead of an API key (`cyber providers login chatgpt`). The full local-model baseline is still open ([evaluation guide](eval/README.md)).
 - **A server that survives a crash.** Prompts are persisted before they run, and execution state lives in SQLite. A restarted server recovers interrupted Sessions, and the TUI, SDK and MCP clients share the same Sessions.
 - **Workflows that resume after `kill -9`.** Claude Code also has [script-driven workflows][C7] with `agent()`/`parallel()`/`pipeline()`. Cyber's differences: runs execute in the background server rather than inside a CLI process; after a server crash they replay durably (`cyber workflows resume --interrupted`); several runs share agent slots fairly with a run queue; and each run has budgets and model tiers that can point at any provider ([details](docs/local-core-guide.md#workflows-p2-m21)).
-- **Other agents can drive whole Sessions.** `cyber mcp serve` lets Claude Code, Codex or another MCP client create, prompt, wait on and interrupt Cyber Sessions, with idempotent receipts and a Mode ceiling. `claude mcp serve` [exposes Claude Code's tools][C4], and Codex [removed its MCP server][X5]. Partial: 7 of the 10 tools ship, and messaging is not implemented yet.
+- **Other agents can drive whole Sessions.** `cyber mcp serve` lets Claude Code, Codex or another MCP client create, prompt, wait on and interrupt Cyber Sessions, with idempotent receipts and a Mode ceiling. All 10 tools ship, including listing, sending and reading cross-session messages. `claude mcp serve` [exposes Claude Code's tools][C4], and Codex [removed its MCP server][X5]. Partial: unattended approval rules and the recursion-depth markers for hook and PTY processes remain.
 - **Recovery and confinement.** Shadow-git snapshots restore files without overwriting your own edits. Commands run in an OS sandbox on macOS and Linux (Windows is incomplete).
 - **Open contracts.** Behavior is specified as [OpenSpec requirements](openspec/specs) tagged by phase and validated in CI, and implementation evidence is published ([P1](docs/implementation/p1-status.md), [P2](docs/implementation/p2-status.md)).
-- **Many agents, one server.** Subagents run as real child Sessions (in the background or in their own worktree), workflows fan out dozens of agents with fair scheduling across runs, and every agent's transcript stays inspectable. Agent teams and agent-to-agent messaging are not built yet.
+- **Many agents, one server.** Subagents run as real child Sessions (in the background or in their own worktree), workflows fan out dozens of agents with fair scheduling across runs, and every agent's transcript stays inspectable. Sessions on one server talk to each other ([how](#sessions-talking-to-each-other)). Agent teams and messaging between machines are not built yet.
 - **A full terminal UI.** 18 themes with a live switcher, Markdown with highlighted code, a responsive sidebar with a context-window bar (tokens used, auto-compact point, cost), the MCP servers and machine stats (CPU, memory, disk), the `Ctrl+P` palette, a file explorer, a workflows monitor, Usage/Stats tabs (also as `cyber stats`), and `/rename` to name a Session and resume it later by title.
 
 ## Screenshots
@@ -138,6 +138,21 @@ claude mcp add cyber -- cyber mcp serve --client claude-code
 
 Use `--model provider/model` to select a model. Remote MCP servers that need OAuth are signed in explicitly with `cyber mcp auth <server>`; `cyber` never opens a browser on its own. See the [local core guide](docs/local-core-guide.md) for configuration, [MCP serve](docs/local-core-guide.md#mcp-serve-partial-p1) for Codex and HTTP setup, and [remote MCP OAuth](docs/local-core-guide.md#remote-mcp-oauth).
 
+### Sessions talking to each other
+
+Sessions on the same server can message each other. An agent gets three tools: `list_sessions` shows the Sessions it can reach, `send_message { to, text }` sends one plain-text message (up to 16 KiB) to a Session by its title, subagent name or `ses_` ID, and `watch_session` (or `send_message` with `notify_when_idle`) sends it one notice when the target next goes idle. A message to an idle Session starts a Turn there; a busy Session reads it at its next Safe Boundary. The target sees it as an untrusted `<cross_session_message>` block, never as instructions, and keeps its own permissions, Mode and sandbox, so a message cannot launder an action the target is not allowed to take. Replies are just another `send_message`.
+
+The receiving side stays in control. `messaging.inbound` rules (and a per-Session override) deliver, hold or refuse messages by sender; held messages wait as cards in the TUI until you release (`r`) or drop (`d`) them. A sender may land at most 10 messages per minute on one target, a target holds at most 30 waiting messages, and a chain of messages stops after `messaging.max_hops` (8) so two agents cannot ping-pong forever. `cyber exec` Sessions refuse messages unless started with `--accept-messages`. `CYBER_DISABLE_MESSAGING=1` or `messaging.enabled: false` turns it off.
+
+```bash
+./target/debug/cyber messages list --reachable          # Sessions a message can reach
+./target/debug/cyber messages send backend "which port does the API use?"
+./target/debug/cyber messages list --session backend    # history with outcomes (delivered, held, refused)
+./target/debug/cyber stats --by origin                  # usage split by user, session, client, job and mcp
+```
+
+The same operations are on HTTP (`/api/v1/messaging/*`), the TypeScript SDK (`client.messaging`) and `cyber mcp serve` (`cyber_message_list`, `cyber_message_send`, `cyber_message_history`), and the TUI shows received messages, `✉ N queued · M held` in the footer and the `/messages` history view. Messaging between machines (`name@machine`) fails with `AccountRequiredError` until direct peers ship. Details: [cross-session messaging](docs/local-core-guide.md#cross-session-messaging).
+
 ## What it does
 
 | Area | Today | Details |
@@ -146,10 +161,10 @@ Use `--model provider/model` to select a model. Remote MCP servers that need OAu
 | Sessions | Durable admission, streaming, interrupt/resume, crash recovery, compaction; named Sessions (`/rename`, `cyber sessions rename`) resumed by title | [Naming and resuming](docs/local-core-guide.md#naming-and-resuming-sessions) |
 | Safety | Workspace trust, permission rules, protected paths, credential masking, macOS/Linux sandbox | Windows enforcement partial |
 | Recovery | Shadow-git snapshots, restore preserving user edits, backup and retention | Broader rewind UI pending |
-| Multiple agents | Subagents as child Sessions (`agent` tool, `/subtask`, background, isolated worktrees, `/agent`, `/tasks`); custom agent profiles with their own model, tools and skills; workflows fanning out many agents; several workflow runs at once; other agents driving Sessions over `cyber mcp serve` | Subagents partial; agent-to-agent messaging and agent teams not yet |
+| Multiple agents | Subagents as child Sessions (`agent` tool, `/subtask`, background, isolated worktrees, `/agent`, `/tasks`); custom agent profiles with their own model, tools and skills; workflows fanning out many agents; several workflow runs at once; other agents driving Sessions over `cyber mcp serve`; Sessions on one server messaging each other (`send_message`, `watch_session`, `cyber messages`, `/messages`) | Subagents partial; messaging between machines (direct peers) and agent teams not yet |
 | Workflows (P2) | QuickJS sandbox, `agent()`/`parallel()`/`pipeline()`, determinism guards, durable replay, budgets, model tiers, parallel runs with fair scheduling and a queue | [Guide](docs/local-core-guide.md#workflows-p2-m21); `ask()`, `exec --workflow` not yet |
 | MCP client | stdio and remote servers, OAuth, resources, prompts, elicitation, roots | WebSocket not implemented |
-| MCP serve | Other agents create, read, prompt and interrupt Sessions (7 of 10 tools) | Messaging not yet |
+| MCP serve | Other agents create, read, prompt and interrupt Sessions and send cross-session messages (all 10 tools) | Unattended approval rules not yet |
 | Hooks | Command, HTTP, prompt and MCP-tool handlers; managed-only org policy | Plugin hooks pending |
 | Skills | Bundled `/review`, `/batch`, `/simplify`, `/security-review`, `/customize-cyber`; remote sources; `cyber review` | Plugin skills pending |
 | Instructions | `CYBER.md`, `AGENTS.md`, `CLAUDE.md`, `CONTEXT.md`; confined `@path` imports | [Guide](docs/local-core-guide.md#project-instructions-and-cybermd) |
@@ -192,7 +207,7 @@ Checked **2026-10-17** against each product's official docs. This compares docum
 
 - **P0 (local core):** implemented; release gates remain open, including the full local-model baseline and the long coding task ([evidence](docs/measurements/p0-exit-evidence.md)).
 - **P1 (table stakes):** in progress; no P1 milestone is fully accepted. Windows confinement, native MCP OAuth keyring acceptance, plugins, complete client controls, browser verification and migration remain ([status](docs/implementation/p1-status.md)).
-- **P2 (autonomy):** the Workflow runtime (M2.1) and parallel runs are implemented and accepted end to end with the real binary; `ask()`, direct read-only tools, `exec --workflow` and Job integration remain ([evidence](docs/implementation/p2-status.md)). Next: cross-session messaging (which also completes `cyber mcp serve` and is the basis for agent teams), then agent teams, bundled workflows and goals; loops later.
+- **P2 (autonomy):** the Workflow runtime (M2.1) and parallel runs are implemented and accepted end to end with the real binary; `ask()`, direct read-only tools, `exec --workflow` and Job integration remain ([evidence](docs/implementation/p2-status.md)). Cross-session messaging on one server (a P1 capability) is implemented and was accepted by hand on the real binary; its automated end-to-end suite is pending ([evidence](docs/implementation/p1-status.md#cross-session-messaging-2026-10-19)). Next: direct peers (`add-messaging-direct-peers`), then agent teams, bundled workflows and goals; loops later.
 
 See the [roadmap](ROADMAP.md) for P3 (connectivity, IDE clients) and P4.
 

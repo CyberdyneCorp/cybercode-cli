@@ -185,7 +185,7 @@ impl Runtime {
     pub async fn resume_child(
         &self,
         owner: &ChildExecution,
-        admission: super::Admission,
+        mut admission: super::Admission,
         name: String,
         schema: Option<super::StructuredSchema>,
     ) -> Result<super::Receipt, RuntimeError> {
@@ -225,7 +225,9 @@ impl Runtime {
                 "Resume cannot change the child name".into(),
             ));
         }
-        self.admit_attempt(
+        // The resumed child continues the parent's message chain.
+        let inherited = self.delegated_chain(&owner.id, &mut admission).await;
+        self.admit_attempt_with(
             &owner.id,
             admission,
             Some(Resumed {
@@ -234,6 +236,7 @@ impl Runtime {
                 output_schema: schema.map(|schema| schema.schema().clone()),
             }),
             super::PromptCheck::Checked(None),
+            inherited,
         )
         .await
     }

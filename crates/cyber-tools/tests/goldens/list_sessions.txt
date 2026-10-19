@@ -1,0 +1,1 @@
+{"sessions":[{"address":"backend","session_id":"<backend>","name":"backend","kind":"local","state":"idle","location":{"directory":"<repo>"},"canReceive":true}]}

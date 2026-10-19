@@ -151,11 +151,18 @@ impl Runtime {
         let mut state = handle.state.lock().await;
         prepared.check(&state)?;
         let mut events = Vec::new();
+        let mut message_record = None;
         if let Some((message, delivery)) = release {
             let row = state
                 .input(message)
                 .ok_or_else(|| RuntimeError::Invalid(format!("no inbox row {message}")))?;
             super::check_inbox_action(row, super::events::InboxAction::Released)?;
+            message_record = super::messaging::inbox::inbox_record(
+                &state,
+                message,
+                super::events::InboxAction::Released,
+                Some(delivery),
+            )?;
             events.push(event(
                 super::events::INBOX_UPDATED,
                 &super::events::InboxUpdated {
@@ -193,6 +200,9 @@ impl Runtime {
                 },
             ),
         );
+        // A released message's `in` record commits with it; `release` then completes
+        // the sender's record.
+        events.extend(message_record);
         self.inner.commit_locked(&mut state, events)?;
         prepared.launch(&self.inner, &mut drains, id);
         Ok(true)

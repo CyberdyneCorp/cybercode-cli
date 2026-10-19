@@ -747,6 +747,7 @@ fn app_host_forwards_every_tool_host_method() {
         "config_digest",
         "instruction_read_gate",
         "lifecycle_hooks",
+        "messaging_settings",
         "resolve_prompt_resources",
         "take_hook_effects",
     ] {

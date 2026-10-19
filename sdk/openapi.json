@@ -1269,6 +1269,13 @@
             },
             "description": "Sorted by tokens, highest first."
           },
+          "origins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StatsOrigin"
+            },
+            "description": "One entry per usage origin, sorted by tokens, highest first."
+          },
           "approximate_days": {
             "type": "boolean",
             "description": "True when part of the period was served from daily aggregates (UTC days)."
@@ -1288,6 +1295,7 @@
           "longest_streak",
           "current_streak",
           "models",
+          "origins",
           "approximate_days",
           "backfilling"
         ],
@@ -1494,6 +1502,60 @@
           "sessions",
           "share"
         ]
+      },
+      "StatsOrigin": {
+        "type": "object",
+        "properties": {
+          "origin": {
+            "type": "string"
+          },
+          "tokens": {
+            "$ref": "#/components/schemas/Usage"
+          },
+          "total_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "cost": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Known priced cost; null when every call of this origin was unpriced."
+          },
+          "unpriced_steps": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "steps": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "turns": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "sessions": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "origin",
+          "tokens",
+          "total_tokens",
+          "unpriced_steps",
+          "steps",
+          "turns",
+          "sessions"
+        ],
+        "description": "Usage of one origin (`cross-session-messaging` → Usage attribution): `user`,\n`session`, `client`, `job`, `mcp`, or the admission source (`workflow`, `hook`, ...)."
       },
       "Data_UsageInsights": {
         "type": "object",
@@ -3788,6 +3850,17 @@
                 "type": "null"
               }
             ]
+          },
+          "messaging": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InboundOverride"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Session-level `messaging.inbound` override (`cross-session-messaging` → Inbound\ncontrols): it replaces the Location's default; sender patterns still win."
           }
         },
         "required": [
@@ -3839,6 +3912,48 @@
             "default": "soft"
           }
         }
+      },
+      "InboundOverride": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "inbound": {
+            "$ref": "#/components/schemas/InboundPolicy"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OverrideReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "inbound"
+        ],
+        "description": "A Session-level `messaging.inbound` override. It replaces only the default; explicit\nsender patterns still win."
+      },
+      "InboundPolicy": {
+        "type": "string",
+        "enum": [
+          "deliver",
+          "hold",
+          "refuse"
+        ],
+        "description": "What a target does with an inbound message."
+      },
+      "OverrideReason": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "non_interactive",
+            "description": "Set by `cyber exec` on the Sessions it creates, unless `--accept-messages`."
+          }
+        ],
+        "description": "Why a Session override refuses; the reason a refused sender sees."
       },
       "ThreadStatus": {
         "type": "string",
@@ -3931,6 +4046,17 @@
             ],
             "format": "uint32",
             "minimum": 0
+          },
+          "messaging": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InboundOverride"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Session-level `messaging.inbound` override (`cyber exec` refuses messages with\n`{ \"inbound\": \"refuse\", \"reason\": \"non_interactive\" }`)."
           }
         }
       },
@@ -4085,6 +4211,17 @@
                 "type": "null"
               }
             ]
+          },
+          "messaging": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InboundOverride"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Session-level `messaging.inbound` override (`cross-session-messaging` → Inbound\ncontrols): it replaces the Location's default; sender patterns still win."
           },
           "status": {
             "type": "string",
@@ -4776,8 +4913,49 @@
               "boolean",
               "null"
             ]
+          },
+          "messaging": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MessagingPatch"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set the Session's `messaging.inbound` override; `{ \"inbound\": null }` clears it."
           }
         }
+      },
+      "MessagingPatch": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "inbound": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InboundPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The policy replacing the Location's default; null clears the override."
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OverrideReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why the Session refuses (`non_interactive`); only with an `inbound` policy.",
+            "default": null
+          }
+        },
+        "description": "The `messaging` of `PATCH /api/v1/sessions/:sessionID`."
       },
       "ForkBody": {
         "type": "object",
@@ -8014,6 +8192,507 @@
         ],
         "description": "A Location-scoped response."
       },
+      "Data_Array_of_ReachableSession": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReachableSession"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "ReachableSession": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "What to pass as `to`: the name when it resolves to this Session, else the ID."
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AddressKind"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ReachableState"
+          },
+          "location": {
+            "$ref": "#/components/schemas/SessionLocation"
+          },
+          "canReceive": {
+            "type": "boolean",
+            "description": "Whether a message from this caller would be accepted: false for an archived\nSession, where messaging is disabled, and where its inbound decision for this\ncaller is `refuse`."
+          }
+        },
+        "required": [
+          "address",
+          "session_id",
+          "name",
+          "kind",
+          "state",
+          "location",
+          "canReceive"
+        ],
+        "description": "One entry of the reachable listing (`list_sessions`, `GET /messaging/sessions`)."
+      },
+      "AddressKind": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "subagent",
+            "description": "A child Session of the caller."
+          },
+          {
+            "type": "string",
+            "const": "teammate",
+            "description": "A member of the caller's team (`agent-teams`)."
+          },
+          {
+            "type": "string",
+            "const": "local",
+            "description": "Another root Session on this server."
+          }
+        ],
+        "description": "How the caller reaches a Session."
+      },
+      "ReachableState": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "idle"
+            ]
+          },
+          {
+            "type": "string",
+            "const": "running",
+            "description": "A Drain runs."
+          },
+          {
+            "type": "string",
+            "const": "waiting_input",
+            "description": "A permission request or question of the Session waits for a client."
+          }
+        ],
+        "description": "What a reachable Session is doing."
+      },
+      "SessionLocation": {
+        "type": "object",
+        "properties": {
+          "directory": {
+            "type": "string"
+          },
+          "workspace": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "directory"
+        ],
+        "description": "Where a Session runs."
+      },
+      "SendMessage": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A `msgx_` ID; a repeated ID returns the original result with `replayed: true`.\nWithout it, an `Idempotency-Key` derives one.",
+            "default": null
+          },
+          "from": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The sending Session; without it the sender is the client (origin `client`).",
+            "default": null
+          },
+          "to": {
+            "type": "string",
+            "description": "The target's address (`ses_` ID, subagent or Session name)."
+          },
+          "text": {
+            "type": "string",
+            "description": "Plain UTF-8 text, at most 16384 bytes."
+          },
+          "notify_when_idle": {
+            "type": "boolean",
+            "description": "Also subscribe `from` to one notice when the target next goes idle; needs `from`.",
+            "default": false
+          }
+        },
+        "required": [
+          "to",
+          "text"
+        ],
+        "description": "`POST /api/v1/messaging/send`."
+      },
+      "Data_SendResult": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SendResult"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "SendResult": {
+        "type": "object",
+        "properties": {
+          "message_id": {
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/MessageOutcome"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "limit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The limit a `rate_limited` refusal hit (`per_target_minute`, `inbox_pending`)."
+          },
+          "to": {
+            "$ref": "#/components/schemas/SentTo"
+          },
+          "watch_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The idle subscription `notify_when_idle` created."
+          },
+          "replayed": {
+            "type": "boolean",
+            "description": "The ID was sent before; this is that send's outcome and nothing was written."
+          }
+        },
+        "required": [
+          "message_id",
+          "outcome",
+          "to"
+        ],
+        "description": "The synchronous outcome of a send (`v1.messaging.send`, the `send_message` tool)."
+      },
+      "MessageOutcome": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "delivered",
+            "description": "Durably admitted to the target inbox (not necessarily read yet)."
+          },
+          {
+            "type": "string",
+            "const": "held",
+            "description": "Admitted with `delivery: \"hold\"`; the target's user releases or drops it."
+          },
+          {
+            "type": "string",
+            "const": "refused",
+            "description": "Not admitted; `reason` says why."
+          }
+        ],
+        "description": "What became of a message."
+      },
+      "SentTo": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "The address the records show: the name used when it resolved uniquely, else the ID."
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "address"
+        ],
+        "description": "The target of a sent message."
+      },
+      "ErrorBody": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "ErrorBody",
+        "description": "The JSON body of every declared failure. Some failures add `reason`, a machine-readable\nrefinement of `_tag`, and fields of their own such as `retryAfterMs` or `path`.",
+        "type": "object",
+        "properties": {
+          "_tag": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "ref": {
+            "description": "`err_<id>` for `UnknownError`, logged server-side.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "paths": {
+            "description": "Paths for rewind conflicts.",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "service": {
+            "description": "Capability group unavailable in this host or phase.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "_tag",
+          "message"
+        ],
+        "additionalProperties": true
+      },
+      "WatchSession": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "The subscribing Session, which receives the notice."
+          },
+          "target": {
+            "type": "string",
+            "description": "The watched Session's address (`ses_` ID, subagent or Session name)."
+          }
+        },
+        "required": [
+          "from",
+          "target"
+        ],
+        "description": "`POST /api/v1/messaging/watch`."
+      },
+      "Data_Watch": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Watch"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "Watch": {
+        "type": "object",
+        "properties": {
+          "watch_id": {
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/SentTo"
+          },
+          "status": {
+            "$ref": "#/components/schemas/WatchStatus"
+          },
+          "expires_at": {
+            "type": "string",
+            "description": "When an unfired subscription expires (RFC 3339)."
+          },
+          "notice_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The notice admitted to the subscriber, once fired or expired with one."
+          },
+          "replayed": {
+            "type": "boolean",
+            "description": "The ID was used before; this is that subscription and nothing was written."
+          }
+        },
+        "required": [
+          "watch_id",
+          "target",
+          "status",
+          "expires_at"
+        ],
+        "description": "An idle-notification subscription (`v1.messaging.watch`, `watch_session`)."
+      },
+      "WatchStatus": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "active",
+            "description": "Waiting for the target to go idle."
+          },
+          {
+            "type": "string",
+            "const": "fired",
+            "description": "The notice was admitted to the subscriber."
+          },
+          {
+            "type": "string",
+            "const": "expired",
+            "description": "It ended without an idle notice (12 hours passed, or the chain limit)."
+          }
+        ],
+        "description": "The state of a subscription."
+      },
+      "Page_MessageRecord": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MessageRecord"
+            }
+          },
+          "cursor": {
+            "$ref": "#/components/schemas/Cursor"
+          }
+        },
+        "required": [
+          "data",
+          "cursor"
+        ]
+      },
+      "MessageRecord": {
+        "type": "object",
+        "properties": {
+          "message_id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string",
+            "description": "The Session whose record this is."
+          },
+          "direction": {
+            "$ref": "#/components/schemas/Direction"
+          },
+          "from": {
+            "type": "string",
+            "description": "The sender's address: the peer for `in`, this Session for `out`."
+          },
+          "to": {
+            "type": "string",
+            "description": "The target's address: this Session for `in`, the peer for `out`."
+          },
+          "peer_session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The other side's local Session, when it has one (none for a client)."
+          },
+          "origin_kind": {
+            "type": "string",
+            "description": "`session` or `client`; an open set."
+          },
+          "outcome": {
+            "type": "string",
+            "description": "`delivered`, `held`, `refused`, `released` or `dropped`."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "size": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "UTF-8 bytes of the text."
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "depth": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "The sender's MCP recursion depth."
+          },
+          "hops": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "The message's position in its chain."
+          },
+          "created_at": {
+            "type": "string",
+            "description": "RFC 3339, milliseconds."
+          },
+          "updated_at": {
+            "type": "string",
+            "description": "When the outcome last changed (RFC 3339, milliseconds)."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The event that last changed this record."
+          }
+        },
+        "required": [
+          "message_id",
+          "session_id",
+          "direction",
+          "from",
+          "to",
+          "origin_kind",
+          "outcome",
+          "size",
+          "sha256",
+          "depth",
+          "hops",
+          "created_at",
+          "updated_at",
+          "seq"
+        ],
+        "description": "One side of a message as the history shows it (`cross-session-messaging` → Messaging\nAPI). A refused message carries no `text`."
+      },
+      "Direction": {
+        "type": "string",
+        "enum": [
+          "in",
+          "out"
+        ],
+        "description": "The Session side of a message: `in` in the target, `out` in the sender."
+      },
       "Located_Array_of_AgentInfo": {
         "type": "object",
         "properties": {
@@ -8626,49 +9305,6 @@
           "truncated"
         ],
         "description": "A file's content, or that it is binary."
-      },
-      "ErrorBody": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": "ErrorBody",
-        "description": "The JSON body of every declared failure. Some failures add `reason`, a machine-readable\nrefinement of `_tag`, and fields of their own such as `retryAfterMs` or `path`.",
-        "type": "object",
-        "properties": {
-          "_tag": {
-            "type": "string"
-          },
-          "message": {
-            "type": "string"
-          },
-          "ref": {
-            "description": "`err_<id>` for `UnknownError`, logged server-side.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "paths": {
-            "description": "Paths for rewind conflicts.",
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "type": "string"
-            }
-          },
-          "service": {
-            "description": "Capability group unavailable in this host or phase.",
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "_tag",
-          "message"
-        ],
-        "additionalProperties": true
       },
       "McpToolsChanged": {
         "type": "object",
@@ -14659,6 +15295,320 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Located_McpServerStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/messaging/sessions": {
+      "get": {
+        "operationId": "v1.messaging.sessions",
+        "summary": "Sessions the caller (`from`, else a client) can message, newest first",
+        "tags": [
+          "messaging"
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "directory",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_ReachableSession"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/messaging/send": {
+      "post": {
+        "operationId": "v1.messaging.send",
+        "summary": "Send a message to a Session as `from`, else as the client; a refusal is a 200 outcome",
+        "tags": [
+          "messaging"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SendResult"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "AddressNotFoundError or SessionNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "AmbiguousAddressError with candidates, or ConflictError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "MessageTooLargeError with size and limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "AccountRequiredError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendMessage"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/messaging/watch": {
+      "post": {
+        "operationId": "v1.messaging.watch",
+        "summary": "Subscribe `from` to one notice when the target next goes idle or exits; an idle target fires at once",
+        "tags": [
+          "messaging"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Watch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "AddressNotFoundError or SessionNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "AmbiguousAddressError with candidates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RateLimitedError with reason watch_quota",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "AccountRequiredError, or ForbiddenError when the target refuses the subscriber's messages (reason non_interactive, inbound_rule or disabled)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WatchSession"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/messaging": {
+      "get": {
+        "operationId": "v1.session.messaging",
+        "summary": "Page the Session's sent and received cross-session messages with their outcomes; refused messages carry no text",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "direction",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_MessageRecord"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "SessionNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
                 }
               }
             }
