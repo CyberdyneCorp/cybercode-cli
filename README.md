@@ -4,7 +4,7 @@ A model-independent, local-first coding agent: a durable server owns your sessio
 
 ## Why Cyber Code
 
-- **Any model, no account.** OpenAI, Anthropic or any OpenAI-compatible endpoint, including a local model server. No Cyber account; hosted models need their own provider credentials. The full local-model baseline is still open ([evaluation guide](eval/README.md)).
+- **Any model, no account.** OpenAI, Anthropic or any OpenAI-compatible endpoint, including a local model server. No Cyber account; hosted models need their own provider credentials. A ChatGPT Plus/Pro plan can pay for OpenAI models instead of an API key (`cyber providers login chatgpt`). The full local-model baseline is still open ([evaluation guide](eval/README.md)).
 - **A server that survives a crash.** Prompts are persisted before they run, and execution state lives in SQLite. A restarted server recovers interrupted Sessions, and the TUI, SDK and MCP clients share the same Sessions.
 - **Workflows that resume after `kill -9`.** Claude Code also has [script-driven workflows][C7] with `agent()`/`parallel()`/`pipeline()`. Cyber's differences: runs execute in the background server rather than inside a CLI process; after a server crash they replay durably (`cyber workflows resume --interrupted`); several runs share agent slots fairly with a run queue; and each run has budgets and model tiers that can point at any provider ([details](docs/local-core-guide.md#workflows-p2-m21)).
 - **Other agents can drive whole Sessions.** `cyber mcp serve` lets Claude Code, Codex or another MCP client create, prompt, wait on and interrupt Cyber Sessions, with idempotent receipts and a Mode ceiling. `claude mcp serve` [exposes Claude Code's tools][C4], and Codex [removed its MCP server][X5]. Partial: 7 of the 10 tools ship, and messaging is not implemented yet.
@@ -35,7 +35,7 @@ Requires **Rust 1.89+**. SQLite is bundled. On Linux, install **bubblewrap** for
 
 ```bash
 cargo build --locked -p cyber-cli
-export OPENAI_API_KEY="your-key"
+export OPENAI_API_KEY="your-key"                  # or use your ChatGPT plan, below
 
 ./target/debug/cyber                              # terminal UI
 ./target/debug/cyber exec "fix the failing test"  # one task
@@ -47,6 +47,20 @@ export OPENAI_API_KEY="your-key"
 ./target/debug/cyber stats --models               # local usage stats
 ./target/debug/cyber doctor                       # check your setup
 ```
+
+### Use your ChatGPT subscription
+
+A ChatGPT Plus or Pro plan can pay for OpenAI models instead of an API key, in the same way as Codex, OpenCode or Pi:
+
+```bash
+./target/debug/cyber providers login chatgpt                # prints a URL; the browser returns to localhost:1455
+./target/debug/cyber providers login chatgpt --method code  # over SSH: paste the URL the browser ends on
+./target/debug/cyber models chatgpt                         # the models your plan serves, e.g. chatgpt/gpt-6-sol
+./target/debug/cyber exec -m chatgpt/gpt-6-sol "fix the failing test"
+./target/debug/cyber providers logout chatgpt
+```
+
+Usage counts against your plan's limits. The login is kept in `~/.local/share/cyber/chatgpt-auth.json` (mode 0600), separate from Codex's, and the token is renewed before it expires. The model list comes from your account and is refreshed daily. macOS and Linux only for now. Details: [ChatGPT subscription](docs/local-core-guide.md#signing-in-with-a-chatgpt-subscription).
 
 ### The background server
 
@@ -150,7 +164,7 @@ Checked **2026-10-17** against each product's official docs. This compares docum
 | Feature | Cyber Code | Claude Code | Codex CLI | OpenCode |
 |---|---|---|---|---|
 | Edit files and run commands | Yes | Yes [C1] | Yes [X1] | Yes [O1] |
-| Model providers | OpenAI, Anthropic, OpenAI-compatible | Claude via Anthropic, Bedrock, Vertex, Foundry [C2] | OpenAI and custom providers [X2] | 75+ providers [O2] |
+| Model providers | OpenAI (API key or ChatGPT plan), Anthropic, OpenAI-compatible | Claude via Anthropic, Bedrock, Vertex, Foundry [C2] | OpenAI and custom providers [X2] | 75+ providers [O2] |
 | Local models | Compatible endpoint; full baseline pending | Not established | Ollama / LM Studio via `--oss` [X2] | Ollama, LM Studio, llama.cpp [O2] |
 | Terminal UI | Yes | Yes [C1] | Yes [X1] | Yes [O1] |
 | Headless / exec | `cyber exec` | `claude -p` [C3] | `codex exec` [X3] | `opencode run` [O3] |
