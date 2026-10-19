@@ -58,12 +58,14 @@ cyber [OPTIONS] [COMMAND]
 - [`sandbox`](#cyber-sandbox): Test, explain or run a command under the effective OS sandbox policy
 - [`trust`](#cyber-trust): Inspect and approve repository-controlled configuration for this checkout
 - [`exec`](#cyber-exec): Run one prompt non-interactively (alias: cyber -p)
+- [`attach`](#cyber-attach): Open the TUI on a Session of a paired machine: cyber attach <session>@<peer>
 - [`review`](#cyber-review): Review uncommitted changes, a range, a commit or a pull request
 - [`pr`](#cyber-pr): Check out a pull request and resume the Session linked to it
 - [`git`](#cyber-git): Generate commit and pull request text with the small model
 - [`serve`](#cyber-serve): Run the server in the foreground
 - [`service`](#cyber-service): Manage the background server
 - [`api`](#cyber-api): Send one request to the server API
+- [`peers`](#cyber-peers): Pair with other machines' cyber servers to message their Sessions
 - [`messages`](#cyber-messages): Send messages between Sessions and read their message history
 - [`doctor`](#cyber-doctor): Check configuration, skills, commands, credentials, catalog, database, sandbox, tools and server
 - [`stats`](#cyber-stats): Usage statistics: activity, streaks, tokens, cost and per-model totals
@@ -1390,6 +1392,18 @@ cyber exec [OPTIONS] [PROMPT]...
 - `--fail-on-deny`: Exit with code 5 when any action was denied.
 - `--trust-project-hooks`: Run the currently resolved project/local hooks for this run only, without approving them for later runs (needs --embedded or --ephemeral)
 
+## `cyber attach`
+
+Open the TUI on a Session of a paired machine: cyber attach <session>@<peer>
+
+```text
+cyber attach [OPTIONS] <TARGET>
+```
+
+**Arguments:**
+
+- `<TARGET>`: `<session>@<peer>`: a Session (ID or name) of a paired machine.
+
 ## `cyber review`
 
 Review uncommitted changes, a range, a commit or a pull request
@@ -1477,7 +1491,7 @@ cyber serve [OPTIONS]
 - `--no-tcp`: Do not listen on TCP.
 - `--register`: Register in server.json so clients find this server.
 - `--sandbox <SANDBOX>`: Sandbox policy for model-run commands: read-only, workspace-write or full-access.
-- `--mdns`: Publish over mDNS (non-loopback binds only)
+- `--mdns`: Publish the peer listener (`peers.listen`) over mDNS, as `peers.mdns` does. Only a listener off loopback is published; the main API never is.
 - `--stdio`: Speak JSON-RPC over stdin and stdout.
 - `--dangerously-bypass-permissions`: Allow `bypass` mode without a sandbox or a container. Everything the model runs executes without approval or OS confinement.
 
@@ -1559,6 +1573,121 @@ cyber api [OPTIONS] <TARGET>...
 - `-H, --header <HEADERS>`: Extra header as `Name: value` (repeatable, up to 100)
 - `--param <PARAMS>`: Path or query parameter as `key=value` (repeatable)
 
+## `cyber peers`
+
+Pair with other machines' cyber servers to message their Sessions
+
+```text
+cyber peers [OPTIONS] <COMMAND>
+```
+
+**Subcommands:**
+
+- [`invite`](#cyber-peers-invite): Let another machine send to this one: create a grant and print its pairing code once. Needs `peers.listen` in user config
+- [`add`](#cyber-peers-add): Pair with another machine from the code its `cyber peers invite` printed: test it, store the token in the OS keyring and add the remote to user config
+- [`rm`](#cyber-peers-rm): Remove a remote and its stored token
+- [`list`](#cyber-peers-list): Remotes (state and latency) and grants of this machine
+- [`test`](#cyber-peers-test): Call a remote's `hello`: machine, version, scopes and latency; exit 1 with the error tag on failure
+- [`revoke`](#cyber-peers-revoke): End a grant: the peer's next request is refused
+- [`discover`](#cyber-peers-discover): Peer listeners published on this network over mDNS: machine, address, fingerprint and whether each is a remote already. It only lists: pairing still needs a code
+
+## `cyber peers invite`
+
+Let another machine send to this one: create a grant and print its pairing code once. Needs `peers.listen` in user config
+
+```text
+cyber peers invite [OPTIONS] <NAME>
+```
+
+**Arguments:**
+
+- `<NAME>`: The other machine's name here: its senders appear as `<session>@<name>`.
+
+**Options:**
+
+- `--scope <SCOPES>`: What the grant allows (repeatable); default `message`. Values: `message`, `attach`.
+- `--expires <EXPIRES>`: End the grant after this long: `90d`, `12h` or `30m`.
+- `--rotate-key`: Make a new listener key first; every existing pairing must be redone.
+- `--host <HOST>`: The host the code names (default: the bound IP, or this host's LAN name)
+
+## `cyber peers add`
+
+Pair with another machine from the code its `cyber peers invite` printed: test it, store the token in the OS keyring and add the remote to user config
+
+```text
+cyber peers add [OPTIONS] <NAME> <CODE>
+```
+
+**Arguments:**
+
+- `<NAME>`: The name to send to it by (`<session>@<name>`)
+- `<CODE>`: The pairing code `cyber peers invite` printed on the other machine.
+
+**Options:**
+
+- `--token-env <NAME>`: Keep the token out of the keyring: config gets `{env:NAME}`, and `NAME` must hold the code's token wherever the server runs (headless machines)
+
+## `cyber peers rm`
+
+Remove a remote and its stored token
+
+```text
+cyber peers rm [OPTIONS] <NAME>
+```
+
+**Arguments:**
+
+- `<NAME>`
+
+## `cyber peers list`
+
+Remotes (state and latency) and grants of this machine
+
+```text
+cyber peers list [OPTIONS]
+```
+
+**Options:**
+
+- `--json`: Print JSON.
+
+## `cyber peers test`
+
+Call a remote's `hello`: machine, version, scopes and latency; exit 1 with the error tag on failure
+
+```text
+cyber peers test [OPTIONS] <NAME>
+```
+
+**Arguments:**
+
+- `<NAME>`
+
+## `cyber peers revoke`
+
+End a grant: the peer's next request is refused
+
+```text
+cyber peers revoke [OPTIONS] <NAME>
+```
+
+**Arguments:**
+
+- `<NAME>`
+
+## `cyber peers discover`
+
+Peer listeners published on this network over mDNS: machine, address, fingerprint and whether each is a remote already. It only lists: pairing still needs a code
+
+```text
+cyber peers discover [OPTIONS]
+```
+
+**Options:**
+
+- `--timeout <TIMEOUT>`: How long to listen: `3s`, `500ms` or `1m`. Default: `3s`.
+- `--json`: Print JSON.
+
 ## `cyber messages`
 
 Send messages between Sessions and read their message history
@@ -1569,12 +1698,12 @@ cyber messages [OPTIONS] <COMMAND>
 
 **Subcommands:**
 
-- [`send`](#cyber-messages-send): Send a message to a Session by ID or name. Exits 0 when delivered or held, 1 when refused (the reason on stderr), 2 for an ambiguous or unknown address or a text over 16 KiB, and 6 for a remote address
+- [`send`](#cyber-messages-send): Send a message to a Session by ID or name. Exits 0 when delivered or held, 1 when refused (the reason on stderr) or when a peer cannot be reached, 2 for an ambiguous or unknown address, an unconfigured peer or a text over 16 KiB, and 6 for an address that needs a Cyber Account
 - [`list`](#cyber-messages-list): The message history of a Session (default: the Location's most recent one), or with `--reachable` the Sessions a message can be sent to
 
 ## `cyber messages send`
 
-Send a message to a Session by ID or name. Exits 0 when delivered or held, 1 when refused (the reason on stderr), 2 for an ambiguous or unknown address or a text over 16 KiB, and 6 for a remote address
+Send a message to a Session by ID or name. Exits 0 when delivered or held, 1 when refused (the reason on stderr) or when a peer cannot be reached, 2 for an ambiguous or unknown address, an unconfigured peer or a text over 16 KiB, and 6 for an address that needs a Cyber Account
 
 ```text
 cyber messages send [OPTIONS] <TO> [TEXT]
@@ -1582,12 +1711,12 @@ cyber messages send [OPTIONS] <TO> [TEXT]
 
 **Arguments:**
 
-- `<TO>`: The target: a `ses_` ID, a subagent name or a Session name.
+- `<TO>`: The target: a `ses_` ID, a subagent name, a Session name, or `<session>@<peer>` for a Session of a paired machine (which needs `--from`)
 - `[TEXT]`: The message text; `-` (or nothing, with a pipe) reads it from stdin.
 
 **Options:**
 
-- `--from <FROM>`: Send as this Session (ID, exact title or unique ID prefix) instead of as the `client:cli` client.
+- `--from <FROM>`: Send as this Session (ID, exact title or unique ID prefix) instead of as the `client:cli` client; a message to a peer Session (`<session>@<peer>`) needs it.
 - `--notify-when-idle`: Also notify the `--from` Session once when the target next goes idle.
 
 ## `cyber messages list`
