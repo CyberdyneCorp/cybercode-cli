@@ -2743,7 +2743,18 @@ fn import_writes_report_file_listing_merged_model_with_both_values() {
     assert!(merged.contains("  - kept: `\"native/kept\"`"), "{text}");
     assert!(merged.contains("  - ignored: `\"local/coder\"`"), "{text}");
     assert!(text.contains("\n## imported\n"), "{text}");
-    assert!(text.contains(&shown(&e.root.join(".codex").join("config.toml"))));
+    // The report is Markdown: the path as written, not JSON-escaped (on Windows, with or
+    // without its `\\?\` prefix).
+    let source = e
+        .root
+        .join(".codex")
+        .join("config.toml")
+        .display()
+        .to_string();
+    assert!(
+        text.contains(&source) || text.contains(source.trim_start_matches(r"\\?\")),
+        "{source} not in {text}"
+    );
     assert_eq!(
         crate_config(&e)["model"],
         "native/kept",

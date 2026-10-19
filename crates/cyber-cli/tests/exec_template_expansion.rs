@@ -89,6 +89,16 @@ impl Provider {
         }
     }
 
+    /// Every message the model was sent, for failure output.
+    fn seen(&self) -> String {
+        let requests = self.requests.lock().unwrap();
+        requests
+            .iter()
+            .map(|body| body["messages"].to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     fn saw(&self, needle: &str) -> bool {
         self.requests
             .lock()
@@ -199,8 +209,8 @@ fn detail(output: &std::process::Output) -> String {
     )
 }
 
-/// Native sandboxes (macOS Seatbelt, Linux bubblewrap) run the injection confined.
-#[cfg(not(windows))]
+/// Native sandboxes (macOS Seatbelt, Linux bubblewrap, a Windows AppContainer) run the
+/// injection confined and substitute its output.
 #[test]
 fn exec_command_injects_sandboxed_git_output() {
     let provider = Provider::start();
@@ -209,31 +219,8 @@ fn exec_command_injects_sandboxed_git_output() {
     assert!(output.status.success(), "{}", detail(&output));
     assert!(
         provider.saw(&format!("Head is {head} now.")),
-        "{}",
-        detail(&output)
-    );
-}
-
-/// Without a sandbox route the injection never runs; only an explicit full-access
-/// run (not confinement evidence) substitutes the output.
-#[cfg(windows)]
-#[test]
-fn exec_command_injection_fails_closed_without_a_windows_sandbox() {
-    let provider = Provider::start();
-    let (_dir, root, head) = root_with(&provider);
-    let output = exec(&root, &[]);
-    assert!(output.status.success(), "{}", detail(&output));
-    assert!(
-        provider.saw("Head is [unavailable: sandbox] now."),
-        "{}",
-        detail(&output)
-    );
-    assert!(!provider.saw(&head));
-    let output = exec(&root, &["--sandbox", "full-access"]);
-    assert!(output.status.success(), "{}", detail(&output));
-    assert!(
-        provider.saw(&format!("Head is {head} now.")),
-        "{}",
-        detail(&output)
+        "{}\nmodel saw: {}",
+        detail(&output),
+        provider.seen()
     );
 }
