@@ -174,6 +174,11 @@ pub enum Command {
     },
     /// List models from the catalog, available first.
     Models(ModelsArgs),
+    /// Sign in to or out of a provider (today: `chatgpt`, a ChatGPT Plus/Pro subscription).
+    Providers {
+        #[command(subcommand)]
+        cmd: crate::commands::providers::ProvidersCmd,
+    },
     /// Dry-run permission rules; inspect or reset checkout-scoped auto-mode statistics.
     Permissions {
         #[command(subcommand)]

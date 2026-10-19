@@ -51,6 +51,26 @@ cargo run -p cyber-server --example session -- openai/gpt-6-luna
 cargo run -p cyber-tools --example agent -- openai/gpt-6-luna path/to/repo "Fix the failing test" accept-edits
 ```
 
+## Signing in with a ChatGPT subscription
+
+A ChatGPT Plus or Pro plan can pay for OpenAI models instead of an API key:
+
+```bash
+cyber providers login chatgpt                 # prints a URL; the browser returns to localhost:1455
+cyber providers login chatgpt --method code   # over SSH: paste the URL the browser ends on
+cyber models chatgpt                          # the models your plan serves, unpriced
+cyber exec -m chatgpt/gpt-6-sol "Fix the failing test"
+cyber providers logout chatgpt
+```
+
+The sign-in uses OpenAI's OAuth flow with the Codex public client, which is what OpenCode and other harnesses use. Requests go to the Codex backend (`https://chatgpt.com/backend-api/codex`), count against your plan's limits, and send `originator: cyber`. The login is kept in `~/.local/share/cyber/chatgpt-auth.json` (mode 0600; a file other users can read is refused). It is separate from Codex's `~/.codex/auth.json`. The access token is renewed 5 minutes before it expires, under a lock shared by every Cyber process.
+
+- The `chatgpt` provider appears only while you are signed in.
+- Its models are the ones the backend lists for your account. The list is fetched at login, kept in `chatgpt-models.json` beside the login, and refreshed once a day. Change them under `providers.chatgpt` in `cyber.jsonc`. If the list is empty, run the login again.
+- `localhost:1455` is the port Codex uses too. If another login holds it, finish that login or use `--method code`.
+- Windows is not supported yet, because the login file cannot be made owner-only there.
+- OpenAI's acceptance of third-party harnesses is a public statement, not a contract. The `openai` provider with `OPENAI_API_KEY` is not affected by this login.
+
 ## Background server and rebuilds
 
 The TUI, `cyber exec`, `cyber api`, `cyber mcp serve` and the resource commands all share one background server per user, started the same way as `cyber service start`. `~/.local/state/cyber/server.json` (mode 0600) names it with its version, build identity and executable. Each binary carries a build identity: the commit, `.dirty` when tracked files differed, `CYBER_BUILD_ID` when set, or the build time (`SOURCE_DATE_EPOCH` for reproducible builds). It also stamps its executable (path, length and modification time) when it starts.

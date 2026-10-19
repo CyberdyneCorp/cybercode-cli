@@ -1,7 +1,8 @@
 //! Credential resolution (`provider-credentials` → Credential precedence).
 //!
 //! Order: explicit config key, `CYBER_AUTH_CONTENT`, the provider's environment variables,
-//! then "none required" for loopback endpoints or `auth: "none"`. Stored keyring
+//! then "none required" for loopback endpoints or `auth: "none"`. The `chatgpt` provider
+//! exists only with a stored ChatGPT login, which is its credential (`login`). Stored keyring
 //! connections join this order with `cyber providers login` (milestone M0.5).
 
 use std::collections::BTreeMap;
@@ -11,6 +12,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::Provider;
+use crate::adapters::ApiKind;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", content = "name", rename_all = "snake_case")]
@@ -19,6 +21,8 @@ pub enum CredentialSource {
     AuthContent,
     Env(String),
     NotRequired,
+    /// A stored subscription login, renewed by the adapter before each request.
+    Login,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -54,6 +58,12 @@ fn resolve(p: &Provider, env: &dyn EnvSource, auth_content: &Value) -> Option<Cr
             source,
         })
     };
+    if p.kind == Some(ApiKind::ChatgptCodex) {
+        return Some(Credential {
+            api_key: None,
+            source: CredentialSource::Login,
+        });
+    }
     if let Some(key) = &p.api_key {
         return with(key.clone(), CredentialSource::Config);
     }

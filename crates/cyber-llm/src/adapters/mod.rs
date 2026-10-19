@@ -1,6 +1,7 @@
 //! Native adapters behind one trait (`provider-catalog` → Native provider adapters).
 
 mod anthropic;
+mod chatgpt;
 mod openai_chat;
 mod openai_responses;
 mod scripted;
@@ -19,6 +20,7 @@ use crate::sse::{SseEvent, SseParser};
 use crate::types::{LlmEvent, LlmRequest, ToolCall};
 
 pub use anthropic::AnthropicAdapter;
+pub use chatgpt::ChatGptAdapter;
 pub use openai_chat::OpenAiChatAdapter;
 pub use openai_responses::OpenAiResponsesAdapter;
 pub use scripted::{ScriptStep, ScriptedAdapter};
@@ -32,6 +34,9 @@ pub enum ApiKind {
     OpenaiResponses,
     OpenaiCompatible,
     Anthropic,
+    /// The Responses protocol at the ChatGPT subscription backend, authorized by the stored
+    /// login. Never selectable from configuration or catalog data.
+    ChatgptCodex,
 }
 
 impl ApiKind {
@@ -61,6 +66,7 @@ impl ApiKind {
             Self::OpenaiResponses => Some("https://api.openai.com/v1"),
             Self::Anthropic => Some("https://api.anthropic.com/v1"),
             Self::OpenaiCompatible => None,
+            Self::ChatgptCodex => Some(crate::chatgpt::BACKEND_URL),
         }
     }
 
@@ -69,6 +75,7 @@ impl ApiKind {
             Self::OpenaiResponses => "openai-responses",
             Self::OpenaiCompatible => "openai-compatible",
             Self::Anthropic => "anthropic",
+            Self::ChatgptCodex => "chatgpt-codex",
         }
     }
 }
@@ -94,6 +101,7 @@ pub fn adapter(kind: ApiKind, endpoint: Endpoint) -> Box<dyn Adapter> {
         ApiKind::OpenaiResponses => Box::new(OpenAiResponsesAdapter::new(endpoint)),
         ApiKind::OpenaiCompatible => Box::new(OpenAiChatAdapter::new(endpoint)),
         ApiKind::Anthropic => Box::new(AnthropicAdapter::new(endpoint)),
+        ApiKind::ChatgptCodex => Box::new(ChatGptAdapter::new(endpoint)),
     }
 }
 
@@ -106,6 +114,8 @@ pub struct Endpoint {
     pub client: reqwest::Client,
     /// Where the usage windows of this provider's responses are recorded, if anywhere.
     pub limits: Option<crate::limits::LimitSink>,
+    /// The stored ChatGPT login that authorizes a [`ApiKind::ChatgptCodex`] endpoint.
+    pub login: Option<crate::chatgpt::Session>,
 }
 
 impl Endpoint {
@@ -117,6 +127,7 @@ impl Endpoint {
             headers: Vec::new(),
             client,
             limits: None,
+            login: None,
         }
     }
 

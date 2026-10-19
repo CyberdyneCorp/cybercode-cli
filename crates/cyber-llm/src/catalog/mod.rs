@@ -1,5 +1,6 @@
 //! The provider catalog (`provider-catalog`): records, availability and resolution.
 
+mod chatgpt;
 mod config;
 mod cost;
 mod credentials;
@@ -231,11 +232,17 @@ pub struct Catalog {
     pub providers: BTreeMap<String, Provider>,
     credentials: BTreeMap<String, Credential>,
     experimental: bool,
+    /// The stored ChatGPT login behind the `chatgpt` provider, when there is one.
+    chatgpt: Option<crate::chatgpt::Session>,
 }
 
 impl Catalog {
     pub fn build(inputs: &BuildInputs<'_>) -> Self {
         let mut providers = models_dev::parse(inputs.data);
+        let chatgpt = crate::chatgpt::Session::stored(inputs.env);
+        if let Some(session) = &chatgpt {
+            chatgpt::insert(&mut providers, session);
+        }
         if let Some(configured) = inputs.config.get("providers").and_then(Value::as_object) {
             config::apply(&mut providers, configured);
         }
@@ -244,6 +251,7 @@ impl Catalog {
             providers,
             credentials,
             experimental: inputs.env.flag("CYBER_ENABLE_EXPERIMENTAL_MODELS"),
+            chatgpt,
         }
     }
 
@@ -355,13 +363,18 @@ impl Catalog {
             cache: true,
             ..LlmRequest::default()
         };
+        let kind = model
+            .api_kind
+            .or(provider.kind)
+            .expect("checked by availability");
+        let mut endpoint = Endpoint::new(url, key);
+        if kind == ApiKind::ChatgptCodex {
+            endpoint.login.clone_from(&self.chatgpt);
+        }
         Ok(Resolved {
             model_ref: model_ref.clone(),
-            kind: model
-                .api_kind
-                .or(provider.kind)
-                .expect("checked by availability"),
-            endpoint: Endpoint::new(url, key),
+            kind,
+            endpoint,
             request,
         })
     }

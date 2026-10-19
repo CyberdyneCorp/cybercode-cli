@@ -10,8 +10,8 @@ use crate::sse::SseEvent;
 use crate::types::{Content, FinishReason, LlmEvent, LlmRequest, Message, Reasoning, Role, Usage};
 
 pub struct OpenAiResponsesAdapter {
-    endpoint: Endpoint,
-    response_limit: Option<usize>,
+    pub(super) endpoint: Endpoint,
+    pub(super) response_limit: Option<usize>,
 }
 
 impl OpenAiResponsesAdapter {

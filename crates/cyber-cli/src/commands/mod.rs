@@ -17,6 +17,7 @@ pub mod memory;
 pub mod models;
 pub mod permissions;
 pub mod pr;
+pub mod providers;
 pub mod review;
 pub mod sandbox;
 pub mod serve;
@@ -79,6 +80,7 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
         Command::Workflows { cmd } => workflows::run(cmd, &ctx, &cli.global),
         Command::Debug { cmd } => debug::run(cmd, &ctx, &cli.global),
         Command::Models(args) => models::run(args, &ctx, &cli.global),
+        Command::Providers { cmd } => providers::run(cmd, &ctx, &cli.global),
         Command::Permissions { cmd } => permissions::run(cmd, &ctx, &cli.global),
         Command::Db { cmd } => db::run(cmd, &ctx, &cli.global),
         Command::Trust { cmd } => trust::run(cmd, &ctx, &cli.global),
