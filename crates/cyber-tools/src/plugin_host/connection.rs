@@ -196,6 +196,9 @@ impl Connection {
             }
         };
         let outcome = tokio::select! {
+            // A reply read just before the host closed its output is delivered before the
+            // close; take it rather than report a crash.
+            biased;
             reply = receiver => reply.map_err(|_| CallError::Crashed)?.map_err(CallError::Rpc),
             _ = self.closed.cancelled() => Err(CallError::Crashed),
             _ = cancel.cancelled() => {
@@ -307,6 +310,38 @@ mod tests {
             .request("tool/execute", json!({}), &CancellationToken::new(), None)
             .await;
         assert_eq!(after, Err(CallError::Crashed));
+    }
+
+    /// Regression: a reply followed at once by the host closing its output could be
+    /// reported as a crash, when the close and the reply were both ready at once.
+    #[tokio::test]
+    async fn a_reply_just_before_the_host_closes_is_delivered() {
+        for _ in 0..20 {
+            let (core_out, host_in) = pipe();
+            let (host_out, core_in) = pipe();
+            let handler: Handler = Arc::new(|_, _| Box::pin(async { Ok(Value::Null) }));
+            let connection = Connection::start(core_out, core_in, handler);
+            let host = tokio::spawn(async move {
+                let mut reader = BufReader::new(host_in);
+                let request: Value =
+                    serde_json::from_str(&read_line(&mut reader).await.unwrap()).unwrap();
+                let mut writer = host_out;
+                let reply = json!({"jsonrpc":"2.0","id":request["id"],"result":"done"});
+                writer
+                    .write_all(format!("{reply}\n").as_bytes())
+                    .await
+                    .unwrap();
+            });
+            let cancel = CancellationToken::new();
+            let call = connection.request("tool/execute", json!({}), &cancel, None);
+            tokio::pin!(call);
+            // Send the request, then let the reply and the close both land before the
+            // call looks again.
+            assert!(futures::poll!(&mut call).is_pending());
+            host.await.unwrap();
+            connection.closed.cancelled().await;
+            assert_eq!(call.await, Ok(json!("done")));
+        }
     }
 
     #[tokio::test]
