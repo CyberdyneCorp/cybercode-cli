@@ -194,8 +194,8 @@ The pending change `defer-editor-integration` moves 13 `editor-integration` requ
 | `org-policy` |  |  |  | 15 |  | 15 |
 | `permissions-modes` | 15 | 7 |  |  |  | 22 |
 | `plugins-marketplace` |  | 14 | 2 |  | 6 | 22 |
-| `provider-catalog` | 17 | 4 | 2 |  |  | 23 |
-| `provider-credentials` | 12 | 3 |  | 2 |  | 17 |
+| `provider-catalog` | 17 | 5 | 2 |  |  | 24 |
+| `provider-credentials` | 12 | 5 |  | 2 |  | 19 |
 | `remote-control` |  |  |  | 17 | 1 | 18 |
 | `routines` |  |  |  | 16 |  | 16 |
 | `runners-cloud` |  |  |  | 22 |  | 22 |
@@ -214,7 +214,7 @@ The pending change `defer-editor-integration` moves 13 `editor-integration` requ
 | `workflows` |  |  | 26 | 2 | 1 | 29 |
 | `workspace-trust` | 4 |  |  |  |  | 4 |
 | `worktrees` |  | 9 | 4 |  |  | 13 |
-| **Total** | **330** | **227** | **102** | **145** | **15** | **819** |
+| **Total** | **330** | **230** | **102** | **145** | **15** | **822** |
 
 
 Most capabilities span phases. A spec is a product contract, and each phase implements the slice tagged for it. For example, `tui` has its basics in P0, rewind and modes in P1, the agent view and workflow monitor in P2, remote indicators in P3 and mods panes in P4.
