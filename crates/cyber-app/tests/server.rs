@@ -3091,7 +3091,7 @@ async fn application_emits_runtime_lifecycle_hooks_with_session_identity() {
         .to_string(),
     )
     .unwrap();
-    let application = app(&root).await;
+    let application = bypass_app(&root).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let api = format!("http://{}/api/v1", listener.local_addr().unwrap());
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
@@ -3398,7 +3398,7 @@ async fn interrupts_settle_in_flight_boundary_and_task_created_hooks() {
         .to_string(),
     )
     .unwrap();
-    let application = app(&root).await;
+    let application = bypass_app(&root).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let api = format!("http://{}/api/v1", listener.local_addr().unwrap());
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
@@ -3567,7 +3567,7 @@ async fn a_prompt_racing_a_slow_session_end_cannot_refuse_the_deletion() {
         .to_string(),
     )
     .unwrap();
-    let application = app(&root).await;
+    let application = bypass_app(&root).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let api = format!("http://{}/api/v1", listener.local_addr().unwrap());
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();

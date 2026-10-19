@@ -53,6 +53,10 @@ impl Env {
         if let Some(system) = std::env::var_os("SystemRoot") {
             command.env("SystemRoot", system);
         }
+        // The owners are `bypass` Sessions; no OS sandbox admits them on Windows, so the
+        // service it starts vouches for its isolation instead.
+        #[cfg(windows)]
+        command.env("CYBER_CONTAINER", "1");
         command
     }
 

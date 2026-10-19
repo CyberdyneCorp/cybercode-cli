@@ -270,7 +270,12 @@ impl Server {
             remote_skill_fetcher: None,
             // Slot counts in snapshots must not depend on the runner's cores.
             workflow_cores: Some(16),
-            isolation: None,
+            // Screens open `bypass` Sessions without testing the eligibility gate, also on
+            // Windows, where no OS sandbox admits them.
+            isolation: Some(cyber_app::IsolationOptions {
+                dangerously_bypass: true,
+                container: false,
+            }),
         })
         .await
         .unwrap();

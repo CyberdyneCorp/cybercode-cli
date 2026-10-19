@@ -29,6 +29,7 @@ use cyber_tools::mcp::oauth::McpCredentialStore;
 use cyber_tools::{BuiltinHost, ConfigFn, HookConfigFn, HostOptions};
 use serde_json::{Value, json};
 
+pub use cyber_tools::IsolationOptions;
 pub use registered_status::registered_lsp_status;
 pub use registration::{
     ClientBuild, Probe, Registration, ServerClientInfo, ServiceNotice, health, probe,
