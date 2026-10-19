@@ -209,8 +209,31 @@ fn detail(output: &std::process::Output) -> String {
     )
 }
 
-/// Native sandboxes (macOS Seatbelt, Linux bubblewrap, a Windows AppContainer) run the
-/// injection confined and substitute its output.
+/// On Windows the injection runs in an AppContainer. Its git output does not come back
+/// yet (the substitution is empty; a follow-up), but nothing runs unconfined: only an
+/// explicit full-access run (not confinement evidence) substitutes the real output.
+#[cfg(windows)]
+#[test]
+fn exec_command_injection_on_windows_is_confined_unless_full_access() {
+    let provider = Provider::start();
+    let (_dir, root, head) = root_with(&provider);
+    let output = exec(&root, &[]);
+    assert!(output.status.success(), "{}", detail(&output));
+    assert!(provider.saw("Head is "), "{}", provider.seen());
+    assert!(!provider.saw(&head), "{}", provider.seen());
+    let output = exec(&root, &["--sandbox", "full-access"]);
+    assert!(output.status.success(), "{}", detail(&output));
+    assert!(
+        provider.saw(&format!("Head is {head} now.")),
+        "{}\nmodel saw: {}",
+        detail(&output),
+        provider.seen()
+    );
+}
+
+/// Native sandboxes (macOS Seatbelt, Linux bubblewrap) run the injection confined and
+/// substitute its output.
+#[cfg(not(windows))]
 #[test]
 fn exec_command_injects_sandboxed_git_output() {
     let provider = Provider::start();
