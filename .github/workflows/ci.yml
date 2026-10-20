@@ -57,7 +57,7 @@ jobs:
       - name: Sandbox prerequisites
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update && sudo apt-get install -y bubblewrap
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update && sudo apt-get install -y bubblewrap
           # Ubuntu 24.04 restricts unprivileged user namespaces, which bubblewrap needs.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - run: cargo fmt --all --check
@@ -1080,7 +1080,7 @@ jobs:
       - name: Plugin host sandbox prerequisites
         working-directory: .
         run: |
-          sudo apt-get update && sudo apt-get install -y bubblewrap
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update && sudo apt-get install -y bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec
       - name: TypeScript plugin kit
@@ -1142,7 +1142,7 @@ jobs:
           key: platform-${{ matrix.target }}
       - name: Native C build prerequisites
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y cmake pkg-config musl-tools
+        run: sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update && sudo apt-get install -y cmake pkg-config musl-tools
       - name: Configure musl linker
         if: endsWith(matrix.target, '-musl')
         run: |
