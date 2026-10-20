@@ -143,6 +143,8 @@ impl Inner {
         request.tools = Vec::new();
         request.reasoning = None;
         request.max_output_tokens = Some(MAX_OUTPUT_TOKENS);
+        // Like a title, a recap is bookkeeping, not a prompt: Copilot does not count it.
+        request.initiator = Some(cyber_llm::Initiator::Agent);
         self.check_budget(&handle).await?;
         let started = std::time::Instant::now();
         let stream = resolved

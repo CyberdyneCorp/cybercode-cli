@@ -53,7 +53,7 @@ cyber [OPTIONS] [COMMAND]
 - [`worktree`](#cyber-worktree): List, remove and prune managed Git worktrees of the current repository
 - [`debug`](#cyber-debug): Inspect resolved paths, configuration and build information
 - [`models`](#cyber-models): List models from the catalog, available first
-- [`providers`](#cyber-providers): Sign in to or out of a provider (today: `chatgpt`, a ChatGPT Plus/Pro subscription)
+- [`providers`](#cyber-providers): Sign in to or out of a provider (today: `chatgpt`, a ChatGPT Plus/Pro subscription, and `copilot`, a GitHub Copilot plan)
 - [`permissions`](#cyber-permissions): Dry-run permission rules; inspect or reset checkout-scoped auto-mode statistics
 - [`db`](#cyber-db): Inspect the local database
 - [`plugins`](#cyber-plugins): Install, list, enable, disable, update and remove plugins
@@ -977,7 +977,7 @@ cyber models [OPTIONS] [PROVIDER]
 
 ## `cyber providers`
 
-Sign in to or out of a provider (today: `chatgpt`, a ChatGPT Plus/Pro subscription)
+Sign in to or out of a provider (today: `chatgpt`, a ChatGPT Plus/Pro subscription, and `copilot`, a GitHub Copilot plan)
 
 ```text
 cyber providers [OPTIONS] <COMMAND>
@@ -985,12 +985,12 @@ cyber providers [OPTIONS] <COMMAND>
 
 **Subcommands:**
 
-- [`login`](#cyber-providers-login): Sign in to a provider. `chatgpt` signs in with a ChatGPT Plus/Pro subscription: open the printed URL in a browser to authorize
+- [`login`](#cyber-providers-login): Sign in to a provider. `chatgpt` signs in with a ChatGPT Plus/Pro subscription: open the printed URL in a browser to authorize. `copilot` signs in with a GitHub Copilot plan: open the printed URL and enter the printed code
 - [`logout`](#cyber-providers-logout): Forget a provider login. Tokens are not revoked remotely
 
 ## `cyber providers login`
 
-Sign in to a provider. `chatgpt` signs in with a ChatGPT Plus/Pro subscription: open the printed URL in a browser to authorize
+Sign in to a provider. `chatgpt` signs in with a ChatGPT Plus/Pro subscription: open the printed URL in a browser to authorize. `copilot` signs in with a GitHub Copilot plan: open the printed URL and enter the printed code
 
 ```text
 cyber providers login [OPTIONS] <PROVIDER>
@@ -1002,7 +1002,8 @@ cyber providers login [OPTIONS] <PROVIDER>
 
 **Options:**
 
-- `--method <METHOD>`: `browser` waits for the redirect on localhost:1455; `code` reads the redirect URL pasted from the browser (for SSH and other headless machines) Values: `browser`, `code`. Default: `browser`.
+- `--method <METHOD>`: `browser` waits for the redirect on localhost:1455; `code` reads the redirect URL pasted from the browser (for SSH and other headless machines). ChatGPT only. Values: `browser`, `code`. Default: `browser`.
+- `--enterprise <HOST>`: Sign in to a GitHub Enterprise host (a bare hostname such as example.ghe.com) instead of github.com. Copilot only.
 
 ## `cyber providers logout`
 

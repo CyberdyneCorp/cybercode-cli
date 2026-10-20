@@ -8,7 +8,7 @@ use cyber_core::config::{HookKind, Resolved};
 use cyber_core::hooks::{HookAction, HookDefinition, HookEvent, HookOutcome};
 use cyber_core::trust::{HookInvocationTrust, TrustStore};
 use cyber_llm::catalog::{ModelRole, compute_cost};
-use cyber_llm::{FinishReason, LlmEvent, LlmRequest, Message, Usage};
+use cyber_llm::{FinishReason, Initiator, LlmEvent, LlmRequest, Message, Usage};
 use cyber_server::runtime::{
     AuxiliaryUsage, HookExecutionIo, HookExecutionResult, ModelResolver, ResolvedModel, Runtime,
 };
@@ -465,6 +465,8 @@ fn request(
         tools: Vec::new(),
         tools_disabled: true,
         max_output_tokens: Some(512),
+        // A hook check is never the user's prompt: Copilot does not count it again.
+        initiator: Some(Initiator::Agent),
         ..model.template.clone()
     };
     if let Some(body) = request.body.as_object_mut() {

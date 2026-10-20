@@ -306,6 +306,10 @@ async fn automatic_compaction_runs_before_an_oversized_turn_and_continues() {
         second.contains("compacted automatically"),
         "automatic compaction continues the work"
     );
+    // `provider-catalog` → GitHub Copilot subscription provider: compaction is the agent's.
+    let summary = h.models.requests("test/summary");
+    assert_eq!(summary[0].initiator, Some(cyber_llm::Initiator::Agent));
+    assert_eq!(requests[1].initiator, Some(cyber_llm::Initiator::User));
 }
 
 #[tokio::test]

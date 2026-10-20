@@ -7,11 +7,13 @@
 pub mod adapters;
 pub mod catalog;
 pub mod chatgpt;
+pub mod copilot;
 mod error;
 mod json;
 pub mod limits;
 mod retry;
 mod sse;
+pub mod subscription;
 mod turn;
 mod types;
 
@@ -21,6 +23,6 @@ pub use retry::{RetryPolicy, open_with_retry};
 pub use sse::{SseEvent, SseParser};
 pub use turn::{TurnOutput, collect};
 pub use types::{
-    Content, FinishReason, LlmEvent, LlmRequest, Message, Reasoning, Role, ToolCall, ToolSpec,
-    Usage,
+    Content, FinishReason, Initiator, LlmEvent, LlmRequest, Message, Reasoning, Role, ToolCall,
+    ToolSpec, Usage,
 };

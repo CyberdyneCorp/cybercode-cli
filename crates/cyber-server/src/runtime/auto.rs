@@ -300,6 +300,8 @@ impl Inner {
                 messages: vec![Message::user_text(evidence.to_string())],
                 tools: Vec::new(),
                 max_output_tokens: Some(512),
+                // Reviewing a tool call continues the Turn that made it.
+                initiator: Some(cyber_llm::Initiator::Agent),
                 ..resolved.template.clone()
             }
         };
