@@ -457,7 +457,7 @@ async fn a_message_starts_a_turn_in_an_idle_session_and_waits_for_a_safe_boundar
     let tool = next
         .iter()
         .position(|(role, text)| role == "tool" && text.contains("finished"))
-        .expect("the tool settled first");
+        .unwrap_or_else(|| panic!("the tool settled first: {next:?}"));
     let message = next
         .iter()
         .position(|(_, text)| text.contains("API moved to port 8080"))

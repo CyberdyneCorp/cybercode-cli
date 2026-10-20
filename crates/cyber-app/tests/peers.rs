@@ -1611,6 +1611,25 @@ async fn transcript(served: &Served, session: &str) -> String {
     body.to_string()
 }
 
+/// Wait until the Session's `echo <output>` has run and its Turn has ended. A timeout
+/// shows the transcript, so a platform that records the output differently is diagnosable.
+async fn command_finished(served: &Served, session: &str, output: &str) {
+    let needle = format!(r#""output":"{output}"#);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let text = transcript(served, session).await;
+        if text.contains(&needle) && !served.runtime.is_running(session) {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for `{output}` (running: {}): {text}",
+            served.runtime.is_running(session)
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 /// Requirement "Peer attach" on the production server `desk`, through its TLS peer
 /// listener and the pinned transport `cyber attach migration@desk` opens the TUI with
 /// (`cyber_client::Client::attach_peer`):
@@ -1769,12 +1788,7 @@ async fn attach_through_a_peer_needs_scope_and_approval() {
     let error = refused.await.unwrap().err().expect("refused");
     assert_eq!(error.tag(), Some("PermissionDeniedError"), "{error}");
     answer(&desk, &migration, "bash", "once").await;
-    eventually("the Session's own turn finishes", || async {
-        let text = transcript(&desk, &migration).await;
-        let ran = text.contains(r#""output":"still-running"#);
-        (ran && !desk.runtime.is_running(&migration)).then_some(())
-    })
-    .await;
+    command_finished(&desk, &migration, "still-running").await;
 
     // Attach approved: the Session, its transcript, its events, prompt and replies.
     let approved = tokio::spawn(Client::attach_peer(target(&laptop), "migration"));
@@ -2477,12 +2491,7 @@ async fn an_attached_peer_cannot_approve_always() {
         .await
         .unwrap();
     assert_eq!(once.status().as_u16(), 204);
-    eventually("the approved command runs", || async {
-        let text = transcript(&desk, &migration).await;
-        let ran = text.contains(r#""output":"always-asked"#);
-        (ran && !desk.runtime.is_running(&migration)).then_some(())
-    })
-    .await;
+    command_finished(&desk, &migration, "always-asked").await;
     // Nothing was saved: the same command asks again.
     let (status, body) = call("prompt", Some(run)).await;
     assert!((200..300).contains(&status), "{status} {body}");
