@@ -1,0 +1,30 @@
+# Run chosen tests on Windows without the full hour-long "Windows lint" job:
+#   gh workflow run windows-tests.yml --ref <branch> -f args="-p cyber-app --test peers"
+#   gh run watch
+name: Windows tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      args:
+        description: Arguments to `cargo test --locked` (packages, test targets, name filters)
+        required: true
+        default: -p cyber-app --test messaging --test peers
+
+jobs:
+  test:
+    name: cargo test ${{ inputs.args }}
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-tests
+      - name: Build Windows process ownership helper
+        run: cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec
+      - name: Tests
+        shell: bash
+        env:
+          ARGS: ${{ inputs.args }}
+        run: cargo test --locked $ARGS

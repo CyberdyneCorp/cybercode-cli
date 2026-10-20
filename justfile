@@ -73,6 +73,20 @@ test-linux *args:
         -v "$PWD":/src:ro -v cyber-target:/target -u root {{ linux_image }} \
         sh -c 'chown -R dev /target && su dev -c "export CARGO_TARGET_DIR=/target CARGO_HOME=/target/cargo-home CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=${LINUX_JOBS:-4} PATH=/usr/local/cargo/bin:\$PATH; cd /src && cargo test --locked $0 $*"' "$scope" "$@"
 
+# LINUX_CPUS (default 2) and LINUX_RUNS (default 3) set the CPU cap and the repetitions;
+# `just ci-linux -p cyber-tools` narrows the run.
+# Linux tests under CI-runner conditions, repeated to surface timing-sensitive tests.
+[positional-arguments]
+ci-linux *args:
+    docker build -q -t {{ linux_image }} -f scripts/docker/linux-test.Dockerfile scripts/docker >/dev/null
+    scope=--workspace; if printf '%s\n' "$@" | grep -qxE -- '-p|--package'; then scope=; fi; \
+    for run in $(seq 1 ${LINUX_RUNS:-3}); do \
+        echo "== Linux run $run (${LINUX_CPUS:-2} CPUs)"; \
+        docker run --rm --cpus ${LINUX_CPUS:-2} --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
+            -v "$PWD":/src:ro -v cyber-target:/target -u root {{ linux_image }} \
+            sh -c 'chown -R dev /target && su dev -c "export CARGO_TARGET_DIR=/target CARGO_HOME=/target/cargo-home CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=${LINUX_JOBS:-4} PATH=/usr/local/cargo/bin:\$PATH; cd /src && cargo test --locked --no-fail-fast $0 $*"' "$scope" "$@" || exit 1; \
+    done
+
 # --- Evaluation -----------------------------------------------------------------
 
 # Check every suite grader: fails on the fixture, passes with the reference solution.

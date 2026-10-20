@@ -62,7 +62,12 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace --no-fail-fast
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      # One retry per failing test; see .config/nextest.toml. Doctests are not run by nextest.
+      - run: cargo nextest run --workspace --profile ci
+      - run: cargo test --workspace --doc
 
   windows-lint:
     name: Windows lint
