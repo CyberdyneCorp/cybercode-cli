@@ -4,6 +4,7 @@ mod composer;
 mod explorer;
 pub(crate) mod footer;
 pub mod layout;
+mod login;
 mod messages;
 mod messaging;
 mod overlays;
@@ -115,6 +116,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Overlay::Memory => overlays::memory(f, app, area),
         Overlay::Help => overlays::help(f, app, area),
         Overlay::Rename(title) => rename::draw(f, app, title, area),
+        Overlay::Login => login::draw(f, app, area),
         Overlay::Findings => overlays::findings(f, app, area),
         Overlay::FileDiff { index, scroll } => overlays::file_diff(f, app, *index, *scroll, area),
         Overlay::TaskLog {

@@ -188,6 +188,8 @@ pub enum Action {
     Loop(crate::loops::LoopRequest),
     /// `/team`, `/team start|stop|resume` (`agent-teams`).
     Team(crate::team::Request),
+    /// `/login` and `/logout` (`tui` → Provider login commands).
+    Login(crate::login::LoginRequest),
     /// Open a file in `$VISUAL`/`$EDITOR` (`s` on a Workflow Run: its script).
     EditFile(String),
     Quit,
@@ -204,6 +206,7 @@ pub enum PickerKind {
     Skills,
     Plugins,
     Loops,
+    Login,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -325,6 +328,8 @@ pub enum Overlay {
     Messages,
     /// `/team`: the members and the task board; the team is `Sidebar::team`.
     Team,
+    /// `/login`: a provider sign-in; its state is `App::login`.
+    Login,
 }
 
 /// Text the small model drafts for the user (`vcs-integration` → Commit and PR text
@@ -470,6 +475,8 @@ pub struct App {
     pub loops: crate::loops::Loops,
     /// The team view's selection and the way back from an opened teammate.
     pub team: crate::team::TeamState,
+    /// The `/login` dialog.
+    pub login: crate::login::LoginDialog,
     /// The runs the indicators show and the notices of their ends.
     pub watch: crate::workflow_watch::Watch,
     /// `tui.notifications`.
@@ -555,6 +562,7 @@ impl App {
             messaging: Default::default(),
             loops: Default::default(),
             team: Default::default(),
+            login: Default::default(),
             watch: Default::default(),
             notifications: Default::default(),
             #[cfg(test)]
@@ -917,6 +925,7 @@ impl App {
             Overlay::Themes(_) => self.switcher_key(key),
             Overlay::Workflows => self.workflows_key(key),
             Overlay::Rename(_) => self.rename_key(key),
+            Overlay::Login => self.login_key(key),
             Overlay::FileDiff { .. } => {
                 self.file_diff_key(key);
                 Vec::new()
@@ -1202,7 +1211,7 @@ impl App {
     }
 
     pub fn on_paste(&mut self, text: &str) {
-        if self.rename_paste(text) {
+        if self.rename_paste(text) || self.login_paste(text) {
             return;
         }
         if let Overlay::Memory = self.overlay {
@@ -1544,6 +1553,8 @@ impl App {
             "memory" => self.memory_command(args),
             "loop" => self.loop_command(args),
             "team" => self.team_command(args),
+            "login" => self.login_command(args),
+            "logout" => self.logout_command(args),
             "hooks" if args == "history" => {
                 self.overlay = Overlay::HookHistory;
                 self.load_hook_history(None)
@@ -1795,6 +1806,7 @@ impl App {
             // Plugin rows only inform; changes go through `cyber plugins`.
             PickerKind::Plugins => Vec::new(),
             // An active loop's row stops it; ended rows only inform.
+            PickerKind::Login => self.start_login(),
             PickerKind::Loops if choice.key.is_empty() => Vec::new(),
             PickerKind::Loops => vec![Action::Loop(crate::loops::LoopRequest::Stop {
                 session_id: self.session.id.clone(),

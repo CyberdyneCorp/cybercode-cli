@@ -512,6 +512,36 @@ export interface Operations {
     body: undefined;
     response: S.Located_PluginList;
   };
+  "v1.provider.cancelLogin": {
+    path: { provider: string; attemptID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: void;
+  };
+  "v1.provider.login": {
+    path: { provider: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.LoginAttempt;
+  };
+  "v1.provider.loginAttempt": {
+    path: { provider: string; attemptID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.LoginAttempt;
+  };
+  "v1.provider.loginCode": {
+    path: { provider: string; attemptID: string };
+    query: Record<string, never>;
+    body: S.LoginCode;
+    response: S.LoginAttempt;
+  };
+  "v1.provider.logout": {
+    path: { provider: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Logout;
+  };
   "v1.question.list": {
     path: Record<string, never>;
     query: {
@@ -1886,6 +1916,66 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.provider.cancelLogin": {
+    tag: "provider",
+    name: "cancelLogin",
+    method: "DELETE",
+    path: "/api/v1/providers/{provider}/login/{attemptID}",
+    pathParams: ["provider", "attemptID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.provider.login": {
+    tag: "provider",
+    name: "login",
+    method: "POST",
+    path: "/api/v1/providers/{provider}/login",
+    pathParams: ["provider"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.provider.loginAttempt": {
+    tag: "provider",
+    name: "loginAttempt",
+    method: "GET",
+    path: "/api/v1/providers/{provider}/login/{attemptID}",
+    pathParams: ["provider", "attemptID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.provider.loginCode": {
+    tag: "provider",
+    name: "loginCode",
+    method: "POST",
+    path: "/api/v1/providers/{provider}/login/{attemptID}/code",
+    pathParams: ["provider", "attemptID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.provider.logout": {
+    tag: "provider",
+    name: "logout",
+    method: "DELETE",
+    path: "/api/v1/providers/{provider}/login",
+    pathParams: ["provider"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.question.list": {
     tag: "question",
     name: "list",
@@ -3132,6 +3222,23 @@ export function createGroups(caller: Caller) {
       /** List the Location's plugins with scope, state and trust without loading them (`GET /api/v1/plugins`) */
       list: (options?: RequestOptions): Promise<Operations["v1.plugin.list"]["response"]> =>
         caller.call("v1.plugin.list", {}, options),
+    },
+    provider: {
+      /** Cancel a pending sign-in attempt and stop waiting for the browser (`DELETE /api/v1/providers/{provider}/login/{attemptID}`) */
+      cancelLogin: (provider: string, attemptID: string, options?: RequestOptions): Promise<Operations["v1.provider.cancelLogin"]["response"]> =>
+        caller.call("v1.provider.cancelLogin", { path: { provider, attemptID } }, options),
+      /** Start a subscription sign-in (only `chatgpt`); cancels a pending attempt. Open `authorization_url`; `callback` says whether the server waits for the browser's redirect (`POST /api/v1/providers/{provider}/login`) */
+      login: (provider: string, options?: RequestOptions): Promise<Operations["v1.provider.login"]["response"]> =>
+        caller.call("v1.provider.login", { path: { provider } }, options),
+      /** A sign-in attempt: `pending`, `complete` with the account and models, or `failed` with the error (`GET /api/v1/providers/{provider}/login/{attemptID}`) */
+      loginAttempt: (provider: string, attemptID: string, options?: RequestOptions): Promise<Operations["v1.provider.loginAttempt"]["response"]> =>
+        caller.call("v1.provider.loginAttempt", { path: { provider, attemptID } }, options),
+      /** Complete a pending attempt with the redirect URL pasted from the browser; a wrong `state` is refused and the attempt stays pending (`POST /api/v1/providers/{provider}/login/{attemptID}/code`) */
+      loginCode: (provider: string, attemptID: string, body: Operations["v1.provider.loginCode"]["body"], options?: RequestOptions): Promise<Operations["v1.provider.loginCode"]["response"]> =>
+        caller.call("v1.provider.loginCode", { path: { provider, attemptID }, body }, options),
+      /** Forget the stored login and its model list; tokens are not revoked remotely (`DELETE /api/v1/providers/{provider}/login`) */
+      logout: (provider: string, options?: RequestOptions): Promise<Operations["v1.provider.logout"]["response"]> =>
+        caller.call("v1.provider.logout", { path: { provider } }, options),
     },
     question: {
       /** Pending questions (`GET /api/v1/questions/requests`) */
