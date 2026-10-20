@@ -36,6 +36,7 @@ fn peers() -> Value {
 async fn peers_config_is_accepted_only_from_user_config() {
     let app = ModeApp::start(Setup {
         config: json!({ "peers": peers() }),
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     })
     .await;
@@ -124,6 +125,7 @@ impl Served {
     async fn start_with(root: &Path, model: &scripted_model::ScriptedModel, config: Value) -> Self {
         let setup = Setup {
             config,
+            sandbox_policy: support::BASH_SANDBOX,
             ..Setup::default()
         };
         Self::start_setup(root, model, &setup).await
@@ -139,6 +141,7 @@ impl Served {
         let setup = Setup {
             config,
             database: Some(root.join("cyber.db")),
+            sandbox_policy: support::BASH_SANDBOX,
             ..Setup::default()
         };
         Self::start_setup(root, model, &setup).await
@@ -1486,6 +1489,7 @@ async fn mdns_publishes_the_peer_listener_only_off_loopback() {
 
     let setup = Setup {
         config: json!({}),
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     };
     let served = Served::start_serving(&root, &model, &setup, mdns()).await;
@@ -1500,6 +1504,7 @@ async fn mdns_publishes_the_peer_listener_only_off_loopback() {
     let machine = format!("desk-{}", ulid::Ulid::new().to_string().to_lowercase());
     let setup = Setup {
         config: json!({"peers": {"listen": {"address": "0.0.0.0:0"}, "machine": machine}}),
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     };
     let served = Served::start_serving(&root, &model, &setup, mdns()).await;
@@ -1655,6 +1660,7 @@ async fn attach_through_a_peer_needs_scope_and_approval() {
     let setup = Setup {
         config: json!({"peers": {"listen": {"address": "127.0.0.1:0"}, "machine": "desk"}}),
         interactive: true,
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     };
     let wait = Duration::from_secs(3);
@@ -2311,6 +2317,7 @@ async fn a_server_stopped_as_it_starts_still_stops() {
     std::fs::create_dir_all(repo.join(".git")).unwrap();
     let setup = Setup {
         config: json!({"peers": {"listen": {"address": "127.0.0.1:0"}, "machine": "desk"}}),
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     };
     let app = ModeApp::build(&root, &repo, &model, &setup).await;
