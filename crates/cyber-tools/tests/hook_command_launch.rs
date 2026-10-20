@@ -361,6 +361,10 @@ async fn windows_missing_helper_refuses_before_process_creation() {
 
 #[cfg(windows)]
 #[tokio::test]
+#[cfg_attr(
+    windows,
+    ignore = "PowerShell 7 cannot start inside the AppContainer sandbox (EtwRegister access denied), issue #9"
+)]
 async fn windows_global_command_receives_event_input_and_required_sandbox_refuses() {
     let f = Fixture::new();
     let helper = cyber_sandbox::find_helper().expect("native test requires the trusted helper");
