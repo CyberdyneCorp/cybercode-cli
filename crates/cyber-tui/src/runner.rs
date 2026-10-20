@@ -232,6 +232,7 @@ async fn event_loop(
         open: true,
         ticks: 0,
     };
+    let mut team_events = crate::team::Events::default();
     let mut refresh = Refresh::default();
     let initial = initial_actions(app, store, opts, open_picker);
     spawn_commands(client, &tx);
@@ -259,22 +260,33 @@ async fn event_loop(
                 }
             },
             Some(msg) = rx.recv() => received(app, store, msg, &mut refresh),
+            Some(ev) = team_events.next() => app.team_event(&ev),
             () = frame_due(app.next_frame()) => {
                 app.advance_frame();
                 Vec::new()
             },
-            _ = tick.tick() => {
-                server.tick(app, client).await;
-                let mut actions = app.admissions.poll();
-                app.refresh_admissions();
-                actions.extend(app.machine_poll());
-                actions
-            },
+            _ = tick.tick() => on_tick(app, client, &mut server, &mut team_events).await,
         };
         let actions = memory_persistence.gate(app, actions);
         dispatch(app, client, store, &tx, &mut refresh, terminal, actions);
     }
     Ok(())
+}
+
+/// Every 250 ms: reopen closed event streams, follow the team, poll admissions and the
+/// machine sample.
+async fn on_tick(
+    app: &mut App,
+    client: &Client,
+    server: &mut Events,
+    team_events: &mut crate::team::Events,
+) -> Vec<Action> {
+    server.tick(app, client).await;
+    team_events.sync(app, client).await;
+    let mut actions = app.admissions.poll();
+    app.refresh_admissions();
+    actions.extend(app.machine_poll());
+    actions
 }
 
 /// Wakes when the activity indicator's next frame is due; never without one.
@@ -637,6 +649,12 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
             }
         }
         Msg::Workflow(reply) => return app.workflow_reply(reply),
+        Msg::Team {
+            session_id,
+            view,
+            open,
+            toast,
+        } => app.team_reply(&session_id, *view, open, toast),
         Msg::Toast(text) => app.toast(text),
         Msg::TaskLog {
             session_id,

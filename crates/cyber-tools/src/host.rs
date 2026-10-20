@@ -610,6 +610,7 @@ impl BuiltinHost {
             Default::default()
         };
         rules.extend(inherited.rules);
+        let ownership = inherited.ownership;
         let mut parent_modes = inherited.modes;
         if agent == Some("reviewer") {
             parent_modes.push(Mode::Plan);
@@ -632,6 +633,7 @@ impl BuiltinHost {
                 .join(format!("{}.md", inv.session_id)),
             location,
             home: self.opts.home.clone(),
+            ownership,
         })
     }
 
@@ -905,6 +907,40 @@ impl ToolHost for BuiltinHost {
         tools::messaging::settings(self, directory.map(Path::new))
     }
 
+    fn team_settings(
+        &self,
+        directory: &str,
+    ) -> Result<Option<cyber_core::teams::TeamSettings>, String> {
+        let location = Path::new(directory);
+        let (config, sources) = (self.opts.config)(location)?;
+        if !cyber_core::features::Features::from_config(&config, &sources)
+            .enabled(cyber_core::features::TEAMS)
+        {
+            return Ok(None);
+        }
+        let mut settings = cyber_core::teams::TeamSettings::from_config(&config)?;
+        settings.budget = cyber_core::budget::Budget::from_config(&config, "team")?;
+        Ok(Some(settings))
+    }
+
+    fn team_editor(&self, directory: &str, agent: &str) -> bool {
+        self.team_editor_agent(directory, agent)
+    }
+
+    fn create_team_session<'a>(
+        &'a self,
+        lead: &'a cyber_server::runtime::SessionInfo,
+        request: cyber_server::runtime::CreateSession,
+        worktree: &'a cyber_server::runtime::TeamWorktree,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<cyber_server::runtime::SessionInfo, String>> {
+        Box::pin(async move {
+            self.create_team_worktree_session(lead, request, worktree, cancel)
+                .await
+                .map_err(|error| error.to_string())
+        })
+    }
+
     fn permission_effect(
         &self,
         turn: &TurnContext,
@@ -1046,6 +1082,15 @@ impl ToolHost for BuiltinHost {
                     || self
                         .runtime()
                         .is_some_and(|runtime| runtime.loop_iteration_running(&turn.session_id))
+            })
+            .filter(|d| {
+                // `agent-teams`: only while `teams` is on, and to a lead or a non-member.
+                tools::team::offered(
+                    self,
+                    &d.spec.name,
+                    &turn.session_id,
+                    Path::new(&turn.directory),
+                )
             })
             .filter(|d| {
                 d.spec.name != "powershell"
@@ -1836,6 +1881,7 @@ fn deny_message(reason: &str) -> String {
     if reason.starts_with("Plan mode")
         || reason.starts_with("Not pre-approved")
         || reason.starts_with("Refused:")
+        || reason.starts_with(cyber_server::runtime::teams::OWNED_PREFIX)
     {
         reason.to_string()
     } else {
@@ -1932,6 +1978,9 @@ impl BuiltinHost {
                 tools::messaging::GUIDANCE.into(),
             );
         }
+        if let Some(text) = tools::team::guidance(self, &turn.session_id) {
+            sources.insert(tools::team::GUIDANCE_KEY.into(), text);
+        }
         if visible.iter().any(|d| {
             d.spec.name == tools::loops::NAME
                 && d.scope == cyber_server::runtime::ToolScope::Builtin
@@ -1980,6 +2029,7 @@ impl BuiltinHost {
             MCP_INSTRUCTIONS_KEY,
             tools::messaging::GUIDANCE_KEY,
             tools::loops::GUIDANCE_KEY,
+            tools::team::GUIDANCE_KEY,
         ] {
             sources
                 .entry(key.into())

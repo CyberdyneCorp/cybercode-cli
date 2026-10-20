@@ -48,6 +48,8 @@ pub(crate) struct Boundary {
 struct Scope<'a> {
     ambient_temp: bool,
     git_roots: Option<&'a [PathBuf]>,
+    /// Kept read-only inside `git_roots`.
+    git_read_only: &'a [PathBuf],
     extra_credentials: &'a [String],
     /// An approved escalation or an excluded command: no OS enforcement.
     unsandboxed: bool,
@@ -149,14 +151,17 @@ pub(crate) fn credential_env_names(config: &serde_json::Value) -> Vec<String> {
         .collect()
 }
 
-/// Git creation may mutate only verified common metadata and the reserved target.
+/// Git creation may mutate only verified common metadata and the reserved target;
+/// `read_only` paths inside them stay read-only.
 pub(crate) async fn prepare_worktree_git(
     ctx: &Ctx<'_>,
     args: &[String],
     writable: &[PathBuf],
+    read_only: &[PathBuf],
 ) -> Result<Prepared, ToolError> {
     let scope = Scope {
         git_roots: Some(writable),
+        git_read_only: read_only,
         ..Scope::default()
     };
     prepare_scoped_command(ctx, "git", args, scope).await
@@ -206,6 +211,7 @@ async fn prepare_scoped_command(
             .iter()
             .filter(|root| !scope.git_roots.is_some_and(|owned| owned.contains(root)))
             .flat_map(|root| protected_in(root))
+            .chain(scope.git_read_only.iter().cloned())
             .collect(),
         unreadable: sandbox.unreadable(home),
         deny_read: sandbox.deny_read_for(&ctx.location, home),

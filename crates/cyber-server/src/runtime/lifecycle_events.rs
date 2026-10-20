@@ -1,7 +1,8 @@
 //! Runtime-owned lifecycle hooks with an existing producer (`hooks` → Supported
 //! events): Interrupt, PreModelSwitch/PostModelSwitch, PreCompact/PostCompact,
-//! PostToolBatch, SessionEnd, TaskCreated/TaskCompleted and InstructionsLoaded,
-//! plus the Session-derived envelope identity every hook event carries.
+//! PostToolBatch, SessionEnd, TaskCreated/TaskCompleted (for background Jobs and team
+//! tasks) and InstructionsLoaded, plus the Session-derived envelope identity every hook
+//! event carries.
 //!
 //! Each hook is built under the Session lock, the lock is dropped, then the port
 //! is awaited; none of these runs while the runtime lifecycle guard is held.
@@ -19,6 +20,7 @@ use super::events::{CompactionTrigger, MODEL_SWITCHED, Switched, event};
 use super::host::SessionEnvelope;
 use super::jobs::Job;
 use super::lifecycle::{lifecycle, stop_text};
+use super::teams::{IDLE_HOOK, TASK_SUBJECT, TaskUpdated};
 use super::{Handle, Inner, Runtime, RuntimeError};
 
 impl Inner {
@@ -300,9 +302,13 @@ impl Inner {
         let Ok(handle) = self.handle(&job.session_id).await else {
             return;
         };
-        let fields = json!({"job": job});
         let hook = self
-            .lifecycle_hook(&handle, "TaskCreated", job.kind.clone(), fields)
+            .lifecycle_hook(
+                &handle,
+                "TaskCreated",
+                job.kind.clone(),
+                job_fields(job, false),
+            )
             .await;
         if let Err(error) = self.tools.lifecycle_hooks(hook, cancel).await {
             cyber_core::log::warn(
@@ -315,8 +321,52 @@ impl Inner {
 
     /// Observational TaskCompleted after a Job's terminal record, before JobEnded.
     pub(crate) async fn task_completed(&self, job: &Job) {
-        let fields = json!({"job": job, "status": job.status});
-        self.job_hook(job, "TaskCompleted", fields).await;
+        self.job_hook(job, "TaskCompleted", job_fields(job, true))
+            .await;
+    }
+
+    /// Observational TaskCreated or TaskCompleted (`kind`) for a team task change, on
+    /// the Session of the member that made it, matched by the subject `team_task`.
+    pub(crate) async fn team_task_hook(&self, session_id: &str, kind: &str, change: &TaskUpdated) {
+        if self.closed.is_cancelled() {
+            return;
+        }
+        let Ok(handle) = self.handle(session_id).await else {
+            return;
+        };
+        let hook = self
+            .lifecycle_hook(&handle, kind, TASK_SUBJECT.into(), team_task_fields(change))
+            .await;
+        self.observe_lifecycle(hook).await;
+    }
+
+    /// `TeammateIdle` after a teammate's idle notice is recorded, on the teammate's
+    /// Session (the envelope's `session_id`), matched by its member name, with
+    /// `{ team_id, member, tasks_in_progress, last_status }`. Its decisions are only
+    /// logged.
+    pub(crate) async fn teammate_idle_hook(&self, session_id: &str, member: &str, fields: Value) {
+        if self.closed.is_cancelled() {
+            return;
+        }
+        let Ok(handle) = self.handle(session_id).await else {
+            return;
+        };
+        let hook = self
+            .lifecycle_hook(&handle, IDLE_HOOK, member.into(), fields)
+            .await;
+        match self.owned_lifecycle_hooks(hook).await {
+            Ok(verdict) if verdict.configured => cyber_core::log::info(
+                "hooks",
+                "TeammateIdle decision ignored",
+                json!({"session_id": session_id, "member": member, "decision": verdict.decision}),
+            ),
+            Ok(_) => {}
+            Err(error) => cyber_core::log::warn(
+                "hooks",
+                "lifecycle hook unavailable",
+                json!({"event": IDLE_HOOK, "session_id": session_id, "error": error}),
+            ),
+        }
     }
 
     /// Observational InstructionsLoaded for each instruction source that entered
@@ -340,6 +390,20 @@ impl Inner {
             self.observe_lifecycle(hook).await;
         }
     }
+}
+
+/// TaskCreated (`{ job }`) and TaskCompleted (`{ job, status }`) fields of a Job.
+fn job_fields(job: &Job, completed: bool) -> Value {
+    if completed {
+        json!({"job": job, "status": job.status})
+    } else {
+        json!({"job": job})
+    }
+}
+
+/// TaskCreated and TaskCompleted fields of a team task: `{ task, team_id, member }`.
+fn team_task_fields(change: &TaskUpdated) -> Value {
+    json!({"task": change.task, "team_id": change.team_id, "member": change.by})
 }
 
 /// Model switch fields with an explicit `automatic` flag.
@@ -399,5 +463,51 @@ impl Runtime {
     ) -> Result<SessionEnvelope, RuntimeError> {
         let handle = self.inner.handle(session_id).await?;
         Ok(self.inner.envelope(&handle).await)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn keys(value: &Value) -> Vec<&str> {
+        let mut keys: Vec<&str> = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        keys
+    }
+
+    /// Team tasks reuse TaskCreated/TaskCompleted with their own fields; a Job's fields
+    /// stay `{ job }` and `{ job, status }`.
+    #[test]
+    fn job_and_team_task_hook_fields_stay_apart() {
+        let job: Job = serde_json::from_value(json!({
+            "id": "job_1", "session_id": "ses_1", "child_id": "", "name": "build",
+            "kind": "bash", "description": "build", "status": "completed", "started_ms": 1,
+            "ended_ms": 2, "exit_code": 0, "output_path": null, "result": null, "error": null,
+            "cost": 0.0, "tokens": 0, "notified": false
+        }))
+        .unwrap();
+        assert_eq!(keys(&job_fields(&job, false)), ["job"]);
+        let completed = job_fields(&job, true);
+        assert_eq!(keys(&completed), ["job", "status"]);
+        assert_eq!(completed["job"]["kind"], "bash");
+        let change: TaskUpdated = serde_json::from_value(json!({
+            "team_id": "team_1", "by": "api", "previous_status": "in_progress",
+            "task": {"id": "task_1", "seq": 1, "title": "schema", "status": "done",
+                "created_by": "lead", "created_ms": 1, "updated_ms": 2, "version": 2}
+        }))
+        .unwrap();
+        let fields = team_task_fields(&change);
+        assert_eq!(keys(&fields), ["member", "task", "team_id"]);
+        assert_eq!(
+            (&fields["task"]["id"], &fields["team_id"], &fields["member"]),
+            (&json!("task_1"), &json!("team_1"), &json!("api"))
+        );
+        assert_eq!(TASK_SUBJECT, "team_task");
     }
 }

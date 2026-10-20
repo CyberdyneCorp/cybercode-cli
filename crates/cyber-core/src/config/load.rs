@@ -117,6 +117,14 @@ pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
         );
         labels.push(label);
     }
+    // Features resolve over the policy layers, which `policy.features.lock` lives in.
+    let env_features = req.env.get(crate::features::ENV);
+    let overrides = crate::features::Overrides {
+        flag: crate::features::flag(),
+        env: env_features.as_deref(),
+    };
+    crate::features::resolve(&mut value, &mut sources, overrides, &mut warnings)
+        .map_err(|issues| ConfigError::Invalid { issues })?;
     for (label, hooks) in managed.hooks {
         merge::merge_layer(&mut value, &json!({ "hooks": hooks }), &label, &mut sources);
         labels.push(label);
@@ -571,6 +579,14 @@ fn assess_trust(req: &LoadRequest<'_>, project: &[Layer]) -> Result<TrustReport,
                 .map(|p| format!("{}#{p}", path.display())),
         );
         subset.insert(relative, split.sensitive);
+    }
+    // Project team definitions choose agents, models and budgets for Sessions the lead
+    // starts, so they take effect only once the checkout approves them.
+    if !req.env.flag("CYBER_DISABLE_PROJECT_CONFIG") {
+        for (relative, path, text) in crate::teams::trust_subset(req.location) {
+            definitions.push(path.display().to_string());
+            subset.insert(relative, Value::String(text));
+        }
     }
     if subset.is_empty() {
         return Ok(TrustReport {

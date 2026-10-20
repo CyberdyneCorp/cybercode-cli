@@ -86,6 +86,10 @@ pub struct SessionInfo {
     /// controls): it replaces the Location's default; sender patterns still win.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub messaging: Option<super::messaging::InboundOverride>,
+    /// The team this Session is a member of (`agent-teams`), set at creation and never
+    /// changed. Teammates are root Sessions, so they outlive the lead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<super::teams::TeamTag>,
 }
 
 /// One entry of model-visible history.

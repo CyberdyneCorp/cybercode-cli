@@ -293,6 +293,10 @@ impl App {
         // same sweep every 60 s (`cross-session-messaging` → Idle notifications).
         runtime.recover_watches().await.map_err(|e| e.to_string())?;
         runtime.spawn_watch_sweep();
+        // Teammates whose Drain a restart cut off go idle and notify their lead, and
+        // teams a restart left stopping finish stopping (`agent-teams` → Idle
+        // notifications, Shutdown and resume).
+        runtime.recover_teams().await.map_err(|e| e.to_string())?;
         // Session loops: end iterations a stopped server cut off, apply the missed-run
         // policy, then admit due iterations every 5 s (`loops-scheduling`).
         runtime.recover_loops().await.map_err(|e| e.to_string())?;
@@ -311,7 +315,8 @@ impl App {
             resolver,
             Arc::clone(&host),
             Arc::clone(&remote_tools),
-            config,
+            // `config_loader` is this loader without trust and warnings.
+            hook_config_loader(opts.paths.clone(), opts.home.clone()),
             opts.paths.clone(),
             withheld_hook_loader(opts.paths.clone(), opts.home.clone()),
             Arc::clone(&global_config),

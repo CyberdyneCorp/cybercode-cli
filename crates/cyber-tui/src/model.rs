@@ -28,6 +28,24 @@ pub struct Session {
     /// Why the Session's `messaging.inbound` override refuses messages
     /// (`non_interactive`), which `a` in `/messages` clears.
     pub inbound_reason: Option<String>,
+    /// The team a teammate Session belongs to (`agent-teams`); a lead has none.
+    pub team: Option<TeamTag>,
+}
+
+/// A teammate's team and member name, as `SessionInfo.team` carries it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TeamTag {
+    pub team_id: String,
+    pub name: String,
+}
+
+impl TeamTag {
+    fn parse(v: &Value) -> Option<Self> {
+        Some(Self {
+            team_id: v["team_id"].as_str()?.to_owned(),
+            name: v["name"].as_str()?.to_owned(),
+        })
+    }
 }
 
 /// `observability-costs` → Context window meter, as the server reports it.
@@ -117,6 +135,7 @@ impl Session {
             children_incomplete: v["children_usage_complete"] == false,
             context: ContextMeter::parse(&v["context"]),
             inbound_reason: v["messaging"]["reason"].as_str().map(str::to_string),
+            team: TeamTag::parse(&v["team"]),
         }
     }
 }
@@ -305,6 +324,8 @@ pub enum Request {
         id: String,
         session_id: String,
         origin: Option<String>,
+        /// The teammate the request comes from, shown as `[name]` in the lead's TUI.
+        member: Option<String>,
         routed_to: Vec<String>,
         action: String,
         resources: Vec<String>,
@@ -315,6 +336,7 @@ pub enum Request {
         id: String,
         session_id: String,
         origin: Option<String>,
+        member: Option<String>,
         routed_to: Vec<String>,
         questions: Vec<QuestionSpec>,
     },
@@ -339,6 +361,10 @@ impl Request {
         let id = v["id"].as_str()?.to_string();
         let session_id = v["session_id"].as_str()?.to_string();
         let origin = v["origin"]["title"].as_str().map(str::to_string);
+        let member = v["origin"]["member"]
+            .as_str()
+            .map(crate::messaging::clean)
+            .filter(|name| !name.is_empty());
         let routed_to = v["routed_to"]
             .as_array()
             .into_iter()
@@ -358,6 +384,7 @@ impl Request {
                 id,
                 session_id,
                 origin,
+                member,
                 routed_to,
                 action: v["action"].as_str().unwrap_or_default().into(),
                 resources: strings("resources"),
@@ -368,6 +395,7 @@ impl Request {
                 id,
                 session_id,
                 origin,
+                member,
                 routed_to,
                 questions: v["questions"]
                     .as_array()
@@ -391,6 +419,33 @@ impl Request {
         match self {
             Self::Permission { origin, .. } | Self::Question { origin, .. } => origin.as_deref(),
         }
+    }
+
+    /// The teammate a request routed to the lead comes from.
+    pub fn member(&self) -> Option<&str> {
+        match self {
+            Self::Permission { member, .. } | Self::Question { member, .. } => member.as_deref(),
+        }
+    }
+
+    /// `[tests] Allow bash: docker compose up?` for a teammate's permission request,
+    /// `[tests] <origin>` for its question; `None` for any other request.
+    pub fn team_label(&self) -> Option<String> {
+        let member = self.member()?;
+        Some(match self {
+            Self::Permission {
+                action, resources, ..
+            } => match resources.first() {
+                Some(resource) => format!(
+                    "[{member}] Allow {action}: {}?",
+                    crate::messaging::clean(resource)
+                ),
+                None => format!("[{member}] Allow {action}?"),
+            },
+            Self::Question { .. } => {
+                format!("[{member}] {}", self.origin_title().unwrap_or("asks"))
+            }
+        })
     }
 }
 

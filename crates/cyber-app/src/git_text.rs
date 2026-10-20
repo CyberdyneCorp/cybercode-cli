@@ -325,6 +325,7 @@ impl Reader {
             location: location.to_path_buf(),
             home: cyber_core::paths::home_dir(&cyber_core::env::ProcessEnv).unwrap_or_default(),
             plan_file: PathBuf::new(),
+            ownership: None,
         };
         Ok(Self {
             policy,

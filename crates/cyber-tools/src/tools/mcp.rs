@@ -457,6 +457,7 @@ mod tests {
             location: "/work".into(),
             home: "/home/u".into(),
             plan_file: "/work/.cyber/plans/s.md".into(),
+            ownership: None,
         };
         let request = |resource: &str| Request {
             tool: Some("mcp_read_resource".into()),
@@ -511,6 +512,7 @@ mod tests {
             location: "/work".into(),
             home: "/home/u".into(),
             plan_file: "/work/.cyber/plans/s.md".into(),
+            ownership: None,
         };
         let request = |tool: &str, resource: String| Request {
             tool: Some(tool.into()),

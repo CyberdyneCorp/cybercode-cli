@@ -571,6 +571,7 @@ async fn light_theme_and_overlays_use_tokens() {
         id: "per_1".into(),
         session_id: id.clone(),
         origin: None,
+        member: None,
         routed_to: Vec::new(),
         action: "edit".into(),
         resources: vec!["src/fib.rs".into()],

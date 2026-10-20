@@ -1090,7 +1090,7 @@ fn step(selected: usize, last: usize, code: KeyCode) -> usize {
     }
 }
 
-fn encode(text: &str) -> String {
+pub(crate) fn encode(text: &str) -> String {
     text.bytes()
         .map(|b| match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b',' | b'-' | b'_' | b'.' | b'~' => {

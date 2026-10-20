@@ -163,9 +163,11 @@ impl Messaging {
         // The name when the peer gave one, else the ID: what the target replies to.
         let from = addresses.last().cloned().unwrap_or_default();
         let target_id = target.candidate.session_id.clone();
+        let reach = sender.reach();
         let outgoing = Outgoing {
             id: message.id,
             sender,
+            reach,
             target,
             from,
             addresses: SenderAddresses::trusted(addresses),

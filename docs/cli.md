@@ -24,6 +24,7 @@ cyber [OPTIONS] [COMMAND]
 - `--print-logs`: Mirror log lines to stderr. Global.
 - `--format <FORMAT>`: Output format. The only output-format flag. Values: `table`, `json`, `text`, `stream-json`. Global.
 - `--pure`: Disable plugins and every hook and MCP server not managed by organization policy for this process. Also CYBER_PURE=1. Global.
+- `--features <LIST>`: Turn features on or off for this process, as a comma list where `-name` turns one off (`teams,-other`). Above CYBER_FEATURES and config; below organization policy. Commands served by the background server (`cyber teams list`, the TUI) follow its configuration instead: use `cyber features enable`, or the TUI with `--embedded`. Global.
 - `--worktree [<NAME>]`: Start a new Session in a managed worktree; omit NAME to generate one.
 - `-c, --continue`: Resume the most recent Session of the Location.
 - `-r, --resume [<RESUME>]`: Resume a Session by ID or name; without a value, open the picker.
@@ -46,6 +47,8 @@ cyber [OPTIONS] [COMMAND]
 - [`skills`](#cyber-skills): Inspect skills: source, scope, permission effect and diagnostics
 - [`commands`](#cyber-commands): Inspect slash commands and command discovery diagnostics
 - [`mcp`](#cyber-mcp): Review MCP server definitions, individual server approvals and OAuth credentials
+- [`teams`](#cyber-teams): Agent teams (feature `teams`): list, show, stop and resume teams; list definitions
+- [`features`](#cyber-features): List the feature registry; enable or disable a feature in config
 - [`workflows`](#cyber-workflows): List saved Workflows; run, inspect and control Workflow Runs
 - [`worktree`](#cyber-worktree): List, remove and prune managed Git worktrees of the current repository
 - [`debug`](#cyber-debug): Inspect resolved paths, configuration and build information
@@ -584,6 +587,140 @@ Remove per-Session browser profiles that no running process holds
 ```text
 cyber mcp browser cleanup [OPTIONS]
 ```
+
+## `cyber teams`
+
+Agent teams (feature `teams`): list, show, stop and resume teams; list definitions
+
+```text
+cyber teams [OPTIONS] <COMMAND>
+```
+
+**Subcommands:**
+
+- [`list`](#cyber-teams-list): The Location's teams, newest first
+- [`show`](#cyber-teams-show): A team's members (status, current task, cost, last message) and its task board
+- [`stop`](#cyber-teams-stop): Stop a team: teammates finish their current Turn; queued input stays queued
+- [`resume`](#cyber-teams-resume): Resume a stopped team; after its lead was deleted, `--lead` names the new one
+- [`definitions`](#cyber-teams-definitions): Team definitions from `.cyber/teams/*.md` (trusted checkouts) and `~/.config/cyber/teams/*.md`; a project definition wins on a name clash
+
+## `cyber teams list`
+
+The Location's teams, newest first
+
+```text
+cyber teams list [OPTIONS]
+```
+
+**Options:**
+
+- `--status <STATUS>`: Only teams with this status. Values: `active`, `stopping`, `stopped`.
+
+## `cyber teams show`
+
+A team's members (status, current task, cost, last message) and its task board
+
+```text
+cyber teams show [OPTIONS] <TEAM>
+```
+
+**Arguments:**
+
+- `<TEAM>`: A `team_` ID, or the name of a team of this Location (the newest one by that name)
+
+## `cyber teams stop`
+
+Stop a team: teammates finish their current Turn; queued input stays queued
+
+```text
+cyber teams stop [OPTIONS] <TEAM>
+```
+
+**Arguments:**
+
+- `<TEAM>`: A `team_` ID, or the name of a team of this Location (the newest one by that name)
+
+## `cyber teams resume`
+
+Resume a stopped team; after its lead was deleted, `--lead` names the new one
+
+```text
+cyber teams resume [OPTIONS] <TEAM>
+```
+
+**Arguments:**
+
+- `<TEAM>`: A `team_` ID, or the name of a team of this Location (the newest one by that name)
+
+**Options:**
+
+- `--lead <LEAD>`: The new lead (ID, exact title or unique ID prefix) of a team whose lead was deleted.
+
+## `cyber teams definitions`
+
+Team definitions from `.cyber/teams/*.md` (trusted checkouts) and `~/.config/cyber/teams/*.md`; a project definition wins on a name clash
+
+```text
+cyber teams definitions [OPTIONS]
+```
+
+## `cyber features`
+
+List the feature registry; enable or disable a feature in config
+
+```text
+cyber features [OPTIONS] <COMMAND>
+```
+
+**Subcommands:**
+
+- [`list`](#cyber-features-list): Every feature with its maturity, default, effective value and source
+- [`enable`](#cyber-features-enable): Turn a feature on in the user or project configuration
+- [`disable`](#cyber-features-disable): Turn a feature off in the user or project configuration
+
+## `cyber features list`
+
+Every feature with its maturity, default, effective value and source
+
+```text
+cyber features list [OPTIONS]
+```
+
+**Options:**
+
+- `--json`: Print JSON (same as --format json)
+
+## `cyber features enable`
+
+Turn a feature on in the user or project configuration
+
+```text
+cyber features enable [OPTIONS] <NAME>
+```
+
+**Arguments:**
+
+- `<NAME>`
+
+**Options:**
+
+- `--scope <SCOPE>`: Values: `user`, `project`. Default: `user`.
+
+## `cyber features disable`
+
+Turn a feature off in the user or project configuration
+
+```text
+cyber features disable [OPTIONS] <NAME>
+```
+
+**Arguments:**
+
+- `<NAME>`
+
+**Options:**
+
+- `--scope <SCOPE>`: Values: `user`, `project`. Default: `user`.
 
 ## `cyber workflows`
 

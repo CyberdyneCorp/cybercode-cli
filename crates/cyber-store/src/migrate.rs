@@ -129,6 +129,10 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         id: "20261020030000_peer_watch",
         sql: include_str!("../migrations/20261020030000_peer_watch.sql"),
     },
+    Migration {
+        id: "20261025000000_teams",
+        sql: include_str!("../migrations/20261025000000_teams.sql"),
+    },
 ];
 
 pub(crate) enum Outcome {
@@ -292,6 +296,74 @@ mod tests {
         };
         assert_eq!(rows("SELECT session_id FROM xsession_message"), ["ses_b"]);
         assert!(rows("SELECT id FROM messaging_watch").is_empty());
+    }
+
+    /// The team tables apply over a database holding P1 data and keep it; a team's
+    /// members and tasks go with the team, and nothing goes with a deleted Session (a
+    /// team outlives its lead).
+    #[test]
+    fn teams_apply_over_p1_data_and_cascade_from_the_team_only() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON").unwrap();
+        let at = MIGRATIONS
+            .iter()
+            .position(|m| m.id == "20261025000000_teams")
+            .unwrap();
+        migrate(&mut conn, &MIGRATIONS[..at]).unwrap();
+        conn.execute_batch(
+            "INSERT INTO session (id, title, directory, agent, model, mode, created_at, updated_at, last_seq)
+             VALUES ('ses_lead', 'lead', '/r', 'build', 'test/main', 'default', 1, 1, 0),
+                    ('ses_api', 'feature/api', '/r', 'build', 'test/main', 'default', 1, 1, 0);
+             INSERT INTO event (id, aggregate_id, seq, type, data, time)
+             VALUES ('evt_1', 'ses_lead', 0, 'session.created.1', '{}', 1);
+             INSERT INTO session_loop (loop_id, session_id, status, next_due_ms, inflight, created_ms)
+             VALUES ('lop_1', 'ses_lead', 'active', 5, 0, 1);",
+        )
+        .unwrap();
+        migrate(&mut conn, MIGRATIONS).unwrap();
+        let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(
+            count(
+                "SELECT (SELECT count(*) FROM session) + (SELECT count(*) FROM event) + (SELECT count(*) FROM session_loop)"
+            ),
+            4
+        );
+        conn.execute_batch(
+            "INSERT INTO team (id, name, lead_id, directory, status, created_ms, updated_ms)
+             VALUES ('team_1', 'feature', 'ses_lead', '/r', 'active', 1, 1);
+             INSERT INTO team_member (team_id, name, session_id, role, agent, isolation, status)
+             VALUES ('team_1', 'lead', 'ses_lead', 'lead', 'build', 'shared', 'idle'),
+                    ('team_1', 'api', 'ses_api', 'teammate', 'build', 'worktree', 'working');
+             INSERT INTO team_task (id, team_id, seq, title, status, created_by, created_ms, updated_ms)
+             VALUES ('task_1', 'team_1', 1, 'API', 'todo', 'lead', 1, 1);",
+        )
+        .unwrap();
+        assert_eq!(count("SELECT version FROM team_task"), 0);
+        assert_eq!(
+            count("SELECT count(*) FROM team_task WHERE depends_on = '[]' AND description = ''"),
+            1
+        );
+        let duplicate = conn.execute(
+            "INSERT INTO team_member (team_id, name, session_id, role, agent, isolation, status)
+             VALUES ('team_1', 'ui', 'ses_api', 'teammate', 'build', 'shared', 'idle')",
+            [],
+        );
+        assert!(duplicate.is_err(), "a Session is a member of one team");
+        let orphan = conn.execute(
+            "INSERT INTO team_task (id, team_id, seq, title, status, created_by, created_ms, updated_ms)
+             VALUES ('task_2', 'team_gone', 1, 'x', 'todo', 'lead', 1, 1)",
+            [],
+        );
+        assert!(orphan.is_err(), "a task needs its team");
+        conn.execute("DELETE FROM session WHERE id = 'ses_lead'", [])
+            .unwrap();
+        assert_eq!(count("SELECT count(*) FROM team_member"), 2);
+        conn.execute("DELETE FROM team WHERE id = 'team_1'", [])
+            .unwrap();
+        assert_eq!(
+            count("SELECT (SELECT count(*) FROM team_member) + (SELECT count(*) FROM team_task)"),
+            0
+        );
     }
 
     /// Task 9.2: ledger rows and folded days recorded before origins existed read as

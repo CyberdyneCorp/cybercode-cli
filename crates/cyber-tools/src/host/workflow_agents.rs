@@ -153,6 +153,26 @@ impl BuiltinHost {
     }
 }
 
+impl BuiltinHost {
+    /// `agent-teams` → isolation default: the profile offers an edit tool or `bash`. A
+    /// profile that cannot be resolved counts as an editor.
+    pub(crate) fn team_editor_agent(&self, directory: &str, agent: &str) -> bool {
+        let Ok((config, _)) = (self.opts.config)(std::path::Path::new(directory)) else {
+            return true;
+        };
+        let Ok(profiles) = cyber_core::config::resolve_agents(&config) else {
+            return true;
+        };
+        profiles.get(agent).is_none_or(|profile| {
+            !profile.read_only
+                && EDIT_TOOLS
+                    .iter()
+                    .chain(&["bash"])
+                    .any(|tool| super::profile_allows_tool(profile, tool))
+        })
+    }
+}
+
 /// Tools that edit files (`tools::action_of` maps them to `edit`).
 const EDIT_TOOLS: [&str; 4] = ["write", "edit", "apply_patch", "notebook_edit"];
 

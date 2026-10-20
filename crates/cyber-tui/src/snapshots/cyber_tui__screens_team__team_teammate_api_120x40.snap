@@ -1,0 +1,44 @@
+---
+source: crates/cyber-tui/src/screens_team.rs
+expression: screen
+---
+› use pagination tokens
+                                                                                      feature/api
+  Noted.
+                                                                                      Context
+  ▣ Build · main · 11.3s                                                              100 tokens · window unknown
+                                                                                      — spent
+
+                                                                                      Team feature
+                                                                                      ○ lead  ○ api  ○ ui  ○ tests
+
+                                                                                      ▼ MCP
+                                                                                      No MCP servers
+                                                                                      add one: cyber mcp add
+
+                                                                                      LSP
+                                                                                      LSPs will activate as files are
+                                                                                      read
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃                                                                                     ~/work/app
+┃ Build · main test · default
+ ~/work/app                                                100 · —  ctrl+p commands   ● Cyber Code 1.0.0

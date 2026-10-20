@@ -4,10 +4,12 @@
 //! client), in tiers: an exact `ses_` ID of a reachable Session; any address `X@P` (a
 //! Session `X` of the configured peer `P`, which [`super::Messaging::resolve`] looks up in
 //! `peers.remotes`; `PeerNotConfiguredError` without one); then names scoped
-//! to the caller (its team, an empty extension point until `agent-teams`, then its
+//! to the caller (for a team member, `lead`, `all` and its teammates' names; then its
 //! subagents by `subagent_name`); then the exact title of a non-archived root Session.
 //! The first tier with a match decides; several matches in it are ambiguous. No ID
 //! prefixes and no fuzzy matches resolve, so a typo never reaches the wrong Session.
+//! `all` names every other member of the caller's team that is not `stopped`; a send to
+//! it fans out to each of them ([`team_all`]).
 
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -338,17 +340,72 @@ fn name_tiers(
         "parent_id IS NULL AND title = ?1 AND archived = 0",
         params![name],
     )?;
-    Ok(vec![
-        named(team_tier(caller, name)),
-        named(subagents),
-        named(roots),
-    ])
+    let team = match caller {
+        Some(caller) => team_tier(db, caller, name)?,
+        None => Vec::new(),
+    };
+    Ok(vec![named(team), named(subagents), named(roots)])
 }
 
-/// Team names (`lead`, `all`, teammate names) of the caller's team. Teams arrive with
-/// `agent-teams`; until then no caller is a team member.
-fn team_tier(_caller: Option<&str>, _name: &str) -> Vec<Target> {
-    Vec::new()
+/// The address that names every other non-stopped member of the caller's team.
+pub const ALL: &str = "all";
+
+/// The members of `caller`'s team that `name` names (`agent-teams` → Teammate
+/// messaging): the member called `name` (`lead` is the lead), or for [`ALL`] every
+/// other member that is not `stopped`, lead first, then teammates in spawn order. Each
+/// is a teammate shown by its member name. Empty for a caller in no team.
+fn team_tier(db: &Connection, caller: &str, name: &str) -> rusqlite::Result<Vec<Target>> {
+    let mut stmt = db.prepare(
+        "SELECT s.id, s.title, s.directory, s.parent_id, s.subagent_name, s.archived,
+                s.inbound, s.inbound_reason, m.name
+           FROM team_member c
+           JOIN team_member m ON m.team_id = c.team_id AND m.session_id <> c.session_id
+           JOIN session s ON s.id = m.session_id
+          WHERE c.session_id = ?1
+            AND (m.name = ?2 OR (?2 = ?3 AND m.status <> 'stopped'))
+          ORDER BY m.role = 'teammate', m.rowid",
+    )?;
+    stmt.query_map(params![caller, name, ALL], |row| {
+        let mut t = target(row, Some(caller))?;
+        t.candidate.kind = AddressKind::Teammate;
+        t.candidate.name = row.get(NEXT_COLUMN)?;
+        Ok(t)
+    })?
+    .collect()
+}
+
+/// The targets of a send from `caller` to `all`, each addressed by its member name;
+/// `None` when the caller is in no team (then `all` is an ordinary name).
+pub fn team_all(db: &Connection, caller: &str) -> rusqlite::Result<Option<Vec<Target>>> {
+    if team_name(db, caller)?.is_none() {
+        return Ok(None);
+    }
+    let mut targets = team_tier(db, caller, ALL)?;
+    for t in &mut targets {
+        t.address = t.candidate.name.clone();
+    }
+    Ok(Some(targets))
+}
+
+/// The member name of `session` in its team.
+fn team_name(db: &Connection, session: &str) -> rusqlite::Result<Option<String>> {
+    db.query_row(
+        "SELECT name FROM team_member WHERE session_id = ?1",
+        [session],
+        |row| row.get(0),
+    )
+    .optional()
+}
+
+/// The member name `a` knows `b` by when both are in one team.
+pub fn teammate_name(db: &Connection, a: &str, b: &str) -> rusqlite::Result<Option<String>> {
+    db.query_row(
+        "SELECT m.name FROM team_member m JOIN team_member c ON c.team_id = m.team_id
+          WHERE c.session_id = ?1 AND m.session_id = ?2 AND m.session_id <> c.session_id",
+        params![a, b],
+        |row| row.get(0),
+    )
+    .optional()
 }
 
 fn query(
@@ -363,10 +420,13 @@ fn query(
     stmt.query_map(args, |row| target(row, caller))?.collect()
 }
 
-/// The address `target` replies to `sender` with: the sender's name when that name
-/// resolves to the sender from `target` (a subagent's name from its parent, a unique
-/// title otherwise), else its ID.
+/// The address `target` replies to `sender` with: the sender's member name when both are
+/// in one team, else its name when that name resolves to the sender from `target` (a
+/// subagent's name from its parent, a unique title otherwise), else its ID.
 pub fn reply_address(db: &Connection, target: &str, sender: &str) -> rusqlite::Result<String> {
+    if let Some(name) = teammate_name(db, target, sender)? {
+        return Ok(name);
+    }
     let row = db
         .query_row(
             &format!("SELECT {COLUMNS} FROM session WHERE id = ?1"),
@@ -441,6 +501,104 @@ mod tests {
             inbound: None,
             peer: None,
         }
+    }
+
+    /// A team `team_1` of lead `ses_lead`, `api`, `ui` and the stopped `docs`, and
+    /// `ses_out` in no team, which has a root titled `all`.
+    fn team_store() -> cyber_store::Store {
+        let store = cyber_store::Store::open(cyber_store::StoreOptions::new(
+            cyber_core::paths::DatabaseLocation::Memory,
+            crate::runtime::Runtime::registry(),
+        ))
+        .unwrap();
+        store
+            .transaction(|tx| {
+                tx.execute_batch(
+                    "INSERT INTO session (id, title, directory, agent, model, mode, created_at, updated_at, last_seq)
+                     VALUES ('ses_lead', 'planner', '/r', 'build', 'test/main', 'default', 1, 1, -1),
+                            ('ses_api', 'adhoc/api', '/r', 'build', 'test/main', 'default', 2, 2, -1),
+                            ('ses_ui', 'adhoc/ui', '/r', 'build', 'test/main', 'default', 3, 3, -1),
+                            ('ses_docs', 'adhoc/docs', '/r', 'build', 'test/main', 'default', 4, 4, -1),
+                            ('ses_out', 'all', '/r', 'build', 'test/main', 'default', 5, 5, -1);
+                     INSERT INTO team (id, name, lead_id, directory, status, created_ms, updated_ms)
+                     VALUES ('team_1', 'adhoc', 'ses_lead', '/r', 'active', 1, 1);
+                     INSERT INTO team_member (team_id, name, session_id, role, agent, isolation, status)
+                     VALUES ('team_1', 'lead', 'ses_lead', 'lead', 'build', 'shared', 'idle'),
+                            ('team_1', 'api', 'ses_api', 'teammate', 'build', 'shared', 'working'),
+                            ('team_1', 'ui', 'ses_ui', 'teammate', 'build', 'shared', 'idle'),
+                            ('team_1', 'docs', 'ses_docs', 'teammate', 'build', 'shared', 'stopped');",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        store
+    }
+
+    #[test]
+    fn team_members_resolve_by_member_name_and_all_skips_the_stopped() {
+        let store = team_store();
+        store
+            .read(|db| {
+                let resolved = |caller: &str, to: &str| {
+                    resolve(db, Some(caller), to).unwrap().map(|t| {
+                        (
+                            t.address,
+                            t.candidate.session_id,
+                            t.candidate.name,
+                            t.candidate.kind,
+                        )
+                    })
+                };
+                let teammate = |address: &str, id: &str, name: &str| {
+                    Ok((
+                        address.into(),
+                        id.into(),
+                        name.into(),
+                        AddressKind::Teammate,
+                    ))
+                };
+                assert_eq!(
+                    resolved("ses_ui", "lead"),
+                    teammate("lead", "ses_lead", "lead")
+                );
+                assert_eq!(
+                    resolved("ses_ui", "@api"),
+                    teammate("api", "ses_api", "api")
+                );
+                // A stopped member is still addressed by its name.
+                assert_eq!(
+                    resolved("ses_lead", "docs"),
+                    teammate("docs", "ses_docs", "docs")
+                );
+                // A member's own name is not a teammate of it.
+                assert!(matches!(
+                    resolved("ses_ui", "ui"),
+                    Err(AddressError::NotFound(_))
+                ));
+                // Outside the team the names mean nothing, and `all` is an ordinary title.
+                assert!(matches!(
+                    resolved("ses_out", "lead"),
+                    Err(AddressError::NotFound(_))
+                ));
+                assert_eq!(team_all(db, "ses_out").unwrap(), None);
+                // `all` fans out to every other member that is not stopped, lead first.
+                let all = team_all(db, "ses_ui").unwrap().unwrap();
+                let named: Vec<(&str, &str)> = all
+                    .iter()
+                    .map(|t| (t.address.as_str(), t.candidate.session_id.as_str()))
+                    .collect();
+                assert_eq!(named, [("lead", "ses_lead"), ("api", "ses_api")]);
+                let all = team_all(db, "ses_lead").unwrap().unwrap();
+                let names: Vec<&str> = all.iter().map(|t| t.address.as_str()).collect();
+                assert_eq!(names, ["api", "ui"]);
+                // Replies name a teammate by its member name.
+                assert_eq!(reply_address(db, "ses_lead", "ses_ui").unwrap(), "ui");
+                assert_eq!(reply_address(db, "ses_ui", "ses_lead").unwrap(), "lead");
+                assert_eq!(reply_address(db, "ses_out", "ses_ui").unwrap(), "adhoc/ui");
+                assert_eq!(teammate_name(db, "ses_ui", "ses_ui").unwrap(), None);
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]

@@ -120,6 +120,7 @@ async fn waiting_on_the_user_naps_the_cat_and_stops_the_frames() {
         id: "per_1".into(),
         session_id: app.session.id.clone(),
         origin: None,
+        member: None,
         routed_to: Vec::new(),
         action: "bash".into(),
         resources: Vec::new(),

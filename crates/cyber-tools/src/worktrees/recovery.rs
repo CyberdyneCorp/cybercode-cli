@@ -85,6 +85,7 @@ impl BuiltinHost {
             ctx: &ctx,
             writable: Some(Vec::new()),
             credentials: &[],
+            read_only: Vec::new(),
         };
         let repository = Repository::discover(&execution, &ctx.location).await?;
         if repository.common_dir != managed.common_dir {

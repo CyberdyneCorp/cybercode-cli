@@ -32,6 +32,7 @@ IDENT = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
 ERROR_TAGS = [
     "CommandNotFoundError",
     "ConflictError",
+    "FeatureDisabledError",
     "ForbiddenError",
     "InvalidCursorError",
     "InvalidRequestError",
@@ -49,6 +50,10 @@ ERROR_TAGS = [
     "BudgetExceededError",
     "SessionBusyError",
     "SessionNotFoundError",
+    "TaskClaimedError",
+    "TaskDependencyError",
+    "TeamLimitError",
+    "TeamNotFoundError",
     "UnauthorizedError",
     "UnknownError",
 ]

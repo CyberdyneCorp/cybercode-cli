@@ -60,6 +60,8 @@ pub(crate) async fn run(inner: Arc<Inner>, id: String, forced: bool, cancel: Can
             .stop_continuations
             .store(0, std::sync::atomic::Ordering::SeqCst);
     }
+    // `agent-teams`: a teammate is `working` while its Drain runs.
+    inner.member_status_changed(&id).await;
     let mut forced = forced;
     let ended = loop {
         // A defect must not leave the Session registered as running forever. Boxed: the
@@ -104,12 +106,17 @@ pub(crate) async fn run(inner: Arc<Inner>, id: String, forced: bool, cancel: Can
         }
         forced = false;
     };
-    // `cross-session-messaging` → Idle notifications: the Session went idle.
-    let (hops, status) = ended;
-    let runtime = super::Runtime { inner };
+    went_idle(super::Runtime { inner }, &id, ended).await;
+}
+
+/// The Session's Drain ended with `(hops, status)` for its idle notices.
+async fn went_idle(runtime: super::Runtime, id: &str, (hops, status): (u32, Option<String>)) {
     // `loops-scheduling`: the iterations this Drain ran end now.
-    runtime.loops_drain_ended(&id, status.as_deref()).await;
-    runtime.drain_ended(&id, hops, status).await;
+    runtime.loops_drain_ended(id, status.as_deref()).await;
+    // `cross-session-messaging` → Idle notifications: the Session went idle.
+    runtime.drain_ended(id, hops, status).await;
+    // `agent-teams` → Idle notifications: a teammate's lead hears that it went idle.
+    runtime.team_drain_ended(id).await;
 }
 
 /// The status line an idle notice reports for a Drain that failed or was interrupted;
@@ -325,12 +332,17 @@ async fn unless_cancelled<T>(
     }
 }
 
-/// Initial service admission owns its readiness wait before input promotion.
+/// Initial service admission owns its readiness wait before input promotion. A teammate
+/// whose team is stopping, stopped or over its budget starts no Turn (`agent-teams` →
+/// Team budgets, Shutdown and resume): the pass ends with its input still queued.
 async fn prepare_location(
     inner: &Arc<Inner>,
     handle: &Arc<Handle>,
     cancel: &CancellationToken,
 ) -> Result<bool, RuntimeError> {
+    if !inner.team_turn_allowed(handle).await? {
+        return Ok(false);
+    }
     let initial = {
         let state = handle.state.lock().await;
         (!state.first_turn_started).then(|| state.info.clone())
@@ -850,6 +862,9 @@ impl Inner {
         prepared: &PreparedModel,
         snapshot: Option<String>,
     ) -> Result<Option<(cyber_llm::LlmRequest, Vec<ToolDef>, bool, String)>, RuntimeError> {
+        // `agent-teams` → Permissions in teams: a teammate's Turn runs in the stricter of
+        // its own Mode and its lead's, read before this Session's lock is taken.
+        let ceiling = self.team_ceiling(handle).await?;
         let mut state = handle.state.lock().await;
         if state.selection_revision != prepared.revision {
             return Ok(None);
@@ -881,11 +896,15 @@ impl Inner {
             };
             self.commit_locked(&mut state, vec![event(SYSTEM_ADDED, &payload)])?;
         }
+        let mode = super::teams::bounded_mode(&state.info.mode, ceiling.as_deref());
         let mut defs = if limited {
             Vec::new()
         } else {
             self.tools.refresh_location(&state.info);
-            self.tools.definitions(&turn_context(&state, resolved))
+            self.tools.definitions(&TurnContext {
+                mode: mode.clone(),
+                ..turn_context(&state, resolved)
+            })
         };
         defs.retain(|def| def.spec.name != "return_result");
         if !limited && let Some(schema) = &state.result.schema {
@@ -922,7 +941,7 @@ impl Inner {
         let origin = super::usage_origin::step_origin(&self.store, &state)?;
         let payload = StepStarted {
             agent: Some(state.info.agent.clone()),
-            mode: Some(state.info.mode.clone()),
+            mode: Some(mode),
             message_id: message_id.clone(),
             provider: resolved.provider.clone(),
             model: resolved.model.clone(),

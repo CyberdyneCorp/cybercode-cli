@@ -263,6 +263,14 @@ pub const WORKFLOW_RUN: &str = "workflow.run";
 /// resources (`cross-session-messaging` → Send message tool).
 pub const MESSAGE_SEND: &str = "message.send";
 
+/// Spawning teammates and merging their work (`agent-teams` → Permissions in teams):
+/// allowed for primary agents, denied for subagents; the runtime refuses teammates.
+pub const TEAM_MANAGE: &str = "team.manage";
+
+/// The shared task board of a team (`agent-teams` → Shared task list): allowed, and
+/// offered to team members only; the runtime enforces the board's own rules.
+pub const TEAM_TASK: &str = "team.task";
+
 /// The `workflow.run` resource of a module (`workflows` → Permissions for runs): the
 /// name of a global or bundled saved Workflow, `project:<name>` for a project one and
 /// `inline:<name>@<digest>` for an inline script. A script declares its own name, so a
@@ -301,6 +309,7 @@ pub fn defaults(allowed_dirs: &[PathBuf], primary_agent: bool) -> Vec<Rule> {
         "notify",
         "list_sessions",
         "watch_session",
+        TEAM_TASK,
     ] {
         rules.push(Rule::new(action, "*", Effect::Allow, "default"));
     }
@@ -328,7 +337,7 @@ pub fn defaults(allowed_dirs: &[PathBuf], primary_agent: bool) -> Vec<Rule> {
     } else {
         Effect::Deny
     };
-    for action in ["question", "plan_enter", "plan_exit"] {
+    for action in ["question", "plan_enter", "plan_exit", TEAM_MANAGE] {
         rules.push(Rule::new(action, "*", interactive, "default"));
     }
     rules
@@ -387,6 +396,9 @@ pub struct Request {
     /// At least `ask` in every Mode but `bypass`, whatever the rules and saved
     /// approvals allow (`sandbox` → Excluded commands).
     pub ask_floor: bool,
+    /// `team_merge`: the teammate whose branch lands. The ownership guard lets its own
+    /// `owns` paths through, and still denies every path another member owns.
+    pub merged_teammate: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -410,6 +422,9 @@ pub struct Policy {
     pub home: PathBuf,
     /// The plan file this Session may write in `plan` mode.
     pub plan_file: PathBuf,
+    /// Paths other members own in a shared-Location team (`agent-teams` → File conflict
+    /// avoidance): mutating one is denied before any rule or ask.
+    pub ownership: Option<cyber_server::runtime::teams::Ownership>,
 }
 
 const PLAN_DENY: &str = "Plan mode is read-only. Present the plan with plan_exit.";
@@ -492,6 +507,13 @@ impl Policy {
     }
 
     fn rule_denial(&self, req: &Request, effect: Effect) -> Option<Decision> {
+        if let Some(owned) = self
+            .ownership
+            .as_ref()
+            .and_then(|ownership| ownership.denial(&req.mutates, req.merged_teammate.as_deref()))
+        {
+            return Some(Decision::Deny(owned));
+        }
         if effect == Effect::Deny {
             return Some(Decision::Deny(format!("denied by rule for {}", req.action)));
         }
@@ -733,6 +755,7 @@ mod tests {
             location: "/repo".into(),
             home: "/home/u".into(),
             plan_file: "/repo/.cyber/plans/ses_1.md".into(),
+            ownership: None,
         }
     }
 
@@ -744,6 +767,43 @@ mod tests {
             file_edit: true,
             ..Request::default()
         }
+    }
+
+    /// `agent-teams` → File conflict avoidance: a path another member owns is denied
+    /// before any rule or Mode, even under `allow` rules in `bypass`, for edits and for
+    /// shell write targets alike; other paths keep their normal decision.
+    #[test]
+    fn paths_other_members_own_are_denied_before_rules_and_modes() {
+        let mut policy = policy(
+            parse_rules(&json!({"edit": "allow", "bash": "allow"}), &BTreeMap::new()),
+            Mode::Bypass,
+        );
+        policy.ownership = Some(cyber_server::runtime::teams::Ownership {
+            directory: "/repo".into(),
+            owners: vec![("api".into(), vec!["server/**".into()])],
+        });
+        let owned = Decision::Deny("Path owned by teammate api".into());
+        assert_eq!(policy.decide(&edit("/repo/server/api.rs")), owned);
+        let shell = Request {
+            action: "bash".into(),
+            resources: vec!["echo x > server/api.rs".into()],
+            mutates: vec!["/repo/web/a.ts".into(), "/repo/server/api.rs".into()],
+            ..Request::default()
+        };
+        assert_eq!(policy.decide(&shell), owned);
+        assert_eq!(
+            policy.rule_denies(&shell).as_deref(),
+            Some("Path owned by teammate api")
+        );
+        assert_eq!(policy.decide(&edit("/repo/web/app.ts")), Decision::Allow);
+        // `team_merge` of `api`'s branch lands its own paths.
+        let mut merged = edit("/repo/server/api.rs");
+        merged.merged_teammate = Some("api".into());
+        assert_eq!(policy.decide(&merged), Decision::Allow);
+        merged.merged_teammate = Some("ui".into());
+        assert_eq!(policy.decide(&merged), owned);
+        policy.ownership = None;
+        assert_eq!(policy.decide(&edit("/repo/server/api.rs")), Decision::Allow);
     }
 
     #[test]

@@ -282,6 +282,9 @@ impl Runtime {
 pub(super) struct Outgoing {
     pub(super) id: String,
     pub(super) sender: Sender,
+    /// Where the sender is from the target's side: a member of its team, or the
+    /// sender's own reach.
+    pub(super) reach: Reach,
     pub(super) target: Target,
     /// The sender as the target shows it and replies to.
     pub(super) from: String,
@@ -544,13 +547,18 @@ impl Messaging {
                 request.to, target.candidate.session_id
             )));
         }
+        let mut reach = request.from.reach();
         let from = match &request.from {
             Sender::Session(id) => {
                 let (target, sender) = (target.candidate.session_id.clone(), id.clone());
-                self.runtime
-                    .inner
-                    .store
-                    .read(move |db| Ok(address::reply_address(db, &target, &sender)?))?
+                let (from, teammate) = self.runtime.inner.store.read(move |db| {
+                    let teammate = address::teammate_name(db, &target, &sender)?.is_some();
+                    Ok((address::reply_address(db, &target, &sender)?, teammate))
+                })?;
+                if teammate {
+                    reach = Reach::SameTeam;
+                }
+                from
             }
             Sender::Client(_) | Sender::Mcp(_) => request.from.key(),
             Sender::Peer { .. } => {
@@ -571,6 +579,7 @@ impl Messaging {
                 .id
                 .unwrap_or_else(|| cyber_core::ids::new_id("msgx")),
             sender: request.from,
+            reach,
             target,
             from,
             addresses,
@@ -624,7 +633,7 @@ impl Messaging {
             target,
             settings.as_ref(),
             &outgoing.addresses,
-            outgoing.sender.reach(),
+            outgoing.reach,
         )
     }
 

@@ -40,6 +40,14 @@ pub struct WorktreeSessionRequest {
     pub name: Name,
 }
 
+/// How a worktree Session is created: `explicit` creations were approved by the user
+/// (deny rules apply, nothing asks); `branch` replaces the `<prefix><name>` branch.
+#[derive(Clone, Copy, Default)]
+struct Creation<'a> {
+    explicit: bool,
+    branch: Option<&'a str>,
+}
+
 /// A setup failure retains both the Session and its owned worktree.
 pub struct WorktreeSession {
     pub session: SessionInfo,
@@ -107,6 +115,7 @@ impl BuiltinHost {
             ctx: &ctx,
             writable: Some(Vec::new()),
             credentials: &[],
+            read_only: Vec::new(),
         };
         let mut leases = Vec::with_capacity(expected.len());
         for managed in expected {
@@ -169,6 +178,7 @@ impl BuiltinHost {
             ctx: &ctx,
             writable: Some(Vec::new()),
             credentials: &[],
+            read_only: Vec::new(),
         };
         let mut leases = Vec::with_capacity(locations.len());
         for (repository, managed) in locations {
@@ -281,6 +291,7 @@ impl BuiltinHost {
             ctx: &ctx,
             writable: Some(Vec::new()),
             credentials: &[],
+            read_only: Vec::new(),
         };
         let id = managed.id.clone();
         let mut leases = Vec::with_capacity(locations.len());
@@ -361,6 +372,7 @@ impl BuiltinHost {
             ctx: &ctx,
             writable: Some(Vec::new()),
             credentials: &[],
+            read_only: Vec::new(),
         };
         let repository = Repository::discover(&execution, &ctx.location).await?;
         let mut result = Vec::new();
@@ -440,7 +452,7 @@ impl BuiltinHost {
             &creation_inv,
             cancel,
             request,
-            false,
+            Creation::default(),
         ))
         .await
     }
@@ -486,7 +498,12 @@ impl BuiltinHost {
             attempt: 1,
             asker: Asker::detached(),
         };
-        Box::pin(self.create_worktree_session_owned(&runtime, &inv, cancel, request, true)).await
+        let creation = Creation {
+            explicit: true,
+            branch: None,
+        };
+        Box::pin(self.create_worktree_session_owned(&runtime, &inv, cancel, request, creation))
+            .await
     }
 
     async fn create_worktree_session_owned(
@@ -495,8 +512,9 @@ impl BuiltinHost {
         inv: &Invocation,
         cancel: CancellationToken,
         request: WorktreeSessionRequest,
-        explicit: bool,
+        creation: Creation<'_>,
     ) -> io::Result<WorktreeSession> {
+        let explicit = creation.explicit;
         let owned_cancel = cancel.child_token();
         // Permission prompts and WorktreeCreate hooks run before shutdown admission is
         // held: hook admission takes it again, and a writer queued in between would
@@ -506,7 +524,7 @@ impl BuiltinHost {
         let (repository, managed, recipe) = runtime
             .own_worktree_setup(
                 owned_cancel.clone(),
-                self.create_worktree(inv, owned_cancel, &request),
+                self.create_worktree(inv, owned_cancel, &request, creation.branch),
             )
             .await?;
         if cancel.is_cancelled() {
@@ -518,7 +536,7 @@ impl BuiltinHost {
         let mut session_request = request.session;
         session_request.directory = managed.path.display().to_string();
         session_request.worktree_id = Some(managed.id.clone());
-        if explicit {
+        if explicit && session_request.id.is_none() {
             session_request.id = Some(inv.session_id.clone());
         }
         let session = runtime
@@ -660,6 +678,7 @@ impl BuiltinHost {
         inv: &Invocation,
         cancel: CancellationToken,
         request: &WorktreeSessionRequest,
+        branch: Option<&str>,
     ) -> io::Result<(Repository, Managed, SetupRecipe)> {
         let ctx = self.worktree_ctx(inv, cancel).await?;
         let (config, settings) = self.worktree_config(&ctx)?;
@@ -673,6 +692,7 @@ impl BuiltinHost {
             ctx: &ctx,
             writable: Some(Vec::new()),
             credentials: &[],
+            read_only: Vec::new(),
         };
         let repository = Repository::discover(&discovery, &ctx.location).await?;
         let target =
@@ -681,16 +701,38 @@ impl BuiltinHost {
             ctx: &ctx,
             writable: Some(vec![repository.common_dir.clone(), target]),
             credentials: &[],
+            read_only: Vec::new(),
         };
-        let managed = repository
-            .create(
-                &execution,
-                &settings,
-                &request.data,
-                &request.project_id,
-                &request.name,
-            )
-            .await?;
+        let managed = match branch {
+            // Teammates are created one after another; a sibling's checkout may still
+            // hold the repository lock briefly.
+            Some(reference) => {
+                retry_repository_busy(&ctx.cancel, || {
+                    repository.create_on_branch(
+                        &execution,
+                        &settings,
+                        &request.data,
+                        &request.project_id,
+                        cyber_core::worktrees::Branch {
+                            name: &request.name,
+                            reference,
+                        },
+                    )
+                })
+                .await?
+            }
+            None => {
+                repository
+                    .create(
+                        &execution,
+                        &settings,
+                        &request.data,
+                        &request.project_id,
+                        &request.name,
+                    )
+                    .await?
+            }
+        };
         Ok((
             repository,
             managed,
@@ -1021,6 +1063,7 @@ impl GitExecution for Execution<'_> {
                 ctx: self.ctx,
                 writable: None,
                 credentials: &self.credentials,
+                read_only: Vec::new(),
             }
             .inspect(target)
             .await
@@ -1033,6 +1076,7 @@ impl GitExecution for Execution<'_> {
                 ctx: self.ctx,
                 writable: None,
                 credentials: &self.credentials,
+                read_only: Vec::new(),
             }
             .run(directory, args)
             .await
@@ -1044,6 +1088,44 @@ struct GitPort<'a> {
     ctx: &'a Ctx<'a>,
     writable: Option<Vec<PathBuf>>,
     credentials: &'a [String],
+    /// Paths kept read-only inside `writable`.
+    read_only: Vec<PathBuf>,
+}
+
+/// The tool's sandboxed git, without ambient or global configuration and with hooks
+/// disabled: under the normal sandbox, or writing only `writable` (plus the Session's
+/// temporary and tool output directories) when given.
+pub(crate) fn sandboxed_git<'a>(
+    ctx: &'a Ctx<'a>,
+    writable: Option<Vec<PathBuf>>,
+) -> impl GitExecution + 'a {
+    GitPort {
+        ctx,
+        writable,
+        credentials: &[],
+        read_only: Vec::new(),
+    }
+}
+
+/// The sandboxed git of a merge into the checkout at `root`: it writes the checkout and
+/// the repository's `common_dir`, while the checkout's protected configuration (its
+/// `cyber.json`, `.cyber` configuration, hooks and plugins) stays read-only, as under
+/// the normal sandbox.
+pub(crate) fn sandboxed_merge_git<'a>(
+    ctx: &'a Ctx<'a>,
+    root: &Path,
+    common_dir: &Path,
+) -> impl GitExecution + 'a {
+    let git = root.join(".git");
+    GitPort {
+        ctx,
+        writable: Some(vec![root.to_path_buf(), common_dir.to_path_buf()]),
+        credentials: &[],
+        read_only: cyber_sandbox::protected_in(root)
+            .into_iter()
+            .filter(|path| *path != git)
+            .collect(),
+    }
 }
 
 struct WorktreeLease(Vec<cyber_core::worktrees::CheckoutLease>);
@@ -1119,7 +1201,13 @@ impl GitExecution for GitPort<'_> {
             }
             let mut prepared = match &self.writable {
                 Some(roots) => {
-                    crate::sandboxing::prepare_worktree_git(self.ctx, &arguments, roots).await
+                    crate::sandboxing::prepare_worktree_git(
+                        self.ctx,
+                        &arguments,
+                        roots,
+                        &self.read_only,
+                    )
+                    .await
                 }
                 None => {
                     crate::sandboxing::prepare_worktree_command(

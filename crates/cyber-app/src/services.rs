@@ -30,6 +30,8 @@ pub struct AppServices {
     global_config_dir: PathBuf,
     hook_review: Arc<HookReviewFn>,
     global: Arc<GlobalConfigFn>,
+    /// The full resolved configuration (trust and warnings included) of a Location.
+    resolved: Arc<cyber_tools::HookConfigFn>,
 }
 
 impl AppServices {
@@ -37,13 +39,18 @@ impl AppServices {
         resolver: Arc<CatalogResolver>,
         host: Arc<BuiltinHost>,
         remote: Arc<RemoteTools>,
-        config: Arc<ConfigFn>,
+        resolved: Arc<cyber_tools::HookConfigFn>,
         paths: cyber_core::paths::Paths,
         hook_review: Arc<HookReviewFn>,
         global: Arc<GlobalConfigFn>,
     ) -> Self {
+        let loader = Arc::clone(&resolved);
+        let config: Arc<ConfigFn> = Arc::new(move |location| {
+            loader(location).map(|resolved| (resolved.value, resolved.sources))
+        });
         Self {
             global,
+            resolved,
             resolver,
             host,
             remote,
@@ -560,6 +567,32 @@ impl Services for AppServices {
         };
         let global = (self.global)().map_err(unavailable)?;
         cyber_core::config::McpServeSettings::from_config(&global).map_err(unavailable)
+    }
+
+    /// An invalid configuration (an unknown feature among them) fails the request.
+    fn features(
+        &self,
+        location: &Path,
+    ) -> Result<cyber_core::features::Features, cyber_server::http::ApiError> {
+        let (config, sources) =
+            (self.config)(location).map_err(cyber_server::http::ApiError::invalid)?;
+        Ok(cyber_core::features::Features::from_config(
+            &config, &sources,
+        ))
+    }
+
+    /// Project definitions only from a trusted checkout.
+    fn team_definitions(
+        &self,
+        location: &Path,
+    ) -> Result<cyber_core::teams::Definitions, cyber_server::http::ApiError> {
+        let resolved = (self.resolved)(location).map_err(cyber_server::http::ApiError::invalid)?;
+        Ok(cyber_core::teams::definitions(
+            location,
+            &self.global_config_dir,
+            &resolved,
+            &cyber_core::env::ProcessEnv,
+        ))
     }
 
     /// Read from the Location's resolved (trust-gated) configuration; an invalid

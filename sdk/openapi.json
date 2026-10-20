@@ -3866,6 +3866,17 @@
               }
             ],
             "description": "Session-level `messaging.inbound` override (`cross-session-messaging` → Inbound\ncontrols): it replaces the Location's default; sender patterns still win."
+          },
+          "team": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TeamTag"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The team this Session is a member of (`agent-teams`), set at creation and never\nchanged. Teammates are root Sessions, so they outlive the lead."
           }
         },
         "required": [
@@ -3959,6 +3970,35 @@
           }
         ],
         "description": "Why a Session override refuses; the reason a refused sender sees."
+      },
+      "TeamTag": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "team_id": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "name": {
+            "type": "string",
+            "description": "The member name: `lead`, or the teammate's name."
+          }
+        },
+        "required": [
+          "team_id",
+          "role",
+          "name"
+        ],
+        "description": "The team label of a member Session, set at creation and never changed, so every\nsurface can label a teammate without a join."
+      },
+      "Role": {
+        "type": "string",
+        "enum": [
+          "lead",
+          "teammate"
+        ]
       },
       "ThreadStatus": {
         "type": "string",
@@ -4227,6 +4267,17 @@
               }
             ],
             "description": "Session-level `messaging.inbound` override (`cross-session-messaging` → Inbound\ncontrols): it replaces the Location's default; sender patterns still win."
+          },
+          "team": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TeamTag"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The team this Session is a member of (`agent-teams`), set at creation and never\nchanged. Teammates are root Sessions, so they outlive the lead."
           },
           "status": {
             "type": "string",
@@ -6673,6 +6724,13 @@
           },
           "directory": {
             "type": "string"
+          },
+          "member": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`agent-teams`: the teammate a request comes from (also for its subagents), which\nthe lead's clients label it with (`[tests] Allow bash: …?`)."
           }
         },
         "required": [
@@ -8018,6 +8076,969 @@
           "available"
         ]
       },
+      "Located_Array_of_FeatureStatus": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FeatureStatus"
+            }
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "FeatureStatus": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "maturity": {
+            "$ref": "#/components/schemas/Maturity"
+          },
+          "default": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": "string",
+            "description": "The label of the source that decided `enabled`: `default`, `cli:--features`,\n`env:CYBER_FEATURES`, a config layer, or a `managed:` policy document."
+          },
+          "locked": {
+            "type": "boolean",
+            "description": "The organization policy fixes the value."
+          },
+          "description": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "maturity",
+          "default",
+          "enabled",
+          "source",
+          "locked",
+          "description"
+        ],
+        "description": "One feature as `cyber features list` and `GET /api/v1/features` report it."
+      },
+      "Maturity": {
+        "type": "string",
+        "enum": [
+          "experimental",
+          "beta",
+          "stable"
+        ],
+        "description": "How far along a feature is. `experimental` features are off by default."
+      },
+      "ErrorBody": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "ErrorBody",
+        "description": "The JSON body of every declared failure. Some failures add `reason`, a machine-readable\nrefinement of `_tag`, and fields of their own such as `retryAfterMs` or `path`.",
+        "type": "object",
+        "properties": {
+          "_tag": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "ref": {
+            "description": "`err_<id>` for `UnknownError`, logged server-side.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "paths": {
+            "description": "Paths for rewind conflicts.",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "service": {
+            "description": "Capability group unavailable in this host or phase.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "_tag",
+          "message"
+        ],
+        "additionalProperties": true
+      },
+      "Located_Definitions": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/Definitions"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "Definitions": {
+        "type": "object",
+        "properties": {
+          "definitions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeamDefinition"
+            }
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DefinitionIssue"
+            }
+          }
+        },
+        "required": [
+          "definitions",
+          "issues"
+        ],
+        "description": "Every definition of a Location, valid ones by name."
+      },
+      "TeamDefinition": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "teammates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeammateSpec"
+            }
+          },
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Budget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "instructions": {
+            "type": "string",
+            "description": "The body: the lead's instructions."
+          },
+          "scope": {
+            "$ref": "#/components/schemas/DefinitionScope"
+          },
+          "path": {
+            "type": "string"
+          },
+          "shadows": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Definitions of the same name this one replaced (a user one under a project one)."
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "teammates",
+          "instructions",
+          "scope",
+          "path",
+          "shadows"
+        ],
+        "description": "A valid team definition."
+      },
+      "TeammateSpec": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "isolation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Isolation"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`None`: chosen at spawn (worktree when two or more teammates can edit)."
+          },
+          "owns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Globs, relative to the team directory, only this teammate may edit."
+          }
+        },
+        "required": [
+          "name",
+          "agent",
+          "owns"
+        ],
+        "description": "One teammate of a definition."
+      },
+      "Isolation": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "shared",
+            "description": "The lead's Location."
+          },
+          {
+            "type": "string",
+            "const": "worktree",
+            "description": "Its own managed worktree."
+          }
+        ],
+        "description": "Where a teammate works."
+      },
+      "DefinitionScope": {
+        "type": "string",
+        "enum": [
+          "project",
+          "user"
+        ],
+        "description": "Which directory a definition came from."
+      },
+      "DefinitionIssue": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string",
+            "description": "`<field>: <problem>`, such as `teammates[1].name: \"lead\" is reserved`."
+          }
+        },
+        "required": [
+          "path",
+          "message"
+        ],
+        "description": "A definition file that did not load, and why."
+      },
+      "Located_Array_of_TeamListing": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeamListing"
+            }
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "TeamListing": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "The definition name, or `adhoc`."
+          },
+          "lead_id": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "description": "`active`, `stopping` or `stopped`."
+          },
+          "stop_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StopReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why a stopping or stopped team stopped."
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "updated_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "teammates": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "tasks": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "tasks_done": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "cost_usd": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "lead_id",
+          "directory",
+          "status",
+          "created_ms",
+          "updated_ms",
+          "teammates",
+          "tasks",
+          "tasks_done",
+          "cost_usd"
+        ],
+        "description": "A team as `GET /teams` lists it."
+      },
+      "StopReason": {
+        "type": "string",
+        "enum": [
+          "user",
+          "budget",
+          "lead_deleted"
+        ]
+      },
+      "CreateTeam": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "lead_session_id": {
+            "type": "string"
+          },
+          "definition": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A team definition name (`cyber teams definitions`).",
+            "default": null
+          },
+          "teammates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeamSpawn"
+            },
+            "description": "Teammates to spawn, after the definition's."
+          },
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Budget"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Over the definition's budget and `budgets.team`.",
+            "default": null
+          }
+        },
+        "required": [
+          "lead_session_id"
+        ],
+        "description": "`POST /api/v1/teams`: a team led by `lead_session_id`, from a definition of the\nlead's Location, from teammates, or both."
+      },
+      "TeamSpawn": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "agent": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Default `build`.",
+            "default": null
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Default: the lead's model.",
+            "default": null
+          },
+          "isolation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Isolation"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Default: `worktree` when two or more teammates can edit, else `shared`.",
+            "default": null
+          },
+          "owns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Globs, relative to the team directory, only this teammate may edit.",
+            "default": []
+          },
+          "prompt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Admitted as the teammate's first input, with `source: \"team\"`.",
+            "default": null
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "description": "One teammate to spawn (`team_spawn`)."
+      },
+      "Data_CreatedTeam": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CreatedTeam"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "CreatedTeam": {
+        "type": "object",
+        "properties": {
+          "team": {
+            "$ref": "#/components/schemas/TeamView"
+          },
+          "spawned": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SpawnedMember"
+            }
+          }
+        },
+        "required": [
+          "team",
+          "spawned"
+        ],
+        "description": "A started team and its spawned teammates."
+      },
+      "TeamView": {
+        "type": "object",
+        "properties": {
+          "team": {
+            "$ref": "#/components/schemas/Team"
+          },
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Budget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "spent": {
+            "$ref": "#/components/schemas/TeamSpent"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemberView"
+            },
+            "description": "The lead first, then teammates in spawn order."
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Task"
+            },
+            "description": "Every task, in creation order."
+          }
+        },
+        "required": [
+          "team",
+          "spent",
+          "members",
+          "tasks"
+        ],
+        "description": "A team with its members, board, budget and spend."
+      },
+      "Team": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "The definition name, or `adhoc`."
+          },
+          "lead_id": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "description": "`active`, `stopping` or `stopped`."
+          },
+          "stop_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StopReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why a stopping or stopped team stopped."
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "updated_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "lead_id",
+          "directory",
+          "status",
+          "created_ms",
+          "updated_ms"
+        ],
+        "description": "A team, as its projection holds it."
+      },
+      "TeamSpent": {
+        "type": "object",
+        "properties": {
+          "turns": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "cost_usd": {
+            "type": "number",
+            "format": "double"
+          },
+          "wall_seconds": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "required": [
+          "turns",
+          "tokens",
+          "cost_usd",
+          "wall_seconds"
+        ],
+        "description": "A team's spend since it was created."
+      },
+      "MemberView": {
+        "type": "object",
+        "properties": {
+          "team_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "isolation": {
+            "$ref": "#/components/schemas/Isolation"
+          },
+          "worktree_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "owns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "$ref": "#/components/schemas/MemberStatus"
+          },
+          "last_status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "current_task": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CurrentTask"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The first `in_progress` task the member owns."
+          },
+          "turns": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "cost_usd": {
+            "type": "number",
+            "format": "double"
+          },
+          "last_message": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LastMessage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The member's newest cross-session message with text, either direction."
+          }
+        },
+        "required": [
+          "team_id",
+          "name",
+          "session_id",
+          "role",
+          "agent",
+          "isolation",
+          "owns",
+          "status",
+          "turns",
+          "tokens",
+          "cost_usd"
+        ],
+        "description": "One member as the team view shows it."
+      },
+      "MemberStatus": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "idle",
+              "stopped"
+            ]
+          },
+          {
+            "type": "string",
+            "const": "working",
+            "description": "A Drain runs."
+          },
+          {
+            "type": "string",
+            "const": "waiting_input",
+            "description": "A permission or question request is open."
+          }
+        ]
+      },
+      "CurrentTask": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ]
+      },
+      "LastMessage": {
+        "type": "object",
+        "properties": {
+          "direction": {
+            "type": "string",
+            "description": "`in` (received) or `out` (sent)."
+          },
+          "peer": {
+            "type": "string",
+            "description": "The other side's address."
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "direction",
+          "peer",
+          "outcome",
+          "text",
+          "created_ms"
+        ],
+        "description": "A member's newest message; `text` is cut to 200 characters."
+      },
+      "Task": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "default": ""
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus"
+          },
+          "owner": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "updated_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "id",
+          "seq",
+          "title",
+          "status",
+          "created_by",
+          "created_ms",
+          "updated_ms",
+          "version"
+        ],
+        "description": "A task as it is after a change."
+      },
+      "TaskStatus": {
+        "type": "string",
+        "enum": [
+          "todo",
+          "in_progress",
+          "blocked",
+          "done",
+          "cancelled"
+        ]
+      },
+      "SpawnedMember": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "isolation": {
+            "$ref": "#/components/schemas/Isolation"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "session_id",
+          "agent",
+          "isolation",
+          "directory"
+        ],
+        "description": "A spawned teammate."
+      },
+      "Data_TeamView": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TeamView"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "Data_Array_of_Task": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Task"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "Data_Team": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Team"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "ResumeTeam": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "lead": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The new lead after `lead_deleted`: a top-level Session in no team.",
+            "default": null
+          }
+        },
+        "description": "`POST /api/v1/teams/:id/resume`."
+      },
       "Located_Array_of_McpServerStatus": {
         "type": "object",
         "properties": {
@@ -8451,49 +9472,6 @@
           "address"
         ],
         "description": "The target of a sent message."
-      },
-      "ErrorBody": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": "ErrorBody",
-        "description": "The JSON body of every declared failure. Some failures add `reason`, a machine-readable\nrefinement of `_tag`, and fields of their own such as `retryAfterMs` or `path`.",
-        "type": "object",
-        "properties": {
-          "_tag": {
-            "type": "string"
-          },
-          "message": {
-            "type": "string"
-          },
-          "ref": {
-            "description": "`err_<id>` for `UnknownError`, logged server-side.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "paths": {
-            "description": "Paths for rewind conflicts.",
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "type": "string"
-            }
-          },
-          "service": {
-            "description": "Capability group unavailable in this host or phase.",
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "_tag",
-          "message"
-        ],
-        "additionalProperties": true
       },
       "PeerErrorBody": {
         "type": "object",
@@ -16186,6 +17164,587 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Located_Machine"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/features": {
+      "get": {
+        "operationId": "v1.features.list",
+        "summary": "Every registered feature with its maturity, default, effective value and source for the Location",
+        "tags": [
+          "features"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_Array_of_FeatureStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError, such as `ConfigInvalidError: unknown feature \"telepathy\"`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/team-definitions": {
+      "get": {
+        "operationId": "v1.teams.definitions",
+        "summary": "Team definitions of the Location (project ones only from a trusted checkout) and the files that failed to load, naming the field",
+        "tags": [
+          "teams"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_Definitions"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "FeatureDisabledError: the `teams` feature is off",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/teams": {
+      "get": {
+        "operationId": "v1.teams.list",
+        "summary": "Teams led from the Location, newest first (`status`: active, stopping or stopped), with teammate and task counts and cost",
+        "tags": [
+          "teams"
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_Array_of_TeamListing"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "FeatureDisabledError: the `teams` feature is off",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "v1.teams.create",
+        "summary": "Start a team led by `lead_session_id` from a definition of the lead's Location, from teammates, or both",
+        "tags": [
+          "teams"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_CreatedTeam"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError, such as `Teammates cannot lead a team` or an unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "SessionNotFoundError, or FeatureDisabledError: the `teams` feature is off",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "TeamLimitError: Team size limit reached (n), or ConflictError when the lead is already in a team",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTeam"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/teams/{teamID}": {
+      "get": {
+        "operationId": "v1.teams.get",
+        "summary": "A team: members with status, current task, cost and last message, the task board, budget and spend",
+        "tags": [
+          "teams"
+        ],
+        "parameters": [
+          {
+            "name": "teamID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_TeamView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TeamNotFoundError, or FeatureDisabledError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/teams/{teamID}/tasks": {
+      "get": {
+        "operationId": "v1.teams.tasks",
+        "summary": "The team's task board in creation order, optionally only one `status` or `owner`",
+        "tags": [
+          "teams"
+        ],
+        "parameters": [
+          {
+            "name": "teamID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "owner",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_Task"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TeamNotFoundError, or FeatureDisabledError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/teams/{teamID}/stop": {
+      "post": {
+        "operationId": "v1.teams.stop",
+        "summary": "Stop a team: stopping while teammates finish their current Turn, then stopped; queued input stays queued",
+        "tags": [
+          "teams"
+        ],
+        "parameters": [
+          {
+            "name": "teamID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Team"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TeamNotFoundError, or FeatureDisabledError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/teams/{teamID}/resume": {
+      "post": {
+        "operationId": "v1.teams.resume",
+        "summary": "Resume a stopped team; after lead_deleted `lead` names the new lead",
+        "tags": [
+          "teams"
+        ],
+        "parameters": [
+          {
+            "name": "teamID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Team"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError, such as a new lead that is a teammate",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TeamNotFoundError, or FeatureDisabledError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ConflictError: only a stopped team resumes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResumeTeam"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/teams/{teamID}/events": {
+      "get": {
+        "operationId": "v1.teams.events",
+        "summary": "Live `team.*` events of the team and its members' permission and question events, for the team view",
+        "tags": [
+          "teams"
+        ],
+        "parameters": [
+          {
+            "name": "teamID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Server-sent events; each `data` is an EventEnvelope",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "TeamNotFoundError, or FeatureDisabledError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
                 }
               }
             }

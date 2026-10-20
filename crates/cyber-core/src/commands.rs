@@ -210,6 +210,10 @@ pub const BUILTIN: &[(&str, &str)] = &[
         "btw",
         "Ask a side question; the answer is not added to the Session",
     ),
+    (
+        "team",
+        "Agent teams (experimental): the team view; /team start <definition>, /team stop, /team resume",
+    ),
     ("fork", "Fork this Session into a new one"),
     ("new", "Start a new Session"),
     ("rewind", "Rewind code and conversation to a message"),

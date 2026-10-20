@@ -11,6 +11,7 @@ pub(crate) mod progress;
 mod rename;
 mod settings;
 pub(crate) mod sidebar;
+mod team;
 mod themes;
 pub mod welcome;
 mod workflows;
@@ -59,7 +60,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     }
     if matches!(
         app.overlay,
-        Overlay::Settings | Overlay::Files | Overlay::Workflows | Overlay::Messages
+        Overlay::Settings | Overlay::Files | Overlay::Workflows | Overlay::Messages | Overlay::Team
     ) {
         // Full screen over the transcript, composer and sidebar; the footer stays.
         app.set_screen_links(Vec::new());
@@ -72,15 +73,7 @@ pub fn draw(f: &mut Frame, app: &App) {
                 ..area
             },
         );
-        if matches!(app.overlay, Overlay::Files) {
-            explorer::draw(f, app, panel);
-        } else if matches!(app.overlay, Overlay::Workflows) {
-            workflows::draw(f, app, panel);
-        } else if matches!(app.overlay, Overlay::Messages) {
-            messaging::view(f, app, panel);
-        } else {
-            settings::draw(f, app, panel);
-        }
+        full_screen(f, app, panel);
         footer::draw(f, app, plan.footer, plan.compact_footer);
         return;
     }
@@ -110,7 +103,8 @@ pub fn draw(f: &mut Frame, app: &App) {
         | Overlay::Settings
         | Overlay::Files
         | Overlay::Workflows
-        | Overlay::Messages => {}
+        | Overlay::Messages
+        | Overlay::Team => {}
         Overlay::Themes(s) => themes::draw(f, app, s, area),
         Overlay::Picker(p) => overlays::picker(f, app, p, area),
         Overlay::Palette(p) => overlays::palette(f, app, p, area),
@@ -131,6 +125,18 @@ pub fn draw(f: &mut Frame, app: &App) {
         Overlay::SideChat(chat) => overlays::side_chat(f, app, chat, area),
         Overlay::ConfirmStopTasks => overlays::confirm_stop_tasks(f, app, area),
         Overlay::ConfirmBypass => overlays::confirm_bypass(f, app, area),
+    }
+}
+
+/// The full-screen view the overlay opens: the explorer, the Workflow monitor,
+/// `/messages`, the team view or Settings.
+fn full_screen(f: &mut Frame, app: &App, panel: Rect) {
+    match app.overlay {
+        Overlay::Files => explorer::draw(f, app, panel),
+        Overlay::Workflows => workflows::draw(f, app, panel),
+        Overlay::Messages => messaging::view(f, app, panel),
+        Overlay::Team => team::view(f, app, panel),
+        _ => settings::draw(f, app, panel),
     }
 }
 

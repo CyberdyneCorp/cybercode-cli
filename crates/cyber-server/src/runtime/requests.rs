@@ -79,6 +79,10 @@ pub struct RequestOrigin {
     pub title: String,
     pub agent: String,
     pub directory: String,
+    /// `agent-teams`: the teammate a request comes from (also for its subagents), which
+    /// the lead's clients label it with (`[tests] Allow bash: …?`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -333,24 +337,16 @@ impl Inner {
         let runtime = super::Runtime {
             inner: self.clone(),
         };
-        request.routed_to = match runtime.ancestors(&info).await {
-            Ok(ancestors) if runtime.unattended_workflow(&info, &ancestors) => return false,
-            Ok(ancestors) => ancestors
-                .into_iter()
-                .map(|info| RequestRoute {
-                    session_id: info.id,
-                    directory: request_directory(&info.directory),
-                })
-                .collect(),
-            Err(e) => {
-                self.bus.publish(super::LiveEvent::Error {
-                    session_id: asker.session_id.clone(),
-                    kind: "ancestry".into(),
-                    message: format!("could not route a child request: {e}"),
-                });
-                return false;
-            }
+        let Some((routes, member)) = self.request_routes(&runtime, asker, &info).await else {
+            return false;
         };
+        request.routed_to = routes
+            .into_iter()
+            .map(|info| RequestRoute {
+                session_id: info.id,
+                directory: request_directory(&info.directory),
+            })
+            .collect();
         if !request.routed_to.is_empty() {
             request.origin = Some(RequestOrigin {
                 title: match info.subagent_name {
@@ -359,6 +355,7 @@ impl Inner {
                 },
                 agent: asker.agent.clone(),
                 directory: request_directory(&info.directory),
+                member,
             });
         }
         let kind_name = if matches!(request.kind, PendingKind::Permission(_)) {
@@ -389,7 +386,45 @@ impl Inner {
         // Only publish after durable storage and reply registration both succeeded.
         self.publish(&stored);
         self.route_request_event(&request, kind_name, serde_json::to_value(&request).unwrap());
+        // The status refresh reads this Session's state, so its lock is released first.
+        drop(state);
+        self.request_status_changed(&request).await;
         true
+    }
+
+    /// The Sessions a request is routed to: the asking Session's ancestors and, for a
+    /// teammate (or one of its subagents), the team lead with the teammate's name
+    /// (`agent-teams` → Labelled teammate requests). `None` when nobody can answer it: an
+    /// unattended Workflow agent, or routes that cannot be read (fail closed).
+    async fn request_routes(
+        &self,
+        runtime: &Runtime,
+        asker: &Asker,
+        info: &super::SessionInfo,
+    ) -> Option<(Vec<super::SessionInfo>, Option<String>)> {
+        let routed = match runtime.ancestors(info).await {
+            Ok(ancestors) if runtime.unattended_workflow(info, &ancestors) => return None,
+            Ok(ancestors) => runtime
+                .request_team_lead(info, &ancestors)
+                .await
+                .map(|lead| (ancestors, lead)),
+            Err(e) => Err(e),
+        };
+        match routed {
+            Ok((mut routes, Some((lead, member)))) => {
+                routes.push(lead);
+                Some((routes, Some(member)))
+            }
+            Ok((routes, None)) => Some((routes, None)),
+            Err(e) => {
+                self.bus.publish(super::LiveEvent::Error {
+                    session_id: asker.session_id.clone(),
+                    kind: "ancestry".into(),
+                    message: format!("could not route a child request: {e}"),
+                });
+                None
+            }
+        }
     }
 
     pub(crate) async fn abandon_requests(&self, session: &str) -> Result<(), RuntimeError> {
@@ -520,6 +555,7 @@ impl Inner {
         )
         .await?;
         self.route_request_event(request, PERMISSION_REPLIED, payload);
+        self.request_status_changed(request).await;
         Ok(())
     }
 
@@ -539,7 +575,17 @@ impl Inner {
         )
         .await?;
         self.route_request_event(request, QUESTION_REPLIED, payload);
+        self.request_status_changed(request).await;
         Ok(())
+    }
+
+    /// `agent-teams`: a teammate (or the Session a request is routed to) is
+    /// `waiting_input` while a request is open, and `working` again once answered.
+    async fn request_status_changed(&self, request: &PendingRequest) {
+        self.member_status_changed(&request.session_id).await;
+        for route in &request.routed_to {
+            self.member_status_changed(&route.session_id).await;
+        }
     }
 
     fn route_request_event(&self, request: &PendingRequest, kind: &str, data: Value) {

@@ -82,6 +82,13 @@ pub struct GlobalArgs {
     /// for this process. Also CYBER_PURE=1.
     #[arg(long, global = true)]
     pub pure: bool,
+
+    /// Turn features on or off for this process, as a comma list where `-name` turns one
+    /// off (`teams,-other`). Above CYBER_FEATURES and config; below organization policy.
+    /// Commands served by the background server (`cyber teams list`, the TUI) follow its
+    /// configuration instead: use `cyber features enable`, or the TUI with `--embedded`.
+    #[arg(long, global = true, value_name = "LIST", allow_hyphen_values = true)]
+    pub features: Option<String>,
 }
 
 /// TUI launch flags (`tui` → Launch flags).
@@ -169,6 +176,16 @@ pub enum Command {
     Mcp {
         #[command(subcommand)]
         cmd: McpCmd,
+    },
+    /// Agent teams (feature `teams`): list, show, stop and resume teams; list definitions.
+    Teams {
+        #[command(subcommand)]
+        cmd: crate::commands::teams::TeamsCmd,
+    },
+    /// List the feature registry; enable or disable a feature in config.
+    Features {
+        #[command(subcommand)]
+        cmd: crate::commands::features::FeaturesCmd,
     },
     /// List saved Workflows; run, inspect and control Workflow Runs.
     Workflows {

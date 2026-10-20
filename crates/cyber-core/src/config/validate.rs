@@ -34,6 +34,7 @@ const KNOWN_KEYS: &[&str] = &[
     "tool_output",
     "workflows",
     "goals",
+    "teams",
     "loops",
     "messaging",
     "peers",
@@ -133,6 +134,7 @@ fn settings_issues(value: &Value) -> Vec<String> {
         issues.push(error);
     }
     issues.extend(crate::budget::validate_config(value));
+    issues.extend(team_issues(value));
     if let Err(error) = super::DeferredToolSettings::from_config(value) {
         issues.push(error);
     }
@@ -160,6 +162,13 @@ fn settings_issues(value: &Value) -> Vec<String> {
     if let Err(error) = crate::browser::BrowserSettings::from_config(value) {
         issues.push(error);
     }
+    issues
+}
+
+/// Errors of `features`, `experimental` and `teams` (`agent-teams`).
+fn team_issues(value: &Value) -> Vec<String> {
+    let mut issues = crate::features::validate_config(value);
+    issues.extend(crate::teams::TeamSettings::from_config(value).err());
     issues
 }
 

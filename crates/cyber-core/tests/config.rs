@@ -1977,3 +1977,101 @@ fn invalid_user_peers_config_fails_loading() {
         .to_string();
     assert!(err.contains("peers.listen.tls:"), "{err}");
 }
+
+fn teams(resolved: &Resolved) -> cyber_core::features::FeatureStatus {
+    cyber_core::features::Features::from_config(&resolved.value, &resolved.sources)
+        .get("teams")
+        .cloned()
+        .unwrap()
+}
+
+/// `configuration` → Feature flags registry, scenario "Unknown feature rejected".
+#[test]
+fn an_unknown_feature_fails_loading_in_any_config_layer() {
+    let f = Fixture::new();
+    f.write("cyber.jsonc", r#"{"features": {"telepathy": true}}"#);
+    let err = f.load().unwrap_err().to_string();
+    assert_eq!(err, "ConfigInvalidError: unknown feature \"telepathy\"");
+    let f = Fixture::new();
+    let overrides = vec!["experimental.telepathy=true".to_string()];
+    let err = config::load(&f.request(&f.repo, &overrides))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("unknown feature \"telepathy\""), "{err}");
+}
+
+#[test]
+fn features_resolve_from_config_env_and_the_deprecated_alias() {
+    let mut f = Fixture::new();
+    let resolved = f.load().unwrap();
+    let status = teams(&resolved);
+    assert!(!status.enabled);
+    assert_eq!(status.source, "default");
+    let path = f.write("global:cyber.jsonc", r#"{"experimental": {"teams": true}}"#);
+    let resolved = f.load().unwrap();
+    assert_eq!(
+        teams(&resolved).source,
+        format!("global:{}", path.display())
+    );
+    assert!(teams(&resolved).enabled);
+    assert!(
+        resolved
+            .warnings
+            .contains(&"experimental.teams is deprecated; use features.teams".to_string()),
+        "{:?}",
+        resolved.warnings
+    );
+    f.env.insert("CYBER_FEATURES".into(), "-teams".into());
+    let status = teams(&f.load().unwrap());
+    assert_eq!(
+        (status.enabled, status.source.as_str()),
+        (false, "env:CYBER_FEATURES")
+    );
+    f.env.insert("CYBER_FEATURES".into(), "telepathy".into());
+    let err = f.load().unwrap_err().to_string();
+    assert!(
+        err.contains("CYBER_FEATURES: unknown feature \"telepathy\""),
+        "{err}"
+    );
+}
+
+/// `policy.features.lock` wins over every layer, and a malformed policy locks every
+/// feature to its default instead of leaving it switchable.
+#[test]
+fn the_organization_policy_locks_features_and_fails_closed() {
+    let mut f = Fixture::new();
+    f.write("global:cyber.jsonc", r#"{"features": {"teams": false}}"#);
+    let policy = f.managed(r#"{"policy": {"features": {"lock": {"teams": true}}}}"#);
+    let status = teams(&f.load().unwrap());
+    assert!(status.enabled && status.locked);
+    assert_eq!(status.source, format!("managed:{}", policy.display()));
+    f.write("global:cyber.jsonc", r#"{"features": {"teams": true}}"#);
+    f.managed(r#"{"policy": {"features": {"lock": {"telepathy": true}}}}"#);
+    let status = teams(&f.load().unwrap());
+    assert!(!status.enabled && status.locked, "{status:?}");
+    f.managed(r#"{"policy": {"features": {"pin": {}}}}"#);
+    assert!(!teams(&f.load().unwrap()).enabled);
+}
+
+/// Project team definitions are part of the trust digest: they load only after
+/// `cyber trust approve`, and editing one asks again.
+#[test]
+fn project_team_definitions_need_workspace_trust() {
+    let f = Fixture::new();
+    let report = config::trust_report(&f.request(&f.repo, &[])).unwrap();
+    assert!(report.trusted && report.digest.is_none());
+    let path = f.write(
+        ".cyber/teams/feature.md",
+        "---\nteammates: [{name: api, agent: build}]\n---\nLead.\n",
+    );
+    let report = config::trust_report(&f.request(&f.repo, &[])).unwrap();
+    assert!(!report.trusted);
+    assert!(report.definitions.contains(&path.display().to_string()));
+    f.approve_current();
+    assert!(f.load().unwrap().trust.trusted);
+    f.write(
+        ".cyber/teams/feature.md",
+        "---\nteammates: [{name: api, agent: general}]\n---\nLead.\n",
+    );
+    assert!(!f.load().unwrap().trust.trusted);
+}

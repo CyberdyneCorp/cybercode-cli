@@ -15,6 +15,9 @@ use crate::model::{Item, Queued};
 
 /// Prefix of the notices an idle subscription admits.
 const NOTICE_PREFIX: &str = "msgx_watch_";
+/// Prefix of the notices a teammate's idle admits to its lead (`agent-teams` → Idle
+/// notifications).
+const TEAM_NOTICE_PREFIX: &str = "msgx_team_idle_";
 
 /// One side of a message (`MessageRecord`).
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -134,15 +137,21 @@ pub struct Notice {
     /// The first line of the target's last run, `failed: …`, `interrupted` or `idle`.
     pub status: String,
     pub expired: bool,
+    /// A teammate's idle notice: the server's whole line, `tests is idle: all assigned
+    /// tasks done`.
+    pub line: Option<String>,
 }
 
 impl Notice {
     /// The notice a transcript item is, when it is one: only inbox rows the server names
-    /// `msgx_watch_…` and whose text is a notice element.
+    /// `msgx_watch_…` or `msgx_team_idle_…` and whose text is a notice element.
     pub fn of(item: &Item) -> Option<Self> {
         let Item::User { id, text, .. } = item else {
             return None;
         };
+        if id.starts_with(TEAM_NOTICE_PREFIX) {
+            return Self::team(text);
+        }
         if !id.starts_with(NOTICE_PREFIX) {
             return None;
         }
@@ -155,6 +164,7 @@ impl Notice {
                     .map(|t| t.timestamp_millis()),
                 status: attribute(head, "status").unwrap_or_default(),
                 expired: false,
+                line: None,
             });
         }
         head.starts_with("<session_watch_expired ").then(|| Self {
@@ -162,6 +172,29 @@ impl Notice {
             finished_ms: None,
             status: "subscription expired".into(),
             expired: true,
+            line: None,
+        })
+    }
+
+    /// `<team_idle_notice team_id="…" member="…"/>`, then the escaped notice line.
+    fn team(text: &str) -> Option<Self> {
+        let mut lines = text.lines();
+        let head = lines.next()?;
+        if !head.starts_with("<team_idle_notice ") {
+            return None;
+        }
+        let target = attribute(head, "member")?;
+        let line = clean(&unescape(lines.next().unwrap_or_default()));
+        let status = line
+            .strip_prefix(&format!("{target} is idle"))
+            .map(|rest| rest.trim_start_matches([':', ' ']).to_owned())
+            .unwrap_or_default();
+        Some(Self {
+            target,
+            finished_ms: None,
+            status,
+            expired: false,
+            line: Some(line),
         })
     }
 }
@@ -171,13 +204,16 @@ fn attribute(element: &str, name: &str) -> Option<String> {
     let start = element.find(&format!(" {name}=\""))? + name.len() + 3;
     let rest = &element[start..];
     let value = &rest[..rest.find('"')?];
-    Some(clean(
-        &value
-            .replace("&quot;", "\"")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&amp;", "&"),
-    ))
+    Some(clean(&unescape(value)))
+}
+
+/// The server's attribute escaping undone.
+fn unescape(value: &str) -> String {
+    value
+        .replace("&quot;", "\"")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
 }
 
 /// One line of untrusted text without control characters; tabs become spaces.
@@ -592,6 +628,31 @@ mod tests {
             promoted_ms: None,
         };
         assert!(Notice::of(&expired).unwrap().expired);
+    }
+
+    #[test]
+    fn team_idle_notices_carry_their_unescaped_line() {
+        let item = |id: &str, text: &str| Item::User {
+            id: id.into(),
+            text: text.into(),
+            promoted_ms: None,
+        };
+        let text = "<team_idle_notice team_id=\"team_1\" member=\"tests\"/>\ntests is idle: said &quot;ok&quot;\x1b[2J\nThis is an idle notice about a teammate.";
+        let notice = Notice::of(&item("msgx_team_idle_team_1_tests_7", text)).unwrap();
+        assert_eq!(notice.target, "tests");
+        assert_eq!(
+            notice.line.as_deref(),
+            Some("tests is idle: said \"ok\"[2J")
+        );
+        assert_eq!(notice.status, "said \"ok\"[2J");
+        assert!(!notice.expired);
+        assert_eq!(
+            Notice::of(&item("msg_user", text)),
+            None,
+            "only the server names team notices"
+        );
+        let other = "<session_idle_notice target=\"x\"/>";
+        assert_eq!(Notice::of(&item("msgx_team_idle_t_x_1", other)), None);
     }
 
     #[test]

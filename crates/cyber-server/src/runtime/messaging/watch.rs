@@ -179,7 +179,7 @@ pub(crate) fn last_run(state: &SessionState) -> (String, Option<i64>) {
 }
 
 /// Whether the inbox holds input a Drain would still promote (`held` rows do not count).
-fn promotable(state: &SessionState) -> bool {
+pub(crate) fn promotable(state: &SessionState) -> bool {
     state
         .inbox
         .iter()

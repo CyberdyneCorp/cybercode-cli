@@ -186,6 +186,8 @@ pub enum Action {
     Workflow(crate::workflows::Request),
     /// `/loop` (`loops-scheduling`).
     Loop(crate::loops::LoopRequest),
+    /// `/team`, `/team start|stop|resume` (`agent-teams`).
+    Team(crate::team::Request),
     /// Open a file in `$VISUAL`/`$EDITOR` (`s` on a Workflow Run: its script).
     EditFile(String),
     Quit,
@@ -321,6 +323,8 @@ pub enum Overlay {
     SideChat(crate::side_chat::SideChat),
     /// `/messages`: the Session's message history; its state is `App::messaging`.
     Messages,
+    /// `/team`: the members and the task board; the team is `Sidebar::team`.
+    Team,
 }
 
 /// Text the small model drafts for the user (`vcs-integration` → Commit and PR text
@@ -464,6 +468,8 @@ pub struct App {
     pub messaging: crate::messaging::Messages,
     /// The Session's loops, for quiet-iteration collapsing and the footer.
     pub loops: crate::loops::Loops,
+    /// The team view's selection and the way back from an opened teammate.
+    pub team: crate::team::TeamState,
     /// The runs the indicators show and the notices of their ends.
     pub watch: crate::workflow_watch::Watch,
     /// `tui.notifications`.
@@ -548,6 +554,7 @@ impl App {
             workflows: Default::default(),
             messaging: Default::default(),
             loops: Default::default(),
+            team: Default::default(),
             watch: Default::default(),
             notifications: Default::default(),
             #[cfg(test)]
@@ -652,6 +659,7 @@ impl App {
         if session.id != self.session.id {
             self.forget_session_views();
             self.thread_session(&session.id);
+            self.team_session(&session.id);
         }
         if session.id != self.session.id || self.mode_selection.as_deref() == Some(&session.mode) {
             self.mode_selection = None;
@@ -862,7 +870,7 @@ impl App {
             return vec![Action::Quit];
         }
         match &self.overlay {
-            Overlay::None => match self.thread_key(key) {
+            Overlay::None => match self.thread_key(key).or_else(|| self.team_return_key(key)) {
                 Some(actions) => actions,
                 None => self.composer_key(key),
             },
@@ -922,6 +930,7 @@ impl App {
                 Vec::new()
             }
             Overlay::Messages => self.messages_key(key),
+            Overlay::Team => self.team_key(key),
         }
     }
 
@@ -1534,6 +1543,7 @@ impl App {
         match name {
             "memory" => self.memory_command(args),
             "loop" => self.loop_command(args),
+            "team" => self.team_command(args),
             "hooks" if args == "history" => {
                 self.overlay = Overlay::HookHistory;
                 self.load_hook_history(None)

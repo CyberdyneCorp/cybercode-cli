@@ -946,6 +946,90 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .ok::<Located<super::system::Machine>>(g),
         op(
             "get",
+            "/features",
+            "v1.features.list",
+            "Every registered feature with its maturity, default, effective value and source for the Location",
+        )
+        .located()
+        .ok::<Located<Vec<cyber_core::features::FeatureStatus>>>(g)
+        .error::<ErrorBody>(g, 400, "InvalidRequestError, such as `ConfigInvalidError: unknown feature \"telepathy\"`"),
+        op(
+            "get",
+            "/team-definitions",
+            "v1.teams.definitions",
+            "Team definitions of the Location (project ones only from a trusted checkout) and the files that failed to load, naming the field",
+        )
+        .located()
+        .ok::<Located<cyber_core::teams::Definitions>>(g)
+        .error::<ErrorBody>(g, 404, "FeatureDisabledError: the `teams` feature is off"),
+        op(
+            "get",
+            "/teams",
+            "v1.teams.list",
+            "Teams led from the Location, newest first (`status`: active, stopping or stopped), with teammate and task counts and cost",
+        )
+        .located()
+        .query(&["status"])
+        .ok::<Located<Vec<crate::runtime::teams::TeamListing>>>(g)
+        .error::<ErrorBody>(g, 404, "FeatureDisabledError: the `teams` feature is off"),
+        op(
+            "post",
+            "/teams",
+            "v1.teams.create",
+            "Start a team led by `lead_session_id` from a definition of the lead's Location, from teammates, or both",
+        )
+        .body::<super::teams::CreateTeam>(g)
+        .status(201)
+        .ok::<Data<super::teams::CreatedTeam>>(g)
+        .error::<ErrorBody>(g, 400, "InvalidRequestError, such as `Teammates cannot lead a team` or an unknown agent")
+        .error::<ErrorBody>(g, 404, "SessionNotFoundError, or FeatureDisabledError: the `teams` feature is off")
+        .error::<ErrorBody>(g, 409, "TeamLimitError: Team size limit reached (n), or ConflictError when the lead is already in a team"),
+        op(
+            "get",
+            "/teams/{teamID}",
+            "v1.teams.get",
+            "A team: members with status, current task, cost and last message, the task board, budget and spend",
+        )
+        .ok::<Data<crate::runtime::teams::TeamView>>(g)
+        .error::<ErrorBody>(g, 404, "TeamNotFoundError, or FeatureDisabledError"),
+        op(
+            "get",
+            "/teams/{teamID}/tasks",
+            "v1.teams.tasks",
+            "The team's task board in creation order, optionally only one `status` or `owner`",
+        )
+        .query(&["status", "owner"])
+        .ok::<Data<Vec<crate::runtime::teams::Task>>>(g)
+        .error::<ErrorBody>(g, 404, "TeamNotFoundError, or FeatureDisabledError"),
+        op(
+            "post",
+            "/teams/{teamID}/stop",
+            "v1.teams.stop",
+            "Stop a team: stopping while teammates finish their current Turn, then stopped; queued input stays queued",
+        )
+        .ok::<Data<crate::runtime::teams::Team>>(g)
+        .error::<ErrorBody>(g, 404, "TeamNotFoundError, or FeatureDisabledError"),
+        op(
+            "post",
+            "/teams/{teamID}/resume",
+            "v1.teams.resume",
+            "Resume a stopped team; after lead_deleted `lead` names the new lead",
+        )
+        .optional_body::<super::teams::ResumeTeam>(g)
+        .ok::<Data<crate::runtime::teams::Team>>(g)
+        .error::<ErrorBody>(g, 400, "InvalidRequestError, such as a new lead that is a teammate")
+        .error::<ErrorBody>(g, 404, "TeamNotFoundError, or FeatureDisabledError")
+        .error::<ErrorBody>(g, 409, "ConflictError: only a stopped team resumes"),
+        op(
+            "get",
+            "/teams/{teamID}/events",
+            "v1.teams.events",
+            "Live `team.*` events of the team and its members' permission and question events, for the team view",
+        )
+        .stream()
+        .error::<ErrorBody>(g, 404, "TeamNotFoundError, or FeatureDisabledError"),
+        op(
+            "get",
             "/mcp",
             "v1.mcp.status",
             "Inspect configured MCP state and retained ownership observations without startup",

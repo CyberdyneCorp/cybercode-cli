@@ -339,6 +339,20 @@ export type CreateLoop = {
   command: string;
 } | LoopSpec;
 
+/**
+ * `POST /api/v1/teams`: a team led by `lead_session_id`, from a definition of the
+ * lead's Location, from teammates, or both.
+ */
+export type CreateTeam = {
+  lead_session_id: string;
+  /** A team definition name (`cyber teams definitions`). */
+  definition?: string | null;
+  /** Teammates to spawn, after the definition's. */
+  teammates?: TeamSpawn[];
+  /** Over the definition's budget and `budgets.team`. */
+  budget?: Budget | null;
+};
+
 export type CreateWorktreeBody = {
   /** Generated when omitted. */
   name?: string | null;
@@ -347,10 +361,21 @@ export type CreateWorktreeBody = {
   session?: CreateBody;
 };
 
+/** A started team and its spawned teammates. */
+export type CreatedTeam = {
+  team: TeamView;
+  spawned: SpawnedMember[];
+};
+
 export type CreatedWorktree = {
   worktree: WorktreeInfo;
   session: Session;
   setup: SetupStatus;
+};
+
+export type CurrentTask = {
+  id: string;
+  title: string;
 };
 
 export type Cursor = {
@@ -382,6 +407,10 @@ export type Data_Array_of_RemoteReach = {
   data: RemoteReach[];
 };
 
+export type Data_Array_of_Task = {
+  data: Task[];
+};
+
 export type Data_Array_of_string = {
   data: string[];
 };
@@ -404,6 +433,10 @@ export type Data_ChildSetupInspection = {
 
 export type Data_ChildThreads = {
   data: ChildThreads;
+};
+
+export type Data_CreatedTeam = {
+  data: CreatedTeam;
 };
 
 export type Data_CreatedWorktree = {
@@ -506,6 +539,14 @@ export type Data_SubtreeStopReport = {
   data: SubtreeStopReport;
 };
 
+export type Data_Team = {
+  data: Team;
+};
+
+export type Data_TeamView = {
+  data: TeamView;
+};
+
 export type Data_UsageInsights = {
   data: UsageInsights;
 };
@@ -524,6 +565,22 @@ export type Data_Watch = {
 
 export type Data_WorkflowRun = {
   data: WorkflowRun;
+};
+
+/** A definition file that did not load, and why. */
+export type DefinitionIssue = {
+  path: string;
+  /** `<field>: <problem>`, such as `teammates[1].name: "lead" is reserved`. */
+  message: string;
+};
+
+/** Which directory a definition came from. */
+export type DefinitionScope = "project" | "user";
+
+/** Every definition of a Location, valid ones by name. */
+export type Definitions = {
+  definitions: TeamDefinition[];
+  issues: DefinitionIssue[];
 };
 
 export type Delegation = {
@@ -604,6 +661,22 @@ export type FavoriteModel = {
   provider: string;
   model: string;
   total_tokens: number;
+};
+
+/** One feature as `cyber features list` and `GET /api/v1/features` report it. */
+export type FeatureStatus = {
+  name: string;
+  maturity: Maturity;
+  default: boolean;
+  enabled: boolean;
+  /**
+   * The label of the source that decided `enabled`: `default`, `cli:--features`,
+   * `env:CYBER_FEATURES`, a config layer, or a `managed:` policy document.
+   */
+  source: string;
+  /** The organization policy fixes the value. */
+  locked: boolean;
+  description: string;
 };
 
 /** A path's permission decision for browsing (`server-api` → File browsing routes). */
@@ -967,6 +1040,9 @@ export type InvitePeer = {
   host?: string | null;
 };
 
+/** Where a teammate works. */
+export type Isolation = "shared" | "worktree";
+
 /** One ended iteration, as clients list it. */
 export type IterationRecord = {
   n: number;
@@ -1018,6 +1094,17 @@ export type JobStatus = "running" | "completed" | "error" | "cancelled" | "inter
 
 export type Kind = "file" | "directory" | "symlink";
 
+/** A member's newest message; `text` is cut to 200 characters. */
+export type LastMessage = {
+  /** `in` (received) or `out` (sent). */
+  direction: string;
+  /** The other side's address. */
+  peer: string;
+  outcome: string;
+  text: string;
+  created_ms: number;
+};
+
 /** The latest reading of one provider window. */
 export type LimitReading = {
   provider: string;
@@ -1053,6 +1140,12 @@ export type Located_Array_of_CommandInfo = {
 };
 
 /** A Location-scoped response. */
+export type Located_Array_of_FeatureStatus = {
+  location: LocationInfo;
+  data: FeatureStatus[];
+};
+
+/** A Location-scoped response. */
 export type Located_Array_of_FormatterStatus = {
   location: LocationInfo;
   data: FormatterStatus[];
@@ -1074,6 +1167,12 @@ export type Located_Array_of_McpServerStatus = {
 export type Located_Array_of_ModelInfo = {
   location: LocationInfo;
   data: ModelInfo[];
+};
+
+/** A Location-scoped response. */
+export type Located_Array_of_TeamListing = {
+  location: LocationInfo;
+  data: TeamListing[];
 };
 
 /** A Location-scoped response. */
@@ -1110,6 +1209,12 @@ export type Located_Content = {
 export type Located_CreatedWorktree = {
   location: LocationInfo;
   data: CreatedWorktree;
+};
+
+/** A Location-scoped response. */
+export type Located_Definitions = {
+  location: LocationInfo;
+  data: Definitions;
 };
 
 /** A Location-scoped response. */
@@ -1372,6 +1477,9 @@ export type ManagedPolicy = {
   plugins_disabled: string[];
 };
 
+/** How far along a feature is. `experimental` features are off by default. */
+export type Maturity = "experimental" | "beta" | "stable";
+
 export type McpClosed = {
   /** All MCP owners observed for this Location have settled; a later open may reconnect. */
   closed: boolean;
@@ -1420,6 +1528,31 @@ export type McpToolsChanged = {
   tools: string[];
   /** Published prompt commands, as `<server>:<prompt>`. */
   prompts: string[];
+};
+
+export type MemberStatus = "idle" | "stopped" | "working" | "waiting_input";
+
+/** One member as the team view shows it. */
+export type MemberView = {
+  team_id: string;
+  name: string;
+  session_id: string;
+  role: Role;
+  agent: string;
+  model?: string | null;
+  isolation: Isolation;
+  worktree_id?: string | null;
+  branch?: string | null;
+  owns: string[];
+  status: MemberStatus;
+  last_status?: string | null;
+  /** The first `in_progress` task the member owns. */
+  current_task?: CurrentTask | null;
+  turns: number;
+  tokens: number;
+  cost_usd: number;
+  /** The member's newest cross-session message with text, either direction. */
+  last_message?: LastMessage | null;
 };
 
 export type MemoryCatalog = {
@@ -2037,6 +2170,11 @@ export type RequestOrigin = {
   title: string;
   agent: string;
   directory: string;
+  /**
+   * `agent-teams`: the teammate a request comes from (also for its subagents), which
+   * the lead's clients label it with (`[tests] Allow bash: …?`).
+   */
+  member?: string | null;
 };
 
 export type RequestRoute = {
@@ -2054,6 +2192,12 @@ export type ResumeBody = {
    * no revision. Absent, the run keeps the `max_concurrent` it was last given.
    */
   max_concurrent?: number | null;
+};
+
+/** `POST /api/v1/teams/:id/resume`. */
+export type ResumeTeam = {
+  /** The new lead after `lead_deleted`: a top-level Session in no team. */
+  lead?: string | null;
 };
 
 export type RetrySafety = "read_only" | "idempotent" | "reconcile" | "never";
@@ -2105,6 +2249,8 @@ export type ReviewedHook = {
   skipped?: string | null;
   last_run?: HookLastRun | null;
 };
+
+export type Role = "lead" | "teammate";
 
 /** Usage of one Workflow agent: its child Session with descendants. */
 export type RunAgentUsage = {
@@ -2355,6 +2501,11 @@ export type Session = {
    * controls): it replaces the Location's default; sender patterns still win.
    */
   messaging?: InboundOverride | null;
+  /**
+   * The team this Session is a member of (`agent-teams`), set at creation and never
+   * changed. Teammates are root Sessions, so they outlive the lead.
+   */
+  team?: TeamTag | null;
   /** `idle` or `running`. */
   status: string;
   /** Mode of the running Turn, or the selected mode while idle. */
@@ -2420,6 +2571,11 @@ export type SessionInfo = {
    * controls): it replaces the Location's default; sender patterns still win.
    */
   messaging?: InboundOverride | null;
+  /**
+   * The team this Session is a member of (`agent-teams`), set at creation and never
+   * changed. Teammates are root Sessions, so they outlive the lead.
+   */
+  team?: TeamTag | null;
 };
 
 /** Where a Session runs. */
@@ -2602,6 +2758,16 @@ export type Sourced = {
   text: string;
 };
 
+/** A spawned teammate. */
+export type SpawnedMember = {
+  name: string;
+  session_id: string;
+  agent: string;
+  isolation: Isolation;
+  directory: string;
+  branch?: string | null;
+};
+
 export type StartBody = {
   /** The owner Session: agents become its children and run under its Mode. */
   session_id: string;
@@ -2691,6 +2857,8 @@ export type StopConditions = {
   until?: string | null;
 };
 
+export type StopReason = "user" | "budget" | "lead_deleted";
+
 export type StopService = {
   id: string;
 };
@@ -2737,12 +2905,133 @@ export type SubtreeStopReport = {
 
 export type SubtreeStopStatus = "acknowledged" | "unknown";
 
+/** A task as it is after a change. */
+export type Task = {
+  id: string;
+  seq: number;
+  title: string;
+  description?: string;
+  status: TaskStatus;
+  owner?: string | null;
+  depends_on?: string[];
+  created_by: string;
+  created_ms: number;
+  updated_ms: number;
+  version: number;
+};
+
 /** Durable task state (`compaction` → Durable task state), derived from promoted input. */
 export type TaskState = {
   version: number;
   objective?: Sourced | null;
   /** Every user instruction, in order, with its source message ID. */
   instructions: Sourced[];
+};
+
+export type TaskStatus = "todo" | "in_progress" | "blocked" | "done" | "cancelled";
+
+/** A team, as its projection holds it. */
+export type Team = {
+  id: string;
+  /** The definition name, or `adhoc`. */
+  name: string;
+  lead_id: string;
+  directory: string;
+  /** `active`, `stopping` or `stopped`. */
+  status: string;
+  /** Why a stopping or stopped team stopped. */
+  stop_reason?: StopReason | null;
+  created_ms: number;
+  updated_ms: number;
+};
+
+/** A valid team definition. */
+export type TeamDefinition = {
+  name: string;
+  description: string;
+  teammates: TeammateSpec[];
+  budget?: Budget | null;
+  /** The body: the lead's instructions. */
+  instructions: string;
+  scope: DefinitionScope;
+  path: string;
+  /** Definitions of the same name this one replaced (a user one under a project one). */
+  shadows: string[];
+};
+
+/** A team as `GET /teams` lists it. */
+export type TeamListing = {
+  id: string;
+  /** The definition name, or `adhoc`. */
+  name: string;
+  lead_id: string;
+  directory: string;
+  /** `active`, `stopping` or `stopped`. */
+  status: string;
+  /** Why a stopping or stopped team stopped. */
+  stop_reason?: StopReason | null;
+  created_ms: number;
+  updated_ms: number;
+  teammates: number;
+  tasks: number;
+  tasks_done: number;
+  cost_usd: number;
+};
+
+/** One teammate to spawn (`team_spawn`). */
+export type TeamSpawn = {
+  name: string;
+  /** Default `build`. */
+  agent?: string | null;
+  /** Default: the lead's model. */
+  model?: string | null;
+  /** Default: `worktree` when two or more teammates can edit, else `shared`. */
+  isolation?: Isolation | null;
+  /** Globs, relative to the team directory, only this teammate may edit. */
+  owns?: string[];
+  /** Admitted as the teammate's first input, with `source: "team"`. */
+  prompt?: string | null;
+};
+
+/** A team's spend since it was created. */
+export type TeamSpent = {
+  turns: number;
+  tokens: number;
+  cost_usd: number;
+  wall_seconds: number;
+};
+
+/**
+ * The team label of a member Session, set at creation and never changed, so every
+ * surface can label a teammate without a join.
+ */
+export type TeamTag = {
+  team_id: string;
+  role: Role;
+  /** The member name: `lead`, or the teammate's name. */
+  name: string;
+};
+
+/** A team with its members, board, budget and spend. */
+export type TeamView = {
+  team: Team;
+  budget?: Budget | null;
+  spent: TeamSpent;
+  /** The lead first, then teammates in spawn order. */
+  members: MemberView[];
+  /** Every task, in creation order. */
+  tasks: Task[];
+};
+
+/** One teammate of a definition. */
+export type TeammateSpec = {
+  name: string;
+  agent: string;
+  model?: string | null;
+  /** `None`: chosen at spawn (worktree when two or more teammates can edit). */
+  isolation?: Isolation | null;
+  /** Globs, relative to the team directory, only this teammate may edit. */
+  owns: string[];
 };
 
 export type ThreadStatus = "running" | "waiting" | "completed" | "failed";

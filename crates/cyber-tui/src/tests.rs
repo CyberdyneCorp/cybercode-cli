@@ -156,6 +156,7 @@ fn permission() -> Request {
         id: "per_1".into(),
         session_id: "ses_1".into(),
         origin: None,
+        member: None,
         routed_to: Vec::new(),
         action: "bash".into(),
         resources: vec!["rm -rf build".into()],
@@ -216,6 +217,7 @@ fn questions_submit_on_selection_or_dismiss_with_esc() {
         id: "que_1".into(),
         session_id: "ses_1".into(),
         origin: None,
+        member: None,
         routed_to: Vec::new(),
         questions: vec![q],
     };
@@ -3267,6 +3269,29 @@ async fn memory_readonly_off_on_commands_change_tool_and_context() {
             .0
             .contains("/memory on|off|readonly")
     );
+}
+
+/// `agent-teams`: `/team`, `/team start|stop|resume` ask the server (which reads the
+/// features first); anything else is refused locally with the usage.
+#[test]
+fn team_commands_parse_locally_before_asking_the_server() {
+    use crate::team::Request;
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    for (line, request) in [
+        ("/team", Request::Open),
+        ("/team start feature", Request::Start("feature".into())),
+        ("/team stop", Request::Stop),
+        ("/team resume", Request::Resume(String::new())),
+    ] {
+        typed(&mut app, line);
+        app.completion = None;
+        let actions = app.on_key(key(KeyCode::Enter));
+        assert_eq!(actions, [Action::Team(request)], "{line}");
+    }
+    typed(&mut app, "/team dance");
+    app.completion = None;
+    assert!(app.on_key(key(KeyCode::Enter)).is_empty());
+    assert!(app.toast.as_ref().unwrap().0.starts_with("Use /team"));
 }
 
 /// `/loop` posts to the server only when the arguments parse (`loops-scheduling`).

@@ -12,7 +12,8 @@ use super::bus::LiveEvent;
 use super::{DrainEntry, Runtime, RuntimeError, usage_ledger};
 
 impl Runtime {
-    /// Delete a Session, its child Sessions, inbox rows and history.
+    /// Delete a Session, its child Sessions, inbox rows and history. Deleting a team lead
+    /// stops its team first (`agent-teams` → Shutdown and resume).
     pub async fn delete(&self, session_id: &str) -> Result<(), RuntimeError> {
         let handle = self.inner.handle(session_id).await?;
         let ids = {
@@ -45,6 +46,12 @@ impl Runtime {
                 return Err(error);
             }
         };
+        // `agent-teams`: a lead's team stops (`lead_deleted`) before the lead goes; a
+        // stop that cannot be recorded keeps the lead.
+        if let Err(error) = self.stop_for_lead_deletion(session_id).await {
+            self.lift_deletion_fence(&ids);
+            return Err(error);
+        }
         let doomed = ids.clone();
         let deleted = self.inner.store.transaction(move |tx| {
             // Ledger rows outlive the Session: index what the backfill has not yet
@@ -53,7 +60,12 @@ impl Runtime {
                 usage_ledger::project_unreached(tx, id)?;
             }
             for id in &doomed {
-                tx.execute("DELETE FROM event WHERE aggregate_id = ?1", [id])?;
+                // A lead's `team.*` records stay: the team outlives its lead, and a
+                // rebuild re-projects it from them.
+                tx.execute(
+                    "DELETE FROM event WHERE aggregate_id = ?1 AND substr(type, 1, 5) <> 'team.'",
+                    [id],
+                )?;
                 tx.execute("DELETE FROM event_sequence WHERE aggregate_id = ?1", [id])?;
                 tx.execute(
                     "DELETE FROM session_children_charge WHERE parent_id = ?1",

@@ -28,6 +28,116 @@ fn child_naming(
     Ok((name, format!("cyber/{}/{child_name}", &parent_short[..12])))
 }
 
+/// The checkout name of a teammate: `team-<ulid>-<member>`, on branch
+/// `cyber/team-<ulid>/<member>` (`agent-teams` → isolation).
+fn team_naming(worktree: &cyber_server::runtime::TeamWorktree) -> io::Result<(Name, &str)> {
+    let name = Name::parse(&worktree.name).map_err(io::Error::other)?;
+    Ok((name, &worktree.branch))
+}
+
+impl BuiltinHost {
+    /// Create the teammate Session `request` in its own managed worktree, based on the
+    /// lead's current HEAD. The user approved the spawn (`team.manage`), so creation obeys
+    /// the lead's deny rules and Mode but never asks; WorktreeCreate hooks and setup run
+    /// as for any new worktree Session. A failed setup fails the spawn and removes the
+    /// teammate Session, its checkout and its branch ([`Self::discard_team_session`]).
+    pub(crate) async fn create_team_worktree_session(
+        &self,
+        lead: &SessionInfo,
+        request: CreateSession,
+        worktree: &cyber_server::runtime::TeamWorktree,
+        cancel: CancellationToken,
+    ) -> io::Result<SessionInfo> {
+        use cyber_server::runtime::teams::Role;
+        let runtime = self
+            .runtime()
+            .ok_or_else(|| io::Error::other("Runtime is not attached"))?;
+        let teammate = request
+            .team
+            .as_ref()
+            .is_some_and(|tag| tag.role == Role::Teammate);
+        if !teammate || request.parent_id.is_some() || request.id.is_none() {
+            return Err(io::Error::other(
+                "A team worktree belongs to a new teammate root Session",
+            ));
+        }
+        let (name, branch) = team_naming(worktree)?;
+        let inv = Invocation {
+            registration: None,
+            session_id: lead.id.clone(),
+            directory: lead.directory.clone(),
+            agent: lead.agent.clone(),
+            mode: lead.mode.clone(),
+            rules: lead.rules.clone(),
+            message_id: String::new(),
+            call_id: cyber_core::ids::new_id("call"),
+            name: "team_spawn".into(),
+            input: json!({"operation": "spawn", "worktree": name.as_str()}),
+            attempt: 1,
+            operation_key: cyber_core::ids::new_id("op"),
+            asker: cyber_server::runtime::Asker::detached(),
+        };
+        let request = WorktreeSessionRequest {
+            project_id: cyber_core::project::identify(Path::new(&lead.directory)).id,
+            data: self
+                .opts
+                .tool_output_dir
+                .parent()
+                .ok_or_else(|| io::Error::other("Missing data directory"))?
+                .to_owned(),
+            name,
+            session: request,
+        };
+        let creation = Creation {
+            explicit: true,
+            branch: Some(branch),
+        };
+        let created = Box::pin(self.create_worktree_session_owned(
+            &runtime,
+            &inv,
+            cancel.clone(),
+            request,
+            creation,
+        ))
+        .await?;
+        let failure = match created.setup {
+            Ok(SetupOutcome::Failed { index, code }) => {
+                format!("Teammate setup command {index} failed with exit code {code:?}")
+            }
+            Err(error) => format!("Teammate setup failed: {error}"),
+            Ok(_) => return Ok(created.session),
+        };
+        let removed = self
+            .discard_team_session(&runtime, lead, &created.session.id, &worktree.name, cancel)
+            .await;
+        Err(io::Error::other(match removed {
+            Ok(()) => format!("{failure}; the teammate and its checkout were removed"),
+            Err(error) => format!(
+                "{failure}; removing the teammate failed ({error}), checkout retained at {}",
+                created.managed.path.display()
+            ),
+        }))
+    }
+
+    /// Undo a teammate spawn whose setup failed: its Session goes (no member row is
+    /// recorded for it, so it would otherwise carry a `team` tag nothing lists, counts
+    /// or stops), then its checkout and branch, so the same name can be spawned again.
+    async fn discard_team_session(
+        &self,
+        runtime: &cyber_server::runtime::Runtime,
+        lead: &SessionInfo,
+        session_id: &str,
+        name: &str,
+        cancel: CancellationToken,
+    ) -> io::Result<()> {
+        runtime.delete(session_id).await.map_err(io::Error::other)?;
+        let name = Name::parse(name).map_err(io::Error::other)?;
+        self.remove_worktree(Path::new(&lead.directory), &name, true, cancel)
+            .await
+            .map(drop)
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct ChildWorktree {
     child_id: String,
@@ -231,6 +341,7 @@ impl BuiltinHost {
             ctx: &ctx,
             writable: Some(vec![]),
             credentials: &[],
+            read_only: Vec::new(),
         };
         let repository = Repository::discover(&discovery, &ctx.location).await?;
         let target =
@@ -239,6 +350,7 @@ impl BuiltinHost {
             ctx: &ctx,
             writable: Some(vec![repository.common_dir.clone(), target]),
             credentials: &[],
+            read_only: Vec::new(),
         };
         let managed = retry_repository_busy(&ctx.cancel, || async {
             let runtime = self
@@ -589,6 +701,7 @@ impl ChildWorktree {
                 self.managed.path.clone(),
             ]),
             credentials: &[],
+            read_only: Vec::new(),
         };
         let changes = retry_repository_busy(&ctx.cancel, || {
             self.repository.changes(&execution, &self.managed)
@@ -648,6 +761,7 @@ impl ChildWorktree {
                 self.managed.path.clone(),
             ]),
             credentials: &[],
+            read_only: Vec::new(),
         };
         let changes = retry_repository_busy(&ctx.cancel, || {
             self.repository.changes(&execution, &self.managed)

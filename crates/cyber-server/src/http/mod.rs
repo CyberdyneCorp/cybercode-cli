@@ -33,6 +33,7 @@ mod serve;
 mod service;
 mod sessions;
 mod system;
+mod teams;
 mod usage;
 pub mod vcs;
 mod workflows;
@@ -450,6 +451,21 @@ pub trait Services: Send + Sync {
             "MCP serve is unavailable in this host",
         ))
     }
+    /// The effective features of a Location (`configuration` → Feature flags registry);
+    /// hosts without configuration report the registry defaults.
+    fn features(&self, _location: &Path) -> Result<cyber_core::features::Features, ApiError> {
+        Ok(cyber_core::features::Features::default())
+    }
+    /// The team definitions of a Location (`agent-teams` → Team definitions).
+    fn team_definitions(
+        &self,
+        _location: &Path,
+    ) -> Result<cyber_core::teams::Definitions, ApiError> {
+        Err(ApiError::service_unavailable(
+            "teams",
+            "Team definitions are unavailable in this host",
+        ))
+    }
     /// The configured `mode` and `default_agent` of a Location; hosts without
     /// configuration have none.
     fn location_defaults(&self, _location: &Path) -> Result<LocationDefaults, ApiError> {
@@ -622,6 +638,7 @@ pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router 
         .merge(usage::routes())
         .merge(vcs::routes())
         .merge(system::routes())
+        .merge(teams::routes())
         .merge(files::routes())
         .merge(worktrees::routes())
         .merge(workflows::routes())

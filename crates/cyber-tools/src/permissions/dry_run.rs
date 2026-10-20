@@ -132,6 +132,7 @@ mod tests {
             location: "/repo".into(),
             home: "/home/u".into(),
             plan_file: "/repo/.cyber/plans/x.md".into(),
+            ownership: None,
         }
     }
 

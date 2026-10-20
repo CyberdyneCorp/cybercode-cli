@@ -119,9 +119,16 @@ pub(super) fn received(app: &App, record: &Record, width: usize) -> Vec<Line<'st
     lines
 }
 
-/// ` ◷ migration is idle · 14:40 · "migration finished"`.
+/// ` ◷ migration is idle · 14:40 · "migration finished"`; a teammate's notice is its
+/// line, ` ◷ tests is idle: all assigned tasks done`.
 pub(super) fn notice(app: &App, notice: &Notice) -> Line<'static> {
     let t = &app.theme;
+    if let Some(line) = &notice.line {
+        return Line::from(Span::styled(
+            format!(" ◷ {line}"),
+            Style::default().fg(t.info),
+        ));
+    }
     let mut text = if notice.expired {
         format!(" ◷ watch on {} expired", notice.target)
     } else {

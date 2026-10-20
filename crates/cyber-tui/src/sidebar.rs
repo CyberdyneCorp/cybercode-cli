@@ -314,13 +314,15 @@ pub enum Part {
     Health,
     Parent,
     Peers,
+    /// The team the Session leads or belongs to (`GET /teams/:id`).
+    Team,
     /// `GET /system`; polled while the sidebar shows (see [`MACHINE_POLL`]), not in
     /// [`Part::ALL`].
     Machine,
 }
 
 impl Part {
-    pub const ALL: [Part; 7] = [
+    pub const ALL: [Part; 8] = [
         Part::Mcp,
         Part::Lsp,
         Part::Files,
@@ -328,6 +330,7 @@ impl Part {
         Part::Health,
         Part::Parent,
         Part::Peers,
+        Part::Team,
     ];
 }
 
@@ -343,6 +346,7 @@ pub enum Loaded {
     Version(Option<String>, Option<String>),
     Parent(Option<String>),
     Peers(Source<Vec<PeerRemote>>),
+    Team(Source<crate::team::TeamView>),
     Machine(Source<Machine>),
     /// `GET /system` failed: the last sample stays, or `—` before the first.
     MachineFailed,
@@ -404,6 +408,8 @@ pub struct Sidebar {
     pub parent_title: Option<String>,
     /// The server's enabled remotes; the Peers line shows only when there are some.
     pub peers: Source<Vec<PeerRemote>>,
+    /// The team the Session leads or belongs to, for the Team section and the team view.
+    pub team: Source<crate::team::TeamView>,
     pub connection: Connection,
     /// The Workflows section's runs, the current Session's first; set before every frame.
     pub workflows: Vec<WorkflowRow>,
@@ -436,6 +442,7 @@ impl Sidebar {
             }
             Loaded::Parent(title) => self.parent_title = title,
             Loaded::Peers(source) => self.peers = source,
+            Loaded::Team(source) => self.team = source,
             Loaded::Machine(source) => {
                 self.machine = source;
                 self.machine_failed = false;
@@ -451,6 +458,7 @@ impl Sidebar {
     /// Another Session or Location: its Session-scoped data no longer applies.
     pub fn forget_session(&mut self) {
         self.files = Source::Pending;
+        self.team = Source::Pending;
         self.parent_title = None;
         self.focus = None;
     }

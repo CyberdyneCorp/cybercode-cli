@@ -179,6 +179,36 @@ impl Messaging {
         found.map_err(RuntimeError::Address)
     }
 
+    /// The targets of a send from `from` to `to`: for a team member's `all`, every other
+    /// member of its team that is not `stopped`, each addressed by its member name (none
+    /// is `AddressNotFoundError`); else the one target [`Self::resolve`] finds. Each target
+    /// is sent its own message (`agent-teams` → Teammate messaging).
+    pub fn resolve_targets(
+        &self,
+        from: Option<&str>,
+        to: &str,
+    ) -> Result<Vec<Target>, RuntimeError> {
+        if let Some(caller) = from
+            && to.strip_prefix('@').unwrap_or(to) == address::ALL
+        {
+            self.caller_exists(Some(caller))?;
+            let caller = caller.to_owned();
+            let all = self
+                .runtime
+                .inner
+                .store
+                .read(move |db| Ok(address::team_all(db, &caller)?))?;
+            match all {
+                Some(targets) if targets.is_empty() => {
+                    return Err(RuntimeError::Address(AddressError::NotFound(to.into())));
+                }
+                Some(targets) => return Ok(targets),
+                None => {}
+            }
+        }
+        self.resolve(from, to).map(|target| vec![target])
+    }
+
     /// The Sessions `from` can message, newest first, at most [`REACHABLE_LIMIT`], in
     /// `directory` when given. The caller itself is never listed; a client caller is the
     /// `api` client.

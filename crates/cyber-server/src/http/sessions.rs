@@ -433,6 +433,8 @@ async fn create(
         max_steps: body.max_steps,
         worktree_id: None,
         messaging: body.messaging,
+        // Only the team runtime makes team members; a client cannot claim membership.
+        team: None,
     };
     let info = state.runtime.create_session(req).await?;
     let data = session(&state, state.runtime.state(&info.id).await?);

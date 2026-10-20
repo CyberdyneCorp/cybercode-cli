@@ -2,6 +2,47 @@
 
 P2 evidence lives here and is kept separate from the P1 files (`p1-status.md`, `p1-handoff.md` and `p1-acceptance-audit.md`). The plan, the requirement-to-task mapping and the scope exclusions are in [`openspec/changes/implement-m2-1-workflow-runtime`](../../openspec/changes/implement-m2-1-workflow-runtime/proposal.md).
 
+## Agent teams (2026-10-20)
+
+[`implement-agent-teams`](../../openspec/changes/implement-agent-teams/proposal.md) (spec: `agent-teams`, P2; ROADMAP M2.5, teams part) is implemented in sections 1 to 8, each with its production-path test (the App over authenticated TCP in `crates/cyber-app/tests/teams.rs`, the real binary in `crates/cyber-cli/tests/teams_cli.rs`, the TUI against a real server in `crates/cyber-tui/src/screens_team.rs`, plus `crates/cyber-server/tests/teams.rs` and `sdk/typescript/test/teams.test.ts`). Everything is behind the experimental `teams` feature, off by default. It builds on same-server messaging (the resolver's team tier, `Messaging::send`, watches and `xsession_message`).
+
+### End-to-end acceptance (task 9.1, by hand, macOS)
+
+The real `target/debug/cyber`, a real `cyber serve`, the TUI in a pty captured with pyte (HTML, PNG and text), and a local-only scripted OpenAI-compatible provider with per-Session scripted Turns, gates and one-shot usage. No network and no live model. Every `cyber serve` and provider process was stopped by PID. The driver and captures were kept in the session scratchpad and are not in the repository or CI. 15 scenarios, all pass:
+
+| Scenario | Observed | Result |
+| --- | --- | --- |
+| Feature off by default, then enabled | `cyber features list` shows `teams experimental off (default)`; `cyber features enable teams` writes `cyber.jsonc`; then `teams experimental on (global:…)` | pass |
+| Definition from `.cyber/teams/feature.md` (trust-gated) | held until `cyber trust approve --digest sha256:…`; then `cyber teams definitions` lists `feature project api,ui,tests Ship the orders feature across API, UI and tests` | pass |
+| `/team start feature` in the TUI | toast `Team feature started: api, ui, tests` and the team view; `api` and `ui` in worktrees on `cyber/team-<ulid>/api` and `/ui`; `tests` shared, owning `tests/**` | pass |
+| Tasks with a dependency | `ui` starting `Orders UI` (depends on `Orders API`) gets `TaskDependencyError: Task depends on unfinished task_…` | pass |
+| Concurrent claim | `api` and `ui` claim `Order fixtures` with both model replies held at a gate and released together: `ui` wins, `api` gets `TaskClaimedError: Task already claimed by ui` | pass |
+| Team view and board | members table (lead, api, ui, tests with status, task, cost) over `todo(2)`/`in_progress(1)`/`blocked`/`done`; the `Orders UI` card shows `@ui · waits 1` | pass |
+| Teammate question and reply | `ui` → `lead` `which API shape should I use?` shows in the lead's transcript as an untrusted card and is in the lead's next request; the lead's reply is in `ui`'s next request | pass |
+| Labelled teammate request | `tests` running `docker compose up` shows `[tests] Allow bash: docker compose up?` in the lead's TUI with the member's waiting dot; rejected there, `tests` gets `Rejected by user`; `api`/`ui` sandbox escalations for `git commit` approved from the lead as `[api]`/`[ui]` | pass |
+| Idle notice | the lead receives `tests is idle with task_… in progress: idle`, then `tests is idle: all assigned tasks done`, drawn as `◷ …` notice lines | pass |
+| Ownership denial | the lead editing `tests/orders_test.py` (owned by `tests`) gets `Path owned by teammate tests`; the file is unchanged | pass |
+| `team_merge` clean | `team_merge member=api` → `Merged api as cc527b4c…`; the lead's `README.md` says `Orders: API v1` | pass |
+| `team_merge` with a conflict | `team_merge member=ui` → `Merge of ui stopped: conflicts in README.md. Your checkout is unchanged.`; the lead's HEAD and `git status` byte-identical before and after | pass |
+| `/team resume` after a server restart | `/team stop`, SIGTERM the server, start a new one, `cyber --resume <lead>`, `/team resume`: stopped → active, board identical, `api`'s next request carries its prior history | pass |
+| Budget stop | `max_cost_usd 2.0`, one `api` Turn priced at $2.10: `ui`'s next Turn does not start, the team stops (`budget`), and the lead gets `Team budget exceeded (max_cost_usd 2.00, spent 2.12): lead $0.01, api $2.10, ui $0.01, tests $0.00` | pass |
+| `cyber teams show` / `list` | `feature stopped (budget)`, spend and budget, members with status, current task, cost and last message, and the board by status | pass |
+
+Bugs found and fixed, each with a regression test:
+- TUI: teammate idle notices (`msgx_team_idle_…`) were drawn in the lead's transcript as a user prompt showing the raw `<team_idle_notice …/>` element. `Notice::of` (`crates/cyber-tui/src/messaging.rs`) now recognises them and `crates/cyber-tui/src/view/messaging.rs` draws ` ◷ tests is idle: all assigned tasks done`. Tests: `messaging::tests::team_idle_notices_carry_their_unescaped_line` and `screens_team::a_teammates_idle_notice_is_drawn_as_a_notice_in_the_leads_transcript` (real server, real `view::draw`).
+- CLI: `cyber teams list` and `show` used fixed column widths; 31-character team IDs, `stopped (budget)` and long task cells shifted every later column. `crates/cyber-cli/src/commands/teams.rs` now sizes each column to its widest cell. Assertions added to `crates/cyber-cli/tests/teams_cli.rs`; only the `list` check fails on the old code (the `show` test's task cell fits the old 40-character column).
+
+Product notes, not changed:
+- Under the default workspace sandbox no Session can write `.git`, so a teammate commits only through a sandbox escalation, which is routed to the lead as a labelled request (fails closed). `team_merge` in the acceptance run depended on those approved commits.
+- Resuming a team still over its budget stops it again at the next teammate Turn, as designed; the resume scenario therefore followed a user stop, and the budget stop ran last.
+- When a teammate's Turn ends on a rejected permission, its idle line reads `<name> is idle with task_… in progress: idle` because there is no assistant text to quote.
+
+### Not done
+
+- An automated end-to-end suite for the scenarios above (the driver is a hand-run script).
+- Runs on Linux and Windows (only macOS was run; Windows cfg code is type-checked with clippy for `x86_64-pc-windows-gnu`).
+- The `cyber agents` dashboard (the agent-view half of M2.5), distributed teammates (P3), teammate panes (P4), and the archive of `implement-agent-teams`.
+
 ## Cross-session messaging: direct peers (2026-10-19)
 
 Same-server messaging (the 18 P1 requirements of `cross-session-messaging`) is implemented by `implement-cross-session-messaging`; its evidence is in the [P1 status](p1-status.md#cross-session-messaging-2026-10-19). The P2 requirement "Direct peer transport" is implemented by [`add-messaging-direct-peers`](../../openspec/changes/add-messaging-direct-peers/proposal.md) (sections 1 to 10 and the review fixes of section 12; the section 11 acceptance is partial, see the acceptance paragraph below; guide: [direct peers](../peers.md)). Before it, the P1 code kept its extension points: an address with `@` (`name@machine`) was parsed into its own tier and failed with `AccountRequiredError` on every surface (model tool, CLI exit 6, HTTP, MCP serve) with nothing sent (it now resolves configured peers, and `AccountRequiredError` is left for the Relay); the inbound default for a cross-machine sender is `hold` (unit-tested only, since no such sender exists); `message.send` is `ask` for `*@*` targets; the record's `origin_kind` is an open set; `cyber peers` was a stub that exited 2 until section 4 below. The team address tier is an empty extension point for agent teams (M2.5).

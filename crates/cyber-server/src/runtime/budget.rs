@@ -187,42 +187,65 @@ pub(super) fn check_scope(
             json!({"scope_id":scope.id,"activated_ms":now}),
         ));
     }
-    let elapsed = now.saturating_sub(scope.activated.unwrap_or(now)).max(0) as f64 / 1000.0;
     let mut blocked = None;
-    for (name, value, cap, exceeded) in [
-        (
-            "max_tokens",
-            scope.tokens as f64,
-            budget.max_tokens.map(|v| v as f64),
-            budget.max_tokens.is_some_and(|v| scope.tokens >= v),
-        ),
-        (
-            "max_cost_usd",
-            scope.cost,
-            budget.max_cost_usd,
-            budget.max_cost_usd.is_some_and(|v| scope.cost >= v),
-        ),
-        (
-            "max_turns",
-            scope.turns as f64,
-            budget.max_turns.map(|v| v as f64),
-            budget.max_turns.is_some_and(|v| scope.turns >= v),
-        ),
-        (
-            "max_wall_seconds",
-            elapsed,
-            budget.max_wall_seconds,
-            budget.max_wall_seconds.is_some_and(|v| elapsed >= v),
-        ),
-    ] {
-        if let Some(cap) = cap
-            && signal(tx, events, scope, name, value, cap, exceeded)?
-        {
-            blocked.get_or_insert(name.to_owned());
+    for limit in limits(&budget, &RunSpend::of(scope, now)) {
+        if signal(
+            tx,
+            events,
+            scope,
+            limit.name,
+            limit.spent,
+            limit.maximum,
+            limit.exceeded,
+        )? {
+            blocked.get_or_insert(limit.name.to_owned());
         }
     }
     Ok(blocked)
 }
+/// One set limit of a budget against a spend.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct Limit {
+    pub(super) name: &'static str,
+    pub(super) spent: f64,
+    pub(super) maximum: f64,
+    pub(super) exceeded: bool,
+}
+
+/// Every limit `budget` sets, in the order they are reported (`max_tokens`,
+/// `max_cost_usd`, `max_turns`, `max_wall_seconds`): a limit is exceeded once the spend
+/// reaches it. Shared by Session, run and team scopes.
+pub(super) fn limits(budget: &Budget, spend: &RunSpend) -> Vec<Limit> {
+    [
+        (
+            "max_tokens",
+            spend.tokens as f64,
+            budget.max_tokens.map(|v| v as f64),
+        ),
+        ("max_cost_usd", spend.cost, budget.max_cost_usd),
+        (
+            "max_turns",
+            spend.turns as f64,
+            budget.max_turns.map(|v| v as f64),
+        ),
+        (
+            "max_wall_seconds",
+            spend.elapsed_seconds,
+            budget.max_wall_seconds,
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(name, spent, maximum)| {
+        maximum.map(|maximum| Limit {
+            name,
+            spent,
+            maximum,
+            exceeded: spent >= maximum,
+        })
+    })
+    .collect()
+}
+
 /// The spend of a Workflow Run budget scope.
 #[derive(Debug, Clone, Default)]
 pub(super) struct RunSpend {

@@ -55,6 +55,18 @@ pub fn idle_notice(target: &str, finished_at: &str, status: &str) -> String {
     )
 }
 
+/// The notice a teammate's idle admits to its lead (`agent-teams` → Idle notifications):
+/// `line` is `<name> is idle…: <status>`, whose status is the teammate's own words, so it
+/// is escaped and marked untrusted like a message.
+pub fn team_idle_notice(team_id: &str, member: &str, line: &str) -> String {
+    format!(
+        "<team_idle_notice team_id=\"{}\" member=\"{}\"/>\n{}\nThis is an idle notice about a teammate; its status line is the teammate's own words. {UNTRUSTED}",
+        attribute(team_id),
+        attribute(member),
+        attribute(line),
+    )
+}
+
 /// The notice a subscription that expired unfired admits.
 pub fn expiry_notice(target: &str, watch_id: &str) -> String {
     format!(

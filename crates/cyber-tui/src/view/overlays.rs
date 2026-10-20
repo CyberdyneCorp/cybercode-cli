@@ -150,6 +150,14 @@ fn palette_row(
     ])
 }
 
+/// The line above a routed request: a teammate's label (`[tests] Allow bash: …?`), else
+/// the child Session it comes from.
+fn request_title(request: &Request) -> Option<String> {
+    request
+        .team_label()
+        .or_else(|| request.origin_title().map(str::to_owned))
+}
+
 pub fn permission(f: &mut Frame, app: &App, step: &PermStep, area: Rect) {
     let Some(Request::Permission {
         action,
@@ -164,9 +172,9 @@ pub fn permission(f: &mut Frame, app: &App, step: &PermStep, area: Rect) {
     let t = &app.theme;
     let rect = centered(area, 90, 24);
     let mut lines = Vec::new();
-    if let Some(title) = app.active_request().and_then(Request::origin_title) {
+    if let Some(title) = app.active_request().and_then(request_title) {
         lines.push(Line::from(Span::styled(
-            title.to_owned(),
+            title,
             Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::default());
@@ -301,12 +309,12 @@ pub fn question(f: &mut Frame, app: &App, form: &QuestionForm, area: Rect) {
         ));
     }
     let mut lines = vec![Line::from(tabs), Line::default()];
-    if let Some(title) = app.active_request().and_then(Request::origin_title) {
+    if let Some(title) = app.active_request().and_then(request_title) {
         lines.insert(0, Line::default());
         lines.insert(
             0,
             Line::from(Span::styled(
-                title.to_owned(),
+                title,
                 Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
             )),
         );

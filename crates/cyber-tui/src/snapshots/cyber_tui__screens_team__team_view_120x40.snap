@@ -1,0 +1,44 @@
+---
+source: crates/cyber-tui/src/screens_team.rs
+expression: screen
+---
+╭ Team feature · active ───────────────────────────────────────────────────────────────── 4 members · 1/5 done · $0.00 ╮
+│ Members                                                                                                              │
+│  member     role      status          task                            cost last message                              │
+│› lead       lead      ○ idle          —                              $0.00 ← api: Schema is merged; starting on the …│
+│  api        teammate  ○ idle          Build the API                  $0.00 → lead: Schema is merged; starting on the…│
+│  ui         teammate  ○ idle          —                              $0.00                                           │
+│  tests      teammate  ◐ waiting_input —                              $0.00                                           │
+│                                                                                                                      │
+│ Board                                                                                                                │
+│ todo (1)                     in_progress (1)              blocked (1)                  done (1)                      │
+│ • Write the UI               • Build the API              • E2E tests                  • Design the schema           │
+│   @ui · waits 1                @api                         @tests                       @api                        │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│ ↑↓ member · enter open its Session · c show cancelled · r refresh · esc close                                        │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ~/work/app                                                  $0.00  ctrl+p commands

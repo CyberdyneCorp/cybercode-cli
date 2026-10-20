@@ -20,6 +20,13 @@ pub enum Msg {
         request: crate::admissions::Request,
         result: Result<Value, String>,
     },
+    /// A `/team` reply: the team of `session_id`, opened in the team view with `open`.
+    Team {
+        session_id: String,
+        view: Box<crate::team::TeamView>,
+        open: bool,
+        toast: Option<String>,
+    },
     Snapshot {
         session: Session,
         items: Vec<Item>,
@@ -285,6 +292,7 @@ pub async fn sidebar(client: &Client, session: &Session, part: crate::sidebar::P
         Part::Vcs => source(&at, "/vcs", |s| Loaded::Vcs(s.map(parse_vcs))).await,
         Part::Health => health(&at).await,
         Part::Peers => source(&at, "/peers/remotes", |s| Loaded::Peers(s.map(parse_peers))).await,
+        Part::Team => crate::team::load(client, session).await,
         Part::Machine => {
             match source(&at, "/system", |s| {
                 Loaded::Machine(s.map(crate::sidebar::parse_machine))
@@ -812,7 +820,9 @@ pub async fn perform_owned(
         | Action::LoadPlugins { .. }
         | Action::LoadAgents
         | Action::FindFiles(_) => load_choices(client, session, action).await,
-        Action::Loop(_) | Action::Workflow(_) => scheduled(client, action).await,
+        Action::Loop(_) | Action::Workflow(_) | Action::Team(_) => {
+            scheduled(client, session, action).await
+        }
         Action::SaveTheme(_)
         | Action::SaveProjectTheme(_)
         | Action::SavePreference { .. }
@@ -824,10 +834,11 @@ pub async fn perform_owned(
     }
 }
 
-/// Repeated and orchestrated work: `/loop` and Workflow Runs.
-async fn scheduled(client: &Client, action: Action) -> Result<Msg, String> {
+/// Repeated and orchestrated work: `/loop`, Workflow Runs and `/team`.
+async fn scheduled(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
     match action {
         Action::Loop(request) => crate::loops::perform(client, request).await,
+        Action::Team(request) => crate::team::perform(client, session, request).await,
         Action::Workflow(request) => Ok(Msg::Workflow(
             crate::workflows::perform(client, request).await,
         )),

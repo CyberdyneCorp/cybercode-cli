@@ -9,6 +9,10 @@
 //! `hold` pattern; its other addresses can only restrict it (`refuse`, or `hold` instead
 //! of `deliver`), so a name another Session chose never lets a message in.
 //!
+//! A sender in the target's own team (`agent-teams` → Teammate messaging) has an
+//! implicit `deliver`: it replaces the default and the Session override, while the
+//! Location's `refuse` and `hold` patterns still win.
+//!
 //! A cross-machine sender is delivered at once only by a `deliver` pattern that names a
 //! peer (`*@laptop`, `review@laptop`: it contains `@`). Patterns written for local senders
 //! (`*`, `ses_*`, `review-*`) still refuse or hold it, but never deliver it, since `*`
@@ -62,6 +66,8 @@ pub enum Verdict {
 pub enum Reach {
     SameMachine,
     CrossMachine,
+    /// A member of the target's team on this machine.
+    SameTeam,
 }
 
 /// The addresses a target's inbound patterns match for one sender.
@@ -122,11 +128,13 @@ pub fn decide(
         Verdict::Deliver
     } else {
         match (session, reach) {
+            // The implicit same-team deliver (`agent-teams`).
+            (_, Reach::SameTeam) => Verdict::Deliver,
             // Only a pattern naming a peer delivers a cross-machine sender at once.
             (Some(o), Reach::CrossMachine) if o.inbound == InboundPolicy::Deliver => Verdict::Hold,
             (Some(o), _) => verdict(o.inbound, o.reason.map_or(INBOUND_RULE, |r| r.as_str())),
             (None, Reach::CrossMachine) => Verdict::Hold,
-            (None, Reach::SameMachine) => verdict(settings.default, INBOUND_RULE),
+            (None, _) => verdict(settings.default, INBOUND_RULE),
         }
     };
     if decided == Verdict::Deliver && matches_any(&settings.hold, addresses.all()) {
@@ -139,7 +147,7 @@ pub fn decide(
 /// sender, only those naming a peer (with `@`) for a cross-machine one.
 fn delivering(patterns: &[String], reach: Reach) -> Vec<String> {
     match reach {
-        Reach::SameMachine => patterns.to_vec(),
+        Reach::SameMachine | Reach::SameTeam => patterns.to_vec(),
         Reach::CrossMachine => patterns
             .iter()
             .filter(|pattern| pattern.contains('@'))
@@ -178,6 +186,32 @@ mod tests {
         inbound: InboundPolicy::Refuse,
         reason: Some(OverrideReason::NonInteractive),
     };
+
+    #[test]
+    fn a_teammate_is_delivered_unless_a_refuse_or_hold_pattern_matches() {
+        let ui = from(&["ses_01JUI", "ui"]);
+        let team = Reach::SameTeam;
+        let mut settings = rules(&[], &[], &[]);
+        settings.default = InboundPolicy::Refuse;
+        // The implicit deliver replaces the default and the Session override.
+        assert_eq!(decide(&settings, None, &ui, team), Verdict::Deliver);
+        assert_eq!(
+            decide(&settings, Some(&NON_INTERACTIVE), &ui, team),
+            Verdict::Deliver
+        );
+        assert_eq!(
+            decide(&settings, Some(&NON_INTERACTIVE), &ui, Reach::SameMachine),
+            Verdict::Refuse("non_interactive")
+        );
+        // Explicit patterns still win.
+        let settings = rules(&[], &["ui"], &[]);
+        assert_eq!(decide(&settings, None, &ui, team), Verdict::Hold);
+        let settings = rules(&["*"], &[], &["ses_01JUI"]);
+        assert_eq!(
+            decide(&settings, None, &ui, team),
+            Verdict::Refuse(INBOUND_RULE)
+        );
+    }
 
     #[test]
     fn refuse_wins_over_hold_and_hold_over_deliver() {

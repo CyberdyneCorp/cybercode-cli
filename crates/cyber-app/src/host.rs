@@ -152,6 +152,28 @@ impl ToolHost for AppHost {
         self.builtin.messaging_settings(directory)
     }
 
+    fn team_settings(
+        &self,
+        directory: &str,
+    ) -> Result<Option<cyber_core::teams::TeamSettings>, String> {
+        self.builtin.team_settings(directory)
+    }
+
+    fn team_editor(&self, directory: &str, agent: &str) -> bool {
+        self.builtin.team_editor(directory, agent)
+    }
+
+    fn create_team_session<'a>(
+        &'a self,
+        lead: &'a cyber_server::runtime::SessionInfo,
+        request: cyber_server::runtime::CreateSession,
+        worktree: &'a cyber_server::runtime::TeamWorktree,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<cyber_server::runtime::SessionInfo, String>> {
+        self.builtin
+            .create_team_session(lead, request, worktree, cancel)
+    }
+
     fn peer_target(&self, name: &str) -> Result<Option<PeerTarget>, String> {
         (self.peers)(name)
     }

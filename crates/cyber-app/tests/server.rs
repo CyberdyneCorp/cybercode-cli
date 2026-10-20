@@ -3225,6 +3225,12 @@ async fn application_emits_runtime_lifecycle_hooks_with_session_identity() {
         assert_eq!(mine[first(kind)]["job"]["id"], json!(job_id), "{kind}");
     }
     assert_eq!(mine[first("TaskCompleted")]["job"]["status"], "completed");
+    // Team task fields never reach a Job's TaskCreated/TaskCompleted (`agent-teams`).
+    for kind in ["TaskCreated", "TaskCompleted"] {
+        for field in ["task", "team_id", "member"] {
+            assert!(mine[first(kind)].get(field).is_none(), "{kind}: {field}");
+        }
+    }
     assert_eq!(mine[first("SessionEnd")]["reason"], "delete");
     let children: Vec<&Value> = events
         .iter()

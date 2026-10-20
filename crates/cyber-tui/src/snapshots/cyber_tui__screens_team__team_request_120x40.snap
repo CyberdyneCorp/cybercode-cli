@@ -1,0 +1,44 @@
+---
+source: crates/cyber-tui/src/screens_team.rs
+expression: screen
+---
+  ⚙ Split the feature between api, ui and tests.
+                                                                                      Team
+ ✉ api · ses_APIAPI · 14:05                                              untrusted
+ │ Schema is merged; starting on the API.                                             Context
+                                                                                      100 tokens · window unknown
+  Noted.                                                                              — spent
+
+  ▣ Build · main · 11.3s                                                              Team feature
+               ┌ Permission: bash ──────────────────────────────────────────────────────────────────────┐  ◐ tests
+               │[tests] Allow bash: docker compose up?                                                  │
+               │                                                                                        │
+               │  docker compose up                                                                     │
+               │                                                                                        │add
+               │❯ Allow once (y)                                                                        │
+               │  Allow always… (a)                                                                     │
+               │  Reject (n)                                                                            │as files are
+               │                                                                                        │
+               │                                                                                        │
+               │                                                                                        │
+               │                                                                                        │
+               │                                                                                        │
+               │                                                                                        │
+               │                                                                                        │
+               │                                                                                        │
+               │                                                                                        │
+               │                                                                                        │
+               │                                                                                        │
+               │                                                                                        │
+               │                                                                                        │
+               │                                                                                        │
+               │                                                                                        │
+               └────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃                                                                                     ~/work/app
+┃ Build · main test · default
+ ~/work/app                                                100 · —  ctrl+p commands   ● Cyber Code 1.0.0

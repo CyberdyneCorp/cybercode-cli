@@ -77,6 +77,12 @@ export interface Operations {
     body: undefined;
     response: S.EventEnvelope;
   };
+  "v1.features.list": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_Array_of_FeatureStatus;
+  };
   "v1.formatter.status": {
     path: Record<string, never>;
     query: Record<string, never>;
@@ -859,6 +865,59 @@ export interface Operations {
     body: undefined;
     response: S.Located_Machine;
   };
+  "v1.teams.create": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.CreateTeam;
+    response: S.CreatedTeam;
+  };
+  "v1.teams.definitions": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_Definitions;
+  };
+  "v1.teams.events": {
+    path: { teamID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.EventEnvelope;
+  };
+  "v1.teams.get": {
+    path: { teamID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.TeamView;
+  };
+  "v1.teams.list": {
+    path: Record<string, never>;
+    query: {
+      status?: QueryValue;
+    };
+    body: undefined;
+    response: S.Located_Array_of_TeamListing;
+  };
+  "v1.teams.resume": {
+    path: { teamID: string };
+    query: Record<string, never>;
+    body: S.ResumeTeam;
+    response: S.Team;
+  };
+  "v1.teams.stop": {
+    path: { teamID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Team;
+  };
+  "v1.teams.tasks": {
+    path: { teamID: string };
+    query: {
+      status?: QueryValue;
+      owner?: QueryValue;
+    };
+    body: undefined;
+    response: S.Task[];
+  };
   "v1.tool.list": {
     path: Record<string, never>;
     query: {
@@ -1058,6 +1117,18 @@ export const operations = {
     located: true,
     unwrap: false,
     stream: true,
+  },
+  "v1.features.list": {
+    tag: "features",
+    name: "list",
+    method: "GET",
+    path: "/api/v1/features",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
   },
   "v1.formatter.status": {
     tag: "formatter",
@@ -2463,6 +2534,102 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.teams.create": {
+    tag: "teams",
+    name: "create",
+    method: "POST",
+    path: "/api/v1/teams",
+    pathParams: [],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.teams.definitions": {
+    tag: "teams",
+    name: "definitions",
+    method: "GET",
+    path: "/api/v1/team-definitions",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.teams.events": {
+    tag: "teams",
+    name: "events",
+    method: "GET",
+    path: "/api/v1/teams/{teamID}/events",
+    pathParams: ["teamID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: true,
+  },
+  "v1.teams.get": {
+    tag: "teams",
+    name: "get",
+    method: "GET",
+    path: "/api/v1/teams/{teamID}",
+    pathParams: ["teamID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.teams.list": {
+    tag: "teams",
+    name: "list",
+    method: "GET",
+    path: "/api/v1/teams",
+    pathParams: [],
+    query: ["status"],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.teams.resume": {
+    tag: "teams",
+    name: "resume",
+    method: "POST",
+    path: "/api/v1/teams/{teamID}/resume",
+    pathParams: ["teamID"],
+    query: [],
+    body: "optional",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.teams.stop": {
+    tag: "teams",
+    name: "stop",
+    method: "POST",
+    path: "/api/v1/teams/{teamID}/stop",
+    pathParams: ["teamID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.teams.tasks": {
+    tag: "teams",
+    name: "tasks",
+    method: "GET",
+    path: "/api/v1/teams/{teamID}/tasks",
+    pathParams: ["teamID"],
+    query: ["status", "owner"],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.tool.list": {
     tag: "tool",
     name: "list",
@@ -2737,6 +2904,11 @@ export function createGroups(caller: Caller) {
       /** Live events for a Location (scope=all for every Location) (`GET /api/v1/event`) */
       subscribe: (query?: Operations["v1.event.subscribe"]["query"], options?: StreamOptions): AsyncIterableIterator<S.EventEnvelope> =>
         caller.stream("v1.event.subscribe", { query }, options),
+    },
+    features: {
+      /** Every registered feature with its maturity, default, effective value and source for the Location (`GET /api/v1/features`) */
+      list: (options?: RequestOptions): Promise<Operations["v1.features.list"]["response"]> =>
+        caller.call("v1.features.list", {}, options),
     },
     formatter: {
       /** Inspect local formatter detection without execution (`GET /api/v1/formatters`) */
@@ -3133,6 +3305,32 @@ export function createGroups(caller: Caller) {
       stats: (options?: RequestOptions): Promise<Operations["v1.system.stats"]["response"]> =>
         caller.call("v1.system.stats", {}, options),
     },
+    teams: {
+      /** Start a team led by `lead_session_id` from a definition of the lead's Location, from teammates, or both (`POST /api/v1/teams`) */
+      create: (body: Operations["v1.teams.create"]["body"], options?: RequestOptions): Promise<Operations["v1.teams.create"]["response"]> =>
+        caller.call("v1.teams.create", { body }, options),
+      /** Team definitions of the Location (project ones only from a trusted checkout) and the files that failed to load, naming the field (`GET /api/v1/team-definitions`) */
+      definitions: (options?: RequestOptions): Promise<Operations["v1.teams.definitions"]["response"]> =>
+        caller.call("v1.teams.definitions", {}, options),
+      /** Live `team.*` events of the team and its members' permission and question events, for the team view (`GET /api/v1/teams/{teamID}/events`) */
+      events: (teamID: string, options?: StreamOptions): AsyncIterableIterator<S.EventEnvelope> =>
+        caller.stream("v1.teams.events", { path: { teamID } }, options),
+      /** A team: members with status, current task, cost and last message, the task board, budget and spend (`GET /api/v1/teams/{teamID}`) */
+      get: (teamID: string, options?: RequestOptions): Promise<Operations["v1.teams.get"]["response"]> =>
+        caller.call("v1.teams.get", { path: { teamID } }, options),
+      /** Teams led from the Location, newest first (`status`: active, stopping or stopped), with teammate and task counts and cost (`GET /api/v1/teams`) */
+      list: (query?: Operations["v1.teams.list"]["query"], options?: RequestOptions): Promise<Operations["v1.teams.list"]["response"]> =>
+        caller.call("v1.teams.list", { query }, options),
+      /** Resume a stopped team; after lead_deleted `lead` names the new lead (`POST /api/v1/teams/{teamID}/resume`) */
+      resume: (teamID: string, body?: Operations["v1.teams.resume"]["body"], options?: RequestOptions): Promise<Operations["v1.teams.resume"]["response"]> =>
+        caller.call("v1.teams.resume", { path: { teamID }, body }, options),
+      /** Stop a team: stopping while teammates finish their current Turn, then stopped; queued input stays queued (`POST /api/v1/teams/{teamID}/stop`) */
+      stop: (teamID: string, options?: RequestOptions): Promise<Operations["v1.teams.stop"]["response"]> =>
+        caller.call("v1.teams.stop", { path: { teamID } }, options),
+      /** The team's task board in creation order, optionally only one `status` or `owner` (`GET /api/v1/teams/{teamID}/tasks`) */
+      tasks: (teamID: string, query?: Operations["v1.teams.tasks"]["query"], options?: RequestOptions): Promise<Operations["v1.teams.tasks"]["response"]> =>
+        caller.call("v1.teams.tasks", { path: { teamID }, query }, options),
+    },
     tool: {
       /** Tools offered for an agent and mode (`GET /api/v1/tools`) */
       list: (query?: Operations["v1.tool.list"]["query"], options?: RequestOptions): Promise<Operations["v1.tool.list"]["response"]> =>
@@ -3214,6 +3412,7 @@ export type Groups = ReturnType<typeof createGroups>;
 export const errorTags = [
   "CommandNotFoundError",
   "ConflictError",
+  "FeatureDisabledError",
   "ForbiddenError",
   "InvalidCursorError",
   "InvalidRequestError",
@@ -3231,6 +3430,10 @@ export const errorTags = [
   "BudgetExceededError",
   "SessionBusyError",
   "SessionNotFoundError",
+  "TaskClaimedError",
+  "TaskDependencyError",
+  "TeamLimitError",
+  "TeamNotFoundError",
   "UnauthorizedError",
   "UnknownError",
 ] as const;
@@ -3254,6 +3457,10 @@ export function isCommandNotFoundError(err: unknown): err is TaggedError<"Comman
 
 export function isConflictError(err: unknown): err is TaggedError<"ConflictError"> {
   return hasTag(err, "ConflictError");
+}
+
+export function isFeatureDisabledError(err: unknown): err is TaggedError<"FeatureDisabledError"> {
+  return hasTag(err, "FeatureDisabledError");
 }
 
 export function isForbiddenError(err: unknown): err is TaggedError<"ForbiddenError"> {
@@ -3322,6 +3529,22 @@ export function isSessionBusyError(err: unknown): err is TaggedError<"SessionBus
 
 export function isSessionNotFoundError(err: unknown): err is TaggedError<"SessionNotFoundError"> {
   return hasTag(err, "SessionNotFoundError");
+}
+
+export function isTaskClaimedError(err: unknown): err is TaggedError<"TaskClaimedError"> {
+  return hasTag(err, "TaskClaimedError");
+}
+
+export function isTaskDependencyError(err: unknown): err is TaggedError<"TaskDependencyError"> {
+  return hasTag(err, "TaskDependencyError");
+}
+
+export function isTeamLimitError(err: unknown): err is TaggedError<"TeamLimitError"> {
+  return hasTag(err, "TeamLimitError");
+}
+
+export function isTeamNotFoundError(err: unknown): err is TaggedError<"TeamNotFoundError"> {
+  return hasTag(err, "TeamNotFoundError");
 }
 
 export function isUnauthorizedError(err: unknown): err is TaggedError<"UnauthorizedError"> {

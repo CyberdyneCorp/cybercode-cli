@@ -334,6 +334,7 @@ fn malformed(sources: Vec<String>, error: String) -> ManagedRead {
             serde_json::json!({
                 "modes": {"disable": MALFORMED_DISABLED_MODES},
                 "messaging": {"enabled": false},
+                "features": malformed_feature_lock(),
             }),
         )],
     }
@@ -426,7 +427,7 @@ fn absorb_policy(read: &mut ManagedPolicy, policy: &Value) -> Result<(), String>
     if let Some(key) = policy.keys().find(|key| {
         !matches!(
             key.as_str(),
-            "hooks" | "messaging" | "mcp" | "modes" | "plugins" | "sandbox"
+            "features" | "hooks" | "messaging" | "mcp" | "modes" | "plugins" | "sandbox"
         )
     }) {
         return Err(format!("policy.{key}: unsupported managed policy key"));
@@ -473,6 +474,9 @@ fn policy_settings(policy: &Value) -> Result<Map<String, Value>, String> {
     let mut out = Map::new();
     if let Some(messaging) = policy.get("messaging") {
         out.insert("messaging".into(), messaging_policy(messaging)?);
+    }
+    if let Some(features) = policy.get("features") {
+        out.insert("features".into(), features_policy(features)?);
     }
     if let Some(modes) = policy.get("modes") {
         let modes = modes
@@ -536,6 +540,49 @@ fn messaging_policy(messaging: &Value) -> Result<Value, String> {
         Some(Value::Bool(enabled)) => Ok(serde_json::json!({ "enabled": enabled })),
         Some(_) => Err("policy.messaging.enabled: expected a boolean".into()),
     }
+}
+
+/// `policy.features.lock`: `{ "<feature>": true|false }` over known features only, so a
+/// typo fails closed instead of leaving a feature unlocked.
+fn features_policy(features: &Value) -> Result<Value, String> {
+    let features = features
+        .as_object()
+        .ok_or("policy.features: expected an object")?;
+    if let Some(key) = features.keys().find(|key| *key != "lock") {
+        return Err(format!(
+            "policy.features.{key}: unsupported managed policy key"
+        ));
+    }
+    let Some(lock) = features.get("lock") else {
+        return Ok(serde_json::json!({}));
+    };
+    let lock = lock
+        .as_object()
+        .ok_or("policy.features.lock: expected an object")?;
+    for (name, value) in lock {
+        if crate::features::entry(name).is_none() {
+            return Err(format!(
+                "policy.features.lock: {}",
+                crate::features::unknown(name)
+            ));
+        }
+        if !value.is_boolean() {
+            return Err(format!(
+                "policy.features.lock.{name}: expected true or false"
+            ));
+        }
+    }
+    Ok(serde_json::json!({ "lock": lock }))
+}
+
+/// Every feature locked to its default: what a malformed policy implies, so an unusable
+/// document never leaves an experimental feature switchable.
+fn malformed_feature_lock() -> Value {
+    let lock: Map<String, Value> = crate::features::REGISTRY
+        .iter()
+        .map(|entry| (entry.name.to_owned(), Value::Bool(entry.default)))
+        .collect();
+    serde_json::json!({ "lock": lock })
 }
 
 /// `policy.mcp`: `allow` and `deny` arrays of patterns; several documents add up.

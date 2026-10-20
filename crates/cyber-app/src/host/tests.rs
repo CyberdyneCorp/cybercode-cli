@@ -761,6 +761,9 @@ fn app_host_forwards_every_tool_host_method() {
         "permission_effect",
         "resolve_prompt_resources",
         "take_hook_effects",
+        "team_editor",
+        "team_settings",
+        "create_team_session",
     ] {
         assert!(
             trait_methods.contains(method),

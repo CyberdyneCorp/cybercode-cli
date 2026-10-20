@@ -149,6 +149,7 @@ fn policy(
         location: "/repo".into(),
         home: "/home/user".into(),
         plan_file: "/repo/.cyber/plans/plan.md".into(),
+        ownership: None,
     }
 }
 

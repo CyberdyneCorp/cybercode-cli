@@ -384,6 +384,16 @@ impl Client {
         Ok(parse_events(chunks))
     }
 
+    /// Live events of one team (`/teams/:id/events`): its `team.*` records and its
+    /// members' permission and question events.
+    pub async fn team_events(
+        &self,
+        team_id: &str,
+    ) -> Result<impl Stream<Item = Event> + use<>, ClientError> {
+        let path = format!("/teams/{}/events", encode(team_id).replace('/', "%2F"));
+        Ok(parse_events(self.open_stream(&path).await?))
+    }
+
     /// One request with extra headers, returning the status and body even on failure
     /// (`cyber api`).
     pub async fn raw(

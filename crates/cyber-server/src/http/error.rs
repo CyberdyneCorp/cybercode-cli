@@ -213,6 +213,17 @@ impl From<RuntimeError> for ApiError {
             RuntimeError::LoopLimit(_) => {
                 Self::new(StatusCode::CONFLICT, "LoopLimitError", message)
             }
+            RuntimeError::FeatureDisabled(m) => Self::not_found("FeatureDisabledError", m),
+            RuntimeError::TeamNotFound(_) => Self::not_found("TeamNotFoundError", message),
+            RuntimeError::TeamLimit(_) => {
+                Self::new(StatusCode::CONFLICT, "TeamLimitError", message)
+            }
+            RuntimeError::TaskClaimed(_) => {
+                Self::new(StatusCode::CONFLICT, "TaskClaimedError", message)
+            }
+            RuntimeError::TaskDependency(_) => {
+                Self::new(StatusCode::CONFLICT, "TaskDependencyError", message)
+            }
             RuntimeError::MessageImmutable(_) => {
                 Self::conflict(message).with_reason("message_immutable")
             }

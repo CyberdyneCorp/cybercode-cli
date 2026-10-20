@@ -2,8 +2,8 @@
 //! Mode admission and sandbox escape tests. The model runs what the prompt asks for:
 //! `RUN<<command>>` calls `bash` with that command, `TOOL<<name>>{json}` calls `name`
 //! with that input, `GATE<<label>>` answers through the scripted model's gate `label`
-//! (the Turn runs until [`ScriptedModel::open_gate`]), and a tool result is answered with
-//! `done`.
+//! (the Turn runs until [`ScriptedModel::open_gate`], then makes the call the rest of the
+//! prompt asks for, if any), and a tool result is answered with `done`.
 #![allow(dead_code)]
 
 use std::path::PathBuf;
@@ -39,6 +39,8 @@ pub struct Setup {
     pub database: Option<PathBuf>,
     /// The scripted model's answers; [`prompted_call`] when unset.
     pub reply: Option<Reply>,
+    /// The scripted provider's models (with their prices), replacing its unpriced `main`.
+    pub models: Option<Value>,
 }
 
 impl Default for Setup {
@@ -50,6 +52,7 @@ impl Default for Setup {
             config: json!({}),
             database: None,
             reply: None,
+            models: None,
         }
     }
 }
@@ -78,9 +81,22 @@ pub fn prompted_call(body: &Value) -> Value {
             text[start + end + 2..].to_string(),
         ))
     };
+    let call = scripted_call(&messages, &between);
     if let Some((label, _)) = between("GATE<<") {
-        return json!({ "gate": label });
+        // `GATE<<label>>` followed by a call makes that call once the gate opens.
+        return match call {
+            Some(call) => json!({ "gate": label, "then": call }),
+            None => json!({ "gate": label }),
+        };
     }
+    call.unwrap_or_else(|| json!({"content": "ok"}))
+}
+
+/// The tool call a prompt's `RUN<<command>>` or `TOOL<<name>>{json}` asks for.
+fn scripted_call(
+    messages: &[Value],
+    between: &dyn Fn(&str) -> Option<(String, String)>,
+) -> Option<Value> {
     let (name, arguments) = if let Some((command, _)) = between("RUN<<") {
         (
             "bash".to_string(),
@@ -90,10 +106,12 @@ pub fn prompted_call(body: &Value) -> Value {
         let input = rest.lines().next().unwrap_or("{}").trim().to_string();
         (name, input)
     } else {
-        return json!({"content": "ok"});
+        return None;
     };
-    json!({"tool_calls": [{"index": 0, "id": format!("call_{:04}", messages.len()), "type": "function",
-        "function": {"name": name, "arguments": arguments}}]})
+    Some(
+        json!({"tool_calls": [{"index": 0, "id": format!("call_{:04}", messages.len()), "type": "function",
+        "function": {"name": name, "arguments": arguments}}]}),
+    )
 }
 
 impl ModeApp {
@@ -151,6 +169,9 @@ impl ModeApp {
         };
         paths.ensure().unwrap();
         let mut config = model.config();
+        if let Some(models) = &setup.models {
+            config["providers"]["test"]["models"] = models.clone();
+        }
         if let (Some(config), Some(extra)) = (config.as_object_mut(), setup.config.as_object()) {
             config.extend(extra.clone());
         }

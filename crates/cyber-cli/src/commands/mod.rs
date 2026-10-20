@@ -7,6 +7,7 @@ pub mod debug;
 pub mod doctor;
 pub mod eval;
 pub mod exec;
+pub mod features;
 pub mod git;
 pub mod hooks;
 pub mod import;
@@ -30,6 +31,7 @@ pub mod serve;
 pub mod sessions;
 pub mod skills;
 pub mod stats;
+pub mod teams;
 pub mod trust;
 pub mod tui;
 pub mod workflows;
@@ -48,6 +50,9 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
     }
     if cli.version {
         return version(&cli.global);
+    }
+    if let Some(features) = &cli.global.features {
+        cyber_core::features::set_flag(features);
     }
     if cli.global.pure || cyber_core::plugins::pure(&cyber_core::env::ProcessEnv) {
         pure(&mut cli)?;
@@ -91,6 +96,8 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
         Command::Commands { cmd } => skills::run_commands(cmd, &ctx, &cli.global),
         Command::Worktree { cmd } => worktrees::run(cmd, &ctx, &cli.global),
         Command::Workflows { cmd } => workflows::run(cmd, &ctx, &cli.global),
+        Command::Teams { cmd } => teams::run(cmd, &ctx, &cli.global),
+        Command::Features { cmd } => features::run(cmd, &ctx, &cli.global),
         Command::Debug { cmd } => debug::run(cmd, &ctx, &cli.global),
         Command::Models(args) => models::run(args, &ctx, &cli.global),
         Command::Providers { cmd } => providers::run(cmd, &ctx, &cli.global),

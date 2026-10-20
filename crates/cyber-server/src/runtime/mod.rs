@@ -55,6 +55,7 @@ pub mod instructions;
 mod jobs;
 pub mod loops;
 mod names;
+pub mod teams;
 pub use handoff::Handoff;
 mod process_jobs;
 pub use process_jobs::{JobIo, ProcessJob, ProcessReservation, ProcessWork};
@@ -177,8 +178,9 @@ pub use host::{
     AgentInference, CatalogResolver, CheckOutcome, ChildContinuation, FileDecision, FileDiff,
     HookEffects, Invocation, LifecycleHook, LifecycleVerdict, LocationGuard, LocationLease,
     ModelResolver, NoSnapshots, NoTools, Reconciliation, ResolvedModel, RestoreError, RuleEffect,
-    RunWorktree, SessionEnvelope, SkillSuggestion, Snapshot, Snapshots, ToolDef, ToolHost,
-    ToolOutcome, ToolScope, TurnContext, TurnWorktree, WorkflowAgentOutput, WorkflowAgentRequest,
+    RunWorktree, SessionEnvelope, SkillSuggestion, Snapshot, Snapshots, TeamWorktree, ToolDef,
+    ToolHost, ToolOutcome, ToolScope, TurnContext, TurnWorktree, WorkflowAgentOutput,
+    WorkflowAgentRequest,
 };
 pub use model::{
     AssistantEntry, CallState, CallStatus, Delivery, Entry, InboxRow, InputStatus, LastStep,
@@ -263,6 +265,23 @@ pub enum RuntimeError {
     /// The Session already has `loops.max_per_session` active loops.
     #[error("LoopLimitError: Scheduled task limit reached ({0})")]
     LoopLimit(u64),
+    /// A feature the Location's configuration leaves off (`agent-teams` → Feature flag);
+    /// nothing was written.
+    #[error("FeatureDisabledError: {0}")]
+    FeatureDisabled(&'static str),
+    /// No team has this ID (`agent-teams`).
+    #[error("TeamNotFoundError: No team {0}")]
+    TeamNotFound(String),
+    /// A team already has `teams.max_teammates` teammates; nothing was created.
+    #[error("TeamLimitError: Team size limit reached ({0})")]
+    TeamLimit(u32),
+    /// A claim of a team task another member is working on; nothing changed.
+    #[error("TaskClaimedError: Task already claimed by {0}")]
+    TaskClaimed(String),
+    /// A team task change the dependency rule refuses (an unfinished dependency, a
+    /// cycle, a task of another team); nothing changed.
+    #[error("TaskDependencyError: {0}")]
+    TaskDependency(String),
     /// The target refuses this caller (a watch of a Session that refuses its messages,
     /// with the refusal reason); nothing was written.
     #[error("ForbiddenError: {message}")]
@@ -338,6 +357,8 @@ pub struct CreateSession {
     /// Session-level `messaging.inbound` override, committed with the Session
     /// (`cyber exec` refuses messages with `non_interactive`).
     pub messaging: Option<messaging::InboundOverride>,
+    /// The team tag of a team member Session (`agent-teams`); only for root Sessions.
+    pub team: Option<teams::TeamTag>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -717,6 +738,14 @@ pub(crate) struct Inner {
     /// One send lock per message target (`cross-session-messaging` → Rate limits):
     /// concurrent senders to one Session pass the checks and admission one at a time.
     message_locks: StdMutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// Team creation and spawns (`agent-teams` → Team composition): the size check and
+    /// the spawn it admits run under this lock, so concurrent spawns cannot exceed
+    /// `teams.max_teammates`.
+    team_spawn: Mutex<()>,
+    /// Team status changes (`agent-teams` → Team budgets, Shutdown and resume): a budget
+    /// stop, a stop, its end and a resume read the team's status and record the change
+    /// one at a time, so a team is exceeded or stopped once per active period.
+    team_status: Mutex<()>,
     /// Peer Sessions of the reachable listing, reused for 15 s (`cross-session-messaging`
     /// → Peer watches and listing).
     peer_listings: StdMutex<messaging::listing::ListingCache>,
@@ -807,6 +836,8 @@ impl Runtime {
             workflow_closing: std::sync::atomic::AtomicBool::new(false),
             workflow_locks: StdMutex::default(),
             message_locks: StdMutex::default(),
+            team_spawn: Mutex::default(),
+            team_status: Mutex::default(),
             peer_listings: StdMutex::default(),
             workflow_writers: StdMutex::default(),
             workflow_dir: std::sync::OnceLock::new(),
@@ -1003,6 +1034,14 @@ impl Runtime {
                 "workflow_run_id requires a parent".into(),
             ));
         }
+        if let Some(tag) = &req.team {
+            if req.parent_id.is_some() {
+                return Err(RuntimeError::Invalid(
+                    "A team member is a root Session".into(),
+                ));
+            }
+            tag.validate().map_err(RuntimeError::Invalid)?;
+        }
         if req.child_worktree_setup_pending && req.child_worktree.is_none() {
             return Err(RuntimeError::Invalid(
                 "Pending isolated setup requires a checkout binding".into(),
@@ -1061,6 +1100,7 @@ impl Runtime {
             max_steps: req.max_steps,
             budget: req.budget,
             messaging: req.messaging,
+            team: req.team,
         };
         if info.budget.is_none() {
             info.budget = self
@@ -1794,6 +1834,10 @@ impl Runtime {
 
     pub async fn switch_mode(&self, session_id: &str, mode: &str) -> Result<(), RuntimeError> {
         selection::validate_mode(mode)?;
+        // `agent-teams` → Permissions in teams: never above the lead's Mode.
+        let handle = self.inner.handle(session_id).await?;
+        let ceiling = self.inner.team_ceiling(&handle).await?;
+        teams::check_mode(mode, ceiling.as_deref())?;
         self.switch(session_id, MODE_SWITCHED, mode, |i| &i.mode)
             .await
     }
@@ -1960,6 +2004,8 @@ impl Runtime {
             subagent_name: None,
             workflow_run_id: None,
             parent_id: None,
+            // A fork is a new Session of its own, never a member of the source's team.
+            team: None,
             default_title: false,
             created_ms: chrono::Utc::now().timestamp_millis(),
             archived: false,
@@ -2169,7 +2215,12 @@ impl Inner {
             return Ok(Arc::clone(h));
         }
         let events = self.load_events(id)?;
-        if events.is_empty() {
+        // A deleted team lead keeps its `team.*` records, so a stream that does not
+        // open with `session.created` is a Session that no longer exists.
+        if events
+            .first()
+            .is_none_or(|first| first.kind != events::CREATED)
+        {
             return Err(RuntimeError::SessionNotFound(id.into()));
         }
         let state = SessionState::replay(&events).map_err(RuntimeError::Corrupt)?;

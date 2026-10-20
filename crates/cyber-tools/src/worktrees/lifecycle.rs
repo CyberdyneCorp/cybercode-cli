@@ -139,6 +139,7 @@ impl BuiltinHost {
             ctx: &ctx,
             writable: Some(Vec::new()),
             credentials: &[],
+            read_only: Vec::new(),
         };
         let repository = Repository::discover(&discovery, &ctx.location).await?;
         let managed = retry_repository_busy(&ctx.cancel, || repository.list(&discovery))
@@ -169,6 +170,7 @@ impl BuiltinHost {
             ctx: &ctx,
             writable: Some(vec![repository.common_dir.clone()]),
             credentials: &[],
+            read_only: Vec::new(),
         };
         retry_repository_busy(&ctx.cancel, || {
             repository.remove(&execution, &CheckoutActivity, &managed, force)
@@ -340,6 +342,7 @@ impl BuiltinHost {
             ctx: &ctx,
             writable: Some(Vec::new()),
             credentials: &[],
+            read_only: Vec::new(),
         };
         let repository = Repository::discover(&discovery, &ctx.location).await?;
         if repository.common_dir != managed.common_dir {
@@ -407,6 +410,7 @@ impl BuiltinHost {
             ctx,
             writable: Some(Vec::new()),
             credentials: &[],
+            read_only: Vec::new(),
         };
         let repository = Repository::discover(&discovery, &ctx.location)
             .await
@@ -485,7 +489,7 @@ impl BuiltinHost {
         let (repository, managed, recipe) = runtime
             .own_worktree_setup(
                 ctx.cancel.clone(),
-                self.create_worktree(ctx.inv, ctx.cancel.clone(), &request),
+                self.create_worktree(ctx.inv, ctx.cancel.clone(), &request, None),
             )
             .await
             .map_err(io_failed)?;

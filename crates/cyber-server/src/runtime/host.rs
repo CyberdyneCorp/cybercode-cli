@@ -498,6 +498,28 @@ impl RunWorktree {
     }
 }
 
+/// The managed worktree of a teammate (`agent-teams` → Team composition):
+/// `team-<ulid>-<member>` on branch `cyber/team-<ulid>/<member>`, based on the lead's
+/// current HEAD and kept until the team is removed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TeamWorktree {
+    pub name: String,
+    pub branch: String,
+}
+
+impl TeamWorktree {
+    pub fn new(team_id: &str, member: &str) -> Self {
+        let id = team_id
+            .strip_prefix("team_")
+            .unwrap_or(team_id)
+            .to_ascii_lowercase();
+        Self {
+            name: format!("team-{id}-{member}"),
+            branch: format!("cyber/team-{id}/{member}"),
+        }
+    }
+}
+
 /// A settled Workflow agent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkflowAgentOutput {
@@ -747,6 +769,34 @@ pub trait ToolHost: Send + Sync {
         _command: &str,
     ) -> BoxFuture<'_, Result<String, String>> {
         Box::pin(async { Err("background shell commands are not supported by this host".into()) })
+    }
+
+    /// The team settings of a Location (`agent-teams` → Feature flag): `None` while the
+    /// `teams` feature is off there. Callers treat an error as off.
+    fn team_settings(
+        &self,
+        _directory: &str,
+    ) -> Result<Option<cyber_core::teams::TeamSettings>, String> {
+        Ok(None)
+    }
+
+    /// Whether `agent` at `directory` can edit: its tool set offers `edit`, `write`,
+    /// `apply_patch` or `bash` (`agent-teams` → isolation default). An agent that cannot
+    /// be resolved counts as an editor.
+    fn team_editor(&self, _directory: &str, _agent: &str) -> bool {
+        true
+    }
+
+    /// Create the teammate Session `request` in its own managed `worktree`, based on the
+    /// lead's current HEAD and authorized under the lead's permissions.
+    fn create_team_session<'a>(
+        &'a self,
+        _lead: &'a SessionInfo,
+        _request: super::CreateSession,
+        _worktree: &'a TeamWorktree,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<SessionInfo, String>> {
+        Box::pin(async { Err("team worktrees are not supported by this host".to_string()) })
     }
 
     /// Loop limits and the `budgets.loop` default of a Location (`loops-scheduling`).

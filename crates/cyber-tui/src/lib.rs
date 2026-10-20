@@ -32,6 +32,7 @@ mod side_chat;
 mod sidebar;
 mod store;
 mod switcher;
+mod team;
 mod theme;
 mod turns;
 mod view;
@@ -78,6 +79,8 @@ mod screens_sidebar;
 mod screens_stats;
 #[cfg(test)]
 mod screens_tasks;
+#[cfg(test)]
+mod screens_team;
 #[cfg(test)]
 mod screens_themes;
 #[cfg(test)]

@@ -1,4 +1,6 @@
-//! Existing durable children inherit every ancestor's deny rules at dispatch.
+//! Existing durable children inherit every ancestor's deny rules at dispatch, and
+//! teammates their team lead's (`agent-teams` → Permissions in teams); members of a
+//! shared-Location team and their subagents also get the team's ownership guard.
 
 use crate::{
     BuiltinHost,
@@ -13,6 +15,9 @@ pub(crate) struct ParentPermissions {
     pub rules: Vec<Rule>,
     pub modes: Vec<Mode>,
     pub auto: Vec<(String, AutoModeSettings)>,
+    /// The paths other team members own, for a member of a shared-Location team and its
+    /// subagents (`agent-teams` → File conflict avoidance).
+    pub ownership: Option<cyber_server::runtime::teams::Ownership>,
 }
 
 impl BuiltinHost {
@@ -30,17 +35,44 @@ impl BuiltinHost {
             return Ok(ParentPermissions::default());
         }
         let info = SessionState::replay(&page.events)?.info;
-        if info.parent_id.is_none() {
-            return Ok(ParentPermissions::default());
+        if info.parent_id.is_none() && info.team.is_none() {
+            // A root Session may still lead a team, whose ownership guard binds it.
+            let ownership = match self.runtime() {
+                Some(runtime) => runtime
+                    .team_ownership(&info)
+                    .map_err(|error| error.to_string())?,
+                None => None,
+            };
+            return Ok(ParentPermissions {
+                ownership,
+                ..ParentPermissions::default()
+            });
         }
         let runtime = self
             .runtime()
             .ok_or("Parent permission resolution requires the runtime")?;
-        let ancestors = runtime
+        let mut ancestors = runtime
             .ancestor_authorities(&info)
             .await
             .map_err(|error| error.to_string())?;
-        let mut inherited = ParentPermissions::default();
+        // `agent-teams` → Permissions in teams: the lead of the root's team is one more
+        // ancestor, so its Mode bounds the teammate (and the teammate's children) and its
+        // deny rules apply to them.
+        let root = ancestors.last().map_or(&info, |authority| &authority.info);
+        let ownership = runtime
+            .team_ownership(root)
+            .map_err(|error| error.to_string())?;
+        if let Some(lead) = runtime
+            .team_lead_authority(root)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            ancestors.push(lead);
+        }
+        let mut inherited = ParentPermissions {
+            ownership,
+            ..ParentPermissions::default()
+        };
         for authority in ancestors {
             let parent = authority.info;
             let mode = Mode::checked_parse(&authority.effective_mode).ok_or_else(|| {

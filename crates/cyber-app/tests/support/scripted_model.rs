@@ -6,7 +6,7 @@
 //! response headers (provider usage windows) instead of being part of the `delta`.
 //! A reply of `{"gate": "<label>"}` logs `(label, start time)` and waits for one
 //! [`ScriptedModel::open_gate`]; gated requests pass one per opening, oldest first, and
-//! answer `<label> done`. It never reaches the internet.
+//! answer their `"then"` delta, else `<label> done`. It never reaches the internet.
 #![allow(dead_code)]
 
 use std::collections::VecDeque;
@@ -168,7 +168,10 @@ fn answer(
     seen.lock().unwrap().push(body.clone());
     if let Some(label) = delta.get("gate").and_then(Value::as_str).map(str::to_owned) {
         gates.pass(&label, done);
-        delta = json!({"content": format!("{label} done")});
+        delta = delta
+            .get("then")
+            .cloned()
+            .unwrap_or_else(|| json!({"content": format!("{label} done")}));
     }
     if delta.get("hold").is_some() {
         while !released.load(Ordering::SeqCst) {

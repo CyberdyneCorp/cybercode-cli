@@ -11,6 +11,7 @@
 use std::path::Path;
 
 use cyber_core::config::MessagingSettings;
+use cyber_server::runtime::messaging::address::ALL;
 use cyber_server::runtime::messaging::send::idempotent_id;
 use cyber_server::runtime::messaging::watch::idempotent_watch_id;
 use cyber_server::runtime::messaging::{
@@ -145,7 +146,7 @@ impl Tool for SendMessage {
     fn def(&self) -> ToolDef {
         def(
             "send_message",
-            "Send a plain-text message to another Session on this server, addressed by its name or ses_ ID as list_sessions shows it. The text is at most 16 KiB and carries no files or attachments. The message waits in the target's inbox until its next safe boundary; the result is its outcome: delivered, held (the target's user decides) or refused with a reason. Replies arrive later as messages from the target; do not wait or poll for them.",
+            "Send a plain-text message to another Session on this server, addressed by its name or ses_ ID as list_sessions shows it; in a team, `lead`, a teammate's name, or `all` for every other member (one outcome each). The text is at most 16 KiB and carries no files or attachments. The message waits in the target's inbox until its next safe boundary; the result is its outcome: delivered, held (the target's user decides) or refused with a reason. Replies arrive later as messages from the target; do not wait or poll for them.",
             json!({"type": "object", "additionalProperties": false, "required": ["to", "text"], "properties": {
                 "to": {"type": "string", "description": "The target's address: a Session name or ses_ ID from list_sessions"},
                 "text": {"type": "string", "description": "Plain UTF-8 text, at most 16384 bytes"},
@@ -180,10 +181,59 @@ async fn send(ctx: &Ctx<'_>) -> Result<String, ToolError> {
     limits::check_text(message).map_err(|error| failed(error.to_string()))?;
     let session = &ctx.inv.session_id;
     let messaging = runtime.messaging();
-    let target = messaging
-        .resolve(Some(session), to)
+    let targets = messaging
+        .resolve_targets(Some(session), to)
         .map_err(runtime_failed)?;
-    let resources = resources(&target);
+    // A team's `all` sends one message per member, each checked before any is sent.
+    for target in &targets {
+        authorize_send(ctx, target, message, notify_when_idle).await?;
+    }
+    let fan_out = fans_out(to, &targets);
+    let mut results = Vec::with_capacity(targets.len());
+    for target in &targets {
+        // A retried or recovered call sends the same IDs, which replay their outcomes.
+        let (id, address) = if fan_out {
+            let key = format!("{}\0{}", ctx.inv.call_id, target.address);
+            (idempotent_id(session, &key), target.address.as_str())
+        } else {
+            (idempotent_id(session, &ctx.inv.call_id), to)
+        };
+        let result = messaging
+            .send(SendRequest {
+                id: Some(id),
+                from: Sender::Session(session.clone()),
+                to: address.to_owned(),
+                text: message.to_owned(),
+                depth: runtime.effective_mcp_depth(session),
+                expected_target: Some(target.candidate.session_id.clone()),
+                notify_when_idle,
+            })
+            .await
+            .map_err(runtime_failed)?;
+        results.push(result);
+    }
+    if fan_out {
+        return Ok(json!({ "results": results }).to_string());
+    }
+    Ok(results
+        .pop()
+        .map(|result| json!(result).to_string())
+        .unwrap_or_default())
+}
+
+/// Whether `to` is a team's `all`, which resolved to its members by name.
+fn fans_out(to: &str, targets: &[Target]) -> bool {
+    to.strip_prefix('@').unwrap_or(to) == ALL && targets.iter().all(|t| t.address != ALL)
+}
+
+/// The `message.send` check of one target, and the watch check with `notify_when_idle`.
+async fn authorize_send(
+    ctx: &Ctx<'_>,
+    target: &Target,
+    message: &str,
+    notify_when_idle: bool,
+) -> Result<(), ToolError> {
+    let resources = resources(target);
     ctx.authorize(
         Request {
             action: MESSAGE_SEND.into(),
@@ -196,22 +246,9 @@ async fn send(ctx: &Ctx<'_>) -> Result<String, ToolError> {
     .await?;
     if notify_when_idle {
         // The idle subscription is a watch: its own rules apply before anything is sent.
-        authorize_watch(ctx, &target).await?;
+        authorize_watch(ctx, target).await?;
     }
-    let result = messaging
-        .send(SendRequest {
-            // A retried or recovered call sends the same ID, which replays its outcome.
-            id: Some(idempotent_id(session, &ctx.inv.call_id)),
-            from: Sender::Session(session.clone()),
-            to: to.to_owned(),
-            text: message.to_owned(),
-            depth: runtime.effective_mcp_depth(session),
-            expected_target: Some(target.candidate.session_id.clone()),
-            notify_when_idle,
-        })
-        .await
-        .map_err(runtime_failed)?;
-    Ok(json!(result).to_string())
+    Ok(())
 }
 
 impl Tool for WatchSession {

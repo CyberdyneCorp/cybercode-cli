@@ -27,6 +27,7 @@ mod session;
 pub(crate) mod shell_resolve;
 mod skill;
 mod task;
+pub(crate) mod team;
 #[cfg(unix)]
 mod terminal;
 mod tool_search;
@@ -81,6 +82,12 @@ pub(crate) fn all() -> Vec<Box<dyn Tool>> {
         Box::new(messaging::SendMessage),
         Box::new(messaging::WatchSession),
         Box::new(loops::ScheduleWakeup),
+        Box::new(team::TeamSpawn),
+        Box::new(team::TeamMerge),
+        Box::new(team::TeamTaskCreate),
+        Box::new(team::TeamTaskList),
+        Box::new(team::TeamTaskGet),
+        Box::new(team::TeamTaskUpdate),
         Box::new(task::TaskStop),
         Box::new(monitor::Monitor),
         Box::new(deliver::Notify),
@@ -121,6 +128,10 @@ pub(crate) fn action_of(name: &str) -> &str {
         "enter_worktree" | "exit_worktree" => "worktree",
         "workflow" => crate::permissions::WORKFLOW_RUN,
         "send_message" => crate::permissions::MESSAGE_SEND,
+        team::SPAWN | team::MERGE => crate::permissions::TEAM_MANAGE,
+        team::TASK_CREATE | team::TASK_LIST | team::TASK_GET | team::TASK_UPDATE => {
+            crate::permissions::TEAM_TASK
+        }
         "mcp_list_resources" | "mcp_list_resource_templates" | "mcp_read_resource" => "read",
         other => other,
     }

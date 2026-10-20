@@ -232,7 +232,7 @@ fn session_of(event: &LiveEvent) -> Option<&str> {
     }
 }
 
-fn sse_event(e: &EventEnvelope) -> Event {
+pub(super) fn sse_event(e: &EventEnvelope) -> Event {
     Event::default()
         .id(e.id.clone())
         .event(e.kind.clone())
@@ -248,7 +248,7 @@ fn session_live_event(e: &EventEnvelope) -> Event {
         .unwrap_or_default()
 }
 
-fn spawn_stream(
+pub(super) fn spawn_stream(
     runtime: Runtime,
     tx: mpsc::Sender<Event>,
     producer: impl std::future::Future<Output = ()> + Send + 'static,
@@ -263,7 +263,7 @@ fn spawn_stream(
     });
 }
 
-fn stream_response(rx: mpsc::Receiver<Event>, runtime: Runtime) -> Response {
+pub(super) fn stream_response(rx: mpsc::Receiver<Event>, runtime: Runtime) -> Response {
     let stream = tokio_stream::StreamExt::map(ReceiverStream::new(rx), Ok::<Event, Infallible>);
     let stream =
         futures::StreamExt::take_until(stream, async move { runtime.shutting_down().await });

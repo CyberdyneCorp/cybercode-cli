@@ -88,6 +88,7 @@ pub fn top(app: &App, width: usize) -> Vec<Line<'static>> {
     }
     context(app, width, &mut out);
     workflows(app, width, &mut out);
+    super::team::sidebar(app, width, &mut out);
     mcp(app, width, &mut out);
     peers(app, width, &mut out);
     lsp(app, width, &mut out);
