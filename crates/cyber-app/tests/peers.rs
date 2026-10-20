@@ -2058,6 +2058,29 @@ async fn attach_stream(
     rx
 }
 
+/// Wait (bounded) until `stream` has sent `marker`; the text it sent so far.
+async fn stream_until(
+    stream: &mut tokio::sync::mpsc::UnboundedReceiver<Option<String>>,
+    marker: &str,
+) -> String {
+    let mut seen = String::new();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !seen.contains(marker) {
+            match stream.recv().await {
+                Some(Some(chunk)) => seen.push_str(&chunk),
+                _ => break,
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("the attach stream never sent {marker}: {seen}"));
+    assert!(
+        seen.contains(marker),
+        "the attach stream ended before {marker}: {seen}"
+    );
+    seen
+}
+
 /// Wait (bounded) until `stream` ends; the text it sent before.
 async fn stream_ends(stream: &mut tokio::sync::mpsc::UnboundedReceiver<Option<String>>) -> String {
     let mut seen = String::new();
@@ -2093,6 +2116,9 @@ async fn an_open_attach_stream_ends_with_its_attach_and_grant() {
     let laptop = grant_token(&desk, "laptop", scopes());
     let attach = open_attach(&peer, &migration, &laptop).await;
     let mut stream = attach_stream(&peer, &migration, &laptop, &attach).await;
+    // The stream has replayed the Session before it is closed, so the replay is not
+    // racing the close on a slow runner.
+    let mut seen = stream_until(&mut stream, "session.created").await;
     let close = peer_client()
         .delete(format!("{peer}/api/v1/peer/attach/{migration}"))
         .bearer_auth(&laptop)
@@ -2101,7 +2127,7 @@ async fn an_open_attach_stream_ends_with_its_attach_and_grant() {
         .await
         .unwrap();
     assert_eq!(close.status().as_u16(), 204);
-    let seen = stream_ends(&mut stream).await;
+    seen.push_str(&stream_ends(&mut stream).await);
     assert!(seen.contains("session.created"), "{seen}");
 
     // `cyber peers revoke laptop` ends it at once; later events never reach the peer.
