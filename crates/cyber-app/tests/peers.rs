@@ -1983,6 +1983,7 @@ async fn attach_desk(
     let setup = Setup {
         config: merged,
         interactive: true,
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     };
     let options = ServeOptions {

@@ -360,6 +360,7 @@ async fn bash_running(app: &ModeApp, id: &str) {
 async fn a_message_starts_a_turn_in_an_idle_session_and_waits_for_a_safe_boundary_in_a_busy_one() {
     let app = ModeApp::start(Setup {
         config: json!({"permissions": {"bash": "allow"}}),
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     })
     .await;
