@@ -137,39 +137,30 @@ jobs:
       - name: Native read-time skill compatibility
         if: ${{ !cancelled() }}
         run: |
-          $failed = $false
           cargo test --locked -p cyber-core --test skills_compat
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-app --test server skill_compat_precedence_and_switches_apply_over_http
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # Every command runs, so one CI run reports every failing target.
-          if ($failed) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native plugin resolution
         if: ${{ !cancelled() }}
         run: |
-          $failed = $false
           cargo test --locked -p cyber-core --test plugins
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-core --lib plugins::
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --lib plugin_host::
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # Every command runs, so one CI run reports every failing target.
-          if ($failed) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native browser verification
         if: ${{ !cancelled() }}
         run: |
-          $failed = $false
           cargo test --locked -p cyber-core --lib browser::
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --lib browser_evidence::
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --lib -- browser:: dev_server::
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-cli --test browser_cli
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # Every command runs, so one CI run reports every failing target.
-          if ($failed) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native MCP migration and disabled configuration
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test import_mcp --test mcp_config
@@ -200,103 +191,97 @@ jobs:
       - name: Native cross-session message records, addressing, listing, sends, model tools, inbound controls, limits, MCP depth, idle notifications, usage attribution, history, CLI, TUI and MCP serve tools
         if: ${{ !cancelled() }}
         run: |
-          $failed = $false
           cargo test --locked -p cyber-core --lib config::messaging
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-core --test config managed_policy_disables_messaging
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --lib permissions::engine::tests::message_send
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --test messaging_tools
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-store --lib migrate::tests::messaging_
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-store --lib migrate::tests::usage_origin_
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --lib runtime::usage_origin
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --test usage_ledger ledger_rows_carry_their_origin
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-store --test store reproject_
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-store --test store an_append_fault_
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --lib runtime::messaging
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --test messaging
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-app --test messaging
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-app --test mcp_serve a_send_message_leg_carries_the_depth
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --lib http::mcp_serve::messaging
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-app --test mcp_serve messaging_tools_map_onto_the_messaging_api
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-cli --test mcp_serve_cli the_bridge_sends_and_reads_messages
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-app --test mcp usage_in_a_turn_woken_through_mcp_serve_is_attributed_to_mcp
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-cli --bin cyber commands::messages
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-cli --bin cyber tree::tests::peers
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-cli --test messages_cli
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tui --lib messaging
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tui --lib taking_back_skips_received_messages
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tui --lib screens_messages
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # Every command runs, so one CI run reports every failing target.
-          if ($failed) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native direct peers config, error tags, token redaction, TLS identity, peer listener, grants, peer client, cyber peers, peer sends, listings, watches, discovery, attach and surfaces
         if: ${{ !cancelled() }}
         run: |
-          $failed = $false
           cargo test --locked -p cyber-core --lib config::peers
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-core --lib memory::secrets
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-core --test config peers
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --lib peer_error
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --lib http::error
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --lib http::peer
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --lib runtime::peers
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --lib runtime::messaging
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --lib permissions::engine::tests::remote_attach
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --test peers
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-app --test peers
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-app --lib peer_tokens
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-app --lib peer_discovery
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-cli --bin cyber peers
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-cli --test peers_cli
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-cli --bin cyber commands::attach
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-client --lib peer
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tui --lib the_tui_opens_a_peer_session_through_an_attach
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tui --lib screens_peers
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tui --lib messaging::tests
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # Every command runs, so one CI run reports every failing target.
-          if ($failed) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native bundled skill discovery and agent profiles
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --lib --test agent_profiles
@@ -336,25 +321,19 @@ jobs:
       - name: Native command template injection through exec
         if: ${{ !cancelled() }}
         run: |
-          $failed = $false
           cargo test --locked -p cyber-snapshot --lib
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-cli --test exec_template_expansion
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # Every command runs, so one CI run reports every failing target.
-          if ($failed) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       # Remote skill sources: cache paths, staging swap and trust through the app host
       # with an in-process fetcher; the index path validation runs in the library units.
       - name: Native remote skill sources
         if: ${{ !cancelled() }}
         run: |
-          $failed = $false
           cargo test --locked -p cyber-app --test server remote_skill
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --lib remote_skills
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # Every command runs, so one CI run reports every failing target.
-          if ($failed) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native imported provider configuration and catalog
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-llm --test import_providers
@@ -446,15 +425,12 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: |
-          $failed = $false
           cargo test --locked -p cyber-cli --bin cyber worktree_tests
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-cli --bin cyber listing_renders_status_sessions_and_recovery_diagnostics
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --test http worktree_request_validation_precedes_host_dispatch
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # Every command runs, so one CI run reports every failing target.
-          if ($failed) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native worktree configuration, repository creation and lock ownership
         run: cargo test --locked -p cyber-core --lib --test worktrees --test worktree_lock --test worktree_repository --test config
       - name: Native MCP configuration, framed protocol and startup wait
@@ -465,38 +441,32 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: |
-          $failed = $false
           cargo test --locked -p cyber-tools --lib mcp::stdio::tests
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --lib mcp::roots::tests
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --lib mcp::elicitation::tests
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --lib mcp::sampling::tests
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --lib tools::process::tests
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # Every command runs, so one CI run reports every failing target.
-          if ($failed) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native scope-aware deferred tool materialization
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: |
-          $failed = $false
           cargo test --locked -p cyber-core --lib config::deferred_tools::tests
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --lib runtime::deferred_tools::tests
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --test runtime loaded_
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --test context_compaction loaded_schemas
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --lib tools::tool_search::tests
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --test golden tool_search_golden
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # Every command runs, so one CI run reports every failing target.
-          if ($failed) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native MCP retained startup joins and bounded reconnect
         if: ${{ !cancelled() }}
         timeout-minutes: 20
@@ -513,13 +483,10 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: |
-          $failed = $false
           cargo test --locked -p cyber-server --test runtime registration
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --lib http::remote_tools::tests
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # Every command runs, so one CI run reports every failing target.
-          if ($failed) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native application client-tool schema and permission boundaries
         if: ${{ !cancelled() }}
         timeout-minutes: 20
@@ -532,17 +499,14 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: |
-          $failed = $false
           cargo test --locked -p cyber-app --test server -- forked_skill_shell_injection_expands_once_before_the_child client_pre_tool_use_handler_approves_docs_edits_through_the_app client_hook_handlers_do_not_reach_other_clients_sessions openai_compatible_call_is_durable_while_its_stream_is_still_open
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --test runtime complete_tool_call_is_durable_before_the_stream_finishes
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --test http client_hook_registration_drops_on_disconnect
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-cli --test git_commit_msg
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # Every command runs, so one CI run reports every failing target.
-          if ($failed) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native MCP definition review and trust CLI
         if: ${{ !cancelled() }}
         timeout-minutes: 20
@@ -551,29 +515,23 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: |
-          $failed = $false
           cargo test --locked -p cyber-tools --test mcp_remote
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --lib mcp::http::tests
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-cli --test mcp_remote_exec
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # Every command runs, so one CI run reports every failing target.
-          if ($failed) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       # Credential Manager layout over the in-memory vault: no test touches the real store.
       - name: Native MCP OAuth credential store
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: |
-          $failed = $false
           cargo test --locked -p cyber-tools --test mcp_oauth
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --lib mcp::oauth
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-app --test mcp oauth::
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # Every command runs, so one CI run reports every failing target.
-          if ($failed) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native memory documents and storage ownership
         if: ${{ !cancelled() }}
         timeout-minutes: 20
@@ -590,13 +548,10 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: |
-          $failed = $false
           cargo test --locked -p cyber-server --lib runtime::memory
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --lib http::idempotency::fingerprint_tests
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # Every command runs, so one CI run reports every failing target.
-          if ($failed) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native memory HTTP shutdown ownership
         if: ${{ !cancelled() }}
         timeout-minutes: 20
@@ -691,13 +646,10 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: |
-          $failed = $false
           cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-cli --test exec_hooks_windows
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # Every command runs, so one CI run reports every failing target.
-          if ($failed) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       # Path, git and npm sources, scopes, trust and pure mode through the binary.
       - name: Native plugins
         if: ${{ !cancelled() }}
@@ -707,13 +659,10 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: |
-          $failed = $false
           cargo test --locked -p cyber-app --test server application_emits_runtime_lifecycle_hooks_with_session_identity
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-app --test server application_emits_setup_and_config_change_hooks
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # Every command runs, so one CI run reports every failing target.
-          if ($failed) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Unsupported Unix bridge refuses execution
         if: ${{ !cancelled() }}
         timeout-minutes: 20
@@ -827,32 +776,26 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: |
-          $failed = $false
           cargo test --locked -p cyber-tools --lib tools::monitor::
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --test monitor --test golden
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-app --test server monitor_tail_filter_admits_error_lines_rate_limited
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # Every command runs, so one CI run reports every failing target.
-          if ($failed) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native PTY tickets, notify, send_file and side chat
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: |
-          $failed = $false
           cargo test --locked -p cyber-server --test pty
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --lib tools::deliver::tests
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --test notify
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-app --test deliveries
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tui --lib side_chat
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # Every command runs, so one CI run reports every failing target.
-          if ($failed) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native background job API controls
         if: ${{ !cancelled() }}
         timeout-minutes: 20
@@ -921,13 +864,10 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: |
-          $failed = $false
           cargo test --locked -p cyber-server --test http child_thread
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tui child_thread
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # Every command runs, so one CI run reports every failing target.
-          if ($failed) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native subagent resume and attempt replay
         if: ${{ !cancelled() }}
         timeout-minutes: 20
@@ -940,13 +880,10 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: |
-          $failed = $false
           cargo test --locked -p cyber-tools --test isolated_subagents interrupt_cancels_public_child_preparation_before_late_setup_or_input -- --exact --nocapture
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --test isolated_subagents -- --test-threads=1
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # Every command runs, so one CI run reports every failing target.
-          if ($failed) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native durable subagent names
         if: ${{ !cancelled() }}
         timeout-minutes: 20
@@ -1011,13 +948,10 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: |
-          $failed = $false
           cargo test --locked -p cyber-app --test server -- worktree_lifecycle_publishes_created_removed_and_kept_events enter_and_exit_worktree_through_the_app entered_worktree_ user_shell_pr_creation_links_the_session
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-cli --test exec_entered_worktree
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # Every command runs, so one CI run reports every failing target.
-          if ($failed) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native durable worktree setup recovery
         if: ${{ !cancelled() }}
         timeout-minutes: 20
@@ -1058,27 +992,24 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: |
-          $failed = $false
           cargo test --locked -p cyber-sandbox --lib
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --lib -- permissions::dry_run sandboxing::tests::refusal_lines
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --test tools -- bypass_refuses_rm_rf_of_git_toplevel_substitution_without_execution accept_edits_allows_write_but_keeps_non_edit_and_recursive_rm_asks grep_and_glob_refuse_a_hidden_base_path
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --test flow -- escalation_denied_in_dont_ask
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-core --test config managed_modes_and_minimum_profile_are_merged_with_managed_sources
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-cli --test cli -- repository_cannot_redefine_the_managed_minimum_profile permissions_test_evaluates_tools_under_their_action
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --lib -- permissions::engine::tests::sandbox_boundary_needs_an_explicit_user_allow
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-core --lib config::gate
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-app --test retention --test backup
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # Every command runs, so one CI run reports every failing target.
-          if ($failed) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native pending HTTP2 request cleanup
         if: ${{ !cancelled() }}
         timeout-minutes: 20
@@ -1095,31 +1026,28 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: |
-          $failed = $false
           cargo test --locked -p cyber-workflow
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-cli --test cli workflow
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-cli --test parallel_workflows
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --test workflow_runs
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --test http workflow_run_lists
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --test workflow_agents
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-app --test workflows
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --lib workflow_
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --lib permissions::engine::tests::workflow_run
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-core --test hook_envelopes
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-cli --bin cyber workflows
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # Every command runs, so one CI run reports every failing target.
-          if ($failed) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Require native Windows lint success
         if: ${{ !cancelled() && needs.windows-lint.result != 'success' }}
         run: throw 'Native Windows lint failed; see the Windows lint job logs'
