@@ -28,6 +28,15 @@ pub struct ModeApp {
     pub model: ScriptedModel,
 }
 
+/// The sandbox policy of tests that run `bash` but do not test the sandbox: `full-access`
+/// on Windows, where Git Bash cannot start inside the AppContainer sandbox (issue #9), and
+/// the default elsewhere.
+pub const BASH_SANDBOX: Option<&str> = if cfg!(windows) {
+    Some("full-access")
+} else {
+    None
+};
+
 /// Options of the server under test.
 pub struct Setup {
     pub sandbox_policy: Option<&'static str>,

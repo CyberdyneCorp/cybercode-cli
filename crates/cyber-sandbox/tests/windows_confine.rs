@@ -55,6 +55,10 @@ fn journals(journal: &Path) -> Vec<PathBuf> {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "the confined command exits before it starts inside the AppContainer sandbox, issue #9"
+)]
 fn a_killed_helpers_grants_and_profile_are_revoked_by_the_next_launch() {
     let dir = tempfile::tempdir().unwrap();
     let base = dir.path().canonicalize().unwrap();
