@@ -1022,7 +1022,9 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: cargo test --locked -p cyber-cli --test cli service_stop_uses_registered_http_shutdown
-      - name: Native workflow engine, runs and surfaces
+      # Each `-p` selection unifies features differently and rebuilds the crates below it
+      # (about 2 minutes on this runner), so the workflow commands are split in two steps.
+      - name: Native workflow engine and runs
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: |
@@ -1036,6 +1038,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --test http workflow_run_lists
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Native workflow agents, permissions and surfaces
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        run: |
           cargo test --locked -p cyber-tools --test workflow_agents
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-app --test workflows
