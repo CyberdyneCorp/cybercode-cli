@@ -734,18 +734,21 @@ fn another_agent_drives_cyber_code_through_the_bridge() {
     let answered = frames(&lines).iter().any(|frame| frame["id"] == 4);
     assert!(!answered, "no answer after stdin EOF: {lines:?}");
 
-    // The Turn runs to completion, as `cyber api` shows.
+    // The Turn runs to completion, as `cyber api` shows. The answer is stored before the
+    // Session goes idle, so wait for both.
     let deadline = Instant::now() + Duration::from_secs(30);
-    while !answered_after(&env, &repo, &session, &second) {
+    let session_row = loop {
+        let row = api(&env, &repo, "v1.session.get", &session);
+        if row["data"]["status"] == "idle" && answered_after(&env, &repo, &session, &second) {
+            break row;
+        }
         assert!(
             Instant::now() < deadline,
-            "{}",
+            "{row}\n{}",
             api(&env, &repo, "v1.message.list", &session)
         );
         std::thread::sleep(Duration::from_millis(200));
-    }
-    let session_row = api(&env, &repo, "v1.session.get", &session);
-    assert_eq!(session_row["data"]["status"], "idle", "{session_row}");
+    };
     assert_eq!(session_row["data"]["mode"], "default", "{session_row}");
     drop(model);
 }
