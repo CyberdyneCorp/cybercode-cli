@@ -455,6 +455,10 @@ fn trust_project(root: &Path) {
 /// write inside the checkout lands, its write to `~/.ssh/config` is denied, the receipt
 /// records a non-blocking `error` and the Turn still finishes.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "PowerShell 7 cannot start inside the AppContainer sandbox (EtwRegister access denied), issue #9"
+)]
 fn exec_project_post_tool_hook_cannot_write_home() {
     let provider = provider();
     let (_dir, root) = root_with(&provider, json!({}));
@@ -500,6 +504,10 @@ fn exec_project_post_tool_hook_cannot_write_home() {
 /// sandbox, writes inside the checkout and is denied writing `C:\Windows\Temp`, and the
 /// model sees the sandbox denial.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "PowerShell 7 cannot start inside the AppContainer sandbox (EtwRegister access denied), issue #9"
+)]
 fn exec_sandboxed_powershell_write_outside_roots_is_denied() {
     let outside = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
         .join("Temp")

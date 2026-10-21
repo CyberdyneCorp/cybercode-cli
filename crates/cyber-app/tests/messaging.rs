@@ -44,6 +44,7 @@ async fn message_records_project_survive_a_restart_and_leave_with_their_session(
     let temp = tempfile::tempdir().unwrap();
     let setup = || Setup {
         database: Some(temp.path().join("cyber.db")),
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     };
     let app = ModeApp::start(setup()).await;
@@ -150,6 +151,7 @@ async fn until(what: &str, mut ready: impl FnMut() -> bool) {
 async fn reachable_sessions_are_listed_over_http() {
     let app = ModeApp::start(Setup {
         interactive: true,
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     })
     .await;
@@ -360,6 +362,7 @@ async fn bash_running(app: &ModeApp, id: &str) {
 async fn a_message_starts_a_turn_in_an_idle_session_and_waits_for_a_safe_boundary_in_a_busy_one() {
     let app = ModeApp::start(Setup {
         config: json!({"permissions": {"bash": "allow"}}),
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     })
     .await;
@@ -457,7 +460,7 @@ async fn a_message_starts_a_turn_in_an_idle_session_and_waits_for_a_safe_boundar
     let tool = next
         .iter()
         .position(|(role, text)| role == "tool" && text.contains("finished"))
-        .expect("the tool settled first");
+        .unwrap_or_else(|| panic!("the tool settled first: {next:?}"));
     let message = next
         .iter()
         .position(|(_, text)| text.contains("API moved to port 8080"))
@@ -554,6 +557,7 @@ async fn a_send_cut_between_its_two_commits_is_completed_when_the_app_restarts()
     let temp = tempfile::tempdir().unwrap();
     let setup = || Setup {
         database: Some(temp.path().join("cyber.db")),
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     };
     let app = ModeApp::start(setup()).await;
@@ -725,6 +729,7 @@ async fn wait_rows(app: &ModeApp, id: &str, count: usize) {
 async fn two_models_exchange_messages_through_send_message() {
     let app = ModeApp::start(Setup {
         reply: Some(exchange),
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     })
     .await;
@@ -862,6 +867,7 @@ async fn a_configured_ask_prompts_before_the_message_leaves() {
     let app = ModeApp::start(Setup {
         interactive: true,
         config: json!({"permissions": {"message.send": "ask"}}),
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     })
     .await;
@@ -915,6 +921,7 @@ async fn a_denied_action_is_not_laundered_through_a_message() {
     let app = ModeApp::start(Setup {
         config: json!({"permissions": {"bash": "allow"}}),
         reply: Some(exchange),
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     })
     .await;
@@ -1021,6 +1028,7 @@ async fn assert_nothing_sent(app: &ModeApp, ids: &[&str]) {
 async fn messaging_enabled_false_removes_the_tools_and_closes_the_routes() {
     let app = ModeApp::start(Setup {
         config: json!({"messaging": {"enabled": false}}),
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     })
     .await;
@@ -1143,6 +1151,7 @@ async fn managed_policy_child() {
     assert!(std::env::var_os(cyber_core::config::MANAGED_POLICY_DIR_ENV).is_some());
     let app = ModeApp::start(Setup {
         config: json!({"messaging": {"enabled": true}}),
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     })
     .await;
@@ -1205,6 +1214,7 @@ fn record_of(app: &ModeApp, session: &str, message_id: &str) -> (String, Option<
 async fn held_messages_are_released_or_dropped_through_the_inbox_routes() {
     let app = ModeApp::start(Setup {
         config: json!({"messaging": {"inbound": {"hold": ["frontend"], "refuse": ["noisy-*"]}}}),
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     })
     .await;
@@ -1493,6 +1503,7 @@ fn outcomes_of(
 async fn a_message_storm_is_rate_limited_and_a_ping_pong_hits_the_chain_limit() {
     let app = ModeApp::start(Setup {
         reply: Some(limits_reply),
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     })
     .await;
@@ -1652,6 +1663,7 @@ async fn a_resumed_run_restores_its_chain_hops_after_a_restart() {
     let setup = || Setup {
         database: Some(temp.path().join("cyber.db")),
         reply: Some(limits_reply),
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     };
     let app = ModeApp::start(setup()).await;
@@ -1933,6 +1945,7 @@ fn by_id<'a>(records: &'a [Value], id: &str) -> &'a Value {
 async fn history_pages_both_directions_with_outcomes() {
     let app = ModeApp::start(Setup {
         config: json!({"messaging": {"inbound": {"hold": ["frontend"], "refuse": ["noisy-*"]}}}),
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     })
     .await;

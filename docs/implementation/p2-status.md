@@ -198,7 +198,7 @@ Unknown keys are rejected.
 
 - **CLI.** `cyber workflows list` (table and `--format json`) discovers saved Workflows for the Location and honours `CYBER_DISABLE_PROJECT_CONFIG`. `run`, `runs`, `show`, `pause`, `resume`, `stop` and `logs` are parsed and exit 2 with "`cyber workflows <sub>` is not available in this build yet".
 - **HTTP.** `ANY /api/v1/workflows` and `/api/v1/workflows/{*rest}` answer `503 {"_tag":"ServiceUnavailableError","service":"workflow"}` behind the normal origin and authentication guard. Before this change they returned an untagged 404 even without credentials. These routes are not in OpenAPI yet, so the SDK is unchanged.
-- **CI.** A native Windows step, "Native workflow engine, discovery and surfaces", runs the `cyber-workflow`, CLI and app workflow tests.
+- **CI.** Two native Windows steps, "Native workflow engine and runs" and "Native workflow agents, permissions and surfaces", run the `cyber-workflow`, CLI, server and app workflow tests.
 
 ### Tests (red first where noted)
 

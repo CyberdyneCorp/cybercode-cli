@@ -1,0 +1,9 @@
+# cargo-nextest settings (https://nexte.st). CI runs `cargo nextest run --profile ci`.
+
+[profile.ci]
+# A test that fails and then passes on its retry is reported FLAKY instead of failing the
+# run; one that fails both times still fails it. Timing-sensitive tests are tracked in
+# issue #8 rather than hidden.
+retries = 1
+fail-fast = false
+failure-output = "immediate-final"
