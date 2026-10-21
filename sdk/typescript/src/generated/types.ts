@@ -71,6 +71,34 @@ export type BackgroundResult = {
   call_ids: string[];
 };
 
+/** What to check out: a message ID or a label, and whether to restore code. */
+export type BranchCheckout = {
+  message_id?: string | null;
+  label?: string | null;
+  /** Make the message itself the tip instead of the newest tip under it. */
+  exact?: boolean;
+  /** Restore the working tree to the snapshot after the tip's last step. */
+  code?: boolean;
+};
+
+/** A user message in the branch tree (`GET .../tree`). */
+export type BranchNode = {
+  id: string;
+  /** The nearest user message before this one; null for a first message. */
+  parent_id?: string | null;
+  /** The first line of the message's text, at most 80 characters. */
+  preview: string;
+  /** When the message was promoted (ms since the epoch); null for old records. */
+  created_at?: number | null;
+  labels: string[];
+  /** On the active path. */
+  active: boolean;
+  /** The end of a branch: no user message follows it, or the active path ends here. */
+  tip: boolean;
+  /** User messages below this one, on every branch. */
+  descendants: number;
+};
+
 /** A stored screenshot, console or network capture, or a dev server log tail. */
 export type BrowserArtifact = {
   /** `screenshot`, `console`, `network`, `snapshot` or `log`. */
@@ -166,6 +194,15 @@ export type Capabilities = {
   shell: boolean;
   secrets: boolean;
   "session.prompt": boolean;
+};
+
+/** The active tip after a checkout and, when code was restored, the staged revert. */
+export type CheckedOutBranch = {
+  tip_message_id: string;
+  code_restored: boolean;
+  /** The files the code restore changed. */
+  restored_files: string[];
+  revert?: RevertState | null;
 };
 
 export type ChildSetupInspection = {
@@ -383,6 +420,10 @@ export type Cursor = {
   next?: string | null;
 };
 
+export type Data_Array_of_BranchNode = {
+  data: BranchNode[];
+};
+
 export type Data_Array_of_FileDiff = {
   data: FileDiff[];
 };
@@ -425,6 +466,10 @@ export type Data_BackgroundResult = {
 
 export type Data_BrowserEvidenceReport = {
   data: BrowserEvidenceReport;
+};
+
+export type Data_CheckedOutBranch = {
+  data: CheckedOutBranch;
 };
 
 export type Data_ChildSetupInspection = {
@@ -1094,6 +1139,11 @@ export type JobStatus = "running" | "completed" | "error" | "cancelled" | "inter
 
 export type Kind = "file" | "directory" | "symlink";
 
+/** `PUT .../labels/:name`: the message the label marks. */
+export type LabelBody = {
+  message_id: string;
+};
+
 /** A member's newest message; `text` is cut to 200 characters. */
 export type LastMessage = {
   /** `in` (received) or `out` (sent). */
@@ -1662,6 +1712,8 @@ export type MemoryType = "user" | "feedback" | "project" | "reference";
 /** A history entry with the tool calls it made. */
 export type Message = {
   tools: CallState[];
+  /** The previous message on this message's branch; null for the first message. */
+  parent_message_id?: string | null;
 } & ({
   id: string;
   parts: Content[];

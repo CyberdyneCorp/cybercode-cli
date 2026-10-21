@@ -86,6 +86,10 @@ pub fn top(app: &App, width: usize) -> Vec<Line<'static>> {
             &truncate_end(&format!("↳ {parent}"), width),
         ));
     }
+    // The header carries it when the sidebar is not docked.
+    if let Some(branch) = app.branches.header() {
+        out.push(muted_line(app, &truncate_end(&branch, width)));
+    }
     context(app, width, &mut out);
     workflows(app, width, &mut out);
     super::team::sidebar(app, width, &mut out);
