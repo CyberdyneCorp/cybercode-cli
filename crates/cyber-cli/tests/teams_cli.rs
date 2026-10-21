@@ -405,19 +405,28 @@ fn invalid_definitions_name_the_field(listed: &Value, written: &Written) {
 /// (`TOOL<<name>>{json}`), answers a tool result with `done`, and anything else with `ok`.
 fn prompted_call(body: &Value) -> Value {
     let messages = body["messages"].as_array().cloned().unwrap_or_default();
-    let last = messages.last().cloned().unwrap_or(Value::Null);
-    if last["role"] == "tool" {
+    if messages.last().is_some_and(|last| last["role"] == "tool") {
         return json!({"content": "done"});
     }
-    let text = match &last["content"] {
-        Value::String(text) => text.clone(),
-        Value::Array(parts) => parts
-            .iter()
-            .filter_map(|part| part["text"].as_str())
-            .collect::<Vec<_>>()
-            .join("\n"),
-        _ => String::new(),
-    };
+    // Every input since the model last spoke: on a slow runner a team notice can land after
+    // the prompt, so the scripted `TOOL<<…>>` is not always the last message.
+    let pending = messages
+        .iter()
+        .rposition(|message| message["role"] == "assistant")
+        .map_or(&messages[..], |at| &messages[at + 1..]);
+    let text = pending
+        .iter()
+        .map(|message| match &message["content"] {
+            Value::String(text) => text.clone(),
+            Value::Array(parts) => parts
+                .iter()
+                .filter_map(|part| part["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            _ => String::new(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     let Some(start) = text.find("TOOL<<").map(|at| at + 6) else {
         return json!({"content": "ok"});
     };

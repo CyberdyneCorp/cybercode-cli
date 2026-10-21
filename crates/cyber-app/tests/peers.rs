@@ -36,6 +36,7 @@ fn peers() -> Value {
 async fn peers_config_is_accepted_only_from_user_config() {
     let app = ModeApp::start(Setup {
         config: json!({ "peers": peers() }),
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     })
     .await;
@@ -124,6 +125,7 @@ impl Served {
     async fn start_with(root: &Path, model: &scripted_model::ScriptedModel, config: Value) -> Self {
         let setup = Setup {
             config,
+            sandbox_policy: support::BASH_SANDBOX,
             ..Setup::default()
         };
         Self::start_setup(root, model, &setup).await
@@ -139,6 +141,7 @@ impl Served {
         let setup = Setup {
             config,
             database: Some(root.join("cyber.db")),
+            sandbox_policy: support::BASH_SANDBOX,
             ..Setup::default()
         };
         Self::start_setup(root, model, &setup).await
@@ -1486,6 +1489,7 @@ async fn mdns_publishes_the_peer_listener_only_off_loopback() {
 
     let setup = Setup {
         config: json!({}),
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     };
     let served = Served::start_serving(&root, &model, &setup, mdns()).await;
@@ -1500,6 +1504,7 @@ async fn mdns_publishes_the_peer_listener_only_off_loopback() {
     let machine = format!("desk-{}", ulid::Ulid::new().to_string().to_lowercase());
     let setup = Setup {
         config: json!({"peers": {"listen": {"address": "0.0.0.0:0"}, "machine": machine}}),
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     };
     let served = Served::start_serving(&root, &model, &setup, mdns()).await;
@@ -1611,6 +1616,25 @@ async fn transcript(served: &Served, session: &str) -> String {
     body.to_string()
 }
 
+/// Wait until the Session's `echo <output>` has run and its Turn has ended. A timeout
+/// shows the transcript, so a platform that records the output differently is diagnosable.
+async fn command_finished(served: &Served, session: &str, output: &str) {
+    let needle = format!(r#""output":"{output}"#);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let text = transcript(served, session).await;
+        if text.contains(&needle) && !served.runtime.is_running(session) {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for `{output}` (running: {}): {text}",
+            served.runtime.is_running(session)
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 /// Requirement "Peer attach" on the production server `desk`, through its TLS peer
 /// listener and the pinned transport `cyber attach migration@desk` opens the TUI with
 /// (`cyber_client::Client::attach_peer`):
@@ -1636,6 +1660,7 @@ async fn attach_through_a_peer_needs_scope_and_approval() {
     let setup = Setup {
         config: json!({"peers": {"listen": {"address": "127.0.0.1:0"}, "machine": "desk"}}),
         interactive: true,
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     };
     let wait = Duration::from_secs(3);
@@ -1769,12 +1794,7 @@ async fn attach_through_a_peer_needs_scope_and_approval() {
     let error = refused.await.unwrap().err().expect("refused");
     assert_eq!(error.tag(), Some("PermissionDeniedError"), "{error}");
     answer(&desk, &migration, "bash", "once").await;
-    eventually("the Session's own turn finishes", || async {
-        let text = transcript(&desk, &migration).await;
-        let ran = text.contains(r#""output":"still-running"#);
-        (ran && !desk.runtime.is_running(&migration)).then_some(())
-    })
-    .await;
+    command_finished(&desk, &migration, "still-running").await;
 
     // Attach approved: the Session, its transcript, its events, prompt and replies.
     let approved = tokio::spawn(Client::attach_peer(target(&laptop), "migration"));
@@ -1969,6 +1989,7 @@ async fn attach_desk(
     let setup = Setup {
         config: merged,
         interactive: true,
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     };
     let options = ServeOptions {
@@ -2044,6 +2065,29 @@ async fn attach_stream(
     rx
 }
 
+/// Wait (bounded) until `stream` has sent `marker`; the text it sent so far.
+async fn stream_until(
+    stream: &mut tokio::sync::mpsc::UnboundedReceiver<Option<String>>,
+    marker: &str,
+) -> String {
+    let mut seen = String::new();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !seen.contains(marker) {
+            match stream.recv().await {
+                Some(Some(chunk)) => seen.push_str(&chunk),
+                _ => break,
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("the attach stream never sent {marker}: {seen}"));
+    assert!(
+        seen.contains(marker),
+        "the attach stream ended before {marker}: {seen}"
+    );
+    seen
+}
+
 /// Wait (bounded) until `stream` ends; the text it sent before.
 async fn stream_ends(stream: &mut tokio::sync::mpsc::UnboundedReceiver<Option<String>>) -> String {
     let mut seen = String::new();
@@ -2079,6 +2123,9 @@ async fn an_open_attach_stream_ends_with_its_attach_and_grant() {
     let laptop = grant_token(&desk, "laptop", scopes());
     let attach = open_attach(&peer, &migration, &laptop).await;
     let mut stream = attach_stream(&peer, &migration, &laptop, &attach).await;
+    // The stream has replayed the Session before it is closed, so the replay is not
+    // racing the close on a slow runner.
+    let mut seen = stream_until(&mut stream, "session.created").await;
     let close = peer_client()
         .delete(format!("{peer}/api/v1/peer/attach/{migration}"))
         .bearer_auth(&laptop)
@@ -2087,7 +2134,7 @@ async fn an_open_attach_stream_ends_with_its_attach_and_grant() {
         .await
         .unwrap();
     assert_eq!(close.status().as_u16(), 204);
-    let seen = stream_ends(&mut stream).await;
+    seen.push_str(&stream_ends(&mut stream).await);
     assert!(seen.contains("session.created"), "{seen}");
 
     // `cyber peers revoke laptop` ends it at once; later events never reach the peer.
@@ -2270,6 +2317,7 @@ async fn a_server_stopped_as_it_starts_still_stops() {
     std::fs::create_dir_all(repo.join(".git")).unwrap();
     let setup = Setup {
         config: json!({"peers": {"listen": {"address": "127.0.0.1:0"}, "machine": "desk"}}),
+        sandbox_policy: support::BASH_SANDBOX,
         ..Setup::default()
     };
     let app = ModeApp::build(&root, &repo, &model, &setup).await;
@@ -2477,12 +2525,7 @@ async fn an_attached_peer_cannot_approve_always() {
         .await
         .unwrap();
     assert_eq!(once.status().as_u16(), 204);
-    eventually("the approved command runs", || async {
-        let text = transcript(&desk, &migration).await;
-        let ran = text.contains(r#""output":"always-asked"#);
-        (ran && !desk.runtime.is_running(&migration)).then_some(())
-    })
-    .await;
+    command_finished(&desk, &migration, "always-asked").await;
     // Nothing was saved: the same command asks again.
     let (status, body) = call("prompt", Some(run)).await;
     assert!((200..300).contains(&status), "{status} {body}");

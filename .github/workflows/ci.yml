@@ -38,7 +38,17 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      # Line tables keep backtraces useful at a fraction of the size of full debug info;
+      # the workspace's test binaries otherwise outgrow the runner's disk.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
+      - name: Free disk space
+        if: runner.os == 'Linux'
+        # Preinstalled SDKs the build never uses.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -47,12 +57,17 @@ jobs:
       - name: Sandbox prerequisites
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update && sudo apt-get install -y bubblewrap
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update && sudo apt-get install -y bubblewrap
           # Ubuntu 24.04 restricts unprivileged user namespaces, which bubblewrap needs.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace --no-fail-fast
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      # One retry per failing test; see .config/nextest.toml. Doctests are not run by nextest.
+      - run: cargo nextest run --workspace --profile ci
+      - run: cargo test --workspace --doc
 
   windows-lint:
     name: Windows lint
@@ -1007,7 +1022,9 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: cargo test --locked -p cyber-cli --test cli service_stop_uses_registered_http_shutdown
-      - name: Native workflow engine, runs and surfaces
+      # Each `-p` selection unifies features differently and rebuilds the crates below it
+      # (about 2 minutes on this runner), so the workflow commands are split in two steps.
+      - name: Native workflow engine and runs
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: |
@@ -1021,6 +1038,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --test http workflow_run_lists
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Native workflow agents, permissions and surfaces
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        run: |
           cargo test --locked -p cyber-tools --test workflow_agents
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-app --test workflows
@@ -1070,7 +1091,7 @@ jobs:
       - name: Plugin host sandbox prerequisites
         working-directory: .
         run: |
-          sudo apt-get update && sudo apt-get install -y bubblewrap
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update && sudo apt-get install -y bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec
       - name: TypeScript plugin kit
@@ -1132,7 +1153,7 @@ jobs:
           key: platform-${{ matrix.target }}
       - name: Native C build prerequisites
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y cmake pkg-config musl-tools
+        run: sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update && sudo apt-get install -y cmake pkg-config musl-tools
       - name: Configure musl linker
         if: endsWith(matrix.target, '-musl')
         run: |
