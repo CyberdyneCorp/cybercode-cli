@@ -75,7 +75,22 @@ pub(crate) fn resolve(
     on_path
         .chain(from_git)
         .find(usable)
-        .map(|p| crate::host::canonical(&p))
+        .map(|p| launchable(&crate::host::canonical(&p)))
+}
+
+/// The path a shell is started with: the canonical path without the verbatim prefix
+/// (`\\?\C:\…`, `\\?\UNC\host\share\…`) that `canonicalize` adds on Windows. Git for
+/// Windows' `bin\bash.exe` is a launcher that runs `..\usr\bin\bash.exe` next to its own
+/// path, and a verbatim path never resolves `..`, so started that way it finds no shell.
+pub(crate) fn launchable(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(share) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{share}"));
+    }
+    match text.strip_prefix(r"\\?\") {
+        Some(plain) => PathBuf::from(plain),
+        None => path.to_path_buf(),
+    }
 }
 
 /// Git roots derived from `git.exe` on `PATH` (`<root>\cmd`, `<root>\bin`,
@@ -139,7 +154,10 @@ mod tests {
             launchers: vec![system32],
         };
         let found = resolve(None, "bash", &search, &checkout).unwrap();
-        assert_eq!(found, crate::host::canonical(&git.join("bin/bash.exe")));
+        assert_eq!(
+            found,
+            launchable(&crate::host::canonical(&git.join("bin/bash.exe")))
+        );
     }
 
     #[test]
@@ -155,7 +173,7 @@ mod tests {
         };
         assert_eq!(
             resolve(None, "sh", &search, &checkout).unwrap(),
-            crate::host::canonical(&git.join("usr/bin/sh.exe"))
+            launchable(&crate::host::canonical(&git.join("usr/bin/sh.exe")))
         );
         let mingw = tmp.path().join("other/Git");
         touch(&mingw.join("mingw64/bin/git.exe"));
@@ -167,7 +185,7 @@ mod tests {
         };
         assert_eq!(
             resolve(None, "bash", &search, &checkout).unwrap(),
-            crate::host::canonical(&mingw.join("bin/bash.exe"))
+            launchable(&crate::host::canonical(&mingw.join("bin/bash.exe")))
         );
     }
 
@@ -198,6 +216,25 @@ mod tests {
         assert_eq!(
             resolve(Some(Path::new("bash")), "bash", &search, &checkout),
             None
+        );
+    }
+
+    /// Regression: on Windows every `bash` call failed with Git's launcher reporting
+    /// `'\\?\C:\Program Files\Git\bin\..\usr\bin\bash.exe' not found`, because the
+    /// resolved shell was started by its verbatim canonical path.
+    #[test]
+    fn a_shell_is_started_without_the_verbatim_prefix() {
+        assert_eq!(
+            launchable(Path::new(r"\\?\C:\Program Files\Git\bin\bash.exe")),
+            PathBuf::from(r"C:\Program Files\Git\bin\bash.exe")
+        );
+        assert_eq!(
+            launchable(Path::new(r"\\?\UNC\host\share\Git\bin\bash.exe")),
+            PathBuf::from(r"\\host\share\Git\bin\bash.exe")
+        );
+        assert_eq!(
+            launchable(Path::new("/usr/bin/bash")),
+            PathBuf::from("/usr/bin/bash")
         );
     }
 }

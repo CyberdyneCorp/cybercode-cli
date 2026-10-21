@@ -856,7 +856,12 @@ fn first_user_text(body: &Value) -> String {
     let Some(user) = messages.into_iter().find(|m| m["role"] == "user") else {
         return String::new();
     };
-    match &user["content"] {
+    message_text(&user)
+}
+
+/// A message's text: the string content, or its text parts joined.
+fn message_text(message: &Value) -> String {
+    match &message["content"] {
         Value::String(text) => text.clone(),
         parts => parts
             .as_array()
@@ -1041,7 +1046,7 @@ fn last_user_text(body: &Value) -> String {
         .iter()
         .rev()
         .find(|m| m["role"] == "user")
-        .map(|m| m["content"].to_string())
+        .map(message_text)
         .unwrap_or_default()
 }
 
