@@ -1,4 +1,4 @@
-//! `cyber sessions list|show|rename|delete` and Session lookup by title
+//! `cyber sessions list|show|rename|delete|export` and Session lookup by title
 //! (`cli-commands` → Resource command groups; `session-runtime` → Fork, rename, archive,
 //! delete), through the real binary and the background server it starts.
 
@@ -148,9 +148,79 @@ fn sessions_are_listed_renamed_and_resumed_by_title() {
     exits(&env.cyber(&["sessions", "show", "nope"]), 1);
     exits(&env.cyber(&["sessions", "rename", &older, " "]), 2);
     exits(&env.cyber(&["sessions", "delete", &newer]), 2);
-    let later = exits(&env.cyber(&["sessions", "export", &newer]), 2);
+    let later = exits(&env.cyber(&["sessions", "import", "x.json"]), 2);
     assert!(later.contains("not available in this build yet"), "{later}");
     exits(&env.cyber(&["sessions", "delete", &newer, "--yes"]), 0);
     let left = json(&env.cyber(&["sessions", "list", "--format", "json"]));
     assert_eq!(left.as_array().unwrap().len(), 1);
+}
+
+/// `storage-events` → Session export: JSON by default, Markdown with `--format md`, and
+/// `--sanitize` drops prompt text and paths while keeping token totals and timings.
+#[test]
+fn sessions_export_as_json_markdown_and_sanitized() {
+    let model = scripted_model::ScriptedModel::start(|_| serde_json::json!({"content": "noted"}));
+    let env = Env::new(&model);
+    let prompt = "summarize /private/secret-project/notes.txt for me";
+    let ran = env.cyber(&["exec", "--format", "json", prompt]);
+    let ran: Value =
+        serde_json::from_slice(&ran.stdout).unwrap_or_else(|_| panic!("{}", exits(&ran, 0)));
+    let id = ran["session_id"].as_str().unwrap().to_owned();
+
+    let export = json(&env.cyber(&["sessions", "export", &id]));
+    assert_eq!(export["version"], 1);
+    assert_eq!(export["session"]["id"], id.as_str());
+    assert_eq!(export["sanitized"], false);
+    assert!(export.to_string().contains(prompt), "{export}");
+    let messages = export["messages"].as_array().unwrap();
+    assert_eq!(messages[0]["kind"], "user");
+    assert_eq!(messages.last().unwrap()["text"], "noted");
+
+    let md = exits(
+        &env.cyber(&["sessions", "export", &id, "--format", "md"]),
+        0,
+    );
+    assert!(md.contains(&format!("- Session: `{id}`")), "{md}");
+    assert!(md.contains(&format!("**User** (user)\n\n{prompt}")), "{md}");
+    assert!(md.contains("noted"), "{md}");
+
+    assert_sanitized(&env, &id, &export);
+    exits(
+        &env.cyber(&["sessions", "export", &id, "--format", "table"]),
+        2,
+    );
+}
+
+/// `--sanitize`: no prompt, answer or path text, the same totals and timings.
+fn assert_sanitized(env: &Env, id: &str, export: &Value) {
+    let clean = json(&env.cyber(&["sessions", "export", id, "--sanitize"]));
+    let text = clean.to_string();
+    for secret in ["secret-project", "notes.txt", "summarize", "noted"] {
+        assert!(!text.contains(secret), "{secret} leaked: {text}");
+    }
+    assert_eq!(clean["sanitized"], true);
+    assert_eq!(clean["session"]["id"], id);
+    assert_eq!(clean["totals"], export["totals"]);
+    let last = clean["messages"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    let first = export["messages"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (&last["started_ms"], &last["ended_ms"]),
+        (&first["started_ms"], &first["ended_ms"])
+    );
+    assert!(
+        last["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("[redacted:text:")
+    );
 }

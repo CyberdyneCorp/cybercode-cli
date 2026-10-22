@@ -564,6 +564,10 @@ export type Data_SessionContext = {
   data: SessionContext;
 };
 
+export type Data_SessionExport = {
+  data: SessionExport;
+};
+
 export type Data_ShellResult = {
   data: ShellResult;
 };
@@ -2664,6 +2668,26 @@ export type SessionContext = {
   baseline?: string | null;
   summary?: string | null;
   task: TaskState;
+};
+
+/** One exported Session. */
+export type SessionExport = {
+  version: number;
+  exported_ms: number;
+  /**
+   * Text, paths, URLs, tool inputs and outputs and metadata are
+   * `[redacted:<kind>:<n>]` markers; structure, IDs, counts and timings are kept.
+   */
+  sanitized: boolean;
+  session: SessionInfo;
+  totals: Totals;
+  /** Every message in order, with its parts and, for answers, its tool calls. */
+  messages: Message[];
+  /** Every Goal of the Session, oldest first, with its evaluations. */
+  goals: Goal[];
+  workflow_runs: WorkflowRunSummary[];
+  /** Child Sessions, oldest first; present with `include_children=true`. */
+  children?: SessionExport[] | null;
 };
 
 export type SessionInfo = {

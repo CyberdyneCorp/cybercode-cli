@@ -647,6 +647,15 @@ export interface Operations {
     body: undefined;
     response: S.EventEnvelope;
   };
+  "v1.session.export": {
+    path: { sessionID: string };
+    query: {
+      sanitize?: QueryValue;
+      include_children?: QueryValue;
+    };
+    body: undefined;
+    response: S.SessionExport;
+  };
   "v1.session.fork": {
     path: { sessionID: string };
     query: Record<string, never>;
@@ -2204,6 +2213,18 @@ export const operations = {
     unwrap: false,
     stream: true,
   },
+  "v1.session.export": {
+    tag: "session",
+    name: "export",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/export",
+    pathParams: ["sessionID"],
+    query: ["sanitize", "include_children"],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.fork": {
     tag: "session",
     name: "fork",
@@ -3399,6 +3420,9 @@ export function createGroups(caller: Caller) {
       /** Replay durable events, then follow (`GET /api/v1/sessions/{sessionID}/events`) */
       events: (sessionID: string, query?: Operations["v1.session.events"]["query"], options?: StreamOptions): AsyncIterableIterator<S.EventEnvelope> =>
         caller.stream("v1.session.events", { path: { sessionID }, query }, options),
+      /** Export the Session: info, totals, messages with parts and tool calls, Goals and Workflow Run summaries; `include_children=true` nests child Sessions and `sanitize=true` replaces content with `[redacted:<kind>:<n>]` markers (`GET /api/v1/sessions/{sessionID}/export`) */
+      export: (sessionID: string, query?: Operations["v1.session.export"]["query"], options?: RequestOptions): Promise<Operations["v1.session.export"]["response"]> =>
+        caller.call("v1.session.export", { path: { sessionID }, query }, options),
       /** Fork a Session (`POST /api/v1/sessions/{sessionID}/fork`) */
       fork: (sessionID: string, body?: Operations["v1.session.fork"]["body"], options?: RequestOptions): Promise<Operations["v1.session.fork"]["response"]> =>
         caller.call("v1.session.fork", { path: { sessionID }, body }, options),

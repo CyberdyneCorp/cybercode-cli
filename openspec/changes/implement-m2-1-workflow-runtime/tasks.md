@@ -87,7 +87,7 @@ Increment 2 delivered the runtime core (section 6) ahead of resume, so 3.1 is do
 - [ ] 5.6 Minimal `/workflows` TUI monitor: `p` pauses or resumes, `x` stops, `r` relaunches, `t` opens a transcript. It also shows a progress line and the status-line count of running workflows.
 - [ ] 5.7 Background-tasks integration: Job kind `workflow`, and runs listed in `/tasks`.
 - [x] 5.8 Goal evaluation is deferred while runs started by the Session are active.
-- [ ] 5.9 Session export includes workflow run summaries. Retention of finished agent transcripts is applied.
+- [ ] 5.9 Session export includes workflow run summaries. Retention of finished agent transcripts is applied. (Export part done by `add-session-export`: `workflow_runs` holds the run summaries; retention of finished agent transcripts remains.)
 
 ## 6. Runtime core (increment 2)
 

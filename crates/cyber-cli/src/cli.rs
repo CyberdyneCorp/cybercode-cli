@@ -139,6 +139,8 @@ pub enum Format {
     Json,
     Text,
     StreamJson,
+    /// Markdown (`cyber sessions export`).
+    Md,
 }
 
 #[derive(Debug, Subcommand)]

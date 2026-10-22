@@ -833,7 +833,7 @@ async fn background(
     }))
 }
 
-fn message_of(state: &SessionState, entry: &Entry) -> Message {
+pub(super) fn message_of(state: &SessionState, entry: &Entry) -> Message {
     let tools = match entry {
         Entry::Assistant(a) => a
             .calls

@@ -1,5 +1,5 @@
-//! `cyber sessions` (`cli-commands` → Resource command groups): list, show, rename and
-//! delete the Location's Sessions through the background server. A Session is named by
+//! `cyber sessions` (`cli-commands` → Resource command groups): list, show, rename,
+//! delete and export the Location's Sessions through the background server. A Session is named by
 //! its ID, an exact title or a unique ID prefix; [`resolve`] is shared with
 //! `cyber --resume` and `cyber exec --session`.
 
@@ -43,12 +43,24 @@ pub enum SessionsCmd {
         #[arg(long)]
         yes: bool,
     },
+    /// Write a Session as JSON (default) or Markdown (--format md): its info, messages,
+    /// tool calls, goals and workflow runs.
+    Export {
+        /// ID, exact title or unique ID prefix.
+        session: String,
+        /// Replace prompts, answers, paths, URLs, tool inputs and outputs and metadata
+        /// with [redacted:<kind>:<n>] markers, keeping structure, token counts and timings.
+        #[arg(long)]
+        sanitize: bool,
+        /// Include child Sessions (subagents, workflow agents), recursively.
+        #[arg(long)]
+        include_children: bool,
+    },
     #[command(external_subcommand)]
     Other(Vec<String>),
 }
 
 const LATER: &[&str] = &[
-    "export",
     "import",
     "fork",
     "rewind",
@@ -110,6 +122,20 @@ async fn dispatch(client: &Client, cmd: SessionsCmd, global: &GlobalArgs) -> Res
                 .map_err(api)?;
             println!("deleted {id}");
             Ok(())
+        }
+        SessionsCmd::Export {
+            session,
+            sanitize,
+            include_children,
+        } => {
+            let found = resolve(client, &session).await?;
+            let id = found["id"].as_str().unwrap_or_default();
+            let path = format!(
+                "/sessions/{}/export?sanitize={sanitize}&include_children={include_children}",
+                encode(id)
+            );
+            let export = client.get(&path).await.map_err(api)?;
+            export_output(&export["data"], global)
         }
         SessionsCmd::Other(_) => unreachable!("handled before connecting"),
     }
@@ -222,6 +248,20 @@ pub async fn resolve(client: &Client, wanted: &str) -> Result<Value, CliError> {
             ))
             .with_hint("use the Session ID"))
         }
+    }
+}
+
+/// The export in `--format json` (the default) or `md`.
+fn export_output(export: &Value, global: &GlobalArgs) -> Result<(), CliError> {
+    match global.format {
+        None | Some(crate::cli::Format::Json) => output::json(export),
+        Some(crate::cli::Format::Md) => {
+            print!("{}", super::session_export::markdown(export));
+            Ok(())
+        }
+        Some(_) => Err(CliError::usage(
+            "cyber sessions export writes --format json or --format md",
+        )),
     }
 }
 
