@@ -1085,6 +1085,7 @@ name = "cyber-workflow"
 version = "0.1.0"
 dependencies = [
  "futures",
+ "jsonschema",
  "rquickjs",
  "schemars",
  "serde",

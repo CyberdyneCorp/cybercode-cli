@@ -20,6 +20,8 @@ pub enum Origin {
     Saved { scope: Scope, path: PathBuf },
     /// A script passed inline (by the model or an API client).
     Inline,
+    /// A Workflow embedded in the binary.
+    Bundled { name: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
