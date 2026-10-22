@@ -73,6 +73,13 @@ const BUILTINS: &[(&str, &str, Option<&str>, bool)] = &[
         true,
     ),
     (
+        "login",
+        "sign in to a subscription (openai: ChatGPT Plus/Pro)",
+        None,
+        true,
+    ),
+    ("logout", "sign out of a subscription", None, true),
+    (
         "btw",
         "ask a side question without adding it to the session",
         None,

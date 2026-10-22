@@ -8,6 +8,7 @@ mod host;
 pub mod peer_discovery;
 mod peer_listener;
 pub mod peer_tokens;
+mod provider_login;
 mod registered_status;
 mod registration;
 pub mod retention;

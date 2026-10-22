@@ -63,6 +63,16 @@ cyber exec -m chatgpt/gpt-6-sol "Fix the failing test"
 cyber providers logout chatgpt
 ```
 
+In the TUI, `/login openai` (or `/login chatgpt`) does the same from a dialog:
+
+- The server runs the sign-in and shows the URL to open. Ctrl+Y copies it.
+- When the browser returns to `localhost:1455`, the dialog closes and the model picker opens.
+- If the server cannot receive that redirect (the port is busy, or the server runs on another machine), paste the URL the browser ends on and press Enter.
+- Esc cancels.
+- `/logout openai` signs out.
+
+The server reloads its model catalog when you sign in or out, so `chatgpt/*` models appear or disappear without a restart. Clients can drive the same flow through `POST /api/v1/providers/chatgpt/login`, then poll `GET …/login/{attempt_id}` or post the pasted URL to `…/login/{attempt_id}/code`. Google (Gemini CLI / Code Assist) subscription logins are not supported, because third-party use has led to account suspensions. Gemini models also need the planned native Gemini adapter.
+
 The sign-in uses OpenAI's OAuth flow with the Codex public client, which is what OpenCode and other harnesses use. Requests go to the Codex backend (`https://chatgpt.com/backend-api/codex`), count against your plan's limits, and send `originator: cyber`. The login is kept in `~/.local/share/cyber/chatgpt-auth.json` (mode 0600; a file other users can read is refused). It is separate from Codex's `~/.codex/auth.json`. The access token is renewed 5 minutes before it expires, under a lock shared by every Cyber process.
 
 - The `chatgpt` provider appears only while you are signed in.
