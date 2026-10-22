@@ -379,6 +379,11 @@ pub struct SessionState {
     #[serde(skip)]
     pub children_usage: super::ChildrenUsage,
     pub steps_since_input: u64,
+    /// A row the user wrote ([`USER_SOURCES`]) was promoted since the last finished step,
+    /// so the next model call is the user's (`provider-catalog` → GitHub Copilot
+    /// subscription provider). Derived from durable events on replay.
+    #[serde(skip)]
+    pub user_input_pending: bool,
     pub open_step: Option<String>,
     /// The origin of the last started step; its end, failure and in-Turn usage copy it.
     #[serde(skip)]
@@ -418,6 +423,11 @@ pub struct SessionState {
 }
 
 const MAX_INSTRUCTION_CHARS: usize = 2000;
+/// Input sources a person wrote, invoked or scheduled: prompts (TUI, HTTP, MCP `prompt`),
+/// MCP server prompts the user ran as a slash command, and `/loop` iterations. Every
+/// other source (`session` handbacks, monitors, messages, `channel`, `team`, `workflow`,
+/// `hook`, `auto_override`, `shell`) is the agent's.
+pub(crate) const USER_SOURCES: [&str; 3] = ["user", super::MCP_PROMPT_SOURCE, "loop"];
 /// Digest prefix of a Stop-hook continuation row; public digests are `sha256:`.
 pub(crate) const STOP_CONTINUATION_DIGEST: &str = "hook:Stop:";
 
@@ -589,6 +599,7 @@ impl SessionState {
             totals: Totals::default(),
             children_usage: Default::default(),
             steps_since_input: 0,
+            user_input_pending: false,
             open_step: None,
             step_origin: Default::default(),
             turn_mode: None,
@@ -1116,6 +1127,7 @@ impl SessionState {
         // A Stop continuation keeps the step count so max_steps stays a ceiling.
         if !row.digest.starts_with(STOP_CONTINUATION_DIGEST) {
             self.steps_since_input = 0;
+            self.user_input_pending |= USER_SOURCES.contains(&row.source.as_str());
         }
         self.push_entry(entry);
         self.result.rejected = false;
@@ -1264,6 +1276,7 @@ impl SessionState {
             None => self.totals.unpriced_steps += 1,
         }
         self.steps_since_input = self.steps_since_input.saturating_add(1);
+        self.user_input_pending = false;
     }
 
     fn on_step_failed(&mut self, f: StepFailed, time_ms: i64) {

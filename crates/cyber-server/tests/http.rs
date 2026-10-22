@@ -663,7 +663,9 @@ async fn every_documented_operation_is_routed() {
             .replace("{sessionID}", &id)
             .replace("{messageID}", "msg_x")
             .replace("{requestID}", "per_x")
-            .replace("{loopID}", "lop_x");
+            .replace("{loopID}", "lop_x")
+            .replace("{provider}", "chatgpt")
+            .replace("{attemptID}", "pla_x");
         let m = Method::from_bytes(method.to_uppercase().as_bytes()).unwrap();
         let (status, body, _) = api.call(m, &concrete, Some(json!({})), &[]).await;
         // An unrouted path is an untagged 404; handler failures always carry `_tag`.

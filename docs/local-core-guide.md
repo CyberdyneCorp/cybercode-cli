@@ -63,6 +63,16 @@ cyber exec -m chatgpt/gpt-6-sol "Fix the failing test"
 cyber providers logout chatgpt
 ```
 
+In the TUI, `/login openai` (or `/login chatgpt`) does the same from a dialog:
+
+- The server runs the sign-in and shows the URL to open. Ctrl+Y copies it.
+- When the browser returns to `localhost:1455`, the dialog closes and the model picker opens.
+- If the server cannot receive that redirect (the port is busy, or the server runs on another machine), paste the URL the browser ends on and press Enter.
+- Esc cancels.
+- `/logout openai` signs out.
+
+The server reloads its model catalog when you sign in or out, so `chatgpt/*` models appear or disappear without a restart. Clients can drive the same flow through `POST /api/v1/providers/chatgpt/login`, then poll `GET …/login/{attempt_id}` or post the pasted URL to `…/login/{attempt_id}/code`. Google (Gemini CLI / Code Assist) subscription logins are not supported, because third-party use has led to account suspensions. Gemini models also need the planned native Gemini adapter.
+
 The sign-in uses OpenAI's OAuth flow with the Codex public client, which is what OpenCode and other harnesses use. Requests go to the Codex backend (`https://chatgpt.com/backend-api/codex`), count against your plan's limits, and send `originator: cyber`. The login is kept in `~/.local/share/cyber/chatgpt-auth.json` (mode 0600; a file other users can read is refused). It is separate from Codex's `~/.codex/auth.json`. The access token is renewed 5 minutes before it expires, under a lock shared by every Cyber process.
 
 - The `chatgpt` provider appears only while you are signed in.
@@ -70,6 +80,30 @@ The sign-in uses OpenAI's OAuth flow with the Codex public client, which is what
 - `localhost:1455` is the port Codex uses too. If another login holds it, finish that login or use `--method code`.
 - Windows is not supported yet, because the login file cannot be made owner-only there.
 - OpenAI's acceptance of third-party harnesses is a public statement, not a contract. The `openai` provider with `OPENAI_API_KEY` is not affected by this login.
+
+## Signing in with a GitHub Copilot subscription
+
+A Copilot Pro, Pro+, Business or Enterprise plan can pay for the OpenAI, Anthropic and Google models it serves:
+
+```bash
+cyber providers login copilot                             # prints a URL and a code to enter there
+cyber providers login copilot --enterprise octo.ghe.com   # a GitHub Enterprise (data residency) host
+cyber models copilot                                      # the models your plan serves, unpriced
+cyber exec -m copilot/claude-sonnet-4.5 "Fix the failing test"
+cyber exec -m copilot/gpt-5.6-sol "Fix the failing test"  # a model Copilot serves over Responses
+cyber providers logout copilot
+```
+
+The sign-in is GitHub's OAuth device flow. The CLI prints `Open <url> and enter <code>` and never opens a browser, so it also works over SSH. It then polls GitHub until you approve, at the interval GitHub asks for. Ctrl+C, a denial or an expired code (at most 15 minutes) store nothing. Before anything is stored, the login mints a Copilot token to prove the account has a plan: an account without one fails with `This GitHub account has no active Copilot subscription`.
+
+- The GitHub token is kept in `~/.local/share/cyber/copilot-auth.json` (mode 0600; a file other users can read is refused), with the host and the user name. Sandboxed commands run as you, so the mode alone would not keep them out: every sandboxed launch hides this file, like `chatgpt-auth.json` and cyber's other credential files. Logout deletes the file and the cached model list; it does not revoke the token on GitHub.
+- Each request uses a short-lived Copilot token minted from the GitHub token. It is kept in memory only, never written to disk or to a transcript, and renewed 5 minutes before it expires. Requests go to the API address that token names. If GitHub rejects the GitHub token, requests fail with `GitHub Copilot login expired or was revoked; run cyber providers login copilot`, before any model call.
+- `--enterprise` takes a bare hostname such as `octo.ghe.com`; a URL or path is a usage error. The host is stored with the login, and the device flow, token mint and model list use `https://<host>` and `https://api.<host>`.
+- The `copilot` provider appears only while you are signed in. Its models are the account's picker-enabled models; models an organization policy disables are left out. The list is fetched at login, kept in `copilot-models.json` beside the login, and refreshed once a day. Each model uses the protocol Copilot lists for it: Responses when it supports `/responses`, Chat Completions otherwise. Models are unpriced: premium-request multipliers are not shown as cost.
+- Premium requests: the first model call after each prompt (an MCP server prompt you run as a slash command, or a `/loop` iteration) is sent with `X-Initiator: user`. Everything else is sent as `agent`: tool-loop steps, prompt hook checks, `webfetch` summaries, MCP sampling, subagents, Turns opened by background Jobs, monitors or messages, compaction, titles, recaps and the auto-mode reviewer. So one prompt counts as one premium request, as in Copilot's own agent mode.
+- The sign-in uses one built-in GitHub OAuth client ID (`Iv1.b507a08c87ecfe98`, provisional: whether GitHub accepts a Cyber-registered client is still open); `CYBER_COPILOT_CLIENT_ID` overrides it. `CYBER_COPILOT_GITHUB_URL` and `CYBER_COPILOT_API_URL` replace the GitHub and API addresses for tests and proxies; both must be HTTPS, or plain HTTP on loopback.
+- Windows is not supported yet, because the login file cannot be made owner-only there.
+- Not yet checked against a live Copilot account. The device flow, token mint, model list and both protocols are tested against a local fake GitHub and Copilot API only.
 
 ## Background server and rebuilds
 

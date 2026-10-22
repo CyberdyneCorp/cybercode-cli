@@ -32,6 +32,7 @@ pub struct AppServices {
     global: Arc<GlobalConfigFn>,
     /// The full resolved configuration (trust and warnings included) of a Location.
     resolved: Arc<cyber_tools::HookConfigFn>,
+    logins: Arc<crate::provider_login::ProviderLoginService>,
 }
 
 impl AppServices {
@@ -51,6 +52,10 @@ impl AppServices {
         Self {
             global,
             resolved,
+            logins: Arc::new(crate::provider_login::ProviderLoginService::new(
+                &paths.data,
+                Arc::clone(&resolver),
+            )),
             resolver,
             host,
             remote,
@@ -68,6 +73,9 @@ impl AppServices {
 use cyber_core::commands::BUILTIN as BUILTIN_COMMANDS;
 
 impl Services for AppServices {
+    fn provider_logins(&self) -> Option<Arc<dyn cyber_server::http::providers::ProviderLogins>> {
+        Some(Arc::clone(&self.logins) as _)
+    }
     fn sandbox_status(&self, location: &Path) -> Option<serde_json::Value> {
         Some(self.host.sandbox_status(location))
     }
@@ -535,11 +543,8 @@ impl Services for AppServices {
 
     fn models(&self, _location: &Path) -> BoxFuture<'_, Result<Vec<ModelInfo>, String>> {
         Box::pin(async move {
-            let rows = self
-                .resolver
-                .catalog()
-                .list(None)
-                .map_err(|e| e.to_string())?;
+            let catalog = self.resolver.catalog();
+            let rows = catalog.list(None).map_err(|e| e.to_string())?;
             Ok(rows
                 .into_iter()
                 .map(|row| ModelInfo {
@@ -648,7 +653,7 @@ impl Services for AppServices {
     fn default_model(&self, location: &Path) -> Option<String> {
         let config = (self.config)(location).map(|(v, _)| v).unwrap_or_default();
         let recent = recent_models(&self.recent_file);
-        default_model(self.resolver.catalog(), &config, &recent)
+        default_model(&self.resolver.catalog(), &config, &recent)
             .ok()
             .map(|(r, _)| r.to_string())
     }

@@ -10403,6 +10403,136 @@
           "data"
         ]
       },
+      "Data_LoginAttempt": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/LoginAttempt"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "LoginAttempt": {
+        "type": "object",
+        "properties": {
+          "attempt_id": {
+            "type": "string",
+            "description": "A `pla_` ID."
+          },
+          "provider": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/LoginStatus"
+          },
+          "authorization_url": {
+            "type": "string",
+            "description": "Open in a browser to authorize."
+          },
+          "callback": {
+            "type": "boolean",
+            "description": "The server is waiting for the browser's redirect on localhost:1455; without it the\nuser pastes the redirect URL to the `code` route."
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Unix seconds after which a pending attempt fails."
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The signed-in account, when complete."
+          },
+          "plan": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The plan's model IDs, when complete."
+          },
+          "warning": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the model list is missing from a complete attempt."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why a failed attempt failed."
+          }
+        },
+        "required": [
+          "attempt_id",
+          "provider",
+          "status",
+          "authorization_url",
+          "callback",
+          "expires_at"
+        ],
+        "description": "One sign-in attempt. Never carries a token, the PKCE verifier or the `state`."
+      },
+      "LoginStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "complete",
+          "failed"
+        ],
+        "description": "Where a login attempt stands."
+      },
+      "LoginCode": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "redirect_url": {
+            "type": "string",
+            "description": "The full URL the browser was redirected to."
+          }
+        },
+        "required": [
+          "redirect_url"
+        ],
+        "description": "`POST /api/v1/providers/:provider/login/:attempt_id/code`."
+      },
+      "Data_Logout": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Logout"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "Logout": {
+        "type": "object",
+        "properties": {
+          "removed": {
+            "type": "boolean",
+            "description": "A stored login was removed."
+          }
+        },
+        "required": [
+          "removed"
+        ],
+        "description": "`DELETE /api/v1/providers/:provider/login`."
+      },
       "Data_PeersOverview": {
         "type": "object",
         "properties": {
@@ -18905,6 +19035,356 @@
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/providers/{provider}/login": {
+      "post": {
+        "operationId": "v1.provider.login",
+        "summary": "Start a subscription sign-in (only `chatgpt`); cancels a pending attempt. Open `authorization_url`; `callback` says whether the server waits for the browser's redirect",
+        "tags": [
+          "provider"
+        ],
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_LoginAttempt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "ProviderLoginUnsupportedError, or InvalidRequestError on Windows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "ServiceUnavailableError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "v1.provider.logout",
+        "summary": "Forget the stored login and its model list; tokens are not revoked remotely",
+        "tags": [
+          "provider"
+        ],
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Logout"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "ProviderLoginUnsupportedError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/providers/{provider}/login/{attemptID}": {
+      "get": {
+        "operationId": "v1.provider.loginAttempt",
+        "summary": "A sign-in attempt: `pending`, `complete` with the account and models, or `failed` with the error",
+        "tags": [
+          "provider"
+        ],
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "attemptID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_LoginAttempt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "ProviderLoginUnsupportedError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ProviderLoginNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "v1.provider.cancelLogin",
+        "summary": "Cancel a pending sign-in attempt and stop waiting for the browser",
+        "tags": [
+          "provider"
+        ],
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "attemptID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "OK"
+          },
+          "404": {
+            "description": "ProviderLoginNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/providers/{provider}/login/{attemptID}/code": {
+      "post": {
+        "operationId": "v1.provider.loginCode",
+        "summary": "Complete a pending attempt with the redirect URL pasted from the browser; a wrong `state` is refused and the attempt stays pending",
+        "tags": [
+          "provider"
+        ],
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "attemptID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_LoginAttempt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError or ProviderLoginUnsupportedError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ProviderLoginNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ConflictError when the attempt is no longer pending",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginCode"
               }
             }
           }

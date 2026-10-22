@@ -604,6 +604,109 @@ async fn step_limit_forces_a_final_summary_turn() {
     );
 }
 
+/// `provider-catalog` → GitHub Copilot subscription provider: premium requests are
+/// counted once per prompt, so only the first call after a promoted prompt is the user's.
+#[tokio::test]
+async fn the_first_call_after_a_prompt_is_the_users_and_continuations_the_agents() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                tools(&[("c1", "clock", "{}"), ("c2", "clock", "{}")]),
+                text("done"),
+                text("second prompt"),
+            ],
+        )],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    h.runtime
+        .admit(&id, admit("what time is it", Delivery::Steer))
+        .await
+        .unwrap();
+    h.settle(&id).await;
+    h.runtime
+        .admit(&id, admit("again", Delivery::Steer))
+        .await
+        .unwrap();
+    h.settle(&id).await;
+    let initiators: Vec<_> = h
+        .models
+        .requests("test/main")
+        .iter()
+        .map(|request| request.initiator)
+        .collect();
+    use cyber_llm::Initiator::{Agent, User};
+    assert_eq!(initiators, [Some(User), Some(Agent), Some(User)]);
+}
+
+/// Regression: a Turn that a row nobody typed opens (a Job handback, a monitor line, a
+/// message from another Session or a channel, a child Session's task) is the agent's,
+/// while a `/loop` iteration, which the user scheduled, and an MCP server prompt the user
+/// ran as a slash command are the user's.
+#[tokio::test]
+async fn only_rows_the_user_wrote_or_scheduled_open_a_users_request() {
+    let sources = ["session", "loop", "mcp_prompt", "channel", "user"];
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", sources.into_iter().map(text).collect())],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    for source in sources {
+        let mut admission = admit(source, Delivery::Queue);
+        admission.source = source.into();
+        h.runtime.admit(&id, admission).await.unwrap();
+        h.settle(&id).await;
+    }
+    let initiators: Vec<_> = h
+        .models
+        .requests("test/main")
+        .iter()
+        .map(|request| request.initiator)
+        .collect();
+    use cyber_llm::Initiator::{Agent, User};
+    assert_eq!(
+        initiators,
+        [Some(Agent), Some(User), Some(User), Some(Agent), Some(User)]
+    );
+    // Replay derives the same state from the durable events.
+    let restarted = h.restart();
+    assert!(!restarted.state(&id).await.unwrap().user_input_pending);
+}
+
+/// Regression: a recap is bookkeeping like a title, never another Copilot prompt.
+#[tokio::test]
+async fn a_recap_is_the_agents_request() {
+    let h = Harness::new(Setup {
+        scripts: vec![
+            ("test/main", vec![text("ok")]),
+            ("test/small", vec![text("I answered.")]),
+        ],
+        roles: vec![("small", "test/small")],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    h.runtime
+        .admit(&id, admit("hello", Delivery::Steer))
+        .await
+        .unwrap();
+    h.settle(&id).await;
+    h.runtime.generate_recap(&id).await.unwrap();
+    let recaps: Vec<_> = h
+        .models
+        .requests("test/small")
+        .into_iter()
+        .filter(|request| {
+            request
+                .system
+                .iter()
+                .any(|s| s.contains("summarize a coding session"))
+        })
+        .collect();
+    assert_eq!(recaps.len(), 1);
+    assert_eq!(recaps[0].initiator, Some(cyber_llm::Initiator::Agent));
+}
+
 #[tokio::test]
 async fn reasoning_is_native_for_the_same_model_and_lowered_otherwise() {
     let h = Harness::new(Setup {
@@ -786,6 +889,11 @@ async fn titles_are_generated_from_the_first_prompt() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert_eq!(h.state(&id).await.info.title, "Fix flaky login test");
+    // The title call belongs to the prompt's Turn; Copilot does not count it again.
+    assert_eq!(
+        h.models.requests("test/title")[0].initiator,
+        Some(cyber_llm::Initiator::Agent)
+    );
 }
 
 #[tokio::test]

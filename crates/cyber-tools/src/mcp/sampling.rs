@@ -1,6 +1,6 @@
 //! Bounded basic sampling requests. Conversion grants no model or server authority.
 use base64::Engine;
-use cyber_llm::{Content, LlmRequest, Message, Role};
+use cyber_llm::{Content, Initiator, LlmRequest, Message, Role};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -112,6 +112,8 @@ impl SamplingRequest {
             max_output_tokens: Some(self.max_tokens.min(output_limit)),
             temperature: self.temperature,
             cache_key: None,
+            // A server's request, never the user's prompt: Copilot does not count it.
+            initiator: Some(Initiator::Agent),
             ..template.clone()
         };
         if let Some(body) = request.body.as_object_mut() {
@@ -250,6 +252,7 @@ mod tests {
             system: vec!["private context".into()],
             cache_key: Some("private-session".into()),
             body: json!({"messages":"private","system":"private","input":"private","model":"other","tools":[{}],"tool_choice":"auto","max_tokens":9999,"temperature":1.9,"provider_option":true,"previous_response_id":"private-parent","conversation":"private-session","prompt":"private-prompt"}),
+            initiator: Some(Initiator::User),
             ..Default::default()
         };
         let request = parsed.request(&template, 64).unwrap();
@@ -260,6 +263,11 @@ mod tests {
         assert_eq!(request.max_output_tokens, Some(64));
         assert_eq!(request.temperature, Some(0.5));
         assert!(request.cache_key.is_none());
+        assert_eq!(
+            request.initiator,
+            Some(Initiator::Agent),
+            "never a Copilot prompt"
+        );
         assert_eq!(request.body, json!({"provider_option":true}));
         assert!(parsed.request(&template, 0).is_err());
     }

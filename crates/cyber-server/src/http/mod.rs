@@ -27,6 +27,7 @@ pub mod openapi;
 pub mod peer;
 mod peers;
 mod plugins;
+pub mod providers;
 mod pty;
 pub mod remote_tools;
 pub mod rpc;
@@ -168,6 +169,10 @@ pub struct LocationDefaults {
 
 /// What the server needs beyond the runtime: catalogs and Location-level lookups.
 pub trait Services: Send + Sync {
+    /// Provider sign-in (`provider-credentials` → Provider login API); `None` answers 503.
+    fn provider_logins(&self) -> Option<Arc<dyn providers::ProviderLogins>> {
+        None
+    }
     /// `{ policy, profile, enforcement, isolation }` of `location` for `/health`.
     fn sandbox_status(&self, _location: &Path) -> Option<serde_json::Value> {
         None
@@ -637,6 +642,7 @@ pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router 
         .merge(messaging::routes())
         .merge(loops::routes())
         .merge(peers::routes())
+        .merge(providers::routes())
         .merge(usage::routes())
         .merge(vcs::routes())
         .merge(system::routes())

@@ -1,5 +1,33 @@
 # P1 implementation status
 
+## GitHub Copilot subscription login (2026-10-20)
+
+Uncommitted, branch `feat/copilot-login`. Change [`add-copilot-subscription-login`](../../openspec/changes/add-copilot-subscription-login/tasks.md) adds a `copilot` provider paid for by a GitHub Copilot plan, next to the ChatGPT login: `cyber providers login|logout copilot [--enterprise <host>]` (GitHub's OAuth device flow, no browser auto-open), an owner-only `copilot-auth.json` holding only the GitHub token, host and user, an in-memory Copilot token minted per process and reused until 5 minutes before expiry, a daily-refreshed `copilot-models.json` of picker-enabled, non-policy-disabled models, an `ApiKind::CopilotChat` adapter that picks Responses or Chat Completions per model and adds the Copilot headers, and `LlmRequest::initiator` so the first call after a user prompt sends `X-Initiator: user` and every other call `agent`. The ChatGPT login file, refresh lock and model cache moved into `cyber-llm::subscription` (task 2.1); `crates/cyber-llm/tests/chatgpt.rs` and `crates/cyber-cli/tests/providers_cli.rs` have no diff against `main`. The login file is hidden from sandboxed launches, and `gho_`/`ghu_` GitHub tokens and Copilot tokens are added to the redaction patterns.
+
+Acceptance (manual, macOS): 12 scenarios on the real debug `cyber` binary against a local fake GitHub and Copilot API (`CYBER_COPILOT_GITHUB_URL`/`CYBER_COPILOT_API_URL` on loopback), no network and no live model, all passed:
+
+- Device-flow login prints the URL and code, handles `authorization_pending` and `slow_down`, mints a token, and prints the user and models.
+- `copilot-auth.json` and `copilot-models.json` are mode 0600; no file under `CYBER_HOME` holds the minted Copilot token.
+- `cyber models copilot` (text, `--verbose`, JSON) lists only picker-enabled, non-disabled models.
+- `cyber exec --embedded` Turns with a tool call on a Chat Completions model and on a Responses model (`store: false`, `function_call_output`) send the Copilot headers and bearer token, with `X-Initiator` `user` on the first Turn call and `agent` on the continuation and the title. No vision header was sent, because no image was attached.
+- The same Turn through the background server path (no `--embedded`); the spawned `cyber serve` was stopped by PID.
+- A 401 on the token mint fails with the login hint before any model call and leaves the login file and its mode unchanged.
+- A 403 at login (no Copilot plan) fails with the spec's message and stores nothing.
+- `--enterprise https://evil.example/x` is a usage error (exit 2); `--enterprise Octo.GHE.com` is stored as `octo.ghe.com`. Without URL overrides, a local HTTPS proxy logged `CONNECT octo.ghe.com:443` (device flow) and `CONNECT api.octo.ghe.com:443` (token mint), and both failed closed. TLS to a real GitHub Enterprise host was never completed.
+- Logout removes both files; a second logout reports not signed in; `cyber models copilot` then fails with `Provider not found`.
+- No GitHub token, Copilot token or device code appears in transcripts, logs, the database or the session store.
+- The ChatGPT and Copilot suites pass: `cyber-llm` lib 36, `chatgpt` 6, `copilot` 22; `cyber-cli` `chatgpt_exec` 2, `copilot_cli` 6, `providers_cli` 3.
+
+No product bugs were found in this run.
+
+Validation (macOS, whole working tree): `cargo test --workspace --no-fail-fast` 3,993 passed, 0 failed, 11 ignored (263 result lines including doc tests; `docs_cli_md_is_current` passes with the regenerated `docs/cli.md`); workspace all-target Clippy with warnings denied; `x86_64-pc-windows-gnu` all-target Clippy (stub CC/AR, type-check only) for `cyber-app`, `cyber-cli`, `cyber-core`, `cyber-llm`, `cyber-server` and `cyber-tools`; `cargo fmt --check`; `generate_sdk.py --check`, the SDK typecheck and 105 SDK tests against the debug binary; the plugin kit typecheck, build and 5 tests; `openspec validate --all --strict` (80 items); `spec_lint.py` 0 errors, 21 warnings (the baseline).
+
+Partial or deferred:
+- Task 1.1 (register a Cyber Code GitHub OAuth App and test whether the token-mint endpoint accepts it on a real Copilot account) is open. The client ID is still the provisional constant `Iv1.b507a08c87ecfe98`, overridable with `CYBER_COPILOT_CLIENT_ID`.
+- Task 5.2 (a live sign-in with a real Copilot plan, tool Turns on both protocols, and confirming one premium request per prompt) is open. Nothing here has run against github.com or a live model.
+- Windows refuses the login, as for ChatGPT, because the file cannot be made owner-only there.
+- Only macOS was run; Linux and native Windows CI have not run this work. The change is not archived.
+
 ## Cross-session messaging (2026-10-19)
 
 Uncommitted. Change [`implement-cross-session-messaging`](../../openspec/changes/implement-cross-session-messaging/tasks.md) implements the 18 P1 requirements of `cross-session-messaging` on one server: durable `xsession_message` and `messaging_watch` records, tiered addressing, the `list_sessions`/`send_message`/`watch_session` model tools (`message.send` allow for same-server targets, ask for `@` targets), delivery through the durable inbox as an untrusted block, inbound rules and the Session override, held-message release and drop, the rate limit, pending cap and `messaging.max_hops` chain limit (default 8) checked before any write, recursion depth shared with MCP serve, idle notices, usage by origin (`user`, `session`, `client`, `job`, `mcp`), the `/api/v1/messaging/*` routes, OpenAPI and SDK (`client.messaging`), `cyber messages send|list`, `cyber stats --by origin`, the TUI surfaces (received blocks, `✉ N queued · M held`, held cards, `/messages`) and the three `cyber mcp serve` messaging tools, which complete its ten. The [acceptance plan](p1-acceptance-plan.md#messaging-acceptance-run-implement-cross-session-messaging-2026-10-19) moves the 18 rows from (d) to (a): 158 of 214 P1 requirements are now done locally.

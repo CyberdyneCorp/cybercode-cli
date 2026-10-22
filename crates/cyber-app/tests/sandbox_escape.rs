@@ -223,7 +223,8 @@ async fn blanket_allow_does_not_approve_an_escalation() {
 }
 
 /// Regression: cyber's own credential files in the data directory (the plugin secret
-/// file, the MCP OAuth file and the peer token file of the file backend) and the peer
+/// file, the MCP OAuth file, the peer token file of the file backend and the ChatGPT and
+/// GitHub Copilot logins) and the peer
 /// listener's private key in `<state>/peer-tls/` were not in any launch's unreadable set,
 /// and sandboxed processes run as the same user, so the model could `cat` them past the
 /// `secrets/get` capability gate. Every sandboxed launch hides them.
@@ -238,6 +239,10 @@ async fn sandboxed_commands_cannot_read_cyber_credential_files() {
         data.join("plugin-secrets.json"),
         data.join("mcp-auth.json"),
         data.join("peers-secrets.json"),
+        // Regression: the subscription logins (the GitHub OAuth token behind Copilot
+        // does not rotate) were readable by sandboxed commands.
+        data.join("chatgpt-auth.json"),
+        data.join("copilot-auth.json"),
         tls.join("key.pem"),
     ];
     for file in &files {

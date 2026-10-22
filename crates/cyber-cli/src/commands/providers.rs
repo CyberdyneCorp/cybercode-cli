@@ -1,5 +1,8 @@
-//! Provider sign-in (`provider-credentials` → ChatGPT subscription login). Only the ChatGPT
-//! subscription signs in today; every other provider takes its API key from the environment.
+//! Provider sign-in (`provider-credentials` → ChatGPT subscription login, GitHub Copilot
+//! subscription login). Only the ChatGPT and GitHub Copilot subscriptions sign in today;
+//! every other provider takes its API key from the environment.
+mod copilot;
+
 use std::time::Duration;
 
 use clap::{Subcommand, ValueEnum};
@@ -16,13 +19,18 @@ use crate::output;
 #[derive(Debug, Subcommand)]
 pub enum ProvidersCmd {
     /// Sign in to a provider. `chatgpt` signs in with a ChatGPT Plus/Pro subscription:
-    /// open the printed URL in a browser to authorize.
+    /// open the printed URL in a browser to authorize. `copilot` signs in with a GitHub
+    /// Copilot plan: open the printed URL and enter the printed code.
     Login {
         provider: String,
         /// `browser` waits for the redirect on localhost:1455; `code` reads the redirect
-        /// URL pasted from the browser (for SSH and other headless machines).
+        /// URL pasted from the browser (for SSH and other headless machines). ChatGPT only.
         #[arg(long, value_enum, default_value_t = Method::Browser)]
         method: Method,
+        /// Sign in to a GitHub Enterprise host (a bare hostname such as example.ghe.com)
+        /// instead of github.com. Copilot only.
+        #[arg(long, value_name = "HOST")]
+        enterprise: Option<String>,
     },
     /// Forget a provider login. Tokens are not revoked remotely.
     Logout { provider: String },
@@ -38,14 +46,31 @@ pub enum Method {
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(300);
 
 pub fn run(cmd: ProvidersCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
-    let file = AuthFile::new(chatgpt::auth_path(&ctx.paths.data));
     match cmd {
-        ProvidersCmd::Login { provider, method } => {
+        ProvidersCmd::Login {
+            provider,
+            enterprise,
+            ..
+        } if provider == cyber_llm::copilot::PROVIDER_ID => {
+            copilot::login(ctx, global, enterprise.as_deref())
+        }
+        ProvidersCmd::Logout { provider } if provider == cyber_llm::copilot::PROVIDER_ID => {
+            copilot::logout(ctx, global)
+        }
+        ProvidersCmd::Login {
+            provider,
+            method,
+            enterprise,
+        } => {
             only_chatgpt(&provider, ctx)?;
-            login(ctx, global, &file, method)
+            if enterprise.is_some() {
+                return Err(CliError::usage("--enterprise applies only to copilot"));
+            }
+            login(ctx, global, &chatgpt_file(ctx), method)
         }
         ProvidersCmd::Logout { provider } => {
             only_chatgpt(&provider, ctx)?;
+            let file = chatgpt_file(ctx);
             let removed = file.remove().map_err(failed)?;
             ModelsFile::beside(file.path()).remove();
             if output::is_json(global.format) {
@@ -62,6 +87,10 @@ pub fn run(cmd: ProvidersCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), 
             Ok(())
         }
     }
+}
+
+fn chatgpt_file(ctx: &Context) -> AuthFile {
+    AuthFile::new(chatgpt::auth_path(&ctx.paths.data))
 }
 
 fn login(
@@ -90,45 +119,23 @@ fn login(
     let http = cyber_llm::Endpoint::client_builder()
         .build()
         .map_err(|_| CliError::runtime("HTTP client unavailable"))?;
-    let tokens = runtime
-        .block_on(chatgpt::exchange_code(
+    let signed_in = runtime
+        .block_on(chatgpt::complete_login(
             &http,
             &issuer,
+            chatgpt::backend_url(&ctx.env),
+            file,
             &code,
             &pkce.verifier,
         ))
         .map_err(login_failed)?;
-    let signed_in = Login::from_exchange(tokens).map_err(login_failed)?;
-    file.save(&signed_in).map_err(failed)?;
-    let models = runtime.block_on(plan_models(ctx, &http, file, &signed_in));
-    report(global, &signed_in, &models)
-}
-
-/// Fetch and cache the plan's models. A failure is only a warning: the login is kept, and
-/// signing in again retries.
-async fn plan_models(
-    ctx: &Context,
-    http: &reqwest::Client,
-    file: &AuthFile,
-    login: &Login,
-) -> Vec<String> {
-    let cache = ModelsFile::beside(file.path());
-    let fetched = match chatgpt::backend_url(&ctx.env) {
-        Ok(backend) => chatgpt::fetch_models(http, &backend, login).await,
-        Err(error) => Err(error),
-    };
-    match fetched.and_then(|models| {
-        let slugs = models.iter().map(|m| m.slug.clone()).collect();
-        cache.save(models).map(|()| slugs)
-    }) {
-        Ok(slugs) => slugs,
-        Err(error) => {
-            eprintln!(
-                "warning: could not list the plan's models ({error}); run this login again to retry"
-            );
-            Vec::new()
-        }
-    }
+    let models = signed_in.models.unwrap_or_else(|error| {
+        eprintln!(
+            "warning: could not list the plan's models ({error}); run this login again to retry"
+        );
+        Vec::new()
+    });
+    report(global, &signed_in.login, &models)
 }
 
 async fn await_callback(url: &str, state: &str) -> Result<String, CliError> {
@@ -177,7 +184,8 @@ fn report(global: &GlobalArgs, login: &Login, models: &[String]) -> Result<(), C
     Ok(())
 }
 
-/// Login exists only for `chatgpt`; others are told which variables carry their key.
+/// Past `copilot`, login exists only for `chatgpt`; others are told which variables carry
+/// their key.
 fn only_chatgpt(provider: &str, ctx: &Context) -> Result<(), CliError> {
     if provider == chatgpt::PROVIDER_ID {
         return Ok(());

@@ -111,6 +111,8 @@ pub enum Msg {
         session_id: String,
         result: Result<Vec<Choice>, String>,
     },
+    /// `/login` and `/logout` answers.
+    Login(crate::login::LoginReply),
     /// `/loop list` rows of `session_id`.
     Loops {
         session_id: String,
@@ -829,9 +831,11 @@ pub async fn perform_owned(
         | Action::LoadPlugins { .. }
         | Action::LoadAgents
         | Action::FindFiles(_) => load_choices(client, session, action).await,
-        Action::Loop(_) | Action::Workflow(_) | Action::Team(_) | Action::Branch(_) => {
-            scheduled(client, session, action).await
-        }
+        Action::Loop(_)
+        | Action::Workflow(_)
+        | Action::Team(_)
+        | Action::Branch(_)
+        | Action::Login(_) => scheduled(client, session, action).await,
         Action::SaveTheme(_)
         | Action::SaveProjectTheme(_)
         | Action::SavePreference { .. }
@@ -843,13 +847,14 @@ pub async fn perform_owned(
     }
 }
 
-/// Repeated and orchestrated work: `/loop`, Workflow Runs and `/team`; and the branch
-/// tree (`/tree`, `/label`).
+/// Requests their own modules run: `/loop`, Workflow Runs, `/team` and `/login`; and the
+/// branch tree (`/tree`, `/label`).
 async fn scheduled(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
     match action {
         Action::Branch(request) => crate::branches::perform(client, session, request).await,
         Action::Loop(request) => crate::loops::perform(client, request).await,
         Action::Team(request) => crate::team::perform(client, session, request).await,
+        Action::Login(request) => crate::login::perform(client, request).await,
         Action::Workflow(request) => Ok(Msg::Workflow(
             crate::workflows::perform(client, request).await,
         )),
