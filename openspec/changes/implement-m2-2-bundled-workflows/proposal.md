@@ -1,3 +1,7 @@
+## Delivery update (2026-10-22)
+
+The first delivery slice is now the shared library foundation plus [`solve`](../add-verified-solve-workflow/proposal.md): independent model attempts, authoritative checks and an independent recommendation. Reuse sections 1–4 of this change as needed; the five original modules remain planned later increments, not prerequisites for shipping `solve`. The detailed `solve` contracts, design and tests live in that sibling change. "Five modules" below refers to this change's original module scope; the combined target library has six. A release lists only modules that actually ship.
+
 ## Why
 
 ROADMAP M2.2 ("Bundled workflows: review, audit (find → verify), migrate (fan-out with worktrees), research (cross-checked), plan-from-angles") is not implemented. M2.1 (`fc61f9f`) and `add-parallel-workflow-runs` (`0b784c0`) ship the runtime: the QuickJS engine, `agent()`/`parallel()`/`pipeline()`/`phase()`, durable resume, budgets, model tiers, write isolation, the run queue and the `/workflows` monitor. What users can run, though, is only what they write themselves:
