@@ -46,6 +46,18 @@ pub enum GoalRequest {
         goal_id: String,
         condition: String,
     },
+    /// `/goal fork`: a new background Session pursues the Goal.
+    Fork {
+        session_id: String,
+        condition: String,
+        check: Option<String>,
+    },
+    /// `/goal use <template> [text]`.
+    Use {
+        session_id: String,
+        template: String,
+        args: String,
+    },
 }
 
 /// The active Goal as the footer shows it.
@@ -160,6 +172,16 @@ impl App {
                 goal_id,
                 condition,
             },
+            Ok(GoalCommand::Fork { condition, check }) => GoalRequest::Fork {
+                session_id,
+                condition,
+                check,
+            },
+            Ok(GoalCommand::Use { template, args }) => GoalRequest::Use {
+                session_id,
+                template,
+                args,
+            },
         };
         vec![Action::Goal(request)]
     }
@@ -214,7 +236,44 @@ pub async fn perform(client: &Client, request: GoalRequest) -> Result<Msg, Strin
                 .map_err(err)?;
             Ok(Msg::Toast("◎ goal updated".into()))
         }
+        GoalRequest::Fork {
+            session_id,
+            condition,
+            check,
+        } => fork(client, &session_id, condition, check).await,
+        GoalRequest::Use {
+            session_id,
+            template,
+            args,
+        } => {
+            let body = json!({"template": template, "args": args, "mode": "set"});
+            client.post(&base(&session_id), body).await.map_err(err)?;
+            Ok(Msg::Toast(format!(
+                "◎ goal set from {template}; working toward it"
+            )))
+        }
     }
+}
+
+/// `/goal fork`: report the new Session and where it works.
+async fn fork(
+    client: &Client,
+    session_id: &str,
+    condition: String,
+    check: Option<String>,
+) -> Result<Msg, String> {
+    let mut body = json!({"condition": condition});
+    if let Some(check) = check {
+        body["check"] = check.into();
+    }
+    let path = format!("{}/fork", base(session_id));
+    let fork = client.post(&path, body).await.map_err(err)?;
+    let data = &fork["data"];
+    let id = data["session_id"].as_str().unwrap_or_default();
+    Ok(Msg::Toast(match data["branch"].as_str() {
+        Some(branch) => format!("◎ goal forked to {id} on {branch}"),
+        None => format!("◎ goal forked to {id}"),
+    }))
 }
 
 fn base(session_id: &str) -> String {

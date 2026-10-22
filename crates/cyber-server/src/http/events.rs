@@ -20,6 +20,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use super::envelope::{location, query_value};
 use super::error::ApiError;
 use super::{AppState, event_location};
+use crate::runtime::presence::Watching;
 use crate::runtime::{LiveEvent, PendingKind, Runtime};
 
 const HEARTBEAT: Duration = Duration::from_secs(15);
@@ -293,7 +294,14 @@ async fn instance(State(state): State<AppState>, parts: Parts) -> Result<Respons
     let (tx, rx) = mpsc::channel(256);
     let mut live = state.runtime.subscribe();
     let runtime = state.runtime.clone();
+    let watching = if all {
+        Watching::All
+    } else {
+        Watching::Location(directory.clone())
+    };
+    let present = runtime.attach_client(watching);
     spawn_stream(runtime.clone(), tx.clone(), async move {
+        let _present = present;
         let hello = EventEnvelope {
             id: "live:0".into(),
             kind: "server.connected".into(),
@@ -367,7 +375,9 @@ pub(crate) async fn session_instance_events(
     let mut live = state.runtime.subscribe();
     let (tx, rx) = mpsc::channel(256);
     let runtime = state.runtime.clone();
+    let present = runtime.attach_client(Watching::Session(id.clone()));
     spawn_stream(runtime.clone(), tx.clone(), async move {
+        let _present = present;
         let hello = EventEnvelope {
             id: "live:0".into(),
             kind: "server.connected".into(),
@@ -439,11 +449,11 @@ pub(crate) async fn session_events(
     let live = state.runtime.subscribe();
     let (tx, rx) = mpsc::channel(256);
     let runtime = state.runtime.clone();
-    spawn_stream(
-        runtime.clone(),
-        tx.clone(),
-        follow(state, id, directory, after, live, tx),
-    );
+    let present = runtime.attach_client(Watching::Session(id.clone()));
+    spawn_stream(runtime.clone(), tx.clone(), async move {
+        let _present = present;
+        follow(state, id, directory, after, live, tx).await;
+    });
     Ok(stream_response(rx, runtime))
 }
 

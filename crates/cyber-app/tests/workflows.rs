@@ -300,7 +300,7 @@ async fn script_failures_and_invalid_starts_are_reported() {
         run["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("option goal is not available"),
+            .contains("agent() option goal: invalid type"),
         "{run}"
     );
     assert_eq!(run["agents_detail"], json!([]));
@@ -626,6 +626,57 @@ async fn max_agents_over_http_rejects_the_next_agent_and_ends_budget_exceeded() 
         )
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    server.close().await;
+}
+
+/// The goal evaluator (its system prompt judges goals) always says met; agents answer.
+fn goal_reply(body: &Value) -> Value {
+    let judging = body["messages"].as_array().into_iter().flatten().any(|m| {
+        m["role"] == "system"
+            && m["content"]
+                .as_str()
+                .is_some_and(|c| c.contains("judge whether a coding agent"))
+    });
+    if judging {
+        return json!({"content": json!({"verdict": "met", "reason": "file X compiles"}).to_string()});
+    }
+    json!({"content": "migrated file X"})
+}
+
+/// `goals` → Goals on workflow agents and subagents: `agent(..., {goal})` keeps the child
+/// working until its check passes: the first `met` fails the check and continues, the
+/// second holds; the result carries `goal_status`, and the goal's budget is capped by
+/// what the run has left.
+#[tokio::test]
+async fn workflow_agent_with_goal_runs_until_check_passes() {
+    let model = ScriptedModel::start(goal_reply);
+    let server = Server::start(model.config()).await;
+    let owner = server.session().await;
+    let script = r#"export const meta = { name: 'goal-agent', description: 'Agent with a goal' };
+export default async () => agent('Migrate file X', { goal: { condition: 'file X compiles',
+  check: '[ -f .goal-mark ] || { touch .goal-mark; exit 1; }', budget: { max_turns: 5 } } });
+"#;
+    let run_id = server
+        .start_run(json!({"session_id": owner, "script": script, "budget": {"max_turns": 3}}))
+        .await;
+    let run = server.settled_run(&run_id).await;
+    assert_eq!(run["status"], "completed", "{run}");
+    assert_eq!(run["result"]["goal_status"], "met", "{run}");
+    let child = run["result"]["session_id"].as_str().unwrap();
+    let goals = server.app.runtime.goals(child).await.unwrap();
+    let goal = goals.goals.values().next().unwrap();
+    assert_eq!(goal.condition, "file X compiles");
+    assert_eq!(
+        goal.budget.max_turns,
+        Some(3),
+        "capped by the run's max_turns"
+    );
+    let checks: Vec<_> = goal
+        .evaluations
+        .iter()
+        .map(|e| e.check.as_ref().unwrap().exit_code)
+        .collect();
+    assert_eq!(checks, [Some(1), Some(0)]);
     server.close().await;
 }
 

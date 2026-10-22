@@ -79,6 +79,7 @@ mod mcp;
 mod mcp_depth;
 pub mod messaging;
 pub mod peers;
+pub mod presence;
 pub use mcp_depth::RunMarker;
 mod memory;
 pub use mcp::{
@@ -177,11 +178,11 @@ pub use context_meter::ContextMeter;
 pub use events::{AuxiliaryUsage, CompactionTrigger, registry as event_registry};
 pub use host::{
     AgentInference, CatalogResolver, CheckOutcome, ChildContinuation, FileDecision, FileDiff,
-    HookEffects, Invocation, LifecycleHook, LifecycleVerdict, LocationGuard, LocationLease,
-    ModelResolver, NoSnapshots, NoTools, Reconciliation, ResolvedModel, RestoreError, RuleEffect,
-    RunWorktree, SessionEnvelope, SkillSuggestion, Snapshot, Snapshots, TeamWorktree, ToolDef,
-    ToolHost, ToolOutcome, ToolScope, TurnContext, TurnWorktree, WorkflowAgentOutput,
-    WorkflowAgentRequest,
+    GoalWorktree, HookEffects, Invocation, LifecycleHook, LifecycleVerdict, LocationGuard,
+    LocationLease, ModelResolver, NoSnapshots, NoTools, Reconciliation, ResolvedModel,
+    RestoreError, RuleEffect, RunWorktree, SessionEnvelope, SkillSuggestion, Snapshot, Snapshots,
+    TeamWorktree, ToolDef, ToolHost, ToolOutcome, ToolScope, TurnContext, TurnWorktree,
+    WorkflowAgentOutput, WorkflowAgentRequest,
 };
 pub use model::{
     AssistantEntry, CallState, CallStatus, Delivery, Entry, InboxRow, InputStatus, LastStep,
@@ -269,6 +270,9 @@ pub enum RuntimeError {
     /// An empty or over-long condition.
     #[error("GoalConditionTooLongError: {0}")]
     GoalCondition(String),
+    /// `goals.templates` has no template with this name.
+    #[error("GoalTemplateNotFoundError: no goal template {0}")]
+    GoalTemplateNotFound(String),
     /// No active loop of the Session has this ID (`loops-scheduling`).
     #[error("LoopNotFoundError: no active loop {0} in this Session")]
     LoopNotFound(String),
@@ -762,6 +766,8 @@ pub(crate) struct Inner {
     /// Issued, unsettled edit-capable workflow agents per canonical Location, across runs
     /// (`workflows` → Write isolation default).
     workflow_writers: StdMutex<HashMap<String, Arc<std::sync::atomic::AtomicUsize>>>,
+    /// Open live event streams (`goals` → Goal mode safety).
+    pub(crate) presence: presence::Presence,
     /// `<state>/workflows`: inline scripts and results larger than 1 MiB.
     workflow_dir: std::sync::OnceLock<PathBuf>,
     /// Rebuilds a run's next attempt after a restart (`workflows` → Recovery of several
@@ -850,6 +856,7 @@ impl Runtime {
             team_status: Mutex::default(),
             peer_listings: StdMutex::default(),
             workflow_writers: StdMutex::default(),
+            presence: presence::Presence::default(),
             workflow_dir: std::sync::OnceLock::new(),
             workflow_relaunch: std::sync::OnceLock::new(),
             workflow_progress: std::sync::OnceLock::new(),
@@ -995,6 +1002,12 @@ impl Runtime {
 
     pub fn subscribe(&self) -> broadcast::Receiver<LiveEvent> {
         self.inner.bus.subscribe()
+    }
+
+    /// Count a client watching `scope` until the guard drops (`goals` → Goal mode
+    /// safety: a request nobody watches for long enough pauses the Goal).
+    pub fn attach_client(&self, scope: presence::Watching) -> presence::PresenceGuard {
+        self.inner.presence.attach(scope)
     }
 
     /// Create a Session, or return the existing one unchanged when `id` is taken.

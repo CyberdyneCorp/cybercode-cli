@@ -7,6 +7,7 @@ mod deliver;
 mod dev_server;
 mod formatters;
 mod fs;
+pub(crate) mod goal;
 pub(crate) mod intelligence;
 pub(crate) mod loops;
 mod lsp;
@@ -82,6 +83,7 @@ pub(crate) fn all() -> Vec<Box<dyn Tool>> {
         Box::new(messaging::SendMessage),
         Box::new(messaging::WatchSession),
         Box::new(loops::ScheduleWakeup),
+        Box::new(goal::GoalTool),
         Box::new(team::TeamSpawn),
         Box::new(team::TeamMerge),
         Box::new(team::TeamTaskCreate),
@@ -128,6 +130,7 @@ pub(crate) fn action_of(name: &str) -> &str {
         "enter_worktree" | "exit_worktree" => "worktree",
         "workflow" => crate::permissions::WORKFLOW_RUN,
         "send_message" => crate::permissions::MESSAGE_SEND,
+        goal::NAME => crate::permissions::GOAL_SET,
         team::SPAWN | team::MERGE => crate::permissions::TEAM_MANAGE,
         team::TASK_CREATE | team::TASK_LIST | team::TASK_GET | team::TASK_UPDATE => {
             crate::permissions::TEAM_TASK

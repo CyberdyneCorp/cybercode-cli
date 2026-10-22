@@ -1,5 +1,30 @@
 ## MODIFIED Requirements
 
+### Requirement: Set the active goal
+(P2) `/goal <condition>` SHALL set the active Goal, replacing an existing active Goal (whose status becomes `cleared`), and SHALL immediately admit a prompt with the condition (`delivery: steer`) so work starts without a further message. Setting a goal SHALL require the `goal.set` permission (allowed by default for the user, `ask` when requested by the model). The model requests it through the `goal` tool (`{condition, check?, mode?: "set" | "add"}`), which checks `goal.set` with the condition as its resource; the user's `/goal` commands and HTTP routes never check it.
+
+#### Scenario: Start working toward a goal
+- **WHEN** the user runs `/goal all call sites compile against the v2 API and cargo test passes`
+- **THEN** the goal becomes active and the agent starts a Turn toward it
+
+#### Scenario: Model asks to set a goal
+- **WHEN** the model calls `goal` in a Session with no `goal.set` rule and no attached approver
+- **THEN** the call is refused and no Goal is set
+
+### Requirement: Goal templates
+(P2) The `goals.templates` config key SHALL define named templates `{ condition, check?, budget? }` usable as `/goal use <name> [extra text]`, with `$ARGUMENTS` substitution in the condition; a condition without `$ARGUMENTS` SHALL get non-empty extra text appended on a new line. `POST /api/v1/sessions/{id}/goals` SHALL accept `template` and `args` for the same result, where a given `check` or `budget` overrides the template's, and an unknown name SHALL fail with `GoalTemplateNotFoundError` (404). The Goal records the template it came from.
+
+#### Scenario: Use template
+- **WHEN** config defines `goals.templates.green = { condition: "$ARGUMENTS and all tests pass", check: "just test" }` and the user runs `/goal use green auth module refactored`
+- **THEN** the active Goal condition is `auth module refactored and all tests pass` with check `just test`
+
+### Requirement: Goals on workflow agents and subagents
+(P2) The `agent` tool and workflow `agent()` calls SHALL accept a `goal` option (`{ condition, check?, budget? }`) that becomes the child Session's active Goal before its task prompt is admitted; the task prompt starts the work, the Goal reaches the child through `core/goal`, and the call SHALL resolve only when the child goes idle with that Goal terminal (or paused), returning `goal_status` (and `goal_reason`) with the result. A resumed child keeps its own Goal, so `goal` with `resume` is refused. A workflow agent's goal budget SHALL be capped by the run's remaining `max_turns`, `max_tokens`, `max_cost_usd` and `max_wall_seconds`.
+
+#### Scenario: Workflow agent with goal
+- **WHEN** a workflow calls `agent("Migrate file X", { goal: { condition: "file compiles", check: "cargo check" } })`
+- **THEN** the child keeps working until the check passes or the goal ends, and the result includes `goal_status`
+
 ### Requirement: Goal management commands
 (P2) The system SHALL provide `/goal` (show active Goal, queue and last verdict), `/goal list`, `/goal edit [id]` (opens the condition in the composer or editor), `/goal pause`, `/goal resume`, `/goal clear [id|all]`, `/goal skip` (mark the active Goal `cleared` and activate the next) and `/goal next` (alias of skip). Equivalent HTTP routes SHALL exist under `/api/v1/sessions/{id}/goals`. Editing a Goal SHALL publish `session.goal.edited.1` and reordering the queue SHALL publish `session.goal.reordered.1` with the new order of Goal IDs.
 
@@ -37,7 +62,7 @@
 - **THEN** after restart the evaluator runs on the last Turn and continuation proceeds only on `not_met`
 
 ### Requirement: Parallel goals across sessions
-(P2) The system SHALL support pursuing independent Goals in parallel by running them in separate Sessions; `/goal fork <condition>` SHALL create a new background Session (in a new worktree when `goals.fork_isolation` is `worktree`, the default) with the condition as its active Goal, and list it in `cyber sessions` and the TUI session list (the agent view lists it once that view exists).
+(P2) The system SHALL support pursuing independent Goals in parallel by running them in separate Sessions; `/goal fork <condition>` SHALL create a new background Session (in a new worktree when `goals.fork_isolation` is `worktree`, the default) with the condition as its active Goal, the Session's agent, model and Mode, and list it in `cyber sessions` and the TUI session list of its Location (the worktree, `goal-<ulid>` on branch `cyber/goal-<ulid>`; the source's Location when not isolated or outside a git checkout); the agent view lists it once that view exists. `POST /api/v1/sessions/{id}/goals/fork` SHALL do the same and return the new Session, its directory, its branch and its Goal.
 
 #### Scenario: Fork a goal
 - **WHEN** the user runs `/goal fork upgrade all dependencies with green tests`

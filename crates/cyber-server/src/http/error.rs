@@ -210,6 +210,9 @@ impl From<RuntimeError> for ApiError {
             .with_field("limit", limit),
             RuntimeError::Disabled(service) => Self::service_unavailable(service, message),
             RuntimeError::GoalNotFound(_) => Self::not_found("GoalNotFoundError", message),
+            RuntimeError::GoalTemplateNotFound(_) => {
+                Self::not_found("GoalTemplateNotFoundError", message)
+            }
             RuntimeError::GoalQueueFull(_) => {
                 Self::new(StatusCode::CONFLICT, "GoalQueueFullError", message)
             }

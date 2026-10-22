@@ -11,7 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{AppState, envelope::Data, error::ApiError};
-use crate::runtime::goals::{Goal, GoalEdit, GoalRequest};
+use crate::runtime::goals::{Goal, GoalEdit, GoalFork, GoalRequest};
 
 type Result<T> = std::result::Result<T, ApiError>;
 
@@ -35,10 +35,14 @@ pub enum GoalMode {
     Add,
 }
 
-/// `POST .../goals`.
+/// `POST .../goals`. With `template`, the condition, check and budget come from
+/// `goals.templates.<template>` (`$ARGUMENTS` becomes `args`); a given `check` or
+/// `budget` overrides the template's.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateGoal {
+    /// Required unless `template` is given.
+    #[serde(default)]
     pub condition: String,
     #[serde(default)]
     pub check: Option<String>,
@@ -46,6 +50,22 @@ pub struct CreateGoal {
     pub budget: Option<Budget>,
     #[serde(default)]
     pub mode: GoalMode,
+    #[serde(default)]
+    pub template: Option<String>,
+    /// The text that replaces `$ARGUMENTS` in the template's condition.
+    #[serde(default)]
+    pub args: Option<String>,
+}
+
+/// `POST .../goals/fork`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ForkGoal {
+    pub condition: String,
+    #[serde(default)]
+    pub check: Option<String>,
+    #[serde(default)]
+    pub budget: Option<Budget>,
 }
 
 /// `PATCH .../goals/{goal_id}`; `check: null` removes the check.
@@ -82,6 +102,7 @@ pub(super) fn routes() -> Router<AppState> {
         .route(&format!("{base}/pause"), post(pause))
         .route(&format!("{base}/resume"), post(resume))
         .route(&format!("{base}/skip"), post(skip))
+        .route(&format!("{base}/fork"), post(fork))
         .route(
             &format!("{base}/{{goal_id}}"),
             get(show).patch(edit).delete(clear_one),
@@ -121,10 +142,22 @@ async fn create(
     Path(id): Path<String>,
     Json(body): Json<CreateGoal>,
 ) -> Result<(StatusCode, Json<Data<Goal>>)> {
-    let request = GoalRequest {
-        condition: body.condition,
-        check: body.check,
-        budget: body.budget,
+    let request = match &body.template {
+        Some(name) => {
+            let args = body.args.as_deref().unwrap_or_default();
+            let template = state.runtime.goal_from_template(&id, name, args).await?;
+            GoalRequest {
+                check: body.check.or(template.check),
+                budget: body.budget.or(template.budget),
+                ..template
+            }
+        }
+        None => GoalRequest {
+            condition: body.condition,
+            check: body.check,
+            budget: body.budget,
+            template: None,
+        },
     };
     let goal = match body.mode {
         GoalMode::Set => state.runtime.set_goal(&id, request).await?,
@@ -207,4 +240,20 @@ async fn skip(
     Ok(Json(Data {
         data: state.runtime.skip_goal(&id).await?,
     }))
+}
+
+/// `/goal fork`: a new background Session pursues the Goal.
+async fn fork(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<ForkGoal>,
+) -> Result<(StatusCode, Json<Data<GoalFork>>)> {
+    let request = GoalRequest {
+        condition: body.condition,
+        check: body.check,
+        budget: body.budget,
+        template: None,
+    };
+    let fork = state.runtime.fork_goal(&id, request).await?;
+    Ok((StatusCode::CREATED, Json(Data { data: fork })))
 }

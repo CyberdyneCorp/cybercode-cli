@@ -40,10 +40,6 @@ use super::{Runtime, WeakRuntime};
 /// `agent()` options that are validated by the engine but not available in this build.
 const UNAVAILABLE_OPTIONS: &[(&str, &str)] = &[
     (
-        "goal",
-        "goal conditions arrive with goals for workflow agents",
-    ),
-    (
         "tools",
         "tool allow lists for workflow agents are not enforced yet",
     ),
@@ -158,6 +154,72 @@ struct Prepared {
     agent: Option<String>,
     schema: Option<Value>,
     isolation: Isolation,
+    /// `goal: {condition, check?, budget?}`: the child's active Goal.
+    goal: Option<AgentGoal>,
+}
+
+/// The `goal` option of `agent()` (`goals` → Goals on workflow agents and subagents).
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct AgentGoal {
+    condition: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    check: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    budget: Option<cyber_core::budget::Budget>,
+}
+
+/// Parse and check `options.goal`.
+fn goal_option(options: &Map<String, Value>) -> Result<Option<AgentGoal>, Diagnostic> {
+    let Some(value) = options.get("goal").filter(|v| !v.is_null()) else {
+        return Ok(None);
+    };
+    let goal: AgentGoal = serde_json::from_value(value.clone())
+        .map_err(|e| Diagnostic::execution(format!("agent() option goal: {e}")))?;
+    cyber_core::goals::check_condition(&goal.condition)
+        .map_err(|e| Diagnostic::execution(format!("agent() option goal: {e}")))?;
+    if let Some(budget) = &goal.budget {
+        budget
+            .validate()
+            .map_err(|e| Diagnostic::execution(format!("agent() option goal.budget.{e}")))?;
+    }
+    Ok(Some(goal))
+}
+
+/// The child Goal's Budget: its own limits, each lowered to what the run has left
+/// (`goals` → a workflow agent's goal budget is capped by the run's remaining budget).
+fn capped_goal_budget(
+    own: Option<cyber_core::budget::Budget>,
+    run: &cyber_core::budget::Budget,
+    spend: &RunSpend,
+) -> cyber_core::budget::Budget {
+    let mut budget = own.unwrap_or_default();
+    let lower_u = |own: Option<u64>, left: Option<u64>| match (own, left) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    };
+    let lower_f = |own: Option<f64>, left: Option<f64>| match (own, left) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    };
+    budget.max_turns = lower_u(
+        budget.max_turns,
+        run.max_turns.map(|m| m.saturating_sub(spend.turns)),
+    );
+    budget.max_tokens = lower_u(
+        budget.max_tokens,
+        run.max_tokens.map(|m| m.saturating_sub(spend.tokens)),
+    );
+    budget.max_cost_usd = lower_f(
+        budget.max_cost_usd,
+        run.max_cost_usd.map(|m| (m - spend.cost).max(0.0)),
+    );
+    budget.max_wall_seconds = lower_f(
+        budget.max_wall_seconds,
+        run.max_wall_seconds
+            .map(|m| (m - spend.elapsed_seconds).max(0.0)),
+    );
+    budget
 }
 
 /// Where an agent writes (`workflows` → Write isolation default).
@@ -347,6 +409,7 @@ impl RunHost {
         };
         let requested = string_option(options, "model")?;
         let model = self.model(requested)?;
+        let goal = goal_option(options)?;
         Ok(Prepared {
             record: WorkflowAgent {
                 id: String::new(),
@@ -370,6 +433,7 @@ impl RunHost {
             prompt: call.prompt,
             schema,
             isolation,
+            goal,
         })
     }
 
@@ -624,6 +688,14 @@ impl RunHost {
         } else {
             prepared.prompt.clone()
         };
+        let goal = prepared.goal.clone().map(|mut goal| {
+            goal.budget = Some(capped_goal_budget(
+                goal.budget,
+                &self.budget.budget,
+                &self.spend(),
+            ));
+            serde_json::to_value(goal).expect("goals serialize")
+        });
         let request = (
             record.id.clone(),
             record.call_key.clone(),
@@ -653,6 +725,7 @@ impl RunHost {
                 label,
                 resume,
                 worktree,
+                goal,
                 slot,
             };
             tools.spawn_workflow_agent(request, cancel).await
@@ -959,6 +1032,9 @@ fn script_value(output: WorkflowAgentOutput, structured: bool) -> Value {
             if let Some(branch) = output.branch {
                 value["branch"] = branch.into();
             }
+            if let Some(status) = output.goal_status {
+                value["goal_status"] = status.into();
+            }
             value
         }
     }
@@ -1006,6 +1082,37 @@ fn canonical(value: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_agent_goal_budget_is_capped_by_what_the_run_has_left() {
+        use cyber_core::budget::Budget;
+        let run = Budget {
+            max_cost_usd: Some(1.0),
+            max_turns: Some(10),
+            ..Budget::default()
+        };
+        let spend = RunSpend {
+            cost: 0.75,
+            turns: 4,
+            ..RunSpend::default()
+        };
+        let own = Budget {
+            max_turns: Some(20),
+            max_tokens: Some(500),
+            ..Budget::default()
+        };
+        let capped = capped_goal_budget(Some(own), &run, &spend);
+        assert_eq!(capped.max_turns, Some(6));
+        assert_eq!(capped.max_cost_usd, Some(0.25));
+        assert_eq!(capped.max_tokens, Some(500));
+        assert_eq!(capped.max_wall_seconds, None);
+        let options: Map<String, Value> =
+            serde_json::from_value(json!({"goal": {"condition": ""}})).unwrap();
+        assert!(goal_option(&options).is_err());
+        let options: Map<String, Value> =
+            serde_json::from_value(json!({"goal": {"condition": "x", "bogus": 1}})).unwrap();
+        assert!(goal_option(&options).is_err());
+    }
 
     #[test]
     fn records_are_bounded_by_count_and_bytes() {

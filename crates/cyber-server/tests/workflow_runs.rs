@@ -197,6 +197,7 @@ impl Agents {
             cost: usage.total_cost(),
             tokens: usage.total_tokens(),
             branch: None,
+            goal_status: None,
         })
     }
 
@@ -310,6 +311,7 @@ impl ToolHost for Agents {
                 cost: 0.25,
                 tokens: 7,
                 branch: request.worktree.map(|tree| tree.branch),
+                goal_status: request.goal.map(|_| "met".into()),
             })
         })
     }

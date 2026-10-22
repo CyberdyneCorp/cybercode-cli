@@ -45,10 +45,10 @@ Implementation deltas are recorded in `specs/goals/spec.md`:
 
 ## 3. Goal service and HTTP routes
 
-- [ ] 3.1 `runtime/goals.rs` service: set (clears the existing goal), add, edit, pause, resume, clear `id|all`, skip/next, reorder and use-template. Each publishes its event.
+- [x] 3.1 `runtime/goals.rs` service: set (clears the existing goal), add, edit, pause, resume, clear `id|all`, skip/next, reorder and use-template. Each publishes its event.
 - [x] 3.2 Set and activate admit the condition as a steer prompt with source `goal`, so work starts at once.
 - [x] 3.3 Routes under `/api/v1/sessions/{id}/goals`, with the errors from design §9. Update OpenAPI and regenerate the SDK (`client.goals`). Add `goal` to `/health` `features`.
-- [ ] 3.4 `goal.set` permission: the user's routes allow it. A model `goal` tool asks by default.
+- [x] 3.4 `goal.set` permission: the user's routes allow it. A model `goal` tool asks by default.
 - [x] 3.5 Tests: `set_goal_starts_a_turn_toward_it`, `add_goal_activates_when_none_active`, `reorder_via_patch_publishes_reordered`, `pause_stops_continuation_and_keeps_history`, `condition_over_4000_chars_rejected_with_message`.
 
 ## 4. Evaluator loop and context
@@ -67,8 +67,8 @@ Implementation deltas are recorded in `specs/goals/spec.md`:
 - [x] 5.2 Goal Budget from activation, counting goal Turns and rolling up child tokens and cost. Exceeding it sets `budget_exceeded` and notifies with the spend figures.
 - [x] 5.3 `impossible` stops the goal, and the queue stops unless `on_impossible = continue`. Blocking `TurnEnd::Failed` kinds pause the goal with the reason.
 - [x] 5.4 Deferred evaluation while Session-started background Jobs, background subagents or workflow runs are running (`pending_eval`).
-- [ ] 5.5 Unattended asks: with no subscriber for `unattended_ask_seconds`, the goal pauses with `Waiting for approval` and a notification is sent; the request stays pending.
-- [ ] 5.6 Tests: `failing_check_turns_met_into_not_met_with_tail`, `goal_turn_budget_exceeded_at_50`, `auth_error_pauses_goal`, `impossible_stops_queue_by_default`, `background_job_defers_evaluation_until_idle`, `unattended_ask_pauses_goal_waiting_for_approval`, `goal_never_raises_mode`.
+- [x] 5.5 Unattended asks: with no subscriber for `unattended_ask_seconds`, the goal pauses with `Waiting for approval` and a notification is sent; the request stays pending.
+- [x] 5.6 Tests: `failing_check_turns_met_into_not_met_with_tail`, `goal_turn_budget_exceeded_at_50`, `auth_error_pauses_goal`, `impossible_stops_queue_by_default`, `background_job_defers_evaluation_until_idle`, `unattended_ask_pauses_goal_waiting_for_approval`, `goal_never_raises_mode`.
 
 ## 6. Durability, hooks and notifications
 
@@ -93,11 +93,11 @@ Implementation deltas are recorded in `specs/goals/spec.md`:
 
 ## 9. Goals on agents and workflows; fork and templates
 
-- [ ] 9.1 The `agent` tool `goal` option: the child's active goal; the call settles on its terminal status, with `goal_status`.
-- [ ] 9.2 Workflow `agent()` `goal`: remove it from `UNAVAILABLE_OPTIONS`; the goal budget is capped by the run's remaining budget; the result includes `goal_status`.
-- [ ] 9.3 `/goal fork` and `POST .../goals/fork`: a background Session in a new managed worktree (`fork_isolation`), listed in `cyber sessions`.
-- [ ] 9.4 `/goal use <template> [text]` with `$ARGUMENTS` substitution; an unknown template returns `GoalTemplateNotFound`.
-- [ ] 9.5 Tests: `workflow_agent_with_goal_runs_until_check_passes`, `agent_tool_goal_returns_goal_status`, `goal_fork_starts_background_session_in_worktree`, `goal_use_template_substitutes_arguments`.
+- [x] 9.1 The `agent` tool `goal` option: the child's active goal; the call settles on its terminal status, with `goal_status`.
+- [x] 9.2 Workflow `agent()` `goal`: remove it from `UNAVAILABLE_OPTIONS`; the goal budget is capped by the run's remaining budget; the result includes `goal_status`.
+- [x] 9.3 `/goal fork` and `POST .../goals/fork`: a background Session in a new managed worktree (`fork_isolation`), listed in `cyber sessions`.
+- [x] 9.4 `/goal use <template> [text]` with `$ARGUMENTS` substitution; an unknown template returns `GoalTemplateNotFound`.
+- [x] 9.5 Tests: `workflow_agent_with_goal_runs_until_check_passes`, `agent_tool_goal_returns_goal_status`, `goal_fork_starts_background_session_in_worktree`, `goal_use_template_substitutes_arguments`.
 
 ## 10. Documentation and acceptance
 

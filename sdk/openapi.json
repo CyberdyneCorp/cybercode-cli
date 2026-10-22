@@ -10553,6 +10553,12 @@
           "budget": {
             "$ref": "#/components/schemas/Budget"
           },
+          "template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "status": {
             "$ref": "#/components/schemas/GoalStatus"
           },
@@ -10764,7 +10770,9 @@
         "additionalProperties": false,
         "properties": {
           "condition": {
-            "type": "string"
+            "type": "string",
+            "description": "Required unless `template` is given.",
+            "default": ""
           },
           "check": {
             "type": [
@@ -10786,12 +10794,24 @@
           },
           "mode": {
             "$ref": "#/components/schemas/GoalMode"
+          },
+          "template": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "args": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The text that replaces `$ARGUMENTS` in the template's condition.",
+            "default": null
           }
         },
-        "required": [
-          "condition"
-        ],
-        "description": "`POST .../goals`."
+        "description": "`POST .../goals`. With `template`, the condition, check and budget come from\n`goals.templates.<template>` (`$ARGUMENTS` becomes `args`); a given `check` or\n`budget` overrides the template's."
       },
       "GoalMode": {
         "oneOf": [
@@ -10818,6 +10838,75 @@
         "required": [
           "data"
         ]
+      },
+      "ForkGoal": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "condition": {
+            "type": "string"
+          },
+          "check": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Budget"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "condition"
+        ],
+        "description": "`POST .../goals/fork`."
+      },
+      "Data_GoalFork": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/GoalFork"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "GoalFork": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The worktree branch; absent when the fork shares the source's checkout."
+          },
+          "goal": {
+            "$ref": "#/components/schemas/Goal"
+          }
+        },
+        "required": [
+          "session_id",
+          "directory",
+          "goal"
+        ],
+        "description": "The Session a fork started and its active Goal."
       },
       "GoalOrder": {
         "type": "object",
@@ -19146,7 +19235,7 @@
       },
       "post": {
         "operationId": "v1.session.createGoal",
-        "summary": "Set the active Goal (`mode: set`, the default, clears the current one and starts a Turn toward it) or queue one (`mode: add`)",
+        "summary": "Set the active Goal (`mode: set`, the default, clears the current one and starts a Turn toward it) or queue one (`mode: add`); `template` takes the condition, check and budget from `goals.templates`",
         "tags": [
           "session"
         ],
@@ -19190,7 +19279,7 @@
             }
           },
           "404": {
-            "description": "SessionNotFoundError",
+            "description": "SessionNotFoundError or GoalTemplateNotFoundError",
             "content": {
               "application/json": {
                 "schema": {
@@ -19283,6 +19372,85 @@
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/goals/fork": {
+      "post": {
+        "operationId": "v1.session.forkGoal",
+        "summary": "Pursue a Goal in a new background root Session, in its own managed worktree when `goals.fork_isolation` is `worktree` and the Location is a git checkout",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_GoalFork"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "GoalConditionTooLongError or InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "SessionNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForkGoal"
               }
             }
           }

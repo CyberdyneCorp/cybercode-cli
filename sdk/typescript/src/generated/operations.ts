@@ -653,6 +653,12 @@ export interface Operations {
     body: S.ForkBody;
     response: S.Session;
   };
+  "v1.session.forkGoal": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: S.ForkGoal;
+    response: S.GoalFork;
+  };
   "v1.session.generateRecap": {
     path: { sessionID: string };
     query: Record<string, never>;
@@ -2210,6 +2216,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.session.forkGoal": {
+    tag: "session",
+    name: "forkGoal",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/goals/fork",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.generateRecap": {
     tag: "session",
     name: "generateRecap",
@@ -3360,7 +3378,7 @@ export function createGroups(caller: Caller) {
       /** Create a Session (`POST /api/v1/sessions`) */
       create: (body?: Operations["v1.session.create"]["body"], options?: RequestOptions): Promise<Operations["v1.session.create"]["response"]> =>
         caller.call("v1.session.create", { body }, options),
-      /** Set the active Goal (`mode: set`, the default, clears the current one and starts a Turn toward it) or queue one (`mode: add`) (`POST /api/v1/sessions/{sessionID}/goals`) */
+      /** Set the active Goal (`mode: set`, the default, clears the current one and starts a Turn toward it) or queue one (`mode: add`); `template` takes the condition, check and budget from `goals.templates` (`POST /api/v1/sessions/{sessionID}/goals`) */
       createGoal: (sessionID: string, body: Operations["v1.session.createGoal"]["body"], options?: RequestOptions): Promise<Operations["v1.session.createGoal"]["response"]> =>
         caller.call("v1.session.createGoal", { path: { sessionID }, body }, options),
       /** Create a loop from `/loop` arguments (`command`) or parsed fields; its first iteration is due now (`POST /api/v1/sessions/{sessionID}/loops`) */
@@ -3384,6 +3402,9 @@ export function createGroups(caller: Caller) {
       /** Fork a Session (`POST /api/v1/sessions/{sessionID}/fork`) */
       fork: (sessionID: string, body?: Operations["v1.session.fork"]["body"], options?: RequestOptions): Promise<Operations["v1.session.fork"]["response"]> =>
         caller.call("v1.session.fork", { path: { sessionID }, body }, options),
+      /** Pursue a Goal in a new background root Session, in its own managed worktree when `goals.fork_isolation` is `worktree` and the Location is a git checkout (`POST /api/v1/sessions/{sessionID}/goals/fork`) */
+      forkGoal: (sessionID: string, body: Operations["v1.session.forkGoal"]["body"], options?: RequestOptions): Promise<Operations["v1.session.forkGoal"]["response"]> =>
+        caller.call("v1.session.forkGoal", { path: { sessionID }, body }, options),
       /** Return the recap covering the latest finished Turn, generating it when stale (`POST /api/v1/sessions/{sessionID}/recap`) */
       generateRecap: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.generateRecap"]["response"]> =>
         caller.call("v1.session.generateRecap", { path: { sessionID } }, options),

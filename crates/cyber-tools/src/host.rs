@@ -959,6 +959,20 @@ impl ToolHost for BuiltinHost {
         })
     }
 
+    fn create_goal_fork_session<'a>(
+        &'a self,
+        source: &'a cyber_server::runtime::SessionInfo,
+        request: cyber_server::runtime::CreateSession,
+        worktree: &'a cyber_server::runtime::GoalWorktree,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<cyber_server::runtime::SessionInfo, String>> {
+        Box::pin(async move {
+            self.create_goal_fork_worktree_session(source, request, worktree, cancel)
+                .await
+                .map_err(|error| error.to_string())
+        })
+    }
+
     fn permission_effect(
         &self,
         turn: &TurnContext,
