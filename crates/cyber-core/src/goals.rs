@@ -6,6 +6,8 @@
 //! /goal [--check "<cmd>"] <condition>      set the active Goal (clears the current one)
 //! /goal add [--check "<cmd>"] <condition>  queue a Goal (activates when none is active)
 //! /goal list | pause | resume | skip | next | clear [<gol_id>|all] | edit [<gol_id>]
+//! /goal fork [--check "<cmd>"] <condition>  pursue it in a new background Session
+//! /goal use <template> [text]               set the Goal from `goals.templates.<template>`
 //! ```
 use std::collections::BTreeMap;
 
@@ -123,6 +125,21 @@ pub struct GoalTemplate {
     pub check: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget: Option<Budget>,
+}
+
+impl GoalTemplate {
+    /// The condition with `$ARGUMENTS` replaced by `args`; without the placeholder,
+    /// non-empty `args` are appended on a new line.
+    pub fn condition_for(&self, args: &str) -> String {
+        let args = args.trim();
+        if self.condition.contains("$ARGUMENTS") {
+            return self.condition.replace("$ARGUMENTS", args).trim().to_owned();
+        }
+        if args.is_empty() {
+            return self.condition.trim().to_owned();
+        }
+        format!("{}\n{args}", self.condition.trim())
+    }
 }
 
 /// The resolved `goals` key.
@@ -244,6 +261,16 @@ pub enum GoalCommand {
     Skip,
     /// `None` clears every Goal of the Session.
     Clear(Option<String>),
+    /// `/goal fork`: a new background Session pursues this Goal.
+    Fork {
+        condition: String,
+        check: Option<String>,
+    },
+    /// `/goal use <template> [text]`.
+    Use {
+        template: String,
+        args: String,
+    },
 }
 
 /// Parse the arguments of `/goal` (everything after the command name).
@@ -282,7 +309,20 @@ pub fn parse(args: &str) -> Result<GoalCommand, String> {
                 condition: text.to_owned(),
             })
         }
-        "fork" | "use" => Err(format!("/goal {first} is not available in this build yet")),
+        "fork" => {
+            let (condition, check) = condition_and_check(rest)?;
+            Ok(GoalCommand::Fork { condition, check })
+        }
+        "use" => {
+            let (template, args) = split_word(rest);
+            if template.is_empty() {
+                return Err("/goal use needs a template name".into());
+            }
+            Ok(GoalCommand::Use {
+                template: template.to_owned(),
+                args: args.trim().to_owned(),
+            })
+        }
         "add" => {
             let (condition, check) = condition_and_check(rest)?;
             Ok(GoalCommand::Add { condition, check })
@@ -414,7 +454,21 @@ mod tests {
             }
         );
         assert_eq!(parse("edit nope text").unwrap_err(), "Unknown goal nope");
-        assert!(parse("fork x").unwrap_err().contains("not available"));
+        assert_eq!(
+            parse("fork --check 'cargo test' deps upgraded").unwrap(),
+            GoalCommand::Fork {
+                condition: "deps upgraded".into(),
+                check: Some("cargo test".into())
+            }
+        );
+        assert_eq!(
+            parse("use green auth module refactored").unwrap(),
+            GoalCommand::Use {
+                template: "green".into(),
+                args: "auth module refactored".into()
+            }
+        );
+        assert!(parse("use").is_err());
         assert_eq!(
             parse("--check").unwrap_err(),
             "--check needs a command, quoted when it has spaces"
@@ -448,6 +502,28 @@ mod tests {
                 .is_err()
         );
         assert!(GoalSettings::from_config(&json!({"goals": {"bogus": 1}})).is_err());
+    }
+
+    #[test]
+    fn templates_substitute_their_arguments() {
+        let green = GoalTemplate {
+            condition: "$ARGUMENTS and all tests pass".into(),
+            check: Some("just test".into()),
+            budget: None,
+        };
+        assert_eq!(
+            green.condition_for("auth module refactored"),
+            "auth module refactored and all tests pass"
+        );
+        let plain = GoalTemplate {
+            condition: "lint is clean".into(),
+            ..green
+        };
+        assert_eq!(plain.condition_for(""), "lint is clean");
+        assert_eq!(
+            plain.condition_for("in crates/"),
+            "lint is clean\nin crates/"
+        );
     }
 
     #[test]

@@ -189,6 +189,8 @@ pub struct Agent {
     pub cost: f64,
     /// From start to settlement, or to when the run was read for a running agent.
     pub duration_ms: Option<u64>,
+    /// Compactions of the agent's Session.
+    pub compactions: u64,
 }
 
 impl Agent {
@@ -208,6 +210,7 @@ impl Agent {
             duration_ms: started
                 .zip(ended)
                 .map(|(start, end)| end.saturating_sub(start).max(0) as u64),
+            compactions: number(&value["compactions"]),
         })
     }
 }
@@ -363,6 +366,10 @@ pub enum Op {
     Stop,
     /// Every run a restart interrupted (`resume_interrupted`).
     ResumeInterrupted,
+    /// Save an inline run's script into `.cyber/workflows/` (`force` replaces a file).
+    Save {
+        force: bool,
+    },
 }
 
 /// Monitor reads and writes, performed by [`perform`].
@@ -743,6 +750,11 @@ impl App {
         let w = &mut self.workflows;
         match (result, &run_id) {
             (Ok(report), None) => self.interrupted_done(&report),
+            (Ok(saved), Some(id)) if matches!(op, Op::Save { .. }) => {
+                w.refusals.remove(id);
+                let path = saved["path"].as_str().unwrap_or_default();
+                self.toast(format!("Saved {}", printable(path)));
+            }
             (Ok(_), Some(id)) => {
                 w.refusals.remove(id);
             }
@@ -935,6 +947,7 @@ impl App {
                 Vec::new()
             }
             "workflows_script" => self.open_script(&run),
+            "workflows_save" => self.run_op(run_id, Op::Save { force: false }),
             "workflows_log" => self.open_log(run),
             _ => Vec::new(),
         }
@@ -1172,6 +1185,7 @@ fn op_path(run_id: Option<&str>, op: Op, all: bool) -> (String, Value) {
             json!({}),
         ),
         Op::ResumeInterrupted => ("/workflows/runs/resume_interrupted".into(), json!({})),
+        Op::Save { force } => (path("save"), json!({ "force": force })),
     }
 }
 
@@ -1406,7 +1420,7 @@ mod tests {
             "phase": "Verify", "agents": {"queued": 5},
             "agents_detail": [
                 {"id": "agt_2", "phase": "Verify", "status": "running", "started_ms": 1000},
-                {"id": "agt_1", "phase": "Scan", "status": "completed",
+                {"id": "agt_1", "phase": "Scan", "status": "completed", "compactions": 2,
                     "started_ms": 0, "ended_ms": 41000},
                 {"id": "agt_3", "status": "failed"},
             ]}),
@@ -1437,6 +1451,7 @@ mod tests {
         assert_eq!(detail.agents[1].duration_ms, Some(41_000));
         assert_eq!(detail.agents[0].duration_ms, Some(4_000));
         assert_eq!(detail.agents[2].duration_ms, None);
+        assert_eq!(detail.agents[1].compactions, 2);
     }
 
     #[test]
@@ -1455,6 +1470,10 @@ mod tests {
         assert_eq!(
             op_path(Some("a/b"), Op::Stop, false).0,
             "/workflows/runs/a%2Fb/stop"
+        );
+        assert_eq!(
+            op_path(Some("run_1"), Op::Save { force: false }, false),
+            ("/workflows/runs/run_1/save".into(), json!({"force": false}))
         );
     }
 

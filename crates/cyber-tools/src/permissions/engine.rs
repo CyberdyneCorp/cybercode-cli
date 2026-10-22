@@ -267,6 +267,10 @@ pub const MESSAGE_SEND: &str = "message.send";
 /// allowed for primary agents, denied for subagents; the runtime refuses teammates.
 pub const TEAM_MANAGE: &str = "team.manage";
 
+/// The model setting a Goal on its own Session through the `goal` tool (`goals` → Set
+/// the active goal): asks by default; the user's own `/goal` routes never check it.
+pub const GOAL_SET: &str = "goal.set";
+
 /// The shared task board of a team (`agent-teams` → Shared task list): allowed, and
 /// offered to team members only; the runtime enforces the board's own rules.
 pub const TEAM_TASK: &str = "team.task";

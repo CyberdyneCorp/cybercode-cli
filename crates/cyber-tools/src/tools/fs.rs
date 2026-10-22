@@ -34,19 +34,7 @@ impl Tool for Read {
 
     fn run<'a>(&'a self, ctx: &'a Ctx<'a>) -> BoxFuture<'a, Result<String, ToolError>> {
         Box::pin(async move {
-            let path = ctx.resolve(text(&ctx.inv.input, "path"));
-            ctx.check_external(std::slice::from_ref(&path)).await?;
-            let resource = ctx.resource(&path);
-            let req = Request {
-                action: "read".into(),
-                resources: vec![resource.clone()],
-                read_only: true,
-                ..Request::default()
-            };
-            ctx.authorize(req, vec![resource], Value::Null).await?;
-            if crate::sandboxing::hidden(ctx).denies(&path) {
-                return Err(failed(crate::sandboxing::hidden_read(ctx, &path).await));
-            }
+            let path = readable(ctx).await?;
             let meta = tokio::fs::metadata(&path)
                 .await
                 .map_err(|_| failed(not_found(&path)))?;
@@ -89,6 +77,71 @@ impl Tool for Read {
             Ok(page(&String::from_utf8_lossy(&bytes), offset, limit))
         })
     }
+}
+
+/// The `path` input, once `external_directory`, the `read` permission and the hidden
+/// paths allow reading it.
+async fn readable(ctx: &Ctx<'_>) -> Result<PathBuf, ToolError> {
+    let path = ctx.resolve(text(&ctx.inv.input, "path"));
+    ctx.check_external(std::slice::from_ref(&path)).await?;
+    let resource = ctx.resource(&path);
+    let req = Request {
+        action: "read".into(),
+        resources: vec![resource.clone()],
+        read_only: true,
+        ..Request::default()
+    };
+    ctx.authorize(req, vec![resource], Value::Null).await?;
+    if crate::sandboxing::hidden(ctx).denies(&path) {
+        return Err(failed(crate::sandboxing::hidden_read(ctx, &path).await));
+    }
+    Ok(path)
+}
+
+/// `tools.read` of a Workflow script (`workflows` → Direct read-only tools): the read
+/// tool's checks and page limits (2,000 lines, 50 KiB), returning the text of the page
+/// without line numbers as `{content, truncated, next_offset}`. A directory, a media file
+/// or a binary file is an error.
+pub(crate) async fn read_value(ctx: &Ctx<'_>) -> Result<Value, ToolError> {
+    let path = readable(ctx).await?;
+    let meta = tokio::fs::metadata(&path)
+        .await
+        .map_err(|_| failed(not_found(&path)))?;
+    if meta.is_dir() {
+        return Err(failed(format!(
+            "{} is a directory; list it with tools.glob",
+            path.display()
+        )));
+    }
+    if let Some(kind) = media_kind(&path) {
+        return Err(failed(format!("{kind} files cannot be read as text")));
+    }
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| failed(format!("Could not read {}: {e}", path.display())))?;
+    if is_binary(&bytes) {
+        return Err(failed("Binary file: application/octet-stream"));
+    }
+    let offset = number(&ctx.inv.input, "offset").unwrap_or(1).max(1) as usize;
+    let limit =
+        number(&ctx.inv.input, "limit").map_or(PAGE_LINES, |l| (l as usize).clamp(1, PAGE_LINES));
+    let content = String::from_utf8_lossy(&bytes);
+    let (text, next) = page_text(&content, offset, limit);
+    Ok(json!({"content": text, "truncated": next.is_some(), "next_offset": next}))
+}
+
+/// The lines from `offset` (1-based), at most `limit` lines and 50 KiB, and the offset
+/// of the next page when the file continues.
+fn page_text(content: &str, offset: usize, limit: usize) -> (String, Option<usize>) {
+    let mut out = String::new();
+    for (index, line) in content.lines().enumerate().skip(offset - 1) {
+        if index + 1 - offset >= limit || out.len() + line.len() + 1 > PAGE_BYTES {
+            return (out, Some(index + 1));
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    (out, None)
 }
 
 /// `<n>: <line>` from `offset` (1-based); at most `limit` lines and 50 KiB.

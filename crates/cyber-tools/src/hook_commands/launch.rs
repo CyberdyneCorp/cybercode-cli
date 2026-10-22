@@ -492,6 +492,10 @@ impl HookCommandRunner<'_> {
             env.retain(|(existing, _)| existing != key);
             env.push((key.into(), value));
         }
+        env.retain(|(existing, _)| existing != crate::sandboxing::WORKFLOW_RUN_ENV);
+        if let Some(run) = &identity.workflow_run_id {
+            env.push((crate::sandboxing::WORKFLOW_RUN_ENV.into(), run.clone()));
+        }
         Ok(Prepared {
             wrapped,
             env,

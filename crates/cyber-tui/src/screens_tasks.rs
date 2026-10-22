@@ -362,3 +362,38 @@ async fn tasks_reload_keeps_the_filter_and_the_selected_task() {
         stop(&server, job["id"].as_str().unwrap()).await;
     }
 }
+
+/// `background-tasks` → Tasks view: the Session's Workflow Runs are listed in `/tasks` as
+/// `workflow` rows, Enter opens one in the `/workflows` monitor, and `/stop` stops a
+/// running run with the Session's Jobs.
+#[tokio::test]
+async fn tasks_lists_workflow_runs_and_stop_all_stops_them() {
+    let server = server().await;
+    let id = server.answered("first question").await;
+    let script = "export const meta = { name: 'slow', description: 'A long agent' };\nexport default async () => (await agent('RUN-FOREGROUND now')).text;\n";
+    let started = server
+        .client
+        .post(
+            "/workflows/runs",
+            json!({"session_id": id, "script": script}),
+        )
+        .await
+        .unwrap();
+    let run_id = started["data"]["id"].as_str().unwrap().to_owned();
+    let path = format!("/workflows/runs/{run_id}");
+    eventually("the run's agent", async || {
+        let run = server.client.get(&path).await.ok()?;
+        (run["data"]["agents"]["running"] == 1).then_some(())
+    })
+    .await;
+    let mut app = server.load(&id).await;
+    let actions = typed(&mut app, "/tasks");
+    perform(&server, &mut app, actions).await;
+    let screen = render(&mut app, 120, 30, &Opts::default());
+    assert!(screen.contains("slow (running)"), "{screen}");
+    assert!(screen.contains("workflow · "), "{screen}");
+
+    perform(&server, &mut app, vec![Action::StopTasks]).await;
+    let run = server.client.get(&path).await.unwrap();
+    assert_eq!(run["data"]["status"], "stopped", "{run}");
+}

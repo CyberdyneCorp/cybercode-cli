@@ -472,3 +472,88 @@ async fn a_background_job_defers_evaluation_until_its_handback() {
     }
     assert_eq!(h.models.requests("test/evaluator").len(), 1);
 }
+
+async fn wait_status(h: &Harness, id: &str, goal_id: &str, status: GoalStatus) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while h.state(id).await.goals.goals[goal_id].status != status {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the goal never became {status:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// The notification events of a Session, as `title: body`.
+fn notices(h: &Harness, id: &str) -> Vec<String> {
+    h.store
+        .read_events(id, -1, 500)
+        .unwrap()
+        .events
+        .into_iter()
+        .filter(|e| e.kind == "session.notification.sent.1")
+        .map(|e| format!("{}: {}", e.data["title"], e.data["body"]))
+        .collect()
+}
+
+/// `goals` → Goal mode safety: a goal Turn's permission request that no client watches
+/// for `unattended_ask_seconds` pauses the Goal with `Waiting for approval` and a
+/// notification naming the request; the request stays pending, and answering it ends
+/// the Turn without continuing the paused Goal. While a client watches, nothing pauses.
+#[tokio::test]
+async fn unattended_ask_pauses_goal_waiting_for_approval() {
+    let h = harness(
+        vec![tools(&[("c1", "shell", "{}")]), text("cleaned")],
+        vec![],
+    );
+    h.tools.goal_settings.lock().unwrap().unattended_ask_seconds = 1;
+    h.tools.set("shell", Behavior::Ask("rm -rf build".into()));
+    let id = h.session().await;
+    let watcher = h
+        .runtime
+        .attach_client(cyber_server::runtime::presence::Watching::Session(
+            id.clone(),
+        ));
+    let set = h
+        .runtime
+        .set_goal(&id, goal("the build is clean"))
+        .await
+        .unwrap();
+    let request = loop {
+        if let Some(r) = h.runtime.pending_requests(Some(&id)).first().cloned() {
+            break r;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert_eq!(
+        h.state(&id).await.goals.goals[&set.goal_id].status,
+        GoalStatus::Active,
+        "a watched Session's ask does not pause the goal"
+    );
+
+    drop(watcher);
+    wait_status(&h, &id, &set.goal_id, GoalStatus::Paused).await;
+    let state = h.state(&id).await;
+    let g = &state.goals.goals[&set.goal_id];
+    assert_eq!(g.reason.as_deref(), Some("Waiting for approval"));
+    assert_eq!(h.runtime.pending_requests(Some(&id))[0].id, request.id);
+    let notes = notices(&h, &id);
+    assert!(
+        notes.iter().any(|n| n.contains("waiting for approval")
+            && n.contains(&request.id)
+            && n.contains("rm -rf build")),
+        "{notes:?}"
+    );
+
+    h.runtime
+        .reply_permission(&request.id, cyber_server::runtime::PermissionReply::Once)
+        .await
+        .unwrap();
+    quiet(&h, &id).await;
+    assert!(h.models.requests("test/evaluator").is_empty());
+    assert_eq!(
+        h.state(&id).await.goals.goals[&set.goal_id].status,
+        GoalStatus::Paused
+    );
+}

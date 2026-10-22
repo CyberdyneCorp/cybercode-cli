@@ -241,6 +241,11 @@ async fn lead_spawns_three_teammates_in_worktrees_and_the_seventh_is_refused() {
         );
         ids.insert(name, id);
     }
+    // Worktree teammates are listed in the lead's checkout too.
+    let (_, listed) = app.send("GET", "/sessions", None).await;
+    for id in ids.values() {
+        assert!(listed.to_string().contains(id.as_str()), "{listed}");
+    }
     let members = app.app.runtime.team_members(&team.id).unwrap();
     let names: Vec<&str> = members.iter().map(|m| m.name.as_str()).collect();
     assert_eq!(names, ["lead", "api", "ui", "tests"]);

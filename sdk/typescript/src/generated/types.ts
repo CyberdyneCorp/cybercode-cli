@@ -380,12 +380,20 @@ export type CreateBody = {
   messaging?: InboundOverride | null;
 };
 
-/** `POST .../goals`. */
+/**
+ * `POST .../goals`. With `template`, the condition, check and budget come from
+ * `goals.templates.<template>` (`$ARGUMENTS` becomes `args`); a given `check` or
+ * `budget` overrides the template's.
+ */
 export type CreateGoal = {
-  condition: string;
+  /** Required unless `template` is given. */
+  condition?: string;
   check?: string | null;
   budget?: Budget | null;
   mode?: GoalMode;
+  template?: string | null;
+  /** The text that replaces `$ARGUMENTS` in the template's condition. */
+  args?: string | null;
 };
 
 /** `POST /api/v1/sessions/:id/loops`: the `/loop` arguments as typed, or the parsed fields. */
@@ -513,6 +521,10 @@ export type Data_Goal = {
   data: Goal;
 };
 
+export type Data_GoalFork = {
+  data: GoalFork;
+};
+
 export type Data_GoalsView = {
   data: GoalsView;
 };
@@ -587,6 +599,10 @@ export type Data_RevertState = {
 
 export type Data_RunDetail = {
   data: RunDetail;
+};
+
+export type Data_SavedScript = {
+  data: SavedScript;
 };
 
 export type Data_ScopeUsage = {
@@ -844,6 +860,13 @@ export type ForkBody = {
   message_id?: string | null;
 };
 
+/** `POST .../goals/fork`. */
+export type ForkGoal = {
+  condition: string;
+  check?: string | null;
+  budget?: Budget | null;
+};
+
 export type FormatterStatus = {
   id: string;
   extensions: string[];
@@ -880,6 +903,7 @@ export type Goal = {
   condition: string;
   check?: string | null;
   budget: Budget;
+  template?: string | null;
   status: GoalStatus;
   /** The last verdict's reason, or why it paused or ended. */
   reason?: string | null;
@@ -895,6 +919,15 @@ export type Goal = {
   activated_ms?: number | null;
   ended_ms?: number | null;
   evaluations: Evaluated[];
+};
+
+/** The Session a fork started and its active Goal. */
+export type GoalFork = {
+  session_id: string;
+  directory: string;
+  /** The worktree branch; absent when the fork shares the source's checkout. */
+  branch?: string | null;
+  goal: Goal;
 };
 
 /** How `POST .../goals` places the new Goal. */
@@ -1255,6 +1288,42 @@ export type LastMessage = {
   outcome: string;
   text: string;
   created_ms: number;
+};
+
+/** One library entry, as its `meta` declares it. */
+export type LibraryEntry = {
+  name: string;
+  description: string;
+  /** Declared phase titles. */
+  phases: string[];
+  /** `meta.args`: the JSON Schema of the run's `args`. */
+  args?: unknown;
+  /** `meta.budget`: the module's default run budget. */
+  budgets?: unknown;
+  /** `meta.estimate`: how many agents a run starts, in words. */
+  estimate?: string | null;
+  /** `meta.tools`: the read-only tools the script calls directly. */
+  tools: string[];
+  origin: LibraryOrigin;
+  /** `sha256:<hex>` of the source. */
+  digest: string;
+  /** The definitions this entry replaces, lowest precedence first. */
+  shadowed: string[];
+};
+
+/** A module that failed to load, with its diagnostic. */
+export type LibraryIssue = {
+  path: string;
+  diagnostic: Diagnostic;
+};
+
+/** Where a library entry comes from. */
+export type LibraryOrigin = {
+  path: string;
+  kind: "global";
+} | {
+  path: string;
+  kind: "project";
 };
 
 /** The latest reading of one provider window. */
@@ -2491,6 +2560,11 @@ export type RunDetail = {
    * or save into `.cyber/workflows/`.
    */
   script_file?: string | null;
+  /**
+   * Direct read-only tools the invocation allowlists besides `meta.tools`
+   * (`workflows` → Direct read-only tools).
+   */
+  tools?: string[];
   /** `sha256:` digest of the current revision's script source. */
   digest: string;
   /** Digest of the engine limits and model tiers the current revision runs with. */
@@ -2601,6 +2675,16 @@ export type RunUsageReport = {
 /** How the host process of `main` is started. */
 export type Runtime = "node" | "bun" | "deno" | "python" | "native";
 
+export type SaveBody = {
+  /** Replace an existing `.cyber/workflows/<name>.js`. */
+  force?: boolean;
+};
+
+/** Where a saved script was written. */
+export type SavedScript = {
+  path: string;
+};
+
 /** One of the usage reports a scope returns, discriminated by `scope`. */
 export type ScopeUsage = SessionUsage | RunUsageReport;
 
@@ -2674,6 +2758,11 @@ export type Session = {
    * a worktree it entered with `enter_worktree`.
    */
   worktree_origin?: string | null;
+  /**
+   * The Location a root Session in its own managed worktree was started from (a
+   * forked Goal, a teammate): Session listings of that Location include it.
+   */
+  source_directory?: string | null;
   parent_id?: string | null;
   /** Durable child identity within its parent, independent of title and agent. */
   subagent_name?: string | null;
@@ -2744,6 +2833,11 @@ export type SessionInfo = {
    * a worktree it entered with `enter_worktree`.
    */
   worktree_origin?: string | null;
+  /**
+   * The Location a root Session in its own managed worktree was started from (a
+   * forked Goal, a teammate): Session listings of that Location include it.
+   */
+  source_directory?: string | null;
   parent_id?: string | null;
   /** Durable child identity within its parent, independent of title and agent. */
   subagent_name?: string | null;
@@ -2981,6 +3075,11 @@ export type StartBody = {
    * at that limit; overrides `meta.max_concurrent` and `workflows.max_concurrent_per_run`.
    */
   max_concurrent?: number | null;
+  /**
+   * Direct read-only tools (`read`, `glob`, `grep`) the script may call besides those
+   * its `meta.tools` names.
+   */
+  tools?: string[] | null;
 };
 
 /** One local day of the period. */
@@ -3430,6 +3529,20 @@ export type WorkflowAgent = {
   started_ms?: number | null;
   /** When the agent settled; absent while it runs. */
   ended_ms?: number | null;
+  /**
+   * Compactions of the agent's child Session (`compaction` → Compaction in subagents and
+   * workflows); counted when the run is read, never recorded in the event.
+   */
+  compactions?: number;
+};
+
+/**
+ * The Workflow library of a Location (`workflows` → Workflow library over HTTP): every
+ * entry a run can start by name, and the modules that failed to load.
+ */
+export type WorkflowLibrary = {
+  workflows: LibraryEntry[];
+  issues: LibraryIssue[];
 };
 
 /** One `log()` call. */
@@ -3456,6 +3569,11 @@ export type WorkflowRun = {
    * or save into `.cyber/workflows/`.
    */
   script_file?: string | null;
+  /**
+   * Direct read-only tools the invocation allowlists besides `meta.tools`
+   * (`workflows` → Direct read-only tools).
+   */
+  tools?: string[];
   /** `sha256:` digest of the current revision's script source. */
   digest: string;
   /** Digest of the engine limits and model tiers the current revision runs with. */
@@ -3547,6 +3665,11 @@ export type WorkflowRunSummary = {
    * or save into `.cyber/workflows/`.
    */
   script_file?: string | null;
+  /**
+   * Direct read-only tools the invocation allowlists besides `meta.tools`
+   * (`workflows` → Direct read-only tools).
+   */
+  tools?: string[];
   /** `sha256:` digest of the current revision's script source. */
   digest: string;
   /** Digest of the engine limits and model tiers the current revision runs with. */

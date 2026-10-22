@@ -317,6 +317,62 @@ fn workflows_run_against_the_shared_server_and_wait_maps_exit_codes() {
     );
 }
 
+/// `exec-mode` → Workflow exec: `cyber exec --workflow` streams `workflow_progress`,
+/// prints the return value as the result and maps the run's end to the exit code.
+#[test]
+fn exec_runs_a_workflow_and_maps_its_end_to_exit_codes() {
+    let model =
+        scripted_model::ScriptedModel::start(|_| serde_json::json!({"content": "agent done"}));
+    let env = Env::new();
+    let service = StartedService(&env, workflow_env(&env, &model));
+
+    let streamed = service.cyber(&["exec", "--workflow", "x", "--format", "stream-json"]);
+    exits(&streamed, 0);
+    let events: Vec<Value> = stdout(&streamed)
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(events[0]["type"], "system", "{events:?}");
+    let progress: Vec<&Value> = events
+        .iter()
+        .filter(|event| event["type"] == "workflow_progress")
+        .collect();
+    assert!(!progress.is_empty(), "{events:?}");
+    assert!(progress.iter().all(|event| event["run_id"].is_string()));
+    let result = events.last().unwrap();
+    assert_eq!(result["type"], "result", "{events:?}");
+    assert_eq!(result["result"], serde_json::json!({"text": "agent done"}));
+    assert_eq!(result["status"], "completed");
+    assert_eq!(result["exit_code"], 0);
+
+    let text = service.cyber(&["exec", "--workflow", "x", "--args", "{}"]);
+    let shown = exits(&text, 0);
+    assert!(
+        stdout(&text).contains("\"text\": \"agent done\""),
+        "{shown}"
+    );
+    assert!(shown.contains("phase: Ask"), "{shown}");
+
+    let failed = exits(&service.cyber(&["exec", "--workflow", "boom.js"]), 1);
+    assert!(failed.contains("boom"), "{failed}");
+    let capped = service.cyber(&[
+        "exec",
+        "--workflow",
+        "x",
+        "--timeout",
+        "0s",
+        "--format",
+        "json",
+    ]);
+    exits(&capped, 4);
+    assert_eq!(json(&capped)["stop_reason"], "budget_exceeded");
+    exits(
+        &service.cyber(&["exec", "--workflow", "x", "--args", "[1]"]),
+        2,
+    );
+    exits(&service.cyber(&["exec", "--workflow", "x", "a prompt"]), 2);
+}
+
 /// Request bodies of provider Turns, as text. Session title requests carry the first
 /// prompt too and arrive concurrently, so they are left out of any count.
 fn turn_requests(model: &scripted_model::ScriptedModel) -> Vec<String> {
