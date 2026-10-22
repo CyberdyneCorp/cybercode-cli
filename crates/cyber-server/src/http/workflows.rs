@@ -180,7 +180,9 @@ async fn start(
         }
     };
     let owner_turn = owner_context(&owner);
-    state.services.authorize_workflow_run(&owner_turn, &module)?;
+    state
+        .services
+        .authorize_workflow_run(&owner_turn, &module)?;
     let args = body
         .args
         .unwrap_or_else(|| Value::Object(Default::default()));

@@ -37,7 +37,9 @@ impl std::fmt::Display for PrepareError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Start(error) => write!(f, "{error}"),
-            Self::Review(error) => write!(f, "ReviewTargetError ({:?}): {}", error.code, error.message),
+            Self::Review(error) => {
+                write!(f, "ReviewTargetError ({:?}): {}", error.code, error.message)
+            }
             Self::Forbidden(message) | Self::Unavailable(message) => f.write_str(message),
         }
     }
@@ -75,9 +77,18 @@ impl BuiltinHost {
         }
     }
 
-    async fn prepare_review(&self, owner: &TurnContext, mut args: Value) -> Result<Value, PrepareError> {
-        let target = args.get("target").and_then(Value::as_str).unwrap_or_default().to_owned();
-        let inv = super::command_skills::command_invocation(owner, "workflow", json!({"name": "review"}));
+    async fn prepare_review(
+        &self,
+        owner: &TurnContext,
+        mut args: Value,
+    ) -> Result<Value, PrepareError> {
+        let target = args
+            .get("target")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let inv =
+            super::command_skills::command_invocation(owner, "workflow", json!({"name": "review"}));
         let policy = self.policy(&inv).await.map_err(PrepareError::Unavailable)?;
         args["diff"] = self.review_diff(&inv, policy, &target).await?;
         Ok(args)
@@ -87,7 +98,11 @@ impl BuiltinHost {
     /// the `general` agent under the owner's rules; the refusal names each missing rule.
     async fn check_migrate(&self, owner: &TurnContext, args: &Value) -> Result<(), PrepareError> {
         let location = Path::new(&owner.directory);
-        let inv = super::command_skills::command_invocation(owner, "workflow", json!({"name": "migrate"}));
+        let inv = super::command_skills::command_invocation(
+            owner,
+            "workflow",
+            json!({"name": "migrate"}),
+        );
         let policy = self
             .policy_for(&inv, Some("general"))
             .await
@@ -100,9 +115,14 @@ impl BuiltinHost {
                 command: command.clone(),
                 ..PermissionTest::default()
             };
-            let request = self.test_request(location, &test).map_err(PrepareError::Unavailable)?;
+            let request = self
+                .test_request(location, &test)
+                .map_err(PrepareError::Unavailable)?;
             if !matches!(policy.decide(&request), Decision::Allow) {
-                missing.push(format!("{tool} {}", command.or(resource).unwrap_or_default()));
+                missing.push(format!(
+                    "{tool} {}",
+                    command.or(resource).unwrap_or_default()
+                ));
             }
         }
         if missing.is_empty() {
@@ -120,7 +140,11 @@ impl BuiltinHost {
         mut args: Value,
         interactive: bool,
     ) -> Result<Value, PrepareError> {
-        let inv = super::command_skills::command_invocation(owner, "workflow", json!({"name": "research"}));
+        let inv = super::command_skills::command_invocation(
+            owner,
+            "workflow",
+            json!({"name": "research"}),
+        );
         let reader = self
             .policy_for(&inv, Some("reviewer"))
             .await
@@ -148,7 +172,13 @@ fn migrate_requests(args: &Value) -> Vec<(&'static str, Option<String>, Option<S
     let strings = |key: &str| -> Vec<String> {
         args.get(key)
             .and_then(Value::as_array)
-            .map(|items| items.iter().filter_map(Value::as_str).map(str::to_owned).collect())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
             .unwrap_or_default()
     };
     let mut paths = strings("files");
@@ -158,7 +188,9 @@ fn migrate_requests(args: &Value) -> Vec<(&'static str, Option<String>, Option<S
         paths.push(pattern.to_owned());
     }
     let edits = paths.into_iter().map(|path| ("edit", Some(path), None));
-    let checks = strings("check").into_iter().map(|command| ("bash", None, Some(command)));
+    let checks = strings("check")
+        .into_iter()
+        .map(|command| ("bash", None, Some(command)));
     edits.chain(checks).collect()
 }
 
@@ -168,7 +200,8 @@ mod tests {
 
     #[test]
     fn migrate_needs_an_edit_per_file_or_the_pattern_and_each_check() {
-        let requests = migrate_requests(&json!({"files": ["a.rs", "b.rs"], "check": ["cargo check"]}));
+        let requests =
+            migrate_requests(&json!({"files": ["a.rs", "b.rs"], "check": ["cargo check"]}));
         assert_eq!(
             requests,
             [

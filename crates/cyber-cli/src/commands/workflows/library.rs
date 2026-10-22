@@ -98,9 +98,7 @@ pub fn list(ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
         return output::json(&view(&listing));
     }
     if listing.workflows.is_empty() && listing.issues.is_empty() {
-        println!(
-            "No workflows. Add modules to .cyber/workflows/ or ~/.config/cyber/workflows/."
-        );
+        println!("No workflows. Add modules to .cyber/workflows/ or ~/.config/cyber/workflows/.");
     }
     let width = listing
         .workflows
@@ -156,7 +154,12 @@ pub fn show(ctx: &Context, global: &GlobalArgs, name: &str, source: bool) -> Res
     println!("{}  ({})", module.meta.name, origin_name(module));
     println!("{}", module.meta.description);
     if !module.meta.phases.is_empty() {
-        let phases: Vec<&str> = module.meta.phases.iter().map(|p| p.title.as_str()).collect();
+        let phases: Vec<&str> = module
+            .meta
+            .phases
+            .iter()
+            .map(|p| p.title.as_str())
+            .collect();
         println!("phases: {}", phases.join(" → "));
     }
     if let Some(estimate) = module.meta.raw.get("estimate").and_then(Value::as_str) {
@@ -196,7 +199,10 @@ fn eject_path(ctx: &Context, name: &str, global: bool) -> PathBuf {
 
 pub fn eject(ctx: &Context, global: &GlobalArgs, args: &EjectArgs) -> Result<(), CliError> {
     let module = bundled::module(&args.name).ok_or_else(|| {
-        let names: Vec<&str> = bundled::modules().iter().map(|m| m.meta.name.as_str()).collect();
+        let names: Vec<&str> = bundled::modules()
+            .iter()
+            .map(|m| m.meta.name.as_str())
+            .collect();
         CliError::runtime(format!(
             "No bundled Workflow named {:?}; bundled: {}",
             args.name,

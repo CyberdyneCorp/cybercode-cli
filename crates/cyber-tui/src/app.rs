@@ -114,9 +114,13 @@ pub enum Action {
         delegation: String,
     },
     /// Start a run of the `review` Workflow for this Session's target.
-    StartReview { arguments: String },
+    StartReview {
+        arguments: String,
+    },
     /// Fetch the awaited review run, which ended.
-    ReviewRun { run: String },
+    ReviewRun {
+        run: String,
+    },
     Interrupt,
     Reply {
         request: String,

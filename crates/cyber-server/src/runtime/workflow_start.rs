@@ -391,7 +391,10 @@ mod args_tests {
         );
         assert!(validate_args(&schema, &json!({"n": 2, "lenses": ["a"]})).is_ok());
         let wrong = message(validate_args(&schema, &json!({"n": 2, "lenses": ["c"]})).unwrap_err());
-        assert!(wrong.starts_with("ExecutionFailure: args.lenses.0: "), "{wrong}");
+        assert!(
+            wrong.starts_with("ExecutionFailure: args.lenses.0: "),
+            "{wrong}"
+        );
         let big = message(validate_args(&schema, &json!({"n": 9})).unwrap_err());
         assert!(big.starts_with("ExecutionFailure: args.n: "), "{big}");
         let missing = message(validate_args(&schema, &json!({})).unwrap_err());
@@ -403,7 +406,8 @@ mod args_tests {
 
     #[test]
     fn a_module_without_meta_args_takes_any_object() {
-        let free = WorkflowModule::inline("export const meta = { name: 'm', description: 'd' };").unwrap();
+        let free =
+            WorkflowModule::inline("export const meta = { name: 'm', description: 'd' };").unwrap();
         assert!(validate_args(&free, &json!({"anything": [1, 2]})).is_ok());
     }
 }

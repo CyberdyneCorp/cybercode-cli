@@ -357,7 +357,11 @@ mod tests {
         let global = tmp.path().join("config");
         let project = tmp.path().join("repo");
         write(&global.join("workflows/plan.js"), "plan", "global plan");
-        write(&project.join(".cyber/workflows/audit.js"), "audit", "project audit");
+        write(
+            &project.join(".cyber/workflows/audit.js"),
+            "audit",
+            "project audit",
+        );
         write(&global.join("workflows/audit.js"), "audit", "global audit");
         let roots = roots(&global, Some((&project, &project)));
 
@@ -392,10 +396,17 @@ mod tests {
                 global.join("workflows/audit.js")
             ]
         );
-        assert_eq!(listing.workflows[2].shadowed, [PathBuf::from("bundled:plan")]);
+        assert_eq!(
+            listing.workflows[2].shadowed,
+            [PathBuf::from("bundled:plan")]
+        );
 
         let without = discover_library(&roots, false);
-        let names: Vec<&str> = without.workflows.iter().map(|e| e.module.meta.name.as_str()).collect();
+        let names: Vec<&str> = without
+            .workflows
+            .iter()
+            .map(|e| e.module.meta.name.as_str())
+            .collect();
         assert_eq!(names, ["audit", "plan"]);
     }
 

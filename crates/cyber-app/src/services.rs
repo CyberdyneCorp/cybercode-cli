@@ -664,7 +664,11 @@ impl Services for AppServices {
     ) -> Result<cyber_server::runtime::workflow_start::WorkflowLibrary, cyber_server::http::ApiError>
     {
         let (config, _) = (self.config)(location).map_err(cyber_server::http::ApiError::invalid)?;
-        Ok(workflows::library(&self.global_config_dir, location, &config))
+        Ok(workflows::library(
+            &self.global_config_dir,
+            location,
+            &config,
+        ))
     }
 
     fn saved_workflow(

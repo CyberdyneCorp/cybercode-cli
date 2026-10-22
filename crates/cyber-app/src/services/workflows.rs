@@ -17,7 +17,11 @@ pub(super) fn location(config: &Value) -> Result<WorkflowLocation, ApiError> {
 /// The Workflow library of a Location. `CYBER_DISABLE_PROJECT_CONFIG` skips project
 /// directories; `workflows.bundled: false` and `CYBER_DISABLE_BUNDLED_WORKFLOWS` hide the
 /// bundled Workflows.
-pub(super) fn library(global_config_dir: &Path, location: &Path, config: &Value) -> WorkflowLibrary {
+pub(super) fn library(
+    global_config_dir: &Path,
+    location: &Path,
+    config: &Value,
+) -> WorkflowLibrary {
     let sources = LibrarySources::of(config, &ProcessEnv);
     WorkflowLibrary::of(workflow_start::discover(
         global_config_dir,

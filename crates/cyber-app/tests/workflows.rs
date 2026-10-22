@@ -462,12 +462,18 @@ async fn the_library_lists_saved_workflows_by_precedence_with_issues() {
     assert_eq!(audit["origin"]["kind"], "global");
     assert_eq!(audit["shadowed"], json!(["bundled:audit"]));
     let review = entry(&listed, "review");
-    assert_eq!(review["origin"], json!({"kind": "bundled", "name": "review"}));
+    assert_eq!(
+        review["origin"],
+        json!({"kind": "bundled", "name": "review"})
+    );
     assert_eq!(review["budgets"]["max_agents"], 24);
     assert!(review["estimate"].as_str().unwrap().starts_with("lenses"));
     assert!(review.get("source").is_none(), "{review}");
     let sourced = server.ok(Method::GET, "/workflows?source=true", None).await;
-    let source = entry(&sourced, "review")["source"].as_str().unwrap().to_owned();
+    let source = entry(&sourced, "review")["source"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     assert!(source.contains("function dedupFindings"));
     let issue = &listed["issues"][0];
     assert!(
@@ -484,7 +490,11 @@ async fn the_library_lists_saved_workflows_by_precedence_with_issues() {
             None,
         )
         .await;
-    assert_eq!(entry(&other, "release")["origin"]["kind"], "global", "{other}");
+    assert_eq!(
+        entry(&other, "release")["origin"]["kind"],
+        "global",
+        "{other}"
+    );
 
     let health = server.ok(Method::GET, "/health", None).await;
     assert!(
@@ -3430,20 +3440,30 @@ async fn bundled_runs_validate_and_prepare_their_args_before_a_run_exists() {
     std::fs::write(paths.config.join("cyber.json"), config.to_string()).unwrap();
     let server = Server::open(temp).await;
     let owner = server.session().await;
-    let start = |name: &str, args: Value| {
-        Some(json!({"session_id": owner, "name": name, "args": args}))
-    };
+    let start =
+        |name: &str, args: Value| Some(json!({"session_id": owner, "name": name, "args": args}));
 
     let (status, body) = server
-        .call(Method::POST, "/workflows/runs", start("review", json!({"max_findings": 99})))
+        .call(
+            Method::POST,
+            "/workflows/runs",
+            start("review", json!({"max_findings": 99})),
+        )
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert!(
-        body["message"].as_str().unwrap().starts_with("ExecutionFailure: args.max_findings: "),
+        body["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("ExecutionFailure: args.max_findings: "),
         "{body}"
     );
     let (status, body) = server
-        .call(Method::POST, "/workflows/runs", start("review", json!({"target": "main.."})))
+        .call(
+            Method::POST,
+            "/workflows/runs",
+            start("review", json!({"target": "main.."})),
+        )
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     assert_eq!(body["_tag"], "ReviewTargetError", "{body}");
@@ -3452,35 +3472,64 @@ async fn bundled_runs_validate_and_prepare_their_args_before_a_run_exists() {
         .call(
             Method::POST,
             "/workflows/runs",
-            start("migrate", json!({"instructions": "rename", "files": ["a.rs"]})),
+            start(
+                "migrate",
+                json!({"instructions": "rename", "files": ["a.rs"]}),
+            ),
         )
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
     assert_eq!(body["reason"], "PermissionDenied", "{body}");
-    assert!(body["message"].as_str().unwrap().contains("edit a.rs"), "{body}");
+    assert!(
+        body["message"].as_str().unwrap().contains("edit a.rs"),
+        "{body}"
+    );
     let runs = server.ok(Method::GET, "/workflows/runs", None).await;
     assert_eq!(runs["data"], json!([]), "{runs}");
 
     let started = server
-        .ok(Method::POST, "/workflows/runs", start("review", json!({"lenses": ["tests"]})))
+        .ok(
+            Method::POST,
+            "/workflows/runs",
+            start("review", json!({"lenses": ["tests"]})),
+        )
         .await;
     let review = started["data"]["id"].as_str().unwrap().to_owned();
     let diff = &started["data"]["args"]["diff"];
     assert_eq!(diff["files"][0]["path"], "a.rs", "{started}");
-    assert!(diff["files"][0]["patch"].as_str().unwrap().contains("+fn a(x: u8) {}"));
-    assert_eq!(started["data"]["origin"], json!({"kind": "bundled", "name": "review"}));
+    assert!(
+        diff["files"][0]["patch"]
+            .as_str()
+            .unwrap()
+            .contains("+fn a(x: u8) {}")
+    );
+    assert_eq!(
+        started["data"]["origin"],
+        json!({"kind": "bundled", "name": "review"})
+    );
     let started = server
         .ok(
             Method::POST,
             "/workflows/runs",
-            start("research", json!({"question": "q", "sources": ["web", "repo"]})),
+            start(
+                "research",
+                json!({"question": "q", "sources": ["web", "repo"]}),
+            ),
         )
         .await;
     let research = started["data"]["id"].as_str().unwrap().to_owned();
-    assert_eq!(started["data"]["args"]["web_permitted"], json!(false), "{started}");
+    assert_eq!(
+        started["data"]["args"]["web_permitted"],
+        json!(false),
+        "{started}"
+    );
     for id in [review, research] {
         server
-            .ok(Method::POST, &format!("/workflows/runs/{id}/stop"), Some(json!({})))
+            .ok(
+                Method::POST,
+                &format!("/workflows/runs/{id}/stop"),
+                Some(json!({})),
+            )
             .await;
     }
 }
@@ -3500,18 +3549,34 @@ async fn a_bundled_run_resumes_as_the_bundled_workflow() {
         .await;
     wait_for("a held planner", || !model.requests().is_empty()).await;
     server
-        .ok(Method::POST, &format!("/workflows/runs/{run_id}/stop"), None)
+        .ok(
+            Method::POST,
+            &format!("/workflows/runs/{run_id}/stop"),
+            None,
+        )
         .await;
     config["permissions"] = json!({"workflow.run": {"inline:*": "deny"}});
-    let global = server.temp.path().canonicalize().unwrap().join("config/cyber.json");
+    let global = server
+        .temp
+        .path()
+        .canonicalize()
+        .unwrap()
+        .join("config/cyber.json");
     std::fs::write(global, config.to_string()).unwrap();
     model.release();
     let (status, body) = resume_when_quiet(&server, &run_id, json!({})).await;
     assert!(status.is_success(), "{body}");
-    assert_eq!(body["data"]["origin"], json!({"kind": "bundled", "name": "plan"}));
+    assert_eq!(
+        body["data"]["origin"],
+        json!({"kind": "bundled", "name": "plan"})
+    );
     assert_eq!(body["data"]["revision"], 1, "{body}");
     server
-        .ok(Method::POST, &format!("/workflows/runs/{run_id}/stop"), None)
+        .ok(
+            Method::POST,
+            &format!("/workflows/runs/{run_id}/stop"),
+            None,
+        )
         .await;
     server.close().await;
 }

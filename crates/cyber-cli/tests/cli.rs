@@ -266,13 +266,26 @@ fn an_ejected_workflow_overrides_the_bundled_one_and_is_never_overwritten() {
     let listing = json(&run(&["workflows", "list", "--format", "json"]));
     let audit = &listing["workflows"][0];
     assert_eq!(audit["origin"], "project");
-    assert!(audit["description"].as_str().unwrap().starts_with("Edited bug"));
+    assert!(
+        audit["description"]
+            .as_str()
+            .unwrap()
+            .starts_with("Edited bug")
+    );
     assert_eq!(audit["shadowed"], json!(["bundled:audit"]));
 
     let o = run(&["workflows", "eject", "audit"]);
     assert_eq!(o.status.code(), Some(1));
-    assert!(stderr(&o).contains(&ejected.display().to_string()), "{}", stderr(&o));
-    assert!(std::fs::read_to_string(&ejected).unwrap().contains("Edited bug"));
+    assert!(
+        stderr(&o).contains(&ejected.display().to_string()),
+        "{}",
+        stderr(&o)
+    );
+    assert!(
+        std::fs::read_to_string(&ejected)
+            .unwrap()
+            .contains("Edited bug")
+    );
     assert_eq!(run(&["workflows", "eject", "nope"]).status.code(), Some(1));
 }
 
@@ -287,13 +300,23 @@ fn bundled_workflows_can_be_turned_off() {
         json(&o)["workflows"].as_array().unwrap().len()
     };
     std::fs::create_dir_all(repo.join(".cyber")).unwrap();
-    std::fs::write(repo.join(".cyber/cyber.jsonc"), r#"{"workflows": {"bundled": false}}"#).unwrap();
-    assert_eq!(count(&mut env.command(&["workflows", "list", "--format", "json"])), 0);
+    std::fs::write(
+        repo.join(".cyber/cyber.jsonc"),
+        r#"{"workflows": {"bundled": false}}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        count(&mut env.command(&["workflows", "list", "--format", "json"])),
+        0
+    );
     std::fs::remove_file(repo.join(".cyber/cyber.jsonc")).unwrap();
     let mut disabled = env.command(&["workflows", "list", "--format", "json"]);
     disabled.env("CYBER_DISABLE_BUNDLED_WORKFLOWS", "1");
     assert_eq!(count(&mut disabled), 0);
-    assert_eq!(count(&mut env.command(&["workflows", "list", "--format", "json"])), 5);
+    assert_eq!(
+        count(&mut env.command(&["workflows", "list", "--format", "json"])),
+        5
+    );
 }
 
 /// A shared server the test started through the CLI, stopped when the test ends.

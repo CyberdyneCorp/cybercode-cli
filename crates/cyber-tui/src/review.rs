@@ -170,7 +170,8 @@ impl View {
             Ok(findings) => {
                 self.show(&findings);
                 if result["partial"] == true {
-                    self.lines.insert(1, "partial: a budget stopped the review".into());
+                    self.lines
+                        .insert(1, "partial: a budget stopped the review".into());
                 }
                 Ended::Findings
             }

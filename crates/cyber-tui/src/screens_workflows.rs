@@ -832,8 +832,17 @@ async fn the_library_tab_lists_the_library_and_starts_a_workflow_from_its_form()
     let actions = press(&mut app, KeyCode::Tab);
     f.drive(&mut app, actions).await;
     assert!(app.workflows.library_tab);
-    let names: Vec<&str> = app.workflows.library.listed().iter().map(|e| e.name.as_str()).collect();
-    assert_eq!(names, ["audit", "migrate", "plan", "release", "research", "review"]);
+    let names: Vec<&str> = app
+        .workflows
+        .library
+        .listed()
+        .iter()
+        .map(|e| e.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        ["audit", "migrate", "plan", "release", "research", "review"]
+    );
     for (width, height) in [(120, 40), (80, 24)] {
         let shown = stabilized(&mut app, |app| render(app, width, height, &Opts::default()));
         insta::assert_snapshot!(format!("workflow_library_{width}x{height}"), shown);
@@ -842,16 +851,30 @@ async fn the_library_tab_lists_the_library_and_starts_a_workflow_from_its_form()
     select_entry(&mut app, "research");
     press(&mut app, KeyCode::Enter);
     let form = app.workflows.library.form.clone().unwrap();
-    assert_eq!(form.text, r#"{"sources":["repo","docs"],"angles":3,"max_sources":12}"#);
+    assert_eq!(
+        form.text,
+        r#"{"sources":["repo","docs"],"angles":3,"max_sources":12}"#
+    );
     let shown = stabilized(&mut app, |app| render(app, 120, 40, &Opts::default()));
     insta::assert_snapshot!("workflow_library_form_120x40", shown);
     ctrl_u(&mut app);
     type_line(&mut app, r#"{"question":"q","angles":9}"#);
     assert!(press(&mut app, KeyCode::Enter).is_empty());
-    let error = app.workflows.library.form.as_ref().unwrap().error.clone().unwrap();
+    let error = app
+        .workflows
+        .library
+        .form
+        .as_ref()
+        .unwrap()
+        .error
+        .clone()
+        .unwrap();
     assert!(error.starts_with("args.angles: "), "{error}");
     ctrl_u(&mut app);
-    type_line(&mut app, r#"{"question":"q","sources":["repo"],"angles":1}"#);
+    type_line(
+        &mut app,
+        r#"{"question":"q","sources":["repo"],"angles":1}"#,
+    );
     let actions = press(&mut app, KeyCode::Enter);
     assert!(matches!(
         actions.as_slice(),
@@ -859,15 +882,30 @@ async fn the_library_tab_lists_the_library_and_starts_a_workflow_from_its_form()
     ));
     f.drive(&mut app, actions).await;
     assert!(!app.workflows.library_tab);
-    assert!(app.toast.as_ref().unwrap().0.starts_with("Started research"));
-    assert!(app.workflows.summaries().iter().any(|run| run.name == "research"));
+    assert!(
+        app.toast
+            .as_ref()
+            .unwrap()
+            .0
+            .starts_with("Started research")
+    );
+    assert!(
+        app.workflows
+            .summaries()
+            .iter()
+            .any(|run| run.name == "research")
+    );
 
     let actions = press(&mut app, KeyCode::Tab);
     f.drive(&mut app, actions).await;
     select_entry(&mut app, "review");
     key(&mut app, 'o');
     let source = app.workflows.library.source.as_ref().unwrap();
-    assert!(source.lines[0].starts_with("export const meta"), "{:?}", source.lines[0]);
+    assert!(
+        source.lines[0].starts_with("export const meta"),
+        "{:?}",
+        source.lines[0]
+    );
     press(&mut app, KeyCode::Esc);
     assert!(app.workflows.library.source.is_none() && app.workflows.library_tab);
 }

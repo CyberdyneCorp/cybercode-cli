@@ -29,7 +29,10 @@ impl Entry {
         Some(Self {
             name: text("name")?,
             description: text("description").unwrap_or_default(),
-            origin: value["origin"]["kind"].as_str().unwrap_or("saved").to_owned(),
+            origin: value["origin"]["kind"]
+                .as_str()
+                .unwrap_or("saved")
+                .to_owned(),
             args: value.get("args").filter(|args| args.is_object()).cloned(),
             estimate: text("estimate"),
             shadowed: value["shadowed"]
@@ -263,19 +266,29 @@ impl App {
     }
 
     /// The library was read.
-    pub(crate) fn library_listed(&mut self, generation: u64, result: Result<(Vec<Entry>, usize), String>) {
+    pub(crate) fn library_listed(
+        &mut self,
+        generation: u64,
+        result: Result<(Vec<Entry>, usize), String>,
+    ) {
         let library = &mut self.workflows.library;
         let result = result.map(|(entries, issues)| {
             library.issues = issues;
             entries
         });
         library.entries.apply(generation, result);
-        library.selected = library.selected.min(library.listed().len().saturating_sub(1));
+        library.selected = library
+            .selected
+            .min(library.listed().len().saturating_sub(1));
     }
 
     /// A run started from the form: back to Runs, which lists it; a refusal stays on
     /// the form.
-    pub(crate) fn library_started(&mut self, name: &str, result: Result<Value, Refusal>) -> Vec<Action> {
+    pub(crate) fn library_started(
+        &mut self,
+        name: &str,
+        result: Result<Value, Refusal>,
+    ) -> Vec<Action> {
         let w = &mut self.workflows;
         let Some(form) = w.library.form.as_mut().filter(|form| form.name == name) else {
             return Vec::new();
@@ -385,7 +398,11 @@ mod tests {
         let lens = checked_args(r#"{"lenses": ["style"]}"#, schema).unwrap_err();
         assert!(lens.starts_with("args.lenses.0: "), "{lens}");
         assert!(checked_args("[1]", schema).unwrap_err().contains("object"));
-        assert!(checked_args("{", schema).unwrap_err().starts_with("args are not JSON"));
+        assert!(
+            checked_args("{", schema)
+                .unwrap_err()
+                .starts_with("args are not JSON")
+        );
         assert!(checked_args(r#"{"x": 1}"#, None).is_ok());
     }
 }

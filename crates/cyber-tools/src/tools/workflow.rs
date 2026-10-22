@@ -30,15 +30,15 @@ const LIBRARY_LISTED: usize = 20;
 /// The Workflows the `workflow` tool can start by name in `location`, bundled ones first,
 /// for the model's context (`workflows` → Workflow library over HTTP): at most 20, each
 /// with its origin, description and argument names. `None` when the library is empty.
-pub(crate) fn library_listing(
-    host: &crate::host::BuiltinHost,
-    location: &Path,
-) -> Option<String> {
+pub(crate) fn library_listing(host: &crate::host::BuiltinHost, location: &Path) -> Option<String> {
     let (config, _) = (host.opts.config)(location).ok()?;
     let sources = workflow_start::LibrarySources::of(&config, host.opts.env.as_ref());
     let listing = workflow_start::discover(&host.opts.global_config_dir, location, sources);
-    let mut entries: Vec<&WorkflowModule> =
-        listing.workflows.iter().map(|entry| &entry.module).collect();
+    let mut entries: Vec<&WorkflowModule> = listing
+        .workflows
+        .iter()
+        .map(|entry| &entry.module)
+        .collect();
     entries.sort_by_key(|module| {
         (
             !matches!(module.origin, Origin::Bundled { .. }),

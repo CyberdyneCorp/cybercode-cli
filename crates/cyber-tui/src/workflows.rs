@@ -417,7 +417,10 @@ pub enum Request {
         fallback: Box<Summary>,
     },
     /// The Location's Workflow library, for the Library tab.
-    Library { generation: u64, directory: String },
+    Library {
+        generation: u64,
+        directory: String,
+    },
     /// Start a library Workflow for the open Session.
     StartRun {
         directory: String,

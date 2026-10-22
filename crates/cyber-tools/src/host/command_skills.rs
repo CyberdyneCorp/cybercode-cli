@@ -229,7 +229,11 @@ impl BuiltinHost {
         super::review::target_diff(&ctx, &reader, arguments).await
     }
 
-    fn review_ctx<'a>(&'a self, inv: &'a Invocation, policy: crate::permissions::Policy) -> super::Ctx<'a> {
+    fn review_ctx<'a>(
+        &'a self,
+        inv: &'a Invocation,
+        policy: crate::permissions::Policy,
+    ) -> super::Ctx<'a> {
         // Withholding follows the reviewer's own ceiling, not the invoker's mode.
         super::Ctx {
             skill_paths: Default::default(),

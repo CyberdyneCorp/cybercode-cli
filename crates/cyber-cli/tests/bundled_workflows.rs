@@ -57,7 +57,9 @@ fn reply(body: &Value) -> Value {
 fn answer(task: &str) -> Option<Value> {
     let verdict = || result(json!({"refuted": false, "evidence": "confirmed by the code"}));
     let value = match task {
-        t if t.starts_with("review ") => result(json!({"findings": [finding("a.rs")], "limitations": []})),
+        t if t.starts_with("review ") => {
+            result(json!({"findings": [finding("a.rs")], "limitations": []}))
+        }
         t if t.starts_with("verify batch") => result(json!({"ok": true, "problems": []})),
         t if t.starts_with("verify ") || t.starts_with("refute ") => verdict(),
         "find chunk 1" => result(json!({"findings": [finding("a.rs")], "limitations": []})),
@@ -85,9 +87,13 @@ fn research_or_plan(task: &str) -> Option<Value> {
             {"step": "change a.rs", "files": ["a.rs"], "risk": "low"}
         ], "assumptions": [], "risks": [], "tests": ["cargo test"]})),
         t if t.starts_with("judge") => {
-            let row = |angle: &str, n: u64| json!({"angle": angle, "reasons": "r", "correctness": n,
-                "completeness": n, "risk": n, "effort": n, "testability": n});
-            result(json!({"scores": [row("mvp-first", 3), row("risk-first", 5), row("user-first", 2)]}))
+            let row = |angle: &str, n: u64| {
+                json!({"angle": angle, "reasons": "r", "correctness": n,
+                "completeness": n, "risk": n, "effort": n, "testability": n})
+            };
+            result(
+                json!({"scores": [row("mvp-first", 3), row("risk-first", 5), row("user-first", 2)]}),
+            )
         }
         "merge plans" => result(json!({"plan_markdown": "# Plan", "grafts": [
             {"from": "user-first", "what": "a usability check"}
@@ -180,7 +186,16 @@ impl Env {
         });
         let args = args.to_string();
         Command::new(&exe)
-            .args(["exec", "--embedded", "--workflow", workflow, "--args", &args, "--format", "json"])
+            .args([
+                "exec",
+                "--embedded",
+                "--workflow",
+                workflow,
+                "--args",
+                &args,
+                "--format",
+                "json",
+            ])
             .args(extra)
             .env_clear()
             .env("HOME", self.root.join("home"))
@@ -202,7 +217,8 @@ fn ran(output: &Output, code: i32) -> Value {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(output.status.code(), Some(code), "{detail}");
-    let report: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|e| panic!("{e}: {detail}"));
+    let report: Value =
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|e| panic!("{e}: {detail}"));
     report["result"].clone()
 }
 
@@ -212,10 +228,16 @@ fn review_verifies_its_findings_on_a_two_file_diff() {
     let env = Env::new();
     std::fs::write(env.repo.join("a.rs"), "fn a(x: u8) {}\n").unwrap();
     std::fs::write(env.repo.join("b.rs"), "fn b(y: u8) {}\n").unwrap();
-    let result = ran(&env.exec("review", json!({"lenses": ["correctness", "tests"]}), &[]), 0);
+    let result = ran(
+        &env.exec("review", json!({"lenses": ["correctness", "tests"]}), &[]),
+        0,
+    );
     assert_eq!(result["findings"], json!([finding("a.rs")]), "{result}");
     assert_eq!(result["refuted"], 0);
-    assert_eq!(result["lenses"]["correctness"], json!({"raised": 1, "confirmed": 1}));
+    assert_eq!(
+        result["lenses"]["correctness"],
+        json!({"raised": 1, "confirmed": 1})
+    );
     assert_eq!(result["partial"], false);
 }
 
@@ -229,7 +251,10 @@ fn audit_reports_coverage_and_a_turn_budget_stops_it_with_exit_4() {
     assert_eq!(result["findings"].as_array().unwrap().len(), 1);
     assert_eq!(result["partial"], false);
 
-    let stopped = ran(&env.exec("audit", json!({"chunk_files": 1}), &["--max-turns", "1"]), 4);
+    let stopped = ran(
+        &env.exec("audit", json!({"chunk_files": 1}), &["--max-turns", "1"]),
+        4,
+    );
     assert_eq!(stopped["partial"], true, "{stopped}");
     assert!(
         stopped["coverage"]["files_skipped"]
@@ -259,9 +284,17 @@ fn migrate_commits_each_batch_on_its_own_branch_and_merges_nothing() {
         assert_eq!(shown, "fn migrated() {}", "{branch}");
     }
     assert_eq!(result["merged"], false);
-    assert!(result["integrate"].as_str().unwrap().starts_with("git merge "));
+    assert!(
+        result["integrate"]
+            .as_str()
+            .unwrap()
+            .starts_with("git merge ")
+    );
     // The owner's checkout is unchanged.
-    assert_eq!(std::fs::read_to_string(env.repo.join("a.rs")).unwrap(), "fn a() {}\n");
+    assert_eq!(
+        std::fs::read_to_string(env.repo.join("a.rs")).unwrap(),
+        "fn a() {}\n"
+    );
     assert_eq!(git(&env.repo, &["status", "--porcelain"]), "");
 }
 
@@ -273,7 +306,13 @@ fn research_answers_from_cross_checked_claims() {
     let result = ran(&env.exec("research", args, &[]), 0);
     assert_eq!(result["answer"], "The answer [1].", "{result}");
     assert_eq!(result["sources"].as_array().unwrap().len(), 2);
-    assert!(result["claims"].as_array().unwrap().iter().all(|c| c["verified"] == true));
+    assert!(
+        result["claims"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["verified"] == true)
+    );
 }
 
 #[cfg(unix)]
@@ -282,6 +321,9 @@ fn plan_merges_the_highest_scoring_draft() {
     let env = Env::new();
     let result = ran(&env.exec("plan", json!({"task": "add a cache"}), &[]), 0);
     assert_eq!(result["chosen"], "risk-first", "{result}");
-    assert_eq!(result["grafts"], json!([{"from": "user-first", "what": "a usability check"}]));
+    assert_eq!(
+        result["grafts"],
+        json!([{"from": "user-first", "what": "a usability check"}])
+    );
     assert_eq!(result["plan_markdown"], "# Plan");
 }

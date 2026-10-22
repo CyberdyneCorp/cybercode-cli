@@ -44,7 +44,11 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(lines).scroll((skip as u16, 0)), body);
     let hints = match &library.form {
         Some(form) if form.posting => vec!["starting…".to_owned()],
-        Some(_) => vec!["enter start".into(), "ctrl+u clear".into(), "esc cancel".into()],
+        Some(_) => vec![
+            "enter start".into(),
+            "ctrl+u clear".into(),
+            "esc cancel".into(),
+        ],
         None => vec![
             "enter run".into(),
             "o source".into(),
@@ -59,7 +63,10 @@ fn list_lines(app: &App, library: &Library, inner: usize) -> Vec<Line<'static>> 
     let entries = &library.entries;
     match &entries.data {
         _ if entries.data.is_none() && entries.error.is_some() => {
-            vec![muted(app, format!(" {}", entries.error.clone().unwrap_or_default()))]
+            vec![muted(
+                app,
+                format!(" {}", entries.error.clone().unwrap_or_default()),
+            )]
         }
         None => vec![muted(app, " Loading…")],
         Some(listed) if listed.is_empty() => vec![muted(
@@ -113,7 +120,10 @@ fn form_lines(app: &App, form: &Form, inner: usize) -> Vec<Line<'static>> {
         Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
     ))];
     if let Some(estimate) = &form.estimate {
-        lines.push(muted(app, truncate_end(&format!(" agents: {estimate}"), inner)));
+        lines.push(muted(
+            app,
+            truncate_end(&format!(" agents: {estimate}"), inner),
+        ));
     }
     lines.push(muted(app, " args (JSON):"));
     // The end of the text stays visible: that is where typing happens.
@@ -150,7 +160,10 @@ fn draw_source(f: &mut Frame, app: &App, view: &SourceView, area: Rect) {
         .map(|line| Line::from(truncate_end(line, inner)))
         .collect();
     let most = (lines.len() as u16).saturating_sub(body.height);
-    f.render_widget(Paragraph::new(lines).scroll((view.scroll.min(most), 0)), body);
+    f.render_widget(
+        Paragraph::new(lines).scroll((view.scroll.min(most), 0)),
+        body,
+    );
     let hints = vec!["↑↓ scroll".into(), "esc back".into()];
     f.render_widget(Paragraph::new(key_line(app, inner, hints)), keys);
 }

@@ -960,25 +960,40 @@ fn review_runs_the_bundled_workflow_and_reports_verified_findings() {
     env.write("a.rs", "fn a() { changed() }\n");
     env.write("b.rs", "fn b() { changed() }\n");
     let output = env.workflow_review(&["--format", "json", "--", "--lenses-are-not-flags"]);
-    assert_eq!(output.status.code(), Some(2), "{}", describe(&output, &provider));
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "{}",
+        describe(&output, &provider)
+    );
     let output = env.workflow_review(&["--format", "json"]);
     let detail = describe(&output, &provider);
     assert!(output.status.success(), "{detail}");
     let result = result(&output, &detail);
     assert_eq!(
         order(&result, &detail),
-        ["critical z.rs:9", "high a.rs:4", "high a.rs:20", "low b.rs:3"],
+        [
+            "critical z.rs:9",
+            "high a.rs:4",
+            "high a.rs:20",
+            "low b.rs:3"
+        ],
         "{detail}"
     );
     assert_eq!(result["reviewed"], true, "{detail}");
     assert_eq!(result["refuted"], 0, "{detail}");
     assert_eq!(result["target_kind"], "uncommitted", "{detail}");
-    assert!(result["run_id"].as_str().unwrap().starts_with("run_"), "{detail}");
+    assert!(
+        result["run_id"].as_str().unwrap().starts_with("run_"),
+        "{detail}"
+    );
     assert!(
         result["limitations"].to_string().contains("no tests ran"),
         "{detail}"
     );
-    let prompt = provider.reviewer_prompt().unwrap_or_else(|| panic!("{detail}"));
+    let prompt = provider
+        .reviewer_prompt()
+        .unwrap_or_else(|| panic!("{detail}"));
     assert!(prompt.contains("Task: review"), "{prompt}");
     assert!(prompt.contains("fn a() { changed() }"), "{prompt}");
     let verifiers = provider
@@ -1004,7 +1019,11 @@ fn the_review_workflow_reports_target_errors_and_clean_trees_without_a_run() {
     let output = env.workflow_review(&["--format", "json", "main..nope"]);
     let detail = describe(&output, &provider);
     assert_eq!(output.status.code(), Some(2), "{detail}");
-    assert_eq!(result(&output, &detail)["code"], "unresolved_ref", "{detail}");
+    assert_eq!(
+        result(&output, &detail)["code"],
+        "unresolved_ref",
+        "{detail}"
+    );
     assert!(provider.requests().is_empty(), "{detail}");
 }
 
@@ -1027,9 +1046,16 @@ fn a_budget_stopped_review_workflow_exits_4_with_partial_findings() {
     assert_eq!(result["exit_code"], 4, "{detail}");
     assert_eq!(result["partial"], true, "{detail}");
     assert_eq!(result["reviewed"], false, "{detail}");
-    assert_eq!(result["findings"].as_array().map(Vec::len), Some(4), "{detail}");
+    assert_eq!(
+        result["findings"].as_array().map(Vec::len),
+        Some(4),
+        "{detail}"
+    );
     assert!(
-        !provider.requests().iter().any(|b| b["messages"].to_string().contains("Task: verify")),
+        !provider
+            .requests()
+            .iter()
+            .any(|b| b["messages"].to_string().contains("Task: verify")),
         "{detail}"
     );
 }

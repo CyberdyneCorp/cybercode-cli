@@ -2849,11 +2849,20 @@ fn review_runs_the_review_workflow_when_the_library_has_one() {
     let other = json!({"id": "run_other"});
     assert!(run_fetches(app.on_event("workflow.run.completed.1", &other)).is_empty());
     let fetch = run_fetches(app.on_event("workflow.run.completed.1", &json!({"id": "run_1"})));
-    assert_eq!(fetch, vec![Action::ReviewRun { run: "run_1".into() }]);
+    assert_eq!(
+        fetch,
+        vec![Action::ReviewRun {
+            run: "run_1".into()
+        }]
+    );
     app.review_run(&review_run("run_1", "completed", run_findings(false)));
     assert!(matches!(app.overlay, Overlay::Findings));
     let shown = screen(&app);
-    let at = |needle: &str| shown.find(needle).unwrap_or_else(|| panic!("{needle}:\n{shown}"));
+    let at = |needle: &str| {
+        shown
+            .find(needle)
+            .unwrap_or_else(|| panic!("{needle}:\n{shown}"))
+    };
     assert!(at("a.rs:1") < at("b.rs:3"));
     assert!(shown.contains("no tests ran"), "{shown}");
     assert!(!shown.contains("partial"), "{shown}");
@@ -2876,7 +2885,9 @@ fn a_review_run_that_ends_early_partially_or_fails_is_reported() {
     assert!(run_fetches(app.on_event("workflow.run.failed.1", &json!({"id": "run_2"}))).is_empty());
     assert_eq!(
         app.review_started("run_2"),
-        vec![Action::ReviewRun { run: "run_2".into() }]
+        vec![Action::ReviewRun {
+            run: "run_2".into()
+        }]
     );
     app.review_run(&review_run("run_2", "budget_exceeded", run_findings(true)));
     assert!(screen(&app).contains("partial: a budget stopped the review"));
@@ -2890,7 +2901,10 @@ fn a_review_run_that_ends_early_partially_or_fails_is_reported() {
     app.review_run(&review_run("run_3", "failed", json!(null)));
     assert_eq!(app.overlay, Overlay::None);
     let toast = &app.toast.as_ref().unwrap().0;
-    assert!(toast.contains("review failed: every reviewer failed"), "{toast}");
+    assert!(
+        toast.contains("review failed: every reviewer failed"),
+        "{toast}"
+    );
     // A run nobody awaits is ignored.
     app.toast = None;
     app.review_run(&review_run("run_3", "completed", run_findings(false)));
@@ -2908,8 +2922,10 @@ fn workflow_review_reply(body: &serde_json::Value) -> serde_json::Value {
         return result(json!({"refuted": false, "evidence": "the patch shows it"}));
     }
     if text.contains("Task: review") {
-        return result(json!({"findings":[{"file":"a.rs","line":1,"severity":"high",
-            "summary":"WORKFLOW-FINDING","failure_scenario":"callers break"}],"limitations":[]}));
+        return result(
+            json!({"findings":[{"file":"a.rs","line":1,"severity":"high",
+            "summary":"WORKFLOW-FINDING","failure_scenario":"callers break"}],"limitations":[]}),
+        );
     }
     json!({"content":"noted"})
 }
@@ -2952,7 +2968,12 @@ async fn review_runs_the_bundled_workflow_against_the_app_server() {
     typed(&mut app, "/review");
     app.completion = None;
     let mut actions = app.on_key(key(KeyCode::Enter));
-    assert_eq!(actions, vec![Action::StartReview { arguments: String::new() }]);
+    assert_eq!(
+        actions,
+        vec![Action::StartReview {
+            arguments: String::new()
+        }]
+    );
     tokio::time::timeout(std::time::Duration::from_secs(60), async {
         loop {
             while let Some(action) = actions.pop() {
