@@ -77,6 +77,18 @@ pub fn replace_input(store: &Store, input: &McpServeInput) -> Result<(), StoreEr
     write_input(store, input, "INSERT OR REPLACE")
 }
 
+/// Drop the record of an input whose admission was refused or failed.
+pub fn remove_input(store: &Store, message_id: &str) -> Result<(), StoreError> {
+    let message_id = message_id.to_owned();
+    store.transaction(move |tx| {
+        tx.execute(
+            "DELETE FROM mcp_serve_input WHERE message_id = ?1",
+            [message_id],
+        )?;
+        Ok(())
+    })
+}
+
 fn write_input(store: &Store, input: &McpServeInput, verb: &'static str) -> Result<(), StoreError> {
     let input = input.clone();
     store.transaction(move |tx| {
