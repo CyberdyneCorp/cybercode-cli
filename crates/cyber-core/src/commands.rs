@@ -203,6 +203,14 @@ pub const BUILTIN: &[(&str, &str)] = &[
     ("resume", "Open another Session"),
     ("rename", "Rename this Session"),
     (
+        "tree",
+        "The Session's branches; check one out, restore its code or label it",
+    ),
+    (
+        "label",
+        "Label the active branch; /label --clear <name> removes a label",
+    ),
+    (
         "loop",
         "Repeat a prompt on an interval or self-paced; /loop list, /loop stop",
     ),

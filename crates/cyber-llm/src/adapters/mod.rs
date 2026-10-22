@@ -2,6 +2,7 @@
 
 mod anthropic;
 mod chatgpt;
+mod copilot;
 mod openai_chat;
 mod openai_responses;
 mod scripted;
@@ -21,6 +22,7 @@ use crate::types::{LlmEvent, LlmRequest, ToolCall};
 
 pub use anthropic::AnthropicAdapter;
 pub use chatgpt::ChatGptAdapter;
+pub use copilot::CopilotAdapter;
 pub use openai_chat::OpenAiChatAdapter;
 pub use openai_responses::OpenAiResponsesAdapter;
 pub use scripted::{ScriptStep, ScriptedAdapter};
@@ -37,6 +39,10 @@ pub enum ApiKind {
     /// The Responses protocol at the ChatGPT subscription backend, authorized by the stored
     /// login. Never selectable from configuration or catalog data.
     ChatgptCodex,
+    /// Chat Completions or Responses (per model) at the GitHub Copilot API, authorized by a
+    /// Copilot token minted from the stored login. Never selectable from configuration or
+    /// catalog data.
+    CopilotChat,
 }
 
 impl ApiKind {
@@ -67,6 +73,7 @@ impl ApiKind {
             Self::Anthropic => Some("https://api.anthropic.com/v1"),
             Self::OpenaiCompatible => None,
             Self::ChatgptCodex => Some(crate::chatgpt::BACKEND_URL),
+            Self::CopilotChat => Some(crate::copilot::API_URL),
         }
     }
 
@@ -76,6 +83,7 @@ impl ApiKind {
             Self::OpenaiCompatible => "openai-compatible",
             Self::Anthropic => "anthropic",
             Self::ChatgptCodex => "chatgpt-codex",
+            Self::CopilotChat => "copilot-chat",
         }
     }
 }
@@ -102,6 +110,7 @@ pub fn adapter(kind: ApiKind, endpoint: Endpoint) -> Box<dyn Adapter> {
         ApiKind::OpenaiCompatible => Box::new(OpenAiChatAdapter::new(endpoint)),
         ApiKind::Anthropic => Box::new(AnthropicAdapter::new(endpoint)),
         ApiKind::ChatgptCodex => Box::new(ChatGptAdapter::new(endpoint)),
+        ApiKind::CopilotChat => Box::new(CopilotAdapter::new(endpoint)),
     }
 }
 
@@ -116,6 +125,9 @@ pub struct Endpoint {
     pub limits: Option<crate::limits::LimitSink>,
     /// The stored ChatGPT login that authorizes a [`ApiKind::ChatgptCodex`] endpoint.
     pub login: Option<crate::chatgpt::Session>,
+    /// The stored GitHub Copilot login and model protocol behind a
+    /// [`ApiKind::CopilotChat`] endpoint.
+    pub copilot: Option<crate::copilot::Route>,
 }
 
 impl Endpoint {
@@ -128,6 +140,7 @@ impl Endpoint {
             client,
             limits: None,
             login: None,
+            copilot: None,
         }
     }
 

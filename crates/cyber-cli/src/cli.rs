@@ -204,7 +204,8 @@ pub enum Command {
     },
     /// List models from the catalog, available first.
     Models(ModelsArgs),
-    /// Sign in to or out of a provider (today: `chatgpt`, a ChatGPT Plus/Pro subscription).
+    /// Sign in to or out of a provider (today: `chatgpt`, a ChatGPT Plus/Pro subscription, and
+    /// `copilot`, a GitHub Copilot plan).
     Providers {
         #[command(subcommand)]
         cmd: crate::commands::providers::ProvidersCmd,

@@ -53,7 +53,7 @@ cyber [OPTIONS] [COMMAND]
 - [`worktree`](#cyber-worktree): List, remove and prune managed Git worktrees of the current repository
 - [`debug`](#cyber-debug): Inspect resolved paths, configuration and build information
 - [`models`](#cyber-models): List models from the catalog, available first
-- [`providers`](#cyber-providers): Sign in to or out of a provider (today: `chatgpt`, a ChatGPT Plus/Pro subscription)
+- [`providers`](#cyber-providers): Sign in to or out of a provider (today: `chatgpt`, a ChatGPT Plus/Pro subscription, and `copilot`, a GitHub Copilot plan)
 - [`permissions`](#cyber-permissions): Dry-run permission rules; inspect or reset checkout-scoped auto-mode statistics
 - [`db`](#cyber-db): Inspect the local database
 - [`plugins`](#cyber-plugins): Install, list, enable, disable, update and remove plugins
@@ -249,6 +249,10 @@ cyber sessions [OPTIONS] <COMMAND>
 - [`show`](#cyber-sessions-show): One Session: title, Location, model, status and usage
 - [`rename`](#cyber-sessions-rename): Give a Session a title to find and resume it by later
 - [`delete`](#cyber-sessions-delete): Delete a Session with its child Sessions
+- [`tree`](#cyber-sessions-tree): The Session's user-message tree: `*` marks the active path
+- [`checkout`](#cyber-sessions-checkout): Make another branch active; the Session must be idle
+- [`label`](#cyber-sessions-label): Set or remove a branch label
+- [`export`](#cyber-sessions-export): Write the Session and its messages as JSON to stdout: the active path, or every branch with `--all-branches`
 
 ## `cyber sessions list`
 
@@ -302,6 +306,70 @@ cyber sessions delete [OPTIONS] <SESSION>
 **Options:**
 
 - `--yes`: Confirm the deletion; it cannot be undone.
+
+## `cyber sessions tree`
+
+The Session's user-message tree: `*` marks the active path
+
+```text
+cyber sessions tree [OPTIONS] <SESSION>
+```
+
+**Arguments:**
+
+- `<SESSION>`: ID, exact title or unique ID prefix.
+
+## `cyber sessions checkout`
+
+Make another branch active; the Session must be idle
+
+```text
+cyber sessions checkout [OPTIONS] <SESSION> <MESSAGE>
+```
+
+**Arguments:**
+
+- `<SESSION>`: ID, exact title or unique ID prefix.
+- `<MESSAGE>`: A message ID, a branch label or a unique message ID prefix; the newest tip under it becomes active.
+
+**Options:**
+
+- `--code`: Also restore files to the branch's last snapshot, keeping your own edits.
+- `--exact`: Make the message itself the tip; the next prompt branches there.
+
+## `cyber sessions label`
+
+Set or remove a branch label
+
+```text
+cyber sessions label [OPTIONS] <SESSION> <NAME>
+```
+
+**Arguments:**
+
+- `<SESSION>`: ID, exact title or unique ID prefix.
+- `<NAME>`: The label: letters, digits, `.`, `_` and `-`, at most 48.
+
+**Options:**
+
+- `--at <AT>`: The message to label (ID, label or unique prefix); the active tip by default.
+- `--delete`: Remove the label instead.
+
+## `cyber sessions export`
+
+Write the Session and its messages as JSON to stdout: the active path, or every branch with `--all-branches`
+
+```text
+cyber sessions export [OPTIONS] <SESSION>
+```
+
+**Arguments:**
+
+- `<SESSION>`: ID, exact title or unique ID prefix.
+
+**Options:**
+
+- `--all-branches`: Include every branch; each message's `parent_message_id` links the tree.
 
 ## `cyber skills`
 
@@ -977,7 +1045,7 @@ cyber models [OPTIONS] [PROVIDER]
 
 ## `cyber providers`
 
-Sign in to or out of a provider (today: `chatgpt`, a ChatGPT Plus/Pro subscription)
+Sign in to or out of a provider (today: `chatgpt`, a ChatGPT Plus/Pro subscription, and `copilot`, a GitHub Copilot plan)
 
 ```text
 cyber providers [OPTIONS] <COMMAND>
@@ -985,12 +1053,12 @@ cyber providers [OPTIONS] <COMMAND>
 
 **Subcommands:**
 
-- [`login`](#cyber-providers-login): Sign in to a provider. `chatgpt` signs in with a ChatGPT Plus/Pro subscription: open the printed URL in a browser to authorize
+- [`login`](#cyber-providers-login): Sign in to a provider. `chatgpt` signs in with a ChatGPT Plus/Pro subscription: open the printed URL in a browser to authorize. `copilot` signs in with a GitHub Copilot plan: open the printed URL and enter the printed code
 - [`logout`](#cyber-providers-logout): Forget a provider login. Tokens are not revoked remotely
 
 ## `cyber providers login`
 
-Sign in to a provider. `chatgpt` signs in with a ChatGPT Plus/Pro subscription: open the printed URL in a browser to authorize
+Sign in to a provider. `chatgpt` signs in with a ChatGPT Plus/Pro subscription: open the printed URL in a browser to authorize. `copilot` signs in with a GitHub Copilot plan: open the printed URL and enter the printed code
 
 ```text
 cyber providers login [OPTIONS] <PROVIDER>
@@ -1002,7 +1070,8 @@ cyber providers login [OPTIONS] <PROVIDER>
 
 **Options:**
 
-- `--method <METHOD>`: `browser` waits for the redirect on localhost:1455; `code` reads the redirect URL pasted from the browser (for SSH and other headless machines) Values: `browser`, `code`. Default: `browser`.
+- `--method <METHOD>`: `browser` waits for the redirect on localhost:1455; `code` reads the redirect URL pasted from the browser (for SSH and other headless machines). ChatGPT only. Values: `browser`, `code`. Default: `browser`.
+- `--enterprise <HOST>`: Sign in to a GitHub Enterprise host (a bare hostname such as example.ghe.com) instead of github.com. Copilot only.
 
 ## `cyber providers logout`
 

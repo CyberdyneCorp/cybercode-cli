@@ -216,6 +216,7 @@ impl From<RuntimeError> for ApiError {
             RuntimeError::GoalCondition(m) => {
                 Self::new(StatusCode::BAD_REQUEST, "GoalConditionTooLongError", m)
             }
+            RuntimeError::MessageNotFound(_) => Self::not_found("MessageNotFoundError", message),
             RuntimeError::LoopNotFound(_) => Self::not_found("LoopNotFoundError", message),
             RuntimeError::LoopLimit(_) => {
                 Self::new(StatusCode::CONFLICT, "LoopLimitError", message)

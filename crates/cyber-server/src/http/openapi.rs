@@ -739,10 +739,40 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "get",
             "/sessions/{sessionID}/messages",
             "v1.message.list",
-            "List messages",
+            "List the active path's messages, or every branch's with branches=all",
         )
-        .query(&["limit", "cursor", "order"])
+        .query(&["limit", "cursor", "order", "branches"])
         .ok::<Page<Message>>(g),
+        op(
+            "get",
+            "/sessions/{sessionID}/tree",
+            "v1.session.tree",
+            "The user-message tree of every branch, with the active path and labels",
+        )
+        .ok::<Data<Vec<crate::runtime::BranchNode>>>(g),
+        op(
+            "post",
+            "/sessions/{sessionID}/checkout",
+            "v1.session.checkout",
+            "Make another branch active on an idle Session, optionally restoring its code",
+        )
+        .body::<crate::runtime::BranchCheckout>(g)
+        .ok::<Data<crate::runtime::CheckedOutBranch>>(g),
+        op(
+            "put",
+            "/sessions/{sessionID}/labels/{name}",
+            "v1.session.label",
+            "Label a message of the branch tree",
+        )
+        .body::<super::branches::LabelBody>(g)
+        .status(204),
+        op(
+            "delete",
+            "/sessions/{sessionID}/labels/{name}",
+            "v1.session.unlabel",
+            "Remove a branch label",
+        )
+        .status(204),
         op(
             "get",
             "/sessions/{sessionID}/messages/{messageID}",

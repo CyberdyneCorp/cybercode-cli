@@ -37,6 +37,8 @@ pub enum Ui {
     ToggleTimestamps,
     ToggleSidebar,
     RenameSession,
+    SessionTree,
+    LabelBranch,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -66,6 +68,18 @@ const BUILTINS: &[(&str, &str, Option<&str>, bool)] = &[
         true,
     ),
     ("fork", "fork this session", Some("session_fork"), false),
+    (
+        "tree",
+        "branches of this session; check one out",
+        None,
+        false,
+    ),
+    (
+        "label",
+        "label the active branch; --clear <name> removes one",
+        None,
+        true,
+    ),
     (
         "loop",
         "repeat a prompt on an interval (or self-paced); list, stop",
@@ -256,6 +270,22 @@ const ACTIONS: &[(&str, &str, Option<&str>, Ui)] = &[
     ),
 ];
 
+/// UI actions listed after the built-in commands: found by name, less often used.
+const LATER_ACTIONS: &[(&str, &str, Option<&str>, Ui)] = &[
+    (
+        "Session tree",
+        "every branch of this session; check one out or label it",
+        None,
+        Ui::SessionTree,
+    ),
+    (
+        "Label branch",
+        "label the active branch to check it out by name later",
+        None,
+        Ui::LabelBranch,
+    ),
+];
+
 /// Untrusted names and descriptions (skills, MCP prompts) on one line, without control
 /// characters that could reach the terminal.
 fn clean(text: &str) -> String {
@@ -267,18 +297,17 @@ fn clean(text: &str) -> String {
         .collect()
 }
 
-/// Every entry: UI actions, built-ins, then server commands not shadowed by a built-in.
+/// Every entry: UI actions, built-ins, later UI actions, then server commands not
+/// shadowed by a built-in.
 pub fn entries(keys: &Keymap, server: &[ServerCommand]) -> Vec<Entry> {
     let key = |action: Option<&str>| action.and_then(|a| keys.label("global", a));
-    let mut out: Vec<Entry> = ACTIONS
-        .iter()
-        .map(|&(name, description, action, ui)| Entry {
-            name: name.into(),
-            description: description.into(),
-            key: key(action),
-            run: Run::Ui(ui),
-        })
-        .collect();
+    let ui = |&(name, description, action, ui): &(&str, &str, Option<&str>, Ui)| Entry {
+        name: name.into(),
+        description: description.into(),
+        key: key(action),
+        run: Run::Ui(ui),
+    };
+    let mut out: Vec<Entry> = ACTIONS.iter().map(ui).collect();
     out.extend(
         BUILTINS
             .iter()
@@ -293,6 +322,7 @@ pub fn entries(keys: &Keymap, server: &[ServerCommand]) -> Vec<Entry> {
                 },
             }),
     );
+    out.extend(LATER_ACTIONS.iter().map(ui));
     for command in server {
         let name = clean(&command.name);
         if name.is_empty() || BUILTINS.iter().any(|b| b.0 == name) {
