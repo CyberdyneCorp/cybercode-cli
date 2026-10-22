@@ -1,0 +1,63 @@
+---
+source: crates/cyber-tui/src/screens_goals.rs
+expression: screen
+---
+› How do I speed up fib?
+                                                                                                                  Theme baseline
+  Plan
+                                                                                                                  Context
+  This keeps the cache warm:                                                                                      100 tokens · window unknown
+                                                                                                                  — spent
+  1. Memoization: results are cached
+                                                                                                                  Goal
+  • avoids recomputation                                                                                          ◎ all call sites compile against the v2 API
+                                                                                                                  active · turn 3/50 · $0.42
+    rust                                                                                                          not met: 2 call sites still use v1
+    fn fib(n: u64) -> u64 { n }                                                                                   +2 queued
+
+  ▣ Build · main · 11.3s                                                                                          ▼ MCP
+                                                                                                                  No MCP servers
+                                                                                                                  add one: cyber mcp add
+
+                                                                                                                  LSP
+                                                                                                                  LSPs will activate as files are read
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃                                                                                                                 ~/work/app
+┃ Build · main test · default
+ ~/work/app                           100 · —  ◎ goal all call sites compile against the v2 A…  ctrl+p commands   ● Cyber Code 1.0.0
+row 8: 0-1 fg=#1f2933 bg=#ffffff
+row 8: 2-3 fg=#5b6878 bg=#ffffff
+row 8: 4-10 fg=#1f2933 bg=#ffffff
+row 8: 11-23 fg=#8250df bg=#ffffff
+row 8: 24-111 fg=#1f2933 bg=#ffffff
+row 8: 112-159 fg=#1f2933 bg=#f6f6f7
+row 39: 0-10 fg=#5b6878 bg=#ffffff
+row 39: 11-37 fg=#1f2933 bg=#ffffff
+row 39: 38-44 fg=#5b6878 bg=#ffffff
+row 39: 45-46 fg=#1f2933 bg=#ffffff
+row 39: 47-93 fg=#00799e bg=#ffffff
+row 39: 94-101 fg=#1f2933 bg=#ffffff
+row 39: 102-110 fg=#5b6878 bg=#ffffff
+row 39: 111-111 fg=#1f2933 bg=#ffffff
+row 39: 112-113 fg=#1f2933 bg=#f6f6f7
+row 39: 114-115 fg=#1a7f37 bg=#f6f6f7
+row 39: 116-125 fg=#1f2933 bg=#f6f6f7 bold
+row 39: 126-131 fg=#5b6878 bg=#f6f6f7
+row 39: 132-159 fg=#1f2933 bg=#f6f6f7

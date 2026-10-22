@@ -51,6 +51,8 @@ mod screens_context;
 #[cfg(test)]
 mod screens_explorer;
 #[cfg(test)]
+mod screens_goals;
+#[cfg(test)]
 mod screens_indicators;
 #[cfg(test)]
 mod screens_machine;

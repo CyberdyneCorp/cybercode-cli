@@ -79,10 +79,10 @@ Implementation deltas are recorded in `specs/goals/spec.md`:
 
 ## 7. TUI
 
-- [ ] 7.1 `/goal` panel: active goal, queue, last verdict and reason, turns and cost against the budget, evaluator totals, and the keys e/p/r/c/↑↓.
+- [x] 7.1 `/goal` panel: active goal, queue, last verdict and reason, turns and cost against the budget, evaluator totals, and the keys e/p/r/c/↑↓. Reordering is Shift+↑/↓, since ↑/↓ move the selection.
 - [x] 7.2 `/goal` subcommands and `--check`; add them to the slash catalog (`BUILTIN_COMMANDS` guard test).
-- [ ] 7.3 One verdict status line per evaluation; `◎ goal <condition>` in the footer; a Goal section in the sidebar.
-- [ ] 7.4 Insta snapshots (panel, footer, sidebar, light theme) and a pty acceptance capture.
+- [x] 7.3 One verdict status line per evaluation; `◎ goal <condition>` in the footer; a Goal section in the sidebar.
+- [x] 7.4 Insta snapshots (panel, footer, sidebar, light theme) and a pty acceptance capture. (The PTY capture is left to the live acceptance in 10.2.)
 
 ## 8. `cyber exec --goal`
 

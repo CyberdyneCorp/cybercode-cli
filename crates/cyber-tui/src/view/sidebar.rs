@@ -87,6 +87,7 @@ pub fn top(app: &App, width: usize) -> Vec<Line<'static>> {
         ));
     }
     context(app, width, &mut out);
+    goal(app, width, &mut out);
     workflows(app, width, &mut out);
     super::team::sidebar(app, width, &mut out);
     mcp(app, width, &mut out);
@@ -262,6 +263,27 @@ const WORKFLOW_BAR: usize = 6;
 
 /// `audit  ▀▀····  31/100` per active run (`#2 in queue` for a queued one), the current
 /// Session's first, then `+N more`; omitted when no run is active.
+/// The current Goal: its condition, status with turns against the budget and cost, the
+/// last verdict and the queued count (`tui` → Goal and loop indicators).
+fn goal(app: &App, width: usize, out: &mut Vec<Line<'static>>) {
+    let lines = app.goals.sidebar();
+    let Some((condition, rest)) = lines.split_first() else {
+        return;
+    };
+    out.push(Line::default());
+    out.push(header(app, None, "Goal".into()));
+    out.extend(wrap(
+        Line::from(Span::styled(
+            condition.clone(),
+            Style::default().fg(app.theme.text),
+        )),
+        width,
+    ));
+    for line in rest {
+        out.push(muted_line(app, &truncate_end(line, width)));
+    }
+}
+
 fn workflows(app: &App, width: usize, out: &mut Vec<Line<'static>>) {
     let rows = &app.sidebar.workflows;
     if rows.is_empty() {

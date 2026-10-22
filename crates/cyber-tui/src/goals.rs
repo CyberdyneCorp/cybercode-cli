@@ -1,15 +1,21 @@
 //! `/goal` in the TUI (`goals` → Goal management commands, tui → Goal and loop
-//! indicators): commands post to the server, `/goal` opens a picker with the current
-//! Goal (turns against budget, cost, evaluator totals, last verdict), the queue and recent
-//! Goals; goal prompts render as `◎` lines and the footer names the active Goal.
+//! indicators): commands post to the server; `/goal` opens a panel with the current Goal
+//! (turns against budget, cost, evaluator totals, last verdict), the queue and recent
+//! Goals, where `e` edits, `p` pauses, `r` resumes and `c` clears the selected Goal and
+//! Shift+↑/↓ moves a queued one. Goal prompts render as `◎` lines, the footer names the
+//! active Goal and the sidebar has a Goal section.
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use cyber_client::Client;
 use cyber_core::goals::GoalCommand;
 use serde_json::{Value, json};
 
-use crate::app::{Action, App};
+use crate::app::{Action, App, Overlay, PickerKind};
 use crate::model::Choice;
 use crate::perform::{Msg, err};
+
+/// The panel title, naming its keys.
+const PANEL_TITLE: &str = "Goals · e edit · p pause · r resume · c clear · shift+↑↓ reorder";
 
 /// What `/goal` asks the server.
 #[derive(Debug, Clone, PartialEq)]
@@ -58,12 +64,30 @@ pub enum GoalRequest {
         template: String,
         args: String,
     },
+    /// The queue in its new order; the panel reopens with it.
+    Reorder {
+        session_id: String,
+        goal_ids: Vec<String>,
+    },
 }
 
-/// The active Goal as the footer shows it.
+/// The current Goal as the footer and the sidebar show it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Current {
+    pub status: String,
+    pub condition: String,
+    pub turns: u64,
+    pub max_turns: u64,
+    pub cost_usd: f64,
+    /// `met`, `not met` or `impossible`, with its reason.
+    pub verdict: Option<(String, String)>,
+}
+
+/// The Session's Goals as the footer and the sidebar show them.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Goals {
-    current: Option<(String, String)>,
+    pub current: Option<Current>,
+    pub queued: usize,
 }
 
 impl Goals {
@@ -72,28 +96,56 @@ impl Goals {
         let Some(view) = view else {
             return;
         };
-        self.current = view["current"].as_object().map(|g| {
-            (
-                g.get("status")
-                    .and_then(Value::as_str)
-                    .unwrap_or("active")
-                    .to_owned(),
-                g.get("condition")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-            )
-        });
+        self.queued = view["queue"].as_array().map_or(0, Vec::len);
+        self.current = view["current"]
+            .as_object()
+            .map(|_| current(&view["current"]));
     }
 
     /// `◎ goal <condition>`, `◎ goal paused <condition>`; `None` without a current Goal.
     pub fn footer(&self) -> Option<String> {
-        let (status, condition) = self.current.as_ref()?;
-        let short = truncate(condition.lines().next().unwrap_or_default(), 40);
-        Some(match status.as_str() {
+        let goal = self.current.as_ref()?;
+        let short = truncate(goal.condition.lines().next().unwrap_or_default(), 40);
+        Some(match goal.status.as_str() {
             "active" => format!("◎ goal {short}"),
             other => format!("◎ goal {other} {short}"),
         })
+    }
+
+    /// The sidebar's Goal section without its header; empty without a current Goal.
+    pub fn sidebar(&self) -> Vec<String> {
+        let Some(goal) = &self.current else {
+            return Vec::new();
+        };
+        let mut lines = vec![
+            format!("◎ {}", goal.condition.lines().next().unwrap_or_default()),
+            format!(
+                "{} · turn {}/{} · ${:.2}",
+                goal.status, goal.turns, goal.max_turns, goal.cost_usd
+            ),
+        ];
+        if let Some((verdict, reason)) = &goal.verdict {
+            lines.push(format!("{verdict}: {reason}"));
+        }
+        if self.queued > 0 {
+            lines.push(format!("+{} queued", self.queued));
+        }
+        lines
+    }
+}
+
+fn current(g: &Value) -> Current {
+    let text = |key: &str| g[key].as_str().unwrap_or_default().to_owned();
+    let verdict = g["last_verdict"]
+        .as_str()
+        .map(|v| (v.replace('_', " "), text("reason")));
+    Current {
+        status: g["status"].as_str().unwrap_or("active").to_owned(),
+        condition: text("condition"),
+        turns: g["turns"].as_u64().unwrap_or(0),
+        max_turns: g["budget"]["max_turns"].as_u64().unwrap_or(0),
+        cost_usd: g["cost_usd"].as_f64().unwrap_or(0.0),
+        verdict,
     }
 }
 
@@ -195,12 +247,60 @@ impl App {
             self.toast("No goals; set one with /goal <condition>");
             return;
         }
-        self.open_picker(
-            crate::app::PickerKind::Goals,
-            "Goals · /goal pause · resume · skip · clear · edit",
-            choices,
-        );
+        self.open_picker(PickerKind::Goals, PANEL_TITLE, choices);
     }
+
+    /// A key in the `/goal` panel: `e`, `p`, `r`, `c` and Shift+↑/↓; `None` for keys
+    /// the picker handles itself (moving, Enter, Esc).
+    pub(crate) fn goal_panel_key(&mut self, key: KeyEvent) -> Option<Vec<Action>> {
+        let Overlay::Picker(picker) = &self.overlay else {
+            return None;
+        };
+        if picker.kind != PickerKind::Goals {
+            return None;
+        }
+        let session_id = self.session.id.clone();
+        let selected = picker.current().map(|choice| choice.key.clone());
+        let request = match (key.code, key.modifiers) {
+            (KeyCode::Char('e'), KeyModifiers::NONE) => GoalRequest::Edit {
+                session_id,
+                goal_id: selected,
+            },
+            (KeyCode::Char('p'), KeyModifiers::NONE) => GoalRequest::Pause { session_id },
+            (KeyCode::Char('r'), KeyModifiers::NONE) => GoalRequest::Resume { session_id },
+            (KeyCode::Char('c'), KeyModifiers::NONE) => GoalRequest::Clear {
+                session_id,
+                goal_id: Some(selected?),
+            },
+            (KeyCode::Up | KeyCode::Down, KeyModifiers::SHIFT) => {
+                let goal_ids = moved(&picker.items, selected.as_deref()?, key.code == KeyCode::Up)?;
+                GoalRequest::Reorder {
+                    session_id,
+                    goal_ids,
+                }
+            }
+            _ => return None,
+        };
+        self.overlay = Overlay::None;
+        Some(vec![Action::Goal(request)])
+    }
+}
+
+/// The queued Goal IDs with `selected` moved one place up or down; `None` when it is
+/// not queued or cannot move.
+fn moved(rows: &[Choice], selected: &str, up: bool) -> Option<Vec<String>> {
+    let mut queue: Vec<String> = rows
+        .iter()
+        .filter(|row| row.detail.starts_with("queued "))
+        .map(|row| row.key.clone())
+        .collect();
+    let at = queue.iter().position(|id| id == selected)?;
+    let to = if up { at.checked_sub(1)? } else { at + 1 };
+    if to >= queue.len() {
+        return None;
+    }
+    queue.swap(at, to);
+    Some(queue)
 }
 
 /// Run a `/goal` request.
@@ -251,6 +351,17 @@ pub async fn perform(client: &Client, request: GoalRequest) -> Result<Msg, Strin
             Ok(Msg::Toast(format!(
                 "◎ goal set from {template}; working toward it"
             )))
+        }
+        GoalRequest::Reorder {
+            session_id,
+            goal_ids,
+        } => {
+            let path = format!("{}/order", base(&session_id));
+            client
+                .patch(&path, json!({"goal_ids": goal_ids}))
+                .await
+                .map_err(err)?;
+            show(client, session_id).await
         }
     }
 }
@@ -359,7 +470,7 @@ fn find(view: &Value, goal_id: Option<&str>) -> Option<Value> {
 }
 
 /// Picker rows: the current Goal with its totals, then the queue, then recent Goals.
-fn choices(view: &Value) -> Vec<Choice> {
+pub(crate) fn choices(view: &Value) -> Vec<Choice> {
     let mut rows = Vec::new();
     if !view["current"].is_null() {
         rows.push(row(&view["current"], "current"));
