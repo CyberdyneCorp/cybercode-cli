@@ -17,6 +17,7 @@ const KEPT: &[&str] = &[
     "goal_id",
     "session_id",
     "parent_id",
+    "parent_message_id",
     "run_id",
     "agent_id",
     "job_id",
@@ -44,6 +45,7 @@ const KEPT: &[&str] = &[
     "tier",
     "media_type",
     "mime",
+    "branches",
 ];
 
 /// Keys whose whole value is a tool input or output.
@@ -201,10 +203,12 @@ mod tests {
             "session": {"id": "ses_1", "title": "fix /home/leo/app", "directory": "/home/leo/app",
                 "model": "corp/main", "created_ms": 5},
             "totals": {"usage": {"input": 120, "output": 30}, "cost": 0.5},
+            "branches": "all",
             "messages": [
                 {"kind": "user", "id": "msg_1", "source": "session",
                     "parts": [{"type": "text", "text": "edit /home/leo/app/main.rs"}]},
-                {"kind": "assistant", "id": "msg_2", "text": "see https://example.com/x",
+                {"kind": "assistant", "id": "msg_2", "parent_message_id": "msg_1",
+                    "text": "see https://example.com/x",
                     "started_ms": 10, "ended_ms": 20,
                     "tools": [{"call_id": "c1", "name": "read", "status": "ok",
                         "input": {"path": "/home/leo/app/main.rs", "limit": 5},
@@ -228,6 +232,8 @@ mod tests {
         assert_eq!(export["session"]["model"], "corp/main");
         assert_eq!(export["session"]["directory"], "[redacted:path:1]");
         assert_eq!(export["totals"]["usage"]["input"], 120);
+        assert_eq!(export["branches"], "all");
+        assert_eq!(export["messages"][1]["parent_message_id"], "msg_1");
         assert_eq!(export["messages"][1]["started_ms"], 10);
         assert_eq!(export["messages"][1]["text"], "[redacted:text:3]");
         let tool = &export["messages"][1]["tools"][0];

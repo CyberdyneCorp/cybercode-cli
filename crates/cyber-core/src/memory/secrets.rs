@@ -7,6 +7,8 @@ const CREDENTIAL_PATTERNS: &[&str] = &[
     r#"(?i)\b(?:[a-z0-9_-]*(?:api[_-]?key|password|passwd|token|secret)|authorization)["']?\s*[:=]\s*\S+"#,
     r"(?i)\bsk-(?:proj-|ant-)?[a-z0-9_-]{8,}",
     r"(?i)\b(?:gh[pousr]_[a-z0-9]{8,}|github_pat_[a-z0-9_]{8,}|AKIA[0-9A-Z]{16})",
+    // Minted GitHub Copilot API tokens (`tid=<hex>;exp=<unix>;…`).
+    r"\btid=[0-9a-fA-F]{8,};[^\s\x22']+",
     // Peer grant tokens (`cyp_pgr…_<secret>`) of `cross-session-messaging` → Peer grants.
     r"\bcyp_[A-Za-z0-9_-]{8,}",
     r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----",
@@ -77,6 +79,17 @@ mod tests {
         assert!(!redacted.contains("abc123") && !redacted.contains("AKIAABCDEFGHIJKLMNOP"));
         assert!(redacted.starts_with("ok\n") && redacted.contains("done"));
         assert_eq!(super::redact_credentials("plain hi"), "plain hi");
+    }
+
+    #[test]
+    fn github_and_copilot_tokens_are_redacted() {
+        let copilot = "tid=0123456789abcdef;exp=4000000000;sku=copilot_pro;8kp=1:ffee";
+        for token in ["gho_abcdefgh12345678", "ghu_abcdefgh12345678", copilot] {
+            let redacted = super::redact_credentials(&format!("using {token} now"));
+            assert_eq!(redacted, "using [REDACTED] now", "{token}");
+            assert!(super::check(token).is_err(), "{token}");
+        }
+        assert_eq!(super::redact_credentials("tid=12;"), "tid=12;");
     }
 
     #[test]

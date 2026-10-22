@@ -1,8 +1,9 @@
 //! Session export (`storage-events` → Session export): `GET /sessions/{id}/export`
 //! returns the Session info and totals, its messages with their parts and tool calls, its
 //! Goals and its Workflow Run summaries, and with `include_children=true` the same for
-//! every child Session, recursively. `sanitize=true` redacts text, paths, URLs, tool
-//! inputs and outputs and metadata (see [`sanitize`]).
+//! every child Session, recursively. The messages are the active path, or with
+//! `branches=all` every branch in creation order. `sanitize=true` redacts text, paths,
+//! URLs, tool inputs and outputs and metadata (see [`sanitize`]).
 
 mod sanitize;
 
@@ -35,7 +36,10 @@ pub struct SessionExport {
     pub sanitized: bool,
     pub session: SessionInfo,
     pub totals: Totals,
-    /// Every message in order, with its parts and, for answers, its tool calls.
+    /// `active` (the active path) or `all` (every branch, in creation order).
+    pub branches: String,
+    /// The messages in order, with their parts and, for answers, their tool calls; each
+    /// `parent_message_id` links the branch tree.
     pub messages: Vec<Message>,
     /// Every Goal of the Session, oldest first, with its evaluations.
     pub goals: Vec<Goal>,
@@ -52,6 +56,9 @@ pub struct ExportQuery {
     pub sanitize: bool,
     #[serde(default)]
     pub include_children: bool,
+    /// `all` exports every branch instead of the active path.
+    #[serde(default)]
+    pub branches: Option<String>,
 }
 
 pub(super) fn routes() -> Router<AppState> {
@@ -63,7 +70,8 @@ async fn export(
     Path(id): Path<String>,
     Query(query): Query<ExportQuery>,
 ) -> Result<Json<Data<Value>>, ApiError> {
-    let built = build(&state.runtime, id, query.include_children).await?;
+    let all = super::sessions::all_branches(query.branches.as_deref())?;
+    let built = build(&state.runtime, id, query.include_children, all).await?;
     let mut value =
         serde_json::to_value(built).map_err(|e| RuntimeError::Corrupt(e.to_string()))?;
     if query.sanitize {
@@ -81,17 +89,17 @@ fn mark_sanitized(export: &mut Value) {
     }
 }
 
-/// The export of `id`, with its children when asked.
+/// The export of `id`, with its children and every branch when asked.
 fn build(
     runtime: &Runtime,
     id: String,
     children: bool,
+    all: bool,
 ) -> BoxFuture<'_, Result<SessionExport, RuntimeError>> {
     Box::pin(async move {
         let state = runtime.state(&id).await?;
-        let messages = state
-            .entries
-            .iter()
+        let messages = super::sessions::listed(&state, all)
+            .into_iter()
             .map(|entry| super::sessions::message_of(&state, entry))
             .collect();
         let mut goals: Vec<Goal> = state.goals.goals.values().cloned().collect();
@@ -102,6 +110,7 @@ fn build(
             sanitized: false,
             session: state.info.clone(),
             totals: state.totals.clone(),
+            branches: if all { "all" } else { "active" }.into(),
             messages,
             goals,
             workflow_runs: runs(runtime, &id)?,
@@ -110,7 +119,7 @@ fn build(
         if children {
             let mut nested = Vec::new();
             for child in child_ids(runtime, &id)? {
-                nested.push(build(runtime, child, true).await?);
+                nested.push(build(runtime, child, true, all).await?);
             }
             export.children = Some(nested);
         }

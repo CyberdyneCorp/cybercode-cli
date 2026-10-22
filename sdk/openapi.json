@@ -6097,6 +6097,13 @@
             "items": {
               "$ref": "#/components/schemas/CallState"
             }
+          },
+          "parent_message_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The previous message on this message's branch; null for the first message."
           }
         },
         "required": [
@@ -6271,6 +6278,165 @@
             "description": "Dispatched, and whether its side effects happened is unknown."
           }
         ]
+      },
+      "Data_Array_of_BranchNode": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BranchNode"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "BranchNode": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The nearest user message before this one; null for a first message."
+          },
+          "preview": {
+            "type": "string",
+            "description": "The first line of the message's text, at most 80 characters."
+          },
+          "created_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the message was promoted (ms since the epoch); null for old records."
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "active": {
+            "type": "boolean",
+            "description": "On the active path."
+          },
+          "tip": {
+            "type": "boolean",
+            "description": "The end of a branch: no user message follows it, or the active path ends here."
+          },
+          "descendants": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "User messages below this one, on every branch."
+          }
+        },
+        "required": [
+          "id",
+          "preview",
+          "labels",
+          "active",
+          "tip",
+          "descendants"
+        ],
+        "description": "A user message in the branch tree (`GET .../tree`)."
+      },
+      "BranchCheckout": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "message_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "exact": {
+            "type": "boolean",
+            "description": "Make the message itself the tip instead of the newest tip under it.",
+            "default": false
+          },
+          "code": {
+            "type": "boolean",
+            "description": "Restore the working tree to the snapshot after the tip's last step.",
+            "default": false
+          }
+        },
+        "description": "What to check out: a message ID or a label, and whether to restore code."
+      },
+      "Data_CheckedOutBranch": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CheckedOutBranch"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "CheckedOutBranch": {
+        "type": "object",
+        "properties": {
+          "tip_message_id": {
+            "type": "string"
+          },
+          "code_restored": {
+            "type": "boolean"
+          },
+          "restored_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The files the code restore changed."
+          },
+          "revert": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RevertState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "tip_message_id",
+          "code_restored",
+          "restored_files"
+        ],
+        "description": "The active tip after a checkout and, when code was restored, the staged revert."
+      },
+      "LabelBody": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "message_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_id"
+        ],
+        "description": "`PUT .../labels/:name`: the message the label marks."
       },
       "Data_Message": {
         "type": "object",
@@ -10668,12 +10834,16 @@
           "totals": {
             "$ref": "#/components/schemas/Totals"
           },
+          "branches": {
+            "type": "string",
+            "description": "`active` (the active path) or `all` (every branch, in creation order)."
+          },
           "messages": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Message"
             },
-            "description": "Every message in order, with its parts and, for answers, its tool calls."
+            "description": "The messages in order, with their parts and, for answers, their tool calls; each\n`parent_message_id` links the branch tree."
           },
           "goals": {
             "type": "array",
@@ -10705,6 +10875,7 @@
           "sanitized",
           "session",
           "totals",
+          "branches",
           "messages",
           "goals",
           "workflow_runs"
@@ -16433,7 +16604,7 @@
     "/api/v1/sessions/{sessionID}/messages": {
       "get": {
         "operationId": "v1.message.list",
-        "summary": "List messages",
+        "summary": "List the active path's messages, or every branch's with branches=all",
         "tags": [
           "message"
         ],
@@ -16469,6 +16640,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "branches",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -16481,6 +16660,214 @@
                 }
               }
             }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/tree": {
+      "get": {
+        "operationId": "v1.session.tree",
+        "summary": "The user-message tree of every branch, with the active path and labels",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_BranchNode"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/checkout": {
+      "post": {
+        "operationId": "v1.session.checkout",
+        "summary": "Make another branch active on an idle Session, optionally restoring its code",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_CheckedOutBranch"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BranchCheckout"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/labels/{name}": {
+      "put": {
+        "operationId": "v1.session.label",
+        "summary": "Label a message of the branch tree",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "OK"
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LabelBody"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "v1.session.unlabel",
+        "summary": "Remove a branch label",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "OK"
           },
           "default": {
             "description": "Tagged error",
@@ -19756,7 +20143,7 @@
     "/api/v1/sessions/{sessionID}/export": {
       "get": {
         "operationId": "v1.session.export",
-        "summary": "Export the Session: info, totals, messages with parts and tool calls, Goals and Workflow Run summaries; `include_children=true` nests child Sessions and `sanitize=true` replaces content with `[redacted:<kind>:<n>]` markers",
+        "summary": "Export the Session: info, totals, messages with parts and tool calls, Goals and Workflow Run summaries; `include_children=true` nests child Sessions, `branches=all` exports every branch instead of the active path, and `sanitize=true` replaces content with `[redacted:<kind>:<n>]` markers",
         "tags": [
           "session"
         ],
@@ -19779,6 +20166,14 @@
           },
           {
             "name": "include_children",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "branches",
             "in": "query",
             "required": false,
             "schema": {

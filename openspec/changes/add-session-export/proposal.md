@@ -8,6 +8,7 @@
 - `sanitize=true` replaces text, paths, URLs, tool inputs and outputs and metadata with `[redacted:<kind>:<n>]` markers. Equal values keep equal markers; IDs, statuses, kinds, sources, agents, models, modes, numbers, booleans and the shape of the document are kept.
 - `cyber sessions export` calls the route and writes JSON (default) or Markdown (`--format md`); `md` joins the global `--format` values and other formats are a usage error.
 - The SDK gains `client.sessions.export()` from the OpenAPI operation.
+- `--all-branches` (`branches=all`), which `add-session-branches` gave the earlier JSON-only export, is kept on this command: the document carries `branches` and every message's `parent_message_id`, and `--sanitize` keeps both.
 
 ## Impact
 

@@ -13,9 +13,15 @@ mod auto;
 mod auto_override;
 pub use auto_override::AutoOverrideReceipt;
 pub mod auto_statistics;
+mod branch_nodes;
+pub use branch_nodes::{BranchNode, branch_nodes};
+mod branches;
+pub use branches::{BranchTree, CheckedOut, Labeled, valid_label};
 pub mod browser_evidence;
 mod budget;
 mod bus;
+mod checkout;
+pub use checkout::{BranchCheckout, CheckedOutBranch};
 mod child_ownership;
 mod child_usage;
 pub use browser_evidence::{
@@ -273,6 +279,9 @@ pub enum RuntimeError {
     /// `goals.templates` has no template with this name.
     #[error("GoalTemplateNotFoundError: no goal template {0}")]
     GoalTemplateNotFound(String),
+    /// A message ID or branch label that names nothing in the Session.
+    #[error("MessageNotFoundError: {0}")]
+    MessageNotFound(String),
     /// No active loop of the Session has this ID (`loops-scheduling`).
     #[error("LoopNotFoundError: no active loop {0} in this Session")]
     LoopNotFound(String),
@@ -672,6 +681,9 @@ pub(crate) struct Handle {
     /// The Location lease of the running Drain or idle operation; `enter_worktree`
     /// and `exit_worktree` replace it with one on the new Location.
     pub location_lease: StdMutex<Option<LocationLease>>,
+    /// Compactions summarizing the active path. A drop guard counts them, so a dropped
+    /// compaction (an interrupt, a disconnected client) never leaves the Session fenced.
+    pub compacting: std::sync::atomic::AtomicUsize,
 }
 
 impl Handle {
@@ -694,6 +706,11 @@ impl Handle {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take()
+    }
+
+    /// A compaction in this process is summarizing the active path.
+    pub(crate) fn is_compacting(&self) -> bool {
+        self.compacting.load(std::sync::atomic::Ordering::SeqCst) > 0
     }
 }
 
@@ -2126,7 +2143,8 @@ fn existing_receipt(
         }
         return Err(RuntimeError::PromptConflict(message_id.into()));
     }
-    if state.entries.iter().any(|e| e.id() == message_id) {
+    // A rewound message keeps its ID in the branch tree.
+    if state.branches().contains(message_id) {
         return Err(RuntimeError::PromptConflict(message_id.into()));
     }
     Ok(None)
@@ -2266,6 +2284,7 @@ impl Inner {
             recap: Mutex::new(()),
             config_digest: StdMutex::default(),
             location_lease: StdMutex::default(),
+            compacting: std::sync::atomic::AtomicUsize::new(0),
         });
         let mut sessions = self.sessions.lock().unwrap_or_else(PoisonError::into_inner);
         Ok(Arc::clone(sessions.entry(id.into()).or_insert(handle)))

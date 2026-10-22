@@ -333,6 +333,7 @@ export interface Operations {
       limit?: QueryValue;
       cursor?: QueryValue;
       order?: QueryValue;
+      branches?: QueryValue;
     };
     body: undefined;
     response: S.Page_Message;
@@ -592,6 +593,12 @@ export interface Operations {
     body: undefined;
     response: S.BrowserEvidenceReport;
   };
+  "v1.session.checkout": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: S.BranchCheckout;
+    response: S.CheckedOutBranch;
+  };
   "v1.session.children": {
     path: { id: string };
     query: {
@@ -682,6 +689,7 @@ export interface Operations {
     query: {
       sanitize?: QueryValue;
       include_children?: QueryValue;
+      branches?: QueryValue;
     };
     body: undefined;
     response: S.SessionExport;
@@ -774,6 +782,12 @@ export interface Operations {
     path: { sessionID: string };
     query: Record<string, never>;
     body: undefined;
+    response: void;
+  };
+  "v1.session.label": {
+    path: { sessionID: string; name: string };
+    query: Record<string, never>;
+    body: S.LabelBody;
     response: void;
   };
   "v1.session.list": {
@@ -943,6 +957,18 @@ export interface Operations {
     query: Record<string, never>;
     body: S.SubtaskBody;
     response: S.Job;
+  };
+  "v1.session.tree": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.BranchNode[];
+  };
+  "v1.session.unlabel": {
+    path: { sessionID: string; name: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: void;
   };
   "v1.session.update": {
     path: { sessionID: string };
@@ -1673,7 +1699,7 @@ export const operations = {
     method: "GET",
     path: "/api/v1/sessions/{sessionID}/messages",
     pathParams: ["sessionID"],
-    query: ["limit", "cursor", "order"],
+    query: ["limit", "cursor", "order", "branches"],
     body: "none",
     located: false,
     unwrap: false,
@@ -2147,6 +2173,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.session.checkout": {
+    tag: "session",
+    name: "checkout",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/checkout",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.children": {
     tag: "session",
     name: "children",
@@ -2309,7 +2347,7 @@ export const operations = {
     method: "GET",
     path: "/api/v1/sessions/{sessionID}/export",
     pathParams: ["sessionID"],
-    query: ["sanitize", "include_children"],
+    query: ["sanitize", "include_children", "branches"],
     body: "none",
     located: false,
     unwrap: true,
@@ -2479,6 +2517,18 @@ export const operations = {
     pathParams: ["sessionID"],
     query: [],
     body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.session.label": {
+    tag: "session",
+    name: "label",
+    method: "PUT",
+    path: "/api/v1/sessions/{sessionID}/labels/{name}",
+    pathParams: ["sessionID", "name"],
+    query: [],
+    body: "required",
     located: false,
     unwrap: false,
     stream: false,
@@ -2793,6 +2843,30 @@ export const operations = {
     body: "required",
     located: false,
     unwrap: true,
+    stream: false,
+  },
+  "v1.session.tree": {
+    tag: "session",
+    name: "tree",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/tree",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.unlabel": {
+    tag: "session",
+    name: "unlabel",
+    method: "DELETE",
+    path: "/api/v1/sessions/{sessionID}/labels/{name}",
+    pathParams: ["sessionID", "name"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: false,
     stream: false,
   },
   "v1.session.update": {
@@ -3348,7 +3422,7 @@ export function createGroups(caller: Caller) {
       /** Get a message (`GET /api/v1/sessions/{sessionID}/messages/{messageID}`) */
       get: (sessionID: string, messageID: string, options?: RequestOptions): Promise<Operations["v1.message.get"]["response"]> =>
         caller.call("v1.message.get", { path: { sessionID, messageID } }, options),
-      /** List messages (`GET /api/v1/sessions/{sessionID}/messages`) */
+      /** List the active path's messages, or every branch's with branches=all (`GET /api/v1/sessions/{sessionID}/messages`) */
       list: (sessionID: string, query?: Operations["v1.message.list"]["query"], options?: RequestOptions): Promise<Operations["v1.message.list"]["response"]> =>
         caller.call("v1.message.list", { path: { sessionID }, query }, options),
     },
@@ -3488,6 +3562,9 @@ export function createGroups(caller: Caller) {
       /** Browser verification evidence of the Session, each record marked stale when the workspace changed since (`GET /api/v1/sessions/{sessionID}/browser/evidence`) */
       browserEvidence: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.browserEvidence"]["response"]> =>
         caller.call("v1.session.browserEvidence", { path: { sessionID } }, options),
+      /** Make another branch active on an idle Session, optionally restoring its code (`POST /api/v1/sessions/{sessionID}/checkout`) */
+      checkout: (sessionID: string, body: Operations["v1.session.checkout"]["body"], options?: RequestOptions): Promise<Operations["v1.session.checkout"]["response"]> =>
+        caller.call("v1.session.checkout", { path: { sessionID }, body }, options),
       /** List direct child threads across Locations with observed state (`GET /api/v1/sessions/{id}/children`) */
       children: (id: string, query?: Operations["v1.session.children"]["query"], options?: RequestOptions): Promise<Operations["v1.session.children"]["response"]> =>
         caller.call("v1.session.children", { path: { id }, query }, options),
@@ -3527,7 +3604,7 @@ export function createGroups(caller: Caller) {
       /** Replay durable events, then follow (`GET /api/v1/sessions/{sessionID}/events`) */
       events: (sessionID: string, query?: Operations["v1.session.events"]["query"], options?: StreamOptions): AsyncIterableIterator<S.EventEnvelope> =>
         caller.stream("v1.session.events", { path: { sessionID }, query }, options),
-      /** Export the Session: info, totals, messages with parts and tool calls, Goals and Workflow Run summaries; `include_children=true` nests child Sessions and `sanitize=true` replaces content with `[redacted:<kind>:<n>]` markers (`GET /api/v1/sessions/{sessionID}/export`) */
+      /** Export the Session: info, totals, messages with parts and tool calls, Goals and Workflow Run summaries; `include_children=true` nests child Sessions, `branches=all` exports every branch instead of the active path, and `sanitize=true` replaces content with `[redacted:<kind>:<n>]` markers (`GET /api/v1/sessions/{sessionID}/export`) */
       export: (sessionID: string, query?: Operations["v1.session.export"]["query"], options?: RequestOptions): Promise<Operations["v1.session.export"]["response"]> =>
         caller.call("v1.session.export", { path: { sessionID }, query }, options),
       /** Fork a Session (`POST /api/v1/sessions/{sessionID}/fork`) */
@@ -3572,6 +3649,9 @@ export function createGroups(caller: Caller) {
       /** Interrupt the running Drain (`POST /api/v1/sessions/{sessionID}/interrupt`) */
       interrupt: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.interrupt"]["response"]> =>
         caller.call("v1.session.interrupt", { path: { sessionID } }, options),
+      /** Label a message of the branch tree (`PUT /api/v1/sessions/{sessionID}/labels/{name}`) */
+      label: (sessionID: string, name: string, body: Operations["v1.session.label"]["body"], options?: RequestOptions): Promise<Operations["v1.session.label"]["response"]> =>
+        caller.call("v1.session.label", { path: { sessionID, name }, body }, options),
       /** List root Sessions of a Location, newest first (`GET /api/v1/sessions`) */
       list: (query?: Operations["v1.session.list"]["query"], options?: RequestOptions): Promise<Operations["v1.session.list"]["response"]> =>
         caller.call("v1.session.list", { query }, options),
@@ -3650,6 +3730,12 @@ export function createGroups(caller: Caller) {
       /** Start an explicit named background child or fork the current context (`POST /api/v1/sessions/{sessionID}/subtask`) */
       subtask: (sessionID: string, body: Operations["v1.session.subtask"]["body"], options?: RequestOptions): Promise<Operations["v1.session.subtask"]["response"]> =>
         caller.call("v1.session.subtask", { path: { sessionID }, body }, options),
+      /** The user-message tree of every branch, with the active path and labels (`GET /api/v1/sessions/{sessionID}/tree`) */
+      tree: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.tree"]["response"]> =>
+        caller.call("v1.session.tree", { path: { sessionID } }, options),
+      /** Remove a branch label (`DELETE /api/v1/sessions/{sessionID}/labels/{name}`) */
+      unlabel: (sessionID: string, name: string, options?: RequestOptions): Promise<Operations["v1.session.unlabel"]["response"]> =>
+        caller.call("v1.session.unlabel", { path: { sessionID, name } }, options),
       /** Rename or archive a Session (`PATCH /api/v1/sessions/{sessionID}`) */
       update: (sessionID: string, body: Operations["v1.session.update"]["body"], options?: RequestOptions): Promise<Operations["v1.session.update"]["response"]> =>
         caller.call("v1.session.update", { path: { sessionID }, body }, options),

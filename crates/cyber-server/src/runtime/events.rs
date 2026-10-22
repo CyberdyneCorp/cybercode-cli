@@ -486,6 +486,7 @@ pub fn registry() -> EventRegistry {
                 .map_err(|e| e.to_string())
         })
         .expect("valid messaging override event");
+    super::branches::register(&mut registry);
     super::budget::register(&mut registry);
     super::hooks::register(&mut registry);
     super::jobs::register(&mut registry);

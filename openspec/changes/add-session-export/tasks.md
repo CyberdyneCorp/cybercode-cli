@@ -8,6 +8,7 @@
 
 - [x] 2.1 `cyber sessions export <id> [--sanitize] [--include-children] [--format json|md]`; the Session is named as for `show`; `md` is a global `--format` value.
 - [x] 2.2 Markdown: a heading per Session, messages with tool calls, Goals, Workflow runs, child Sessions one level deeper.
+- [x] 2.3 One `export` command with `add-session-branches`' `--all-branches` (`branches=all` on the route, `branches` and `parent_message_id` kept by `--sanitize`): `exports_the_active_path_or_every_branch` (`crates/cyber-cli/tests/branches_cli.rs`) and the sanitizer unit test.
 
 ## 3. Tests and docs
 

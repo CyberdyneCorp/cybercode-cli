@@ -1,5 +1,6 @@
 //! `cyber sessions` (`cli-commands` → Resource command groups): list, show, rename,
-//! delete and export the Location's Sessions through the background server. A Session is named by
+//! delete and export the Location's Sessions through the background server, and their
+//! branches (`tree`, `checkout`, `label`). A Session is named by
 //! its ID, an exact title or a unique ID prefix; [`resolve`] is shared with
 //! `cyber --resume` and `cyber exec --session`.
 
@@ -43,6 +44,38 @@ pub enum SessionsCmd {
         #[arg(long)]
         yes: bool,
     },
+    /// The Session's user-message tree: `*` marks the active path.
+    Tree {
+        /// ID, exact title or unique ID prefix.
+        session: String,
+    },
+    /// Make another branch active; the Session must be idle.
+    Checkout {
+        /// ID, exact title or unique ID prefix.
+        session: String,
+        /// A message ID, a branch label or a unique message ID prefix; the newest tip
+        /// under it becomes active.
+        message: String,
+        /// Also restore files to the branch's last snapshot, keeping your own edits.
+        #[arg(long)]
+        code: bool,
+        /// Make the message itself the tip; the next prompt branches there.
+        #[arg(long)]
+        exact: bool,
+    },
+    /// Set or remove a branch label.
+    Label {
+        /// ID, exact title or unique ID prefix.
+        session: String,
+        /// The label: letters, digits, `.`, `_` and `-`, at most 48.
+        name: String,
+        /// The message to label (ID, label or unique prefix); the active tip by default.
+        #[arg(long, conflicts_with = "delete")]
+        at: Option<String>,
+        /// Remove the label instead.
+        #[arg(long)]
+        delete: bool,
+    },
     /// Write a Session as JSON (default) or Markdown (--format md): its info, messages,
     /// tool calls, goals and workflow runs.
     Export {
@@ -55,6 +88,9 @@ pub enum SessionsCmd {
         /// Include child Sessions (subagents, workflow agents), recursively.
         #[arg(long)]
         include_children: bool,
+        /// Include every branch; each message's `parent_message_id` links the tree.
+        #[arg(long)]
+        all_branches: bool,
     },
     #[command(external_subcommand)]
     Other(Vec<String>),
@@ -127,17 +163,52 @@ async fn dispatch(client: &Client, cmd: SessionsCmd, global: &GlobalArgs) -> Res
             session,
             sanitize,
             include_children,
+            all_branches,
         } => {
-            let found = resolve(client, &session).await?;
-            let id = found["id"].as_str().unwrap_or_default();
+            let id = session_id(client, &session).await?;
+            let branches = if all_branches { "&branches=all" } else { "" };
             let path = format!(
-                "/sessions/{}/export?sanitize={sanitize}&include_children={include_children}",
-                encode(id)
+                "/sessions/{}/export?sanitize={sanitize}&include_children={include_children}{branches}",
+                encode(&id)
             );
             let export = client.get(&path).await.map_err(api)?;
             export_output(&export["data"], global)
         }
         SessionsCmd::Other(_) => unreachable!("handled before connecting"),
+        branch => dispatch_branch(client, branch, global).await,
+    }
+}
+
+/// The branch commands: `tree`, `checkout` and `label`.
+async fn dispatch_branch(
+    client: &Client,
+    cmd: SessionsCmd,
+    global: &GlobalArgs,
+) -> Result<(), CliError> {
+    match cmd {
+        SessionsCmd::Tree { session } => {
+            let id = session_id(client, &session).await?;
+            super::branches::tree(client, &id, global).await
+        }
+        SessionsCmd::Checkout {
+            session,
+            message,
+            code,
+            exact,
+        } => {
+            let id = session_id(client, &session).await?;
+            super::branches::checkout(client, &id, &message, code, exact, global).await
+        }
+        SessionsCmd::Label {
+            session,
+            name,
+            at,
+            delete,
+        } => {
+            let id = session_id(client, &session).await?;
+            super::branches::label(client, &id, &name, at.as_deref(), delete).await
+        }
+        _ => unreachable!("not a branch command"),
     }
 }
 
@@ -265,8 +336,13 @@ fn export_output(export: &Value, global: &GlobalArgs) -> Result<(), CliError> {
     }
 }
 
+async fn session_id(client: &Client, wanted: &str) -> Result<String, CliError> {
+    let found = resolve(client, wanted).await?;
+    Ok(found["id"].as_str().unwrap_or_default().to_owned())
+}
+
 /// Titles come from models and users; keep them on one line without control characters.
-fn clean(text: &str) -> String {
+pub(super) fn clean(text: &str) -> String {
     text.chars()
         .map(|c| if c.is_whitespace() { ' ' } else { c })
         .filter(|c| !c.is_control())
@@ -291,7 +367,7 @@ fn updated(value: &Value) -> String {
     format!("{age:>4} ago")
 }
 
-fn encode(value: &str) -> String {
+pub(super) fn encode(value: &str) -> String {
     value
         .bytes()
         .map(|b| {
@@ -304,7 +380,7 @@ fn encode(value: &str) -> String {
         .collect()
 }
 
-fn api(e: cyber_client::ClientError) -> CliError {
+pub(super) fn api(e: cyber_client::ClientError) -> CliError {
     match e.tag() {
         Some("InvalidRequestError") => CliError::usage(e.to_string()),
         _ => CliError::runtime(e.to_string()),

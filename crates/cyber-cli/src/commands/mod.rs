@@ -2,6 +2,7 @@
 
 pub mod api;
 pub mod attach;
+mod branches;
 pub mod db;
 pub mod debug;
 pub mod doctor;

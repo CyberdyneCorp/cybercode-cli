@@ -32,7 +32,7 @@ The ChatGPT login file, refresh lock and model cache move into `cyber-llm::subsc
   - `expired_token` and `access_denied` fail the login,
   - `expires_in` (at most 15 minutes) bounds the wait,
   - Ctrl+C stops polling and stores nothing.
-- `<host>` is `github.com`, or the `--enterprise <host>` value. That value must be a bare hostname; it is stored with the login.
+- `<host>` is `github.com`, or the `--enterprise <host>` value. That value must be a bare DNS hostname; it is stored with the login. A name a URL would read as an IPv4 address (`1.2.3.4`, `foo.123`, `a.0x1`) is refused, so `https://<host>` and `https://api.<host>` always form; building them returns an error instead of panicking, so a hand-edited login with such a host fails its request closed.
 - After the device flow, the login immediately mints a Copilot token. A 401/403, or a response without `endpoints.api`, means the account has no Copilot plan: the login fails with `This GitHub account has no active Copilot subscription` and stores nothing.
 
 **Client ID (open question, decided by task 1.1).** Cyber Code should register its own GitHub OAuth App with device flow enabled. GitHub's partner support may only accept known clients at the token-mint endpoint. The task tests a Cyber-registered client against a real Copilot account:
@@ -42,9 +42,13 @@ The ChatGPT login file, refresh lock and model cache move into `cyber-llm::subsc
 
 Either way the client ID is one constant.
 
+Until task 1.1 runs, `copilot::CLIENT_ID` holds the fallback (`Iv1.b507a08c87ecfe98`, the client other harnesses used before the partnership), and `CYBER_COPILOT_CLIENT_ID` overrides it. Task 1.1 replaces the constant if a Cyber-registered client is accepted. This decision is still open.
+
+For tests and proxies, `CYBER_COPILOT_GITHUB_URL` replaces `https://<host>` and `CYBER_COPILOT_API_URL` replaces `https://api.<host>`. Both must be HTTPS, or plain HTTP on loopback. The `endpoints.api` URL a mint returns must also be HTTPS (or loopback HTTP), or the login fails closed.
+
 ### Stored login and token mint
 
-- `<data>/copilot-auth.json` holds `{version, host, github_token, user}`. The GitHub token does not expire unless revoked.
+- `<data>/copilot-auth.json` holds `{version, host, github_token, user}`. The GitHub token does not expire unless revoked. Sandboxed processes run as the same user, so the 0600 mode does not keep them out: the file is registered with the sandbox's hidden credential files (`hide_credential_files`), as `chatgpt-auth.json` now is too, so no sandboxed tool call can read it into a transcript.
 - The Copilot token is kept in memory per process, not in the file. Each process mints its own, so the refresh lock is only needed when another process might write the file. The GitHub token never rotates, so concurrent mints are harmless.
 - A minted token is reused until 5 minutes before its `expires_at`.
 - If minting fails with 401, the GitHub token was revoked: the request fails with `GitHub Copilot login expired or was revoked; run cyber providers login copilot`, and the file is kept.
@@ -59,12 +63,16 @@ Either way the client ID is one constant.
   - tool support from `capabilities.supports.tool_calls`,
   - its protocol (Responses when `supported_endpoints` lists `/responses`, else Chat Completions).
 - Cost is `None` (unpriced). Premium-request multipliers are not modeled as cost.
+- Each cached model also records the `endpoints.api` of the token that listed it. The provider's catalog URL is that endpoint (or `https://api.githubcopilot.com` before any list is cached); every request still goes to the endpoint of the token minted for it. The catalog resolves each model's protocol from the cached list, and a model the list does not name (one added through configuration) uses Chat Completions.
 - The provider (id `copilot`, name `GitHub Copilot (subscription)`) exists only with a stored login, like `chatgpt`. `ApiKind::CopilotChat` is not selectable from configuration.
 
 ### Requests
 
 - Common headers: `Authorization: Bearer <copilot token>`, `Copilot-Integration-Id: vscode-chat`, `Editor-Version: cyber/<version>`, `Editor-Plugin-Version: cyber/<version>`, `Openai-Intent: conversation-edits`, and `X-Initiator`.
 - `X-Initiator` is `user` when the request is the first model call after a promoted user prompt, and `agent` for later steps of the same Turn: tool-result continuations and compaction. This needs the runtime to say which a request is, through a new `LlmRequest::initiator: Option<Initiator>`. Other adapters ignore it.
+- The Turn loop sets `user` when a row the user wrote or scheduled was promoted since the last finished step, and `agent` otherwise. `SessionState::user_input_pending` holds this; it is derived from the durable `promoted` and `step.ended` events, so a replay gives the same answer. A Stop continuation never sets it.
+- Sources that count as the user's: `user` (TUI, HTTP, MCP `prompt`), `mcp_prompt` (an MCP server prompt the user ran as a `/mcp:<server>:<prompt>` slash command: its text is untrusted, but the user asked for it) and `loop` (a `/loop` iteration is a prompt the user scheduled, one premium request each, like typing it again). Every other source is the agent's: `session` (Job and monitor handbacks, cross-Session messages, forked skills, child Sessions spawned by `agent`, workflow agents), `channel` (messages pushed in from an external channel, which nobody typed into this Session), `team`, `workflow`, `hook`, `auto_override` and `shell`. So a chatty monitor or background Job never bills a premium request per line, and a subagent never bills one for its task.
+- Calls a tool or hook makes inside a Turn send `agent`: prompt hook checks, `webfetch` summaries and MCP sampling. Compaction, title generation, recaps and the auto-mode reviewer are bookkeeping, so they send `agent` too; a side question sends `user` on its first call and `agent` after. A request with no initiator is sent as `user`, so nothing is under-counted; the only such call left is commit and PR text generation, which the user asks for explicitly.
 - Requests with images also send `Copilot-Vision-Request: true`.
 - The Responses path reuses the Responses body (with `store: false`). The Chat path reuses the OpenAI-compatible adapter. The Copilot adapter only chooses the protocol, attaches the token and adds the headers.
 

@@ -502,6 +502,10 @@ pub fn help(f: &mut Frame, app: &App, area: Rect) {
             "work until the condition is met; /goal add, pause, resume, skip, clear, edit",
         ),
         (
+            "/tree · /label <name>",
+            "branches: check one out (c restores code, l labels); /label --clear <name>",
+        ),
+        (
             "/loop [5m] <prompt>",
             "repeat a prompt every interval, or self-paced; /loop list, /loop stop",
         ),

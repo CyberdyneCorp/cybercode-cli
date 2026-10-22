@@ -630,6 +630,7 @@ async fn max_agents_over_http_rejects_the_next_agent_and_ends_budget_exceeded() 
 }
 
 /// The goal evaluator (its system prompt judges goals) always says met; agents answer.
+#[cfg(unix)]
 fn goal_reply(body: &Value) -> Value {
     let judging = body["messages"].as_array().into_iter().flatten().any(|m| {
         m["role"] == "system"
@@ -646,7 +647,8 @@ fn goal_reply(body: &Value) -> Value {
 /// `goals` → Goals on workflow agents and subagents: `agent(..., {goal})` keeps the child
 /// working until its check passes: the first `met` fails the check and continues, the
 /// second holds; the result carries `goal_status`, and the goal's budget is capped by
-/// what the run has left.
+/// what the run has left. The check is a POSIX shell command.
+#[cfg(unix)]
 #[tokio::test]
 async fn workflow_agent_with_goal_runs_until_check_passes() {
     let model = ScriptedModel::start(goal_reply);

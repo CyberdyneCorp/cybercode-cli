@@ -4,7 +4,7 @@ A model-independent, local-first coding agent: a durable server owns your sessio
 
 ## Why Cyber Code
 
-- **Any model, no account.** OpenAI, Anthropic or any OpenAI-compatible endpoint, including a local model server. No Cyber account; hosted models need their own provider credentials. A ChatGPT Plus/Pro plan can pay for OpenAI models instead of an API key (`cyber providers login chatgpt`). The full local-model baseline is still open ([evaluation guide](eval/README.md)).
+- **Any model, no account.** OpenAI, Anthropic or any OpenAI-compatible endpoint, including a local model server. No Cyber account; hosted models need their own provider credentials. A ChatGPT Plus/Pro plan can pay for OpenAI models instead of an API key (`cyber providers login chatgpt`), and a GitHub Copilot plan for the OpenAI, Anthropic and Google models it serves (`cyber providers login copilot`). The full local-model baseline is still open ([evaluation guide](eval/README.md)).
 - **A server that survives a crash.** Prompts are persisted before they run, and execution state lives in SQLite. A restarted server recovers interrupted Sessions, and the TUI, SDK and MCP clients share the same Sessions.
 - **Workflows that resume after `kill -9`.** Claude Code also has [script-driven workflows][C7] with `agent()`/`parallel()`/`pipeline()`. Cyber's differences: runs execute in the background server rather than inside a CLI process; after a server crash they replay durably (`cyber workflows resume --interrupted`); several runs share agent slots fairly with a run queue; and each run has budgets and model tiers that can point at any provider ([details](docs/local-core-guide.md#workflows-p2-m21)).
 - **Other agents can drive whole Sessions.** `cyber mcp serve` lets Claude Code, Codex or another MCP client create, prompt, wait on and interrupt Cyber Sessions, with idempotent receipts and a Mode ceiling. All 10 tools ship, including listing, sending and reading cross-session messages. `claude mcp serve` [exposes Claude Code's tools][C4], and Codex [removed its MCP server][X5]. Partial: unattended approval rules and the recursion-depth markers for hook and PTY processes remain.
@@ -35,7 +35,7 @@ Requires **Rust 1.89+**. SQLite is bundled. On Linux, install **bubblewrap** for
 
 ```bash
 cargo build --locked -p cyber-cli
-export OPENAI_API_KEY="your-key"                  # or use your ChatGPT plan, below
+export OPENAI_API_KEY="your-key"                  # or use your ChatGPT or Copilot plan, below
 
 ./target/debug/cyber                              # terminal UI
 ./target/debug/cyber exec "fix the failing test"  # one task
@@ -63,6 +63,20 @@ A ChatGPT Plus or Pro plan can pay for OpenAI models instead of an API key, in t
 In the TUI, `/login openai` signs in from a dialog. It shows the URL to open, or takes the redirect URL you paste. The plan's models are usable at once, without restarting the server. `/logout openai` signs out. Google (Gemini) subscription logins are not supported.
 
 Usage counts against your plan's limits. The login is kept in `~/.local/share/cyber/chatgpt-auth.json` (mode 0600), separate from Codex's, and the token is renewed before it expires. The model list comes from your account and is refreshed daily. macOS and Linux only for now. Details: [ChatGPT subscription](docs/local-core-guide.md#signing-in-with-a-chatgpt-subscription).
+
+### Use your GitHub Copilot subscription
+
+A Copilot Pro, Pro+, Business or Enterprise plan can pay for the OpenAI, Anthropic and Google models it serves. GitHub supports Copilot plans in third-party agents. The sign-in is GitHub's device flow, so it works over SSH too:
+
+```bash
+./target/debug/cyber providers login copilot                              # prints a URL and a code to enter there
+./target/debug/cyber providers login copilot --enterprise octo.ghe.com    # a GitHub Enterprise (data residency) host
+./target/debug/cyber models copilot                                       # the models your plan serves, e.g. copilot/claude-sonnet-4.5
+./target/debug/cyber exec -m copilot/claude-sonnet-4.5 "fix the failing test"
+./target/debug/cyber providers logout copilot
+```
+
+Each prompt counts as one premium request: the tool-loop steps after it, hook checks, page summaries, subagents, background handbacks, compaction and titles are sent as the agent's, as in Copilot's own agent mode. The GitHub login is kept in `~/.local/share/cyber/copilot-auth.json` (mode 0600). The short-lived Copilot token is minted from it, kept in memory only and renewed before it expires. The model list comes from your account and is refreshed daily. macOS and Linux only for now. Not yet checked against a live Copilot account: it is tested against a local fake GitHub, and the OAuth client ID is provisional. Details: [GitHub Copilot subscription](docs/local-core-guide.md#signing-in-with-a-github-copilot-subscription).
 
 ### Permission modes
 
@@ -164,6 +178,19 @@ claude mcp add cyber -- cyber mcp serve --client claude-code
 
 Use `--model provider/model` to select a model. Remote MCP servers that need OAuth are signed in explicitly with `cyber mcp auth <server>`; `cyber` never opens a browser on its own. See the [local core guide](docs/local-core-guide.md) for configuration, [MCP serve](docs/local-core-guide.md#mcp-serve-partial-p1) for Codex and HTTP setup, and [remote MCP OAuth](docs/local-core-guide.md#remote-mcp-oauth).
 
+### Branching a Session
+
+A rewind keeps the attempt you abandoned. The Session's messages form a tree, and only the active path is sent to the model. Switch back to an earlier attempt, and optionally restore its files (your own edits are kept, and `POST /sessions/{id}/revert/clear` undoes the restore):
+
+```bash
+./target/debug/cyber sessions tree <session>                         # ASCII tree; * active path, o inactive
+./target/debug/cyber sessions label <session> attempt-two --at msg_01J…   # name a message (default: the active tip)
+./target/debug/cyber sessions checkout <session> attempt-two --code  # make it active and restore its code
+./target/debug/cyber sessions export <session> --all-branches        # JSON with every branch
+```
+
+In the TUI, `/tree` opens the same tree (Enter checks out, `c` restores code, `l` labels) and `/label <name>` labels the active tip. A checkout is refused with `SessionBusyError` while a Turn or background Job runs. Details: [Session branches](docs/local-core-guide.md#session-branches).
+
 ### Sessions talking to each other
 
 Sessions on the same server can message each other. An agent gets three tools: `list_sessions` shows the Sessions it can reach, `send_message { to, text }` sends one plain-text message (up to 16 KiB) to a Session by its title, subagent name or `ses_` ID, and `watch_session` (or `send_message` with `notify_when_idle`) sends it one notice when the target next goes idle. A message to an idle Session starts a Turn there; a busy Session reads it at its next Safe Boundary. The target sees it as an untrusted `<cross_session_message>` block, never as instructions, and keeps its own permissions, Mode and sandbox, so a message cannot launder an action the target is not allowed to take. Replies are just another `send_message`.
@@ -222,7 +249,7 @@ In the TUI, a message from another machine reads `from review@laptop`, its held 
 | Area | Today | Details |
 |---|---|---|
 | Coding | Read/search, edit files and notebook cells, run commands, web tools | [Features](docs/features.md) |
-| Sessions | Durable admission, streaming, interrupt/resume, crash recovery, compaction; named Sessions (`/rename`, `cyber sessions rename`) resumed by title; `cyber sessions export` as JSON or Markdown, with children and `--sanitize` | [Naming and resuming](docs/local-core-guide.md#naming-and-resuming-sessions) |
+| Sessions | Durable admission, streaming, interrupt/resume, crash recovery, compaction; named Sessions (`/rename`, `cyber sessions rename`) resumed by title; branches: a rewind keeps the abandoned attempt, `/tree`, `/label` and `cyber sessions tree\|checkout\|label` switch between attempts, optionally restoring their code; `cyber sessions export` as JSON or Markdown, with children, every branch and `--sanitize` | [Naming and resuming](docs/local-core-guide.md#naming-and-resuming-sessions), [branches](docs/local-core-guide.md#session-branches) |
 | Safety | Workspace trust, permission rules, protected paths, credential masking, macOS/Linux sandbox | Windows enforcement partial |
 | Recovery | Shadow-git snapshots, restore preserving user edits, backup and retention | Broader rewind UI pending |
 | Multiple agents | Subagents as child Sessions (`agent` tool, `/subtask`, background, isolated worktrees, `/agent`, `/tasks`); custom agent profiles with their own model, tools and skills; workflows fanning out many agents; several workflow runs at once; other agents driving Sessions over `cyber mcp serve`; Sessions messaging each other on one server and across your machines (`send_message`, `watch_session`, `cyber messages`, `/messages`, `cyber peers`, `cyber attach <session>@<peer>`); agent teams with a shared task board (`/team`, `cyber teams`, behind `teams`) | Subagents partial; agent teams experimental, behind the `teams` feature (off by default); the Relay transport not yet |
@@ -245,7 +272,7 @@ Checked **2026-10-17** against each product's official docs. This compares docum
 | Feature | Cyber Code | Claude Code | Codex CLI | OpenCode |
 |---|---|---|---|---|
 | Edit files and run commands | Yes | Yes [C1] | Yes [X1] | Yes [O1] |
-| Model providers | OpenAI (API key or ChatGPT plan), Anthropic, OpenAI-compatible | Claude via Anthropic, Bedrock, Vertex, Foundry [C2] | OpenAI and custom providers [X2] | 75+ providers [O2] |
+| Model providers | OpenAI (API key or ChatGPT plan), Anthropic, GitHub Copilot plan, OpenAI-compatible | Claude via Anthropic, Bedrock, Vertex, Foundry [C2] | OpenAI and custom providers [X2] | 75+ providers [O2] |
 | Local models | Compatible endpoint; full baseline pending | Not established | Ollama / LM Studio via `--oss` [X2] | Ollama, LM Studio, llama.cpp [O2] |
 | Terminal UI | Yes | Yes [C1] | Yes [X1] | Yes [O1] |
 | Headless / exec | `cyber exec` | `claude -p` [C3] | `codex exec` [X3] | `opencode run` [O3] |
