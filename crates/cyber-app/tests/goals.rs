@@ -138,6 +138,138 @@ async fn http_errors_follow_the_goal_contract() {
     );
 }
 
+/// The JSON a hook wrote to `path`, once it is complete.
+async fn written(path: &std::path::Path) -> Value {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        if let Ok(text) = std::fs::read_to_string(path)
+            && let Ok(value) = serde_json::from_str(&text)
+        {
+            return value;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{} never written",
+            path.display()
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// `goals` → Goal events: `GoalEvaluated` gets `{goal, verdict, reason}` and
+/// `GoalCompleted` the Goal JSON on stdin; both are observational command hooks.
+#[tokio::test]
+async fn goal_completed_hook_receives_goal_json() {
+    let hook =
+        |file: &str| json!([{"hooks": [{"type": "command", "command": format!("cat > {file}")}]}]);
+    let app = ModeApp::start(Setup {
+        reply: Some(reply),
+        config: json!({"hooks": {"GoalEvaluated": hook("evaluated.json"),
+            "GoalCompleted": hook("completed.json")}}),
+        ..Setup::default()
+    })
+    .await;
+    let id = session(&app).await;
+    let (status, body) = app
+        .send(
+            "POST",
+            &format!("/sessions/{id}/goals"),
+            Some(json!({"condition": "the hooks fire", "check": "true"})),
+        )
+        .await;
+    assert_eq!(status, 201, "{body}");
+    let goal_id = body["data"]["goal_id"].clone();
+    wait_goals(&app, &id, |g| g["current"].is_null()).await;
+    let evaluated = written(&app.repo.join("evaluated.json")).await;
+    assert_eq!(evaluated["verdict"], "met", "{evaluated}");
+    assert_eq!(evaluated["reason"], "the evidence shows it");
+    assert_eq!(evaluated["goal"]["goal_id"], goal_id);
+    // The Goal lives on the Session stream, which a Session export carries whole.
+    let kinds: Vec<String> = app.events(&id).into_iter().map(|e| e.kind).collect();
+    for kind in [
+        "session.goal.set.1",
+        "session.goal.activated.1",
+        "session.goal.evaluated.1",
+        "session.goal.completed.1",
+    ] {
+        assert!(kinds.iter().any(|k| k == kind), "{kind} in {kinds:?}");
+    }
+    let completed = written(&app.repo.join("completed.json")).await;
+    assert_eq!(completed["goal"]["goal_id"], goal_id, "{completed}");
+    assert_eq!(completed["goal"]["status"], "met");
+    assert_eq!(completed["goal"]["condition"], "the hooks fire");
+    assert_eq!(completed["goal"]["check"], "true");
+}
+
+/// 0 before the restart, 1 after.
+static PHASE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Before the restart the evaluator says not met, with a reason that holds the
+/// continuation Turn at a gate; after it, met.
+fn restart_reply(body: &Value) -> Value {
+    let judging = body.to_string().contains("judge whether a coding agent");
+    match (judging, PHASE.load(std::sync::atomic::Ordering::SeqCst)) {
+        (true, 0) => json!({"content": json!({"verdict": "not_met",
+            "reason": "the report is missing GATE<<hold>>"}).to_string()}),
+        (true, _) => json!({"content": json!({"verdict": "met",
+            "reason": "the report exists"}).to_string()}),
+        (false, _) => prompted_call(body),
+    }
+}
+
+/// `goals` → Goals survive resume and restart, on a real App restart: the server stops
+/// mid-goal (a continuation Turn in flight); the rebuilt App evaluates the active Goal
+/// once on its last Turn and, the verdict being met, completes it without running
+/// another work Turn.
+#[tokio::test]
+async fn restart_mid_goal_evaluates_before_continuing() {
+    let temp = tempfile::tempdir().unwrap();
+    let setup = || Setup {
+        database: Some(temp.path().join("cyber.db")),
+        reply: Some(restart_reply),
+        ..Setup::default()
+    };
+    let app = ModeApp::start(setup()).await;
+    let id = session(&app).await;
+    let (status, body) = app
+        .send(
+            "POST",
+            &format!("/sessions/{id}/goals"),
+            Some(json!({"condition": "the report exists"})),
+        )
+        .await;
+    assert_eq!(status, 201, "{body}");
+    let goal_id = body["data"]["goal_id"].as_str().unwrap().to_owned();
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while app.model.held() != ["hold"] {
+        assert!(std::time::Instant::now() < deadline, "never held");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    PHASE.store(1, std::sync::atomic::Ordering::SeqCst);
+    let before = app.model.requests().len();
+
+    let app = app.restart(setup()).await;
+    app.model.open_gate();
+    let done = wait_goals(&app, &id, |g| g["current"].is_null()).await;
+    let goal = &done["ended"][0];
+    assert_eq!(
+        (&goal["goal_id"], &goal["status"]),
+        (&json!(goal_id), &json!("met"))
+    );
+    let evaluations = goal["evaluations"].as_array().unwrap();
+    assert_eq!(evaluations.len(), 2, "{goal}");
+    assert_eq!(evaluations[1]["reason"], "the report exists");
+    let after: Vec<String> = app.model.requests()[before..]
+        .iter()
+        .map(Value::to_string)
+        .filter(|r| !r.contains("judge whether a coding agent"))
+        .collect();
+    assert!(
+        after.is_empty(),
+        "no work Turn ran after the restart: {after:?}"
+    );
+}
+
 /// `goals` → Goal templates: `POST .../goals` with `template` substitutes `$ARGUMENTS`
 /// and takes the template's check; an unknown template is `GoalTemplateNotFoundError`.
 #[tokio::test]

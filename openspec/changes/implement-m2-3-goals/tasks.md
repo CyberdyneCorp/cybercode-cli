@@ -73,9 +73,9 @@ Implementation deltas are recorded in `specs/goals/spec.md`:
 ## 6. Durability, hooks and notifications
 
 - [x] 6.1 On replay or resume, an active goal is marked for evaluation. The first pass evaluates once before continuing, and an evaluation-only pass runs when no Drain is running.
-- [ ] 6.2 `GoalEvaluated` and `GoalCompleted` hook producers (observational, JSON on stdin).
+- [x] 6.2 `GoalEvaluated` and `GoalCompleted` hook producers (observational, JSON on stdin).
 - [x] 6.3 Completion, pause and budget notices through the notify path (TUI toast, desktop notification, event).
-- [ ] 6.4 Tests: `restart_mid_goal_evaluates_before_continuing` (a real server restart), `goal_completed_hook_receives_goal_json`, and Session export including goals.
+- [x] 6.4 Tests: `restart_mid_goal_evaluates_before_continuing` (a real server restart), `goal_completed_hook_receives_goal_json`, and Session export including goals.
 
 ## 7. TUI
 
