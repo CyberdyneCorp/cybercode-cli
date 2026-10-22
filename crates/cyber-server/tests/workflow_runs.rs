@@ -2309,11 +2309,12 @@ async fn stopping_a_run_whose_agents_are_slow_to_exit_does_not_block_another_run
     })
     .await;
 
+    // Waiting for A would take most of STALL; half of it leaves room for a slow runner.
     let asked = std::time::Instant::now();
     let paused = f.runtime.pause_workflow_run(&b.id).await.unwrap();
     assert_eq!(paused.status, WorkflowRunStatus::Paused);
     assert!(
-        asked.elapsed() < Duration::from_millis(100),
+        asked.elapsed() < STALL / 2,
         "B's pause waited {:?}",
         asked.elapsed()
     );
@@ -2327,7 +2328,7 @@ async fn stopping_a_run_whose_agents_are_slow_to_exit_does_not_block_another_run
     })
     .await;
     assert!(
-        opened.elapsed() < Duration::from_millis(100),
+        opened.elapsed() < STALL / 2,
         "B's end waited {:?}",
         opened.elapsed()
     );
