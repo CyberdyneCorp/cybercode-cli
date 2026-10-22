@@ -309,6 +309,9 @@ impl App {
         // Watches on peer Sessions ask those peers every 15 s (`cross-session-messaging`
         // → Peer watches and listing).
         runtime.spawn_remote_watch_poller();
+        // Active Goals of Sessions a stopped server left are evaluated once on their last
+        // Turn before continuing (`goals` → Goals survive resume and restart).
+        runtime.spawn_goal_recovery();
         // Index usage stored before the usage ledger existed (resumable, in batches).
         runtime.spawn_usage_backfill();
         let config_for_app = Arc::clone(&config);
@@ -353,6 +356,7 @@ impl App {
                     "fs",
                     "command",
                     "event",
+                    "goals",
                 ]
                 .map(str::to_string)
                 .to_vec(),

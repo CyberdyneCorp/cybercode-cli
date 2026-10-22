@@ -55,6 +55,7 @@ pub use hooks::{
     HookExecution, HookExecutionIo, HookExecutionRecord, HookExecutionResult, HookExecutionStatus,
     hook_execution_page, hook_last_run,
 };
+pub mod goals;
 mod handoff;
 mod host;
 pub mod instructions;
@@ -265,6 +266,15 @@ pub enum RuntimeError {
         reason: &'static str,
         message: String,
     },
+    /// No live Goal of the Session has this ID, or none is in the needed state (`goals`).
+    #[error("GoalNotFoundError: no {0} goal in this Session")]
+    GoalNotFound(String),
+    /// The pending queue already holds `goals.max_queue` Goals.
+    #[error("GoalQueueFullError: the goal queue is full ({0})")]
+    GoalQueueFull(u64),
+    /// An empty or over-long condition.
+    #[error("GoalConditionTooLongError: {0}")]
+    GoalCondition(String),
     /// A message ID or branch label that names nothing in the Session.
     #[error("MessageNotFoundError: {0}")]
     MessageNotFound(String),

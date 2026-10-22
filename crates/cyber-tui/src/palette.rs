@@ -87,6 +87,12 @@ const BUILTINS: &[(&str, &str, Option<&str>, bool)] = &[
         true,
     ),
     (
+        "goal",
+        "keep working until a condition is met; add, pause, resume, skip, clear",
+        None,
+        true,
+    ),
+    (
         "login",
         "sign in to a subscription (openai: ChatGPT Plus/Pro)",
         None,

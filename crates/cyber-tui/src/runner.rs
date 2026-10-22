@@ -521,6 +521,7 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
             requests,
             messages,
             loops,
+            goals,
             branches,
         } => {
             refresh.in_flight = false;
@@ -533,6 +534,7 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
             app.queued = queued;
             app.messaging.set_records(messages);
             app.loops.replace(loops);
+            app.goals.replace(goals);
             app.branches.set(branches);
             app.requests = requests;
             app.sync_overlay();
@@ -598,6 +600,10 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
             session_id,
             choices,
         } => app.loops_listed(&session_id, choices),
+        Msg::Goals {
+            session_id,
+            choices,
+        } => app.goals_listed(&session_id, choices),
         Msg::Children { session_id, result } => {
             if session_id == app.session.id {
                 match result {
@@ -1259,6 +1265,7 @@ mod mode_tests {
                 messages: None,
                 requests: Vec::new(),
                 loops: None,
+                goals: None,
                 branches: Vec::new(),
             };
             assert_eq!(
@@ -1293,6 +1300,7 @@ mod mode_tests {
             messages: None,
             requests: Vec::new(),
             loops: None,
+            goals: None,
             branches: Vec::new(),
         };
         let actions = apply(&mut app, Ok(snapshot), &mut Refresh::default());

@@ -41,6 +41,8 @@ pub enum Msg {
         messages: Option<Vec<crate::messaging::Record>>,
         /// The Session's loops, read only when the transcript holds loop iterations.
         loops: Option<Vec<Value>>,
+        /// The Session's Goals, read only when the transcript holds goal prompts.
+        goals: Option<Value>,
         /// The Session's branch tree, for the header's branch tag.
         branches: Vec<crate::branches::Node>,
     },
@@ -115,6 +117,11 @@ pub enum Msg {
     Login(crate::login::LoginReply),
     /// `/loop list` rows of `session_id`.
     Loops {
+        session_id: String,
+        choices: Vec<Choice>,
+    },
+    /// `/goal` rows of `session_id`.
+    Goals {
         session_id: String,
         choices: Vec<Choice>,
     },
@@ -245,6 +252,18 @@ pub async fn snapshot(client: &Client, id: &str) -> Result<Msg, String> {
     } else {
         None
     };
+    let goals = if items
+        .iter()
+        .any(|item| matches!(item, Item::User { text, .. } if crate::goals::mentioned(text)))
+    {
+        client
+            .get(&format!("/sessions/{id}/goals"))
+            .await
+            .ok()
+            .map(|view| view["data"].clone())
+    } else {
+        None
+    };
     let branches = crate::branches::load(client, id).await?;
     Ok(Msg::Snapshot {
         session,
@@ -253,6 +272,7 @@ pub async fn snapshot(client: &Client, id: &str) -> Result<Msg, String> {
         requests,
         messages,
         loops,
+        goals,
         branches,
     })
 }
@@ -832,6 +852,7 @@ pub async fn perform_owned(
         | Action::LoadAgents
         | Action::FindFiles(_) => load_choices(client, session, action).await,
         Action::Loop(_)
+        | Action::Goal(_)
         | Action::Workflow(_)
         | Action::Team(_)
         | Action::Branch(_)
@@ -847,13 +868,14 @@ pub async fn perform_owned(
     }
 }
 
-/// Requests their own modules run: `/loop`, Workflow Runs, `/team` and `/login`; and the
-/// branch tree (`/tree`, `/label`).
+/// Requests their own modules run: `/loop`, `/goal`, Workflow Runs, `/team` and `/login`;
+/// and the branch tree (`/tree`, `/label`).
 async fn scheduled(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
     match action {
         Action::Branch(request) => crate::branches::perform(client, session, request).await,
         Action::Loop(request) => crate::loops::perform(client, request).await,
         Action::Team(request) => crate::team::perform(client, session, request).await,
+        Action::Goal(request) => crate::goals::perform(client, request).await,
         Action::Login(request) => crate::login::perform(client, request).await,
         Action::Workflow(request) => Ok(Msg::Workflow(
             crate::workflows::perform(client, request).await,

@@ -1587,7 +1587,9 @@ cyber exec [OPTIONS] [PROMPT]...
 - `--accept-messages`: Let other Sessions message the Session this run creates (by default it refuses them with `non_interactive`)
 - `--command <COMMAND>`: Run a skill or custom command with the prompt as its arguments.
 - `--file <FILES>`: Attach a file (repeatable)
-- `--max-turns <MAX_TURNS>`
+- `--max-turns <MAX_TURNS>`: With --goal: each Goal's `max_turns` budget; otherwise the Session's step ceiling.
+- `--goal <CONDITION>`: Work until this Goal is met (repeatable: a queue, in order). The exit code is 0 met, 3 impossible, 4 budget exceeded, 1 otherwise, for the first non-met Goal.
+- `--goal-check <COMMAND>`: A command that must pass for the --goal before it to count as met.
 - `--max-tokens <MAX_TOKENS>`
 - `--max-cost <MAX_COST>`: Stop after this cost in USD.
 - `--timeout <TIMEOUT>`: Stop after this long, e.g. 30m, 90s.

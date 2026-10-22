@@ -2,6 +2,7 @@
 
 mod background;
 mod delegation;
+pub(crate) mod goals;
 pub(crate) mod report;
 pub(crate) mod setup;
 
@@ -85,8 +86,19 @@ pub struct ExecArgs {
     /// Attach a file (repeatable).
     #[arg(long = "file")]
     pub files: Vec<PathBuf>,
+    /// With --goal: each Goal's `max_turns` budget; otherwise the Session's step ceiling.
     #[arg(long)]
     pub max_turns: Option<u32>,
+    /// Work until this Goal is met (repeatable: a queue, in order). The exit code is 0
+    /// met, 3 impossible, 4 budget exceeded, 1 otherwise, for the first non-met Goal.
+    #[arg(long = "goal", value_name = "CONDITION")]
+    pub goal: Vec<String>,
+    /// A command that must pass for the --goal before it to count as met.
+    #[arg(long = "goal-check", value_name = "COMMAND")]
+    pub goal_check: Vec<String>,
+    /// The Goals with their checks, paired from the raw arguments (filled by `run`).
+    #[arg(skip)]
+    pub goals: Vec<goals::GoalArg>,
     #[arg(long)]
     pub max_tokens: Option<u64>,
     /// Stop after this cost in USD.
@@ -128,9 +140,23 @@ pub const EXIT_BUDGET: u8 = 4;
 pub const EXIT_DENIED: u8 = 5;
 pub const EXIT_INTERRUPTED: u8 = 130;
 
-pub fn run(args: ExecArgs, ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
-    let prompt = setup::prompt(&args.prompt)?;
-    if prompt.is_empty() && args.command.is_none() {
+pub fn run(mut args: ExecArgs, ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
+    if !args.goal.is_empty() {
+        args.goals = goals::pair(std::env::args().skip(1))?;
+        if args.goals.len() != args.goal.len() || args.goal_check.len() > args.goal.len() {
+            return Err(CliError::usage(
+                "pass --goal-check right after the --goal it checks",
+            ));
+        }
+    } else if !args.goal_check.is_empty() {
+        return Err(CliError::usage("--goal-check needs a --goal before it"));
+    }
+    let prompt = if args.goals.is_empty() {
+        setup::prompt(&args.prompt)?
+    } else {
+        args.prompt.join(" ")
+    };
+    if prompt.is_empty() && args.command.is_none() && args.goals.is_empty() {
         return Err(
             CliError::usage("no prompt: pass one as arguments or on stdin")
                 .with_hint("cyber exec \"fix the failing tests\""),
@@ -241,9 +267,8 @@ async fn execute_session(
         );
     let id = session["id"].as_str().unwrap_or_default();
     let mut owned = Owned::capture(client, id).await?;
-    let (path, body) = setup::request(id, args, prompt)?;
-    let message = match client.post(&path, body).await {
-        Ok(receipt) => receipt["data"]["message_id"].as_str().map(str::to_string),
+    let (message, goal_ids) = match goals::submit(client, id, args, prompt).await? {
+        Ok(sent) => sent,
         Err(error) => return out.refused(error, &run, args, session),
     };
     if let (Some(_), Some(message)) = (&args.command, &message) {
@@ -255,8 +280,10 @@ async fn execute_session(
         run: &mut run,
         out: &mut out,
         owned: &mut owned,
+        goals: !goal_ids.is_empty(),
     };
     follow.run(&mut events, timeout).await;
+    goals::settle(client, id, &goal_ids, &mut run).await;
     if out.is_review() {
         match owned.fork_job(client).await {
             Ok(job) => out.review_job(owned.fork_id(), job),
@@ -288,6 +315,8 @@ struct Follow<'a> {
     run: &'a mut Run,
     out: &'a mut Out,
     owned: &'a mut Owned,
+    /// `--goal`: idle is final only once no Goal is active.
+    goals: bool,
 }
 
 impl Follow<'_> {
@@ -351,6 +380,15 @@ impl Follow<'_> {
             self.owned.stop(self.client, self.run).await;
         }
         match self.owned.settle(self.client, stopping).await {
+            Ok(Settle::Done) if self.goals && !stopping => {
+                match goals::unfinished(self.client, self.id).await {
+                    Ok(unfinished) => !unfinished,
+                    Err(error) => {
+                        self.run.error = Some(error.message);
+                        true
+                    }
+                }
+            }
             Ok(Settle::Done) => true,
             Ok(Settle::Wait) => false,
             Err(error) => {

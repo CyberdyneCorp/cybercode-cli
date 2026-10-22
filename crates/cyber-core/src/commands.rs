@@ -215,6 +215,10 @@ pub const BUILTIN: &[(&str, &str)] = &[
         "Repeat a prompt on an interval or self-paced; /loop list, /loop stop",
     ),
     (
+        "goal",
+        "Work until a condition is met; /goal add, pause, resume, skip, clear, edit",
+    ),
+    (
         "btw",
         "Ask a side question; the answer is not added to the Session",
     ),

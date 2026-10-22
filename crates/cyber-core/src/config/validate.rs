@@ -114,54 +114,32 @@ pub fn validate(
 
 /// Errors of every typed settings section of the merged document.
 fn settings_issues(value: &Value) -> Vec<String> {
-    let mut issues = Vec::new();
-    if let Err(error) = crate::worktrees::Settings::from_config(value) {
-        issues.push(error);
-    }
-    if let Err(error) = super::AutoModeSettings::from_config(value) {
-        issues.push(error);
-    }
-    if let Err(error) = crate::memory::MemorySettings::from_config(
+    let memory = crate::memory::MemorySettings::from_config(
         value,
         &std::collections::HashMap::<String, String>::new(),
-    ) {
-        issues.push(error.to_string());
-    }
-    if let Err(error) = super::LspSettings::from_config(value) {
-        issues.push(error);
-    }
-    if let Err(error) = super::FormatterSettings::from_config(value) {
-        issues.push(error);
-    }
+    )
+    .err()
+    .map(|error| error.to_string());
+    let sections = [
+        crate::worktrees::Settings::from_config(value).err(),
+        super::AutoModeSettings::from_config(value).err(),
+        memory,
+        super::LspSettings::from_config(value).err(),
+        super::FormatterSettings::from_config(value).err(),
+        crate::goals::GoalSettings::from_config(value).err(),
+        super::DeferredToolSettings::from_config(value).err(),
+        super::McpSettings::from_config(value).err(),
+        super::HookSettings::from_config(value).err(),
+        super::McpServeSettings::from_config(value).err(),
+        super::WorkflowSettings::from_config(value).err(),
+        super::MessagingSettings::from_config(value).err(),
+        super::PeersSettings::from_config(value).err(),
+        super::GitSettings::from_config(value).err(),
+        crate::browser::BrowserSettings::from_config(value).err(),
+    ];
+    let mut issues: Vec<String> = sections.into_iter().flatten().collect();
     issues.extend(crate::budget::validate_config(value));
     issues.extend(team_issues(value));
-    if let Err(error) = super::DeferredToolSettings::from_config(value) {
-        issues.push(error);
-    }
-    if let Err(error) = super::McpSettings::from_config(value) {
-        issues.push(error);
-    }
-    if let Err(error) = super::HookSettings::from_config(value) {
-        issues.push(error);
-    }
-    if let Err(error) = super::McpServeSettings::from_config(value) {
-        issues.push(error);
-    }
-    if let Err(error) = super::WorkflowSettings::from_config(value) {
-        issues.push(error);
-    }
-    if let Err(error) = super::MessagingSettings::from_config(value) {
-        issues.push(error);
-    }
-    if let Err(error) = super::PeersSettings::from_config(value) {
-        issues.push(error);
-    }
-    if let Err(error) = super::GitSettings::from_config(value) {
-        issues.push(error);
-    }
-    if let Err(error) = crate::browser::BrowserSettings::from_config(value) {
-        issues.push(error);
-    }
     issues
 }
 

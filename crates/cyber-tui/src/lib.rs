@@ -8,6 +8,7 @@ mod children;
 mod composer;
 mod explorer;
 mod fuzzy;
+mod goals;
 mod highlight;
 mod hook_definitions;
 mod hooks;
