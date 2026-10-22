@@ -1,17 +1,17 @@
-## Slice 1 status (PR "Add Session goals")
+## Status
 
-Slice 1 delivers sections 2–8 except where noted below. Slice 2 covers section 9 and the open items:
+Slice 1 (PR "Add Session goals") delivered sections 2–8 apart from the items below; slice 2 delivered them and section 9:
 
-- 3.1: use-template.
-- 3.4: the model-facing `goal` tool. User routes allow `goal.set` today.
-- 5.5 and its test: unattended asks. No per-Session client presence signal exists yet.
-- 6.2: a `GoalCompleted` hook test. The producers are implemented.
-- 6.4: the hook and export tests. The restart test runs on the runtime.
-- 7.1: the `/goal` panel ships as a picker with totals; panel keys are still to do.
-- 7.3: a sidebar Goal section; verdict lines and the footer ship.
-- 7.4: snapshots and the PTY capture.
-- 8.4: the SIGINT test; the other exit codes are tested.
-- 10.2 and 10.3.
+- 3.1 templates, 3.4 the model `goal` tool behind `goal.set` (asks by default);
+- 5.5 unattended-ask pauses, using a new client-presence signal (open live event streams per Location and Session);
+- 6.2 and 6.4: hook and real-App-restart tests; Session export (`cyber sessions export`) is not built yet, so the test checks the goal events on the Session stream it would carry;
+- 7.1 panel keys (reorder is Shift+↑/↓), 7.3 the sidebar Goal section, 7.4 snapshots;
+- 8.4 the SIGINT test;
+- 9.x goals on `agent` and workflow `agent()`, `/goal fork`, `/goal use`.
+
+Open: 10.2 (live end-to-end acceptance on the real binary, including the PTY capture) and 10.3 (archive).
+
+The 5.6 tests exist under descriptive names: `a_failing_check_turns_met_into_not_met_with_its_output`, `the_turn_budget_stops_the_goal` (with the default of 50 covered by `budgets_default_to_fifty_turns`), `an_authentication_failure_pauses_the_goal`, `impossible_stops_the_queue_by_default`, `a_background_job_defers_evaluation_until_its_handback`, `unattended_ask_pauses_goal_waiting_for_approval` and `a_goal_never_raises_the_mode`.
 
 Implementation deltas are recorded in `specs/goals/spec.md`:
 - the evaluator falls back to the Session's model;
@@ -101,7 +101,7 @@ Implementation deltas are recorded in `specs/goals/spec.md`:
 
 ## 10. Documentation and acceptance
 
-- [ ] 10.1 Docs: README feature list, `docs/features.md`, a goals guide (conditions, checks, budgets, exec in CI) and ROADMAP M2.3 status.
+- [x] 10.1 Docs: README feature list, `docs/features.md`, a goals guide (conditions, checks, budgets, exec in CI) and ROADMAP M2.3 status.
 - [ ] 10.2 End-to-end acceptance on the real binary with a scripted provider:
   - a goal queue of three
   - a failing then passing check

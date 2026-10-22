@@ -86,7 +86,7 @@ Increment 2 delivered the runtime core (section 6) ahead of resume, so 3.1 is do
 - [ ] 5.5 The model-facing `workflow` tool (a name or an inline script). The inline script is persisted to `<state>/workflows/<run_id>.js` and can be saved into `.cyber/workflows/`. (Increment 4: the tool, the permission and the persisted `script_file`; the Save action arrives with the TUI monitor, 5.6.)
 - [ ] 5.6 Minimal `/workflows` TUI monitor: `p` pauses or resumes, `x` stops, `r` relaunches, `t` opens a transcript. It also shows a progress line and the status-line count of running workflows.
 - [ ] 5.7 Background-tasks integration: Job kind `workflow`, and runs listed in `/tasks`.
-- [ ] 5.8 Goal evaluation is deferred while runs started by the Session are active.
+- [x] 5.8 Goal evaluation is deferred while runs started by the Session are active.
 - [ ] 5.9 Session export includes workflow run summaries. Retention of finished agent transcripts is applied.
 
 ## 6. Runtime core (increment 2)

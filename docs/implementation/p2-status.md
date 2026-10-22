@@ -2,6 +2,19 @@
 
 P2 evidence lives here and is kept separate from the P1 files (`p1-status.md`, `p1-handoff.md` and `p1-acceptance-audit.md`). The plan, the requirement-to-task mapping and the scope exclusions are in [`openspec/changes/implement-m2-1-workflow-runtime`](../../openspec/changes/implement-m2-1-workflow-runtime/proposal.md).
 
+## Goals, slice 2 (`implement-m2-3-goals`, 2026-10-22)
+
+- Templates: `/goal use <name> [text]` and `POST .../goals {template, args}` (`GoalTemplateNotFoundError` 404). Test: `goal_use_template_substitutes_arguments` (`crates/cyber-app/tests/goals.rs`).
+- Fork: `/goal fork` and `POST .../goals/fork` start a root Session in a `goal-<ulid>` worktree on `cyber/goal-<ulid>`. Test: `goal_fork_starts_background_session_in_worktree`.
+- Goals on agents: the `agent` tool and workflow `agent()` accept `goal`; results carry `goal_status`; a workflow agent's goal budget is capped by the run's remaining budget. Tests: `agent_tool_goal_returns_goal_status`, `workflow_agent_with_goal_runs_until_check_passes` (`crates/cyber-app/tests/workflows.rs`), `an_agent_goal_budget_is_capped_by_what_the_run_has_left`.
+- The model `goal` tool behind `goal.set` (ask by default). Test: `the_model_goal_tool_asks_by_default`, golden `crates/cyber-tools/tests/goldens/goal.txt`.
+- Unattended asks pause the Goal with `Waiting for approval` after `goals.unattended_ask_seconds` without a watching client. Test: `unattended_ask_pauses_goal_waiting_for_approval` (`crates/cyber-server/tests/goals.rs`).
+- Hooks and restart: `goal_completed_hook_receives_goal_json`, `restart_mid_goal_evaluates_before_continuing` (a rebuilt App).
+- Workflow runs defer evaluation (M2.1 5.8): `goal_evaluation_waits_for_the_sessions_active_run`.
+- `cyber exec --goal` SIGINT exits 130: `exec_goal_sigint_exits_130`.
+- TUI: panel keys, sidebar Goal section; snapshots `goal_panel_120x40`, `goal_sidebar_160x40`, `goal_sidebar_light_160x40`.
+- Not done: the live end-to-end acceptance on the real binary (task 10.2) and archiving (10.3).
+
 ## Agent teams (2026-10-20)
 
 [`implement-agent-teams`](../../openspec/changes/implement-agent-teams/proposal.md) (spec: `agent-teams`, P2; ROADMAP M2.5, teams part) is implemented in sections 1 to 8, each with its production-path test (the App over authenticated TCP in `crates/cyber-app/tests/teams.rs`, the real binary in `crates/cyber-cli/tests/teams_cli.rs`, the TUI against a real server in `crates/cyber-tui/src/screens_team.rs`, plus `crates/cyber-server/tests/teams.rs` and `sdk/typescript/test/teams.test.ts`). Everything is behind the experimental `teams` feature, off by default. It builds on same-server messaging (the resolver's team tier, `Messaging::send`, watches and `xsession_message`).

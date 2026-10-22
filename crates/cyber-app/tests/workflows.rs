@@ -1523,6 +1523,53 @@ fn gated_reply(body: &Value) -> Value {
     json!({ "gate": label })
 }
 
+/// [`gated_reply`], with the goal evaluator saying met.
+fn gated_goal_reply(body: &Value) -> Value {
+    if body.to_string().contains("judge whether a coding agent") {
+        return json!({"content": json!({"verdict": "met", "reason": "the run finished"}).to_string()});
+    }
+    gated_reply(body)
+}
+
+/// `workflows` → goal evaluation is deferred while runs the Session started are active
+/// (`goals` → Deferred evaluation during background work): the owner's goal Turn ends
+/// while its run's agent waits at a gate, and no verdict is asked for until it is gone.
+#[tokio::test]
+async fn goal_evaluation_waits_for_the_sessions_active_run() {
+    let model = ScriptedModel::start(gated_goal_reply);
+    let server = Server::start(model.config()).await;
+    let owner = server.session().await;
+    let run_id = server
+        .start_run(json!({"session_id": owner, "script": gated_script("held", "g1")}))
+        .await;
+    wait_for("g1 at the gate", || model.held() == ["g1"]).await;
+    let goal = server
+        .ok(
+            Method::POST,
+            &format!("/sessions/{owner}/goals"),
+            Some(json!({"condition": "the held run finished"})),
+        )
+        .await;
+    assert_eq!(goal["data"]["status"], "active");
+    server.app.runtime.wait_idle(&owner).await;
+    let judged = || {
+        model
+            .requests()
+            .iter()
+            .filter(|r| r.to_string().contains("judge whether a coding agent"))
+            .count()
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(judged(), 0, "no verdict while the run is active");
+    let goals = server.app.runtime.goals(&owner).await.unwrap();
+    assert!(goals.pending_eval, "evaluation is owed");
+
+    model.open_gate();
+    let run = server.settled_run(&run_id).await;
+    assert_eq!(run["status"], "completed", "{run}");
+    server.close().await;
+}
+
 /// Labels of `prefix` waiting at the gate.
 fn held_of(model: &ScriptedModel, prefix: char) -> usize {
     model
