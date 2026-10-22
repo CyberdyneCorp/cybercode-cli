@@ -20,6 +20,11 @@ pub enum Msg {
         request: crate::admissions::Request,
         result: Result<Value, String>,
     },
+    /// A `/tree` or `/label` reply for `session_id`.
+    Branches {
+        session_id: String,
+        reply: crate::branches::Reply,
+    },
     /// A `/team` reply: the team of `session_id`, opened in the team view with `open`.
     Team {
         session_id: String,
@@ -36,6 +41,8 @@ pub enum Msg {
         messages: Option<Vec<crate::messaging::Record>>,
         /// The Session's loops, read only when the transcript holds loop iterations.
         loops: Option<Vec<Value>>,
+        /// The Session's branch tree, for the header's branch tag.
+        branches: Vec<crate::branches::Node>,
     },
     Cost {
         session_id: String,
@@ -238,6 +245,7 @@ pub async fn snapshot(client: &Client, id: &str) -> Result<Msg, String> {
     } else {
         None
     };
+    let branches = crate::branches::load(client, id).await?;
     Ok(Msg::Snapshot {
         session,
         items,
@@ -245,6 +253,7 @@ pub async fn snapshot(client: &Client, id: &str) -> Result<Msg, String> {
         requests,
         messages,
         loops,
+        branches,
     })
 }
 
@@ -822,9 +831,11 @@ pub async fn perform_owned(
         | Action::LoadPlugins { .. }
         | Action::LoadAgents
         | Action::FindFiles(_) => load_choices(client, session, action).await,
-        Action::Loop(_) | Action::Workflow(_) | Action::Team(_) | Action::Login(_) => {
-            scheduled(client, session, action).await
-        }
+        Action::Loop(_)
+        | Action::Workflow(_)
+        | Action::Team(_)
+        | Action::Branch(_)
+        | Action::Login(_) => scheduled(client, session, action).await,
         Action::SaveTheme(_)
         | Action::SaveProjectTheme(_)
         | Action::SavePreference { .. }
@@ -836,9 +847,11 @@ pub async fn perform_owned(
     }
 }
 
-/// Requests their own modules run: `/loop`, Workflow Runs, `/team` and `/login`.
+/// Requests their own modules run: `/loop`, Workflow Runs, `/team` and `/login`; and the
+/// branch tree (`/tree`, `/label`).
 async fn scheduled(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
     match action {
+        Action::Branch(request) => crate::branches::perform(client, session, request).await,
         Action::Loop(request) => crate::loops::perform(client, request).await,
         Action::Team(request) => crate::team::perform(client, session, request).await,
         Action::Login(request) => crate::login::perform(client, request).await,

@@ -417,6 +417,9 @@ pub struct SessionState {
     /// not durable: a restart ends the iteration and the missed-run policy applies.
     #[serde(skip)]
     pub(crate) loop_coalesced: BTreeSet<String>,
+    /// Every projected message with its parent; `entries` is its active path.
+    #[serde(skip)]
+    pub(super) branches: super::branches::BranchTree,
 }
 
 const MAX_INSTRUCTION_CHARS: usize = 2000;
@@ -611,6 +614,7 @@ impl SessionState {
             notice_hops: BTreeMap::new(),
             loops: BTreeMap::new(),
             loop_coalesced: BTreeSet::new(),
+            branches: Default::default(),
         }
     }
 
@@ -656,6 +660,7 @@ impl SessionState {
         state.child_worktree_setup_pending = created.child_worktree_setup_pending;
         state.child_worktree = created.child_worktree;
         state.entries = created.history;
+        state.attach_history();
         state.calls = created
             .calls
             .into_iter()
@@ -855,6 +860,8 @@ impl SessionState {
                     .extend(sent.files.into_iter().map(|f| (f.id.clone(), f)));
             }
             "session.browser.evidence" => self.browser_evidence.push(decode(e)?),
+            "session.branch.checked_out" => self.on_checked_out(decode(e)?)?,
+            "session.branch.labeled" => self.on_labeled(decode(e)?),
             "session.recap.generated" => {
                 let recap: super::recap::RecapGenerated = decode(e)?;
                 // Recaps stored before control characters were stripped stay safe.
@@ -891,8 +898,9 @@ impl SessionState {
         }
     }
 
-    /// Drop a user message and everything after it. Unsettled and unknown-outcome calls stay
-    /// in `calls` for recovery even though no entry projects them.
+    /// A committed conversation rewind: the user message and everything after it leave
+    /// the active path and stay as an inactive branch, so the tip moves to its parent.
+    /// Input admitted after the message is dropped, as before branches existed.
     fn truncate_from(&mut self, message_id: &str) {
         let Some(index) = self
             .entries
@@ -901,49 +909,13 @@ impl SessionState {
         else {
             return;
         };
-        let removed: Vec<String> = self.entries[index..]
-            .iter()
-            .map(|e| e.id().to_string())
-            .collect();
-        self.entries.truncate(index);
-        if self
-            .compacted
-            .as_ref()
-            .is_some_and(|c| c.tail_start > index)
-        {
-            self.compacted = None;
-            self.epoch_stale = true;
-        }
         let boundary = self
             .inbox
             .iter()
             .find(|r| r.message_id == message_id)
             .map_or(i64::MAX, |r| r.admitted_seq);
+        self.stash_from(index);
         self.inbox.retain(|r| r.admitted_seq < boundary);
-        self.calls.retain(|_, c| {
-            !removed.contains(&c.message_id)
-                || matches!(
-                    c.status,
-                    CallStatus::OutcomeUnknown | CallStatus::Dispatched
-                )
-        });
-        self.result.rewind(&self.calls);
-        self.steps.retain(|s| !removed.contains(&s.step_id));
-        self.diffs.retain(|id, _| !removed.contains(id));
-        self.task
-            .instructions
-            .retain(|i| !removed.contains(&i.message_id));
-        if self
-            .task
-            .objective
-            .as_ref()
-            .is_some_and(|o| removed.contains(&o.message_id))
-        {
-            self.task.objective = self.task.instructions.first().cloned();
-        }
-        self.task.version += 1;
-        self.steps_since_input = 0;
-        self.open_step = None;
     }
 
     /// The user message the next step answers.
@@ -1157,7 +1129,7 @@ impl SessionState {
             self.steps_since_input = 0;
             self.user_input_pending |= USER_SOURCES.contains(&row.source.as_str());
         }
-        self.entries.push(entry);
+        self.push_entry(entry);
         self.result.rejected = false;
     }
 
@@ -1179,7 +1151,7 @@ impl SessionState {
             epoch.snapshot = c.snapshot;
         }
         let epoch = self.epoch.as_ref().map(|e| e.number);
-        self.entries.push(Entry::System {
+        self.push_entry(Entry::System {
             id: c.message_id,
             text: c.text,
             epoch,
@@ -1187,7 +1159,7 @@ impl SessionState {
     }
 
     fn on_system(&mut self, s: SystemAdded) {
-        self.entries.push(Entry::System {
+        self.push_entry(Entry::System {
             id: s.message_id,
             text: s.text,
             epoch: None,
@@ -1207,7 +1179,7 @@ impl SessionState {
             pre: s.snapshot.clone(),
             post: None,
         });
-        self.entries.push(Entry::Assistant(AssistantEntry {
+        self.push_entry(Entry::Assistant(AssistantEntry {
             id: s.message_id,
             provider: s.provider,
             model: s.model,
@@ -1327,17 +1299,23 @@ impl SessionState {
 
     fn on_compacted(&mut self, c: CompactionCompleted) {
         self.add_hidden(&c.usage, c.cost);
-        let tail_start = self
-            .entries
-            .iter()
-            .position(|e| e.id() == c.tail_start_id)
-            .unwrap_or(self.entries.len());
+        // An empty tail (the newest entry alone exceeded the budget) points past the end.
+        let tail_start = match c.tail_start_id.as_str() {
+            "" => self.entries.len(),
+            id => match self.entries.iter().position(|e| e.id() == id) {
+                Some(index) => index,
+                // The summarized path is no longer active: fail closed, so a sibling's
+                // summary never reaches the model, now or after a replay.
+                None => return,
+            },
+        };
         self.compacted = Some(Compacted {
             summary_id: c.message_id,
             summary: c.summary,
             tail_start,
             strip_media: c.trigger == CompactionTrigger::Overflow,
         });
+        self.record_summary();
         self.epoch_stale = true;
         self.last_step = None;
     }

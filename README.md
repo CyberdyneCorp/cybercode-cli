@@ -178,6 +178,19 @@ claude mcp add cyber -- cyber mcp serve --client claude-code
 
 Use `--model provider/model` to select a model. Remote MCP servers that need OAuth are signed in explicitly with `cyber mcp auth <server>`; `cyber` never opens a browser on its own. See the [local core guide](docs/local-core-guide.md) for configuration, [MCP serve](docs/local-core-guide.md#mcp-serve-partial-p1) for Codex and HTTP setup, and [remote MCP OAuth](docs/local-core-guide.md#remote-mcp-oauth).
 
+### Branching a Session
+
+A rewind keeps the attempt you abandoned. The Session's messages form a tree, and only the active path is sent to the model. Switch back to an earlier attempt, and optionally restore its files (your own edits are kept, and `POST /sessions/{id}/revert/clear` undoes the restore):
+
+```bash
+./target/debug/cyber sessions tree <session>                         # ASCII tree; * active path, o inactive
+./target/debug/cyber sessions label <session> attempt-two --at msg_01J…   # name a message (default: the active tip)
+./target/debug/cyber sessions checkout <session> attempt-two --code  # make it active and restore its code
+./target/debug/cyber sessions export <session> --all-branches        # JSON with every branch
+```
+
+In the TUI, `/tree` opens the same tree (Enter checks out, `c` restores code, `l` labels) and `/label <name>` labels the active tip. A checkout is refused with `SessionBusyError` while a Turn or background Job runs. Details: [Session branches](docs/local-core-guide.md#session-branches).
+
 ### Sessions talking to each other
 
 Sessions on the same server can message each other. An agent gets three tools: `list_sessions` shows the Sessions it can reach, `send_message { to, text }` sends one plain-text message (up to 16 KiB) to a Session by its title, subagent name or `ses_` ID, and `watch_session` (or `send_message` with `notify_when_idle`) sends it one notice when the target next goes idle. A message to an idle Session starts a Turn there; a busy Session reads it at its next Safe Boundary. The target sees it as an untrusted `<cross_session_message>` block, never as instructions, and keeps its own permissions, Mode and sandbox, so a message cannot launder an action the target is not allowed to take. Replies are just another `send_message`.
@@ -236,7 +249,7 @@ In the TUI, a message from another machine reads `from review@laptop`, its held 
 | Area | Today | Details |
 |---|---|---|
 | Coding | Read/search, edit files and notebook cells, run commands, web tools | [Features](docs/features.md) |
-| Sessions | Durable admission, streaming, interrupt/resume, crash recovery, compaction; named Sessions (`/rename`, `cyber sessions rename`) resumed by title | [Naming and resuming](docs/local-core-guide.md#naming-and-resuming-sessions) |
+| Sessions | Durable admission, streaming, interrupt/resume, crash recovery, compaction; named Sessions (`/rename`, `cyber sessions rename`) resumed by title; branches: a rewind keeps the abandoned attempt, `/tree`, `/label` and `cyber sessions tree\|checkout\|label` switch between attempts, optionally restoring their code | [Naming and resuming](docs/local-core-guide.md#naming-and-resuming-sessions), [branches](docs/local-core-guide.md#session-branches) |
 | Safety | Workspace trust, permission rules, protected paths, credential masking, macOS/Linux sandbox | Windows enforcement partial |
 | Recovery | Shadow-git snapshots, restore preserving user edits, backup and retention | Broader rewind UI pending |
 | Multiple agents | Subagents as child Sessions (`agent` tool, `/subtask`, background, isolated worktrees, `/agent`, `/tasks`); custom agent profiles with their own model, tools and skills; workflows fanning out many agents; several workflow runs at once; other agents driving Sessions over `cyber mcp serve`; Sessions messaging each other on one server and across your machines (`send_message`, `watch_session`, `cyber messages`, `/messages`, `cyber peers`, `cyber attach <session>@<peer>`); agent teams with a shared task board (`/team`, `cyber teams`, behind `teams`) | Subagents partial; agent teams experimental, behind the `teams` feature (off by default); the Relay transport not yet |

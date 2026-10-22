@@ -249,6 +249,10 @@ cyber sessions [OPTIONS] <COMMAND>
 - [`show`](#cyber-sessions-show): One Session: title, Location, model, status and usage
 - [`rename`](#cyber-sessions-rename): Give a Session a title to find and resume it by later
 - [`delete`](#cyber-sessions-delete): Delete a Session with its child Sessions
+- [`tree`](#cyber-sessions-tree): The Session's user-message tree: `*` marks the active path
+- [`checkout`](#cyber-sessions-checkout): Make another branch active; the Session must be idle
+- [`label`](#cyber-sessions-label): Set or remove a branch label
+- [`export`](#cyber-sessions-export): Write the Session and its messages as JSON to stdout: the active path, or every branch with `--all-branches`
 
 ## `cyber sessions list`
 
@@ -302,6 +306,70 @@ cyber sessions delete [OPTIONS] <SESSION>
 **Options:**
 
 - `--yes`: Confirm the deletion; it cannot be undone.
+
+## `cyber sessions tree`
+
+The Session's user-message tree: `*` marks the active path
+
+```text
+cyber sessions tree [OPTIONS] <SESSION>
+```
+
+**Arguments:**
+
+- `<SESSION>`: ID, exact title or unique ID prefix.
+
+## `cyber sessions checkout`
+
+Make another branch active; the Session must be idle
+
+```text
+cyber sessions checkout [OPTIONS] <SESSION> <MESSAGE>
+```
+
+**Arguments:**
+
+- `<SESSION>`: ID, exact title or unique ID prefix.
+- `<MESSAGE>`: A message ID, a branch label or a unique message ID prefix; the newest tip under it becomes active.
+
+**Options:**
+
+- `--code`: Also restore files to the branch's last snapshot, keeping your own edits.
+- `--exact`: Make the message itself the tip; the next prompt branches there.
+
+## `cyber sessions label`
+
+Set or remove a branch label
+
+```text
+cyber sessions label [OPTIONS] <SESSION> <NAME>
+```
+
+**Arguments:**
+
+- `<SESSION>`: ID, exact title or unique ID prefix.
+- `<NAME>`: The label: letters, digits, `.`, `_` and `-`, at most 48.
+
+**Options:**
+
+- `--at <AT>`: The message to label (ID, label or unique prefix); the active tip by default.
+- `--delete`: Remove the label instead.
+
+## `cyber sessions export`
+
+Write the Session and its messages as JSON to stdout: the active path, or every branch with `--all-branches`
+
+```text
+cyber sessions export [OPTIONS] <SESSION>
+```
+
+**Arguments:**
+
+- `<SESSION>`: ID, exact title or unique ID prefix.
+
+**Options:**
+
+- `--all-branches`: Include every branch; each message's `parent_message_id` links the tree.
 
 ## `cyber skills`
 
