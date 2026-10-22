@@ -119,6 +119,17 @@ async fn went_idle(runtime: super::Runtime, id: &str, (hops, status): (u32, Opti
     runtime.team_drain_ended(id).await;
 }
 
+/// `user` for the first model call after a promoted row the user wrote, `agent` for the
+/// tool-result continuations that follow it and for Turns other sources open (a Stop
+/// continuation never counts as the user's).
+fn initiator(user_input_pending: bool) -> cyber_llm::Initiator {
+    if user_input_pending {
+        cyber_llm::Initiator::User
+    } else {
+        cyber_llm::Initiator::Agent
+    }
+}
+
 /// The status line an idle notice reports for a Drain that failed or was interrupted;
 /// `None` takes it from the last run.
 fn ended_status(failure: Option<&str>, cancel: &CancellationToken) -> Option<String> {
@@ -139,6 +150,8 @@ async fn publish_failure(
     message: String,
     cancel: &CancellationToken,
 ) {
+    // `goals`: an error the user must fix pauses the active Goal.
+    goal_pause_session(inner, id, &format!("{kind}: {message}")).await;
     inner.bus.publish(LiveEvent::Error {
         session_id: id.into(),
         kind: kind.clone(),
@@ -201,8 +214,9 @@ async fn pass_owned(
     let mut answered = false;
     loop {
         if !eligible(handle, continue_tools, first, cancel).await {
-            // Stop runs only after a model answer, never for an interrupted or empty pass.
-            if answered && inner.stop_hooks(handle, cancel).await? {
+            // Stop hooks, then the active Goal's evaluation, run only after a model answer,
+            // never for an interrupted or empty pass.
+            if answered && idle_continuation(inner, handle, cancel).await? {
                 answered = false;
                 continue;
             }
@@ -261,12 +275,67 @@ async fn pass_owned(
                     "ContextOverflow: the request exceeds the model's context window".into(),
                 ));
             }
-            TurnEnd::Stopped => return Ok(()),
+            TurnEnd::Stopped => return stopped(inner, handle).await,
             TurnEnd::Failed { kind, message } => {
-                inner.stop_failure(handle, &kind, &message, cancel).await;
+                failed(inner, handle, &kind, &message, cancel).await;
                 return Ok(());
             }
         }
+    }
+}
+
+/// What may keep an answered Drain going at its idle exit: a Stop-hook continuation,
+/// else the active Goal's continuation or the next Goal's prompt (`goals`).
+async fn idle_continuation(
+    inner: &Arc<Inner>,
+    handle: &Arc<Handle>,
+    cancel: &CancellationToken,
+) -> Result<bool, RuntimeError> {
+    if inner.stop_hooks(handle, cancel).await? {
+        return Ok(true);
+    }
+    super::Runtime {
+        inner: Arc::clone(inner),
+    }
+    .goal_after_turn(handle, cancel)
+    .await
+}
+
+/// A failed, interrupted or rejected Turn pauses the active Goal (`goals` → Impossible and
+/// blocking errors); a shutdown does not, so the Goal is evaluated after the restart.
+async fn goal_pause(inner: &Arc<Inner>, handle: &Arc<Handle>, reason: &str) {
+    if inner.closed.is_cancelled() {
+        return;
+    }
+    super::Runtime {
+        inner: Arc::clone(inner),
+    }
+    .goal_turn_ended_early(handle, reason)
+    .await;
+}
+
+/// A Turn ended by an interrupt or a rejected permission.
+async fn stopped(inner: &Arc<Inner>, handle: &Arc<Handle>) -> Result<(), RuntimeError> {
+    goal_pause(inner, handle, "stopped before the goal was met").await;
+    Ok(())
+}
+
+/// A Turn that failed: the active Goal pauses, then StopFailure runs.
+async fn failed(
+    inner: &Arc<Inner>,
+    handle: &Arc<Handle>,
+    kind: &str,
+    message: &str,
+    cancel: &CancellationToken,
+) {
+    goal_pause(inner, handle, &format!("{kind}: {message}")).await;
+    inner.stop_failure(handle, kind, message, cancel).await;
+}
+
+/// [`goal_pause`] for a Drain that failed outside a Turn.
+async fn goal_pause_session(inner: &Arc<Inner>, id: &str, reason: &str) {
+    if let Ok(handle) = inner.handle(id).await {
+        goal_pause(inner, &handle, reason).await;
     }
 }
 
@@ -692,6 +761,12 @@ impl Inner {
         for (key, value) in self.options.tools.context_observations_owned(&turn).await {
             observed.sources.insert(key, value);
         }
+        // `goals` → Goal context source.
+        let goal = super::goals::context_source(&state.goals)
+            .map_or(context::Observed::Absent, context::Observed::Value);
+        observed
+            .sources
+            .insert(super::goals::CONTEXT_KEY.into(), goal);
         observed
     }
 
@@ -937,6 +1012,7 @@ impl Inner {
         defs.extend(catalog.deferred);
         request.tools_disabled |= limited;
         request.cache_key = Some(state.info.id.clone());
+        request.initiator = Some(initiator(state.user_input_pending));
         let message_id = cyber_core::ids::new_id("msg");
         let origin = super::usage_origin::step_origin(&self.store, &state)?;
         let payload = StepStarted {

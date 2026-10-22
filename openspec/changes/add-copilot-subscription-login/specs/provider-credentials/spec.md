@@ -8,7 +8,7 @@
   - The CLI SHALL print the verification URL and the user code, then poll at the server's `interval`, adding 5 seconds on `slow_down`.
   - Polling SHALL stop at the code's expiry (at most 15 minutes), on `access_denied` or `expired_token`, or on Ctrl+C. In every one of those cases nothing SHALL be stored.
 - **Subscription check:** after the device flow, the system SHALL mint a Copilot API token from the GitHub token. If minting fails, or names no API endpoint, the login SHALL fail with `This GitHub account has no active Copilot subscription` and SHALL store nothing.
-- **Storage:** the GitHub token, host and user SHALL be stored in the owner-only file `<data>/copilot-auth.json` (mode 0600, replaced atomically; refused when accessible to other users). Minted Copilot API tokens SHALL be kept only in memory and reused until 5 minutes before they expire.
+- **Storage:** the GitHub token, host and user SHALL be stored in the owner-only file `<data>/copilot-auth.json` (mode 0600, replaced atomically; refused when accessible to other users), and SHALL be unreadable by every sandboxed process. Minted Copilot API tokens SHALL be kept only in memory and reused until 5 minutes before they expire.
 - **Revoked login:** a mint rejected with HTTP 401 SHALL fail the request with an `Authentication` error that says `GitHub Copilot login expired or was revoked; run cyber providers login copilot`, and SHALL leave the stored login untouched.
 - **Logout:** `cyber providers logout copilot` SHALL delete the login and the cached model list without revoking the GitHub token.
 - **Windows:** login SHALL refuse on Windows until keyring storage exists.

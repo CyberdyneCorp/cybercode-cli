@@ -33,7 +33,8 @@ Because the projection is rebuilt from events, existing Sessions gain a tree on 
 
 ### Checkout
 
-- **Idle only.** The Session must be idle: no Drain running and an empty promotable inbox. Otherwise the result is `SessionBusyError`, exactly as revert does today. Held inbox items stay held.
+- **Idle only.** The Session must be idle: no Drain running, an empty promotable inbox, no compaction in progress and no running background Job (process, Monitor, subagent, workflow) or delegation, whose handback would land on the newly active branch. A compaction's fence is an in-process counter held by a drop guard, not a projected flag, so a compaction future dropped by an interrupt or a disconnected client never leaves the Session refusing checkouts and rewinds. Otherwise the result is `SessionBusyError`, exactly as revert does today. Held inbox items stay held.
+- **Checked at commit.** A code restore runs without the Session lock, so the idle checks and the tip run again under the lock that records the checkout. If input arrived meanwhile, the restored files are put back and the result is `SessionBusyError`.
 - **Choosing the tip.** The target can be any message. If it has descendants, checkout goes to the most recently created tip under it, so the active path always ends at a leaf. `--exact` selects the message itself; the next prompt then branches there.
 - **Code.** With `code: true`, checkout restores the working tree to the snapshot taken after the target tip's last step. This uses the existing three-phase revert machinery, so user edits are preserved and the diff is previewed. Without it, files are left alone, and the TUI warns when the branch's last snapshot differs from the working tree.
 - **Tool recovery.** Tool-recovery records keep referencing durable operation IDs, as they do today. Unknown-outcome calls on inactive branches stay reported in recovery views.
@@ -43,6 +44,8 @@ Because the projection is rebuilt from events, existing Sessions gain a tree on 
 - The model context is built from the active path only.
 - A Context Epoch summary records the message range it replaced. It is reused only when that range is an ancestor prefix of the active path. Otherwise the context is assembled from the path's stored messages, and normal auto-compaction applies if it overflows.
 - Switching back to a branch therefore never shows the model a summary of a sibling branch.
+- A manual compaction runs without a Drain, so the projection tracks a compaction in progress (`session.compaction.started` until completed or failed). Checkout and the commit of a conversation rewind are refused with `SessionBusyError` meanwhile; a compaction whose active tip moved before its start was recorded fails; and a summary whose `tail_start_id` is not on the active path is discarded. A restart clears the in-progress flag.
+- Older builds could admit a rewound message ID again (the rewind dropped its inbox row). Replay keeps both attempts: the stale message and what was derived from it move to `<id>~<order>` under its old parent, and the new one attaches at the current tip, so the active path is the old linear one.
 
 ### Listing and compatibility
 

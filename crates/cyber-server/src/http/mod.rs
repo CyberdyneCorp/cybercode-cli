@@ -3,6 +3,7 @@
 //! The router is transport-independent. TCP, the Unix socket and the in-process embedded
 //! transport mark each request with a [`Transport`], which decides authentication.
 
+mod branches;
 mod catalog;
 mod children;
 mod deliveries;
@@ -11,6 +12,7 @@ mod error;
 mod event_location;
 mod events;
 mod files;
+mod goals;
 mod guard;
 mod hooks;
 mod idempotency;
@@ -638,6 +640,7 @@ pub fn router(state: AppState) -> Router {
 pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router {
     let api = Router::new()
         .merge(sessions::routes())
+        .merge(branches::routes())
         .merge(children::router())
         .merge(jobs::routes())
         .merge(pty::routes())
@@ -650,6 +653,7 @@ pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router 
         .merge(messaging::routes())
         .merge(loops::routes())
         .merge(peers::routes())
+        .merge(goals::routes())
         .merge(providers::routes())
         .merge(usage::routes())
         .merge(vcs::routes())

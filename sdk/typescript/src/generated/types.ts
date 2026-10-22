@@ -71,6 +71,34 @@ export type BackgroundResult = {
   call_ids: string[];
 };
 
+/** What to check out: a message ID or a label, and whether to restore code. */
+export type BranchCheckout = {
+  message_id?: string | null;
+  label?: string | null;
+  /** Make the message itself the tip instead of the newest tip under it. */
+  exact?: boolean;
+  /** Restore the working tree to the snapshot after the tip's last step. */
+  code?: boolean;
+};
+
+/** A user message in the branch tree (`GET .../tree`). */
+export type BranchNode = {
+  id: string;
+  /** The nearest user message before this one; null for a first message. */
+  parent_id?: string | null;
+  /** The first line of the message's text, at most 80 characters. */
+  preview: string;
+  /** When the message was promoted (ms since the epoch); null for old records. */
+  created_at?: number | null;
+  labels: string[];
+  /** On the active path. */
+  active: boolean;
+  /** The end of a branch: no user message follows it, or the active path ends here. */
+  tip: boolean;
+  /** User messages below this one, on every branch. */
+  descendants: number;
+};
+
 /** A stored screenshot, console or network capture, or a dev server log tail. */
 export type BrowserArtifact = {
   /** `screenshot`, `console`, `network`, `snapshot` or `log`. */
@@ -166,6 +194,24 @@ export type Capabilities = {
   shell: boolean;
   secrets: boolean;
   "session.prompt": boolean;
+};
+
+/** The `check` that ran after a `met` verdict. */
+export type CheckRun = {
+  command: string;
+  exit_code?: number | null;
+  timed_out: boolean;
+  /** The last 50 lines of its output. */
+  tail: string;
+};
+
+/** The active tip after a checkout and, when code was restored, the staged revert. */
+export type CheckedOutBranch = {
+  tip_message_id: string;
+  code_restored: boolean;
+  /** The files the code restore changed. */
+  restored_files: string[];
+  revert?: RevertState | null;
 };
 
 export type ChildSetupInspection = {
@@ -334,6 +380,14 @@ export type CreateBody = {
   messaging?: InboundOverride | null;
 };
 
+/** `POST .../goals`. */
+export type CreateGoal = {
+  condition: string;
+  check?: string | null;
+  budget?: Budget | null;
+  mode?: GoalMode;
+};
+
 /** `POST /api/v1/sessions/:id/loops`: the `/loop` arguments as typed, or the parsed fields. */
 export type CreateLoop = {
   command: string;
@@ -383,6 +437,10 @@ export type Cursor = {
   next?: string | null;
 };
 
+export type Data_Array_of_BranchNode = {
+  data: BranchNode[];
+};
+
 export type Data_Array_of_FileDiff = {
   data: FileDiff[];
 };
@@ -427,6 +485,10 @@ export type Data_BrowserEvidenceReport = {
   data: BrowserEvidenceReport;
 };
 
+export type Data_CheckedOutBranch = {
+  data: CheckedOutBranch;
+};
+
 export type Data_ChildSetupInspection = {
   data: ChildSetupInspection;
 };
@@ -445,6 +507,14 @@ export type Data_CreatedWorktree = {
 
 export type Data_Delegation = {
   data: Delegation;
+};
+
+export type Data_Goal = {
+  data: Goal;
+};
+
+export type Data_GoalsView = {
+  data: GoalsView;
 };
 
 export type Data_InterruptedResume = {
@@ -477,6 +547,10 @@ export type Data_LoopState = {
 
 export type Data_Message = {
   data: Message;
+};
+
+export type Data_Nullable_Goal = {
+  data?: Goal | null;
 };
 
 export type Data_Nullable_Recap = {
@@ -638,6 +712,13 @@ export type DurableRef = {
   version: number;
 };
 
+/** `PATCH .../goals/{goal_id}`; `check: null` removes the check. */
+export type EditGoal = {
+  condition?: string | null;
+  check?: string | null;
+  budget?: Budget | null;
+};
+
 export type Enforcement = "soft" | "reserved";
 
 /**
@@ -654,6 +735,22 @@ export type ErrorBody = {
   /** Capability group unavailable in this host or phase. */
   service?: string | null;
   [key: string]: unknown;
+};
+
+/** `session.goal.evaluated.1`. */
+export type Evaluated = {
+  goal_id: string;
+  verdict: Verdict;
+  reason: string;
+  check?: CheckRun | null;
+  /** The goal Turn this verdict closes (1-based). */
+  turn: number;
+  eval_tokens: number;
+  eval_cost_usd: number;
+  /** Work tokens and cost since activation, children included, at this verdict. */
+  tokens: number;
+  cost_usd: number;
+  evaluated_ms: number;
 };
 
 /** One event on any stream. */
@@ -779,6 +876,48 @@ export type GitState = {
   worktree?: string | null;
   /** Staged, unstaged or untracked (not ignored) changes exist. */
   dirty: boolean;
+};
+
+/** One Goal as the Session state folds it and clients list it. */
+export type Goal = {
+  goal_id: string;
+  condition: string;
+  check?: string | null;
+  budget: Budget;
+  status: GoalStatus;
+  /** The last verdict's reason, or why it paused or ended. */
+  reason?: string | null;
+  last_verdict?: Verdict | null;
+  /** Goal Turns: evaluations since activation. */
+  turns: number;
+  tokens: number;
+  cost_usd: number;
+  eval_count: number;
+  eval_tokens: number;
+  eval_cost_usd: number;
+  created_ms: number;
+  activated_ms?: number | null;
+  ended_ms?: number | null;
+  evaluations: Evaluated[];
+};
+
+/** How `POST .../goals` places the new Goal. */
+export type GoalMode = "set" | "add";
+
+/** `PATCH .../goals/order`. */
+export type GoalOrder = {
+  goal_ids: string[];
+};
+
+/** A Goal's status (`goals` → Goal model). */
+export type GoalStatus = "pending" | "active" | "paused" | "met" | "impossible" | "cleared" | "budget_exceeded";
+
+/** `GET .../goals`: the current Goal, the queue in order and the most recent ended ones. */
+export type GoalsView = {
+  current?: Goal | null;
+  queue: Goal[];
+  /** Ended Goals, newest first, at most 20. */
+  ended: Goal[];
 };
 
 /** A grant as listed; never its token or hash. */
@@ -1105,6 +1244,11 @@ export type JobOutput = {
 export type JobStatus = "running" | "completed" | "error" | "cancelled" | "interrupted";
 
 export type Kind = "file" | "directory" | "symlink";
+
+/** `PUT .../labels/:name`: the message the label marks. */
+export type LabelBody = {
+  message_id: string;
+};
 
 /** A member's newest message; `text` is cut to 200 characters. */
 export type LastMessage = {
@@ -1751,6 +1895,8 @@ export type MemoryType = "user" | "feedback" | "project" | "reference";
 /** A history entry with the tool calls it made. */
 export type Message = {
   tools: CallState[];
+  /** The previous message on this message's branch; null for the first message. */
+  parent_message_id?: string | null;
 } & ({
   id: string;
   parts: Content[];
@@ -3263,6 +3409,9 @@ export type UsageStats = {
 export type Vcs = {
   vcs?: GitState | null;
 };
+
+/** An evaluator verdict. */
+export type Verdict = "met" | "not_met" | "impossible";
 
 /** The browser viewport, when the server reported or was asked for one. */
 export type Viewport = {

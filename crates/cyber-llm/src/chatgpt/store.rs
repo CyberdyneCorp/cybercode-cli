@@ -1,6 +1,7 @@
 //! The stored login: one owner-only document (`<data>/chatgpt-auth.json`, mode 0600,
 //! replaced atomically) and its cross-process refresh lock
-//! (`<data>/chatgpt-auth.json.refresh.lock`).
+//! (`<data>/chatgpt-auth.json.refresh.lock`), both kept by the shared
+//! [`crate::subscription::LoginFile`].
 //!
 //! A refresh re-reads the document under the lock, so a login another process already
 //! renewed is adopted without a request and a rotating refresh token is never presented
@@ -9,22 +10,18 @@
 //! `cyber providers login` is never overwritten. A document readable by other users, not
 //! regular or larger than 64 KiB is refused rather than trusted. Windows has no
 //! owner-only file here yet, so storing a login is refused there.
-use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use cyber_core::env::EnvSource;
 use serde::{Deserialize, Serialize};
 
 use super::oauth::{TokenResponse, visible};
 use super::{ChatGptError, Claims, Issuer, auth_path, now, refresh};
+use crate::subscription::{Credential, LoginFile, refresh_locked};
 
 const VERSION: u32 = 1;
-const FILE_LIMIT: u64 = 64 * 1024;
 /// An access token expiring within this window is refreshed before it is used.
 pub const REFRESH_WINDOW: u64 = 5 * 60;
-const LOCK_WAIT: Duration = Duration::from_secs(60);
-const LOCK_RETRY: Duration = Duration::from_millis(50);
 
 /// One signed-in ChatGPT account. `Debug` never shows a token.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,10 +110,6 @@ impl Login {
         self.expires_at
             .is_some_and(|expires_at| expires_at <= now.saturating_add(REFRESH_WINDOW))
     }
-
-    fn valid(&self) -> bool {
-        visible(&self.access_token) && visible(&self.refresh_token) && visible(&self.account_id)
-    }
 }
 
 /// The access token's own `exp`, else `expires_in` from now.
@@ -124,22 +117,23 @@ fn expiry(claimed: Option<u64>, expires_in: Option<u64>) -> Option<u64> {
     claimed.or_else(|| expires_in.map(|seconds| now().saturating_add(seconds)))
 }
 
-#[derive(Serialize, Deserialize)]
-struct Document {
-    version: u32,
-    #[serde(flatten)]
-    login: Login,
+impl Credential for Login {
+    fn valid(&self) -> bool {
+        visible(&self.access_token) && visible(&self.refresh_token) && visible(&self.account_id)
+    }
 }
 
 /// The stored-login document and its refresh lock.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthFile {
-    path: PathBuf,
+    file: LoginFile<Login>,
 }
 
 impl AuthFile {
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            file: LoginFile::new(path, VERSION),
+        }
     }
 
     /// `<data>/chatgpt-auth.json` of the data directory `env` resolves to; `None` when `env`
@@ -157,34 +151,16 @@ impl AuthFile {
     }
 
     pub fn path(&self) -> &Path {
-        &self.path
+        self.file.path()
     }
 
     pub fn exists(&self) -> bool {
-        self.path.exists()
+        self.file.exists()
     }
 
     /// The stored login, or `None` when there is none.
     pub fn load(&self) -> Result<Option<Login>, ChatGptError> {
-        let metadata = match std::fs::symlink_metadata(&self.path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(_) => return Err(ChatGptError::Storage("login file unavailable")),
-        };
-        if !metadata.is_file() || metadata.len() > FILE_LIMIT {
-            return Err(ChatGptError::Storage(
-                "login file is not a bounded regular file",
-            ));
-        }
-        private(&metadata)?;
-        let bytes = std::fs::read(&self.path)
-            .map_err(|_| ChatGptError::Storage("login file unavailable"))?;
-        let document: Document = serde_json::from_slice(&bytes)
-            .map_err(|_| ChatGptError::Storage("login file has an unknown format"))?;
-        if document.version != VERSION || !document.login.valid() {
-            return Err(ChatGptError::Storage("login file has an unknown format"));
-        }
-        Ok(Some(document.login))
+        Ok(self.file.load()?)
     }
 
     /// Replace the stored login atomically with an owner-only file.
@@ -194,23 +170,12 @@ impl AuthFile {
                 "ChatGPT login is not supported on Windows yet",
             ));
         }
-        let document = Document {
-            version: VERSION,
-            login: login.clone(),
-        };
-        let bytes = serde_json::to_vec_pretty(&document)
-            .map_err(|_| ChatGptError::Storage("login encoding failed"))?;
-        cyber_core::trust::write_private_atomic(&self.path, &bytes)
-            .map_err(|_| ChatGptError::Storage("login file write failed"))
+        Ok(self.file.save(login)?)
     }
 
     /// Forget the login; whether one was stored. Tokens are not revoked remotely.
     pub fn remove(&self) -> Result<bool, ChatGptError> {
-        match std::fs::remove_file(&self.path) {
-            Ok(()) => Ok(true),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(_) => Err(ChatGptError::Storage("login file could not be removed")),
-        }
+        Ok(self.file.remove()?)
     }
 
     /// The stored login with an access token outside its refresh window, renewing it under
@@ -220,92 +185,16 @@ impl AuthFile {
         http: &reqwest::Client,
         issuer: &Issuer,
     ) -> Result<Login, ChatGptError> {
-        let login = self.load_blocking().await?;
-        if !login.due(now()) {
-            return Ok(login);
-        }
-        let lock = self.lock_refresh().await?;
-        let login = self.load_blocking().await?;
-        if !login.due(now()) {
-            return Ok(login);
-        }
-        let response = refresh(http, issuer, &login.refresh_token).await?;
-        let next = login.refreshed(response)?;
-        let (file, stored) = (self.clone(), next.clone());
-        // The lock is released only once the write has ended, even if this future is
-        // dropped meanwhile, so no other holder reads the rotated-away refresh token.
-        blocking(move || {
-            let _lock = lock;
-            file.save(&stored)
-        })
-        .await?;
-        Ok(next)
-    }
-
-    async fn load_blocking(&self) -> Result<Login, ChatGptError> {
-        let file = self.clone();
-        blocking(move || file.load())
-            .await?
-            .ok_or(ChatGptError::NotSignedIn)
-    }
-
-    async fn lock_refresh(&self) -> Result<File, ChatGptError> {
-        let deadline = tokio::time::Instant::now() + LOCK_WAIT;
-        let file = self.lock_file()?;
-        loop {
-            match file.try_lock() {
-                Ok(()) => return Ok(file),
-                Err(std::fs::TryLockError::WouldBlock) => {}
-                Err(std::fs::TryLockError::Error(_)) => {
-                    return Err(ChatGptError::Storage("refresh lock failed"));
-                }
-            }
-            if tokio::time::Instant::now() >= deadline {
-                return Err(ChatGptError::Busy);
-            }
-            tokio::time::sleep(LOCK_RETRY).await;
-        }
-    }
-
-    fn lock_file(&self) -> Result<File, ChatGptError> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|_| ChatGptError::Storage("login directory unavailable"))?;
-        }
-        let mut options = std::fs::OpenOptions::new();
-        options.create(true).truncate(false).write(true);
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        let mut name = self.path.clone().into_os_string();
-        name.push(".refresh.lock");
-        options
-            .open(PathBuf::from(name))
-            .map_err(|_| ChatGptError::Storage("refresh lock unavailable"))
-    }
-}
-
-async fn blocking<T: Send + 'static>(
-    operation: impl FnOnce() -> Result<T, ChatGptError> + Send + 'static,
-) -> Result<T, ChatGptError> {
-    tokio::task::spawn_blocking(operation)
+        refresh_locked(
+            &self.file,
+            |login: &Login| login.due(now()),
+            |login| async move {
+                let response = refresh(http, issuer, &login.refresh_token).await?;
+                login.refreshed(response)
+            },
+        )
         .await
-        .map_err(|_| ChatGptError::Storage("login file task failed"))?
-}
-
-#[cfg(unix)]
-fn private(metadata: &std::fs::Metadata) -> Result<(), ChatGptError> {
-    use std::os::unix::fs::PermissionsExt;
-    if metadata.permissions().mode() & 0o077 != 0 {
-        return Err(ChatGptError::Storage(
-            "login file is accessible to other users",
-        ));
     }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn private(_metadata: &std::fs::Metadata) -> Result<(), ChatGptError> {
-    Ok(())
 }
 
 #[cfg(test)]

@@ -486,6 +486,7 @@ pub fn registry() -> EventRegistry {
                 .map_err(|e| e.to_string())
         })
         .expect("valid messaging override event");
+    super::branches::register(&mut registry);
     super::budget::register(&mut registry);
     super::hooks::register(&mut registry);
     super::jobs::register(&mut registry);
@@ -495,11 +496,13 @@ pub fn registry() -> EventRegistry {
     super::messaging::records::register(&mut registry);
     super::loops::records::register(&mut registry);
     super::teams::records::register(&mut registry);
+    super::goals::records::register(&mut registry);
     super::workflows::register(&mut registry);
     registry.projector(project);
     registry.projector(super::messaging::records::project);
     registry.projector(super::loops::records::project);
     registry.projector(super::teams::records::project);
+    registry.projector(super::goals::records::project);
     crate::worktrees::register(&mut registry);
     registry
 }

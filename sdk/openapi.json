@@ -6294,6 +6294,13 @@
             "items": {
               "$ref": "#/components/schemas/CallState"
             }
+          },
+          "parent_message_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The previous message on this message's branch; null for the first message."
           }
         },
         "required": [
@@ -6468,6 +6475,165 @@
             "description": "Dispatched, and whether its side effects happened is unknown."
           }
         ]
+      },
+      "Data_Array_of_BranchNode": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BranchNode"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "BranchNode": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The nearest user message before this one; null for a first message."
+          },
+          "preview": {
+            "type": "string",
+            "description": "The first line of the message's text, at most 80 characters."
+          },
+          "created_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the message was promoted (ms since the epoch); null for old records."
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "active": {
+            "type": "boolean",
+            "description": "On the active path."
+          },
+          "tip": {
+            "type": "boolean",
+            "description": "The end of a branch: no user message follows it, or the active path ends here."
+          },
+          "descendants": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "User messages below this one, on every branch."
+          }
+        },
+        "required": [
+          "id",
+          "preview",
+          "labels",
+          "active",
+          "tip",
+          "descendants"
+        ],
+        "description": "A user message in the branch tree (`GET .../tree`)."
+      },
+      "BranchCheckout": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "message_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "exact": {
+            "type": "boolean",
+            "description": "Make the message itself the tip instead of the newest tip under it.",
+            "default": false
+          },
+          "code": {
+            "type": "boolean",
+            "description": "Restore the working tree to the snapshot after the tip's last step.",
+            "default": false
+          }
+        },
+        "description": "What to check out: a message ID or a label, and whether to restore code."
+      },
+      "Data_CheckedOutBranch": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CheckedOutBranch"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "CheckedOutBranch": {
+        "type": "object",
+        "properties": {
+          "tip_message_id": {
+            "type": "string"
+          },
+          "code_restored": {
+            "type": "boolean"
+          },
+          "restored_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The files the code restore changed."
+          },
+          "revert": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RevertState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "tip_message_id",
+          "code_restored",
+          "restored_files"
+        ],
+        "description": "The active tip after a checkout and, when code was restored, the staged revert."
+      },
+      "LabelBody": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "message_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_id"
+        ],
+        "description": "`PUT .../labels/:name`: the message the label marks."
       },
       "Data_Message": {
         "type": "object",
@@ -10831,6 +10997,397 @@
           "revoked"
         ],
         "description": "`DELETE /api/v1/peers/grants/:name`."
+      },
+      "Data_GoalsView": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/GoalsView"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "GoalsView": {
+        "type": "object",
+        "properties": {
+          "current": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Goal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "queue": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Goal"
+            }
+          },
+          "ended": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Goal"
+            },
+            "description": "Ended Goals, newest first, at most 20."
+          }
+        },
+        "required": [
+          "queue",
+          "ended"
+        ],
+        "description": "`GET .../goals`: the current Goal, the queue in order and the most recent ended ones."
+      },
+      "Goal": {
+        "type": "object",
+        "properties": {
+          "goal_id": {
+            "type": "string"
+          },
+          "condition": {
+            "type": "string"
+          },
+          "check": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "budget": {
+            "$ref": "#/components/schemas/Budget"
+          },
+          "status": {
+            "$ref": "#/components/schemas/GoalStatus"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The last verdict's reason, or why it paused or ended."
+          },
+          "last_verdict": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Verdict"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "turns": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Goal Turns: evaluations since activation."
+          },
+          "tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "cost_usd": {
+            "type": "number",
+            "format": "double"
+          },
+          "eval_count": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "eval_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "eval_cost_usd": {
+            "type": "number",
+            "format": "double"
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "activated_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "ended_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "evaluations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Evaluated"
+            }
+          }
+        },
+        "required": [
+          "goal_id",
+          "condition",
+          "budget",
+          "status",
+          "turns",
+          "tokens",
+          "cost_usd",
+          "eval_count",
+          "eval_tokens",
+          "eval_cost_usd",
+          "created_ms",
+          "evaluations"
+        ],
+        "description": "One Goal as the Session state folds it and clients list it."
+      },
+      "GoalStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "active",
+          "paused",
+          "met",
+          "impossible",
+          "cleared",
+          "budget_exceeded"
+        ],
+        "description": "A Goal's status (`goals` → Goal model)."
+      },
+      "Verdict": {
+        "type": "string",
+        "enum": [
+          "met",
+          "not_met",
+          "impossible"
+        ],
+        "description": "An evaluator verdict."
+      },
+      "Evaluated": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal_id": {
+            "type": "string"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/Verdict"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "check": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CheckRun"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "turn": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "The goal Turn this verdict closes (1-based)."
+          },
+          "eval_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "eval_cost_usd": {
+            "type": "number",
+            "format": "double"
+          },
+          "tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Work tokens and cost since activation, children included, at this verdict."
+          },
+          "cost_usd": {
+            "type": "number",
+            "format": "double"
+          },
+          "evaluated_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "goal_id",
+          "verdict",
+          "reason",
+          "turn",
+          "eval_tokens",
+          "eval_cost_usd",
+          "tokens",
+          "cost_usd",
+          "evaluated_ms"
+        ],
+        "description": "`session.goal.evaluated.1`."
+      },
+      "CheckRun": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "timed_out": {
+            "type": "boolean"
+          },
+          "tail": {
+            "type": "string",
+            "description": "The last 50 lines of its output."
+          }
+        },
+        "required": [
+          "command",
+          "timed_out",
+          "tail"
+        ],
+        "description": "The `check` that ran after a `met` verdict."
+      },
+      "CreateGoal": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "condition": {
+            "type": "string"
+          },
+          "check": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Budget"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "mode": {
+            "$ref": "#/components/schemas/GoalMode"
+          }
+        },
+        "required": [
+          "condition"
+        ],
+        "description": "`POST .../goals`."
+      },
+      "GoalMode": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "set",
+            "description": "Replace the current Goal and start working on this one."
+          },
+          {
+            "type": "string",
+            "const": "add",
+            "description": "Append to the queue; it activates at once when no Goal is current."
+          }
+        ],
+        "description": "How `POST .../goals` places the new Goal."
+      },
+      "Data_Goal": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Goal"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "GoalOrder": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "goal_ids"
+        ],
+        "description": "`PATCH .../goals/order`."
+      },
+      "Data_Nullable_Goal": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Goal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "EditGoal": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "condition": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "check": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Budget"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "description": "`PATCH .../goals/{goal_id}`; `check: null` removes the check."
       },
       "Located_Array_of_AgentInfo": {
         "type": "object",
@@ -16190,7 +16747,7 @@
     "/api/v1/sessions/{sessionID}/messages": {
       "get": {
         "operationId": "v1.message.list",
-        "summary": "List messages",
+        "summary": "List the active path's messages, or every branch's with branches=all",
         "tags": [
           "message"
         ],
@@ -16226,6 +16783,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "branches",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -16238,6 +16803,214 @@
                 }
               }
             }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/tree": {
+      "get": {
+        "operationId": "v1.session.tree",
+        "summary": "The user-message tree of every branch, with the active path and labels",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_BranchNode"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/checkout": {
+      "post": {
+        "operationId": "v1.session.checkout",
+        "summary": "Make another branch active on an idle Session, optionally restoring its code",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_CheckedOutBranch"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BranchCheckout"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/labels/{name}": {
+      "put": {
+        "operationId": "v1.session.label",
+        "summary": "Label a message of the branch tree",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "OK"
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LabelBody"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "v1.session.unlabel",
+        "summary": "Remove a branch label",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "OK"
           },
           "default": {
             "description": "Tagged error",
@@ -19493,6 +20266,656 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Data_PeerRevoked"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/goals": {
+      "get": {
+        "operationId": "v1.session.goals",
+        "summary": "The Session's current Goal, its queue in order and its 20 most recent ended Goals",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_GoalsView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "SessionNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "v1.session.createGoal",
+        "summary": "Set the active Goal (`mode: set`, the default, clears the current one and starts a Turn toward it) or queue one (`mode: add`)",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Goal"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "GoalConditionTooLongError or InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "SessionNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "GoalQueueFullError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateGoal"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "v1.session.clearGoals",
+        "summary": "Clear the current and every queued Goal; returns the cleared IDs",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "SessionNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/goals/order": {
+      "patch": {
+        "operationId": "v1.session.reorderGoals",
+        "summary": "Reorder the pending queue; publishes session.goal.reordered.1",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError when goal_ids is not the pending queue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoalOrder"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/goals/pause": {
+      "post": {
+        "operationId": "v1.session.pauseGoal",
+        "summary": "Pause the active Goal: no evaluation or continuation until resumed",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Goal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "GoalNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/goals/resume": {
+      "post": {
+        "operationId": "v1.session.resumeGoal",
+        "summary": "Resume the paused Goal with a prompt toward it",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Goal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "GoalNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/goals/skip": {
+      "post": {
+        "operationId": "v1.session.skipGoal",
+        "summary": "Clear the current Goal and activate the next queued one; null when the queue was empty",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Nullable_Goal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "GoalNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/goals/{goalID}": {
+      "get": {
+        "operationId": "v1.session.goal",
+        "summary": "One Goal with its last 50 evaluations",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "goalID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Goal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "GoalNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "v1.session.editGoal",
+        "summary": "Edit a live Goal's condition, check (null removes it) or budget; publishes session.goal.edited.1",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "goalID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Goal"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "GoalConditionTooLongError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "GoalNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditGoal"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "v1.session.clearGoal",
+        "summary": "Clear one live Goal",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "goalID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "GoalNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
                 }
               }
             }

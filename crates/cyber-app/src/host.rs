@@ -108,6 +108,19 @@ impl ToolHost for AppHost {
         self.builtin.daily_budget(directory)
     }
 
+    fn goal_settings(
+        &self,
+        directory: &str,
+    ) -> Result<
+        (
+            cyber_core::goals::GoalSettings,
+            Option<cyber_core::budget::Budget>,
+        ),
+        String,
+    > {
+        self.builtin.goal_settings(directory)
+    }
+
     fn loop_settings(
         &self,
         directory: &str,

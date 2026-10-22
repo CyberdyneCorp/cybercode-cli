@@ -44,10 +44,14 @@ const DISTINCT_UNAVAILABLE: &[&str] = &[
     "WorktreeRemove",
     "Setup",
     "ConfigChange",
+    "GoalEvaluated",
+    "GoalCompleted",
 ];
 
 /// Lifecycle events the runtime dispatches through its narrow host port.
 const RUNTIME_EVENTS: &[&str] = &[
+    "GoalEvaluated",
+    "GoalCompleted",
     "Stop",
     "StopFailure",
     "UserPromptSubmit",

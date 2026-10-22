@@ -49,6 +49,8 @@ impl Inner {
         request.tools = Vec::new();
         request.reasoning = None;
         request.max_output_tokens = Some(80);
+        // The title belongs to the Turn the first prompt opened; it is not a new request.
+        request.initiator = Some(cyber_llm::Initiator::Agent);
         self.check_budget(handle).await.map_err(|e| e.to_string())?;
         let started = std::time::Instant::now();
         let stream = resolved

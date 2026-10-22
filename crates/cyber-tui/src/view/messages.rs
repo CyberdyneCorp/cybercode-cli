@@ -283,6 +283,14 @@ fn message_lines(app: &App, item: &Item, width: usize) -> Option<Vec<Line<'stati
     if crate::loops::is_iteration(id) {
         return iteration_lines(app, id, text);
     }
+    if let Some(line) = crate::goals::prompt_line(text) {
+        let t = &app.theme;
+        let (mark, rest) = line.split_at(line.find(' ').unwrap_or(0));
+        return Some(vec![Line::from(vec![
+            Span::styled(mark.to_string(), Style::default().fg(t.accent)),
+            Span::styled(rest.to_string(), Style::default().fg(t.text_muted)),
+        ])]);
+    }
     if let Some(record) = app.messaging.received(id) {
         return Some(super::messaging::received(app, record, width));
     }
