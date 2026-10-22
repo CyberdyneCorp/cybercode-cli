@@ -119,45 +119,23 @@ fn login(
     let http = cyber_llm::Endpoint::client_builder()
         .build()
         .map_err(|_| CliError::runtime("HTTP client unavailable"))?;
-    let tokens = runtime
-        .block_on(chatgpt::exchange_code(
+    let signed_in = runtime
+        .block_on(chatgpt::complete_login(
             &http,
             &issuer,
+            chatgpt::backend_url(&ctx.env),
+            file,
             &code,
             &pkce.verifier,
         ))
         .map_err(login_failed)?;
-    let signed_in = Login::from_exchange(tokens).map_err(login_failed)?;
-    file.save(&signed_in).map_err(failed)?;
-    let models = runtime.block_on(plan_models(ctx, &http, file, &signed_in));
-    report(global, &signed_in, &models)
-}
-
-/// Fetch and cache the plan's models. A failure is only a warning: the login is kept, and
-/// signing in again retries.
-async fn plan_models(
-    ctx: &Context,
-    http: &reqwest::Client,
-    file: &AuthFile,
-    login: &Login,
-) -> Vec<String> {
-    let cache = ModelsFile::beside(file.path());
-    let fetched = match chatgpt::backend_url(&ctx.env) {
-        Ok(backend) => chatgpt::fetch_models(http, &backend, login).await,
-        Err(error) => Err(error),
-    };
-    match fetched.and_then(|models| {
-        let slugs = models.iter().map(|m| m.slug.clone()).collect();
-        cache.save(models).map(|()| slugs)
-    }) {
-        Ok(slugs) => slugs,
-        Err(error) => {
-            eprintln!(
-                "warning: could not list the plan's models ({error}); run this login again to retry"
-            );
-            Vec::new()
-        }
-    }
+    let models = signed_in.models.unwrap_or_else(|error| {
+        eprintln!(
+            "warning: could not list the plan's models ({error}); run this login again to retry"
+        );
+        Vec::new()
+    });
+    report(global, &signed_in.login, &models)
 }
 
 async fn await_callback(url: &str, state: &str) -> Result<String, CliError> {

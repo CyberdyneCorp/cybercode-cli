@@ -286,6 +286,7 @@ async fn on_tick(
     let mut actions = app.admissions.poll();
     app.refresh_admissions();
     actions.extend(app.machine_poll());
+    actions.extend(app.login_poll());
     actions
 }
 
@@ -655,6 +656,7 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
             open,
             toast,
         } => app.team_reply(&session_id, *view, open, toast),
+        Msg::Login(reply) => return app.login_reply(reply),
         Msg::Toast(text) => app.toast(text),
         Msg::TaskLog {
             session_id,

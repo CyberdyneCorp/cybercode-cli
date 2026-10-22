@@ -4,9 +4,10 @@
 //! The sign-in is OpenAI's OAuth authorization-code flow with PKCE, using the Codex public
 //! client as other third-party harnesses do; requests then go to the Codex backend and are
 //! paid by the user's ChatGPT plan. The interactive part (PKCE, `state`, the loopback
-//! callback) belongs to the CLI; this module owns the requests, the stored login and its
+//! callback) belongs to the CLI and the server's login API; this module owns the requests, the stored login and its
 //! refresh, so the adapter can renew a token right before it is used, and the list of
 //! models the plan serves. Diagnostics never contain a token or an authorization code.
+mod login;
 mod models;
 mod oauth;
 mod store;
@@ -18,6 +19,7 @@ use reqwest::Url;
 
 use crate::subscription::StoreError;
 
+pub use login::{SignedIn, complete_login};
 pub use models::{CLIENT_VERSION, ModelsFile, PlanModel, fetch as fetch_models};
 pub use oauth::{Claims, authorize_url, exchange_code, refresh};
 pub use store::{AuthFile, Login};

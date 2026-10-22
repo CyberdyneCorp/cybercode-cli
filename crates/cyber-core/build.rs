@@ -1,4 +1,8 @@
+use std::path::PathBuf;
 use std::process::Command;
+
+#[path = "build/git_watch.rs"]
+mod git_watch;
 
 fn main() {
     let target = std::env::var("TARGET").unwrap_or_else(|_| "unknown".into());
@@ -18,8 +22,8 @@ fn main() {
     println!("cargo:rustc-env=CYBER_BUILD_CHANNEL={channel}");
 
     // Rebuild when the commit changes: HEAD, the branch ref it points to, packed refs.
-    for path in git_paths() {
-        println!("cargo:rerun-if-changed={path}");
+    for path in git_watch::watched(&git_paths()) {
+        println!("cargo:rerun-if-changed={}", path.display());
     }
     println!("cargo:rerun-if-env-changed=CYBER_GIT_SHA");
     println!("cargo:rerun-if-env-changed=CYBER_CHANNEL");
@@ -60,11 +64,14 @@ fn git(args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-fn git_paths() -> Vec<String> {
+fn git_paths() -> Vec<(String, PathBuf)> {
     let mut refs = vec!["HEAD".to_string(), "packed-refs".to_string()];
     refs.extend(git(&["symbolic-ref", "-q", "HEAD"]));
-    refs.iter()
-        .filter_map(|r| git(&["rev-parse", "--git-path", r]))
+    refs.into_iter()
+        .filter_map(|r| {
+            let path = git(&["rev-parse", "--git-path", &r])?;
+            Some((r, PathBuf::from(path)))
+        })
         .collect()
 }
 
