@@ -89,7 +89,7 @@ Implementation deltas are recorded in `specs/goals/spec.md`:
 - [x] 8.1 `--goal` (repeatable), `--goal-check` (binds to the previous `--goal`) and `--max-turns`.
 - [x] 8.2 Exit codes 0, 3, 4, 1 and 130 per design §9. The JSON result gains `goals[]`.
 - [x] 8.3 Under exec, asks are declined immediately, and a declined ask doesn't pause the goal.
-- [ ] 8.4 CLI tests: `exec_goal_met_exits_zero_after_check_passes`, `exec_goal_impossible_exits_3`, `exec_goal_budget_exits_4`, `exec_goal_queue_exit_reflects_first_non_met`, `exec_goal_sigint_exits_130`.
+- [x] 8.4 CLI tests: `exec_goal_met_exits_zero_after_check_passes`, `exec_goal_impossible_exits_3`, `exec_goal_budget_exits_4`, `exec_goal_queue_exit_reflects_first_non_met`, `exec_goal_sigint_exits_130`.
 
 ## 9. Goals on agents and workflows; fork and templates
 
