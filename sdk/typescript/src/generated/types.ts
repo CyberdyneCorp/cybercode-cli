@@ -3341,6 +3341,11 @@ export type WorkflowAgent = {
   started_ms?: number | null;
   /** When the agent settled; absent while it runs. */
   ended_ms?: number | null;
+  /**
+   * Compactions of the agent's child Session (`compaction` → Compaction in subagents and
+   * workflows); counted when the run is read, never recorded in the event.
+   */
+  compactions?: number;
 };
 
 /**

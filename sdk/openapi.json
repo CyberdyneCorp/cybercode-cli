@@ -3393,6 +3393,12 @@
             ],
             "format": "int64",
             "description": "When the agent settled; absent while it runs."
+          },
+          "compactions": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Compactions of the agent's child Session (`compaction` → Compaction in subagents and\nworkflows); counted when the run is read, never recorded in the event."
           }
         },
         "required": [

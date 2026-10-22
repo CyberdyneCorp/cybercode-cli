@@ -261,6 +261,14 @@ pub struct WorkflowAgent {
     /// When the agent settled; absent while it runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ended_ms: Option<i64>,
+    /// Compactions of the agent's child Session (`compaction` → Compaction in subagents and
+    /// workflows); counted when the run is read, never recorded in the event.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub compactions: u64,
+}
+
+fn is_zero(count: &u64) -> bool {
+    *count == 0
 }
 
 /// One `log()` call.
@@ -771,11 +779,40 @@ impl Runtime {
 
     /// Agents of a run, in start or settlement order.
     pub fn workflow_agents(&self, run_id: &str) -> Result<Vec<WorkflowAgent>, RuntimeError> {
-        rows(
+        let mut agents: Vec<WorkflowAgent> = rows(
             &self.inner.store,
             "SELECT data FROM workflow_agent WHERE run_id = ?1 ORDER BY settled_seq",
             Some(run_id.to_owned()),
-        )
+        )?;
+        let counts = self.agent_compactions(run_id)?;
+        for agent in &mut agents {
+            if let Some(count) = agent.session_id.as_ref().and_then(|id| counts.get(id)) {
+                agent.compactions = *count;
+            }
+        }
+        Ok(agents)
+    }
+
+    /// Completed compactions per child Session of the run's agents.
+    fn agent_compactions(
+        &self,
+        run_id: &str,
+    ) -> Result<std::collections::HashMap<String, u64>, RuntimeError> {
+        let run = run_id.to_owned();
+        Ok(self.inner.store.read(move |db| {
+            let mut statement = db.prepare(
+                "SELECT e.aggregate_id, COUNT(*) FROM event e
+                 WHERE e.type = ?2 AND e.aggregate_id IN
+                   (SELECT json_extract(a.data, '$.session_id') FROM workflow_agent a WHERE a.run_id = ?1)
+                 GROUP BY e.aggregate_id",
+            )?;
+            let counts = statement
+                .query_map(params![run, super::events::COMPACTION_COMPLETED], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64))
+                })?
+                .collect::<Result<_, _>>()?;
+            Ok(counts)
+        })?)
     }
 
     /// The run log (`log()` calls), oldest first.

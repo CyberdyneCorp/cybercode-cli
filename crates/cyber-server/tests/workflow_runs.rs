@@ -2992,3 +2992,35 @@ async fn direct_tool_results_are_recorded_and_replayed_after_a_pause() {
     assert_eq!(recorded.len(), 1, "{recorded:?}");
     assert_eq!(recorded[0]["outcome"]["value"]["paths"], json!(["call 1"]));
 }
+
+/// `compaction` → Compaction in subagents and workflows: a run reports the compactions of
+/// each agent's child Session.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_reports_its_agents_compactions() {
+    let agents = Arc::new(Agents::default());
+    let f = fixture(&agents);
+    let owner = f.session("default").await;
+    let run = f
+        .start(&owner, "export default async () => (await agent('a')).text;\n")
+        .await;
+    f.settled(&run.id).await;
+    let child = f.runtime.workflow_agents(&run.id).unwrap()[0]
+        .session_id
+        .clone()
+        .unwrap();
+    for _ in 0..2 {
+        f.store
+            .append(
+                &child,
+                cyber_store::Expected::Any,
+                vec![cyber_store::NewEvent::new(
+                    "session.compaction.completed.1",
+                    json!({"model": "test/main"}),
+                )],
+            )
+            .unwrap();
+    }
+    let agent = &f.runtime.workflow_agents(&run.id).unwrap()[0];
+    assert_eq!(agent.compactions, 2);
+    assert_eq!(serde_json::to_value(agent).unwrap()["compactions"], 2);
+}

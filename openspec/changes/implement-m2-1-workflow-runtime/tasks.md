@@ -74,7 +74,7 @@ Increment 2 delivered the runtime core (section 6) ahead of resume, so 3.1 is do
 - [x] 4.12 The `workflow.run` permission defaults to `ask` in `default` Mode and `allow` in `auto` and `bypass`. The run's Mode is a ceiling for its agents. In a non-interactive run, an agent's `ask` is auto-rejected with `No interactive approver for workflow run`.
 - [x] 4.13 Run results: the return value (up to 1 MiB, else a file with a preview), and a summary admitted to the starting Session with `delivery: queue` and `source: workflow`.
 - [x] 4.14 Hooks fire for workflow agent tool calls with `workflow_run_id`, plus the workflow hook events.
-- [ ] 4.15 Compaction rules apply to workflow agent Sessions and are reported to the monitor.
+- [x] 4.15 Compaction rules apply to workflow agent Sessions and are reported to the monitor. (Workflow agents are ordinary child Sessions, so the compaction rules already apply; the gaps count each agent's `session.compaction.completed.1` events as `compactions` in `GET /workflows/runs/{id}` and show `⟲N` on its monitor row. Test: `workflow_runs::a_run_reports_its_agents_compactions`.)
 - [ ] 4.16 Follow-up (P2 exit criterion, not M2.1-blocking): `reserved` budget enforcement. `crates/cyber-server/src/runtime/budget.rs` `validate` refuses it today with "Reserved Session budget enforcement is not available"; run budgets ship with `soft`/`hard` enforcement until reservations land.
 
 ## 5. Surfaces (increment 4)
@@ -87,7 +87,7 @@ Increment 2 delivered the runtime core (section 6) ahead of resume, so 3.1 is do
 - [x] 5.6 Minimal `/workflows` TUI monitor: `p` pauses or resumes, `x` stops, `r` relaunches, `t` opens a transcript. It also shows a progress line and the status-line count of running workflows. (Delivered by `add-parallel-workflow-runs` sections 9 and 10; the gaps add `w` to save an inline script, with the snapshots updated.)
 - [x] 5.7 Background-tasks integration: Job kind `workflow`, and runs listed in `/tasks`. (`/tasks` lists the Session's runs as `workflow` rows beside its Jobs from `GET /workflows/runs?session_id=`, Enter opens a run in the monitor and `x` stops it; `/stop` also stops the Session's active runs. Runs keep their own `run_` records rather than duplicate `job` rows, so `GET /jobs` does not list them. Test: `screens_tasks::tasks_lists_workflow_runs_and_stop_all_stops_them`.)
 - [ ] 5.8 Goal evaluation is deferred while runs started by the Session are active.
-- [ ] 5.9 Session export includes workflow run summaries. Retention of finished agent transcripts is applied.
+- [ ] 5.9 Session export includes workflow run summaries. Retention of finished agent transcripts is applied. (Open: blocked. `cyber sessions export` is not implemented (`sessions export` answers "not available") and storage-events retention/GC does not exist yet; both belong to their own changes. Run summaries are already readable through `GET /workflows/runs?session_id=`.)
 
 ## 6. Runtime core (increment 2)
 

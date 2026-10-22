@@ -189,6 +189,8 @@ pub struct Agent {
     pub cost: f64,
     /// From start to settlement, or to when the run was read for a running agent.
     pub duration_ms: Option<u64>,
+    /// Compactions of the agent's Session.
+    pub compactions: u64,
 }
 
 impl Agent {
@@ -208,6 +210,7 @@ impl Agent {
             duration_ms: started
                 .zip(ended)
                 .map(|(start, end)| end.saturating_sub(start).max(0) as u64),
+            compactions: number(&value["compactions"]),
         })
     }
 }
@@ -1415,7 +1418,7 @@ mod tests {
             "phase": "Verify", "agents": {"queued": 5},
             "agents_detail": [
                 {"id": "agt_2", "phase": "Verify", "status": "running", "started_ms": 1000},
-                {"id": "agt_1", "phase": "Scan", "status": "completed",
+                {"id": "agt_1", "phase": "Scan", "status": "completed", "compactions": 2,
                     "started_ms": 0, "ended_ms": 41000},
                 {"id": "agt_3", "status": "failed"},
             ]}),
@@ -1446,6 +1449,7 @@ mod tests {
         assert_eq!(detail.agents[1].duration_ms, Some(41_000));
         assert_eq!(detail.agents[0].duration_ms, Some(4_000));
         assert_eq!(detail.agents[2].duration_ms, None);
+        assert_eq!(detail.agents[1].compactions, 2);
     }
 
     #[test]

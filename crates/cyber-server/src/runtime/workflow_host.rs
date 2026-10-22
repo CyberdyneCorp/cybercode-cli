@@ -375,6 +375,7 @@ impl RunHost {
                 tokens: 0,
                 started_ms: None,
                 ended_ms: None,
+                compactions: 0,
             },
             agent,
             prompt: call.prompt,
