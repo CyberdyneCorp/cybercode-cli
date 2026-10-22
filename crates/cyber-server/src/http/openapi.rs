@@ -1153,6 +1153,52 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .ok::<Data<Vec<String>>>(g)
         .error::<ErrorBody>(g, 404, "SessionNotFoundError or LoopNotFoundError"),
         op(
+            "post",
+            "/providers/{provider}/login",
+            "v1.provider.login",
+            "Start a subscription sign-in (only `chatgpt`); cancels a pending attempt. Open `authorization_url`; `callback` says whether the server waits for the browser's redirect",
+        )
+        .status(201)
+        .ok::<Data<super::providers::LoginAttempt>>(g)
+        .error::<ErrorBody>(g, 400, "ProviderLoginUnsupportedError, or InvalidRequestError on Windows")
+        .error::<ErrorBody>(g, 503, "ServiceUnavailableError"),
+        op(
+            "get",
+            "/providers/{provider}/login/{attemptID}",
+            "v1.provider.loginAttempt",
+            "A sign-in attempt: `pending`, `complete` with the account and models, or `failed` with the error",
+        )
+        .ok::<Data<super::providers::LoginAttempt>>(g)
+        .error::<ErrorBody>(g, 400, "ProviderLoginUnsupportedError")
+        .error::<ErrorBody>(g, 404, "ProviderLoginNotFoundError"),
+        op(
+            "post",
+            "/providers/{provider}/login/{attemptID}/code",
+            "v1.provider.loginCode",
+            "Complete a pending attempt with the redirect URL pasted from the browser; a wrong `state` is refused and the attempt stays pending",
+        )
+        .body::<super::providers::LoginCode>(g)
+        .ok::<Data<super::providers::LoginAttempt>>(g)
+        .error::<ErrorBody>(g, 400, "InvalidRequestError or ProviderLoginUnsupportedError")
+        .error::<ErrorBody>(g, 404, "ProviderLoginNotFoundError")
+        .error::<ErrorBody>(g, 409, "ConflictError when the attempt is no longer pending"),
+        op(
+            "delete",
+            "/providers/{provider}/login/{attemptID}",
+            "v1.provider.cancelLogin",
+            "Cancel a pending sign-in attempt and stop waiting for the browser",
+        )
+        .status(204)
+        .error::<ErrorBody>(g, 404, "ProviderLoginNotFoundError"),
+        op(
+            "delete",
+            "/providers/{provider}/login",
+            "v1.provider.logout",
+            "Forget the stored login and its model list; tokens are not revoked remotely",
+        )
+        .ok::<Data<super::providers::Logout>>(g)
+        .error::<ErrorBody>(g, 400, "ProviderLoginUnsupportedError"),
+        op(
             "get",
             "/peers",
             "v1.peers.list",

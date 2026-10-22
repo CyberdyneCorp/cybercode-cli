@@ -488,6 +488,14 @@ export type Data_LocationInfo = {
   data: LocationInfo;
 };
 
+export type Data_LoginAttempt = {
+  data: LoginAttempt;
+};
+
+export type Data_Logout = {
+  data: Logout;
+};
+
 export type Data_LoopState = {
   data: LoopState;
 };
@@ -1465,6 +1473,47 @@ export type LocationInfo = {
   directory: string;
   workspace?: string | null;
   project: ProjectInfo;
+};
+
+/** One sign-in attempt. Never carries a token, the PKCE verifier or the `state`. */
+export type LoginAttempt = {
+  /** A `pla_` ID. */
+  attempt_id: string;
+  provider: string;
+  status: LoginStatus;
+  /** Open in a browser to authorize. */
+  authorization_url: string;
+  /**
+   * The server is waiting for the browser's redirect on localhost:1455; without it the
+   * user pastes the redirect URL to the `code` route.
+   */
+  callback: boolean;
+  /** Unix seconds after which a pending attempt fails. */
+  expires_at: number;
+  /** The signed-in account, when complete. */
+  email?: string | null;
+  plan?: string | null;
+  /** The plan's model IDs, when complete. */
+  models?: string[];
+  /** Why the model list is missing from a complete attempt. */
+  warning?: string | null;
+  /** Why a failed attempt failed. */
+  error?: string | null;
+};
+
+/** `POST /api/v1/providers/:provider/login/:attempt_id/code`. */
+export type LoginCode = {
+  /** The full URL the browser was redirected to. */
+  redirect_url: string;
+};
+
+/** Where a login attempt stands. */
+export type LoginStatus = "pending" | "complete" | "failed";
+
+/** `DELETE /api/v1/providers/:provider/login`. */
+export type Logout = {
+  /** A stored login was removed. */
+  removed: boolean;
 };
 
 export type LongestSession = {

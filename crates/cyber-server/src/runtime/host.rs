@@ -110,35 +110,47 @@ pub trait ModelResolver: Send + Sync {
     }
 }
 
-/// Resolution through the catalog and the user's configuration.
+/// Resolution through the catalog and the user's configuration. The catalog is rebuilt by
+/// [`CatalogResolver::reload`] when a provider login changes; resolved models keep theirs.
 pub struct CatalogResolver {
-    catalog: Catalog,
+    catalog: std::sync::RwLock<Arc<Catalog>>,
+    /// The catalog source data the catalog was built from, kept for reloads.
+    data: Value,
     config: Value,
     limits: cyber_llm::limits::LimitStore,
 }
 
 impl CatalogResolver {
     pub fn new(data: &Value, config: Value, env: &dyn cyber_core::env::EnvSource) -> Self {
-        let catalog = Catalog::build(&BuildInputs {
-            data,
-            config: &config,
-            env,
-        });
+        let catalog = Self::build(data, &config, env);
         Self {
-            catalog,
+            catalog: std::sync::RwLock::new(catalog),
+            data: data.clone(),
             config,
             limits: Default::default(),
         }
     }
 
-    pub fn catalog(&self) -> &Catalog {
-        &self.catalog
+    fn build(data: &Value, config: &Value, env: &dyn cyber_core::env::EnvSource) -> Arc<Catalog> {
+        Arc::new(Catalog::build(&BuildInputs { data, config, env }))
+    }
+
+    pub fn catalog(&self) -> Arc<Catalog> {
+        Arc::clone(&self.catalog.read().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    /// Rebuild the catalog from the same source data and configuration, picking up a
+    /// stored provider login that appeared or went away (`provider-catalog` → ChatGPT
+    /// subscription provider: Reload on login).
+    pub fn reload(&self, env: &dyn cyber_core::env::EnvSource) {
+        let catalog = Self::build(&self.data, &self.config, env);
+        *self.catalog.write().unwrap_or_else(|e| e.into_inner()) = catalog;
     }
 }
 
 impl ModelResolver for CatalogResolver {
     fn credential_env_names(&self) -> Vec<String> {
-        self.catalog
+        self.catalog()
             .providers
             .values()
             .flat_map(|provider| provider.env.iter().cloned())
@@ -147,9 +159,10 @@ impl ModelResolver for CatalogResolver {
 
     fn resolve(&self, model_ref: &str) -> Result<ResolvedModel, String> {
         let r = ModelRef::parse(model_ref).map_err(|e| e.to_string())?;
-        let mut target = self.catalog.resolve(&r, None).map_err(|e| e.to_string())?;
+        let catalog = self.catalog();
+        let mut target = catalog.resolve(&r, None).map_err(|e| e.to_string())?;
         target.endpoint.limits = Some(self.limits.sink(&r.provider));
-        let (_, model) = self.catalog.find(&r).map_err(|e| e.to_string())?;
+        let (_, model) = catalog.find(&r).map_err(|e| e.to_string())?;
         Ok(ResolvedModel {
             adapter: Arc::from(target.adapter()),
             template: target.request,

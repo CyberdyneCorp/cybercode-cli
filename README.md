@@ -60,6 +60,8 @@ A ChatGPT Plus or Pro plan can pay for OpenAI models instead of an API key, in t
 ./target/debug/cyber providers logout chatgpt
 ```
 
+In the TUI, `/login openai` signs in from a dialog. It shows the URL to open, or takes the redirect URL you paste. The plan's models are usable at once, without restarting the server. `/logout openai` signs out. Google (Gemini) subscription logins are not supported.
+
 Usage counts against your plan's limits. The login is kept in `~/.local/share/cyber/chatgpt-auth.json` (mode 0600), separate from Codex's, and the token is renewed before it expires. The model list comes from your account and is refreshed daily. macOS and Linux only for now. Details: [ChatGPT subscription](docs/local-core-guide.md#signing-in-with-a-chatgpt-subscription).
 
 ### Permission modes

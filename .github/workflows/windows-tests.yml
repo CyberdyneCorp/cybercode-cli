@@ -1,4 +1,4 @@
-# Run chosen tests on Windows without the full hour-long "Windows lint" job:
+# Run chosen tests on Windows without the full "Windows build" job:
 #   gh workflow run windows-tests.yml --ref <branch> -f args="-p cyber-app --test peers"
 #   gh run watch
 name: Windows tests
