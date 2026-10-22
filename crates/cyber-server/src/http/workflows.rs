@@ -385,9 +385,9 @@ async fn stop(
     Ok(Json(Data { data: run }))
 }
 
-/// Relaunch through replay. Saved Workflows and an inline script's `script_file` are read
-/// again, so an edit needs `revision: true`; an inline run whose file is gone runs its
-/// stored source.
+/// Relaunch through replay. Saved Workflows, bundled ones (as this build ships them) and
+/// an inline script's `script_file` are read again, so a change needs `revision: true`; an
+/// inline run whose file is gone runs its stored source.
 async fn resume(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -429,6 +429,7 @@ async fn relaunch(
     let location = std::path::PathBuf::from(&run.directory);
     let module = match run.origin["kind"].as_str() {
         Some("saved") => services.saved_workflow(&location, &run.name)?,
+        Some("bundled") => bundled_module(run)?,
         _ => WorkflowModule::inline(inline_source(runtime, run)?).map_err(diagnostic)?,
     };
     let owner = runtime.state(&run.session_id).await?.info;
@@ -444,6 +445,19 @@ async fn relaunch(
         revision: false,
         share,
     })
+}
+
+/// The bundled Workflow a run started from, as this build ships it.
+fn bundled_module(run: &WorkflowRun) -> Result<WorkflowModule, ApiError> {
+    let name = run.origin["name"].as_str().unwrap_or(&run.name);
+    cyber_workflow::bundled::module(name)
+        .cloned()
+        .ok_or_else(|| {
+            ApiError::not_found(
+                "WorkflowNotFoundError",
+                format!("This build has no bundled Workflow named {name:?}"),
+            )
+        })
 }
 
 /// How the runtime rebuilds runs after a restart (`workflows` → Recovery of several runs):

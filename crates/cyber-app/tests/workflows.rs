@@ -3384,3 +3384,34 @@ async fn bundled_runs_validate_and_prepare_their_args_before_a_run_exists() {
             .await;
     }
 }
+
+/// Regression: a bundled run was resumed as an inline script (`inline:<name>@<digest>`),
+/// so a rule denying inline scripts refused it and a release's changed source was never
+/// read. It resumes as the bundled Workflow it started from.
+#[tokio::test]
+async fn a_bundled_run_resumes_as_the_bundled_workflow() {
+    let model = ScriptedModel::start(|_| json!({"hold": true}));
+    let mut config = model.config();
+    let server = Server::start(config.clone()).await;
+    let owner = server.session().await;
+    let run_id = server
+        .start_run(json!({"session_id": owner, "name": "plan",
+            "args": {"task": "add a cache", "angles": ["a", "b"], "judges": 1}}))
+        .await;
+    wait_for("a held planner", || !model.requests().is_empty()).await;
+    server
+        .ok(Method::POST, &format!("/workflows/runs/{run_id}/stop"), None)
+        .await;
+    config["permissions"] = json!({"workflow.run": {"inline:*": "deny"}});
+    let global = server.temp.path().canonicalize().unwrap().join("config/cyber.json");
+    std::fs::write(global, config.to_string()).unwrap();
+    model.release();
+    let (status, body) = resume_when_quiet(&server, &run_id, json!({})).await;
+    assert!(status.is_success(), "{body}");
+    assert_eq!(body["data"]["origin"], json!({"kind": "bundled", "name": "plan"}));
+    assert_eq!(body["data"]["revision"], 1, "{body}");
+    server
+        .ok(Method::POST, &format!("/workflows/runs/{run_id}/stop"), None)
+        .await;
+    server.close().await;
+}
