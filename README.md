@@ -43,7 +43,7 @@ export OPENAI_API_KEY="your-key"                  # or use your ChatGPT or Copil
 ./target/debug/cyber --continue                   # resume the latest session
 ./target/debug/cyber -r "auth refactor"           # resume a Session by title (name it with /rename)
 ./target/debug/cyber sessions list                # list, show, rename or delete Sessions
-./target/debug/cyber workflows run fanout --wait  # run a saved Workflow; progress on stderr
+./target/debug/cyber workflows list                # list saved Workflows; create one using the guide below
 ./target/debug/cyber stats --models               # local usage stats
 ./target/debug/cyber doctor                       # check your setup
 ```
@@ -338,6 +338,8 @@ flowchart LR
 ## Documentation and development
 
 [Documentation index](docs/README.md) · [Feature reference](docs/features.md) · [Commands and configuration](docs/local-core-guide.md) · [Command-line reference](docs/cli.md) · [Roadmap](ROADMAP.md) · [SDK](sdk/typescript/README.md) · [OpenAPI](sdk/openapi.json) · [Evaluations](eval/README.md) · [OpenSpec contracts](openspec/specs)
+
+Create a saved Workflow with the [fan-out example](docs/local-core-guide.md#workflows-p2-m21) before running `cyber workflows run fanout --wait`.
 
 Run `just` to list tasks, `just build` to build and `just ci` for local checks. Platform builds run in [CI](.github/workflows/ci.yml). See the [development guide](docs/local-core-guide.md#build-and-development) for raw commands and the pinned specification validator.
 

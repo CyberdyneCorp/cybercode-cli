@@ -38,11 +38,15 @@ Cyber Code is a Model Context Protocol client, so tools, resources and prompts f
 - **THEN** the first Turn runs without its tools and the model can call `wait_for_mcp` with that server name
 
 ### Requirement: Status model
-(P0) The system SHALL report each server's status as `connecting`, `connected`, `disabled`, `failed` (with error), `needs_auth`, or `needs_client_registration`. It SHALL publish `mcp.status.changed.1` on every transition, and on connection loss SHALL set `failed`, remove the server's tools and retry with exponential backoff (1 s to 60 s, at most 10 attempts).
+(P0) The system SHALL report each server's status as `idle`, `connecting`, `connected`, `disabled`, `failed` (with error), `needs_auth`, or `needs_client_registration`, together with its `transport` (`remote` or `stdio`). `idle` SHALL mean the server is configured and allowed but no Session has opened its Location yet; such a server SHALL NOT be reported as `failed`, and `idle` SHALL never be recorded as a connection transition. It SHALL publish `mcp.status.changed.1` on every transition, and on connection loss SHALL set `failed`, remove the server's tools and retry with exponential backoff (1 s to 60 s, at most 10 attempts).
 
 #### Scenario: Reconnect after drop
 - **WHEN** a connected remote server drops the connection
 - **THEN** its tools are removed, status becomes `failed`, and reconnection is retried with backoff
+
+#### Scenario: Configured but not started
+- **WHEN** a server is configured globally and no Session has opened the Location yet
+- **THEN** `GET /api/v1/mcp` reports it `idle` with `transport` `remote`, and it connects once a Session opens the Location
 
 ### Requirement: Timeouts
 (P0) Connecting and initial listing SHALL time out after `timeout` (default 30 s). Each tool call SHALL time out after `timeout` or `mcp.tool_timeout` (default 300 s), and progress notifications SHALL reset the call timer.
@@ -126,11 +130,15 @@ Cyber Code is a Model Context Protocol client, so tools, resources and prompts f
 - **THEN** the call settles with `Stale tool call: mcp__srv__foo`
 
 ### Requirement: MCP CLI and UI
-(P0) The system SHALL provide `cyber mcp add <name> [--scope user|project|local] (--url <url> [--header K=V]... | -- <command> [args...] [--env K=V]...)`, `list`, `get <name>`, `remove <name>`, `auth <name>`, `logout <name>`, `debug <name>` and the in-session `/mcp` panel (status, tools, reconnect, auth). Edits SHALL preserve JSONC comments.
+(P0) The system SHALL provide `cyber mcp add <name> [--scope user|project|local] (--url <url> [--header K=V]... | [--env K=V]... -- <command> [args...])`, `list`, `get <name>`, `remove <name> [--scope user|project|local]`, `auth <name>`, `logout <name>`, `debug <name>` and the in-session `/mcp` panel (status, tools, reconnect, auth). `user` scope SHALL write the global document, `project` the project's `.cyber/cyber.jsonc` (which then needs `cyber mcp trust`), and `local` the project's `.cyber/cyber.local.jsonc`. Edits SHALL preserve JSONC comments. `add` SHALL refuse a name already defined in the target document, and `remove` without `--scope` SHALL refuse a name defined in more than one document.
 
 #### Scenario: Add remote server
 - **WHEN** the user runs `cyber mcp add linear --url https://mcp.linear.app/mcp`
 - **THEN** a remote entry is written to user-scope config and the server connects
+
+#### Scenario: Comments survive an edit
+- **WHEN** the global `cyber.jsonc` has comments and the user adds and then removes a server
+- **THEN** every comment and every other setting is unchanged
 
 ### Requirement: Organization MCP controls
 (P1) Org policy (`policy.mcp`) SHALL be able to allowlist or denylist servers by name, command or URL pattern, and to provide managed servers to every user. A blocked server SHALL report status `failed` with error `blocked by organization policy` and SHALL never be started.
@@ -147,11 +155,11 @@ Cyber Code is a Model Context Protocol client, so tools, resources and prompts f
 - **THEN** the whole process group is terminated
 
 ### Requirement: MCP server mode
-(P2) The system SHALL provide `cyber mcp serve [--transport stdio|http] [--port N]`, exposing Cyber Code as an MCP server with tools `cyber_session_create`, `cyber_prompt` (admit a prompt and wait for idle or `wait: false`), `cyber_session_read`, `cyber_session_list`, `cyber_workflow_run`, `cyber_goal_set` and `cyber_interrupt`. Permissions SHALL be enforced by the target session's mode, and over HTTP the same authentication as the server API SHALL be required.
+(P1) The system SHALL provide `cyber mcp serve`, exposing Cyber Code as an MCP server so external agents and IDEs can create, list, read, prompt and interrupt Sessions and exchange cross-session messages, as the `mcp-server` capability specifies. MCP clients SHALL be trusted local clients of the server API (local authentication, loopback or Unix socket only) and SHALL gain no permission beyond what the server API allows a local client; permission requests SHALL stay with human clients and the target Session's Mode.
 
 #### Scenario: Another agent drives Cyber Code
 - **WHEN** an external MCP client calls `cyber_prompt` with `{ directory: "/repo", prompt: "fix the failing test" }`
-- **THEN** a session is created or reused in `/repo`, the prompt runs, and the final assistant text is returned as tool content
+- **THEN** a Session is created in `/repo`, the prompt runs, and the final assistant text is returned as tool content with `status: "completed"`
 
 ### Requirement: Server options
 (P1) A server entry MAY set `required: true` (the Session's first Turn SHALL wait up to the connect `timeout` for it and fail with `McpRequiredError` naming the server if it is not connected), `headers_command` (a shell command, run outside the sandbox and outside project trust until approved, whose JSON stdout supplies `headers`, refreshed every `headers_refresh_seconds`, default 3600, and redacted from logs) and `output_token_limit` (per-server cap on model-visible tool output, default the global `tool_output` budget). `cyber mcp get <name>` SHALL display the resolved options with header values redacted.

@@ -111,11 +111,11 @@ wall time starts on the first gated dispatch and includes idle time. Soft limits
 overshoot and prevent subsequent provider dispatch. Session responses retain the Budget;
 `budget.warned.1` and `budget.exceeded.1` events identify `scope_id` and the limiting dimension.
 Independent forks copy caps with fresh spending. Reserved enforcement is refused until reservations
-are implemented; daily caps, explicit subtree cancellation and full client displays remain open.
+are implemented; daily caps, budget-triggered subtree cancellation and full client displays remain open. The explicit local subtree-stop API is available; exec/TUI adoption remains open.
 
 ## Descendant usage
 
-Session detail and list responses expose `children_cost`, `children_tokens`, `children_unpriced_steps` and `children_usage_complete` separately from own usage. Descendant totals include nested children and hidden title, compaction and evaluator calls, and persist across restart and child deletion. Retained billing receipts contain IDs and usage only, without prompt content; deleting an ancestor removes its receipts. Older databases are backfilled from surviving history and report `children_usage_complete: false` because previously deleted child billing cannot be reconstructed. New Sessions start with complete attribution. Subtree budget enforcement and live client counters remain open.
+Session detail and list responses expose `children_cost`, `children_tokens`, `children_unpriced_steps` and `children_usage_complete` separately from own usage. Descendant totals include nested children and hidden title, compaction and evaluator calls, and persist across restart and child deletion. Retained billing receipts contain IDs and usage only, without prompt content; deleting an ancestor removes its receipts. Older databases are backfilled from surviving history and report `children_usage_complete: false` because previously deleted child billing cannot be reconstructed. New Sessions start with complete attribution. Soft subtree budget enforcement is implemented: ancestor caps include descendant spending and block subsequent provider dispatch, including after child deletion. Budget-triggered subtree cancellation and complete live client counters remain open.
 
 ## Durable delegation admission
 

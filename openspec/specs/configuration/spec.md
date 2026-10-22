@@ -17,7 +17,7 @@ Configuration is the set of authored `cyber.json`/`cyber.jsonc` documents and `.
 - **THEN** a warning `unknown config key "colour"` is logged and shown by `cyber doctor`, and loading continues
 
 ### Requirement: Top-level keys
-(P0) The schema SHALL accept the top-level keys `$schema`, `model`, `small_model`, `model_roles`, `fallback_models`, `providers`, `agents`, `default_agent`, `mode`, `permissions`, `sandbox`, `hooks`, `plugins`, `mcp`, `skills`, `commands`, `instructions`, `references`, `memory`, `compaction`, `snapshots`, `worktrees`, `lsp`, `formatters`, `tool_output`, `workflows`, `goals`, `loops`, `messaging`, `peers`, `remote`, `runners`, `channels`, `account`, `share`, `telemetry`, `budgets`, `policy`, `profiles`, `default_profile`, `shell`, `attachments`, `background`, `tools`, `git`, `ide`, `autofix`, `network`, `storage`, `compat`, `services`, `features` and `experimental` (deprecated alias of `features`). Collection keys SHALL use plural names, and entries SHALL use `disabled: true` to turn off an inherited entry.
+(P0) The schema SHALL accept the top-level keys `$schema`, `model`, `small_model`, `model_roles`, `fallback_models`, `providers`, `agents`, `default_agent`, `mode`, `permissions`, `sandbox`, `hooks`, `plugins`, `mcp`, `mcp_serve` (MCP serve; global configuration only), `skills`, `commands`, `instructions`, `references`, `memory`, `browser`, `compaction`, `snapshots`, `worktrees`, `lsp`, `formatters`, `tool_output`, `workflows`, `goals`, `teams`, `loops`, `messaging`, `peers`, `remote`, `runners`, `channels`, `account`, `share`, `telemetry`, `budgets`, `policy`, `profiles`, `default_profile`, `shell`, `attachments`, `background`, `tools`, `git`, `ide`, `autofix`, `network`, `storage`, `compat`, `services`, `features`, `experimental` (deprecated alias of `features`) and `autoupdate` (`installation-upgrade`). Collection keys SHALL use plural names, and entries SHALL use `disabled: true` to turn off an inherited entry.
 
 #### Scenario: Disabling an inherited MCP server
 - **WHEN** the global config defines `mcp.github` and the project config sets `mcp.github.disabled = true`
@@ -31,7 +31,7 @@ Configuration is the set of authored `cyber.json`/`cyber.jsonc` documents and `.
 - **THEN** session titles and goal evaluation use `openai/gpt-6-mini`, and the advisor is off
 
 ### Requirement: Global config directory
-(P0) The system SHALL use `$XDG_CONFIG_HOME/cyber` (default `~/.config/cyber`), or `CYBER_CONFIG_DIR` when set, as the global config directory, holding `cyber.json`, `cyber.jsonc`, `tui.jsonc`, `AGENTS.md` and the supplemental subdirectories. On first run, when no global document exists, the system SHALL create `cyber.jsonc` containing only `{"$schema": "https://cyber-code.dev/schema/config.json"}`.
+(P0) The system SHALL use `$XDG_CONFIG_HOME/cyber` (default `~/.config/cyber`), or `CYBER_CONFIG_DIR` when set, as the global config directory, holding `cyber.json`, `cyber.jsonc`, `tui.jsonc`, `AGENTS.md`, `CYBER.md` and the supplemental subdirectories. On first run, when no global document exists, the system SHALL create `cyber.jsonc` containing only `{"$schema": "https://cyber-code.dev/schema/config.json"}`.
 
 #### Scenario: First run bootstrap
 - **WHEN** `~/.config/cyber` does not exist and the user runs `cyber`

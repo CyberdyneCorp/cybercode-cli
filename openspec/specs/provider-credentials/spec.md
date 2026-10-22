@@ -165,3 +165,55 @@ A refresh rejected with HTTP 400 or 401 SHALL fail the request with an `Authenti
 #### Scenario: Revoked refresh token
 - **WHEN** the token endpoint answers the refresh with 400 `invalid_grant`
 - **THEN** the Turn fails with the `cyber providers login chatgpt` hint and `<data>/chatgpt-auth.json` is unchanged
+
+### Requirement: Provider login API
+(P1) The server SHALL let clients drive the ChatGPT subscription login (same client, PKCE, scope, redirect URI and storage as "ChatGPT subscription login") through these routes of the `provider` group:
+
+- `POST /api/v1/providers/{provider}/login` SHALL start an attempt and return `201` with `{ attempt_id, provider, status: "pending", authorization_url, callback, expires_at }`. `callback` SHALL be true when the server is listening for the redirect on `127.0.0.1:1455`, and false when the port is busy. Starting an attempt SHALL cancel any pending one. An attempt SHALL expire 5 minutes after it starts.
+- `GET /api/v1/providers/{provider}/login/{attempt_id}` SHALL return the attempt, with `status` `pending`, `complete` (with `email`, `plan`, `models` and an optional `warning`) or `failed` (with `error`). A finished attempt SHALL remain readable for 10 minutes; after that, or for an unknown ID, the server SHALL answer `404 ProviderLoginNotFoundError`.
+- `POST /api/v1/providers/{provider}/login/{attempt_id}/code` with `{ redirect_url }` SHALL complete a pending attempt with a redirect URL pasted by the user. It SHALL refuse a URL whose `state` is missing or differs with `400 InvalidRequestError`, send no token request, and leave the attempt pending.
+- `DELETE /api/v1/providers/{provider}/login/{attempt_id}` SHALL cancel a pending attempt and stop its listener.
+- `DELETE /api/v1/providers/{provider}/login` SHALL sign out like `cyber providers logout`, returning `{ removed }`.
+
+The PKCE verifier, `state` and tokens SHALL never be returned by the API. Every route for a provider other than `chatgpt` SHALL answer `400 ProviderLoginUnsupportedError`, naming the provider's API-key environment variables. Starting an attempt SHALL be refused on Windows, as the CLI login is.
+
+#### Scenario: Pasted redirect completes the attempt
+- **WHEN** a client starts an attempt and posts `http://localhost:1455/auth/callback?code=c&state=<state of the attempt>` to its `code` route
+- **THEN** the code is exchanged, `<data>/chatgpt-auth.json` is written with mode 0600, and the attempt reads `complete` with the account email, plan and models
+
+#### Scenario: Forged state through the API
+- **WHEN** the posted redirect URL carries a different `state`
+- **THEN** the server answers 400, sends no token request, stores nothing and the attempt stays `pending`
+
+#### Scenario: Busy callback port
+- **WHEN** another process listens on port 1455 and a client starts an attempt
+- **THEN** the attempt starts with `callback: false` and can still complete through the `code` route
+
+#### Scenario: Unsupported provider
+- **WHEN** a client calls `POST /api/v1/providers/google/login`
+- **THEN** the server answers `400 ProviderLoginUnsupportedError` and starts nothing
+
+### Requirement: GitHub Copilot subscription login
+(P1) The system SHALL provide `cyber providers login copilot [--enterprise <host>]`. It SHALL sign the user in with GitHub's OAuth device flow:
+
+- **Device flow:**
+  - The flow runs on `github.com`, or on the bare hostname given with `--enterprise`.
+  - The CLI SHALL print the verification URL and the user code, then poll at the server's `interval`, adding 5 seconds on `slow_down`.
+  - Polling SHALL stop at the code's expiry (at most 15 minutes), on `access_denied` or `expired_token`, or on Ctrl+C. In every one of those cases nothing SHALL be stored.
+- **Subscription check:** after the device flow, the system SHALL mint a Copilot API token from the GitHub token. If minting fails, or names no API endpoint, the login SHALL fail with `This GitHub account has no active Copilot subscription` and SHALL store nothing.
+- **Storage:** the GitHub token, host and user SHALL be stored in the owner-only file `<data>/copilot-auth.json` (mode 0600, replaced atomically; refused when accessible to other users), and SHALL be unreadable by every sandboxed process. Minted Copilot API tokens SHALL be kept only in memory and reused until 5 minutes before they expire.
+- **Revoked login:** a mint rejected with HTTP 401 SHALL fail the request with an `Authentication` error that says `GitHub Copilot login expired or was revoked; run cyber providers login copilot`, and SHALL leave the stored login untouched.
+- **Logout:** `cyber providers logout copilot` SHALL delete the login and the cached model list without revoking the GitHub token.
+- **Windows:** login SHALL refuse on Windows until keyring storage exists.
+
+#### Scenario: Device login
+- **WHEN** the user runs `cyber providers login copilot`, opens the printed URL, enters the printed code and approves
+- **THEN** `<data>/copilot-auth.json` is written with mode 0600 and the CLI prints the GitHub user and the plan's models
+
+#### Scenario: Slow down honored
+- **WHEN** the token endpoint answers a poll with `slow_down`
+- **THEN** the next poll is sent at least `interval + 5` seconds later
+
+#### Scenario: No Copilot plan
+- **WHEN** the device flow succeeds but the Copilot token request answers 403
+- **THEN** the login fails with `This GitHub account has no active Copilot subscription` and nothing is stored

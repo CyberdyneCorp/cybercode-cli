@@ -1,5 +1,7 @@
 # P1 implementation status
 
+Current canonical scope and unmatched acceptance rows are tracked in the [2026-10-22 reconciliation](spec-doc-reconciliation.md). Counts and results in the dated sections below describe their recorded checkpoints; they do not classify every requirement added since then.
+
 ## GitHub Copilot subscription login (2026-10-20)
 
 Uncommitted, branch `feat/copilot-login`. Change [`add-copilot-subscription-login`](../../openspec/changes/add-copilot-subscription-login/tasks.md) adds a `copilot` provider paid for by a GitHub Copilot plan, next to the ChatGPT login: `cyber providers login|logout copilot [--enterprise <host>]` (GitHub's OAuth device flow, no browser auto-open), an owner-only `copilot-auth.json` holding only the GitHub token, host and user, an in-memory Copilot token minted per process and reused until 5 minutes before expiry, a daily-refreshed `copilot-models.json` of picker-enabled, non-policy-disabled models, an `ApiKind::CopilotChat` adapter that picks Responses or Chat Completions per model and adds the Copilot headers, and `LlmRequest::initiator` so the first call after a user prompt sends `X-Initiator: user` and every other call `agent`. The ChatGPT login file, refresh lock and model cache moved into `cyber-llm::subscription` (task 2.1); `crates/cyber-llm/tests/chatgpt.rs` and `crates/cyber-cli/tests/providers_cli.rs` have no diff against `main`. The login file is hidden from sandboxed launches, and `gho_`/`ghu_` GitHub tokens and Copilot tokens are added to the redaction patterns.

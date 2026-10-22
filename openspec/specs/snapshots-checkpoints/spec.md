@@ -48,11 +48,15 @@ Records the working tree around every model step in a private git repository sep
 - **THEN** two entries with additions and deletions are returned
 
 ### Requirement: Rewind targets
-(P1) The system SHALL support rewinding to any user message with target `code` (restore files only), `conversation` (drop later messages only) or `both`. It SHALL expose this through `/rewind` (Esc Esc in the TUI), `cyber sessions rewind <session> --to <msg> --target <t>`, and `POST /api/v1/sessions/:id/rewind`.
+(P1) The system SHALL support rewinding to any user message with target `code` (restore files only), `conversation` (move the active branch to before that message, keeping later messages as an inactive branch as defined by `session-runtime` → Session branches) or `both`. It SHALL expose this through `/rewind` (Esc Esc in the TUI), `cyber sessions rewind <session> --to <msg> --target <t>`, and `POST /api/v1/sessions/:id/rewind`.
 
 #### Scenario: Code-only rewind
 - **WHEN** the user rewinds `code` to message 3
 - **THEN** files return to their state before message 3's Turns and the conversation is unchanged
+
+#### Scenario: Conversation rewind keeps a branch
+- **WHEN** the user rewinds `conversation` to message 3 of 5
+- **THEN** messages 3 to 5 leave the model's view and remain reachable as an inactive branch through `/tree` and `cyber sessions checkout`
 
 ### Requirement: Three-phase revert
 (P0) Rewinds affecting the conversation SHALL be staged first: `stage { message_id, target }` restores files (when the target includes code) and records the revert state, `clear` restores the pre-stage working tree, and `commit` deletes the messages and inbox rows after the boundary while retaining unresolved tool recovery records independently of conversation projection. A staged revert SHALL be committed automatically on the next prompt, shell command or compaction. The routes SHALL be `POST /api/v1/sessions/:id/revert/{stage,clear,commit}`.
