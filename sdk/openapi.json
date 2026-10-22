@@ -2180,6 +2180,208 @@
         ],
         "description": "A single-use ticket for `GET /jobs/{id}/pty/connect`."
       },
+      "WorkflowLibrary": {
+        "type": "object",
+        "properties": {
+          "workflows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryEntry"
+            }
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryIssue"
+            }
+          }
+        },
+        "required": [
+          "workflows",
+          "issues"
+        ],
+        "description": "The Workflow library of a Location (`workflows` → Workflow library over HTTP): every\nentry a run can start by name, and the modules that failed to load."
+      },
+      "LibraryEntry": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "phases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Declared phase titles."
+          },
+          "args": {
+            "description": "`meta.args`: the JSON Schema of the run's `args`."
+          },
+          "budgets": {
+            "description": "`meta.budget`: the module's default run budget."
+          },
+          "estimate": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`meta.estimate`: how many agents a run starts, in words."
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "`meta.tools`: the read-only tools the script calls directly."
+          },
+          "origin": {
+            "$ref": "#/components/schemas/LibraryOrigin"
+          },
+          "digest": {
+            "type": "string",
+            "description": "`sha256:<hex>` of the source."
+          },
+          "shadowed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The definitions this entry replaces, lowest precedence first."
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "phases",
+          "tools",
+          "origin",
+          "digest",
+          "shadowed"
+        ],
+        "description": "One library entry, as its `meta` declares it."
+      },
+      "LibraryOrigin": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "const": "global"
+              }
+            },
+            "required": [
+              "kind",
+              "path"
+            ],
+            "description": "`<config>/workflows`."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "const": "project"
+              }
+            },
+            "required": [
+              "kind",
+              "path"
+            ],
+            "description": "A `.cyber/workflows` directory of the project."
+          }
+        ],
+        "description": "Where a library entry comes from."
+      },
+      "LibraryIssue": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "diagnostic": {
+            "$ref": "#/components/schemas/Diagnostic"
+          }
+        },
+        "required": [
+          "path",
+          "diagnostic"
+        ],
+        "description": "A module that failed to load, with its diagnostic."
+      },
+      "Diagnostic": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/DiagnosticKind"
+          },
+          "message": {
+            "type": "string"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Position"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "message"
+        ],
+        "description": "One Workflow failure: a kind, a message and, for script errors, where it happened."
+      },
+      "DiagnosticKind": {
+        "type": "string",
+        "enum": [
+          "ParseError",
+          "UnsupportedSyntax",
+          "ExecutionFailure",
+          "AgentFailed",
+          "SchemaMismatch",
+          "BudgetExceeded",
+          "ModelUnavailable",
+          "NoInteractiveUser",
+          "Timeout",
+          "PermissionDenied",
+          "WorkflowReplayMismatch"
+        ],
+        "description": "The single kind every Workflow failure is reported with."
+      },
+      "Position": {
+        "type": "object",
+        "properties": {
+          "line": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "column": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "line",
+          "column"
+        ],
+        "description": "A 1-based source position in the Workflow script."
+      },
       "StartBody": {
         "type": "object",
         "additionalProperties": false,
@@ -2496,69 +2698,6 @@
           "soft",
           "reserved"
         ]
-      },
-      "Diagnostic": {
-        "type": "object",
-        "properties": {
-          "kind": {
-            "$ref": "#/components/schemas/DiagnosticKind"
-          },
-          "message": {
-            "type": "string"
-          },
-          "position": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Position"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "kind",
-          "message"
-        ],
-        "description": "One Workflow failure: a kind, a message and, for script errors, where it happened."
-      },
-      "DiagnosticKind": {
-        "type": "string",
-        "enum": [
-          "ParseError",
-          "UnsupportedSyntax",
-          "ExecutionFailure",
-          "AgentFailed",
-          "SchemaMismatch",
-          "BudgetExceeded",
-          "ModelUnavailable",
-          "NoInteractiveUser",
-          "Timeout",
-          "PermissionDenied",
-          "WorkflowReplayMismatch"
-        ],
-        "description": "The single kind every Workflow failure is reported with."
-      },
-      "Position": {
-        "type": "object",
-        "properties": {
-          "line": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 0
-          },
-          "column": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 0
-          }
-        },
-        "required": [
-          "line",
-          "column"
-        ],
-        "description": "A 1-based source position in the Workflow script."
       },
       "Page_WorkflowRunSummary": {
         "type": "object",
@@ -12995,6 +13134,63 @@
           }
         },
         "x-websocket": true
+      }
+    },
+    "/api/v1/workflows": {
+      "get": {
+        "operationId": "v1.workflow.library",
+        "summary": "List the Workflow library of the Location: saved Workflows by precedence, with their origin, and the modules that failed to load",
+        "tags": [
+          "workflow"
+        ],
+        "parameters": [
+          {
+            "name": "directory",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowLibrary"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/workflows/runs": {

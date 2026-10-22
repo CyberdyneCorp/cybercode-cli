@@ -11,7 +11,8 @@ use std::time::Duration;
 use cyber_core::budget::RunBudget;
 use cyber_core::config::{TierTarget, WorkflowSettings};
 use cyber_llm::catalog::{ModelRole, tier_role_ref};
-use cyber_workflow::{Diagnostic, Limits, WorkflowModule};
+use cyber_workflow::{Diagnostic, Entry, Limits, Listing, Origin, Scope, WorkflowModule};
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::workflows::RunShare;
@@ -82,22 +83,137 @@ pub fn tier_model(config: &Value, target: &TierTarget) -> Option<String> {
     }
 }
 
-/// The saved Workflow `name` of a Location: global, then project directories from the
+/// The Workflows a Location can run by name: global, then project directories from the
 /// project root down to the Location. `project_config: false` skips project directories
 /// (`CYBER_DISABLE_PROJECT_CONFIG`).
+pub fn discover(global_config_dir: &Path, location: &Path, project_config: bool) -> Listing {
+    let project_root = cyber_core::config::project_root(location);
+    let project = project_config.then_some((location, project_root.as_path()));
+    cyber_workflow::discover(&cyber_workflow::roots(global_config_dir, project))
+}
+
+/// The saved Workflow `name` of a Location (see [`discover`]).
 pub fn saved(
     global_config_dir: &Path,
     location: &Path,
     name: &str,
     project_config: bool,
 ) -> Result<WorkflowModule, StartError> {
-    let project_root = cyber_core::config::project_root(location);
-    let project = project_config.then_some((location, project_root.as_path()));
-    let listing = cyber_workflow::discover(&cyber_workflow::roots(global_config_dir, project));
-    listing
+    discover(global_config_dir, location, project_config)
         .find(name)
         .cloned()
         .ok_or_else(|| StartError::NotFound(name.to_owned()))
+}
+
+/// The Workflow library of a Location (`workflows` → Workflow library over HTTP): every
+/// entry a run can start by name, and the modules that failed to load.
+#[derive(Debug, Clone, Default, Serialize, schemars::JsonSchema)]
+pub struct WorkflowLibrary {
+    pub workflows: Vec<LibraryEntry>,
+    pub issues: Vec<LibraryIssue>,
+}
+
+/// One library entry, as its `meta` declares it.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub struct LibraryEntry {
+    pub name: String,
+    pub description: String,
+    /// Declared phase titles.
+    pub phases: Vec<String>,
+    /// `meta.args`: the JSON Schema of the run's `args`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub args: Option<Value>,
+    /// `meta.budget`: the module's default run budget.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budgets: Option<Value>,
+    /// `meta.estimate`: how many agents a run starts, in words.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimate: Option<String>,
+    /// `meta.tools`: the read-only tools the script calls directly.
+    pub tools: Vec<String>,
+    pub origin: LibraryOrigin,
+    /// `sha256:<hex>` of the source.
+    pub digest: String,
+    /// The definitions this entry replaces, lowest precedence first.
+    pub shadowed: Vec<String>,
+}
+
+/// Where a library entry comes from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum LibraryOrigin {
+    /// `<config>/workflows`.
+    Global { path: String },
+    /// A `.cyber/workflows` directory of the project.
+    Project { path: String },
+}
+
+/// A module that failed to load, with its diagnostic.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub struct LibraryIssue {
+    pub path: String,
+    pub diagnostic: Diagnostic,
+}
+
+impl WorkflowLibrary {
+    pub fn of(listing: Listing) -> Self {
+        Self {
+            workflows: listing.workflows.into_iter().filter_map(entry).collect(),
+            issues: listing
+                .issues
+                .into_iter()
+                .map(|issue| LibraryIssue {
+                    path: issue.path.display().to_string(),
+                    diagnostic: issue.diagnostic,
+                })
+                .collect(),
+        }
+    }
+}
+
+fn entry(entry: Entry) -> Option<LibraryEntry> {
+    let module = entry.module;
+    let origin = match &module.origin {
+        Origin::Saved { scope, path } => {
+            let path = path.display().to_string();
+            match scope {
+                Scope::Global => LibraryOrigin::Global { path },
+                Scope::Project => LibraryOrigin::Project { path },
+            }
+        }
+        Origin::Inline => return None,
+    };
+    let raw = &module.meta.raw;
+    Some(LibraryEntry {
+        name: module.meta.name.clone(),
+        description: module.meta.description.clone(),
+        phases: module.meta.phases.iter().map(|p| p.title.clone()).collect(),
+        args: module.meta.args.clone(),
+        budgets: raw.get("budget").cloned(),
+        estimate: raw.get("estimate").and_then(Value::as_str).map(str::to_owned),
+        tools: meta_tools(&module),
+        origin,
+        digest: module.digest.clone(),
+        shadowed: entry
+            .shadowed
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect(),
+    })
+}
+
+/// `meta.tools`: the direct read-only tools a module allowlists.
+pub fn meta_tools(module: &WorkflowModule) -> Vec<String> {
+    module
+        .meta
+        .raw
+        .get("tools")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect()
 }
 
 /// An inline module, checked like a saved one.

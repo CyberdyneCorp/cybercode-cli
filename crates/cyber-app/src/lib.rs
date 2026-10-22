@@ -353,6 +353,7 @@ impl App {
                     "fs",
                     "command",
                     "event",
+                    "workflow",
                 ]
                 .map(str::to_string)
                 .to_vec(),

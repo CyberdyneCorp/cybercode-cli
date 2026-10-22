@@ -19,7 +19,7 @@ The production-path test named in each section must pass before the section is t
 
 ## 2. Library surface: HTTP, CLI, SDK
 
-- [ ] 2.1 `GET /api/v1/workflows?directory=` (`v1.workflow.library`) in `http/workflows.rs`, replacing the `503` for that exact path only; openapi and SDK regeneration (`scripts/generate_sdk.py`), `client.workflows.library()`.
+- [x] 2.1 `GET /api/v1/workflows?directory=` (`v1.workflow.library`) in `http/workflows.rs`, replacing the `503` for that exact path only; openapi and SDK regeneration (`scripts/generate_sdk.py`), `client.workflows.library()`. (Delivered with the M2.1 gaps; bundled entries appear once 1.1–1.2 add `Origin::Bundled`, as `origin: {kind: "bundled", name}`. `budgets` reads `meta.budget`, the key runs already use.)
 - [ ] 2.2 `cyber workflows list` ORIGIN column and `--format json`; `cyber workflows show <name> [--source]`; `cyber workflows eject <name> [--global] [--force]` (refuses to overwrite, exit 1 naming the file).
 - [ ] 2.3 Args validation against `meta.args` before a run record exists, for every surface (HTTP, CLI, tool); `ExecutionFailure` naming `args.<path>`.
   - Production path: `crates/cyber-cli/tests/workflows_cli.rs` `bundled_workflows_are_listed_shown_and_ejected` (scenarios "Bundled listed on a fresh install", "Eject refuses to overwrite", "Library over HTTP" via `cyber api GET /api/v1/workflows`).

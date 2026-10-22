@@ -2,9 +2,10 @@
 //! execution on the server, Run lifecycle states, Phases, logs and checkpoints, Permissions
 //! for runs). Runs are started, listed, shown, paused, resumed, stopped and their logs read
 //! here; they execute inside the server, independent of the client connection. Starting
-//! and resuming honour the owner Session's `workflow.run` deny rules. Paths without an operation yet
-//! (saved-Workflow listing) answer `503 ServiceUnavailableError` with
-//! `service: "workflow"`, so clients can tell a missing capability from a missing resource.
+//! and resuming honour the owner Session's `workflow.run` deny rules. `GET /workflows` lists
+//! the Location's Workflow library. Paths without an operation answer
+//! `503 ServiceUnavailableError` with `service: "workflow"`, so clients can tell a missing
+//! capability from a missing resource.
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -22,7 +23,7 @@ use futures::future::BoxFuture;
 use super::envelope::{Cursor, Data, Page, location};
 use super::{ApiError, AppState, Services};
 pub use crate::runtime::workflow_start::WorkflowLocation;
-use crate::runtime::workflow_start::{self, StartError};
+use crate::runtime::workflow_start::{self, StartError, WorkflowLibrary};
 use crate::runtime::{
     InterruptedResume, ResumeWorkflowRun, RunFilter, RunStarter, Runtime, RuntimeError,
     SessionInfo, StartWorkflowRun, TurnContext, WorkflowAgent, WorkflowLogEntry, WorkflowRelaunch,
@@ -41,7 +42,7 @@ pub fn routes() -> Router<AppState> {
         .route("/workflows/runs/{id}/resume", post(resume))
         .route("/workflows/runs/{id}/stop", post(stop))
         .route("/workflows/runs/{id}/logs", get(logs))
-        .route("/workflows", any(unavailable))
+        .route("/workflows", get(library).fallback(unavailable))
         .route("/workflows/{*rest}", any(unavailable))
 }
 
@@ -195,6 +196,26 @@ async fn start(
         })
         .await?;
     Ok((StatusCode::CREATED, Json(Data { data: run })))
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct LibraryQuery {
+    /// The Location; the request's when absent.
+    directory: Option<String>,
+}
+
+/// The Workflow library of a Location (`workflows` → Workflow library over HTTP).
+async fn library(
+    State(state): State<AppState>,
+    Query(query): Query<LibraryQuery>,
+    parts: Parts,
+) -> Result<Json<WorkflowLibrary>, ApiError> {
+    let directory = match query.directory.as_deref() {
+        Some(directory) => std::fs::canonicalize(directory)
+            .map_err(|_| ApiError::invalid(format!("no such directory: {directory}")))?,
+        None => location(&parts, &state.options.default_directory)?,
+    };
+    state.services.workflow_library(&directory).map(Json)
 }
 
 /// `status=running,queued`: each name a run status.

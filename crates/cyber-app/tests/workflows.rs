@@ -373,7 +373,7 @@ async fn workflow_routes_require_authentication_and_name_the_group_when_unavaila
     assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
 
     for (method, path) in [
-        (Method::GET, "/workflows"),
+        (Method::POST, "/workflows"),
         (Method::GET, "/workflows/saved"),
     ] {
         let (status, body) = server.call(method.clone(), path, None).await;
@@ -394,6 +394,70 @@ async fn workflow_routes_require_authentication_and_name_the_group_when_unavaila
         assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path}: {body}");
         assert_eq!(body["_tag"], "WorkflowRunNotFoundError");
     }
+    server.close().await;
+}
+
+fn saved_module(name: &str, description: &str) -> String {
+    format!(
+        "export const meta = {{ name: '{name}', description: '{description}', phases: [{{ title: 'One' }}], args: {{ type: 'object' }}, budget: {{ max_agents: 3 }}, estimate: 'one agent', tools: ['glob'] }};\nexport default async () => null;\n"
+    )
+}
+
+/// `workflows` → Workflow library over HTTP: saved Workflows of the Location by
+/// precedence, with origin, digest and shadowed definitions, and the issues; the
+/// capability is reported by `/health`.
+#[tokio::test]
+async fn the_library_lists_saved_workflows_by_precedence_with_issues() {
+    let model = ScriptedModel::start(reply);
+    let server = Server::start(model.config()).await;
+    let global = server.temp.path().join("config/workflows");
+    let project = server.temp.path().join(".cyber/workflows");
+    for dir in [&global, &project] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    std::fs::write(global.join("release.js"), saved_module("release", "Global")).unwrap();
+    std::fs::write(global.join("audit.js"), saved_module("audit", "Audit")).unwrap();
+    std::fs::write(project.join("release.js"), saved_module("release", "Project")).unwrap();
+    std::fs::write(project.join("broken.js"), "export const meta = 1;").unwrap();
+
+    let listed = server.ok(Method::GET, "/workflows", None).await;
+    let names: Vec<&str> = listed["workflows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["audit", "release"], "{listed}");
+    let release = &listed["workflows"][1];
+    assert_eq!(release["description"], "Project");
+    assert_eq!(release["origin"]["kind"], "project", "{release}");
+    assert_eq!(release["phases"], json!(["One"]));
+    assert_eq!(release["budgets"], json!({"max_agents": 3}));
+    assert_eq!(release["estimate"], "one agent");
+    assert_eq!(release["tools"], json!(["glob"]));
+    assert!(release["digest"].as_str().unwrap().starts_with("sha256:"));
+    let shadowed = release["shadowed"][0].as_str().unwrap();
+    assert!(shadowed.ends_with("config/workflows/release.js"), "{release}");
+    assert_eq!(listed["workflows"][0]["origin"]["kind"], "global");
+    let issue = &listed["issues"][0];
+    assert!(issue["path"].as_str().unwrap().ends_with("broken.js"), "{listed}");
+    assert_eq!(issue["diagnostic"]["kind"], "ParseError", "{issue}");
+
+    let elsewhere = tempfile::tempdir().unwrap();
+    let other = server
+        .ok(
+            Method::GET,
+            &format!("/workflows?directory={}", elsewhere.path().display()),
+            None,
+        )
+        .await;
+    assert_eq!(other["workflows"][1]["origin"]["kind"], "global", "{other}");
+
+    let health = server.ok(Method::GET, "/health", None).await;
+    assert!(
+        health["features"].as_array().unwrap().contains(&json!("workflow")),
+        "{health}"
+    );
     server.close().await;
 }
 

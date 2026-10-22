@@ -331,6 +331,15 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .query(&["ticket", "cursor"])
         .websocket(),
         op(
+            "get",
+            "/workflows",
+            "v1.workflow.library",
+            "List the Workflow library of the Location: saved Workflows by precedence, with their origin, and the modules that failed to load",
+        )
+        .located()
+        .query(&["directory"])
+        .ok::<crate::runtime::workflow_start::WorkflowLibrary>(g),
+        op(
             "post",
             "/workflows/runs",
             "v1.workflow.run",
