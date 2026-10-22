@@ -1030,20 +1030,18 @@ async fn create_child(
     };
     let worktree = if spawn.isolation {
         Some(
-            ctx.host
-                .create_child_worktree(
-                    ctx.inv,
-                    ctx.cancel.clone(),
-                    request,
-                    spawn.source.user_requested(),
-                    spawn.source.run_worktree(),
-                )
-                .await
-                .map_err(|e| failed(e.to_string()))?,
+            Box::pin(ctx.host.create_child_worktree(
+                ctx.inv,
+                ctx.cancel.clone(),
+                request,
+                spawn.source.user_requested(),
+                spawn.source.run_worktree(),
+            ))
+            .await
+            .map_err(|e| failed(e.to_string()))?,
         )
     } else {
-        runtime
-            .create_session(request)
+        Box::pin(runtime.create_session(request))
             .await
             .map_err(|e| failed(e.to_string()))?;
         None

@@ -5,7 +5,7 @@ P2 evidence lives here and is kept separate from the P1 files (`p1-status.md`, `
 ## Goals, slice 2 (`implement-m2-3-goals`, 2026-10-22)
 
 - Templates: `/goal use <name> [text]` and `POST .../goals {template, args}` (`GoalTemplateNotFoundError` 404). Test: `goal_use_template_substitutes_arguments` (`crates/cyber-app/tests/goals.rs`).
-- Fork: `/goal fork` and `POST .../goals/fork` start a root Session in a `goal-<ulid>` worktree on `cyber/goal-<ulid>`. Test: `goal_fork_starts_background_session_in_worktree`.
+- Fork: `/goal fork` and `POST .../goals/fork` start a root Session in a `goal-<ulid>` worktree on `cyber/goal-<ulid>`. Root worktree Sessions record `source_directory`, so `cyber sessions list` in the source checkout lists forks and worktree teammates. Test: `goal_fork_starts_background_session_in_worktree` (regression: listed from the source checkout).
 - Goals on agents: the `agent` tool and workflow `agent()` accept `goal`; results carry `goal_status`; a workflow agent's goal budget is capped by the run's remaining budget. Tests: `agent_tool_goal_returns_goal_status`, `workflow_agent_with_goal_runs_until_check_passes` (`crates/cyber-app/tests/workflows.rs`), `an_agent_goal_budget_is_capped_by_what_the_run_has_left`.
 - The model `goal` tool behind `goal.set` (ask by default). Test: `the_model_goal_tool_asks_by_default`, golden `crates/cyber-tools/tests/goldens/goal.txt`.
 - Unattended asks pause the Goal with `Waiting for approval` after `goals.unattended_ask_seconds` without a watching client. Test: `unattended_ask_pauses_goal_waiting_for_approval` (`crates/cyber-server/tests/goals.rs`).

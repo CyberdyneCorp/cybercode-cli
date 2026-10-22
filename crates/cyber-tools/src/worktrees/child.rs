@@ -102,7 +102,7 @@ impl BuiltinHost {
     async fn create_root_worktree_session(
         &self,
         source: &SessionInfo,
-        request: CreateSession,
+        mut request: CreateSession,
         root: RootWorktree<'_>,
         cancel: CancellationToken,
     ) -> io::Result<SessionInfo> {
@@ -110,6 +110,7 @@ impl BuiltinHost {
             .runtime()
             .ok_or_else(|| io::Error::other("Runtime is not attached"))?;
         let name = Name::parse(root.name).map_err(io::Error::other)?;
+        request.source_directory = Some(source.directory.clone());
         let inv = Invocation {
             registration: None,
             session_id: source.id.clone(),

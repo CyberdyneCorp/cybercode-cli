@@ -355,6 +355,8 @@ pub struct CreateSession {
     pub directory: String,
     /// Expected checkout identity for an internally provisioned managed Session.
     pub worktree_id: Option<String>,
+    /// The Location a root worktree Session was started from; listings there include it.
+    pub source_directory: Option<String>,
     pub model: String,
     /// The supplied model is a fallback; the selected agent may replace it.
     pub model_is_default: bool,
@@ -1111,6 +1113,7 @@ impl Runtime {
             directory: req.directory,
             worktree_id: req.worktree_id,
             worktree_origin: None,
+            source_directory: req.source_directory,
             parent_id: req.parent_id,
             subagent_name: req.subagent_name,
             workflow_run_id: req.workflow_run_id,
@@ -2172,7 +2175,7 @@ fn query_sessions(
     let (cursor_at, cursor_id) = cursor.unwrap_or((i64::MAX, String::new()));
     let mut stmt = conn.prepare(
         "SELECT id, title, directory, parent_id, model, archived, created_at, updated_at, cost, children_cost, children_tokens, children_unpriced_steps, children_usage_complete, children_token_classes, children_token_classes_complete, agent, mode FROM session
-         WHERE (?1 IS NULL OR directory = ?1)
+         WHERE (?1 IS NULL OR directory = ?1 OR (parent_id IS NULL AND source_directory = ?1))
            AND (?2 IS NULL OR parent_id = ?2)
            AND (?3 = 0 OR parent_id IS NULL)
            AND (?4 = 1 OR archived = 0)

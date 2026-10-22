@@ -377,6 +377,16 @@ async fn goal_fork_starts_background_session_in_worktree() {
     );
     let info = app.app.runtime.state(&forked).await.unwrap().info;
     assert_eq!((info.parent_id, info.mode.as_str()), (None, "default"));
+    // Regression: `cyber sessions list` in the source checkout lists the fork too.
+    let (status, listed) = app.send("GET", "/sessions", None).await;
+    assert_eq!(status, 200, "{listed}");
+    let rows = listed["data"]["data"].as_array().unwrap();
+    let row = rows.iter().find(|s| s["id"] == json!(forked));
+    assert!(row.is_some(), "{listed}");
+    assert_eq!(
+        info.source_directory.as_deref(),
+        Some(app.repo.display().to_string().as_str())
+    );
     let done = wait_goals(&app, &forked, |g| g["current"].is_null()).await;
     assert_eq!(done["ended"][0]["status"], "met", "{done}");
     let (_, source) = app

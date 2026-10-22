@@ -2602,6 +2602,11 @@ export type Session = {
    * a worktree it entered with `enter_worktree`.
    */
   worktree_origin?: string | null;
+  /**
+   * The Location a root Session in its own managed worktree was started from (a
+   * forked Goal, a teammate): Session listings of that Location include it.
+   */
+  source_directory?: string | null;
   parent_id?: string | null;
   /** Durable child identity within its parent, independent of title and agent. */
   subagent_name?: string | null;
@@ -2672,6 +2677,11 @@ export type SessionInfo = {
    * a worktree it entered with `enter_worktree`.
    */
   worktree_origin?: string | null;
+  /**
+   * The Location a root Session in its own managed worktree was started from (a
+   * forked Goal, a teammate): Session listings of that Location include it.
+   */
+  source_directory?: string | null;
   parent_id?: string | null;
   /** Durable child identity within its parent, independent of title and agent. */
   subagent_name?: string | null;

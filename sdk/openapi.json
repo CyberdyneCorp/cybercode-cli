@@ -3792,6 +3792,13 @@
             ],
             "description": "The unmanaged Location `exit_worktree` returns to, while the Session runs in\na worktree it entered with `enter_worktree`."
           },
+          "source_directory": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Location a root Session in its own managed worktree was started from (a\nforked Goal, a teammate): Session listings of that Location include it."
+          },
           "parent_id": {
             "type": [
               "string",
@@ -4192,6 +4199,13 @@
               "null"
             ],
             "description": "The unmanaged Location `exit_worktree` returns to, while the Session runs in\na worktree it entered with `enter_worktree`."
+          },
+          "source_directory": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Location a root Session in its own managed worktree was started from (a\nforked Goal, a teammate): Session listings of that Location include it."
           },
           "parent_id": {
             "type": [

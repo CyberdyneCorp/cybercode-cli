@@ -631,8 +631,8 @@ fn project_meta(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()> {
 fn insert_session(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()> {
     let info = &e.data["info"];
     tx.execute(
-        "INSERT INTO session (id, title, directory, parent_id, agent, model, mode, created_at, updated_at, last_seq, subagent_name, children_usage_complete, workflow_run_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, ?10, 1, ?11)",
+        "INSERT INTO session (id, title, directory, parent_id, agent, model, mode, created_at, updated_at, last_seq, subagent_name, children_usage_complete, workflow_run_id, source_directory)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, ?10, 1, ?11, ?12)",
         params![
             e.aggregate_id,
             s(info, "title"),
@@ -644,7 +644,8 @@ fn insert_session(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()>
             e.time_ms,
             e.seq,
             info["subagent_name"].as_str(),
-            info["workflow_run_id"].as_str()
+            info["workflow_run_id"].as_str(),
+            info["source_directory"].as_str()
         ],
     )?;
     project_inbound(tx, &e.aggregate_id, &info["messaging"])?;

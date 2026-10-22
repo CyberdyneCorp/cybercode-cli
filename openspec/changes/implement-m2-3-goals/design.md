@@ -144,7 +144,7 @@ When no Goal is active, the source is empty and contributes nothing.
 **Permission:** the user's routes allow `goal.set`. The model's `goal` tool, a small tool exposed only when `goals` is enabled, uses `goal.set` with an `ask` default.
 
 **TUI:**
-- `/goal` opens the panel: active Goal, queue, last verdict, Turns and cost against budget, evaluator totals, and the keys e/p/r/c/↑↓ for edit, pause, resume, clear and reorder.
+- `/goal` opens the panel: active Goal, queue, last verdict, Turns and cost against budget, evaluator totals, and the keys e/p/r/c for edit, pause, resume and clear. Plain ↑/↓ move the selection; Shift+↑/↓ move the selected queued Goal (`PATCH .../order`, then the panel reopens).
 - `/goal <text>`, `/goal add|list|edit|pause|resume|clear|skip|next|fork|use` and `/goal --check "<cmd>" <text>`.
 - Each evaluation shows one status line, `◎ not met: 3 tests failing…`.
 - The footer shows `◎ goal <truncated condition>`.
@@ -166,7 +166,7 @@ When no Goal is active, the source is empty and contributes nothing.
 - A workflow agent's goal budget is capped by the run's remaining budget.
 
 **Fork and templates:**
-- `/goal fork` creates a background root Session in a new managed worktree (`goals.fork_isolation`, default `worktree`) with the condition as its active Goal.
+- `/goal fork` creates a background root Session in a new managed worktree (`goals.fork_isolation`, default `worktree`) with the condition as its active Goal. The new Session records the source Session's directory as `source_directory` (a `session` column, also set for worktree teammates), and a directory-filtered listing matches root Sessions by it, so `cyber sessions list` in the source checkout shows the fork.
 - `/goal use <name> [text]` resolves `goals.templates.<name>`, substituting `$ARGUMENTS`.
 
 ### 10. Events and hooks

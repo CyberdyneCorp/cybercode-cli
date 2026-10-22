@@ -79,7 +79,7 @@ Implementation deltas are recorded in `specs/goals/spec.md`:
 
 ## 7. TUI
 
-- [x] 7.1 `/goal` panel: active goal, queue, last verdict and reason, turns and cost against the budget, evaluator totals, and the keys e/p/r/c/↑↓. Reordering is Shift+↑/↓, since ↑/↓ move the selection.
+- [x] 7.1 `/goal` panel: active goal, queue, last verdict and reason, turns and cost against the budget, evaluator totals, and the keys e/p/r/c/↑↓. Reordering is Shift+↑/↓; plain ↑/↓ move the selection (spec and design updated).
 - [x] 7.2 `/goal` subcommands and `--check`; add them to the slash catalog (`BUILTIN_COMMANDS` guard test).
 - [x] 7.3 One verdict status line per evaluation; `◎ goal <condition>` in the footer; a Goal section in the sidebar.
 - [x] 7.4 Insta snapshots (panel, footer, sidebar, light theme) and a pty acceptance capture. (The PTY capture is left to the live acceptance in 10.2.)
@@ -95,7 +95,7 @@ Implementation deltas are recorded in `specs/goals/spec.md`:
 
 - [x] 9.1 The `agent` tool `goal` option: the child's active goal; the call settles on its terminal status, with `goal_status`.
 - [x] 9.2 Workflow `agent()` `goal`: remove it from `UNAVAILABLE_OPTIONS`; the goal budget is capped by the run's remaining budget; the result includes `goal_status`.
-- [x] 9.3 `/goal fork` and `POST .../goals/fork`: a background Session in a new managed worktree (`fork_isolation`), listed in `cyber sessions`.
+- [x] 9.3 `/goal fork` and `POST .../goals/fork`: a background Session in a new managed worktree (`fork_isolation`), listed in `cyber sessions`. Root worktree Sessions record `source_directory`, so listings of the source checkout include forks and worktree teammates (session-runtime delta; migration `20261025020000_session_source_directory`).
 - [x] 9.4 `/goal use <template> [text]` with `$ARGUMENTS` substitution; an unknown template returns `GoalTemplateNotFound`.
 - [x] 9.5 Tests: `workflow_agent_with_goal_runs_until_check_passes`, `agent_tool_goal_returns_goal_status`, `goal_fork_starts_background_session_in_worktree`, `goal_use_template_substitutes_arguments`.
 

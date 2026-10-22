@@ -26,7 +26,7 @@
 - **THEN** the child keeps working until the check passes or the goal ends, and the result includes `goal_status`
 
 ### Requirement: Goal management commands
-(P2) The system SHALL provide `/goal` (show active Goal, queue and last verdict), `/goal list`, `/goal edit [id]` (opens the condition in the composer or editor), `/goal pause`, `/goal resume`, `/goal clear [id|all]`, `/goal skip` (mark the active Goal `cleared` and activate the next) and `/goal next` (alias of skip). Equivalent HTTP routes SHALL exist under `/api/v1/sessions/{id}/goals`. Editing a Goal SHALL publish `session.goal.edited.1` and reordering the queue SHALL publish `session.goal.reordered.1` with the new order of Goal IDs.
+(P2) The system SHALL provide `/goal` (show active Goal, queue and last verdict), `/goal list`, `/goal edit [id]` (opens the condition in the composer or editor), `/goal pause`, `/goal resume`, `/goal clear [id|all]`, `/goal skip` (mark the active Goal `cleared` and activate the next) and `/goal next` (alias of skip). In the TUI `/goal` panel, `e` edits, `p` pauses, `r` resumes and `c` clears the selected Goal, plain ↑/↓ move the selection and Shift+↑/↓ move the selected queued Goal one place. Equivalent HTTP routes SHALL exist under `/api/v1/sessions/{id}/goals`. Editing a Goal SHALL publish `session.goal.edited.1` and reordering the queue SHALL publish `session.goal.reordered.1` with the new order of Goal IDs.
 
 #### Scenario: Pause goal
 - **WHEN** the user runs `/goal pause`
@@ -62,7 +62,7 @@
 - **THEN** after restart the evaluator runs on the last Turn and continuation proceeds only on `not_met`
 
 ### Requirement: Parallel goals across sessions
-(P2) The system SHALL support pursuing independent Goals in parallel by running them in separate Sessions; `/goal fork <condition>` SHALL create a new background Session (in a new worktree when `goals.fork_isolation` is `worktree`, the default) with the condition as its active Goal, the Session's agent, model and Mode, and list it in `cyber sessions` and the TUI session list of its Location (the worktree, `goal-<ulid>` on branch `cyber/goal-<ulid>`; the source's Location when not isolated or outside a git checkout); the agent view lists it once that view exists. `POST /api/v1/sessions/{id}/goals/fork` SHALL do the same and return the new Session, its directory, its branch and its Goal.
+(P2) The system SHALL support pursuing independent Goals in parallel by running them in separate Sessions; `/goal fork <condition>` SHALL create a new background Session (in a new worktree when `goals.fork_isolation` is `worktree`, the default) with the condition as its active Goal, the Session's agent, model and Mode, and list it in `cyber sessions` and the TUI session list of the source checkout (its worktree is `goal-<ulid>` on branch `cyber/goal-<ulid>`, linked to the source Location; without isolation or outside a git checkout it shares the source's Location); the agent view lists it once that view exists. `POST /api/v1/sessions/{id}/goals/fork` SHALL do the same and return the new Session, its directory, its branch and its Goal.
 
 #### Scenario: Fork a goal
 - **WHEN** the user runs `/goal fork upgrade all dependencies with green tests`

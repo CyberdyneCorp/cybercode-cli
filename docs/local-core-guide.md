@@ -1084,7 +1084,7 @@ In the `/goal` panel, `e` edits, `p` pauses, `r` resumes and `c` clears the sele
   {"goals": {"templates": {"green": {"condition": "$ARGUMENTS and all tests pass", "check": "just test"}}}}
   ```
 
-- **Fork.** `/goal fork <condition>` starts a root Session with the Session's agent, model and Mode and the condition as its active Goal. With `goals.fork_isolation: "worktree"` (the default) in a git checkout it runs in its own `goal-<ulid>` worktree on branch `cyber/goal-<ulid>`, listed by `cyber sessions` in that worktree; otherwise it shares the Location.
+- **Fork.** `/goal fork <condition>` starts a root Session with the Session's agent, model and Mode and the condition as its active Goal. With `goals.fork_isolation: "worktree"` (the default) in a git checkout it runs in its own `goal-<ulid>` worktree on branch `cyber/goal-<ulid>`; `cyber sessions list` in the source checkout lists it (as it does worktree teammates). Otherwise it shares the Location.
 - **Subagents and workflows.** The `agent` tool and workflow `agent()` accept `goal: {condition, check?, budget?}`. The child works until its Goal is terminal and the result carries `goal_status`. A workflow agent's goal budget is capped by what the run has left.
 
   ```js
