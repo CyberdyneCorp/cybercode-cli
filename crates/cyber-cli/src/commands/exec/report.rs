@@ -314,6 +314,69 @@ impl Out {
         self.review.is_some()
     }
 
+    pub fn is_text(&self) -> bool {
+        self.format == Format::Text
+    }
+
+    /// A Workflow Run's progress changed (`exec-mode` → Workflow exec).
+    pub fn workflow_progress(&self, progress: &Value) {
+        self.line("workflow_progress", progress.clone());
+    }
+
+    /// The result of an exec Workflow Run: its return value (text format prints it as
+    /// JSON), status, spend and exit code.
+    pub fn workflow_finish(
+        self,
+        run: &Value,
+        code: u8,
+        started: Instant,
+        args: &ExecArgs,
+        session: &Value,
+    ) -> u8 {
+        let status = run["status"].as_str().unwrap_or("failed");
+        let stop_reason = match (status, code) {
+            (_, super::EXIT_INTERRUPTED) => "interrupted",
+            ("completed", _) => "end_turn",
+            ("budget_exceeded", _) => "budget_exceeded",
+            _ => "error",
+        };
+        let error = run
+            .get("error")
+            .filter(|error| !error.is_null())
+            .map(|error| json!(format!("{}: {}", error["kind"].as_str().unwrap_or("?"), error["message"].as_str().unwrap_or("?"))))
+            .or_else(|| run.get("reason").filter(|r| r.is_string()).cloned())
+            .unwrap_or(Value::Null);
+        if code != 0 && let Some(message) = error.as_str() {
+            self.error(message);
+        }
+        let value = run
+            .get("result")
+            .filter(|result| !result.is_null())
+            .cloned()
+            .unwrap_or(Value::Null);
+        let result = json!({
+            "result": value,
+            "run_id": run["id"],
+            "status": status,
+            "result_file": run["result_file"],
+            "session_id": self.session_id,
+            "usage": {"tokens": run["tokens"]},
+            "cost_usd": run["cost_usd"],
+            "duration_ms": started.elapsed().as_millis() as u64,
+            "stop_reason": stop_reason,
+            "error": error,
+            "exit_code": code,
+        });
+        let text = match (&value, run["result_file"].as_str()) {
+            (Value::Null, Some(file)) => format!("result: {file}"),
+            (Value::Null, None) => String::new(),
+            (Value::String(text), _) => text.clone(),
+            (value, _) => serde_json::to_string_pretty(value).unwrap_or_default(),
+        };
+        self.emit(result, &text, args, session);
+        code
+    }
+
     /// The settled reviewer delegation and its Job, when the command forked.
     pub fn review_job(&mut self, delegation: Option<&str>, fork: Option<ForkOutcome>) {
         if let Some(review) = &mut self.review {

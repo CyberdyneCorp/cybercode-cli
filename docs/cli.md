@@ -1517,6 +1517,8 @@ cyber exec [OPTIONS] [PROMPT]...
 - `--non-interactive-rules`: Add the never-ask rules to a reused Session too.
 - `--accept-messages`: Let other Sessions message the Session this run creates (by default it refuses them with `non_interactive`)
 - `--command <COMMAND>`: Run a skill or custom command with the prompt as its arguments.
+- `--workflow <NAME|PATH>`: Run a Workflow (a saved name or a `.js` module path) instead of a prompt; its return value is the result.
+- `--args <JSON>`: The Workflow's `args` as a JSON object.
 - `--file <FILES>`: Attach a file (repeatable)
 - `--max-turns <MAX_TURNS>`
 - `--max-tokens <MAX_TOKENS>`

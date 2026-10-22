@@ -2,6 +2,7 @@
 
 mod background;
 mod delegation;
+mod workflow;
 pub(crate) mod report;
 pub(crate) mod setup;
 
@@ -82,6 +83,13 @@ pub struct ExecArgs {
     /// Run a skill or custom command with the prompt as its arguments.
     #[arg(long)]
     pub command: Option<String>,
+    /// Run a Workflow (a saved name or a `.js` module path) instead of a prompt; its return
+    /// value is the result.
+    #[arg(long, value_name = "NAME|PATH", conflicts_with_all = ["command", "prompt"])]
+    pub workflow: Option<String>,
+    /// The Workflow's `args` as a JSON object.
+    #[arg(long = "args", value_name = "JSON", requires = "workflow")]
+    pub workflow_args: Option<String>,
     /// Attach a file (repeatable).
     #[arg(long = "file")]
     pub files: Vec<PathBuf>,
@@ -129,6 +137,9 @@ pub const EXIT_DENIED: u8 = 5;
 pub const EXIT_INTERRUPTED: u8 = 130;
 
 pub fn run(args: ExecArgs, ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
+    if args.workflow.is_some() {
+        return launch(args, ctx, global, String::new(), None);
+    }
     let prompt = setup::prompt(&args.prompt)?;
     if prompt.is_empty() && args.command.is_none() {
         return Err(
@@ -177,12 +188,13 @@ fn launch(
             client
         };
         let mut out = Out::new(format, &args, &session);
-        let code = match review {
-            Some(target) => {
+        let code = match (review, &args.workflow) {
+            (_, Some(target)) => workflow::execute(&client, ctx, &session, &args, target, out).await,
+            (Some(target), None) => {
                 out.review(target);
                 execute_session(&client, &session, &args, prompt, timeout, out).await
             }
-            None => execute(&client, &session, &args, prompt, timeout, out).await,
+            (None, None) => execute(&client, &session, &args, prompt, timeout, out).await,
         };
         if let Some(id) = session["id"].as_str() {
             let source = backend.client.at(&ctx.location.display().to_string());
