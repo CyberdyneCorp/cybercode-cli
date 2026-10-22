@@ -163,6 +163,28 @@ fn summary_prompt(state: &SessionState, tail: usize, instructions: Option<&str>)
     prompt
 }
 
+/// Fences checkouts and conversation rewinds out while a compaction summarizes the
+/// active path. Dropping it, also when the compaction future is dropped mid-request,
+/// lifts the fence.
+struct CompactionFence<'a>(&'a Handle);
+
+impl<'a> CompactionFence<'a> {
+    fn raise(handle: &'a Handle) -> Self {
+        handle
+            .compacting
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self(handle)
+    }
+}
+
+impl Drop for CompactionFence<'_> {
+    fn drop(&mut self) {
+        self.0
+            .compacting
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 impl Inner {
     /// Estimate the next request against the model's window.
     pub(crate) async fn needs_compaction(
@@ -223,11 +245,24 @@ impl Inner {
         };
         self.check_budget(handle).await?;
         let instructions = self.pre_compact(handle, trigger, instructions).await?;
+        // Raised before the start is recorded, so a checkout that commits after the start
+        // always sees it; one that committed before is caught by the path check below.
+        let _fence = CompactionFence::raise(handle);
         self.commit(
             handle,
             vec![event(COMPACTION_STARTED, &CompactionStarted { trigger })],
         )
         .await?;
+        // The start fences checkouts and rewinds out; one that landed before it (while the
+        // PreCompact hook ran) moved the path the summary would be of, so fail closed.
+        if handle.state.lock().await.active_tip() != state.active_tip() {
+            let failed = CompactionFailed {
+                error: "The active path changed before compaction started".into(),
+            };
+            self.commit(handle, vec![event(COMPACTION_FAILED, &failed)])
+                .await?;
+            return Err(RuntimeError::Busy(state.info.id.clone()));
+        }
         let model = config
             .model
             .clone()
@@ -321,6 +356,8 @@ impl Inner {
         ))];
         request.tools = Vec::new();
         request.max_output_tokens = Some(request.max_output_tokens.unwrap_or(4096).min(8192));
+        // Compaction continues the Turn a prompt opened; it is never a new user request.
+        request.initiator = Some(cyber_llm::Initiator::Agent);
         let handle = self.handle(&state.info.id).await?;
         self.check_budget(&handle).await?;
         let gated = super::budget::GatedAdapter::new(self, &handle, resolved.adapter.as_ref());

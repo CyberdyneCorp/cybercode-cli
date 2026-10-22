@@ -903,6 +903,24 @@ impl ToolHost for BuiltinHost {
         Box::pin(self.command_plan(turn, name, arguments))
     }
 
+    fn goal_settings(
+        &self,
+        directory: &str,
+    ) -> Result<
+        (
+            cyber_core::goals::GoalSettings,
+            Option<cyber_core::budget::Budget>,
+        ),
+        String,
+    > {
+        let (config, _) = (self.opts.config)(Path::new(directory))?;
+        let budget = cyber_core::budget::Budget::from_config(&config, "goal")?;
+        Ok((
+            cyber_core::goals::GoalSettings::from_config(&config)?,
+            budget,
+        ))
+    }
+
     fn daily_budget(&self, directory: &str) -> Result<Option<cyber_core::budget::Budget>, String> {
         let (config, _) = (self.opts.config)(Path::new(directory))?;
         cyber_core::budget::Budget::from_config(&config, "daily")
@@ -944,6 +962,20 @@ impl ToolHost for BuiltinHost {
     ) -> BoxFuture<'a, Result<cyber_server::runtime::SessionInfo, String>> {
         Box::pin(async move {
             self.create_team_worktree_session(lead, request, worktree, cancel)
+                .await
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    fn create_goal_fork_session<'a>(
+        &'a self,
+        source: &'a cyber_server::runtime::SessionInfo,
+        request: cyber_server::runtime::CreateSession,
+        worktree: &'a cyber_server::runtime::GoalWorktree,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<cyber_server::runtime::SessionInfo, String>> {
+        Box::pin(async move {
+            self.create_goal_fork_worktree_session(source, request, worktree, cancel)
                 .await
                 .map_err(|error| error.to_string())
         })

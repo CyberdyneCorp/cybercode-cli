@@ -38,6 +38,7 @@ impl BuiltinHost {
             label: _,
             resume,
             worktree,
+            goal,
             slot,
         } = request;
         // An unsettled agent is resumed, but when the server stopped between recording its
@@ -58,6 +59,10 @@ impl BuiltinHost {
         }
         if let Some(schema) = schema {
             input["output_schema"] = schema;
+        }
+        // A resumed child keeps the Goal it already has.
+        if let Some(goal) = goal.filter(|_| !resume) {
+            input["goal"] = goal;
         }
         // A resumed child keeps its checkout; the shared path refuses a change.
         if worktree.is_some() && !resume {
@@ -184,6 +189,7 @@ impl BuiltinHost {
             cost: usage.total_cost(),
             tokens: usage.total_tokens(),
             branch: value["worktree"]["branch"].as_str().map(str::to_owned),
+            goal_status: value["goal_status"].as_str().map(str::to_owned),
             session_id,
         })
     }

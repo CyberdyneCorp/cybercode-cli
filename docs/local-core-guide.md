@@ -81,6 +81,30 @@ The sign-in uses OpenAI's OAuth flow with the Codex public client, which is what
 - Windows is not supported yet, because the login file cannot be made owner-only there.
 - OpenAI's acceptance of third-party harnesses is a public statement, not a contract. The `openai` provider with `OPENAI_API_KEY` is not affected by this login.
 
+## Signing in with a GitHub Copilot subscription
+
+A Copilot Pro, Pro+, Business or Enterprise plan can pay for the OpenAI, Anthropic and Google models it serves:
+
+```bash
+cyber providers login copilot                             # prints a URL and a code to enter there
+cyber providers login copilot --enterprise octo.ghe.com   # a GitHub Enterprise (data residency) host
+cyber models copilot                                      # the models your plan serves, unpriced
+cyber exec -m copilot/claude-sonnet-4.5 "Fix the failing test"
+cyber exec -m copilot/gpt-5.6-sol "Fix the failing test"  # a model Copilot serves over Responses
+cyber providers logout copilot
+```
+
+The sign-in is GitHub's OAuth device flow. The CLI prints `Open <url> and enter <code>` and never opens a browser, so it also works over SSH. It then polls GitHub until you approve, at the interval GitHub asks for. Ctrl+C, a denial or an expired code (at most 15 minutes) store nothing. Before anything is stored, the login mints a Copilot token to prove the account has a plan: an account without one fails with `This GitHub account has no active Copilot subscription`.
+
+- The GitHub token is kept in `~/.local/share/cyber/copilot-auth.json` (mode 0600; a file other users can read is refused), with the host and the user name. Sandboxed commands run as you, so the mode alone would not keep them out: every sandboxed launch hides this file, like `chatgpt-auth.json` and cyber's other credential files. Logout deletes the file and the cached model list; it does not revoke the token on GitHub.
+- Each request uses a short-lived Copilot token minted from the GitHub token. It is kept in memory only, never written to disk or to a transcript, and renewed 5 minutes before it expires. Requests go to the API address that token names. If GitHub rejects the GitHub token, requests fail with `GitHub Copilot login expired or was revoked; run cyber providers login copilot`, before any model call.
+- `--enterprise` takes a bare hostname such as `octo.ghe.com`; a URL or path is a usage error. The host is stored with the login, and the device flow, token mint and model list use `https://<host>` and `https://api.<host>`.
+- The `copilot` provider appears only while you are signed in. Its models are the account's picker-enabled models; models an organization policy disables are left out. The list is fetched at login, kept in `copilot-models.json` beside the login, and refreshed once a day. Each model uses the protocol Copilot lists for it: Responses when it supports `/responses`, Chat Completions otherwise. Models are unpriced: premium-request multipliers are not shown as cost.
+- Premium requests: the first model call after each prompt (an MCP server prompt you run as a slash command, or a `/loop` iteration) is sent with `X-Initiator: user`. Everything else is sent as `agent`: tool-loop steps, prompt hook checks, `webfetch` summaries, MCP sampling, subagents, Turns opened by background Jobs, monitors or messages, compaction, titles, recaps and the auto-mode reviewer. So one prompt counts as one premium request, as in Copilot's own agent mode.
+- The sign-in uses one built-in GitHub OAuth client ID (`Iv1.b507a08c87ecfe98`, provisional: whether GitHub accepts a Cyber-registered client is still open); `CYBER_COPILOT_CLIENT_ID` overrides it. `CYBER_COPILOT_GITHUB_URL` and `CYBER_COPILOT_API_URL` replace the GitHub and API addresses for tests and proxies; both must be HTTPS, or plain HTTP on loopback.
+- Windows is not supported yet, because the login file cannot be made owner-only there.
+- Not yet checked against a live Copilot account. The device flow, token mint, model list and both protocols are tested against a local fake GitHub and Copilot API only.
+
 ## Background server and rebuilds
 
 The TUI, `cyber exec`, `cyber api`, `cyber mcp serve` and the resource commands all share one background server per user, started the same way as `cyber service start`. `~/.local/state/cyber/server.json` (mode 0600) names it with its version, build identity and executable. Each binary carries a build identity: the commit, `.dirty` when tracked files differed, `CYBER_BUILD_ID` when set, or the build time (`SOURCE_DATE_EPOCH` for reproducible builds). It also stamps its executable (path, length and modification time) when it starts.
@@ -99,10 +123,28 @@ When you rebuild or upgrade `cyber`, the next client sees that the registered se
 A Session gets a generated title after its first prompt. Give it your own to find it later:
 
 - TUI: `/rename Auth refactor` renames the current Session at once; a bare `/rename` (or **Rename session** in the `Ctrl+P` palette, or the unbound `session_rename` key) opens a dialog prefilled with the title (Enter saves, Esc cancels, Ctrl+U clears). In the Session picker (`/resume`, Ctrl+X L) Ctrl+R renames the selected Session. The header, sidebar and terminal window title change as soon as the server publishes `session.renamed.1`, in every attached client.
-- CLI: `cyber sessions list` (`ls`, `--limit`, `--format json` with `id`, `title`, `directory`, `updated_at` and `status`), `cyber sessions show <session>`, `cyber sessions rename <session> <title…>` and `cyber sessions delete <session> --yes` (`rm`; it removes child Sessions too and cannot be undone). `export`, `import`, `fork`, `rewind`, `repair-context`, `share` and `unshare` are not available yet.
+- CLI: `cyber sessions list` (`ls`, `--limit`, `--format json` with `id`, `title`, `directory`, `updated_at` and `status`), `cyber sessions show <session>`, `cyber sessions rename <session> <title…>` and `cyber sessions delete <session> --yes` (`rm`; it removes child Sessions too and cannot be undone). `cyber sessions export <session> [--all-branches]` prints the Session and its messages as JSON (see [Session branches](#session-branches)); `import`, `fork`, `rewind`, `repair-context`, `share` and `unshare` are not available yet.
 - Resume: `cyber -r "Auth refactor"` opens the TUI on it and `cyber exec --session "Auth refactor" "go on"` prompts it.
 
 `<session>` is an ID, an exact title, or a unique ID prefix, among the Location's Sessions. A title or prefix that matches several Sessions exits 2 and lists their IDs. A title you set is kept: trimmed, with whitespace runs (newlines included) joined into one space, control characters dropped and at most 100 characters; an empty title is refused with `InvalidRequestError`. Generated titles never replace it, even when the title request was already in flight.
+
+### Session branches
+
+A Session keeps every attempt. Its messages form a tree, and only the active path (from the active tip up to the first message) is sent to the model. A conversation rewind (`POST /sessions/{id}/rewind` with `target` `conversation` or `both`) no longer drops the later messages: they stay as an inactive branch, and the next prompt starts a new branch from the rewind point. Sessions rewound by older builds gain the same tree on their next replay, with an unchanged active path; no migration runs. A rewound message ID stays taken, so re-sending a prompt with it answers `409 ConflictError`.
+
+- TUI: `/tree` opens the user messages of every branch as a collapsible tree, with the active path highlighted, `(n branches)` at branch points and labels as tags. ↑/↓ (or `j`/`k`) move, Space folds, Enter checks out the selected branch and reloads the transcript, `c` adds the code restore (the restored diff then opens in the task-log view) and `l` types a label for the selected message; Esc closes. `/label <name>` labels the active tip and `/label --clear <name>` removes a label. With more than one tip, the header (or the docked sidebar) shows `branch <label or short id> (2 of 3)`.
+- CLI: `cyber sessions tree <session>` prints an ASCII tree (`*` active path, `o` inactive, `(active)` on the tip) or the nodes with `--format json`. `cyber sessions checkout <session> <message> [--code] [--exact]` prints `tip <id>` (and `restored <n> files` with `--code`). `cyber sessions label <session> <name> [--at <message>] [--delete]` labels the active tip unless `--at` names a message. `cyber sessions export <session>` prints the Session and its active path as JSON (`{session, branches, messages}`); `--all-branches` includes every branch, linked by `parent_message_id`. `<message>` is a message ID, a label, or a unique ID prefix over every branch; an ambiguous prefix exits 2 and lists the IDs.
+- API: `GET /sessions/{id}/tree` returns nodes for user messages only, `{id, parent_id, preview, created_at, labels, active, tip, descendants}`. `POST /sessions/{id}/checkout` takes `{message_id | label, exact?, code?}` and returns `{tip_message_id, code_restored, restored_files, revert?}`. `PUT /sessions/{id}/labels/{name}` with `{message_id}` and `DELETE /sessions/{id}/labels/{name}` answer 204. `GET /sessions/{id}/messages` still returns the active path, and `?branches=all` returns every branch in creation order; every message carries `parent_message_id`. TypeScript clients call `client.call("v1.session.tree", …)`, `v1.session.checkout`, `v1.session.label` and `v1.session.unlabel`.
+
+Checkout rules:
+
+- Checkout goes to the newest tip under the chosen message, so the active path ends at a leaf; `exact` makes the message itself the tip, and the next prompt branches there.
+- The Session must be idle: a running Turn, a compaction, a running background Job (a process, Monitor, subagent or workflow) or delegation, or input waiting to start answers `409 SessionBusyError`, because a Job's result would be handed back into the newly active branch; and a staged rewind must be committed or cleared first. Held messages stay held.
+- Without `code`, files are left alone. With `code`, the working tree is restored to the snapshot after the last step on the target path through the same three-way restore as a rewind, so your own edits are kept; the restore is recorded as a staged `code` revert that `POST /sessions/{id}/revert/clear` undoes. A conflict or a branch with no snapshot refuses the checkout and changes nothing.
+- A compaction summary is reused only on the path it summarized: after a rewind or checkout the summary covering the longest prefix of the active path is kept, and with none the path's own messages are sent (auto-compaction applies as usual). A sibling branch's summary never reaches the model.
+- Labels are 1 to 48 of `A-Z a-z 0-9 . _ -` and unique per Session (a taken name is `409 ConflictError`); a label stays on its message when that message stops being a tip. An unknown label or message is `404 MessageNotFoundError`.
+
+Branches are not deleted, merged or summarized into each other; they stay until the Session is deleted. `fork` still creates a new Session.
 
 Worktree startup runs trusted `worktrees.setup` commands inside the sandbox and reports output on stderr. Setup failure keeps the Session and files.
 
@@ -1055,6 +1097,63 @@ cyber mcp browser cleanup                   # remove profiles no running process
 - **Reports.** `GET /api/v1/sessions/{id}/browser/evidence` (`v1.session.browserEvidence`) lists the records with `stale: true` once the workspace hash differs from the one a record was taken under. Artifacts never leave the machine: deleting the Session removes them, retention removes them after `storage.retention.tool_output_days`, and nothing uploads them.
 - **Dev servers.** `bash` (or `powershell`) with `background: true` and `ready_url`, an `http(s)` URL on localhost, starts the command as an owned Job. It returns once `ready_url` answers below HTTP 500 (redirects are not followed: the probe runs outside the sandbox). A call cancelled while it waits stops the Job. A sandboxed dev server with `ready_url` is refused before it starts when the sandbox isolates its loopback from the host, so the check could never connect: always on Windows (the AppContainer), and on Linux (its own network namespace) and macOS (listening is denied) unless `sandbox.network` is `on`. Set `sandbox.network` to `on` or run the Session with `--sandbox full-access` to verify a dev server the agent starts. If the process exits first, or `ready_timeout_seconds` (default 60, at most 600) passes and the Job is stopped, the call fails with the log tail. It then records `startup_failed` evidence that says the page was not tested.
 - **Session end.** Archiving or deleting the Session stops its browser, removes its profile and stops its dev servers without a completion notice, so the Session does not start a Turn.
+
+## Goals (P2 M2.3)
+
+A Goal is a condition the Session keeps working toward. After every Turn that leaves nothing to do, an evaluator judges it: `not_met` sends its reason back as the next prompt, `met` completes the Goal (and starts the next queued one), and `impossible` stops.
+
+```text
+/goal all call sites compile against the v2 API and cargo test passes
+/goal --check "cargo test --quiet" the auth tests pass     # met only when the check exits 0
+/goal add the changelog mentions the v2 API                  # queued; runs after the current one
+/goal                                                        # panel: current, queue, totals, last verdict
+/goal pause | resume | skip | next | clear [gol_…|all] | edit [gol_…]
+/goal use green auth module refactored                       # from goals.templates.green
+/goal fork upgrade all dependencies with green tests         # a new background Session works on it
+```
+
+In the `/goal` panel, `e` edits, `p` pauses, `r` resumes and `c` clears the selected Goal, and Shift+↑/↓ moves a queued Goal. The footer shows `◎ goal <condition>`, and the sidebar has a Goal section with the status, turns against the budget, cost, last verdict and queued count.
+
+- **One active Goal per Session, plus a queue** (`goals.max_queue`, default 20). `/goal <condition>` replaces the current Goal and starts a Turn toward it at once. User prompts during a Goal are handled as usual and the Goal stays active.
+- **Evaluator.**
+  - Model: `model_roles.evaluator`, else the small model, else the Session's model.
+  - Tools: none.
+  - Input: the condition, the latest answer, the Turn's tool results and earlier verdicts, within `goals.evaluator_max_input_tokens` (8000).
+  - Output: one JSON verdict. A malformed reply is retried once, then counts as `not_met`.
+  - Cost: recorded as hidden `goal_evaluator` usage, counted in the Session cost, and shown as evaluator totals in `/goal`.
+- **Checks.** `--check` runs after a `met` verdict, sandboxed in the Location without a permission prompt like `!` (timeout `goals.check_timeout_seconds`, 600). A non-zero exit turns the verdict into `not_met`, and the last 50 lines go into the continuation.
+- **Stops.**
+  - **Budget:** each Goal has one, `max_turns` 50 by default, plus `budgets.goal` or per-Goal tokens, cost and wall time. It counts from activation and includes subagents; exceeding it gives `budget_exceeded`.
+  - **`impossible`:** stops the queue unless `goals.on_impossible` is `continue`.
+  - **Pause:** a failed Turn, an interrupt or a rejected permission pauses the Goal with the reason. `/goal resume` continues.
+- **Background work.** While Jobs, background subagents or workflow runs the Session started are still running, evaluation waits for their handback.
+- **Restarts.** Goals are `session.goal.*` events, so they survive a restart. An active Goal is evaluated once on its last Turn, and work continues only if it is `not_met`.
+- **Notifications and hooks.** Met, impossible, paused and budget stops send a notification (TUI toast, desktop). `GoalEvaluated` hooks receive `{goal, verdict, reason}` and `GoalCompleted` hooks the Goal JSON on stdin; both are observational.
+- **Unattended asks.** When a goal Turn asks for a permission and no client (a TUI, or any live event stream for the Session or its Location) has watched for `goals.unattended_ask_seconds` (300), the Goal pauses with `Waiting for approval` and a notification names the request. The request stays pending; answer it, then `/goal resume`. Under `cyber exec` asks are declined at once instead.
+- **Templates.** `goals.templates.<name> = {condition, check?, budget?}` in config; `/goal use <name> [text]` (or `POST .../goals` with `template` and `args`) replaces `$ARGUMENTS` in the condition, or appends the text on a new line when there is no placeholder.
+
+  ```jsonc
+  {"goals": {"templates": {"green": {"condition": "$ARGUMENTS and all tests pass", "check": "just test"}}}}
+  ```
+
+- **Fork.** `/goal fork <condition>` starts a root Session with the Session's agent, model and Mode and the condition as its active Goal. With `goals.fork_isolation: "worktree"` (the default) in a git checkout it runs in its own `goal-<ulid>` worktree on branch `cyber/goal-<ulid>`; `cyber sessions list` in the source checkout lists it (as it does worktree teammates). Otherwise it shares the Location.
+- **Subagents and workflows.** The `agent` tool and workflow `agent()` accept `goal: {condition, check?, budget?}`. The child works until its Goal is terminal and the result carries `goal_status`. A workflow agent's goal budget is capped by what the run has left.
+
+  ```js
+  const r = await agent('Migrate file X', { goal: { condition: 'file X compiles', check: 'cargo check' } });
+  if (r.goal_status !== 'met') log('not migrated', r.goal_status);
+  ```
+
+- **The model.** The model can set or queue a Goal with the `goal` tool. It checks `goal.set`, which asks by default; allow it with `{"permissions": {"goal.set": "allow"}}`.
+- **CI.**
+  - `cyber exec --goal "<condition>" [--goal-check "<cmd>"] [--max-turns N]` runs until every Goal is terminal. `--goal` repeats to form a queue, and each `--goal-check` binds to the `--goal` before it.
+  - Exit codes, for the first non-met Goal: `0` all met, `3` impossible, `4` budget exceeded, `1` otherwise, `130` interrupted.
+  - The JSON result lists `goals[]` with status, turns, cost and last reason.
+- **API:**
+  - `GET|POST|DELETE /api/v1/sessions/{id}/goals`
+  - `GET|PATCH|DELETE .../goals/{goal_id}`
+  - `POST .../goals/pause|resume|skip|fork`
+  - `PATCH .../goals/order`
 
 ## Loops (P2 M2.4)
 

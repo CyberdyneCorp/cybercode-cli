@@ -351,6 +351,7 @@ async fn synthetic_evaluator_policy_and_flat_event_have_no_tools_or_session_effe
     let request = &adapter.requests()[0];
     assert!(request.tools.is_empty() && request.tools_disabled);
     assert_eq!(request.max_output_tokens, Some(512));
+    assert_eq!(request.initiator, Some(cyber_llm::Initiator::Agent));
     assert!(request.body.get("messages").is_none() && request.body.get("max_tokens").is_none());
     assert!(request.system[1].contains("Deny deletion outside"));
     let encoded = serde_json::to_value(&request.messages[0])

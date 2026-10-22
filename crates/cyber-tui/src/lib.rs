@@ -3,10 +3,12 @@
 mod admissions;
 mod app;
 pub mod books;
+mod branches;
 mod children;
 mod composer;
 mod explorer;
 mod fuzzy;
+mod goals;
 mod highlight;
 mod hook_definitions;
 mod hooks;
@@ -46,11 +48,15 @@ mod screens;
 #[cfg(test)]
 mod screens_a11y;
 #[cfg(test)]
+mod screens_branches;
+#[cfg(test)]
 mod screens_chrome;
 #[cfg(test)]
 mod screens_context;
 #[cfg(test)]
 mod screens_explorer;
+#[cfg(test)]
+mod screens_goals;
 #[cfg(test)]
 mod screens_indicators;
 #[cfg(test)]

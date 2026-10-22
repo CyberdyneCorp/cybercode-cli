@@ -333,6 +333,7 @@ export interface Operations {
       limit?: QueryValue;
       cursor?: QueryValue;
       order?: QueryValue;
+      branches?: QueryValue;
     };
     body: undefined;
     response: S.Page_Message;
@@ -592,6 +593,12 @@ export interface Operations {
     body: undefined;
     response: S.BrowserEvidenceReport;
   };
+  "v1.session.checkout": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: S.BranchCheckout;
+    response: S.CheckedOutBranch;
+  };
   "v1.session.children": {
     path: { id: string };
     query: {
@@ -600,6 +607,18 @@ export interface Operations {
     };
     body: undefined;
     response: S.ChildThreads;
+  };
+  "v1.session.clearGoal": {
+    path: { sessionID: string; goalID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: string[];
+  };
+  "v1.session.clearGoals": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: string[];
   };
   "v1.session.compact": {
     path: { sessionID: string };
@@ -618,6 +637,12 @@ export interface Operations {
     query: Record<string, never>;
     body: S.CreateBody;
     response: S.Located_Session;
+  };
+  "v1.session.createGoal": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: S.CreateGoal;
+    response: S.Goal;
   };
   "v1.session.createLoop": {
     path: { sessionID: string };
@@ -645,6 +670,12 @@ export interface Operations {
     body: undefined;
     response: S.FileDiff[];
   };
+  "v1.session.editGoal": {
+    path: { sessionID: string; goalID: string };
+    query: Record<string, never>;
+    body: S.EditGoal;
+    response: S.Goal;
+  };
   "v1.session.events": {
     path: { sessionID: string };
     query: {
@@ -659,6 +690,12 @@ export interface Operations {
     body: S.ForkBody;
     response: S.Session;
   };
+  "v1.session.forkGoal": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: S.ForkGoal;
+    response: S.GoalFork;
+  };
   "v1.session.generateRecap": {
     path: { sessionID: string };
     query: Record<string, never>;
@@ -670,6 +707,18 @@ export interface Operations {
     query: Record<string, never>;
     body: undefined;
     response: S.Session;
+  };
+  "v1.session.goal": {
+    path: { sessionID: string; goalID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Goal;
+  };
+  "v1.session.goals": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.GoalsView;
   };
   "v1.session.history": {
     path: { sessionID: string };
@@ -725,6 +774,12 @@ export interface Operations {
     body: undefined;
     response: void;
   };
+  "v1.session.label": {
+    path: { sessionID: string; name: string };
+    query: Record<string, never>;
+    body: S.LabelBody;
+    response: void;
+  };
   "v1.session.list": {
     path: Record<string, never>;
     query: {
@@ -767,6 +822,12 @@ export interface Operations {
     body: S.ModelBody;
     response: S.Session;
   };
+  "v1.session.pauseGoal": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Goal;
+  };
   "v1.session.prompt": {
     path: { sessionID: string };
     query: Record<string, never>;
@@ -790,6 +851,18 @@ export interface Operations {
     query: Record<string, never>;
     body: S.ReopenSubtreeBody;
     response: S.SubtreeReopenReport;
+  };
+  "v1.session.reorderGoals": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: S.GoalOrder;
+    response: string[];
+  };
+  "v1.session.resumeGoal": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Goal;
   };
   "v1.session.revertClear": {
     path: { sessionID: string };
@@ -833,6 +906,12 @@ export interface Operations {
     body: S.SideBody;
     response: S.SideAnswer;
   };
+  "v1.session.skipGoal": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Data_Nullable_Goal;
+  };
   "v1.session.startDelegation": {
     path: { sessionID: string; requestID: string };
     query: Record<string, never>;
@@ -868,6 +947,18 @@ export interface Operations {
     query: Record<string, never>;
     body: S.SubtaskBody;
     response: S.Job;
+  };
+  "v1.session.tree": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.BranchNode[];
+  };
+  "v1.session.unlabel": {
+    path: { sessionID: string; name: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: void;
   };
   "v1.session.update": {
     path: { sessionID: string };
@@ -1613,7 +1704,7 @@ export const operations = {
     method: "GET",
     path: "/api/v1/sessions/{sessionID}/messages",
     pathParams: ["sessionID"],
-    query: ["limit", "cursor", "order"],
+    query: ["limit", "cursor", "order", "branches"],
     body: "none",
     located: false,
     unwrap: false,
@@ -2087,6 +2178,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.session.checkout": {
+    tag: "session",
+    name: "checkout",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/checkout",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.children": {
     tag: "session",
     name: "children",
@@ -2094,6 +2197,30 @@ export const operations = {
     path: "/api/v1/sessions/{id}/children",
     pathParams: ["id"],
     query: ["limit", "cursor"],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.clearGoal": {
+    tag: "session",
+    name: "clearGoal",
+    method: "DELETE",
+    path: "/api/v1/sessions/{sessionID}/goals/{goalID}",
+    pathParams: ["sessionID", "goalID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.clearGoals": {
+    tag: "session",
+    name: "clearGoals",
+    method: "DELETE",
+    path: "/api/v1/sessions/{sessionID}/goals",
+    pathParams: ["sessionID"],
+    query: [],
     body: "none",
     located: false,
     unwrap: true,
@@ -2133,6 +2260,18 @@ export const operations = {
     body: "optional",
     located: true,
     unwrap: false,
+    stream: false,
+  },
+  "v1.session.createGoal": {
+    tag: "session",
+    name: "createGoal",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/goals",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
     stream: false,
   },
   "v1.session.createLoop": {
@@ -2183,6 +2322,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.session.editGoal": {
+    tag: "session",
+    name: "editGoal",
+    method: "PATCH",
+    path: "/api/v1/sessions/{sessionID}/goals/{goalID}",
+    pathParams: ["sessionID", "goalID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.events": {
     tag: "session",
     name: "events",
@@ -2207,6 +2358,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.session.forkGoal": {
+    tag: "session",
+    name: "forkGoal",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/goals/fork",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.generateRecap": {
     tag: "session",
     name: "generateRecap",
@@ -2224,6 +2387,30 @@ export const operations = {
     name: "get",
     method: "GET",
     path: "/api/v1/sessions/{sessionID}",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.goal": {
+    tag: "session",
+    name: "goal",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/goals/{goalID}",
+    pathParams: ["sessionID", "goalID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.goals": {
+    tag: "session",
+    name: "goals",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/goals",
     pathParams: ["sessionID"],
     query: [],
     body: "none",
@@ -2327,6 +2514,18 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.session.label": {
+    tag: "session",
+    name: "label",
+    method: "PUT",
+    path: "/api/v1/sessions/{sessionID}/labels/{name}",
+    pathParams: ["sessionID", "name"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
   "v1.session.list": {
     tag: "session",
     name: "list",
@@ -2387,6 +2586,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.session.pauseGoal": {
+    tag: "session",
+    name: "pauseGoal",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/goals/pause",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.prompt": {
     tag: "session",
     name: "prompt",
@@ -2431,6 +2642,30 @@ export const operations = {
     pathParams: ["sessionID"],
     query: [],
     body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.reorderGoals": {
+    tag: "session",
+    name: "reorderGoals",
+    method: "PATCH",
+    path: "/api/v1/sessions/{sessionID}/goals/order",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.resumeGoal": {
+    tag: "session",
+    name: "resumeGoal",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/goals/resume",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
     located: false,
     unwrap: true,
     stream: false,
@@ -2519,6 +2754,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.session.skipGoal": {
+    tag: "session",
+    name: "skipGoal",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/goals/skip",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
   "v1.session.startDelegation": {
     tag: "session",
     name: "startDelegation",
@@ -2589,6 +2836,30 @@ export const operations = {
     body: "required",
     located: false,
     unwrap: true,
+    stream: false,
+  },
+  "v1.session.tree": {
+    tag: "session",
+    name: "tree",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/tree",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.unlabel": {
+    tag: "session",
+    name: "unlabel",
+    method: "DELETE",
+    path: "/api/v1/sessions/{sessionID}/labels/{name}",
+    pathParams: ["sessionID", "name"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: false,
     stream: false,
   },
   "v1.session.update": {
@@ -3168,7 +3439,7 @@ export function createGroups(caller: Caller) {
       /** Get a message (`GET /api/v1/sessions/{sessionID}/messages/{messageID}`) */
       get: (sessionID: string, messageID: string, options?: RequestOptions): Promise<Operations["v1.message.get"]["response"]> =>
         caller.call("v1.message.get", { path: { sessionID, messageID } }, options),
-      /** List messages (`GET /api/v1/sessions/{sessionID}/messages`) */
+      /** List the active path's messages, or every branch's with branches=all (`GET /api/v1/sessions/{sessionID}/messages`) */
       list: (sessionID: string, query?: Operations["v1.message.list"]["query"], options?: RequestOptions): Promise<Operations["v1.message.list"]["response"]> =>
         caller.call("v1.message.list", { path: { sessionID }, query }, options),
     },
@@ -3308,9 +3579,18 @@ export function createGroups(caller: Caller) {
       /** Browser verification evidence of the Session, each record marked stale when the workspace changed since (`GET /api/v1/sessions/{sessionID}/browser/evidence`) */
       browserEvidence: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.browserEvidence"]["response"]> =>
         caller.call("v1.session.browserEvidence", { path: { sessionID } }, options),
+      /** Make another branch active on an idle Session, optionally restoring its code (`POST /api/v1/sessions/{sessionID}/checkout`) */
+      checkout: (sessionID: string, body: Operations["v1.session.checkout"]["body"], options?: RequestOptions): Promise<Operations["v1.session.checkout"]["response"]> =>
+        caller.call("v1.session.checkout", { path: { sessionID }, body }, options),
       /** List direct child threads across Locations with observed state (`GET /api/v1/sessions/{id}/children`) */
       children: (id: string, query?: Operations["v1.session.children"]["query"], options?: RequestOptions): Promise<Operations["v1.session.children"]["response"]> =>
         caller.call("v1.session.children", { path: { id }, query }, options),
+      /** Clear one live Goal (`DELETE /api/v1/sessions/{sessionID}/goals/{goalID}`) */
+      clearGoal: (sessionID: string, goalID: string, options?: RequestOptions): Promise<Operations["v1.session.clearGoal"]["response"]> =>
+        caller.call("v1.session.clearGoal", { path: { sessionID, goalID } }, options),
+      /** Clear the current and every queued Goal; returns the cleared IDs (`DELETE /api/v1/sessions/{sessionID}/goals`) */
+      clearGoals: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.clearGoals"]["response"]> =>
+        caller.call("v1.session.clearGoals", { path: { sessionID } }, options),
       /** Compact now or at the next Safe Boundary (`POST /api/v1/sessions/{sessionID}/compact`) */
       compact: (sessionID: string, body?: Operations["v1.session.compact"]["body"], options?: RequestOptions): Promise<Operations["v1.session.compact"]["response"]> =>
         caller.call("v1.session.compact", { path: { sessionID }, body }, options),
@@ -3320,6 +3600,9 @@ export function createGroups(caller: Caller) {
       /** Create a Session (`POST /api/v1/sessions`) */
       create: (body?: Operations["v1.session.create"]["body"], options?: RequestOptions): Promise<Operations["v1.session.create"]["response"]> =>
         caller.call("v1.session.create", { body }, options),
+      /** Set the active Goal (`mode: set`, the default, clears the current one and starts a Turn toward it) or queue one (`mode: add`); `template` takes the condition, check and budget from `goals.templates` (`POST /api/v1/sessions/{sessionID}/goals`) */
+      createGoal: (sessionID: string, body: Operations["v1.session.createGoal"]["body"], options?: RequestOptions): Promise<Operations["v1.session.createGoal"]["response"]> =>
+        caller.call("v1.session.createGoal", { path: { sessionID }, body }, options),
       /** Create a loop from `/loop` arguments (`command`) or parsed fields; its first iteration is due now (`POST /api/v1/sessions/{sessionID}/loops`) */
       createLoop: (sessionID: string, body: Operations["v1.session.createLoop"]["body"], options?: RequestOptions): Promise<Operations["v1.session.createLoop"]["response"]> =>
         caller.call("v1.session.createLoop", { path: { sessionID }, body }, options),
@@ -3332,18 +3615,30 @@ export function createGroups(caller: Caller) {
       /** File diffs for a user message, or the whole Session without `message_id` (`GET /api/v1/sessions/{sessionID}/diff`) */
       diff: (sessionID: string, query?: Operations["v1.session.diff"]["query"], options?: RequestOptions): Promise<Operations["v1.session.diff"]["response"]> =>
         caller.call("v1.session.diff", { path: { sessionID }, query }, options),
+      /** Edit a live Goal's condition, check (null removes it) or budget; publishes session.goal.edited.1 (`PATCH /api/v1/sessions/{sessionID}/goals/{goalID}`) */
+      editGoal: (sessionID: string, goalID: string, body: Operations["v1.session.editGoal"]["body"], options?: RequestOptions): Promise<Operations["v1.session.editGoal"]["response"]> =>
+        caller.call("v1.session.editGoal", { path: { sessionID, goalID }, body }, options),
       /** Replay durable events, then follow (`GET /api/v1/sessions/{sessionID}/events`) */
       events: (sessionID: string, query?: Operations["v1.session.events"]["query"], options?: StreamOptions): AsyncIterableIterator<S.EventEnvelope> =>
         caller.stream("v1.session.events", { path: { sessionID }, query }, options),
       /** Fork a Session (`POST /api/v1/sessions/{sessionID}/fork`) */
       fork: (sessionID: string, body?: Operations["v1.session.fork"]["body"], options?: RequestOptions): Promise<Operations["v1.session.fork"]["response"]> =>
         caller.call("v1.session.fork", { path: { sessionID }, body }, options),
+      /** Pursue a Goal in a new background root Session, in its own managed worktree when `goals.fork_isolation` is `worktree` and the Location is a git checkout (`POST /api/v1/sessions/{sessionID}/goals/fork`) */
+      forkGoal: (sessionID: string, body: Operations["v1.session.forkGoal"]["body"], options?: RequestOptions): Promise<Operations["v1.session.forkGoal"]["response"]> =>
+        caller.call("v1.session.forkGoal", { path: { sessionID }, body }, options),
       /** Return the recap covering the latest finished Turn, generating it when stale (`POST /api/v1/sessions/{sessionID}/recap`) */
       generateRecap: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.generateRecap"]["response"]> =>
         caller.call("v1.session.generateRecap", { path: { sessionID } }, options),
       /** Get a Session (`GET /api/v1/sessions/{sessionID}`) */
       get: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.get"]["response"]> =>
         caller.call("v1.session.get", { path: { sessionID } }, options),
+      /** One Goal with its last 50 evaluations (`GET /api/v1/sessions/{sessionID}/goals/{goalID}`) */
+      goal: (sessionID: string, goalID: string, options?: RequestOptions): Promise<Operations["v1.session.goal"]["response"]> =>
+        caller.call("v1.session.goal", { path: { sessionID, goalID } }, options),
+      /** The Session's current Goal, its queue in order and its 20 most recent ended Goals (`GET /api/v1/sessions/{sessionID}/goals`) */
+      goals: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.goals"]["response"]> =>
+        caller.call("v1.session.goals", { path: { sessionID } }, options),
       /** Durable events after a sequence (`GET /api/v1/sessions/{sessionID}/history`) */
       history: (sessionID: string, query?: Operations["v1.session.history"]["query"], options?: RequestOptions): Promise<Operations["v1.session.history"]["response"]> =>
         caller.call("v1.session.history", { path: { sessionID }, query }, options),
@@ -3368,6 +3663,9 @@ export function createGroups(caller: Caller) {
       /** Interrupt the running Drain (`POST /api/v1/sessions/{sessionID}/interrupt`) */
       interrupt: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.interrupt"]["response"]> =>
         caller.call("v1.session.interrupt", { path: { sessionID } }, options),
+      /** Label a message of the branch tree (`PUT /api/v1/sessions/{sessionID}/labels/{name}`) */
+      label: (sessionID: string, name: string, body: Operations["v1.session.label"]["body"], options?: RequestOptions): Promise<Operations["v1.session.label"]["response"]> =>
+        caller.call("v1.session.label", { path: { sessionID, name }, body }, options),
       /** List root Sessions of a Location, newest first (`GET /api/v1/sessions`) */
       list: (query?: Operations["v1.session.list"]["query"], options?: RequestOptions): Promise<Operations["v1.session.list"]["response"]> =>
         caller.call("v1.session.list", { query }, options),
@@ -3383,6 +3681,9 @@ export function createGroups(caller: Caller) {
       /** Switch the model (`POST /api/v1/sessions/{sessionID}/model`) */
       model: (sessionID: string, body: Operations["v1.session.model"]["body"], options?: RequestOptions): Promise<Operations["v1.session.model"]["response"]> =>
         caller.call("v1.session.model", { path: { sessionID }, body }, options),
+      /** Pause the active Goal: no evaluation or continuation until resumed (`POST /api/v1/sessions/{sessionID}/goals/pause`) */
+      pauseGoal: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.pauseGoal"]["response"]> =>
+        caller.call("v1.session.pauseGoal", { path: { sessionID } }, options),
       /** Durably admit a prompt (`POST /api/v1/sessions/{sessionID}/prompt`) */
       prompt: (sessionID: string, body: Operations["v1.session.prompt"]["body"], options?: RequestOptions): Promise<Operations["v1.session.prompt"]["response"]> =>
         caller.call("v1.session.prompt", { path: { sessionID }, body }, options),
@@ -3395,6 +3696,12 @@ export function createGroups(caller: Caller) {
       /** Reopen a reviewed acknowledged scope with fresh durable and native proof (`POST /api/v1/sessions/{sessionID}/reopen-subtree`) */
       reopenSubtree: (sessionID: string, body: Operations["v1.session.reopenSubtree"]["body"], options?: RequestOptions): Promise<Operations["v1.session.reopenSubtree"]["response"]> =>
         caller.call("v1.session.reopenSubtree", { path: { sessionID }, body }, options),
+      /** Reorder the pending queue; publishes session.goal.reordered.1 (`PATCH /api/v1/sessions/{sessionID}/goals/order`) */
+      reorderGoals: (sessionID: string, body: Operations["v1.session.reorderGoals"]["body"], options?: RequestOptions): Promise<Operations["v1.session.reorderGoals"]["response"]> =>
+        caller.call("v1.session.reorderGoals", { path: { sessionID }, body }, options),
+      /** Resume the paused Goal with a prompt toward it (`POST /api/v1/sessions/{sessionID}/goals/resume`) */
+      resumeGoal: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.resumeGoal"]["response"]> =>
+        caller.call("v1.session.resumeGoal", { path: { sessionID } }, options),
       /** Undo a staged revert (`POST /api/v1/sessions/{sessionID}/revert/clear`) */
       revertClear: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.revertClear"]["response"]> =>
         caller.call("v1.session.revertClear", { path: { sessionID } }, options),
@@ -3416,6 +3723,9 @@ export function createGroups(caller: Caller) {
       /** Ask a side question (/btw) with a read-only copy of the Session's context and read-only tools; the Session's history is unchanged (`POST /api/v1/sessions/{sessionID}/side`) */
       side: (sessionID: string, body: Operations["v1.session.side"]["body"], options?: RequestOptions): Promise<Operations["v1.session.side"]["response"]> =>
         caller.call("v1.session.side", { path: { sessionID }, body }, options),
+      /** Clear the current Goal and activate the next queued one; null when the queue was empty (`POST /api/v1/sessions/{sessionID}/goals/skip`) */
+      skipGoal: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.skipGoal"]["response"]> =>
+        caller.call("v1.session.skipGoal", { path: { sessionID } }, options),
       /** Durably reserve a named user delegation request (`POST /api/v1/sessions/{sessionID}/delegations/{requestID}`) */
       startDelegation: (sessionID: string, requestID: string, body: Operations["v1.session.startDelegation"]["body"], options?: RequestOptions): Promise<Operations["v1.session.startDelegation"]["response"]> =>
         caller.call("v1.session.startDelegation", { path: { sessionID, requestID }, body }, options),
@@ -3434,6 +3744,12 @@ export function createGroups(caller: Caller) {
       /** Start an explicit named background child or fork the current context (`POST /api/v1/sessions/{sessionID}/subtask`) */
       subtask: (sessionID: string, body: Operations["v1.session.subtask"]["body"], options?: RequestOptions): Promise<Operations["v1.session.subtask"]["response"]> =>
         caller.call("v1.session.subtask", { path: { sessionID }, body }, options),
+      /** The user-message tree of every branch, with the active path and labels (`GET /api/v1/sessions/{sessionID}/tree`) */
+      tree: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.tree"]["response"]> =>
+        caller.call("v1.session.tree", { path: { sessionID } }, options),
+      /** Remove a branch label (`DELETE /api/v1/sessions/{sessionID}/labels/{name}`) */
+      unlabel: (sessionID: string, name: string, options?: RequestOptions): Promise<Operations["v1.session.unlabel"]["response"]> =>
+        caller.call("v1.session.unlabel", { path: { sessionID, name } }, options),
       /** Rename or archive a Session (`PATCH /api/v1/sessions/{sessionID}`) */
       update: (sessionID: string, body: Operations["v1.session.update"]["body"], options?: RequestOptions): Promise<Operations["v1.session.update"]["response"]> =>
         caller.call("v1.session.update", { path: { sessionID }, body }, options),

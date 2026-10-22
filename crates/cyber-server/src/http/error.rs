@@ -209,6 +209,17 @@ impl From<RuntimeError> for ApiError {
             .with_field("size", size)
             .with_field("limit", limit),
             RuntimeError::Disabled(service) => Self::service_unavailable(service, message),
+            RuntimeError::GoalNotFound(_) => Self::not_found("GoalNotFoundError", message),
+            RuntimeError::GoalTemplateNotFound(_) => {
+                Self::not_found("GoalTemplateNotFoundError", message)
+            }
+            RuntimeError::GoalQueueFull(_) => {
+                Self::new(StatusCode::CONFLICT, "GoalQueueFullError", message)
+            }
+            RuntimeError::GoalCondition(m) => {
+                Self::new(StatusCode::BAD_REQUEST, "GoalConditionTooLongError", m)
+            }
+            RuntimeError::MessageNotFound(_) => Self::not_found("MessageNotFoundError", message),
             RuntimeError::LoopNotFound(_) => Self::not_found("LoopNotFoundError", message),
             RuntimeError::LoopLimit(_) => {
                 Self::new(StatusCode::CONFLICT, "LoopLimitError", message)

@@ -74,6 +74,26 @@ pub enum Reasoning {
     BudgetTokens(u32),
 }
 
+/// Who a model call is made for (`provider-catalog` → GitHub Copilot subscription provider):
+/// the first call after a promoted user prompt is the `user`'s; every other call (tool-result
+/// continuations, hook checks, summaries, sampling, Turns other sources open, compaction)
+/// is the `agent`'s. Copilot counts premium requests by it; other adapters ignore it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Initiator {
+    User,
+    Agent,
+}
+
+impl Initiator {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Agent => "agent",
+        }
+    }
+}
+
 /// One provider stream request.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LlmRequest {
@@ -99,6 +119,9 @@ pub struct LlmRequest {
     pub body: Value,
     #[serde(default)]
     pub headers: Vec<(String, String)>,
+    /// Set by the Turn loop; `None` for calls made outside one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initiator: Option<Initiator>,
 }
 
 fn default_true() -> bool {

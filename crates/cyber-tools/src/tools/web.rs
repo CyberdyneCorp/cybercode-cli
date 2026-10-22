@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use cyber_llm::catalog::ModelRole;
-use cyber_llm::{LlmRequest, Message};
+use cyber_llm::{Initiator, LlmRequest, Message};
 use cyber_server::runtime::{RetrySafety, ToolDef};
 use futures::StreamExt;
 use futures::future::BoxFuture;
@@ -185,6 +185,8 @@ async fn summarize(
     let request = LlmRequest {
         system: vec!["Answer the request using only the provided web page content. Be concise and quote exact text where it matters.".into()],
         messages: vec![Message::user_text(format!("URL: {url}\n\n<content>\n{clipped}\n</content>\n\nRequest: {prompt}"))],
+        // A tool call of the Turn: Copilot does not count it as another prompt.
+        initiator: Some(Initiator::Agent),
         ..resolved.template.clone()
     };
     ctx.inv

@@ -108,6 +108,19 @@ impl ToolHost for AppHost {
         self.builtin.daily_budget(directory)
     }
 
+    fn goal_settings(
+        &self,
+        directory: &str,
+    ) -> Result<
+        (
+            cyber_core::goals::GoalSettings,
+            Option<cyber_core::budget::Budget>,
+        ),
+        String,
+    > {
+        self.builtin.goal_settings(directory)
+    }
+
     fn loop_settings(
         &self,
         directory: &str,
@@ -172,6 +185,17 @@ impl ToolHost for AppHost {
     ) -> BoxFuture<'a, Result<cyber_server::runtime::SessionInfo, String>> {
         self.builtin
             .create_team_session(lead, request, worktree, cancel)
+    }
+
+    fn create_goal_fork_session<'a>(
+        &'a self,
+        source: &'a cyber_server::runtime::SessionInfo,
+        request: cyber_server::runtime::CreateSession,
+        worktree: &'a cyber_server::runtime::GoalWorktree,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<cyber_server::runtime::SessionInfo, String>> {
+        self.builtin
+            .create_goal_fork_session(source, request, worktree, cancel)
     }
 
     fn peer_target(&self, name: &str) -> Result<Option<PeerTarget>, String> {

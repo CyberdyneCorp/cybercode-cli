@@ -756,10 +756,40 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "get",
             "/sessions/{sessionID}/messages",
             "v1.message.list",
-            "List messages",
+            "List the active path's messages, or every branch's with branches=all",
         )
-        .query(&["limit", "cursor", "order"])
+        .query(&["limit", "cursor", "order", "branches"])
         .ok::<Page<Message>>(g),
+        op(
+            "get",
+            "/sessions/{sessionID}/tree",
+            "v1.session.tree",
+            "The user-message tree of every branch, with the active path and labels",
+        )
+        .ok::<Data<Vec<crate::runtime::BranchNode>>>(g),
+        op(
+            "post",
+            "/sessions/{sessionID}/checkout",
+            "v1.session.checkout",
+            "Make another branch active on an idle Session, optionally restoring its code",
+        )
+        .body::<crate::runtime::BranchCheckout>(g)
+        .ok::<Data<crate::runtime::CheckedOutBranch>>(g),
+        op(
+            "put",
+            "/sessions/{sessionID}/labels/{name}",
+            "v1.session.label",
+            "Label a message of the branch tree",
+        )
+        .body::<super::branches::LabelBody>(g)
+        .status(204),
+        op(
+            "delete",
+            "/sessions/{sessionID}/labels/{name}",
+            "v1.session.unlabel",
+            "Remove a branch label",
+        )
+        .status(204),
         op(
             "get",
             "/sessions/{sessionID}/messages/{messageID}",
@@ -1250,6 +1280,74 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "Revoke a peer grant; its next request is refused",
         )
         .ok::<Data<super::peers::PeerRevoked>>(g),
+        op(
+            "get",
+            "/sessions/{sessionID}/goals",
+            "v1.session.goals",
+            "The Session's current Goal, its queue in order and its 20 most recent ended Goals",
+        )
+        .ok::<Data<super::goals::GoalsView>>(g)
+        .error::<ErrorBody>(g, 404, "SessionNotFoundError"),
+        op(
+            "post",
+            "/sessions/{sessionID}/goals",
+            "v1.session.createGoal",
+            "Set the active Goal (`mode: set`, the default, clears the current one and starts a Turn toward it) or queue one (`mode: add`); `template` takes the condition, check and budget from `goals.templates`",
+        )
+        .body::<super::goals::CreateGoal>(g)
+        .status(201)
+        .ok::<Data<crate::runtime::goals::Goal>>(g)
+        .error::<ErrorBody>(g, 400, "GoalConditionTooLongError or InvalidRequestError")
+        .error::<ErrorBody>(g, 404, "SessionNotFoundError or GoalTemplateNotFoundError")
+        .error::<ErrorBody>(g, 409, "GoalQueueFullError"),
+        op(
+            "post",
+            "/sessions/{sessionID}/goals/fork",
+            "v1.session.forkGoal",
+            "Pursue a Goal in a new background root Session, in its own managed worktree when `goals.fork_isolation` is `worktree` and the Location is a git checkout",
+        )
+        .body::<super::goals::ForkGoal>(g)
+        .status(201)
+        .ok::<Data<crate::runtime::goals::GoalFork>>(g)
+        .error::<ErrorBody>(g, 400, "GoalConditionTooLongError or InvalidRequestError")
+        .error::<ErrorBody>(g, 404, "SessionNotFoundError"),
+        op(
+            "delete",
+            "/sessions/{sessionID}/goals",
+            "v1.session.clearGoals",
+            "Clear the current and every queued Goal; returns the cleared IDs",
+        )
+        .ok::<Data<Vec<String>>>(g)
+        .error::<ErrorBody>(g, 404, "SessionNotFoundError"),
+        op(
+            "patch",
+            "/sessions/{sessionID}/goals/order",
+            "v1.session.reorderGoals",
+            "Reorder the pending queue; publishes session.goal.reordered.1",
+        )
+        .body::<super::goals::GoalOrder>(g)
+        .ok::<Data<Vec<String>>>(g)
+        .error::<ErrorBody>(g, 400, "InvalidRequestError when goal_ids is not the pending queue"),
+        op("post", "/sessions/{sessionID}/goals/pause", "v1.session.pauseGoal", "Pause the active Goal: no evaluation or continuation until resumed")
+            .ok::<Data<crate::runtime::goals::Goal>>(g)
+            .error::<ErrorBody>(g, 404, "GoalNotFoundError"),
+        op("post", "/sessions/{sessionID}/goals/resume", "v1.session.resumeGoal", "Resume the paused Goal with a prompt toward it")
+            .ok::<Data<crate::runtime::goals::Goal>>(g)
+            .error::<ErrorBody>(g, 404, "GoalNotFoundError"),
+        op("post", "/sessions/{sessionID}/goals/skip", "v1.session.skipGoal", "Clear the current Goal and activate the next queued one; null when the queue was empty")
+            .ok::<Data<Option<crate::runtime::goals::Goal>>>(g)
+            .error::<ErrorBody>(g, 404, "GoalNotFoundError"),
+        op("get", "/sessions/{sessionID}/goals/{goalID}", "v1.session.goal", "One Goal with its last 50 evaluations")
+            .ok::<Data<crate::runtime::goals::Goal>>(g)
+            .error::<ErrorBody>(g, 404, "GoalNotFoundError"),
+        op("patch", "/sessions/{sessionID}/goals/{goalID}", "v1.session.editGoal", "Edit a live Goal's condition, check (null removes it) or budget; publishes session.goal.edited.1")
+            .body::<super::goals::EditGoal>(g)
+            .ok::<Data<crate::runtime::goals::Goal>>(g)
+            .error::<ErrorBody>(g, 400, "GoalConditionTooLongError")
+            .error::<ErrorBody>(g, 404, "GoalNotFoundError"),
+        op("delete", "/sessions/{sessionID}/goals/{goalID}", "v1.session.clearGoal", "Clear one live Goal")
+            .ok::<Data<Vec<String>>>(g)
+            .error::<ErrorBody>(g, 404, "GoalNotFoundError"),
         op("get", "/agents", "v1.agent.list", "Selectable agents")
             .located()
             .ok::<Located<Vec<AgentInfo>>>(g),

@@ -1,5 +1,6 @@
 //! Drawing (`tui` → Message and part rendering, Permission prompt, Question prompt).
 
+mod branches;
 mod composer;
 mod explorer;
 pub(crate) mod footer;
@@ -107,6 +108,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         | Overlay::Workflows
         | Overlay::Messages
         | Overlay::Team => {}
+        Overlay::Tree => branches::draw(f, app, area),
         Overlay::Themes(s) => themes::draw(f, app, s, area),
         Overlay::Picker(p) => overlays::picker(f, app, p, area),
         Overlay::Palette(p) => overlays::palette(f, app, p, area),
@@ -215,7 +217,13 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     } else {
         "idle ".to_owned()
     };
-    let room = (area.width as usize).saturating_sub(state.chars().count() + 10);
+    let branch = app
+        .branches
+        .header()
+        .map(|b| format!(" · {b}"))
+        .unwrap_or_default();
+    let room =
+        (area.width as usize).saturating_sub(state.chars().count() + branch.chars().count() + 10);
     let title = layout::truncate_end(&crate::sidebar::clean(&app.session.title), room);
     let line = Line::from(vec![
         Span::styled(
@@ -223,6 +231,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
         ),
         Span::styled(format!("· {title}"), Style::default().fg(t.text)),
+        Span::styled(branch, Style::default().fg(t.text_muted)),
     ]);
     f.render_widget(Paragraph::new(line), area);
     let style = if app.session.running {

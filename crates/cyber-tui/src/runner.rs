@@ -521,6 +521,8 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
             requests,
             messages,
             loops,
+            goals,
+            branches,
         } => {
             refresh.in_flight = false;
             if session.id != app.session.id || session.seq < app.session.seq {
@@ -532,6 +534,8 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
             app.queued = queued;
             app.messaging.set_records(messages);
             app.loops.replace(loops);
+            app.goals.replace(goals);
+            app.branches.set(branches);
             app.requests = requests;
             app.sync_overlay();
             if std::mem::take(&mut refresh.again) {
@@ -596,6 +600,10 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
             session_id,
             choices,
         } => app.loops_listed(&session_id, choices),
+        Msg::Goals {
+            session_id,
+            choices,
+        } => app.goals_listed(&session_id, choices),
         Msg::Children { session_id, result } => {
             if session_id == app.session.id {
                 match result {
@@ -657,6 +665,7 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
             }
         }
         Msg::Workflow(reply) => return app.workflow_reply(reply),
+        Msg::Branches { session_id, reply } => return app.branch_reply(&session_id, reply),
         Msg::Team {
             session_id,
             view,
@@ -1263,6 +1272,8 @@ mod mode_tests {
                 messages: None,
                 requests: Vec::new(),
                 loops: None,
+                goals: None,
+                branches: Vec::new(),
             };
             assert_eq!(
                 apply(&mut app, Ok(snapshot), &mut refresh),
@@ -1296,6 +1307,8 @@ mod mode_tests {
             messages: None,
             requests: Vec::new(),
             loops: None,
+            goals: None,
+            branches: Vec::new(),
         };
         let actions = apply(&mut app, Ok(snapshot), &mut Refresh::default());
         assert_eq!(actions[0], Action::Refresh);

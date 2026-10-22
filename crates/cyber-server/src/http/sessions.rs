@@ -54,6 +54,8 @@ pub struct Message {
     #[serde(flatten)]
     pub entry: Entry,
     pub tools: Vec<CallState>,
+    /// The previous message on this message's branch; null for the first message.
+    pub parent_message_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -267,6 +269,9 @@ pub struct MessagesQuery {
     pub limit: Option<u32>,
     pub cursor: Option<String>,
     pub order: Option<String>,
+    /// `all`: the messages of every branch, oldest first by creation, instead of the
+    /// active path.
+    pub branches: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -432,6 +437,7 @@ async fn create(
         rules: body.rules,
         max_steps: body.max_steps,
         worktree_id: None,
+        source_directory: None,
         messaging: body.messaging,
         // Only the team runtime makes team members; a client cannot claim membership.
         team: None,
@@ -833,17 +839,41 @@ async fn background(
 }
 
 fn message_of(state: &SessionState, entry: &Entry) -> Message {
+    let tree = state.branches();
     let tools = match entry {
         Entry::Assistant(a) => a
             .calls
             .iter()
-            .filter_map(|c| state.calls.get(c).cloned())
+            .filter_map(|c| {
+                let stashed = || tree.stashed_call(&a.id, c);
+                state.calls.get(c).or_else(stashed)
+            })
+            .cloned()
             .collect(),
         _ => Vec::new(),
     };
     Message {
         entry: entry.clone(),
         tools,
+        parent_message_id: tree.parent(entry.id()).map(str::to_owned),
+    }
+}
+
+/// The active path, or with `branches=all` every message in creation order.
+fn listed<'a>(s: &'a SessionState, q: &MessagesQuery) -> Result<Vec<&'a Entry>> {
+    match q.branches.as_deref() {
+        None => Ok(s.entries.iter().collect()),
+        Some("all") => {
+            let messages = s.messages_by_id();
+            Ok(s.branches()
+                .ordered()
+                .into_iter()
+                .filter_map(|id| messages.get(id).copied())
+                .collect())
+        }
+        Some(other) => Err(ApiError::invalid(format!(
+            "branches must be \"all\", not {other:?}"
+        ))),
     }
 }
 
@@ -864,7 +894,7 @@ pub(crate) async fn messages(
         })?,
         None => 0,
     };
-    let mut ordered: Vec<&Entry> = s.entries.iter().collect();
+    let mut ordered = listed(&s, &q)?;
     if q.order.as_deref() != Some("asc") {
         ordered.reverse();
     }

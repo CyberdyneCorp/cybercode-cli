@@ -16,6 +16,7 @@ Defines the built-in tools Cyber Code exposes to models: parameters, limits, per
 (P1) Besides the tools above, the registry SHALL register the following model-facing tools. Each is specified by the capability in parentheses and is advertised only when that capability is enabled and its phase is implemented:
 - `agent`, `return_result` (agents-subagents)
 - `workflow` (workflows)
+- `goal` (goals)
 - `schedule_wakeup`, `cron_create`, `cron_list`, `cron_delete` (loops-scheduling)
 - `monitor`, `task_stop`, `pty_start`, `pty_write`, `pty_read`, `notify`, `send_file` (background-tasks)
 - `enter_worktree`, `exit_worktree` (worktrees)

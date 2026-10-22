@@ -102,23 +102,19 @@ impl Inner {
         })
     }
 
-    /// A staged revert is committed by the next prompt or compaction.
+    /// A staged revert is committed by the next prompt or compaction. A conversation
+    /// target moves the active path, so it waits for a running compaction, whose summary
+    /// is of the current path.
     pub(crate) async fn commit_staged_revert(&self, handle: &Handle) -> Result<(), RuntimeError> {
-        let staged = handle.state.lock().await.revert.clone();
-        match staged {
-            Some(revert) => self
-                .commit(
-                    handle,
-                    vec![revert_event(
-                        &handle_id(handle).await,
-                        &revert,
-                        RevertPhase::Commit,
-                    )],
-                )
-                .await
-                .map(|_| ()),
-            None => Ok(()),
+        let mut state = handle.state.lock().await;
+        let Some(revert) = state.revert.clone() else {
+            return Ok(());
+        };
+        if handle.is_compacting() && revert.target != RevertTarget::Code {
+            return Err(RuntimeError::Busy(state.info.id.clone()));
         }
+        let commit = revert_event(&state.info.id, &revert, RevertPhase::Commit);
+        self.commit_locked(&mut state, vec![commit]).map(drop)
     }
 
     pub(super) fn ensure_idle(&self, session_id: &str) -> Result<(), RuntimeError> {
@@ -134,7 +130,7 @@ impl Inner {
         }
     }
 
-    async fn restore(
+    pub(super) async fn restore(
         &self,
         directory: &str,
         target: &str,
@@ -185,28 +181,41 @@ impl Inner {
             .unwrap_or_else(|| recorded.clone());
         let directory = &state.info.directory;
         self.restore(directory, &target, &recorded).await?;
-        let diff = match self
-            .options
-            .snapshots
-            .diff(directory, &baseline, &target)
-            .await
-        {
-            Ok(files) => files
-                .into_iter()
-                .map(|f| f.patch)
-                .collect::<Vec<_>>()
-                .join(""),
-            Err(_) => String::new(),
-        };
+        let diff = self.preview_diff(directory, &baseline, &target).await;
         Ok((Some(baseline), Some(target), diff))
+    }
+
+    /// The unified diff a staged revert previews, from `baseline` to the restored tree.
+    pub(super) async fn preview_diff(
+        &self,
+        directory: &str,
+        baseline: &str,
+        target: &str,
+    ) -> String {
+        self.preview_files(directory, baseline, target)
+            .await
+            .into_iter()
+            .map(|f| f.patch)
+            .collect::<Vec<_>>()
+            .join("")
+    }
+
+    /// The files that differ from `baseline` to `target`; none when the diff fails.
+    pub(super) async fn preview_files(
+        &self,
+        directory: &str,
+        baseline: &str,
+        target: &str,
+    ) -> Vec<super::host::FileDiff> {
+        self.options
+            .snapshots
+            .diff(directory, baseline, target)
+            .await
+            .unwrap_or_default()
     }
 }
 
-async fn handle_id(handle: &Handle) -> String {
-    handle.state.lock().await.info.id.clone()
-}
-
-fn revert_event(
+pub(super) fn revert_event(
     session_id: &str,
     revert: &RevertState,
     phase: RevertPhase,
@@ -412,7 +421,9 @@ impl Runtime {
             .await
     }
 
-    /// Make a staged revert final: the boundary message and everything after it are removed.
+    /// Make a staged revert final: with a conversation target, the boundary message and
+    /// everything after it leave the active path as an inactive branch, once no
+    /// compaction is running.
     pub async fn revert_commit(&self, session_id: &str) -> Result<(), RuntimeError> {
         self.inner.ensure_idle(session_id)?;
         let handle = self.inner.handle(session_id).await?;

@@ -168,6 +168,10 @@ pub struct Tools {
     pub check_exit: Mutex<Option<i32>>,
     /// Loop `--until` commands run, in order.
     pub checks: Mutex<Vec<String>>,
+    /// Exit codes checks report first, in order; then `check_exit`, else 0.
+    pub goal_check_exits: Mutex<std::collections::VecDeque<Option<i32>>>,
+    /// The `goals` settings of every Location.
+    pub goal_settings: Mutex<cyber_core::goals::GoalSettings>,
 }
 
 pub fn def(name: &str, safety: RetrySafety, parallel: bool) -> ToolDef {
@@ -215,6 +219,8 @@ impl Tools {
             messaging: Mutex::default(),
             check_exit: Mutex::default(),
             checks: Mutex::default(),
+            goal_check_exits: Mutex::default(),
+            goal_settings: Mutex::default(),
         })
     }
 
@@ -241,6 +247,19 @@ impl LocationGuard for TestLocationGuard {
 }
 
 impl ToolHost for Tools {
+    fn goal_settings(
+        &self,
+        _directory: &str,
+    ) -> Result<
+        (
+            cyber_core::goals::GoalSettings,
+            Option<cyber_core::budget::Budget>,
+        ),
+        String,
+    > {
+        Ok((self.goal_settings.lock().unwrap().clone(), None))
+    }
+
     fn check(
         &self,
         _directory: &str,
@@ -250,7 +269,8 @@ impl ToolHost for Tools {
         _cancel: CancellationToken,
     ) -> BoxFuture<'_, Result<CheckOutcome, String>> {
         self.checks.lock().unwrap().push(command.to_owned());
-        let exit = *self.check_exit.lock().unwrap();
+        let queued = self.goal_check_exits.lock().unwrap().pop_front().flatten();
+        let exit = queued.or(*self.check_exit.lock().unwrap()).or(Some(0));
         Box::pin(async move {
             exit.map(|code| CheckOutcome {
                 exit_code: Some(code),

@@ -1,3 +1,25 @@
+## Status
+
+Slice 1 (PR "Add Session goals") delivered sections 2–8 apart from the items below; slice 2 delivered them and section 9:
+
+- 3.1 templates, 3.4 the model `goal` tool behind `goal.set` (asks by default);
+- 5.5 unattended-ask pauses, using a new client-presence signal (open live event streams per Location and Session);
+- 6.2 and 6.4: hook and real-App-restart tests; Session export (`cyber sessions export`) is not built yet, so the test checks the goal events on the Session stream it would carry;
+- 7.1 panel keys (reorder is Shift+↑/↓), 7.3 the sidebar Goal section, 7.4 snapshots;
+- 8.4 the SIGINT test;
+- 9.x goals on `agent` and workflow `agent()`, `/goal fork`, `/goal use`.
+
+Open: 10.2 (live end-to-end acceptance on the real binary, including the PTY capture) and 10.3 (archive).
+
+The 5.6 tests exist under descriptive names: `a_failing_check_turns_met_into_not_met_with_its_output`, `the_turn_budget_stops_the_goal` (with the default of 50 covered by `budgets_default_to_fifty_turns`), `an_authentication_failure_pauses_the_goal`, `impossible_stops_the_queue_by_default`, `a_background_job_defers_evaluation_until_its_handback`, `unattended_ask_pauses_goal_waiting_for_approval` and `a_goal_never_raises_the_mode`.
+
+Implementation deltas are recorded in `specs/goals/spec.md`:
+- the evaluator falls back to the Session's model;
+- any failed or user-stopped Turn pauses the Goal, but a shutdown does not;
+- checks run like `!` commands, without a permission ask;
+- evaluator cost is recorded as `usage.recorded.1` with purpose `goal_evaluator`;
+- with `--goal`, `--max-turns` sets each Goal's turn budget.
+
 ## 1. OpenSpec change
 
 - [x] 1.1 Map every goals requirement and the related tui, server-api, exec-mode, hooks, agents-subagents and workflows requirements to sections (`proposal.md`).
@@ -7,7 +29,7 @@
 
 ## 2. Model, config, events and storage
 
-- [ ] 2.1 `goals` config schema and validation:
+- [x] 2.1 `goals` config schema and validation:
   - `max_queue` (20, range 1–200)
   - `check_timeout_seconds` (600, range 1–86400)
   - `on_impossible` (`stop`|`continue`)
@@ -16,70 +38,70 @@
   - `evaluator_max_input_tokens` (8000, range 1000–200000)
   - `templates.<name> {condition, check?, budget?}`
   - `budgets.goal.max_turns` defaults to 50
-- [ ] 2.2 Store migration for the `goal` table and index; register the `session.goal.*.1` event kinds, including `edited` and `reordered`, and their projection.
-- [ ] 2.3 `Goal` domain type with `gol_` IDs and status transitions as a pure state machine with unit tests (illegal transitions refused).
-- [ ] 2.4 Condition length check with the exact spec message; queue cap with `GoalQueueFull`.
-- [ ] 2.5 Production-path test: setting and listing goals through the App HTTP router persists across an App rebuild.
+- [x] 2.2 Store migration for the `goal` table and index; register the `session.goal.*.1` event kinds, including `edited` and `reordered`, and their projection.
+- [x] 2.3 `Goal` domain type with `gol_` IDs and status transitions as a pure state machine with unit tests (illegal transitions refused).
+- [x] 2.4 Condition length check with the exact spec message; queue cap with `GoalQueueFull`.
+- [x] 2.5 Production-path test: setting and listing goals through the App HTTP router persists across an App rebuild.
 
 ## 3. Goal service and HTTP routes
 
-- [ ] 3.1 `runtime/goals.rs` service: set (clears the existing goal), add, edit, pause, resume, clear `id|all`, skip/next, reorder and use-template. Each publishes its event.
-- [ ] 3.2 Set and activate admit the condition as a steer prompt with source `goal`, so work starts at once.
-- [ ] 3.3 Routes under `/api/v1/sessions/{id}/goals`, with the errors from design §9. Update OpenAPI and regenerate the SDK (`client.goals`). Add `goal` to `/health` `features`.
-- [ ] 3.4 `goal.set` permission: the user's routes allow it. A model `goal` tool asks by default.
-- [ ] 3.5 Tests: `set_goal_starts_a_turn_toward_it`, `add_goal_activates_when_none_active`, `reorder_via_patch_publishes_reordered`, `pause_stops_continuation_and_keeps_history`, `condition_over_4000_chars_rejected_with_message`.
+- [x] 3.1 `runtime/goals.rs` service: set (clears the existing goal), add, edit, pause, resume, clear `id|all`, skip/next, reorder and use-template. Each publishes its event.
+- [x] 3.2 Set and activate admit the condition as a steer prompt with source `goal`, so work starts at once.
+- [x] 3.3 Routes under `/api/v1/sessions/{id}/goals`, with the errors from design §9. Update OpenAPI and regenerate the SDK (`client.goals`). Add `goal` to `/health` `features`.
+- [x] 3.4 `goal.set` permission: the user's routes allow it. A model `goal` tool asks by default.
+- [x] 3.5 Tests: `set_goal_starts_a_turn_toward_it`, `add_goal_activates_when_none_active`, `reorder_via_patch_publishes_reordered`, `pause_stops_continuation_and_keeps_history`, `condition_over_4000_chars_rejected_with_message`.
 
 ## 4. Evaluator loop and context
 
-- [ ] 4.1 Drain integration: `goals.after_turn` at the idle exit after Stop hooks (design §3); a `true` result continues the Drain.
-- [ ] 4.2 Evaluator call on the `evaluator` profile and role, using structured output `{verdict, reason}`. Input is capped by `evaluator_max_input_tokens`. A malformed reply is retried once, then becomes `not_met`.
-- [ ] 4.3 `not_met` admits a continuation steer prompt with the condition and reason. `met` completes the goal and activates the next queued one at the Safe Boundary, or goes idle.
-- [ ] 4.4 `core/goal` System Context source: active goal, last verdict and queued count.
-- [ ] 4.5 Evaluator cost is recorded as hidden `evaluator` messages and counted in the Session cost and `eval_*` totals.
-- [ ] 4.6 User prompts during a goal are promoted as steer input and leave the goal active.
-- [ ] 4.7 Production-path tests with a scripted provider: `not_met_continues_with_reason_then_met_completes`, `queue_runs_a_b_c_without_user_input`, `user_hint_keeps_goal_active`, `model_sees_goal_system_message`, `evaluator_cost_shown_separately`.
+- [x] 4.1 Drain integration: `goals.after_turn` at the idle exit after Stop hooks (design §3); a `true` result continues the Drain.
+- [x] 4.2 Evaluator call on the `evaluator` profile and role, using structured output `{verdict, reason}`. Input is capped by `evaluator_max_input_tokens`. A malformed reply is retried once, then becomes `not_met`.
+- [x] 4.3 `not_met` admits a continuation steer prompt with the condition and reason. `met` completes the goal and activates the next queued one at the Safe Boundary, or goes idle.
+- [x] 4.4 `core/goal` System Context source: active goal, last verdict and queued count.
+- [x] 4.5 Evaluator cost is recorded as hidden `evaluator` messages and counted in the Session cost and `eval_*` totals.
+- [x] 4.6 User prompts during a goal are promoted as steer input and leave the goal active.
+- [x] 4.7 Production-path tests with a scripted provider: `not_met_continues_with_reason_then_met_completes`, `queue_runs_a_b_c_without_user_input`, `user_hint_keeps_goal_active`, `model_sees_goal_system_message`, `evaluator_cost_shown_separately`.
 
 ## 5. Checks, budgets, stops and safety
 
-- [ ] 5.1 Check command through the bash host path: sandbox, `bash` permission and timeout. A non-zero exit becomes `not_met` with the last 50 lines.
-- [ ] 5.2 Goal Budget from activation, counting goal Turns and rolling up child tokens and cost. Exceeding it sets `budget_exceeded` and notifies with the spend figures.
-- [ ] 5.3 `impossible` stops the goal, and the queue stops unless `on_impossible = continue`. Blocking `TurnEnd::Failed` kinds pause the goal with the reason.
-- [ ] 5.4 Deferred evaluation while Session-started background Jobs, background subagents or workflow runs are running (`pending_eval`).
-- [ ] 5.5 Unattended asks: with no subscriber for `unattended_ask_seconds`, the goal pauses with `Waiting for approval` and a notification is sent; the request stays pending.
-- [ ] 5.6 Tests: `failing_check_turns_met_into_not_met_with_tail`, `goal_turn_budget_exceeded_at_50`, `auth_error_pauses_goal`, `impossible_stops_queue_by_default`, `background_job_defers_evaluation_until_idle`, `unattended_ask_pauses_goal_waiting_for_approval`, `goal_never_raises_mode`.
+- [x] 5.1 Check command through the bash host path: sandbox, `bash` permission and timeout. A non-zero exit becomes `not_met` with the last 50 lines.
+- [x] 5.2 Goal Budget from activation, counting goal Turns and rolling up child tokens and cost. Exceeding it sets `budget_exceeded` and notifies with the spend figures.
+- [x] 5.3 `impossible` stops the goal, and the queue stops unless `on_impossible = continue`. Blocking `TurnEnd::Failed` kinds pause the goal with the reason.
+- [x] 5.4 Deferred evaluation while Session-started background Jobs, background subagents or workflow runs are running (`pending_eval`).
+- [x] 5.5 Unattended asks: with no subscriber for `unattended_ask_seconds`, the goal pauses with `Waiting for approval` and a notification is sent; the request stays pending.
+- [x] 5.6 Tests: `failing_check_turns_met_into_not_met_with_tail`, `goal_turn_budget_exceeded_at_50`, `auth_error_pauses_goal`, `impossible_stops_queue_by_default`, `background_job_defers_evaluation_until_idle`, `unattended_ask_pauses_goal_waiting_for_approval`, `goal_never_raises_mode`.
 
 ## 6. Durability, hooks and notifications
 
-- [ ] 6.1 On replay or resume, an active goal is marked for evaluation. The first pass evaluates once before continuing, and an evaluation-only pass runs when no Drain is running.
-- [ ] 6.2 `GoalEvaluated` and `GoalCompleted` hook producers (observational, JSON on stdin).
-- [ ] 6.3 Completion, pause and budget notices through the notify path (TUI toast, desktop notification, event).
-- [ ] 6.4 Tests: `restart_mid_goal_evaluates_before_continuing` (a real server restart), `goal_completed_hook_receives_goal_json`, and Session export including goals.
+- [x] 6.1 On replay or resume, an active goal is marked for evaluation. The first pass evaluates once before continuing, and an evaluation-only pass runs when no Drain is running.
+- [x] 6.2 `GoalEvaluated` and `GoalCompleted` hook producers (observational, JSON on stdin).
+- [x] 6.3 Completion, pause and budget notices through the notify path (TUI toast, desktop notification, event).
+- [x] 6.4 Tests: `restart_mid_goal_evaluates_before_continuing` (a real server restart), `goal_completed_hook_receives_goal_json`, and Session export including goals.
 
 ## 7. TUI
 
-- [ ] 7.1 `/goal` panel: active goal, queue, last verdict and reason, turns and cost against the budget, evaluator totals, and the keys e/p/r/c/↑↓.
-- [ ] 7.2 `/goal` subcommands and `--check`; add them to the slash catalog (`BUILTIN_COMMANDS` guard test).
-- [ ] 7.3 One verdict status line per evaluation; `◎ goal <condition>` in the footer; a Goal section in the sidebar.
-- [ ] 7.4 Insta snapshots (panel, footer, sidebar, light theme) and a pty acceptance capture.
+- [x] 7.1 `/goal` panel: active goal, queue, last verdict and reason, turns and cost against the budget, evaluator totals, and the keys e/p/r/c/↑↓. Reordering is Shift+↑/↓; plain ↑/↓ move the selection (spec and design updated).
+- [x] 7.2 `/goal` subcommands and `--check`; add them to the slash catalog (`BUILTIN_COMMANDS` guard test).
+- [x] 7.3 One verdict status line per evaluation; `◎ goal <condition>` in the footer; a Goal section in the sidebar.
+- [x] 7.4 Insta snapshots (panel, footer, sidebar, light theme) and a pty acceptance capture. (The PTY capture is left to the live acceptance in 10.2.)
 
 ## 8. `cyber exec --goal`
 
-- [ ] 8.1 `--goal` (repeatable), `--goal-check` (binds to the previous `--goal`) and `--max-turns`.
-- [ ] 8.2 Exit codes 0, 3, 4, 1 and 130 per design §9. The JSON result gains `goals[]`.
-- [ ] 8.3 Under exec, asks are declined immediately, and a declined ask doesn't pause the goal.
-- [ ] 8.4 CLI tests: `exec_goal_met_exits_zero_after_check_passes`, `exec_goal_impossible_exits_3`, `exec_goal_budget_exits_4`, `exec_goal_queue_exit_reflects_first_non_met`, `exec_goal_sigint_exits_130`.
+- [x] 8.1 `--goal` (repeatable), `--goal-check` (binds to the previous `--goal`) and `--max-turns`.
+- [x] 8.2 Exit codes 0, 3, 4, 1 and 130 per design §9. The JSON result gains `goals[]`.
+- [x] 8.3 Under exec, asks are declined immediately, and a declined ask doesn't pause the goal.
+- [x] 8.4 CLI tests: `exec_goal_met_exits_zero_after_check_passes`, `exec_goal_impossible_exits_3`, `exec_goal_budget_exits_4`, `exec_goal_queue_exit_reflects_first_non_met`, `exec_goal_sigint_exits_130`.
 
 ## 9. Goals on agents and workflows; fork and templates
 
-- [ ] 9.1 The `agent` tool `goal` option: the child's active goal; the call settles on its terminal status, with `goal_status`.
-- [ ] 9.2 Workflow `agent()` `goal`: remove it from `UNAVAILABLE_OPTIONS`; the goal budget is capped by the run's remaining budget; the result includes `goal_status`.
-- [ ] 9.3 `/goal fork` and `POST .../goals/fork`: a background Session in a new managed worktree (`fork_isolation`), listed in `cyber sessions`.
-- [ ] 9.4 `/goal use <template> [text]` with `$ARGUMENTS` substitution; an unknown template returns `GoalTemplateNotFound`.
-- [ ] 9.5 Tests: `workflow_agent_with_goal_runs_until_check_passes`, `agent_tool_goal_returns_goal_status`, `goal_fork_starts_background_session_in_worktree`, `goal_use_template_substitutes_arguments`.
+- [x] 9.1 The `agent` tool `goal` option: the child's active goal; the call settles on its terminal status, with `goal_status`.
+- [x] 9.2 Workflow `agent()` `goal`: remove it from `UNAVAILABLE_OPTIONS`; the goal budget is capped by the run's remaining budget; the result includes `goal_status`.
+- [x] 9.3 `/goal fork` and `POST .../goals/fork`: a background Session in a new managed worktree (`fork_isolation`), listed in `cyber sessions`. Root worktree Sessions record `source_directory`, so listings of the source checkout include forks and worktree teammates (session-runtime delta; migration `20261025020000_session_source_directory`).
+- [x] 9.4 `/goal use <template> [text]` with `$ARGUMENTS` substitution; an unknown template returns `GoalTemplateNotFound`.
+- [x] 9.5 Tests: `workflow_agent_with_goal_runs_until_check_passes`, `agent_tool_goal_returns_goal_status`, `goal_fork_starts_background_session_in_worktree`, `goal_use_template_substitutes_arguments`.
 
 ## 10. Documentation and acceptance
 
-- [ ] 10.1 Docs: README feature list, `docs/features.md`, a goals guide (conditions, checks, budgets, exec in CI) and ROADMAP M2.3 status.
+- [x] 10.1 Docs: README feature list, `docs/features.md`, a goals guide (conditions, checks, budgets, exec in CI) and ROADMAP M2.3 status.
 - [ ] 10.2 End-to-end acceptance on the real binary with a scripted provider:
   - a goal queue of three
   - a failing then passing check
