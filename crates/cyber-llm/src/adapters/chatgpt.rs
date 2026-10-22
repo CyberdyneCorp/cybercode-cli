@@ -50,8 +50,7 @@ impl ChatGptAdapter {
         if !file.stale() {
             return;
         }
-        let fetched = fetch_models(&self.endpoint.client, &self.endpoint.base_url, login).await;
-        let _ = file.save(fetched.unwrap_or_else(|_| file.load()));
+        file.record(fetch_models(&self.endpoint.client, &self.endpoint.base_url, login).await);
     }
 }
 

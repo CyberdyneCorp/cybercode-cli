@@ -17,6 +17,8 @@ use std::path::PathBuf;
 use cyber_core::env::EnvSource;
 use reqwest::Url;
 
+use crate::subscription::StoreError;
+
 pub use login::{SignedIn, complete_login};
 pub use models::{CLIENT_VERSION, ModelsFile, PlanModel, fetch as fetch_models};
 pub use oauth::{Claims, authorize_url, exchange_code, refresh};
@@ -62,6 +64,16 @@ pub enum ChatGptError {
     Busy,
     #[error("{0} must be an HTTPS URL (plain HTTP only on loopback)")]
     Insecure(&'static str),
+}
+
+impl From<StoreError> for ChatGptError {
+    fn from(error: StoreError) -> Self {
+        match error {
+            StoreError::NotSignedIn => Self::NotSignedIn,
+            StoreError::Storage(what) => Self::Storage(what),
+            StoreError::Busy => Self::Busy,
+        }
+    }
 }
 
 impl From<ChatGptError> for crate::LlmError {
@@ -173,12 +185,7 @@ pub fn auth_path(data: &std::path::Path) -> PathBuf {
     data.join("chatgpt-auth.json")
 }
 
-pub(crate) fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs())
-        .unwrap_or(0)
-}
+pub(crate) use crate::subscription::now;
 
 #[cfg(test)]
 mod tests {

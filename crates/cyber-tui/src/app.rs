@@ -190,6 +190,8 @@ pub enum Action {
     Team(crate::team::Request),
     /// `/goal` (`goals`).
     Goal(crate::goals::GoalRequest),
+    /// `/tree` and `/label` (`tui` → Branch tree view).
+    Branch(crate::branches::Request),
     /// `/login` and `/logout` (`tui` → Provider login commands).
     Login(crate::login::LoginRequest),
     /// Open a file in `$VISUAL`/`$EDITOR` (`s` on a Workflow Run: its script).
@@ -331,6 +333,8 @@ pub enum Overlay {
     Messages,
     /// `/team`: the members and the task board; the team is `Sidebar::team`.
     Team,
+    /// `/tree`: the branch tree; its state is `App::branches`.
+    Tree,
     /// `/login`: a provider sign-in; its state is `App::login`.
     Login,
 }
@@ -474,6 +478,8 @@ pub struct App {
     pub workflows: crate::workflows::WorkflowsState,
     /// Cross-session message records, held cards and the `/messages` view.
     pub messaging: crate::messaging::Messages,
+    /// The Session's branch tree (the header's branch tag) and the `/tree` view.
+    pub branches: crate::branches::Tree,
     /// The Session's loops, for quiet-iteration collapsing and the footer.
     pub loops: crate::loops::Loops,
     /// The team view's selection and the way back from an opened teammate.
@@ -565,6 +571,7 @@ impl App {
             progress: Default::default(),
             workflows: Default::default(),
             messaging: Default::default(),
+            branches: Default::default(),
             loops: Default::default(),
             team: Default::default(),
             goals: Default::default(),
@@ -946,6 +953,7 @@ impl App {
             }
             Overlay::Messages => self.messages_key(key),
             Overlay::Team => self.team_key(key),
+            Overlay::Tree => self.tree_key(key),
         }
     }
 
@@ -1016,6 +1024,8 @@ impl App {
             Ui::ToggleTimestamps => self.timestamps = !self.timestamps,
             Ui::ToggleSidebar => self.toggle_sidebar(),
             Ui::RenameSession => return self.rename_command(""),
+            Ui::SessionTree => return self.tree_command(),
+            Ui::LabelBranch => self.composer.set_text("/label "),
         }
         Vec::new()
     }
@@ -1607,6 +1617,8 @@ impl App {
             "reload-plugins" => vec![Action::LoadPlugins { reload: true }, Action::LoadCommands],
             "resume" | "sessions" => vec![Action::LoadSessions],
             "rename" => self.rename_command(args),
+            "tree" => self.tree_command(),
+            "label" => self.label_command(args),
             "btw" | "side" => self.side_command(args),
             "new" | "clear" => vec![Action::NewSession],
             "fork" => vec![Action::Fork],
