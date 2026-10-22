@@ -1106,9 +1106,13 @@ A Goal is a condition the Session keeps working toward. After every Turn that le
 /goal all call sites compile against the v2 API and cargo test passes
 /goal --check "cargo test --quiet" the auth tests pass     # met only when the check exits 0
 /goal add the changelog mentions the v2 API                  # queued; runs after the current one
-/goal                                                        # picker: current, queue, totals, last verdict
+/goal                                                        # panel: current, queue, totals, last verdict
 /goal pause | resume | skip | next | clear [gol_…|all] | edit [gol_…]
+/goal use green auth module refactored                       # from goals.templates.green
+/goal fork upgrade all dependencies with green tests         # a new background Session works on it
 ```
+
+In the `/goal` panel, `e` edits, `p` pauses, `r` resumes and `c` clears the selected Goal, and Shift+↑/↓ moves a queued Goal. The footer shows `◎ goal <condition>`, and the sidebar has a Goal section with the status, turns against the budget, cost, last verdict and queued count.
 
 - **One active Goal per Session, plus a queue** (`goals.max_queue`, default 20). `/goal <condition>` replaces the current Goal and starts a Turn toward it at once. User prompts during a Goal are handled as usual and the Goal stays active.
 - **Evaluator.**
@@ -1124,7 +1128,23 @@ A Goal is a condition the Session keeps working toward. After every Turn that le
   - **Pause:** a failed Turn, an interrupt or a rejected permission pauses the Goal with the reason. `/goal resume` continues.
 - **Background work.** While Jobs, background subagents or workflow runs the Session started are still running, evaluation waits for their handback.
 - **Restarts.** Goals are `session.goal.*` events, so they survive a restart. An active Goal is evaluated once on its last Turn, and work continues only if it is `not_met`.
-- **Notifications and hooks.** Met, impossible, paused and budget stops send a notification (TUI toast, desktop). `GoalEvaluated` and `GoalCompleted` hooks receive the Goal JSON.
+- **Notifications and hooks.** Met, impossible, paused and budget stops send a notification (TUI toast, desktop). `GoalEvaluated` hooks receive `{goal, verdict, reason}` and `GoalCompleted` hooks the Goal JSON on stdin; both are observational.
+- **Unattended asks.** When a goal Turn asks for a permission and no client (a TUI, or any live event stream for the Session or its Location) has watched for `goals.unattended_ask_seconds` (300), the Goal pauses with `Waiting for approval` and a notification names the request. The request stays pending; answer it, then `/goal resume`. Under `cyber exec` asks are declined at once instead.
+- **Templates.** `goals.templates.<name> = {condition, check?, budget?}` in config; `/goal use <name> [text]` (or `POST .../goals` with `template` and `args`) replaces `$ARGUMENTS` in the condition, or appends the text on a new line when there is no placeholder.
+
+  ```jsonc
+  {"goals": {"templates": {"green": {"condition": "$ARGUMENTS and all tests pass", "check": "just test"}}}}
+  ```
+
+- **Fork.** `/goal fork <condition>` starts a root Session with the Session's agent, model and Mode and the condition as its active Goal. With `goals.fork_isolation: "worktree"` (the default) in a git checkout it runs in its own `goal-<ulid>` worktree on branch `cyber/goal-<ulid>`; `cyber sessions list` in the source checkout lists it (as it does worktree teammates). Otherwise it shares the Location.
+- **Subagents and workflows.** The `agent` tool and workflow `agent()` accept `goal: {condition, check?, budget?}`. The child works until its Goal is terminal and the result carries `goal_status`. A workflow agent's goal budget is capped by what the run has left.
+
+  ```js
+  const r = await agent('Migrate file X', { goal: { condition: 'file X compiles', check: 'cargo check' } });
+  if (r.goal_status !== 'met') log('not migrated', r.goal_status);
+  ```
+
+- **The model.** The model can set or queue a Goal with the `goal` tool. It checks `goal.set`, which asks by default; allow it with `{"permissions": {"goal.set": "allow"}}`.
 - **CI.**
   - `cyber exec --goal "<condition>" [--goal-check "<cmd>"] [--max-turns N]` runs until every Goal is terminal. `--goal` repeats to form a queue, and each `--goal-check` binds to the `--goal` before it.
   - Exit codes, for the first non-met Goal: `0` all met, `3` impossible, `4` budget exceeded, `1` otherwise, `130` interrupted.
@@ -1132,13 +1152,8 @@ A Goal is a condition the Session keeps working toward. After every Turn that le
 - **API:**
   - `GET|POST|DELETE /api/v1/sessions/{id}/goals`
   - `GET|PATCH|DELETE .../goals/{goal_id}`
-  - `POST .../goals/pause|resume|skip`
+  - `POST .../goals/pause|resume|skip|fork`
   - `PATCH .../goals/order`
-- **Not yet:**
-  - `/goal fork`, templates, and goals on subagents and workflow `agent()`;
-  - the model-facing `goal` tool;
-  - pausing on an unattended permission ask;
-  - the sidebar Goal section and the panel's keys.
 
 ## Loops (P2 M2.4)
 

@@ -1707,6 +1707,9 @@ impl App {
     }
 
     fn picker_key(&mut self, key: KeyEvent) -> Vec<Action> {
+        if let Some(actions) = self.goal_panel_key(key) {
+            return actions;
+        }
         let Overlay::Picker(picker) = &mut self.overlay else {
             return Vec::new();
         };

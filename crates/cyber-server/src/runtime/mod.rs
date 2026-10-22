@@ -85,6 +85,7 @@ mod mcp;
 mod mcp_depth;
 pub mod messaging;
 pub mod peers;
+pub mod presence;
 pub use mcp_depth::RunMarker;
 mod memory;
 pub use mcp::{
@@ -185,11 +186,11 @@ pub use context_meter::ContextMeter;
 pub use events::{AuxiliaryUsage, CompactionTrigger, registry as event_registry};
 pub use host::{
     AgentInference, CatalogResolver, CheckOutcome, ChildContinuation, FileDecision, FileDiff,
-    HookEffects, Invocation, LifecycleHook, LifecycleVerdict, LocationGuard, LocationLease,
-    ModelResolver, NoSnapshots, NoTools, Reconciliation, ResolvedModel, RestoreError, RuleEffect,
-    RunWorktree, SessionEnvelope, SkillSuggestion, Snapshot, Snapshots, TeamWorktree, ToolDef,
-    ToolHost, ToolOutcome, ToolScope, TurnContext, TurnWorktree, WorkflowAgentOutput,
-    WorkflowAgentRequest, WorkflowToolRequest,
+    GoalWorktree, HookEffects, Invocation, LifecycleHook, LifecycleVerdict, LocationGuard,
+    LocationLease, ModelResolver, NoSnapshots, NoTools, Reconciliation, ResolvedModel,
+    RestoreError, RuleEffect, RunWorktree, SessionEnvelope, SkillSuggestion, Snapshot, Snapshots,
+    TeamWorktree, ToolDef, ToolHost, ToolOutcome, ToolScope, TurnContext, TurnWorktree,
+    WorkflowAgentOutput, WorkflowAgentRequest, WorkflowToolRequest,
 };
 pub use model::{
     AssistantEntry, CallState, CallStatus, Delivery, Entry, InboxRow, InputStatus, LastStep,
@@ -277,6 +278,9 @@ pub enum RuntimeError {
     /// An empty or over-long condition.
     #[error("GoalConditionTooLongError: {0}")]
     GoalCondition(String),
+    /// `goals.templates` has no template with this name.
+    #[error("GoalTemplateNotFoundError: no goal template {0}")]
+    GoalTemplateNotFound(String),
     /// A message ID or branch label that names nothing in the Session.
     #[error("MessageNotFoundError: {0}")]
     MessageNotFound(String),
@@ -362,6 +366,8 @@ pub struct CreateSession {
     pub directory: String,
     /// Expected checkout identity for an internally provisioned managed Session.
     pub worktree_id: Option<String>,
+    /// The Location a root worktree Session was started from; listings there include it.
+    pub source_directory: Option<String>,
     pub model: String,
     /// The supplied model is a fallback; the selected agent may replace it.
     pub model_is_default: bool,
@@ -783,6 +789,8 @@ pub(crate) struct Inner {
     /// Issued, unsettled edit-capable workflow agents per canonical Location, across runs
     /// (`workflows` → Write isolation default).
     workflow_writers: StdMutex<HashMap<String, Arc<std::sync::atomic::AtomicUsize>>>,
+    /// Open live event streams (`goals` → Goal mode safety).
+    pub(crate) presence: presence::Presence,
     /// `<state>/workflows`: inline scripts and results larger than 1 MiB.
     workflow_dir: std::sync::OnceLock<PathBuf>,
     /// Rebuilds a run's next attempt after a restart (`workflows` → Recovery of several
@@ -872,6 +880,7 @@ impl Runtime {
             team_status: Mutex::default(),
             peer_listings: StdMutex::default(),
             workflow_writers: StdMutex::default(),
+            presence: presence::Presence::default(),
             workflow_dir: std::sync::OnceLock::new(),
             workflow_relaunch: std::sync::OnceLock::new(),
             workflow_progress: std::sync::OnceLock::new(),
@@ -1019,6 +1028,12 @@ impl Runtime {
         self.inner.bus.subscribe()
     }
 
+    /// Count a client watching `scope` until the guard drops (`goals` → Goal mode
+    /// safety: a request nobody watches for long enough pauses the Goal).
+    pub fn attach_client(&self, scope: presence::Watching) -> presence::PresenceGuard {
+        self.inner.presence.attach(scope)
+    }
+
     /// Create a Session, or return the existing one unchanged when `id` is taken.
     /// The first root Session of a Location fires the observational `Setup` hook
     /// once creation is committed and admission released (hook runners take it again).
@@ -1120,6 +1135,7 @@ impl Runtime {
             directory: req.directory,
             worktree_id: req.worktree_id,
             worktree_origin: None,
+            source_directory: req.source_directory,
             parent_id: req.parent_id,
             subagent_name: req.subagent_name,
             workflow_run_id: req.workflow_run_id,
@@ -2182,7 +2198,7 @@ fn query_sessions(
     let (cursor_at, cursor_id) = cursor.unwrap_or((i64::MAX, String::new()));
     let mut stmt = conn.prepare(
         "SELECT id, title, directory, parent_id, model, archived, created_at, updated_at, cost, children_cost, children_tokens, children_unpriced_steps, children_usage_complete, children_token_classes, children_token_classes_complete, agent, mode FROM session
-         WHERE (?1 IS NULL OR directory = ?1)
+         WHERE (?1 IS NULL OR directory = ?1 OR (parent_id IS NULL AND source_directory = ?1))
            AND (?2 IS NULL OR parent_id = ?2)
            AND (?3 = 0 OR parent_id IS NULL)
            AND (?4 = 1 OR archived = 0)

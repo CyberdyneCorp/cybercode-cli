@@ -1292,14 +1292,25 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "post",
             "/sessions/{sessionID}/goals",
             "v1.session.createGoal",
-            "Set the active Goal (`mode: set`, the default, clears the current one and starts a Turn toward it) or queue one (`mode: add`)",
+            "Set the active Goal (`mode: set`, the default, clears the current one and starts a Turn toward it) or queue one (`mode: add`); `template` takes the condition, check and budget from `goals.templates`",
         )
         .body::<super::goals::CreateGoal>(g)
         .status(201)
         .ok::<Data<crate::runtime::goals::Goal>>(g)
         .error::<ErrorBody>(g, 400, "GoalConditionTooLongError or InvalidRequestError")
-        .error::<ErrorBody>(g, 404, "SessionNotFoundError")
+        .error::<ErrorBody>(g, 404, "SessionNotFoundError or GoalTemplateNotFoundError")
         .error::<ErrorBody>(g, 409, "GoalQueueFullError"),
+        op(
+            "post",
+            "/sessions/{sessionID}/goals/fork",
+            "v1.session.forkGoal",
+            "Pursue a Goal in a new background root Session, in its own managed worktree when `goals.fork_isolation` is `worktree` and the Location is a git checkout",
+        )
+        .body::<super::goals::ForkGoal>(g)
+        .status(201)
+        .ok::<Data<crate::runtime::goals::GoalFork>>(g)
+        .error::<ErrorBody>(g, 400, "GoalConditionTooLongError or InvalidRequestError")
+        .error::<ErrorBody>(g, 404, "SessionNotFoundError"),
         op(
             "delete",
             "/sessions/{sessionID}/goals",

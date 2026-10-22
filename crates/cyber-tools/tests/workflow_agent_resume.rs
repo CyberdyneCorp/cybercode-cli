@@ -49,6 +49,7 @@ async fn resuming_an_agent_that_never_got_a_child_spawns_one() {
         label: None,
         resume: true,
         worktree: None,
+        goal: None,
         slot,
     };
     let output = flow

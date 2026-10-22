@@ -300,7 +300,7 @@ async fn script_failures_and_invalid_starts_are_reported() {
         run["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("option goal is not available"),
+            .contains("agent() option goal: invalid type"),
         "{run}"
     );
     assert_eq!(run["agents_detail"], json!([]));
@@ -703,6 +703,59 @@ async fn max_agents_over_http_rejects_the_next_agent_and_ends_budget_exceeded() 
         )
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    server.close().await;
+}
+
+/// The goal evaluator (its system prompt judges goals) always says met; agents answer.
+#[cfg(unix)]
+fn goal_reply(body: &Value) -> Value {
+    let judging = body["messages"].as_array().into_iter().flatten().any(|m| {
+        m["role"] == "system"
+            && m["content"]
+                .as_str()
+                .is_some_and(|c| c.contains("judge whether a coding agent"))
+    });
+    if judging {
+        return json!({"content": json!({"verdict": "met", "reason": "file X compiles"}).to_string()});
+    }
+    json!({"content": "migrated file X"})
+}
+
+/// `goals` → Goals on workflow agents and subagents: `agent(..., {goal})` keeps the child
+/// working until its check passes: the first `met` fails the check and continues, the
+/// second holds; the result carries `goal_status`, and the goal's budget is capped by
+/// what the run has left. The check is a POSIX shell command.
+#[cfg(unix)]
+#[tokio::test]
+async fn workflow_agent_with_goal_runs_until_check_passes() {
+    let model = ScriptedModel::start(goal_reply);
+    let server = Server::start(model.config()).await;
+    let owner = server.session().await;
+    let script = r#"export const meta = { name: 'goal-agent', description: 'Agent with a goal' };
+export default async () => agent('Migrate file X', { goal: { condition: 'file X compiles',
+  check: '[ -f .goal-mark ] || { touch .goal-mark; exit 1; }', budget: { max_turns: 5 } } });
+"#;
+    let run_id = server
+        .start_run(json!({"session_id": owner, "script": script, "budget": {"max_turns": 3}}))
+        .await;
+    let run = server.settled_run(&run_id).await;
+    assert_eq!(run["status"], "completed", "{run}");
+    assert_eq!(run["result"]["goal_status"], "met", "{run}");
+    let child = run["result"]["session_id"].as_str().unwrap();
+    let goals = server.app.runtime.goals(child).await.unwrap();
+    let goal = goals.goals.values().next().unwrap();
+    assert_eq!(goal.condition, "file X compiles");
+    assert_eq!(
+        goal.budget.max_turns,
+        Some(3),
+        "capped by the run's max_turns"
+    );
+    let checks: Vec<_> = goal
+        .evaluations
+        .iter()
+        .map(|e| e.check.as_ref().unwrap().exit_code)
+        .collect();
+    assert_eq!(checks, [Some(1), Some(0)]);
     server.close().await;
 }
 
@@ -1547,6 +1600,53 @@ fn gated_reply(body: &Value) -> Value {
         .take_while(char::is_ascii_alphanumeric)
         .collect();
     json!({ "gate": label })
+}
+
+/// [`gated_reply`], with the goal evaluator saying met.
+fn gated_goal_reply(body: &Value) -> Value {
+    if body.to_string().contains("judge whether a coding agent") {
+        return json!({"content": json!({"verdict": "met", "reason": "the run finished"}).to_string()});
+    }
+    gated_reply(body)
+}
+
+/// `workflows` → goal evaluation is deferred while runs the Session started are active
+/// (`goals` → Deferred evaluation during background work): the owner's goal Turn ends
+/// while its run's agent waits at a gate, and no verdict is asked for until it is gone.
+#[tokio::test]
+async fn goal_evaluation_waits_for_the_sessions_active_run() {
+    let model = ScriptedModel::start(gated_goal_reply);
+    let server = Server::start(model.config()).await;
+    let owner = server.session().await;
+    let run_id = server
+        .start_run(json!({"session_id": owner, "script": gated_script("held", "g1")}))
+        .await;
+    wait_for("g1 at the gate", || model.held() == ["g1"]).await;
+    let goal = server
+        .ok(
+            Method::POST,
+            &format!("/sessions/{owner}/goals"),
+            Some(json!({"condition": "the held run finished"})),
+        )
+        .await;
+    assert_eq!(goal["data"]["status"], "active");
+    server.app.runtime.wait_idle(&owner).await;
+    let judged = || {
+        model
+            .requests()
+            .iter()
+            .filter(|r| r.to_string().contains("judge whether a coding agent"))
+            .count()
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(judged(), 0, "no verdict while the run is active");
+    let goals = server.app.runtime.goals(&owner).await.unwrap();
+    assert!(goals.pending_eval, "evaluation is owed");
+
+    model.open_gate();
+    let run = server.settled_run(&run_id).await;
+    assert_eq!(run["status"], "completed", "{run}");
+    server.close().await;
 }
 
 /// Labels of `prefix` waiting at the gate.

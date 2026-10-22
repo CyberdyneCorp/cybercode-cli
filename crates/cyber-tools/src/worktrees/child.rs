@@ -28,11 +28,14 @@ fn child_naming(
     Ok((name, format!("cyber/{}/{child_name}", &parent_short[..12])))
 }
 
-/// The checkout name of a teammate: `team-<ulid>-<member>`, on branch
-/// `cyber/team-<ulid>/<member>` (`agent-teams` → isolation).
-fn team_naming(worktree: &cyber_server::runtime::TeamWorktree) -> io::Result<(Name, &str)> {
-    let name = Name::parse(&worktree.name).map_err(io::Error::other)?;
-    Ok((name, &worktree.branch))
+/// The checkout of a new root Session: a teammate's `team-<ulid>-<member>` on
+/// `cyber/team-<ulid>/<member>` (`agent-teams` → isolation), or a forked Goal's
+/// `goal-<ulid>` on `cyber/goal-<ulid>`; `tool` and `label` name it in hooks and errors.
+struct RootWorktree<'a> {
+    name: &'a str,
+    branch: &'a str,
+    tool: &'static str,
+    label: &'static str,
 }
 
 impl BuiltinHost {
@@ -49,9 +52,6 @@ impl BuiltinHost {
         cancel: CancellationToken,
     ) -> io::Result<SessionInfo> {
         use cyber_server::runtime::teams::Role;
-        let runtime = self
-            .runtime()
-            .ok_or_else(|| io::Error::other("Runtime is not attached"))?;
         let teammate = request
             .team
             .as_ref()
@@ -61,24 +61,73 @@ impl BuiltinHost {
                 "A team worktree belongs to a new teammate root Session",
             ));
         }
-        let (name, branch) = team_naming(worktree)?;
+        let root = RootWorktree {
+            name: &worktree.name,
+            branch: &worktree.branch,
+            tool: "team_spawn",
+            label: "Teammate",
+        };
+        self.create_root_worktree_session(lead, request, root, cancel)
+            .await
+    }
+
+    /// Create the root Session of a forked Goal in its own managed worktree, based on
+    /// the source Session's HEAD (`goals` → Parallel goals across sessions). The user
+    /// asked for the fork, so creation obeys the source's deny rules and Mode but never
+    /// asks; a failed setup removes the Session, its checkout and its branch.
+    pub(crate) async fn create_goal_fork_worktree_session(
+        &self,
+        source: &SessionInfo,
+        request: CreateSession,
+        worktree: &cyber_server::runtime::GoalWorktree,
+        cancel: CancellationToken,
+    ) -> io::Result<SessionInfo> {
+        if request.parent_id.is_some() || request.id.is_none() || request.team.is_some() {
+            return Err(io::Error::other(
+                "A goal fork worktree belongs to a new root Session",
+            ));
+        }
+        let root = RootWorktree {
+            name: &worktree.name,
+            branch: &worktree.branch,
+            tool: "goal_fork",
+            label: "Goal fork",
+        };
+        self.create_root_worktree_session(source, request, root, cancel)
+            .await
+    }
+
+    /// A new root Session in its own managed worktree on `root.branch`, created on
+    /// behalf of `source` (the user already approved it); setup failure removes it.
+    async fn create_root_worktree_session(
+        &self,
+        source: &SessionInfo,
+        mut request: CreateSession,
+        root: RootWorktree<'_>,
+        cancel: CancellationToken,
+    ) -> io::Result<SessionInfo> {
+        let runtime = self
+            .runtime()
+            .ok_or_else(|| io::Error::other("Runtime is not attached"))?;
+        let name = Name::parse(root.name).map_err(io::Error::other)?;
+        request.source_directory = Some(source.directory.clone());
         let inv = Invocation {
             registration: None,
-            session_id: lead.id.clone(),
-            directory: lead.directory.clone(),
-            agent: lead.agent.clone(),
-            mode: lead.mode.clone(),
-            rules: lead.rules.clone(),
+            session_id: source.id.clone(),
+            directory: source.directory.clone(),
+            agent: source.agent.clone(),
+            mode: source.mode.clone(),
+            rules: source.rules.clone(),
             message_id: String::new(),
             call_id: cyber_core::ids::new_id("call"),
-            name: "team_spawn".into(),
+            name: root.tool.into(),
             input: json!({"operation": "spawn", "worktree": name.as_str()}),
             attempt: 1,
             operation_key: cyber_core::ids::new_id("op"),
             asker: cyber_server::runtime::Asker::detached(),
         };
         let request = WorktreeSessionRequest {
-            project_id: cyber_core::project::identify(Path::new(&lead.directory)).id,
+            project_id: cyber_core::project::identify(Path::new(&source.directory)).id,
             data: self
                 .opts
                 .tool_output_dir
@@ -90,7 +139,7 @@ impl BuiltinHost {
         };
         let creation = Creation {
             explicit: true,
-            branch: Some(branch),
+            branch: Some(root.branch),
         };
         let created = Box::pin(self.create_worktree_session_owned(
             &runtime,
@@ -100,29 +149,31 @@ impl BuiltinHost {
             creation,
         ))
         .await?;
+        let label = root.label;
         let failure = match created.setup {
             Ok(SetupOutcome::Failed { index, code }) => {
-                format!("Teammate setup command {index} failed with exit code {code:?}")
+                format!("{label} setup command {index} failed with exit code {code:?}")
             }
-            Err(error) => format!("Teammate setup failed: {error}"),
+            Err(error) => format!("{label} setup failed: {error}"),
             Ok(_) => return Ok(created.session),
         };
         let removed = self
-            .discard_team_session(&runtime, lead, &created.session.id, &worktree.name, cancel)
+            .discard_root_session(&runtime, source, &created.session.id, root.name, cancel)
             .await;
+        let what = label.to_ascii_lowercase();
         Err(io::Error::other(match removed {
-            Ok(()) => format!("{failure}; the teammate and its checkout were removed"),
+            Ok(()) => format!("{failure}; the {what} and its checkout were removed"),
             Err(error) => format!(
-                "{failure}; removing the teammate failed ({error}), checkout retained at {}",
+                "{failure}; removing the {what} failed ({error}), checkout retained at {}",
                 created.managed.path.display()
             ),
         }))
     }
 
-    /// Undo a teammate spawn whose setup failed: its Session goes (no member row is
-    /// recorded for it, so it would otherwise carry a `team` tag nothing lists, counts
-    /// or stops), then its checkout and branch, so the same name can be spawned again.
-    async fn discard_team_session(
+    /// Undo a root worktree Session whose setup failed: its Session goes (a teammate's
+    /// has no member row yet, so it would otherwise carry a `team` tag nothing lists,
+    /// counts or stops), then its checkout and branch, so the name can be used again.
+    async fn discard_root_session(
         &self,
         runtime: &cyber_server::runtime::Runtime,
         lead: &SessionInfo,

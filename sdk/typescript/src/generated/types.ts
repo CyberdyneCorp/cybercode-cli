@@ -380,12 +380,20 @@ export type CreateBody = {
   messaging?: InboundOverride | null;
 };
 
-/** `POST .../goals`. */
+/**
+ * `POST .../goals`. With `template`, the condition, check and budget come from
+ * `goals.templates.<template>` (`$ARGUMENTS` becomes `args`); a given `check` or
+ * `budget` overrides the template's.
+ */
 export type CreateGoal = {
-  condition: string;
+  /** Required unless `template` is given. */
+  condition?: string;
   check?: string | null;
   budget?: Budget | null;
   mode?: GoalMode;
+  template?: string | null;
+  /** The text that replaces `$ARGUMENTS` in the template's condition. */
+  args?: string | null;
 };
 
 /** `POST /api/v1/sessions/:id/loops`: the `/loop` arguments as typed, or the parsed fields. */
@@ -511,6 +519,10 @@ export type Data_Delegation = {
 
 export type Data_Goal = {
   data: Goal;
+};
+
+export type Data_GoalFork = {
+  data: GoalFork;
 };
 
 export type Data_GoalsView = {
@@ -848,6 +860,13 @@ export type ForkBody = {
   message_id?: string | null;
 };
 
+/** `POST .../goals/fork`. */
+export type ForkGoal = {
+  condition: string;
+  check?: string | null;
+  budget?: Budget | null;
+};
+
 export type FormatterStatus = {
   id: string;
   extensions: string[];
@@ -884,6 +903,7 @@ export type Goal = {
   condition: string;
   check?: string | null;
   budget: Budget;
+  template?: string | null;
   status: GoalStatus;
   /** The last verdict's reason, or why it paused or ended. */
   reason?: string | null;
@@ -899,6 +919,15 @@ export type Goal = {
   activated_ms?: number | null;
   ended_ms?: number | null;
   evaluations: Evaluated[];
+};
+
+/** The Session a fork started and its active Goal. */
+export type GoalFork = {
+  session_id: string;
+  directory: string;
+  /** The worktree branch; absent when the fork shares the source's checkout. */
+  branch?: string | null;
+  goal: Goal;
 };
 
 /** How `POST .../goals` places the new Goal. */
@@ -2729,6 +2758,11 @@ export type Session = {
    * a worktree it entered with `enter_worktree`.
    */
   worktree_origin?: string | null;
+  /**
+   * The Location a root Session in its own managed worktree was started from (a
+   * forked Goal, a teammate): Session listings of that Location include it.
+   */
+  source_directory?: string | null;
   parent_id?: string | null;
   /** Durable child identity within its parent, independent of title and agent. */
   subagent_name?: string | null;
@@ -2799,6 +2833,11 @@ export type SessionInfo = {
    * a worktree it entered with `enter_worktree`.
    */
   worktree_origin?: string | null;
+  /**
+   * The Location a root Session in its own managed worktree was started from (a
+   * forked Goal, a teammate): Session listings of that Location include it.
+   */
+  source_directory?: string | null;
   parent_id?: string | null;
   /** Durable child identity within its parent, independent of title and agent. */
   subagent_name?: string | null;

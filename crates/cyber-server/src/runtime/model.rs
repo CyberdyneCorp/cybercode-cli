@@ -58,6 +58,10 @@ pub struct SessionInfo {
     /// a worktree it entered with `enter_worktree`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree_origin: Option<String>,
+    /// The Location a root Session in its own managed worktree was started from (a
+    /// forked Goal, a teammate): Session listings of that Location include it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_directory: Option<String>,
     pub parent_id: Option<String>,
     /// Durable child identity within its parent, independent of title and agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]

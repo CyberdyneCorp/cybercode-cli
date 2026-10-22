@@ -4,10 +4,13 @@
 //! stops on `impossible`, a blocking error or its Budget.
 
 mod evaluate;
+mod fork;
 pub mod records;
 mod run;
 mod service;
+mod unattended;
 
+pub use fork::GoalFork;
 pub use records::{CheckRun, Evaluated, Goal, Goals};
 
 /// The System Context source key of the active Goal.

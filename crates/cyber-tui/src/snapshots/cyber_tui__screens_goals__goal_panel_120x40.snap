@@ -1,0 +1,44 @@
+---
+source: crates/cyber-tui/src/screens_goals.rs
+expression: screen
+---
+› How do I speed up fib?
+                                                                                      Theme baseline
+  Plan
+                                                                                      Context
+  This keeps the cache warm:                                                          100 tokens · window unknown
+                                                                                      — spent
+  1. Memoization: results are cached
+                                                                                      Goal
+  • avoids recomputation                                                              ◎ all call sites compile against
+                                                                                       the v2 API
+    rust            ┌ Goals · e edit · p pause · r resume · c clear · shift+↑↓ reorder ────────────┐3/50 · $0.42
+    fn fib(n: u64) -│search:                                                                       │l sites still use…
+                    │                                                                              │
+  ▣ Build · main · 1│❯ ◎ all call sites compile against the v2 API  current · active · turn 3/50 · │
+                    │  ◎ cargo test passes  queued · pending · turn 0/50 · $0.00                   │
+                    │  ◎ the changelog lists the API change  queued · pending · turn 0/50 · $0.00  │
+                    │  ◎ the parser is split into modules  ended · met · turn 5/50 · $0.90 · evalua│ mcp add
+                    │                                                                              │
+                    │                                                                              │
+                    │                                                                              │vate as files are
+                    │                                                                              │
+                    │                                                                              │
+                    │                                                                              │
+                    │                                                                              │
+                    │                                                                              │
+                    │                                                                              │
+                    │                                                                              │
+                    │                                                                              │
+                    │                                                                              │
+                    └──────────────────────────────────────────────────────────────────────────────┘
+
+
+
+
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃                                                                                     ~/work/app
+┃ Build · main test · default
+ ~/…/app  100 · —  ◎ goal all call sites compile against the v2 A…  ctrl+p commands   ● Cyber Code 1.0.0

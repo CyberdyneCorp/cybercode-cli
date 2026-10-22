@@ -1,0 +1,1 @@
+{"goal_id":"<goal>","status":"active","condition":"the changelog lists every fix"}

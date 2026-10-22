@@ -369,7 +369,7 @@ impl Runtime {
         }
     }
 
-    async fn goal_notify(&self, session_id: &str, goal: &Goal, title: &str, body: &str) {
+    pub(super) async fn goal_notify(&self, session_id: &str, goal: &Goal, title: &str, body: &str) {
         let notification = Notification {
             call_id: goal.goal_id.clone(),
             title: title.into(),

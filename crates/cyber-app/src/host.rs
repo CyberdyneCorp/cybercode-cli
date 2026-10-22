@@ -187,6 +187,17 @@ impl ToolHost for AppHost {
             .create_team_session(lead, request, worktree, cancel)
     }
 
+    fn create_goal_fork_session<'a>(
+        &'a self,
+        source: &'a cyber_server::runtime::SessionInfo,
+        request: cyber_server::runtime::CreateSession,
+        worktree: &'a cyber_server::runtime::GoalWorktree,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<cyber_server::runtime::SessionInfo, String>> {
+        self.builtin
+            .create_goal_fork_session(source, request, worktree, cancel)
+    }
+
     fn peer_target(&self, name: &str) -> Result<Option<PeerTarget>, String> {
         (self.peers)(name)
     }

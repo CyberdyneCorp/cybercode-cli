@@ -20,11 +20,13 @@ impl Tool for Agent {
     fn def(&self) -> ToolDef {
         def(
             "agent",
-            "Delegate a focused task to a subagent; wait for its final result or start a background task with completion handback. Resume an existing child by name or Session ID. Set fork true to inherit the caller history, agent and model unless overridden.",
+            "Delegate a focused task to a subagent; wait for its final result or start a background task with completion handback. Resume an existing child by name or Session ID. Set fork true to inherit the caller history, agent and model unless overridden. Set goal to make the child keep working until a condition is met (and its check passes); the result then includes goal_status.",
             json!({"type":"object", "required":["prompt"], "additionalProperties":false, "properties":{
                 "prompt":{"type":"string"}, "agent":{"type":"string"}, "description":{"type":"string"},
                 "model":{"type":"string"}, "output_schema":{}, "isolation":{"type":"string", "enum":["none","worktree"]},
-                "background":{"type":"boolean"}, "fork":{"type":"boolean"}, "resume":{"type":"string"}, "name":{"type":"string"}
+                "background":{"type":"boolean"}, "fork":{"type":"boolean"}, "resume":{"type":"string"}, "name":{"type":"string"},
+                "goal":{"type":"object", "required":["condition"], "additionalProperties":false, "properties":{
+                    "condition":{"type":"string"}, "check":{"type":"string"}, "budget":{"type":"object"}}}
             }}),
             RetrySafety::Never,
             true,
@@ -136,6 +138,8 @@ struct Spawn {
     max_concurrent: usize,
     /// Pre-assigned (or resumed) child Session ID, known to SubagentStart.
     child_id: String,
+    /// The child's active Goal (`goals` → Goals on workflow agents and subagents).
+    goal: Option<cyber_server::runtime::goals::GoalRequest>,
 }
 
 fn configured(ctx: &Ctx<'_>, resume: Option<&SessionInfo>) -> Result<Spawn, ToolError> {
@@ -189,6 +193,10 @@ fn configured(ctx: &Ctx<'_>, resume: Option<&SessionInfo>) -> Result<Spawn, Tool
         }
     }
     let isolation = check_features(input, &profile)?;
+    let goal = goal_option(input)?;
+    if goal.is_some() && resume.is_some() {
+        return Err(failed("Resume cannot set a goal; the child keeps its own"));
+    }
     let description = input
         .get("description")
         .and_then(Value::as_str)
@@ -236,7 +244,35 @@ fn configured(ctx: &Ctx<'_>, resume: Option<&SessionInfo>) -> Result<Spawn, Tool
         max_depth: setting(&config, "max_depth", 2)?,
         max_concurrent: setting(&config, "max_concurrent", 8)? as usize,
         child_id: resume.map_or_else(|| cyber_core::ids::new_id("ses"), |info| info.id.clone()),
+        goal,
     })
+}
+
+/// `goal: {condition, check?, budget?}`.
+fn goal_option(
+    input: &Value,
+) -> Result<Option<cyber_server::runtime::goals::GoalRequest>, ToolError> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Option_ {
+        condition: String,
+        #[serde(default)]
+        check: Option<String>,
+        #[serde(default)]
+        budget: Option<cyber_core::budget::Budget>,
+    }
+    let Some(value) = input.get("goal").filter(|v| !v.is_null()) else {
+        return Ok(None);
+    };
+    let goal: Option_ = serde_json::from_value(value.clone())
+        .map_err(|error| failed(format!("Invalid goal: {error}")))?;
+    cyber_core::goals::check_condition(&goal.condition).map_err(failed)?;
+    Ok(Some(cyber_server::runtime::goals::GoalRequest {
+        condition: goal.condition,
+        check: goal.check,
+        budget: goal.budget,
+        template: None,
+    }))
 }
 
 fn setting(config: &Value, key: &str, fallback: u64) -> Result<u64, ToolError> {
@@ -994,24 +1030,28 @@ async fn create_child(
     };
     let worktree = if spawn.isolation {
         Some(
-            ctx.host
-                .create_child_worktree(
-                    ctx.inv,
-                    ctx.cancel.clone(),
-                    request,
-                    spawn.source.user_requested(),
-                    spawn.source.run_worktree(),
-                )
-                .await
-                .map_err(|e| failed(e.to_string()))?,
+            Box::pin(ctx.host.create_child_worktree(
+                ctx.inv,
+                ctx.cancel.clone(),
+                request,
+                spawn.source.user_requested(),
+                spawn.source.run_worktree(),
+            ))
+            .await
+            .map_err(|e| failed(e.to_string()))?,
         )
     } else {
-        runtime
-            .create_session(request)
+        Box::pin(runtime.create_session(request))
             .await
             .map_err(|e| failed(e.to_string()))?;
         None
     };
+    if let Some(goal) = spawn.goal.clone() {
+        runtime
+            .assign_goal(id, goal)
+            .await
+            .map_err(|e| failed(e.to_string()))?;
+    }
     let mut admission = Admission::text(text(&ctx.inv.input, "prompt"), Delivery::Queue);
     admission.skill_command = spawn.skill_command.clone().map(|mut skill| {
         skill.fork = false;
@@ -1027,6 +1067,37 @@ async fn create_child(
 }
 
 async fn finish_child(
+    weak: &WeakRuntime,
+    id: &str,
+    prompt: &str,
+    structured: bool,
+    bytes: usize,
+    dir: std::path::PathBuf,
+) -> Result<String, ToolError> {
+    let result = child_answer(weak, id, prompt, structured, bytes, dir).await?;
+    with_goal_status(weak, id, result).await
+}
+
+/// Add the status of the child's Goal, when it has one (`goal_status`).
+async fn with_goal_status(
+    weak: &WeakRuntime,
+    id: &str,
+    result: String,
+) -> Result<String, ToolError> {
+    let runtime = weak.upgrade().ok_or_else(|| failed("Server stopped"))?;
+    let goals = runtime.goals(id).await.map_err(|e| failed(e.to_string()))?;
+    let Some(goal) = goals.goals.values().max_by_key(|goal| goal.created_ms) else {
+        return Ok(result);
+    };
+    let mut value: Value = serde_json::from_str(&result).map_err(|e| failed(e.to_string()))?;
+    value["goal_status"] = json!(goal.status.as_str());
+    if let Some(reason) = &goal.reason {
+        value["goal_reason"] = json!(reason);
+    }
+    Ok(value.to_string())
+}
+
+async fn child_answer(
     weak: &WeakRuntime,
     id: &str,
     prompt: &str,

@@ -126,10 +126,10 @@ fn root(provider: &Provider) -> (tempfile::TempDir, PathBuf) {
     (dir, root)
 }
 
-/// `cyber exec --embedded --format json <flags>`, killed after 90 s.
-fn exec(root: &Path, flags: &[&str]) -> (Option<i32>, Value, String) {
+/// `cyber exec --embedded --format json <flags>`, started.
+fn spawn(root: &Path, flags: &[&str]) -> std::process::Child {
     let helper = PathBuf::from(env!("CARGO_BIN_EXE_cyber")).with_file_name("cyber-sandbox-exec");
-    let child = Command::new(env!("CARGO_BIN_EXE_cyber"))
+    Command::new(env!("CARGO_BIN_EXE_cyber"))
         .args(["--cwd", root.join("repo").to_str().unwrap()])
         .args([
             "exec",
@@ -152,7 +152,11 @@ fn exec(root: &Path, flags: &[&str]) -> (Option<i32>, Value, String) {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .unwrap();
+        .unwrap()
+}
+
+/// Wait for `child`, killing it after 90 s; its exit code, stdout and stderr.
+fn finish(child: std::process::Child) -> (Option<i32>, String, String) {
     let id = child.id();
     let (exited, deadline) = mpsc::channel::<()>();
     let killer = thread::spawn(move || {
@@ -163,14 +167,19 @@ fn exec(root: &Path, flags: &[&str]) -> (Option<i32>, Value, String) {
     let output = child.wait_with_output().unwrap();
     let _ = exited.send(());
     killer.join().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    let result = serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
-        panic!(
-            "stdout={}\nstderr={stderr}",
-            String::from_utf8_lossy(&output.stdout)
-        )
-    });
-    (output.status.code(), result, stderr)
+    (
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+/// `cyber exec --embedded --format json <flags>`, killed after 90 s.
+fn exec(root: &Path, flags: &[&str]) -> (Option<i32>, Value, String) {
+    let (code, stdout, stderr) = finish(spawn(root, flags));
+    let result = serde_json::from_str(&stdout)
+        .unwrap_or_else(|_| panic!("stdout={stdout}\nstderr={stderr}"));
+    (code, result, stderr)
 }
 
 #[test]
@@ -260,4 +269,28 @@ fn a_check_without_a_goal_is_a_usage_error() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+/// SIGINT while a Goal keeps continuing exits 130.
+#[cfg(unix)]
+#[test]
+fn exec_goal_sigint_exits_130() {
+    let provider = Provider::start(&["not_met"]);
+    let (_dir, root) = root(&provider);
+    let child = spawn(&root, &["--goal", "never done", "--max-turns", "50"]);
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while provider.evaluations.load(Ordering::SeqCst) < 1 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no goal Turn evaluated"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    let interrupt = Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(interrupt.success());
+    let (code, stdout, stderr) = finish(child);
+    assert_eq!(code, Some(130), "stdout={stdout}\nstderr={stderr}");
 }
