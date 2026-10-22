@@ -46,7 +46,19 @@ pub(super) async fn execute(
     let body = workflows::start_body(ctx, &run_args(args, target), id)?;
     out.init(client, session).await;
     let run = client.post("/workflows/runs", body).await.map_err(api)?;
-    let run_id = run["data"]["id"].as_str().unwrap_or_default().to_owned();
+    let run_id = run["data"]["id"].as_str().unwrap_or_default();
+    let (out, run, code) = follow(client, run_id, args, out).await?;
+    Ok(out.workflow_finish(&run, code, started, args, session))
+}
+
+/// Follow run `run_id` until it ends, reporting progress; returns the final run and its
+/// exit code. Ctrl-C stops the run and exits 130.
+pub(super) async fn follow(
+    client: &Client,
+    run_id: &str,
+    args: &ExecArgs,
+    out: Out,
+) -> Result<(Out, Value, u8), CliError> {
     let path = format!("/workflows/runs/{run_id}");
     let mut follow = Follow {
         out,
@@ -59,19 +71,17 @@ pub(super) async fn execute(
     loop {
         let detail = tokio::select! {
             biased;
-            _ = &mut interrupt => return follow.interrupted(client, &path, args, session, started).await,
+            _ = &mut interrupt => return Ok(follow.interrupted(client, &path).await),
             detail = client.get(&path) => detail.map_err(api)?,
         };
         let run = &detail["data"];
         follow.observe(run);
         if let Some(code) = workflows::ended(run) {
-            return Ok(follow
-                .out
-                .workflow_finish(run, code, started, args, session));
+            return Ok((follow.out, run.clone(), code));
         }
         tokio::select! {
             biased;
-            _ = &mut interrupt => return follow.interrupted(client, &path, args, session, started).await,
+            _ = &mut interrupt => return Ok(follow.interrupted(client, &path).await),
             () = tokio::time::sleep(POLL) => {}
         }
     }
@@ -99,22 +109,13 @@ impl Follow {
     }
 
     /// Ctrl-C: stop the run and report it interrupted.
-    async fn interrupted(
-        self,
-        client: &Client,
-        path: &str,
-        args: &ExecArgs,
-        session: &Value,
-        started: Instant,
-    ) -> Result<u8, CliError> {
+    async fn interrupted(self, client: &Client, path: &str) -> (Out, Value, u8) {
         let stopped = client.post(&format!("{path}/stop"), json!({})).await;
         let run = stopped
             .ok()
             .map(|stopped| stopped["data"].clone())
             .unwrap_or_else(|| json!({"status": "stopped"}));
-        Ok(self
-            .out
-            .workflow_finish(&run, EXIT_INTERRUPTED, started, args, session))
+        (self.out, run, EXIT_INTERRUPTED)
     }
 }
 

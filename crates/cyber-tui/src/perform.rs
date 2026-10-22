@@ -130,6 +130,8 @@ pub enum Msg {
         palette: Vec<crate::palette::ServerCommand>,
         /// `review` resolves to the bundled skill rather than an override.
         bundled_review: bool,
+        /// The Location's library has a `review` Workflow, which a bundled review runs.
+        workflow_review: bool,
     },
     /// The server refused a command before admission; nothing runs.
     Refused {
@@ -138,6 +140,10 @@ pub enum Msg {
     },
     /// The awaited review's delegation record.
     ReviewDelegation(Value),
+    /// The review run was admitted with this ID.
+    ReviewStarted(String),
+    /// The awaited review run, after it ended.
+    ReviewRun(Value),
     Files(Vec<String>),
     Agents {
         directory: String,
@@ -742,6 +748,27 @@ async fn review_delegation(
     Ok(Msg::ReviewDelegation(record["data"].clone()))
 }
 
+/// Start a run of the `review` Workflow owned by `session`; a refusal (an invalid target,
+/// an empty diff, a denial) is reported like the command's.
+async fn start_review(client: &Client, session: &str, arguments: String) -> Result<Msg, String> {
+    let body = json!({"session_id": session, "name": "review", "args": {"target": arguments}});
+    match client.post("/workflows/runs", body).await {
+        Ok(run) => Ok(Msg::ReviewStarted(
+            run["data"]["id"].as_str().unwrap_or_default().to_owned(),
+        )),
+        Err(error) => refused("review".into(), error),
+    }
+}
+
+/// The awaited review run, after it ended.
+async fn review_run(client: &Client, run: &str) -> Result<Msg, String> {
+    let detail = client
+        .get(&format!("/workflows/runs/{run}"))
+        .await
+        .map_err(err)?;
+    Ok(Msg::ReviewRun(detail["data"].clone()))
+}
+
 /// A command the server did not admit. A permission denial or review target
 /// error is a refusal; any failure of a `review` post is too, so the review
 /// is not left awaiting a Job that will never exist.
@@ -982,10 +1009,9 @@ async fn converse(
             arguments,
             id: message,
         } => command(client, id, name, arguments, message).await,
-        Action::ReviewDelegation {
-            session,
-            delegation,
-        } => review_delegation(client, &session, &delegation).await,
+        Action::ReviewDelegation { .. } | Action::StartReview { .. } | Action::ReviewRun { .. } => {
+            review(client, id, action).await
+        }
         Action::Interrupt => post(client, &format!("/sessions/{id}/interrupt"), json!({})).await,
         Action::Reply { request, body } => {
             post(
@@ -1021,6 +1047,19 @@ async fn converse(
             .await?;
             Ok(Msg::Toast("compacting…".into()))
         }
+        _ => Ok(Msg::Done),
+    }
+}
+
+/// A bundled review's follow-up: its reviewer delegation (skill), or its run (Workflow).
+async fn review(client: &Client, id: &str, action: Action) -> Result<Msg, String> {
+    match action {
+        Action::ReviewDelegation {
+            session,
+            delegation,
+        } => review_delegation(client, &session, &delegation).await,
+        Action::StartReview { arguments } => start_review(client, id, arguments).await,
+        Action::ReviewRun { run } => review_run(client, &run).await,
         _ => Ok(Msg::Done),
     }
 }
@@ -1305,6 +1344,14 @@ pub async fn commands(client: &Client) -> Result<Msg, String> {
     let bundled_review = entries
         .iter()
         .any(|c| c["name"] == "review" && c["source"] == "builtin");
+    // The library decides whether a bundled review runs as a Workflow; a server without
+    // the library keeps the review skill.
+    let workflow_review = bundled_review
+        && client.get("/workflows").await.is_ok_and(|library| {
+            library["workflows"]
+                .as_array()
+                .is_some_and(|entries| entries.iter().any(|entry| entry["name"] == "review"))
+        });
     let items = entries
         .iter()
         .map(|c| Choice {
@@ -1328,6 +1375,7 @@ pub async fn commands(client: &Client) -> Result<Msg, String> {
         items,
         palette,
         bundled_review,
+        workflow_review,
     })
 }
 

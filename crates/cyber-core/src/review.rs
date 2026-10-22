@@ -287,6 +287,16 @@ impl Findings {
         Ok(result)
     }
 
+    /// The findings of a `review` Workflow Run's result (`workflows` → Bundled workflow
+    /// contracts): its `findings` and `limitations`, validated and sorted as a reviewer's
+    /// are; the run's other fields (`refuted`, `lenses`, `stats`, …) are ignored.
+    pub fn from_workflow_result(value: &Value) -> Result<Self, InvalidFindings> {
+        Self::from_result(&serde_json::json!({
+            "findings": value["findings"],
+            "limitations": value["limitations"],
+        }))
+    }
+
     pub fn counts(&self) -> Counts {
         let mut counts = Counts::default();
         for finding in &self.findings {

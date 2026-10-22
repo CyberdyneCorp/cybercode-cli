@@ -119,6 +119,10 @@ fn hold(delay: Duration, release: &AtomicBool) {
 fn answer(out: &mut TcpStream, body: &Value, script: &Script, release: &AtomicBool) {
     let messages = body["messages"].as_array().cloned().unwrap_or_default();
     let after_tool = messages.last().is_some_and(|m| m["role"] == "tool");
+    if is_reviewer(body) && body["messages"].to_string().contains("Task: verify") {
+        let verdict = json!({"refuted": false, "evidence": "the changed line confirms it"});
+        return return_result(out, messages.len(), &verdict);
+    }
     if !is_reviewer(body) {
         let text = if body["messages"].to_string().contains("OVERRIDE REVIEW") {
             "override answer"
@@ -313,7 +317,16 @@ impl Env {
         git(&self.repo, &["rev-parse", "HEAD"])
     }
 
+    /// `cyber review` with the bundled Workflows disabled, so the bundled review skill
+    /// runs (the P1 path); see [`Env::workflow_review`] for the Workflow path.
     fn command(&self, args: &[&str]) -> Command {
+        let mut command = self.workflow_command(args);
+        command.env("CYBER_DISABLE_BUNDLED_WORKFLOWS", "1");
+        command
+    }
+
+    /// `cyber review` with the bundled Workflows available: the `review` Workflow runs.
+    fn workflow_command(&self, args: &[&str]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_cyber"));
         command
             .args(["--cwd", self.repo.to_str().unwrap(), "review"])
@@ -336,6 +349,11 @@ impl Env {
     /// Runs `cyber review --embedded`, killing it after 60 s so a hang fails.
     fn review(&self, args: &[&str]) -> std::process::Output {
         self.run(self.command(&[&["--embedded"], args].concat()))
+    }
+
+    /// Runs `cyber review --embedded` through the `review` Workflow.
+    fn workflow_review(&self, args: &[&str]) -> std::process::Output {
+        self.run(self.workflow_command(&[&["--embedded"], args].concat()))
     }
 
     fn run(&self, mut command: Command) -> std::process::Output {
@@ -699,7 +717,9 @@ fn a_project_review_command_overrides_the_bundled_review() {
     std::fs::create_dir_all(env.repo.join(".cyber/commands")).unwrap();
     env.write(".cyber/commands/review.md", "OVERRIDE REVIEW $ARGUMENTS\n");
     env.commit("override");
-    let output = env.review(&["--format", "json", "HEAD"]);
+    // With the bundled Workflows available, the override still wins and gets its
+    // arguments unchanged.
+    let output = env.workflow_review(&["--format", "json", "HEAD"]);
     let detail = describe(&output, &provider);
     assert!(output.status.success(), "{detail}");
     let result = result(&output, &detail);
@@ -928,4 +948,88 @@ fn pure_review_runs_in_process_without_global_hooks() {
     let result = result(&output, &detail);
     assert_completed_review(&result, "uncommitted", &detail);
     assert_eq!(env.databases().len(), 1, "not in process\n{detail}");
+}
+
+/// `workflows` → Bundled workflow contracts: with the bundled Workflows available,
+/// `cyber review` runs the `review` Workflow: reviewers raise findings, a verifier checks
+/// each, and the validated findings are reported most severe first.
+#[test]
+fn review_runs_the_bundled_workflow_and_reports_verified_findings() {
+    let provider = Provider::start(script(unsorted()));
+    let env = Env::new(&provider);
+    env.write("a.rs", "fn a() { changed() }\n");
+    env.write("b.rs", "fn b() { changed() }\n");
+    let output = env.workflow_review(&["--format", "json", "--", "--lenses-are-not-flags"]);
+    assert_eq!(output.status.code(), Some(2), "{}", describe(&output, &provider));
+    let output = env.workflow_review(&["--format", "json"]);
+    let detail = describe(&output, &provider);
+    assert!(output.status.success(), "{detail}");
+    let result = result(&output, &detail);
+    assert_eq!(
+        order(&result, &detail),
+        ["critical z.rs:9", "high a.rs:4", "high a.rs:20", "low b.rs:3"],
+        "{detail}"
+    );
+    assert_eq!(result["reviewed"], true, "{detail}");
+    assert_eq!(result["refuted"], 0, "{detail}");
+    assert_eq!(result["target_kind"], "uncommitted", "{detail}");
+    assert!(result["run_id"].as_str().unwrap().starts_with("run_"), "{detail}");
+    assert!(
+        result["limitations"].to_string().contains("no tests ran"),
+        "{detail}"
+    );
+    let prompt = provider.reviewer_prompt().unwrap_or_else(|| panic!("{detail}"));
+    assert!(prompt.contains("Task: review"), "{prompt}");
+    assert!(prompt.contains("fn a() { changed() }"), "{prompt}");
+    let verifiers = provider
+        .requests()
+        .iter()
+        .filter(|body| body["messages"].to_string().contains("Task: verify"))
+        .count();
+    assert!(verifiers >= 4, "one verifier per finding\n{detail}");
+}
+
+/// Target errors and a clean tree are reported before any run exists, as on the P1 path.
+#[test]
+fn the_review_workflow_reports_target_errors_and_clean_trees_without_a_run() {
+    let provider = Provider::start(script(unsorted()));
+    let env = Env::new(&provider);
+    let output = env.workflow_review(&["--format", "json"]);
+    let detail = describe(&output, &provider);
+    assert!(output.status.success(), "{detail}");
+    let clean = result(&output, &detail);
+    assert_eq!(clean["findings"], json!([]), "{detail}");
+    assert_eq!(clean["reviewed"], false, "{detail}");
+    env.write("a.rs", "changed\n");
+    let output = env.workflow_review(&["--format", "json", "main..nope"]);
+    let detail = describe(&output, &provider);
+    assert_eq!(output.status.code(), Some(2), "{detail}");
+    assert_eq!(result(&output, &detail)["code"], "unresolved_ref", "{detail}");
+    assert!(provider.requests().is_empty(), "{detail}");
+}
+
+/// A budget that stops the review run exits 4 and still prints its partial findings:
+/// the reviewer answers after the wall-clock budget, so no verifier starts.
+#[test]
+fn a_budget_stopped_review_workflow_exits_4_with_partial_findings() {
+    let provider = Provider::start(Script {
+        result: unsorted(),
+        delay: Duration::from_secs(4),
+        read_first: None,
+    });
+    let env = Env::new(&provider);
+    env.write("a.rs", "changed\n");
+    let output = env.workflow_review(&["--format", "json", "--timeout", "2s"]);
+    let detail = describe(&output, &provider);
+    assert_eq!(output.status.code(), Some(4), "{detail}");
+    let result = result(&output, &detail);
+    assert_eq!(result["stop_reason"], "budget_exceeded", "{detail}");
+    assert_eq!(result["exit_code"], 4, "{detail}");
+    assert_eq!(result["partial"], true, "{detail}");
+    assert_eq!(result["reviewed"], false, "{detail}");
+    assert_eq!(result["findings"].as_array().map(Vec::len), Some(4), "{detail}");
+    assert!(
+        !provider.requests().iter().any(|b| b["messages"].to_string().contains("Task: verify")),
+        "{detail}"
+    );
 }

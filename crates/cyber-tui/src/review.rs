@@ -1,5 +1,6 @@
-//! `/review`: local target validation for the bundled review skill and the
-//! findings view for its reviewer Job.
+//! `/review`: local target validation and the findings view. With the bundled Workflows
+//! available, the review is a run of the `review` Workflow and its findings come from the
+//! run's result; otherwise the bundled review skill's reviewer Job reports them.
 
 use std::collections::BTreeMap;
 
@@ -19,8 +20,35 @@ pub enum Ended {
         session: String,
         delegation: String,
     },
+    /// The awaited review run ended: fetch it for its result.
+    FetchRun(String),
     Unrelated,
 }
+
+/// How a valid `/review` is submitted.
+#[derive(Debug, PartialEq)]
+pub enum Submit {
+    /// As the `review` command: an override (no ID) or the bundled skill, whose reviewer
+    /// delegation follows from the client-chosen message ID.
+    Command(Option<String>),
+    /// As a run of the `review` Workflow.
+    Workflow,
+}
+
+/// A `review` Workflow Run being awaited.
+#[derive(Debug)]
+enum AwaitedRun {
+    /// Posted; the run ID is not known yet. Runs that ended meanwhile, by ID.
+    Starting(Vec<String>),
+    Run(String),
+}
+
+/// The lifecycle events that end a run.
+const RUN_ENDS: [&str; 3] = [
+    "workflow.run.completed",
+    "workflow.run.failed",
+    "workflow.run.stopped",
+];
 
 /// A submitted bundled review. The client chooses the command's message ID,
 /// so the reviewer fork's delegation ID is known before anything is posted.
@@ -37,8 +65,12 @@ pub struct View {
     /// `Some(false)` once the command catalogue shows that a user, project or
     /// configured `review` overrides the bundled skill; unknown means bundled.
     bundled: Option<bool>,
+    /// The library has a `review` Workflow, so a bundled review runs it.
+    workflow: bool,
     /// The submitted bundled review whose reviewer Job has not ended.
     awaited: Option<Awaited>,
+    /// The submitted review run that has not ended.
+    run: Option<AwaitedRun>,
     /// Jobs that ended while the reviewer Job was still unknown, by ID.
     ended: BTreeMap<String, Value>,
     pub lines: Vec<String>,
@@ -50,28 +82,100 @@ impl View {
         self.bundled = Some(bundled);
     }
 
-    /// Validates a bundled review target before anything is posted and returns
-    /// the message ID to post it with; an overriding command receives its
-    /// arguments unchanged and is not awaited.
-    pub fn submit(&mut self, session: &str, arguments: &str) -> Result<Option<String>, String> {
+    pub fn set_workflow(&mut self, workflow: bool) {
+        self.workflow = workflow;
+    }
+
+    /// Validates a bundled review target before anything is posted and says how to
+    /// submit it; an overriding command receives its arguments unchanged and is not
+    /// awaited.
+    pub fn submit(&mut self, session: &str, arguments: &str) -> Result<Submit, String> {
         if self.bundled == Some(false) {
-            return Ok(None);
+            return Ok(Submit::Command(None));
         }
         Target::parse(arguments).map_err(|error| escape(&error.message))?;
+        self.ended.clear();
+        if self.workflow {
+            self.awaited = None;
+            self.run = Some(AwaitedRun::Starting(Vec::new()));
+            return Ok(Submit::Workflow);
+        }
         let message = cyber_core::ids::new_id("msg");
         self.awaited = Some(Awaited {
             session: session.into(),
             delegation: Runtime::skill_command_delegation_id(session, &message),
             job: None,
         });
-        self.ended.clear();
-        Ok(Some(message))
+        Ok(Submit::Command(Some(message)))
     }
 
-    /// The command was not admitted, so no reviewer Job will end.
+    /// The command or run was not admitted, so nothing will end.
     pub fn refused(&mut self) {
         self.awaited = None;
+        self.run = None;
         self.ended.clear();
+    }
+
+    /// The review run was admitted as `id`; it may already have ended.
+    pub fn run_started(&mut self, id: &str) -> Ended {
+        let ended = match self.run.take() {
+            Some(AwaitedRun::Starting(ended)) => ended.iter().any(|run| run == id),
+            _ => return Ended::Unrelated,
+        };
+        self.run = Some(AwaitedRun::Run(id.to_owned()));
+        if ended {
+            Ended::FetchRun(id.to_owned())
+        } else {
+            Ended::Unrelated
+        }
+    }
+
+    /// A Workflow Run event: the awaited run's end fetches it.
+    pub fn run_event(&mut self, kind: &str, run: &Value) -> Ended {
+        if !RUN_ENDS.iter().any(|end| kind.starts_with(end)) {
+            return Ended::Unrelated;
+        }
+        let id = run["id"].as_str().unwrap_or_default();
+        match &mut self.run {
+            Some(AwaitedRun::Run(awaited)) if awaited == id => Ended::FetchRun(id.to_owned()),
+            Some(AwaitedRun::Starting(ended)) if !id.is_empty() => {
+                ended.push(id.to_owned());
+                Ended::Unrelated
+            }
+            _ => Ended::Unrelated,
+        }
+    }
+
+    /// The awaited run, fetched after it ended: show its findings (partial ones too) or
+    /// its error.
+    pub fn run_settled(&mut self, run: &Value) -> Ended {
+        let awaited = matches!(&self.run, Some(AwaitedRun::Run(id)) if run["id"] == id.as_str());
+        if !awaited {
+            return Ended::Unrelated;
+        }
+        self.refused();
+        let result = &run["result"];
+        let ended = matches!(
+            run["status"].as_str(),
+            Some("completed" | "budget_exceeded")
+        );
+        if !ended || !result.is_object() {
+            let error = run["error"]["message"]
+                .as_str()
+                .or(run["reason"].as_str())
+                .unwrap_or("The review run did not complete");
+            return Ended::Failed(escape(error));
+        }
+        match Findings::from_workflow_result(result) {
+            Ok(findings) => {
+                self.show(&findings);
+                if result["partial"] == true {
+                    self.lines.insert(1, "partial: a budget stopped the review".into());
+                }
+                Ended::Findings
+            }
+            Err(error) => Ended::Failed(escape(&error.to_string())),
+        }
     }
 
     /// Only the awaited review's Job is reported; any other Job is unrelated.

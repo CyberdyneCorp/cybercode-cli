@@ -99,6 +99,10 @@ async function reviewGroups(state, groups, lenses) {
       ),
     ),
   );
+  if (!state.partial && results.length > 0 && results.every((result) => result === null)) {
+    // Nothing was reviewed: a clean result here would pass a CI gate.
+    throw new Error("every reviewer failed: " + state.limitations.join("; "));
+  }
   const raised = [];
   results.forEach((result, index) => {
     if (result === null) return;

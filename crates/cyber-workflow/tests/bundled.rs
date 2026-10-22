@@ -311,6 +311,17 @@ fn review_caps_findings_and_needs_the_prepared_diff() {
     assert!(error.message.contains("args.diff"), "{error}");
 }
 
+#[test]
+fn a_review_where_every_reviewer_failed_fails_instead_of_passing_clean() {
+    let host = Scripted::new(|_, _| {
+        Err(Diagnostic::new(DiagnosticKind::AgentFailed, "SchemaMismatch: twice"))
+    });
+    let error = execute("review", json!({"lenses": ["correctness"], "diff": diff()}), &host)
+        .unwrap_err();
+    assert!(error.message.contains("every reviewer failed"), "{error}");
+    assert!(error.message.contains("SchemaMismatch: twice"), "{error}");
+}
+
 // ---- audit ----------------------------------------------------------------------------
 
 fn files(count: usize) -> impl Fn(&str, &Value) -> Value {
