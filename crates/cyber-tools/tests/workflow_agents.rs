@@ -934,7 +934,10 @@ impl Adapter for Staggered {
         let (delay, first) = (self.delay, Arc::clone(&self.first_response));
         Box::pin(async move {
             tokio::time::sleep(delay).await;
-            first.lock().unwrap().get_or_insert_with(std::time::Instant::now);
+            first
+                .lock()
+                .unwrap()
+                .get_or_insert_with(std::time::Instant::now);
             Ok(answer("warm"))
         })
     }
