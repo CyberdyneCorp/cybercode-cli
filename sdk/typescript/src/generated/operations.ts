@@ -1094,6 +1094,14 @@ export interface Operations {
     body: undefined;
     response: S.RunDetail;
   };
+  "v1.workflow.library": {
+    path: Record<string, never>;
+    query: {
+      directory?: QueryValue;
+    };
+    body: undefined;
+    response: S.WorkflowLibrary;
+  };
   "v1.workflow.list": {
     path: Record<string, never>;
     query: {
@@ -1137,6 +1145,12 @@ export interface Operations {
     query: Record<string, never>;
     body: S.StartBody;
     response: S.WorkflowRun;
+  };
+  "v1.workflow.save": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: S.SaveBody;
+    response: S.SavedScript;
   };
   "v1.workflow.stop": {
     path: { id: string };
@@ -3069,6 +3083,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.workflow.library": {
+    tag: "workflow",
+    name: "library",
+    method: "GET",
+    path: "/api/v1/workflows",
+    pathParams: [],
+    query: ["directory"],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
   "v1.workflow.list": {
     tag: "workflow",
     name: "list",
@@ -3137,6 +3163,18 @@ export const operations = {
     pathParams: [],
     query: [],
     body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.workflow.save": {
+    tag: "workflow",
+    name: "save",
+    method: "POST",
+    path: "/api/v1/workflows/runs/{id}/save",
+    pathParams: ["id"],
+    query: [],
+    body: "optional",
     located: false,
     unwrap: true,
     stream: false,
@@ -3764,6 +3802,9 @@ export function createGroups(caller: Caller) {
       /** Read a Workflow Run's summary with its agents (agents_detail) (`GET /api/v1/workflows/runs/{id}`) */
       get: (id: string, options?: RequestOptions): Promise<Operations["v1.workflow.get"]["response"]> =>
         caller.call("v1.workflow.get", { path: { id } }, options),
+      /** List the Workflow library of the Location: saved Workflows by precedence, with their origin, and the modules that failed to load (`GET /api/v1/workflows`) */
+      library: (query?: Operations["v1.workflow.library"]["query"], options?: RequestOptions): Promise<Operations["v1.workflow.library"]["response"]> =>
+        caller.call("v1.workflow.library", { query }, options),
       /** List Workflow Run summaries of the Location (directory=all for every Location), active runs first, then the newest (`GET /api/v1/workflows/runs`) */
       list: (query?: Operations["v1.workflow.list"]["query"], options?: RequestOptions): Promise<Operations["v1.workflow.list"]["response"]> =>
         caller.call("v1.workflow.list", { query }, options),
@@ -3782,6 +3823,9 @@ export function createGroups(caller: Caller) {
       /** Start a Workflow Run from a saved name or an inline script; it executes in the server (`POST /api/v1/workflows/runs`) */
       run: (body: Operations["v1.workflow.run"]["body"], options?: RequestOptions): Promise<Operations["v1.workflow.run"]["response"]> =>
         caller.call("v1.workflow.run", { body }, options),
+      /** Save an inline run's script as the project Workflow .cyber/workflows/<meta.name>.js; 409 when the file exists unless force (`POST /api/v1/workflows/runs/{id}/save`) */
+      save: (id: string, body?: Operations["v1.workflow.save"]["body"], options?: RequestOptions): Promise<Operations["v1.workflow.save"]["response"]> =>
+        caller.call("v1.workflow.save", { path: { id }, body }, options),
       /** Stop a run and cancel its in-flight agents (`POST /api/v1/workflows/runs/{id}/stop`) */
       stop: (id: string, options?: RequestOptions): Promise<Operations["v1.workflow.stop"]["response"]> =>
         caller.call("v1.workflow.stop", { path: { id } }, options),

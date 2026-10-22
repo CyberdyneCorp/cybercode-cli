@@ -32,9 +32,29 @@ pub struct Meta {
     pub phases: Vec<Phase>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub args: Option<Value>,
+    /// `meta.tools`: the direct read-only tools the script may call (`workflows` → Direct
+    /// read-only tools).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
     /// The literal as written, including keys later milestones read (budgets, tools).
     #[serde(skip)]
     pub raw: Value,
+}
+
+/// The tools a script may call directly; mutating tools are never exposed.
+pub const DIRECT_TOOLS: [&str; 3] = ["read", "glob", "grep"];
+
+/// A tool allowlist (`meta.tools` or an invocation's `tools`): names from
+/// [`DIRECT_TOOLS`], without duplicates.
+pub fn tool_list(value: &Value) -> Option<Vec<String>> {
+    let mut tools: Vec<String> = Vec::new();
+    for item in value.as_array()? {
+        let name = item.as_str().filter(|name| DIRECT_TOOLS.contains(name))?;
+        if !tools.iter().any(|known| known == name) {
+            tools.push(name.to_owned());
+        }
+    }
+    Some(tools)
 }
 
 /// Whether `name` is a valid Workflow name: `^[a-z0-9][a-z0-9._-]{0,63}$`.
@@ -297,11 +317,17 @@ fn validate(raw: Value, at: Position) -> Result<Meta, Diagnostic> {
         Some(Value::Object(args)) => Some(Value::Object(args.clone())),
         Some(_) => return Err(invalid("meta.args must be an object")),
     };
+    let tools = match map.get("tools") {
+        None => Vec::new(),
+        Some(tools) => tool_list(tools)
+            .ok_or_else(|| invalid("meta.tools must be an array naming read, glob or grep"))?,
+    };
     Ok(Meta {
         name: name.into(),
         description: description.into(),
         phases,
         args,
+        tools,
         raw,
     })
 }

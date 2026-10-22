@@ -113,6 +113,16 @@ pub trait WorkflowHost {
     fn budget(&self) -> Value {
         Value::Null
     }
+    /// A direct read-only tool call (`tools.read`, `tools.glob`, `tools.grep`) the run's
+    /// allowlist permits; `input` is the call's object as the script passed it.
+    fn tool(&self, _name: String, _input: Value) -> HostFuture<'_> {
+        Box::pin(async {
+            Err(Diagnostic::new(
+                DiagnosticKind::PermissionDenied,
+                "direct tools are not available in this host",
+            ))
+        })
+    }
     /// A host call the engine refused before it reached the host: an invalid payload or
     /// an unknown kind. The script observes `error` like any other call result, so a
     /// durable host sequences and records it with the others.
@@ -128,6 +138,8 @@ pub struct RunInput {
     pub args: Value,
     /// The frozen `ctx` global.
     pub ctx: Value,
+    /// Direct tools the invocation allowlists, besides `meta.tools`.
+    pub tools: Vec<String>,
 }
 
 /// A completed script.
@@ -334,6 +346,8 @@ struct Engine {
     limits: Limits,
     phases: Vec<String>,
     current_phase: Option<String>,
+    /// Direct tools the run allows: `meta.tools` and the invocation's.
+    tools: Vec<String>,
 }
 
 impl Engine {
@@ -360,6 +374,7 @@ impl Engine {
             limits,
             phases: Vec::new(),
             current_phase: None,
+            tools: Vec::new(),
         })
     }
 
@@ -377,6 +392,8 @@ impl Engine {
         let budget = Rc::clone(&self.budget);
         let args = json_text(&input.args);
         let run_ctx = json_text(&input.ctx);
+        self.tools = module.meta.tools.clone();
+        self.tools.extend(input.tools.iter().cloned());
         let started = self.slice(|ctx| {
             let api = install(&ctx, bridge, budget, &args, &run_ctx)
                 .map_err(|_| self.failure(&ctx, false))?;
@@ -498,6 +515,7 @@ impl Engine {
                 checkpoint_call(&payload).map(|(name, value)| host.checkpoint(name, value))
             }
             "ask" => Ok(host.ask(payload["question"].clone())),
+            "tool" => tool_call(&payload, &self.tools).map(|(name, input)| host.tool(name, input)),
             other => Err(Diagnostic::execution(format!("unknown host call {other}"))),
         };
         request.unwrap_or_else(|error| host.rejected(kind, payload, error))
@@ -691,6 +709,24 @@ fn agent_call(payload: &Value, current: Option<&String>) -> Result<AgentCall, Di
         options: options.clone(),
         phase,
     })
+}
+
+/// A direct tool call: its name must be in the run's allowlist.
+fn tool_call(payload: &Value, allowed: &[String]) -> Result<(String, Value), Diagnostic> {
+    let name = payload["tool"]
+        .as_str()
+        .filter(|name| crate::meta::DIRECT_TOOLS.contains(name))
+        .ok_or_else(|| Diagnostic::execution("unknown direct tool"))?;
+    if !allowed.iter().any(|tool| tool == name) {
+        return Err(Diagnostic::new(
+            DiagnosticKind::PermissionDenied,
+            format!("tool not allowed by meta.tools: {name}"),
+        ));
+    }
+    let input = payload["input"]
+        .as_object()
+        .ok_or_else(|| Diagnostic::execution(format!("tools.{name}() expects an object")))?;
+    Ok((name.into(), Value::Object(input.clone())))
 }
 
 fn checkpoint_call(payload: &Value) -> Result<(String, Value), Diagnostic> {

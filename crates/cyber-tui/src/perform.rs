@@ -1509,18 +1509,7 @@ async fn manage_tasks(client: &Client, session: &Session, action: Action) -> Res
             client.post(&path, json!({})).await.map_err(err)?;
             tasks(client, &session.id).await
         }
-        Action::StopTasks => {
-            let jobs = fetch_jobs(client, &session.id).await?;
-            for job in jobs.iter().filter(|job| job["status"] == "running") {
-                if let Some(id) = job["id"].as_str() {
-                    client
-                        .post(&format!("/jobs/{id}/stop"), json!({}))
-                        .await
-                        .map_err(err)?;
-                }
-            }
-            tasks(client, &session.id).await
-        }
+        Action::StopTasks => stop_tasks(client, &session.id).await,
         _ => Ok(Msg::Done),
     }
 }
@@ -1625,6 +1614,39 @@ async fn log_line(client: &Client, id: &str) -> String {
         Ok(output) => last_line(output["data"]["text"].as_str().unwrap_or("")),
         Err(_) => String::new(),
     }
+}
+
+/// `/stop`: every running Job and active Workflow Run of the Session.
+async fn stop_tasks(client: &Client, session: &str) -> Result<Msg, String> {
+    let jobs = fetch_jobs(client, session).await?;
+    for job in jobs.iter().filter(|job| job["status"] == "running") {
+        if let Some(id) = job["id"].as_str() {
+            client
+                .post(&format!("/jobs/{id}/stop"), json!({}))
+                .await
+                .map_err(err)?;
+        }
+    }
+    // The Session's active Workflow Runs are tasks too (`background-tasks` →
+    // Tasks view).
+    let runs = fetch_runs(client, session).await?;
+    for run in runs.iter().filter(|run| active_run(run)) {
+        if let Some(id) = run["id"].as_str() {
+            client
+                .post(&format!("/workflows/runs/{id}/stop"), json!({}))
+                .await
+                .map_err(err)?;
+        }
+    }
+    tasks(client, session).await
+}
+
+/// A run that `/stop` stops: one that may still start agents.
+fn active_run(run: &Value) -> bool {
+    matches!(
+        run["status"].as_str(),
+        Some("running" | "queued" | "waiting_input" | "paused")
+    )
 }
 
 async fn fetch_runs(client: &Client, session: &str) -> Result<Vec<Value>, String> {

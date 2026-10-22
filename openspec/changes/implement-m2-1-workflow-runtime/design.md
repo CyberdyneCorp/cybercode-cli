@@ -180,3 +180,10 @@ Additional rules:
 - **Engine CVEs.** QuickJS is C code. Mitigations: the exact pin, a per-run Runtime, heap and CPU limits, and no I/O primitives. Upgrades are deliberate changes.
 - **CPU limit precision.** Wall-clock slices over-charge when the machine is under load. Scripts are meant to be thin orchestration, and the 60 s default is generous.
 - **Tokenizer gaps.** The regex heuristic can misread exotic code such as `a = b\n/re/.test(x)`. The static scan is defense in depth: the absence of a loader still blocks imports.
+
+## Decisions in the gaps increment
+
+- **`ask()` answers in advance** come from `args.answers`, keyed by the question text. `waiting_input` is entered and left with `workflow.run.waiting.1` and `workflow.run.answered.1`; waiting is not running time for `max_wall_seconds`. A pause or stop withdraws the question and leaves the call unrecorded.
+- **Direct tools are host calls of kind `tool`**, recorded with `workflow.call.recorded.1` like checkpoints (M2.2's `workflow.host.settled.1` was not added). The engine, not the prelude, checks the allowlist, so a script cannot widen it. Scripts get wider listing limits than the model (`glob` default 1,000 paths, up to 10,000), in path order.
+- **Warm-up groups** are keyed by agent profile, model and result schema, which fix the system prompt and tools. A follower waits before taking a scheduler slot, so the leader is never starved. Only hosts with real child Sessions warm (`ToolHost::warms_prompt_cache`), and `workflows.prompt_cache_warmup: false` turns it off.
+- **Runs are not mirrored as `job` rows.** `/tasks` and `/stop` read runs from the run API.

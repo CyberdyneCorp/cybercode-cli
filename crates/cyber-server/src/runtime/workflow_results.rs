@@ -260,6 +260,7 @@ mod tests {
             tokens: 5,
             started_ms: None,
             ended_ms: None,
+            compactions: 0,
         };
         let text = handback_text(&run, &[agent("completed", 0.5), agent("failed", 0.25)]);
         let summary: Value =

@@ -270,6 +270,7 @@ async fn service_stop_pauses_running_workflow_runs_and_a_rebuilt_app_keeps_them_
             budget: cyber_core::budget::RunBudget::resolve(&serde_json::json!({}), &[]).unwrap(),
             share: Default::default(),
             starter: Default::default(),
+            tools: Vec::new(),
         })
         .await
         .unwrap();

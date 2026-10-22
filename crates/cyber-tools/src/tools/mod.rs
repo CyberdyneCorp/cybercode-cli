@@ -6,7 +6,7 @@ pub(crate) mod bash;
 mod deliver;
 mod dev_server;
 mod formatters;
-mod fs;
+pub(crate) mod fs;
 pub(crate) mod intelligence;
 pub(crate) mod loops;
 mod lsp;
@@ -21,7 +21,7 @@ mod pr_links;
 pub(crate) mod process;
 #[cfg(unix)]
 mod pty;
-mod search;
+pub(crate) mod search;
 mod session;
 #[cfg(any(windows, test))]
 pub(crate) mod shell_resolve;

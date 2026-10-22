@@ -5,6 +5,7 @@ mod delegation;
 pub(crate) mod goals;
 pub(crate) mod report;
 pub(crate) mod setup;
+mod workflow;
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -83,6 +84,13 @@ pub struct ExecArgs {
     /// Run a skill or custom command with the prompt as its arguments.
     #[arg(long)]
     pub command: Option<String>,
+    /// Run a Workflow (a saved name or a `.js` module path) instead of a prompt; its return
+    /// value is the result.
+    #[arg(long, value_name = "NAME|PATH", conflicts_with_all = ["command", "prompt"])]
+    pub workflow: Option<String>,
+    /// The Workflow's `args` as a JSON object.
+    #[arg(long = "args", value_name = "JSON", requires = "workflow")]
+    pub workflow_args: Option<String>,
     /// Attach a file (repeatable).
     #[arg(long = "file")]
     pub files: Vec<PathBuf>,
@@ -151,6 +159,9 @@ pub fn run(mut args: ExecArgs, ctx: &Context, global: &GlobalArgs) -> Result<(),
     } else if !args.goal_check.is_empty() {
         return Err(CliError::usage("--goal-check needs a --goal before it"));
     }
+    if args.workflow.is_some() {
+        return launch(args, ctx, global, String::new(), None);
+    }
     let prompt = if args.goals.is_empty() {
         setup::prompt(&args.prompt)?
     } else {
@@ -203,12 +214,15 @@ fn launch(
             client
         };
         let mut out = Out::new(format, &args, &session);
-        let code = match review {
-            Some(target) => {
+        let code = match (review, &args.workflow) {
+            (_, Some(target)) => {
+                workflow::execute(&client, ctx, &session, &args, target, out).await
+            }
+            (Some(target), None) => {
                 out.review(target);
                 execute_session(&client, &session, &args, prompt, timeout, out).await
             }
-            None => execute(&client, &session, &args, prompt, timeout, out).await,
+            (None, None) => execute(&client, &session, &args, prompt, timeout, out).await,
         };
         if let Some(id) = session["id"].as_str() {
             let source = backend.client.at(&ctx.location.display().to_string());

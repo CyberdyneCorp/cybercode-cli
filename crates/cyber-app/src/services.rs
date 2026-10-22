@@ -642,6 +642,14 @@ impl Services for AppServices {
         }
     }
 
+    fn workflow_library(
+        &self,
+        location: &Path,
+    ) -> Result<cyber_server::runtime::workflow_start::WorkflowLibrary, cyber_server::http::ApiError>
+    {
+        Ok(workflows::library(&self.global_config_dir, location))
+    }
+
     fn saved_workflow(
         &self,
         location: &Path,

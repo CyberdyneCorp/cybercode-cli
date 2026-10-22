@@ -34,6 +34,9 @@ impl Env {
         std::fs::create_dir_all(&config).unwrap();
         let mut global = model.config();
         global["workflows"] = workflows;
+        // The scripted provider holds whole responses at its gates, so warm-up would hold
+        // every fan-out behind its first agent.
+        global["workflows"]["prompt_cache_warmup"] = false.into();
         std::fs::write(config.join("cyber.jsonc"), global.to_string()).unwrap();
         std::fs::write(root.join("models.json"), "{}").unwrap();
         Self { _dir: dir, root }

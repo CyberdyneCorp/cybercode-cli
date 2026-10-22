@@ -60,6 +60,8 @@ struct Agents {
     stall: AtomicBool,
     /// `stall` calls entered.
     stalled: AtomicUsize,
+    /// Direct tool calls of scripts, as `(tool, input, interactive)`.
+    tool_calls: Mutex<Vec<(String, Value, bool)>>,
     /// `stall` calls wait for [`Agents::unstall`] instead of [`STALL`].
     stall_held: AtomicBool,
     unstall: Notify,
@@ -328,6 +330,24 @@ impl ToolHost for Agents {
     fn workflow_agent_writes(&self, _directory: &str, agent: Option<&str>) -> bool {
         self.writers.load(Ordering::SeqCst) && agent != Some("explore")
     }
+
+    /// Answers with the number of direct tool calls so far, so a replayed result is told
+    /// apart from a repeated call.
+    fn workflow_tool(
+        &self,
+        request: WorkflowToolRequest,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<Value, Diagnostic>> {
+        Box::pin(async move {
+            let mut calls = self.tool_calls.lock().unwrap();
+            calls.push((
+                request.tool.clone(),
+                request.input.clone(),
+                request.interactive,
+            ));
+            Ok(json!({"paths": [format!("call {}", calls.len())], "truncated": false}))
+        })
+    }
 }
 
 struct Fixture {
@@ -485,6 +505,7 @@ impl Fixture {
                 budget,
                 share: Default::default(),
                 starter: Default::default(),
+                tools: Vec::new(),
             })
             .await
             .unwrap()
@@ -821,6 +842,7 @@ async fn hosts_without_workflow_agents_fail_closed_and_missing_owners_are_refuse
             budget: default_budget(),
             share: Default::default(),
             starter: Default::default(),
+            tools: Vec::new(),
         })
         .await
         .unwrap();
@@ -848,6 +870,7 @@ async fn hosts_without_workflow_agents_fail_closed_and_missing_owners_are_refuse
             budget: default_budget(),
             share: Default::default(),
             starter: Default::default(),
+            tools: Vec::new(),
         })
         .await;
     assert!(matches!(missing, Err(RuntimeError::SessionNotFound(_))));
@@ -2253,6 +2276,7 @@ async fn a_workflow_agent_session_cannot_own_a_run() {
                 budget: default_budget(),
                 share: Default::default(),
                 starter: Default::default(),
+                tools: Vec::new(),
             })
             .await;
         match refused {
@@ -2945,4 +2969,93 @@ async fn queued_agents_are_counted_and_each_change_is_followed_by_a_progress_eve
     f.quiet(&run.id).await;
     assert_eq!(stopped.agents.queued, 0);
     assert_eq!(stopped.agents, summary().agents);
+}
+
+/// `workflows` → Direct read-only tools, Replay of workflow host calls: a direct tool call
+/// allowed by the invocation runs once for the owner, is recorded before the script sees
+/// it, and a resumed run gets the recorded result instead of listing the files again. A
+/// tool outside the allowlist rejects with `PermissionDenied` without reaching the host.
+#[tokio::test(flavor = "multi_thread")]
+async fn direct_tool_results_are_recorded_and_replayed_after_a_pause() {
+    let agents = Arc::new(Agents::default());
+    let f = fixture(&agents);
+    let owner = f.session("default").await;
+    let body = "export default async () => {\n  const found = await tools.glob({ pattern: '*.rs' });\n  let denied = null;\n  try { await tools.grep({ pattern: 'x' }); } catch (e) { denied = e.kind; }\n  const b = await agent('hold b');\n  const c = await agent('c');\n  return [found.paths, denied, b.text, c.text];\n};\n";
+    let run = f
+        .runtime
+        .start_workflow_run(StartWorkflowRun {
+            module: module(body),
+            args: json!({}),
+            session_id: owner.clone(),
+            limits: Limits::default(),
+            tiers: BTreeMap::new(),
+            budget: default_budget(),
+            share: Default::default(),
+            starter: Default::default(),
+            tools: vec!["glob".into()],
+        })
+        .await
+        .unwrap();
+    assert_eq!(run.tools, ["glob"]);
+    eventually("b in flight", || agents.holding.load(Ordering::SeqCst) == 1).await;
+    f.runtime.pause_workflow_run(&run.id).await.unwrap();
+    agents.release();
+    f.quiet(&run.id).await;
+
+    f.resume(&run.id, None, false).await.unwrap();
+    let run = f.settled(&run.id).await;
+    assert_eq!(run.status, WorkflowRunStatus::Completed, "{run:?}");
+    assert_eq!(
+        run.result,
+        Some(json!([
+            ["call 1"],
+            "PermissionDenied",
+            "hold b done",
+            "c done"
+        ]))
+    );
+    let calls = agents.tool_calls.lock().unwrap().clone();
+    assert_eq!(calls, [("glob".into(), json!({"pattern": "*.rs"}), false)]);
+    let recorded: Vec<Value> = f
+        .events(&run.id, "workflow.call.recorded.1")
+        .into_iter()
+        .filter(|event| event["kind"] == "tool" && event["outcome"].get("value").is_some())
+        .collect();
+    assert_eq!(recorded.len(), 1, "{recorded:?}");
+    assert_eq!(recorded[0]["outcome"]["value"]["paths"], json!(["call 1"]));
+}
+
+/// `compaction` → Compaction in subagents and workflows: a run reports the compactions of
+/// each agent's child Session.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_reports_its_agents_compactions() {
+    let agents = Arc::new(Agents::default());
+    let f = fixture(&agents);
+    let owner = f.session("default").await;
+    let run = f
+        .start(
+            &owner,
+            "export default async () => (await agent('a')).text;\n",
+        )
+        .await;
+    f.settled(&run.id).await;
+    let child = f.runtime.workflow_agents(&run.id).unwrap()[0]
+        .session_id
+        .clone()
+        .unwrap();
+    for _ in 0..2 {
+        f.store
+            .append(
+                &child,
+                cyber_store::Expected::Any,
+                vec![cyber_store::NewEvent::new(
+                    "session.compaction.completed.1",
+                    json!({"model": "test/main"}),
+                )],
+            )
+            .unwrap();
+    }
+    let agent = &f.runtime.workflow_agents(&run.id).unwrap()[0];
+    assert_eq!(agent.compactions, 2);
+    assert_eq!(serde_json::to_value(agent).unwrap()["compactions"], 2);
 }

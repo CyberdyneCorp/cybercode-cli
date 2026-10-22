@@ -28,10 +28,15 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 use super::budget::RunSpend;
-use super::host::{RunWorktree, ToolHost, TurnContext, WorkflowAgentOutput, WorkflowAgentRequest};
+use super::host::{
+    RunWorktree, ToolHost, TurnContext, WorkflowAgentOutput, WorkflowAgentRequest,
+    WorkflowToolRequest,
+};
+use super::workflow_ask::{Asked, ScriptQuestion, no_user};
 use super::workflow_control::{Control, Signal};
 use super::workflow_replay::{Outcome, Plan, Replay};
 use super::workflow_scheduler::{Slot, WorkflowScheduler};
+use super::workflow_warmup::{self, Groups, Release, Role};
 use super::workflows::{
     AGENT_SETTLED, AGENT_STARTED, CALL_RECORDED, LOG, PHASE, RunLog, WorkflowAgent, WorkflowRun,
 };
@@ -75,6 +80,10 @@ pub(super) struct RunHost {
     control: Arc<Control>,
     run_id: String,
     owner: TurnContext,
+    /// `ask()` and the asks of direct tool calls may reach the owner's clients.
+    interactive: bool,
+    /// The run's `args`, whose `answers` declare `ask()` answers in advance.
+    args: Value,
     tiers: BTreeMap<String, Option<String>>,
     budget: RunBudget,
     replay: Replay,
@@ -98,6 +107,8 @@ pub(super) struct RunHost {
     budget_view: RefCell<Value>,
     /// Records of the run so far, against [`MAX_RUN_RECORDS`] and [`MAX_RUN_RECORD_BYTES`].
     records: RecordCount,
+    /// Prompt-prefix groups for cache warm-up, when the host warms.
+    warmup: Option<Groups>,
     /// A host call other than `agent()` was already rejected for the wall-clock budget.
     wall_rejected: Cell<bool>,
 }
@@ -227,6 +238,8 @@ impl RunHost {
             control,
             run_id: run.id.clone(),
             owner,
+            interactive: run.interactive,
+            args: run.args.clone(),
             tiers,
             budget: run_budget(run),
             replay,
@@ -241,6 +254,7 @@ impl RunHost {
             writers: runtime.workflow_writers(&run.directory),
             budget_view: RefCell::new(Value::Null),
             records: RecordCount::of(&runtime.inner.store, &run.id),
+            warmup: runtime.workflow_warmup().then(Groups::default),
             wall_rejected: Cell::new(false),
         }
         .with_initial_budget()
@@ -365,6 +379,7 @@ impl RunHost {
                 tokens: 0,
                 started_ms: None,
                 ended_ms: None,
+                compactions: 0,
             },
             agent,
             prompt: call.prompt,
@@ -486,6 +501,15 @@ impl RunHost {
             return self.record_call("agent", seq, &key, outcome);
         }
         let resumed = self.replay.unsettled(&key);
+        let role = self.warm_role(&prepared, resumed.is_none());
+        if let Some(Role::Follower(group)) = &role {
+            // Paused or stopped meanwhile: `slot` ends the attempt.
+            futures::future::select(Box::pin(group.released()), Box::pin(self.signalled())).await;
+        }
+        let release = match role {
+            Some(Role::Leader(group)) => Some(Release(group)),
+            _ => None,
+        };
         let slot = self.slot().await?;
         if resumed.is_none()
             && let Err(error) = self.charge_agent()
@@ -500,6 +524,9 @@ impl RunHost {
             .then(|| RunWorktree::new(&self.run_id, self.started.get()));
         prepared.record.branch = worktree.as_ref().map(|tree| tree.branch.clone());
         self.record_agent(AGENT_STARTED, &prepared.record, seq, None)?;
+        if let Some(release) = &release {
+            self.watch_first_response(&prepared.record.id, release);
+        }
         self.in_flight.set(self.in_flight.get() + 1);
         let outcome = self
             .spawn(&prepared, resumed.is_some(), worktree, slot)
@@ -512,6 +539,36 @@ impl RunHost {
         }
         let outcome = self.budget_failure(outcome);
         self.settle(prepared, seq, outcome)
+    }
+
+    /// The call's place in its prompt-prefix group; a resumed agent continues at once.
+    fn warm_role(&self, prepared: &Prepared, fresh: bool) -> Option<Role> {
+        let groups = self.warmup.as_ref().filter(|_| fresh)?;
+        Some(groups.join(
+            prepared.agent.as_deref(),
+            prepared.record.model.as_deref(),
+            prepared.schema.as_ref(),
+        ))
+    }
+
+    /// Release a leader's group at its child's first provider response. Subscribed before
+    /// the child starts, so its first output is not missed.
+    fn watch_first_response(&self, agent_id: &str, release: &Release) {
+        let Some(runtime) = self.runtime.upgrade() else {
+            return;
+        };
+        if release.0.is_released() {
+            return;
+        }
+        let events = runtime.inner.bus.subscribe();
+        self.handle
+            .spawn(workflow_warmup::release_on_first_response(
+                events,
+                Arc::clone(&self.store),
+                self.owner.session_id.clone(),
+                agent_id.to_owned(),
+                Arc::clone(&release.0),
+            ));
     }
 
     /// Wait while the run is pausing; a paused run with nothing in flight ends.
@@ -767,6 +824,100 @@ impl RunHost {
         view
     }
 
+    /// A direct tool call after the replay prefix: a recorded result of the same call
+    /// (same tool, input and ordinal) is reused, so a resumed run sees the files as they
+    /// were; otherwise the tool runs for the owner on the tokio runtime. A stop or shutdown
+    /// meanwhile ends the attempt without recording the call.
+    async fn serve_tool(
+        &self,
+        seq: u64,
+        key: String,
+        tool: String,
+        input: Value,
+    ) -> Result<Value, Diagnostic> {
+        self.replay
+            .after_prefix()
+            .await
+            .map_err(|error| self.fail_closed(error))?;
+        if let Some(outcome) = self.replay.reusable(&key) {
+            return self.record_call("tool", seq, &key, outcome);
+        }
+        let cancel = self.control.cancel.child_token();
+        let _stop = cancel.clone().drop_guard();
+        let lease = self.control.lease();
+        let request = WorkflowToolRequest {
+            run_id: self.run_id.clone(),
+            call_key: key.clone(),
+            owner: self.owner.clone(),
+            tool,
+            input,
+            interactive: self.interactive,
+        };
+        let tools = Arc::clone(&self.tools);
+        let outcome = self
+            .handle
+            .spawn(async move {
+                let _lease = lease;
+                tools.workflow_tool(request, cancel).await
+            })
+            .await
+            .unwrap_or_else(|error| Err(failed(format!("workflow tool task ended: {error}"))));
+        if self.control.cancel.is_cancelled() && self.control.signal() != Signal::Running {
+            return Err(self.halt());
+        }
+        self.record_call("tool", seq, &key, Outcome::of(&outcome))
+    }
+
+    /// An `ask()` after the replay prefix: its recorded answer, an answer `args.answers`
+    /// declares, `NoInteractiveUser` in a run without a user, else the owner's answer.
+    async fn serve_ask(
+        &self,
+        seq: u64,
+        key: String,
+        question: ScriptQuestion,
+    ) -> Result<Value, Diagnostic> {
+        self.replay
+            .after_prefix()
+            .await
+            .map_err(|error| self.fail_closed(error))?;
+        if let Some(outcome) = self.replay.reusable(&key) {
+            return self.record_call("ask", seq, &key, outcome);
+        }
+        let outcome = match question.declared(&self.args) {
+            Some(answer) => Outcome::Value(answer),
+            None if !self.interactive => {
+                Outcome::Error(no_user("no interactive user can answer ask() in this run"))
+            }
+            None => self.answer(question).await?,
+        };
+        self.record_call("ask", seq, &key, outcome)
+    }
+
+    /// Wait for the owner's answer on the tokio runtime; a pause or stop meanwhile ends
+    /// the attempt.
+    async fn answer(&self, question: ScriptQuestion) -> Result<Outcome, Diagnostic> {
+        let runtime = self
+            .runtime
+            .upgrade()
+            .ok_or_else(|| self.fail_closed(failed("the server is shutting down")))?;
+        let (run_id, control) = (self.run_id.clone(), Arc::clone(&self.control));
+        let lease = self.control.lease();
+        let asked = self
+            .handle
+            .spawn(async move {
+                let _lease = lease;
+                runtime.workflow_ask(&run_id, &question, control).await
+            })
+            .await;
+        match asked {
+            Ok(Ok(Asked::Answer(answer))) => Ok(Outcome::Value(answer)),
+            Ok(Ok(Asked::Unanswered(error))) => Ok(Outcome::Error(error)),
+            Ok(Ok(Asked::Halted)) => Err(self.halt()),
+            Ok(Err(error)) => Err(self.fail_closed(failed(error.to_string()))),
+            Err(error) => Err(self.fail_closed(failed(format!("ask() task ended: {error}")))),
+        }
+    }
+
     /// A checkpoint after the replay prefix: its recorded value, else the given one.
     async fn serve_checkpoint(
         &self,
@@ -822,12 +973,36 @@ impl WorkflowHost for RunHost {
         })
     }
 
-    fn ask(&self, question: Value) -> HostFuture<'_> {
-        let error = Diagnostic::new(
-            DiagnosticKind::NoInteractiveUser,
-            "no interactive user can answer ask() in this run",
+    fn tool(&self, name: String, input: Value) -> HostFuture<'_> {
+        let key = self.call_key(
+            &format!("tool {name}"),
+            &canonical(&input).to_string(),
+            &Map::new(),
         );
-        self.rejected("ask", json!({ "question": question }), error)
+        let plan = self.replay.issue("tool", &key);
+        Box::pin(async move {
+            match plan {
+                Plan::Mismatch(error) => Err(self.fail_closed(error)),
+                Plan::Replay { index, outcome } => self.replayed(index, outcome).await,
+                Plan::Free { seq } => self.serve_tool(seq, key, name, input).await,
+            }
+        })
+    }
+
+    fn ask(&self, question: Value) -> HostFuture<'_> {
+        let parsed = ScriptQuestion::parse(&question);
+        let key = self.call_key("ask", &canonical(&question).to_string(), &Map::new());
+        let plan = self.replay.issue("ask", &key);
+        Box::pin(async move {
+            match (plan, parsed) {
+                (Plan::Mismatch(error), _) => Err(self.fail_closed(error)),
+                (Plan::Replay { index, outcome }, _) => self.replayed(index, outcome).await,
+                (Plan::Free { seq }, Ok(question)) => self.serve_ask(seq, key, question).await,
+                (Plan::Free { seq }, Err(error)) => {
+                    self.serve_rejected("ask", seq, &key, error).await
+                }
+            }
+        })
     }
 
     fn rejected(&self, kind: &str, payload: Value, error: Diagnostic) -> HostFuture<'_> {
