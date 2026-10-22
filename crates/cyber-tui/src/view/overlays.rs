@@ -505,6 +505,10 @@ pub fn help(f: &mut Frame, app: &App, area: Rect) {
             "/loop [5m] <prompt>",
             "repeat a prompt every interval, or self-paced; /loop list, /loop stop",
         ),
+        (
+            "/login openai · /logout openai",
+            "sign in to or out of a ChatGPT subscription",
+        ),
         ("/subtask <prompt> · /tasks · /stop", "background tasks"),
         ("/agent · /subagents", "browse child and parent threads"),
         (

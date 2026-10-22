@@ -3556,3 +3556,128 @@ fn goal_prompts_and_the_footer() {
     assert!(text.contains("◎ goal docs build cleanly"), "{text}");
     assert!(!text.contains("<goal"), "{text}");
 }
+
+/// `tui` → Provider login commands: `/login openai` opens the dialog and starts an
+/// attempt; Google and unknown providers are refused without a request.
+#[test]
+fn login_commands_start_openai_and_refuse_google() {
+    use crate::app::PickerKind;
+    use crate::login::LoginRequest;
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    let submit = |app: &mut App, line: &str| {
+        typed(app, line);
+        app.completion = None;
+        app.on_key(key(KeyCode::Enter))
+    };
+    assert!(submit(&mut app, "/login google").is_empty());
+    assert!(
+        app.toast
+            .as_ref()
+            .unwrap()
+            .0
+            .starts_with("Google subscription login is not supported")
+    );
+    assert!(submit(&mut app, "/login anthropic").is_empty());
+    assert!(
+        app.toast
+            .as_ref()
+            .unwrap()
+            .0
+            .contains("No subscription login for anthropic")
+    );
+    assert_eq!(
+        submit(&mut app, "/logout openai"),
+        [Action::Login(LoginRequest::Logout)]
+    );
+
+    assert_eq!(
+        submit(&mut app, "/login openai"),
+        [Action::Login(LoginRequest::Start)]
+    );
+    assert_eq!(app.overlay, Overlay::Login);
+
+    app.overlay = Overlay::None;
+    submit(&mut app, "/login");
+    assert!(matches!(&app.overlay, Overlay::Picker(p) if p.kind == PickerKind::Login));
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        [Action::Login(LoginRequest::Start)]
+    );
+}
+
+/// The dialog polls once a second and submits a pasted redirect URL; a refused paste
+/// keeps the dialog open with the error.
+#[test]
+fn login_dialog_polls_and_submits_a_pasted_url() {
+    use crate::login::{LoginReply, LoginRequest};
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    app.start_login();
+    assert!(
+        app.login_poll().is_empty(),
+        "nothing to poll before the attempt starts"
+    );
+    let pending = json!({"attempt_id": "pla_1", "status": "pending",
+        "authorization_url": "https://auth.openai.com/oauth/authorize?state=s", "callback": false});
+    assert!(
+        app.login_reply(LoginReply::Attempt(pending.clone()))
+            .is_empty()
+    );
+    assert_eq!(
+        app.login.url,
+        "https://auth.openai.com/oauth/authorize?state=s"
+    );
+    assert!(!app.login.callback);
+    assert_eq!(
+        app.login_poll(),
+        [Action::Login(LoginRequest::Poll("pla_1".into()))]
+    );
+    assert!(app.login_poll().is_empty(), "one poll in flight at a time");
+    app.login_reply(LoginReply::Attempt(pending));
+    assert!(app.login_poll().is_empty(), "at most once a second");
+
+    app.on_paste("http://localhost:1455/auth/callback?code=c&state=s\n");
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        [Action::Login(LoginRequest::Code {
+            attempt_id: "pla_1".into(),
+            redirect_url: "http://localhost:1455/auth/callback?code=c&state=s".into(),
+        })]
+    );
+    app.login_reply(LoginReply::Failed("state mismatch".into()));
+    assert_eq!(
+        app.overlay,
+        Overlay::Login,
+        "a refused paste keeps the dialog"
+    );
+    assert_eq!(app.login.error.as_deref(), Some("state mismatch"));
+}
+
+/// A complete attempt closes the dialog and opens the model picker; Esc cancels.
+#[test]
+fn login_dialog_finishes_or_cancels() {
+    use crate::login::{LoginReply, LoginRequest};
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    app.start_login();
+    let done = json!({"attempt_id": "pla_1", "status": "complete",
+        "email": "dev@example.com", "plan": "plus", "models": ["gpt-6-sol"]});
+    assert_eq!(
+        app.login_reply(LoginReply::Attempt(done)),
+        [Action::LoadModels]
+    );
+    assert_eq!(app.overlay, Overlay::None);
+    assert_eq!(
+        app.toast.as_ref().unwrap().0,
+        "Signed in to ChatGPT as dev@example.com (plus)"
+    );
+
+    app.start_login();
+    app.login_reply(LoginReply::Attempt(
+        json!({"attempt_id": "pla_2", "status": "pending",
+        "authorization_url": "https://x", "callback": true}),
+    ));
+    assert_eq!(
+        app.on_key(key(KeyCode::Esc)),
+        [Action::Login(LoginRequest::Cancel("pla_2".into()))]
+    );
+    assert_eq!(app.overlay, Overlay::None);
+}
