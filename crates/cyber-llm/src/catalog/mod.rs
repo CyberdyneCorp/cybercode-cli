@@ -2,6 +2,7 @@
 
 mod chatgpt;
 mod config;
+mod copilot;
 mod cost;
 mod credentials;
 mod model_ref;
@@ -234,6 +235,8 @@ pub struct Catalog {
     experimental: bool,
     /// The stored ChatGPT login behind the `chatgpt` provider, when there is one.
     chatgpt: Option<crate::chatgpt::Session>,
+    /// The stored GitHub Copilot login behind the `copilot` provider, when there is one.
+    copilot: Option<crate::copilot::Session>,
 }
 
 impl Catalog {
@@ -242,6 +245,10 @@ impl Catalog {
         let chatgpt = crate::chatgpt::Session::stored(inputs.env);
         if let Some(session) = &chatgpt {
             chatgpt::insert(&mut providers, session);
+        }
+        let copilot = crate::copilot::Session::stored(inputs.env);
+        if let Some(session) = &copilot {
+            copilot::insert(&mut providers, session);
         }
         if let Some(configured) = inputs.config.get("providers").and_then(Value::as_object) {
             config::apply(&mut providers, configured);
@@ -252,6 +259,7 @@ impl Catalog {
             credentials,
             experimental: inputs.env.flag("CYBER_ENABLE_EXPERIMENTAL_MODELS"),
             chatgpt,
+            copilot,
         }
     }
 
@@ -370,6 +378,12 @@ impl Catalog {
         let mut endpoint = Endpoint::new(url, key);
         if kind == ApiKind::ChatgptCodex {
             endpoint.login.clone_from(&self.chatgpt);
+        }
+        if kind == ApiKind::CopilotChat {
+            endpoint.copilot = self.copilot.clone().map(|session| crate::copilot::Route {
+                protocol: session.protocol(&model.api_id),
+                session,
+            });
         }
         Ok(Resolved {
             model_ref: model_ref.clone(),

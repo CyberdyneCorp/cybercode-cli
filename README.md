@@ -4,7 +4,7 @@ A model-independent, local-first coding agent: a durable server owns your sessio
 
 ## Why Cyber Code
 
-- **Any model, no account.** OpenAI, Anthropic or any OpenAI-compatible endpoint, including a local model server. No Cyber account; hosted models need their own provider credentials. A ChatGPT Plus/Pro plan can pay for OpenAI models instead of an API key (`cyber providers login chatgpt`). The full local-model baseline is still open ([evaluation guide](eval/README.md)).
+- **Any model, no account.** OpenAI, Anthropic or any OpenAI-compatible endpoint, including a local model server. No Cyber account; hosted models need their own provider credentials. A ChatGPT Plus/Pro plan can pay for OpenAI models instead of an API key (`cyber providers login chatgpt`), and a GitHub Copilot plan for the OpenAI, Anthropic and Google models it serves (`cyber providers login copilot`). The full local-model baseline is still open ([evaluation guide](eval/README.md)).
 - **A server that survives a crash.** Prompts are persisted before they run, and execution state lives in SQLite. A restarted server recovers interrupted Sessions, and the TUI, SDK and MCP clients share the same Sessions.
 - **Workflows that resume after `kill -9`.** Claude Code also has [script-driven workflows][C7] with `agent()`/`parallel()`/`pipeline()`. Cyber's differences: runs execute in the background server rather than inside a CLI process; after a server crash they replay durably (`cyber workflows resume --interrupted`); several runs share agent slots fairly with a run queue; and each run has budgets and model tiers that can point at any provider ([details](docs/local-core-guide.md#workflows-p2-m21)).
 - **Other agents can drive whole Sessions.** `cyber mcp serve` lets Claude Code, Codex or another MCP client create, prompt, wait on and interrupt Cyber Sessions, with idempotent receipts and a Mode ceiling. All 10 tools ship, including listing, sending and reading cross-session messages. `claude mcp serve` [exposes Claude Code's tools][C4], and Codex [removed its MCP server][X5]. Partial: unattended approval rules and the recursion-depth markers for hook and PTY processes remain.
@@ -35,7 +35,7 @@ Requires **Rust 1.89+**. SQLite is bundled. On Linux, install **bubblewrap** for
 
 ```bash
 cargo build --locked -p cyber-cli
-export OPENAI_API_KEY="your-key"                  # or use your ChatGPT plan, below
+export OPENAI_API_KEY="your-key"                  # or use your ChatGPT or Copilot plan, below
 
 ./target/debug/cyber                              # terminal UI
 ./target/debug/cyber exec "fix the failing test"  # one task
@@ -63,6 +63,20 @@ A ChatGPT Plus or Pro plan can pay for OpenAI models instead of an API key, in t
 In the TUI, `/login openai` signs in from a dialog. It shows the URL to open, or takes the redirect URL you paste. The plan's models are usable at once, without restarting the server. `/logout openai` signs out. Google (Gemini) subscription logins are not supported.
 
 Usage counts against your plan's limits. The login is kept in `~/.local/share/cyber/chatgpt-auth.json` (mode 0600), separate from Codex's, and the token is renewed before it expires. The model list comes from your account and is refreshed daily. macOS and Linux only for now. Details: [ChatGPT subscription](docs/local-core-guide.md#signing-in-with-a-chatgpt-subscription).
+
+### Use your GitHub Copilot subscription
+
+A Copilot Pro, Pro+, Business or Enterprise plan can pay for the OpenAI, Anthropic and Google models it serves. GitHub supports Copilot plans in third-party agents. The sign-in is GitHub's device flow, so it works over SSH too:
+
+```bash
+./target/debug/cyber providers login copilot                              # prints a URL and a code to enter there
+./target/debug/cyber providers login copilot --enterprise octo.ghe.com    # a GitHub Enterprise (data residency) host
+./target/debug/cyber models copilot                                       # the models your plan serves, e.g. copilot/claude-sonnet-4.5
+./target/debug/cyber exec -m copilot/claude-sonnet-4.5 "fix the failing test"
+./target/debug/cyber providers logout copilot
+```
+
+Each prompt counts as one premium request: the tool-loop steps after it, hook checks, page summaries, subagents, background handbacks, compaction and titles are sent as the agent's, as in Copilot's own agent mode. The GitHub login is kept in `~/.local/share/cyber/copilot-auth.json` (mode 0600). The short-lived Copilot token is minted from it, kept in memory only and renewed before it expires. The model list comes from your account and is refreshed daily. macOS and Linux only for now. Not yet checked against a live Copilot account: it is tested against a local fake GitHub, and the OAuth client ID is provisional. Details: [GitHub Copilot subscription](docs/local-core-guide.md#signing-in-with-a-github-copilot-subscription).
 
 ### Permission modes
 
@@ -244,7 +258,7 @@ Checked **2026-10-17** against each product's official docs. This compares docum
 | Feature | Cyber Code | Claude Code | Codex CLI | OpenCode |
 |---|---|---|---|---|
 | Edit files and run commands | Yes | Yes [C1] | Yes [X1] | Yes [O1] |
-| Model providers | OpenAI (API key or ChatGPT plan), Anthropic, OpenAI-compatible | Claude via Anthropic, Bedrock, Vertex, Foundry [C2] | OpenAI and custom providers [X2] | 75+ providers [O2] |
+| Model providers | OpenAI (API key or ChatGPT plan), Anthropic, GitHub Copilot plan, OpenAI-compatible | Claude via Anthropic, Bedrock, Vertex, Foundry [C2] | OpenAI and custom providers [X2] | 75+ providers [O2] |
 | Local models | Compatible endpoint; full baseline pending | Not established | Ollama / LM Studio via `--oss` [X2] | Ollama, LM Studio, llama.cpp [O2] |
 | Terminal UI | Yes | Yes [C1] | Yes [X1] | Yes [O1] |
 | Headless / exec | `cyber exec` | `claude -p` [C3] | `codex exec` [X3] | `opencode run` [O3] |

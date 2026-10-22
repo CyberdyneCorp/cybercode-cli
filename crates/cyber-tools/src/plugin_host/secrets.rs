@@ -163,8 +163,8 @@ impl PluginSecrets for FileSecrets {
     }
 }
 
-/// Hide cyber's credential files (in the data directory, and the peer listener's key in
-/// the state directory) from every sandboxed launch of this process for `home`. On the file backend the secret file is created (empty, owner-only)
+/// Hide cyber's credential files (in the data directory, including the ChatGPT and GitHub
+/// Copilot logins, and the peer listener's key in the state directory) from every sandboxed launch of this process for `home`. On the file backend the secret file is created (empty, owner-only)
 /// first: a sandbox hides only paths that exist when it starts.
 pub fn hide_credential_files(paths: &cyber_core::paths::Paths, home: &std::path::Path) {
     #[cfg(not(any(target_os = "macos", windows)))]
@@ -182,6 +182,10 @@ pub fn hide_credential_files(paths: &cyber_core::paths::Paths, home: &std::path:
     cyber_sandbox::hide_credential_file(home, secret_file(paths));
     cyber_sandbox::hide_credential_file(home, paths.mcp_auth_file());
     cyber_sandbox::hide_credential_file(home, paths.peer_tokens_file());
+    // Subscription logins: the ChatGPT refresh token and the GitHub OAuth token behind
+    // Copilot, which does not rotate.
+    cyber_sandbox::hide_credential_file(home, cyber_llm::chatgpt::auth_path(&paths.data));
+    cyber_sandbox::hide_credential_file(home, cyber_llm::copilot::auth_path(&paths.data));
     // The peer listener's private key: whoever reads it can pose as this listener to every
     // paired machine and collect their tokens.
     cyber_sandbox::hide_credential_file(home, paths.state.join(cyber_server::http::peer::tls::DIR));

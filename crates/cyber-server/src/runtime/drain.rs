@@ -119,6 +119,17 @@ async fn went_idle(runtime: super::Runtime, id: &str, (hops, status): (u32, Opti
     runtime.team_drain_ended(id).await;
 }
 
+/// `user` for the first model call after a promoted row the user wrote, `agent` for the
+/// tool-result continuations that follow it and for Turns other sources open (a Stop
+/// continuation never counts as the user's).
+fn initiator(user_input_pending: bool) -> cyber_llm::Initiator {
+    if user_input_pending {
+        cyber_llm::Initiator::User
+    } else {
+        cyber_llm::Initiator::Agent
+    }
+}
+
 /// The status line an idle notice reports for a Drain that failed or was interrupted;
 /// `None` takes it from the last run.
 fn ended_status(failure: Option<&str>, cancel: &CancellationToken) -> Option<String> {
@@ -937,6 +948,7 @@ impl Inner {
         defs.extend(catalog.deferred);
         request.tools_disabled |= limited;
         request.cache_key = Some(state.info.id.clone());
+        request.initiator = Some(initiator(state.user_input_pending));
         let message_id = cyber_core::ids::new_id("msg");
         let origin = super::usage_origin::step_origin(&self.store, &state)?;
         let payload = StepStarted {

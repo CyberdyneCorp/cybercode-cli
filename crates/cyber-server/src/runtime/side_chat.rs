@@ -74,6 +74,11 @@ impl Inner {
         let mut answer = String::new();
         for step in 0..MAX_STEPS {
             request.tools_disabled = step + 1 == MAX_STEPS;
+            request.initiator = Some(if step == 0 {
+                cyber_llm::Initiator::User
+            } else {
+                cyber_llm::Initiator::Agent
+            });
             let stream = resolved.adapter.stream(request.clone()).await;
             let out = match stream {
                 Ok(stream) => collect(stream, |_| {}).await,

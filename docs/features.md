@@ -1,13 +1,13 @@
 # Feature reference
 
-Implemented behavior and remaining scope, reviewed on **2026-10-16** (the Models and Cross-session messaging rows on 2026-10-19, Direct peers and Feature flags on 2026-10-19, Agent teams on 2026-10-20). Start with the [README](../README.md); use the [P1 status](implementation/p1-status.md) and [acceptance audit](implementation/p1-acceptance-audit.md) for detailed evidence.
+Implemented behavior and remaining scope, reviewed on **2026-10-16** (Cross-session messaging, Direct peers and Feature flags on 2026-10-19, Agent teams and Models on 2026-10-20). Start with the [README](../README.md); use the [P1 status](implementation/p1-status.md) and [acceptance audit](implementation/p1-acceptance-audit.md) for detailed evidence.
 
 
 “Available” describes implemented local-core behavior. “Partial P1” means working pieces exist and the full contract still needs implementation or acceptance.
 
 | Area | What you can use today | Status |
 |---|---|---|
-| Models | Provider adapters, model catalog, credentials and usage pricing; a ChatGPT Plus/Pro subscription instead of an API key (`cyber providers login\|logout chatgpt`, a `chatgpt` provider on the Codex backend, an owner-only login file refreshed across processes; [guide](local-core-guide.md#signing-in-with-a-chatgpt-subscription)) | Available; broader catalog work remains |
+| Models | Provider adapters, model catalog, credentials and usage pricing; a ChatGPT Plus/Pro subscription instead of an API key (`cyber providers login\|logout chatgpt`, a `chatgpt` provider on the Codex backend, an owner-only login file refreshed across processes; [guide](local-core-guide.md#signing-in-with-a-chatgpt-subscription)); a GitHub Copilot plan (`cyber providers login\|logout copilot`, device-flow sign-in, a `copilot` provider whose models use Chat Completions or Responses, one premium request per prompt; [guide](local-core-guide.md#signing-in-with-a-github-copilot-subscription); live sign-in not yet checked) | Available; broader catalog work remains |
 | Sessions | Durable inbox, streaming tool loops, interrupt/resume, crash recovery and compaction | Available |
 | Tools | Repository inspection/editing, notebook cell editing, command execution, web tools and instruction/skill loading and durable path-triggered skill reminders with model-loaded Turn permission scopes | Available; static configured command templates also reach the public API; broader skills/commands remain |
 | Project instructions | `AGENTS.md`, `CLAUDE.md` (fallback where a directory has no `AGENTS.md`), `CONTEXT.md` and `CYBER.md` from the global config directory and every directory from the project root to the Location; `@path` imports, `AGENTS.override.md`, 32 KiB truncation, `CYBER_DISABLE_CLAUDE_MD`/`CYBER_DISABLE_PROJECT_CONFIG`, nested files attached to `read` results once per Context Epoch, and the `cyber doctor` `instructions` check ([guide](local-core-guide.md#project-instructions-and-cybermd)) | Available; `.cyber/rules`, `.claude/CLAUDE.md`, the `~/.claude/CLAUDE.md` fallback, a configurable `instructions.max_bytes`, per-source sizes in `/context` and `/init` remain |
