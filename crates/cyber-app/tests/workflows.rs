@@ -442,7 +442,7 @@ async fn the_library_lists_saved_workflows_by_precedence_with_issues() {
     assert!(release["digest"].as_str().unwrap().starts_with("sha256:"));
     let shadowed = release["shadowed"][0].as_str().unwrap();
     assert!(
-        shadowed.ends_with("config/workflows/release.js"),
+        std::path::Path::new(shadowed).ends_with("config/workflows/release.js"),
         "{release}"
     );
     assert_eq!(listed["workflows"][0]["origin"]["kind"], "global");
