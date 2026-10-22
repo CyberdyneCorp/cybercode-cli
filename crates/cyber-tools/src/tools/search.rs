@@ -232,7 +232,8 @@ fn script_limit(input: &Value, default: usize, cap: usize) -> usize {
 
 /// `tools.glob` of a Workflow script (`workflows` → Direct read-only tools): the glob
 /// tool's permission checks, ignore rules and hidden paths, returning `{paths, truncated}`
-/// in path order, Location-relative inside the Location.
+/// in path order, Location-relative inside the Location, and `sizes` (bytes) with
+/// `sizes: true`.
 pub(crate) async fn glob_value(ctx: &Ctx<'_>) -> Result<Value, ToolError> {
     let input = &ctx.inv.input;
     let pattern = text(input, "pattern");
@@ -245,8 +246,17 @@ pub(crate) async fn glob_value(ctx: &Ctx<'_>) -> Result<Value, ToolError> {
     paths.sort();
     let truncated = paths.len() > max;
     paths.truncate(max);
-    let paths: Vec<String> = paths.iter().map(|path| ctx.resource(path)).collect();
-    Ok(json!({"paths": paths, "truncated": truncated}))
+    let shown: Vec<String> = paths.iter().map(|path| ctx.resource(path)).collect();
+    let mut value = json!({"paths": shown, "truncated": truncated});
+    // `sizes: true` adds each file's size in bytes, in the same order.
+    if input.get("sizes").and_then(Value::as_bool) == Some(true) {
+        let sizes: Vec<u64> = paths
+            .iter()
+            .map(|path| std::fs::metadata(path).map_or(0, |meta| meta.len()))
+            .collect();
+        value["sizes"] = json!(sizes);
+    }
+    Ok(value)
 }
 
 /// `tools.grep` of a Workflow script: the grep tool's checks, returning
