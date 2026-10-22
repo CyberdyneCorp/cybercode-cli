@@ -106,6 +106,34 @@ impl Runtime {
             .unwrap_or(0)
     }
 
+    /// The Workflow Run of the Session or its nearest ancestor, from the store alone: no
+    /// Session state lock is taken, so a tool preparing a process mid-Turn can ask
+    /// (`CYBER_WORKFLOW_RUN_ID`).
+    pub fn process_workflow_run(&self, session_id: &str) -> Option<String> {
+        std::iter::once(session_id.to_owned())
+            .chain(self.ancestor_ids(session_id))
+            .find_map(|id| self.stored_workflow_run(&id))
+    }
+
+    fn stored_workflow_run(&self, session_id: &str) -> Option<String> {
+        let id = session_id.to_owned();
+        self.inner
+            .store
+            .read(move |conn| {
+                use rusqlite::OptionalExtension;
+                Ok(conn
+                    .query_row(
+                        "SELECT workflow_run_id FROM session WHERE id = ?1",
+                        [id],
+                        |r| r.get::<_, Option<String>>(0),
+                    )
+                    .optional()?
+                    .flatten())
+            })
+            .ok()
+            .flatten()
+    }
+
     fn parent_id(&self, session_id: &str) -> Option<String> {
         let id = session_id.to_owned();
         self.inner

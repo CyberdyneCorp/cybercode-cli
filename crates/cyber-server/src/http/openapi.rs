@@ -331,6 +331,15 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .query(&["ticket", "cursor"])
         .websocket(),
         op(
+            "get",
+            "/workflows",
+            "v1.workflow.library",
+            "List the Workflow library of the Location: saved Workflows by precedence, with their origin, and the modules that failed to load",
+        )
+        .located()
+        .query(&["directory"])
+        .ok::<crate::runtime::workflow_start::WorkflowLibrary>(g),
+        op(
             "post",
             "/workflows/runs",
             "v1.workflow.run",
@@ -386,6 +395,14 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "Stop a run and cancel its in-flight agents",
         )
         .ok::<Data<crate::runtime::WorkflowRun>>(g),
+        op(
+            "post",
+            "/workflows/runs/{id}/save",
+            "v1.workflow.save",
+            "Save an inline run's script as the project Workflow .cyber/workflows/<meta.name>.js; 409 when the file exists unless force",
+        )
+        .optional_body::<super::workflows::SaveBody>(g)
+        .ok::<Data<super::workflows::SavedScript>>(g),
         op(
             "get",
             "/workflows/runs/{id}/logs",

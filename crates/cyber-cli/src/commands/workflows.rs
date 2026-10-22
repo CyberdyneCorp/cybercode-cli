@@ -71,7 +71,7 @@ pub enum WorkflowsCmd {
     Logs { run_id: String },
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Default, Args)]
 pub struct RunArgs {
     /// A saved Workflow's name, or the path of a `.js` module.
     pub target: String,
@@ -181,7 +181,7 @@ fn budget(args: &RunArgs) -> Result<Value, CliError> {
 }
 
 /// The start request body: a saved name, or a module file's source as an inline script.
-fn start_body(ctx: &Context, args: &RunArgs, session: &str) -> Result<Value, CliError> {
+pub(crate) fn start_body(ctx: &Context, args: &RunArgs, session: &str) -> Result<Value, CliError> {
     let script_args = match &args.args {
         None => json!({}),
         Some(text) => match serde_json::from_str::<Value>(text) {
@@ -292,7 +292,7 @@ async fn interrupted(client: &Client, path: &str, id: &str) -> Result<(), CliErr
 }
 
 /// The exit code of an ended run; `None` while it may still run.
-fn ended(run: &Value) -> Option<u8> {
+pub(crate) fn ended(run: &Value) -> Option<u8> {
     match run["status"].as_str()? {
         "completed" => Some(0),
         "budget_exceeded" => Some(EXIT_BUDGET),
@@ -303,7 +303,7 @@ fn ended(run: &Value) -> Option<u8> {
 
 /// What `--wait` already printed.
 #[derive(Default)]
-struct Progress {
+pub(crate) struct Progress {
     phase: Option<String>,
     /// The last queue position printed while the run waits for a run slot.
     queue_position: Option<u64>,
@@ -312,7 +312,7 @@ struct Progress {
 }
 
 impl Progress {
-    fn report(&mut self, run: &Value) {
+    pub(crate) fn report(&mut self, run: &Value) {
         for line in self.changes(run) {
             eprintln!("{line}");
         }

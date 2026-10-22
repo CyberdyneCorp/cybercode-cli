@@ -512,6 +512,16 @@ pub trait Services: Send + Sync {
             "Saved Workflows are unavailable in this host",
         ))
     }
+    /// The Workflow library of a Location (`workflows` → Workflow library over HTTP).
+    fn workflow_library(
+        &self,
+        _location: &Path,
+    ) -> Result<crate::runtime::workflow_start::WorkflowLibrary, ApiError> {
+        Err(ApiError::service_unavailable(
+            "workflow",
+            "Saved Workflows are unavailable in this host",
+        ))
+    }
     fn models(&self, location: &Path) -> BoxFuture<'_, Result<Vec<ModelInfo>, String>>;
     /// The configured default model for new Sessions in a Location.
     fn default_model(&self, location: &Path) -> Option<String>;

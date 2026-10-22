@@ -253,6 +253,12 @@ impl BuiltinHost {
         depth.saturating_add(1).to_string()
     }
 
+    /// The Workflow Run a Session belongs to (its own or an ancestor's), for
+    /// `CYBER_WORKFLOW_RUN_ID` in the processes its tools start.
+    pub(crate) fn process_workflow_run(&self, session_id: &str) -> Option<String> {
+        self.runtime()?.process_workflow_run(session_id)
+    }
+
     fn agent_profile(
         &self,
         directory: &Path,
@@ -1396,6 +1402,18 @@ impl ToolHost for BuiltinHost {
         self.workflow_writer(directory, agent)
     }
 
+    fn warms_prompt_cache(&self) -> bool {
+        true
+    }
+
+    fn workflow_tool(
+        &self,
+        request: cyber_server::runtime::WorkflowToolRequest,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<Value, cyber_workflow::Diagnostic>> {
+        Box::pin(self.direct_tool(request, cancel))
+    }
+
     fn shell(
         &self,
         directory: &str,
@@ -1919,6 +1937,13 @@ fn deny_message(reason: &str) -> String {
     } else {
         format!("Permission denied: {reason}")
     }
+}
+
+/// Whether a denial is [`unattended`]'s: an ask no approver could answer.
+pub(crate) fn is_unattended_denial(message: &str) -> bool {
+    [Mode::Auto, Mode::Default]
+        .into_iter()
+        .any(|mode| message.contains(&unattended(mode)))
 }
 
 /// `permissions-modes` → Non-interactive behavior.

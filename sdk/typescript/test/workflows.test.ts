@@ -52,6 +52,16 @@ test("workflows.run creates an owner Session and returns a handle over the gener
   assert.equal(polls, 2);
 });
 
+test("workflows.library reads the Location's library", async () => {
+  const library = { workflows: [], issues: [] };
+  const { client, calls } = mockClient((req) => {
+    if (req.url.pathname === "/api/v1/workflows") return json(200, library);
+    throw new Error(`unexpected ${req.method} ${req.url.pathname}`);
+  });
+  assert.deepEqual(await client.workflows.library({ directory: "/repo" }), library);
+  assert.equal(calls[0]!.url.searchParams.get("directory"), "/repo");
+});
+
 test("an existing owner Session is reused and an ended run rejects with its diagnostic", async () => {
   const { client, calls } = mockClient((req) => {
     if (req.method === "POST") return json(201, { data: run });

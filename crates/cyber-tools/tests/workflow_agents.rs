@@ -37,6 +37,7 @@ async fn start(flow: &Flow, owner: &str, body: &str) -> String {
             budget: cyber_core::budget::RunBudget::resolve(&json!({}), &[]).unwrap(),
             share: Default::default(),
             starter: Default::default(),
+            tools: Vec::new(),
         })
         .await
         .unwrap()
@@ -147,6 +148,37 @@ async fn agents_are_child_sessions_of_the_owner_under_the_run_mode() {
     assert!(flow.runtime.state(&owner).await.unwrap().entries.is_empty());
 }
 
+/// `CYBER_WORKFLOW_RUN_ID` reaches the processes a workflow agent's tools start, and only
+/// those (`workflows` → agent() call).
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_workflow_agents_shell_sees_its_run_id() {
+    let command = r#"printf 'run=[%s]' "$CYBER_WORKFLOW_RUN_ID""#;
+    let flow = Flow::new(
+        vec![
+            call("b1", "bash", json!({"command": command})),
+            text("done"),
+            call("b2", "bash", json!({"command": command})),
+            text("owner done"),
+        ],
+        false,
+    );
+    let owner = flow.session("bypass").await;
+    let body = "export default async () => (await agent('task')).text;";
+    let run = run(&flow, &owner, body).await;
+    assert_eq!(run.status, WorkflowRunStatus::Completed, "{run:?}");
+    let agents = flow.runtime.workflow_agents(&run.id).unwrap();
+    let child = agents[0].session_id.as_deref().unwrap();
+    let seen = flow.output(child, "b1").await;
+    assert!(seen.contains(&format!("run=[{}]", run.id)), "{seen}");
+
+    // The owner's own tools run outside the run.
+    flow.prompt(&owner, "go").await;
+    flow.settle(&owner).await;
+    let seen = flow.output(&owner, "b2").await;
+    assert!(seen.contains("run=[]"), "{seen}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_missing_result_is_retried_once_then_schema_mismatch() {
     let flow = Flow::new(vec![text("no result"), text("still no result")], false);
@@ -201,34 +233,51 @@ async fn provider_errors_reject_with_agent_failed_and_denials_with_permission_de
 /// Answers only once `expected` streams are open at the same time.
 struct Rendezvous {
     expected: usize,
-    arrived: AtomicUsize,
+    arrived: Arc<AtomicUsize>,
 }
 
+/// Whether every expected request arrived within the wait.
+async fn met(arrived: Arc<AtomicUsize>, expected: usize) -> bool {
+    {
+        for _ in 0..500 {
+            if arrived.load(Ordering::SeqCst) >= expected {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        false
+    }
+}
+
+/// Each response begins at once, as a provider's does, and finishes only once every
+/// expected request is in flight.
 impl Adapter for Rendezvous {
     fn stream(&self, _request: LlmRequest) -> BoxFuture<'_, Result<EventStream, LlmError>> {
         self.arrived.fetch_add(1, Ordering::SeqCst);
         Box::pin(async move {
-            for _ in 0..500 {
-                if self.arrived.load(Ordering::SeqCst) >= self.expected {
-                    let events = vec![
-                        Ok(LlmEvent::TextDelta { text: "met".into() }),
-                        Ok(LlmEvent::Usage(Usage {
-                            input: 10,
-                            output: 1,
-                            ..Usage::default()
-                        })),
-                        Ok(LlmEvent::Finish {
-                            reason: FinishReason::Stop,
-                        }),
-                    ];
-                    return Ok(stream::iter(events).boxed());
+            let first = stream::once(async { Ok(LlmEvent::TextDelta { text: "me".into() }) });
+            let (arrived, expected) = (Arc::clone(&self.arrived), self.expected);
+            let rest = stream::once(async move {
+                if !met(arrived, expected).await {
+                    return vec![Err(LlmError::new(
+                        ErrorKind::InvalidRequest,
+                        "agents never ran concurrently",
+                    ))];
                 }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-            Err(LlmError::new(
-                ErrorKind::InvalidRequest,
-                "agents never ran concurrently",
-            ))
+                vec![
+                    Ok(LlmEvent::TextDelta { text: "t".into() }),
+                    Ok(LlmEvent::Usage(Usage {
+                        input: 10,
+                        output: 1,
+                        ..Usage::default()
+                    })),
+                    Ok(LlmEvent::Finish {
+                        reason: FinishReason::Stop,
+                    }),
+                ]
+            })
+            .flat_map(stream::iter);
+            Ok(first.chain(rest).boxed())
         })
     }
 }
@@ -282,7 +331,7 @@ fn flow_with(
 async fn workflow_agents_are_not_limited_by_agents_max_concurrent() {
     let adapter = Arc::new(Rendezvous {
         expected: 3,
-        arrived: AtomicUsize::new(0),
+        arrived: Arc::new(AtomicUsize::new(0)),
     });
     let flow = flow_with(
         Fixture::new(),
@@ -703,4 +752,235 @@ async fn two_runs_of_one_session_run_together_and_stop_independently() {
         "{summary:?}"
     );
     flow.runtime.shutdown().await;
+}
+
+/// `workflows` → Direct read-only tools on the built-in host: `tools.glob`, `tools.grep`
+/// and `tools.read` return structured data from the owner's Location under the built-in
+/// checks, and an ask in a non-interactive run is refused for want of an approver.
+#[tokio::test(flavor = "multi_thread")]
+async fn direct_tools_return_structured_results_and_refuse_unattended_asks() {
+    let flow = Flow::new(Vec::new(), false);
+    std::fs::create_dir_all(flow.f.repo.join("src")).unwrap();
+    std::fs::write(flow.f.repo.join("src/b.rs"), "fn b() {}\n// TODO b\n").unwrap();
+    std::fs::write(flow.f.repo.join("src/a.rs"), "// TODO a\nfn a() {}\n").unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let owner = flow.session("default").await;
+    let source = format!(
+        "export const meta = {{ name: 'scan', description: 'Scan', tools: ['glob', 'grep', 'read'] }};\n\
+         export default async () => {{\n\
+           const files = await tools.glob({{ pattern: 'src/*.rs' }});\n\
+           const todos = await tools.grep({{ pattern: 'TODO', include: '*.rs' }});\n\
+           const page = await tools.read({{ path: 'src/a.rs', limit: 1 }});\n\
+           let refused = null;\n\
+           try {{ await tools.glob({{ pattern: '*', path: {:?} }}); }} catch (e) {{ refused = `${{e.kind}}: ${{e.message}}`; }}\n\
+           return {{ files, todos, page, refused }};\n\
+         }};\n",
+        outside.path().display().to_string()
+    );
+    let run = flow
+        .runtime
+        .start_workflow_run(StartWorkflowRun {
+            module: WorkflowModule::inline(source).unwrap(),
+            args: json!({}),
+            session_id: owner,
+            limits: Limits::default(),
+            tiers: BTreeMap::new(),
+            budget: cyber_core::budget::RunBudget::resolve(&json!({}), &[]).unwrap(),
+            share: Default::default(),
+            starter: Default::default(),
+            tools: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let run = settled(&flow, &run.id).await;
+    assert_eq!(run.status, WorkflowRunStatus::Completed, "{run:?}");
+    let result = run.result.unwrap();
+    assert_eq!(
+        result["files"],
+        json!({"paths": ["src/a.rs", "src/b.rs"], "truncated": false})
+    );
+    assert_eq!(
+        result["todos"]["matches"],
+        json!([
+            {"path": "src/a.rs", "line": 1, "text": "// TODO a"},
+            {"path": "src/b.rs", "line": 2, "text": "// TODO b"},
+        ])
+    );
+    assert_eq!(
+        result["page"],
+        json!({"content": "// TODO a\n", "truncated": true, "next_offset": 2})
+    );
+    assert_eq!(
+        result["refused"],
+        "PermissionDenied: No interactive approver for workflow run"
+    );
+}
+
+/// Start a run of `body` as `starter` with `args`.
+async fn start_as(
+    flow: &Flow,
+    owner: &str,
+    body: &str,
+    starter: RunStarter,
+    args: Value,
+) -> String {
+    flow.runtime
+        .start_workflow_run(StartWorkflowRun {
+            module: module(body),
+            args,
+            session_id: owner.into(),
+            limits: Limits::default(),
+            tiers: BTreeMap::new(),
+            budget: cyber_core::budget::RunBudget::resolve(&json!({}), &[]).unwrap(),
+            share: Default::default(),
+            starter,
+            tools: Vec::new(),
+        })
+        .await
+        .unwrap()
+        .id
+}
+
+/// Poll a run until it has ended.
+async fn ended(flow: &Flow, id: &str) -> WorkflowRun {
+    for _ in 0..1000 {
+        let run = flow.runtime.workflow_run(id).unwrap().unwrap();
+        if !run.status.is_active() {
+            return run;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("run {id} did not end");
+}
+
+fn run_status(flow: &Flow, id: &str) -> WorkflowRunStatus {
+    flow.runtime.workflow_run(id).unwrap().unwrap().status
+}
+
+/// `workflows` → ask() user interaction: an interactive run waits in `waiting_input` for
+/// the owner's answer to a question with options, and `args.answers` answers a question
+/// without asking; a run without a user rejects with `NoInteractiveUser`.
+#[tokio::test(flavor = "multi_thread")]
+async fn ask_waits_for_the_owner_or_uses_declared_answers() {
+    let flow = Flow::new(vec![text("noted"), text("noted")], true);
+    let owner = flow.session("default").await;
+    let body = "export default async () => {\n  const pick = await ask({ question: 'Migrate 60 files in 12 batches?', options: ['yes', 'no'] });\n  const note = await ask('Anything else?');\n  return { pick, note };\n};\n";
+    let starter = RunStarter::Session { interactive: true };
+    let args = json!({"answers": {"Anything else?": "nothing"}});
+    let id = start_as(&flow, &owner, body, starter, args).await;
+    let request = flow.pending(&owner).await;
+    let PendingKind::Question { questions } = &request.kind else {
+        panic!("expected a question: {request:?}");
+    };
+    assert_eq!(questions[0].question, "Migrate 60 files in 12 batches?");
+    assert_eq!(questions[0].options.len(), 2);
+    eventually("waiting_input", || {
+        run_status(&flow, &id) == WorkflowRunStatus::WaitingInput
+    })
+    .await;
+    assert!(flow.runtime.workflow_agents(&id).unwrap().is_empty());
+    let answers = vec![vec!["yes".to_string()]];
+    flow.runtime
+        .answer_question(&request.id, QuestionReply::Answers { answers })
+        .await
+        .unwrap();
+    let run = ended(&flow, &id).await;
+    assert_eq!(run.status, WorkflowRunStatus::Completed, "{run:?}");
+    assert_eq!(run.result, Some(json!({"pick": "yes", "note": "nothing"})));
+
+    let body = "export default async () => {\n  try { await ask('Go?'); } catch (e) { return `${e.kind}: ${e.message}`; }\n};\n";
+    let id = start_as(&flow, &owner, body, RunStarter::Api, json!({})).await;
+    let run = ended(&flow, &id).await;
+    assert_eq!(
+        run.result,
+        Some(json!(
+            "NoInteractiveUser: no interactive user can answer ask() in this run"
+        ))
+    );
+}
+
+/// A stop while `ask()` waits withdraws the question and records no answer.
+#[tokio::test(flavor = "multi_thread")]
+async fn stopping_a_waiting_run_withdraws_its_question() {
+    let flow = Flow::new(Vec::new(), true);
+    let owner = flow.session("default").await;
+    let body = "export default async () => ask('Proceed?');\n";
+    let starter = RunStarter::Session { interactive: true };
+    let id = start_as(&flow, &owner, body, starter, json!({})).await;
+    flow.pending(&owner).await;
+    eventually("waiting_input", || {
+        run_status(&flow, &id) == WorkflowRunStatus::WaitingInput
+    })
+    .await;
+    flow.runtime.stop_workflow_run(&id).await.unwrap();
+    eventually("the question withdrawn", || {
+        flow.runtime.pending_requests(Some(&owner)).is_empty()
+    })
+    .await;
+    assert_eq!(run_status(&flow, &id), WorkflowRunStatus::Stopped);
+}
+
+/// Records when each request starts and when the first response begins; each response
+/// begins `delay` after its request.
+struct Staggered {
+    delay: Duration,
+    starts: Arc<std::sync::Mutex<Vec<std::time::Instant>>>,
+    first_response: Arc<std::sync::Mutex<Option<std::time::Instant>>>,
+}
+
+impl Adapter for Staggered {
+    fn stream(&self, _request: LlmRequest) -> BoxFuture<'_, Result<EventStream, LlmError>> {
+        self.starts.lock().unwrap().push(std::time::Instant::now());
+        let (delay, first) = (self.delay, Arc::clone(&self.first_response));
+        Box::pin(async move {
+            tokio::time::sleep(delay).await;
+            first
+                .lock()
+                .unwrap()
+                .get_or_insert_with(std::time::Instant::now);
+            Ok(answer("warm"))
+        })
+    }
+}
+
+async fn fan_out(warmup: bool) -> (Vec<std::time::Instant>, std::time::Instant) {
+    let adapter = Arc::new(Staggered {
+        delay: Duration::from_millis(300),
+        starts: Arc::default(),
+        first_response: Arc::default(),
+    });
+    let flow = flow_with(
+        Fixture::new(),
+        Vec::new(),
+        "test/staggered",
+        Arc::clone(&adapter) as Arc<dyn Adapter>,
+    );
+    flow.runtime.configure_workflow_warmup(warmup);
+    assert!(flow.runtime.configure_workflow_concurrency(3));
+    let owner = flow.session("default").await;
+    let body = "export default async () => (await parallel([1, 2, 3].map((i) => () => agent('task ' + i, { model: 'test/staggered' })))).length;\n";
+    let run = run(&flow, &owner, body).await;
+    assert_eq!(run.result, Some(json!(3)), "{run:?}");
+    let starts = adapter.starts.lock().unwrap().clone();
+    let first = adapter.first_response.lock().unwrap().unwrap();
+    (starts, first)
+}
+
+/// `workflows` → Prompt-cache warm-up for fan-out: of agents sharing a prompt prefix, one
+/// starts at once and the others after its first response begins; with
+/// `workflows.prompt_cache_warmup: false` all start together.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_fan_out_sharing_a_prefix_waits_for_the_first_response() {
+    let (starts, first) = fan_out(true).await;
+    assert_eq!(starts.len(), 3);
+    let mut sorted = starts.clone();
+    sorted.sort();
+    assert!(sorted[0] < first, "the leader starts before any response");
+    assert!(
+        sorted[1..].iter().all(|start| *start >= first),
+        "followers start after the first response: {sorted:?} vs {first:?}"
+    );
+
+    let (starts, first) = fan_out(false).await;
+    assert!(starts.iter().all(|start| *start < first), "{starts:?}");
 }

@@ -241,12 +241,9 @@ impl Runtime {
         if run.status == WorkflowRunStatus::Paused {
             return Ok(run);
         }
-        if !matches!(
-            run.status,
-            WorkflowRunStatus::Running | WorkflowRunStatus::Queued
-        ) {
+        if !run.status.is_active() {
             return Err(RuntimeError::Conflict(format!(
-                "Run {run_id} is {}; only a running or queued run can be paused",
+                "Run {run_id} is {}; only a running, waiting or queued run can be paused",
                 status_name(run.status)
             )));
         }
@@ -509,7 +506,10 @@ impl Runtime {
         let Ok(Some(mut run)) = self.workflow_run(id) else {
             return;
         };
-        if run.status != WorkflowRunStatus::Running {
+        if !matches!(
+            run.status,
+            WorkflowRunStatus::Running | WorkflowRunStatus::WaitingInput
+        ) {
             return;
         }
         run.status = WorkflowRunStatus::Paused;

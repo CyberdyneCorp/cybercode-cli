@@ -1588,6 +1588,8 @@ cyber exec [OPTIONS] [PROMPT]...
 - `--non-interactive-rules`: Add the never-ask rules to a reused Session too.
 - `--accept-messages`: Let other Sessions message the Session this run creates (by default it refuses them with `non_interactive`)
 - `--command <COMMAND>`: Run a skill or custom command with the prompt as its arguments.
+- `--workflow <NAME|PATH>`: Run a Workflow (a saved name or a `.js` module path) instead of a prompt; its return value is the result.
+- `--args <JSON>`: The Workflow's `args` as a JSON object.
 - `--file <FILES>`: Attach a file (repeatable)
 - `--max-turns <MAX_TURNS>`: With --goal: each Goal's `max_turns` budget; otherwise the Session's step ceiling.
 - `--goal <CONDITION>`: Work until this Goal is met (repeatable: a queue, in order). The exit code is 0 met, 3 impossible, 4 budget exceeded, 1 otherwise, for the first non-met Goal.

@@ -279,6 +279,7 @@ impl App {
         let workflow_settings = config::WorkflowSettings::from_config(&global).unwrap_or_default();
         let workflow_limit = workflow_settings.effective_max_concurrent(cores);
         runtime.configure_workflow_concurrency(workflow_limit as usize);
+        runtime.configure_workflow_warmup(workflow_settings.prompt_cache_warmup);
         // Runs holding an execution attempt at once (`workflows.max_running_runs`); later
         // starts and resumes wait `queued`.
         runtime.configure_workflow_runs(workflow_settings.max_running_runs as usize);
@@ -356,6 +357,7 @@ impl App {
                     "fs",
                     "command",
                     "event",
+                    "workflow",
                     "goals",
                 ]
                 .map(str::to_string)

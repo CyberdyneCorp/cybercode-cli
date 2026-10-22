@@ -12,7 +12,7 @@ import {
   type StreamOperationId,
   type StreamOptions,
 } from "./generated/operations.js";
-import type { EventEnvelope, Receipt } from "./generated/types.js";
+import type { EventEnvelope, Receipt, WorkflowLibrary } from "./generated/types.js";
 import { promptAndWait, switchSession, toParts, type PromptInput, type PromptOptions, type PromptResult } from "./prompt.js";
 import {
   onPermissionRequest,
@@ -115,6 +115,12 @@ export class CyberClient implements Caller {
     list: (filter?: WorkflowListFilter): AsyncIterableIterator<WorkflowRunHandle> => listWorkflowRuns(this, filter),
     /** The handle of an existing run, such as one another client started. */
     get: (id: string): Promise<WorkflowRunHandle> => getWorkflowRun(this, id),
+    /**
+     * The Workflow library of a Location (default: the client's): every Workflow a run can
+     * start by name, with its origin, digest and the definitions it shadows, and the
+     * modules that failed to load.
+     */
+    library: (query?: { directory?: string }): Promise<WorkflowLibrary> => this.workflow.library(query),
   };
 
   readonly questions = {

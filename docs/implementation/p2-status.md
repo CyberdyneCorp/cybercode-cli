@@ -475,6 +475,22 @@ Increment 2 delivers what the brief named "runtime core": real agents, the globa
 
 `ask()`/`waiting_input`, direct read-only `tools`, prompt-cache warm-up, `CYBER_WORKFLOW_RUN_ID`, compaction reporting, the TUI monitor and Save action, `exec --workflow`, Job integration, saved-Workflow listing over HTTP and capability discovery, reserved budgets (4.16), M2.2 bundled Workflows, P3 runners.
 
+## M2.1 Workflow runtime: gaps (2026-10-22)
+
+Change `implement-m2-1-workflow-runtime`, tasks 4.3, 4.8, 4.9, 4.11, 4.15, 5.1, 5.4, 5.5, 5.6 and 5.7; M2.2 tasks 2.1 and 3.1–3.3 with them.
+
+- **`CYBER_WORKFLOW_RUN_ID`** in every sandboxed tool process of a workflow agent (and its subagents) and in hook commands of a run, read from the store without the Session lock. Test: `workflow_agents::a_workflow_agents_shell_sees_its_run_id`.
+- **Workflow library over HTTP.** `GET /api/v1/workflows` (`v1.workflow.library`), `client.workflows.library()`, `workflow` in `/health` `features`. Test: `workflows::the_library_lists_saved_workflows_by_precedence_with_issues`.
+- **Direct read-only tools.** `meta.tools` and the invocation's `tools`, enforced by the engine; `ToolHost::workflow_tool` with the built-in checks; results recorded as `tool` calls and replayed. Tests: `engine::direct_tools_obey_the_meta_and_invocation_allowlists`, `workflow_runs::direct_tool_results_are_recorded_and_replayed_after_a_pause`, `workflow_agents::direct_tools_return_structured_results_and_refuse_unattended_asks`.
+- **`ask()`.** `runtime/workflow_ask.rs`, `workflow.run.waiting.1`/`workflow.run.answered.1`, `args.answers`. Tests: `workflow_agents::ask_waits_for_the_owner_or_uses_declared_answers`, `workflow_agents::stopping_a_waiting_run_withdraws_its_question`.
+- **`cyber exec --workflow`.** Test: `cli::exec_runs_a_workflow_and_maps_its_end_to_exit_codes`.
+- **`/tasks` and `/stop`.** Test: `screens_tasks::tasks_lists_workflow_runs_and_stop_all_stops_them`.
+- **Save.** `POST /workflows/runs/{id}/save`, `w` in the monitor. Test: `workflows::an_inline_runs_script_is_saved_into_the_project_workflows`.
+- **Compaction reporting.** `compactions` per agent, `⟲N` in the monitor. Test: `workflow_runs::a_run_reports_its_agents_compactions`.
+- **Prompt-cache warm-up.** `runtime/workflow_warmup.rs`, `workflows.prompt_cache_warmup`. Test: `workflow_agents::a_fan_out_sharing_a_prefix_waits_for_the_first_response`.
+
+Still open: reserved budgets (4.16) and finished-transcript retention (5.9, which needs storage retention). Session export of run summaries is done by `add-session-export`, and goal deferral while runs are active (5.8) by the goals change.
+
 ## M2.1 Workflow runtime: review fixes
 
 Fourteen review findings were checked; thirteen were real (two of them, the HTTP and CLI `workflow.run` check, were one bug). Each fix has a regression test that fails without it.
