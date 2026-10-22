@@ -367,7 +367,9 @@ pub enum Op {
     /// Every run a restart interrupted (`resume_interrupted`).
     ResumeInterrupted,
     /// Save an inline run's script into `.cyber/workflows/` (`force` replaces a file).
-    Save { force: bool },
+    Save {
+        force: bool,
+    },
 }
 
 /// Monitor reads and writes, performed by [`perform`].

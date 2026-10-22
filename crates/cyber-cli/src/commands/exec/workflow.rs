@@ -45,10 +45,7 @@ pub(super) async fn execute(
     let id = session["id"].as_str().unwrap_or_default();
     let body = workflows::start_body(ctx, &run_args(args, target), id)?;
     out.init(client, session).await;
-    let run = client
-        .post("/workflows/runs", body)
-        .await
-        .map_err(api)?;
+    let run = client.post("/workflows/runs", body).await.map_err(api)?;
     let run_id = run["data"]["id"].as_str().unwrap_or_default().to_owned();
     let path = format!("/workflows/runs/{run_id}");
     let mut follow = Follow {
@@ -68,7 +65,9 @@ pub(super) async fn execute(
         let run = &detail["data"];
         follow.observe(run);
         if let Some(code) = workflows::ended(run) {
-            return Ok(follow.out.workflow_finish(run, code, started, args, session));
+            return Ok(follow
+                .out
+                .workflow_finish(run, code, started, args, session));
         }
         tokio::select! {
             biased;

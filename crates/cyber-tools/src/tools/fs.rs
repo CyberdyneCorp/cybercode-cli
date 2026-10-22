@@ -123,8 +123,8 @@ pub(crate) async fn read_value(ctx: &Ctx<'_>) -> Result<Value, ToolError> {
         return Err(failed("Binary file: application/octet-stream"));
     }
     let offset = number(&ctx.inv.input, "offset").unwrap_or(1).max(1) as usize;
-    let limit = number(&ctx.inv.input, "limit")
-        .map_or(PAGE_LINES, |l| (l as usize).clamp(1, PAGE_LINES));
+    let limit =
+        number(&ctx.inv.input, "limit").map_or(PAGE_LINES, |l| (l as usize).clamp(1, PAGE_LINES));
     let content = String::from_utf8_lossy(&bytes);
     let (text, next) = page_text(&content, offset, limit);
     Ok(json!({"content": text, "truncated": next.is_some(), "next_offset": next}))

@@ -417,7 +417,11 @@ async fn the_library_lists_saved_workflows_by_precedence_with_issues() {
     }
     std::fs::write(global.join("release.js"), saved_module("release", "Global")).unwrap();
     std::fs::write(global.join("audit.js"), saved_module("audit", "Audit")).unwrap();
-    std::fs::write(project.join("release.js"), saved_module("release", "Project")).unwrap();
+    std::fs::write(
+        project.join("release.js"),
+        saved_module("release", "Project"),
+    )
+    .unwrap();
     std::fs::write(project.join("broken.js"), "export const meta = 1;").unwrap();
 
     let listed = server.ok(Method::GET, "/workflows", None).await;
@@ -437,10 +441,16 @@ async fn the_library_lists_saved_workflows_by_precedence_with_issues() {
     assert_eq!(release["tools"], json!(["glob"]));
     assert!(release["digest"].as_str().unwrap().starts_with("sha256:"));
     let shadowed = release["shadowed"][0].as_str().unwrap();
-    assert!(shadowed.ends_with("config/workflows/release.js"), "{release}");
+    assert!(
+        shadowed.ends_with("config/workflows/release.js"),
+        "{release}"
+    );
     assert_eq!(listed["workflows"][0]["origin"]["kind"], "global");
     let issue = &listed["issues"][0];
-    assert!(issue["path"].as_str().unwrap().ends_with("broken.js"), "{listed}");
+    assert!(
+        issue["path"].as_str().unwrap().ends_with("broken.js"),
+        "{listed}"
+    );
     assert_eq!(issue["diagnostic"]["kind"], "ParseError", "{issue}");
 
     let elsewhere = tempfile::tempdir().unwrap();
@@ -455,7 +465,10 @@ async fn the_library_lists_saved_workflows_by_precedence_with_issues() {
 
     let health = server.ok(Method::GET, "/health", None).await;
     assert!(
-        health["features"].as_array().unwrap().contains(&json!("workflow")),
+        health["features"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("workflow")),
         "{health}"
     );
     server.close().await;
@@ -1552,7 +1565,8 @@ fn held_of(model: &ScriptedModel, prefix: char) -> usize {
 async fn runs_share_the_agent_limit_fairly_and_a_share_caps_its_run() {
     let model = ScriptedModel::start(gated_reply);
     let mut config = model.config();
-    config["workflows"] = json!({"max_concurrent": 2});
+    // The scripted provider holds whole responses, so warm-up would hold the fan-out.
+    config["workflows"] = json!({"max_concurrent": 2, "prompt_cache_warmup": false});
     let server = Server::start(config).await;
     let owner = server.session().await;
     let a = server
@@ -1659,7 +1673,8 @@ async fn a_bad_share_is_refused_and_a_resume_changes_the_share_without_a_revisio
 async fn a_resume_without_a_share_keeps_the_runs_share() {
     let model = ScriptedModel::start(gated_reply);
     let mut config = model.config();
-    config["workflows"] = json!({"max_concurrent": 2});
+    // The scripted provider holds whole responses, so warm-up would hold the fan-out.
+    config["workflows"] = json!({"max_concurrent": 2, "prompt_cache_warmup": false});
     let server = Server::start(config).await;
     let owner = server.session().await;
     let run = server
@@ -2829,7 +2844,8 @@ impl Server {
 async fn queued_agents_are_counted_and_progress_streams_on_the_runs_location() {
     let model = ScriptedModel::start(gated_reply);
     let mut config = model.config();
-    config["workflows"] = json!({"max_concurrent": 16});
+    // The scripted provider holds whole responses, so warm-up would hold the fan-out.
+    config["workflows"] = json!({"max_concurrent": 16, "prompt_cache_warmup": false});
     let server = Server::start(config).await;
     let elsewhere = server.temp.path().canonicalize().unwrap().join("elsewhere");
     std::fs::create_dir_all(&elsewhere).unwrap();
@@ -3225,7 +3241,12 @@ async fn an_inline_runs_script_is_saved_into_the_project_workflows() {
     server.settled_run(&id).await;
     let path = format!("/workflows/runs/{id}/save");
     let saved = server.ok(Method::POST, &path, None).await;
-    let file = server.temp.path().canonicalize().unwrap().join(".cyber/workflows/keep-me.js");
+    let file = server
+        .temp
+        .path()
+        .canonicalize()
+        .unwrap()
+        .join(".cyber/workflows/keep-me.js");
     assert_eq!(saved["data"]["path"], file.display().to_string());
     assert_eq!(std::fs::read_to_string(&file).unwrap(), script);
 

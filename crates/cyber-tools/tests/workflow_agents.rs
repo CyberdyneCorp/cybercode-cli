@@ -233,34 +233,51 @@ async fn provider_errors_reject_with_agent_failed_and_denials_with_permission_de
 /// Answers only once `expected` streams are open at the same time.
 struct Rendezvous {
     expected: usize,
-    arrived: AtomicUsize,
+    arrived: Arc<AtomicUsize>,
 }
 
+/// Whether every expected request arrived within the wait.
+async fn met(arrived: Arc<AtomicUsize>, expected: usize) -> bool {
+    {
+        for _ in 0..500 {
+            if arrived.load(Ordering::SeqCst) >= expected {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        false
+    }
+}
+
+/// Each response begins at once, as a provider's does, and finishes only once every
+/// expected request is in flight.
 impl Adapter for Rendezvous {
     fn stream(&self, _request: LlmRequest) -> BoxFuture<'_, Result<EventStream, LlmError>> {
         self.arrived.fetch_add(1, Ordering::SeqCst);
         Box::pin(async move {
-            for _ in 0..500 {
-                if self.arrived.load(Ordering::SeqCst) >= self.expected {
-                    let events = vec![
-                        Ok(LlmEvent::TextDelta { text: "met".into() }),
-                        Ok(LlmEvent::Usage(Usage {
-                            input: 10,
-                            output: 1,
-                            ..Usage::default()
-                        })),
-                        Ok(LlmEvent::Finish {
-                            reason: FinishReason::Stop,
-                        }),
-                    ];
-                    return Ok(stream::iter(events).boxed());
+            let first = stream::once(async { Ok(LlmEvent::TextDelta { text: "me".into() }) });
+            let (arrived, expected) = (Arc::clone(&self.arrived), self.expected);
+            let rest = stream::once(async move {
+                if !met(arrived, expected).await {
+                    return vec![Err(LlmError::new(
+                        ErrorKind::InvalidRequest,
+                        "agents never ran concurrently",
+                    ))];
                 }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-            Err(LlmError::new(
-                ErrorKind::InvalidRequest,
-                "agents never ran concurrently",
-            ))
+                vec![
+                    Ok(LlmEvent::TextDelta { text: "t".into() }),
+                    Ok(LlmEvent::Usage(Usage {
+                        input: 10,
+                        output: 1,
+                        ..Usage::default()
+                    })),
+                    Ok(LlmEvent::Finish {
+                        reason: FinishReason::Stop,
+                    }),
+                ]
+            })
+            .flat_map(stream::iter);
+            Ok(first.chain(rest).boxed())
         })
     }
 }
@@ -314,7 +331,7 @@ fn flow_with(
 async fn workflow_agents_are_not_limited_by_agents_max_concurrent() {
     let adapter = Arc::new(Rendezvous {
         expected: 3,
-        arrived: AtomicUsize::new(0),
+        arrived: Arc::new(AtomicUsize::new(0)),
     });
     let flow = flow_with(
         Fixture::new(),
@@ -800,7 +817,13 @@ async fn direct_tools_return_structured_results_and_refuse_unattended_asks() {
 }
 
 /// Start a run of `body` as `starter` with `args`.
-async fn start_as(flow: &Flow, owner: &str, body: &str, starter: RunStarter, args: Value) -> String {
+async fn start_as(
+    flow: &Flow,
+    owner: &str,
+    body: &str,
+    starter: RunStarter,
+    args: Value,
+) -> String {
     flow.runtime
         .start_workflow_run(StartWorkflowRun {
             module: module(body),
@@ -895,4 +918,66 @@ async fn stopping_a_waiting_run_withdraws_its_question() {
     })
     .await;
     assert_eq!(run_status(&flow, &id), WorkflowRunStatus::Stopped);
+}
+
+/// Records when each request starts and when the first response begins; each response
+/// begins `delay` after its request.
+struct Staggered {
+    delay: Duration,
+    starts: Arc<std::sync::Mutex<Vec<std::time::Instant>>>,
+    first_response: Arc<std::sync::Mutex<Option<std::time::Instant>>>,
+}
+
+impl Adapter for Staggered {
+    fn stream(&self, _request: LlmRequest) -> BoxFuture<'_, Result<EventStream, LlmError>> {
+        self.starts.lock().unwrap().push(std::time::Instant::now());
+        let (delay, first) = (self.delay, Arc::clone(&self.first_response));
+        Box::pin(async move {
+            tokio::time::sleep(delay).await;
+            first.lock().unwrap().get_or_insert_with(std::time::Instant::now);
+            Ok(answer("warm"))
+        })
+    }
+}
+
+async fn fan_out(warmup: bool) -> (Vec<std::time::Instant>, std::time::Instant) {
+    let adapter = Arc::new(Staggered {
+        delay: Duration::from_millis(300),
+        starts: Arc::default(),
+        first_response: Arc::default(),
+    });
+    let flow = flow_with(
+        Fixture::new(),
+        Vec::new(),
+        "test/staggered",
+        Arc::clone(&adapter) as Arc<dyn Adapter>,
+    );
+    flow.runtime.configure_workflow_warmup(warmup);
+    assert!(flow.runtime.configure_workflow_concurrency(3));
+    let owner = flow.session("default").await;
+    let body = "export default async () => (await parallel([1, 2, 3].map((i) => () => agent('task ' + i, { model: 'test/staggered' })))).length;\n";
+    let run = run(&flow, &owner, body).await;
+    assert_eq!(run.result, Some(json!(3)), "{run:?}");
+    let starts = adapter.starts.lock().unwrap().clone();
+    let first = adapter.first_response.lock().unwrap().unwrap();
+    (starts, first)
+}
+
+/// `workflows` → Prompt-cache warm-up for fan-out: of agents sharing a prompt prefix, one
+/// starts at once and the others after its first response begins; with
+/// `workflows.prompt_cache_warmup: false` all start together.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_fan_out_sharing_a_prefix_waits_for_the_first_response() {
+    let (starts, first) = fan_out(true).await;
+    assert_eq!(starts.len(), 3);
+    let mut sorted = starts.clone();
+    sorted.sort();
+    assert!(sorted[0] < first, "the leader starts before any response");
+    assert!(
+        sorted[1..].iter().all(|start| *start >= first),
+        "followers start after the first response: {sorted:?} vs {first:?}"
+    );
+
+    let (starts, first) = fan_out(false).await;
+    assert!(starts.iter().all(|start| *start < first), "{starts:?}");
 }

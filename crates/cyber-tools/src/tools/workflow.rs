@@ -110,8 +110,7 @@ async fn run(ctx: &Ctx<'_>) -> Result<String, ToolError> {
         workflow_start::budget(&settings, &module, input.get("budget")).map_err(start_failed)?;
     let share = workflow_start::share(&settings, &module, input.get("max_concurrent"))
         .map_err(start_failed)?;
-    let tools =
-        workflow_start::invocation_tools(input.get("tools")).map_err(start_failed)?;
+    let tools = workflow_start::invocation_tools(input.get("tools")).map_err(start_failed)?;
     let shown = serde_json::to_value(&budget).unwrap_or(Value::Null);
     let request = |resource: String| Request {
         action: WORKFLOW_RUN.into(),

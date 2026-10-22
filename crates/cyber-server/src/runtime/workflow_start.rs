@@ -190,7 +190,10 @@ fn entry(entry: Entry) -> Option<LibraryEntry> {
         phases: module.meta.phases.iter().map(|p| p.title.clone()).collect(),
         args: module.meta.args.clone(),
         budgets: raw.get("budget").cloned(),
-        estimate: raw.get("estimate").and_then(Value::as_str).map(str::to_owned),
+        estimate: raw
+            .get("estimate")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
         tools: meta_tools(&module),
         origin,
         digest: module.digest.clone(),

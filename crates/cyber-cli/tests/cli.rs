@@ -347,15 +347,29 @@ fn exec_runs_a_workflow_and_maps_its_end_to_exit_codes() {
 
     let text = service.cyber(&["exec", "--workflow", "x", "--args", "{}"]);
     let shown = exits(&text, 0);
-    assert!(stdout(&text).contains("\"text\": \"agent done\""), "{shown}");
+    assert!(
+        stdout(&text).contains("\"text\": \"agent done\""),
+        "{shown}"
+    );
     assert!(shown.contains("phase: Ask"), "{shown}");
 
     let failed = exits(&service.cyber(&["exec", "--workflow", "boom.js"]), 1);
     assert!(failed.contains("boom"), "{failed}");
-    let capped = service.cyber(&["exec", "--workflow", "x", "--timeout", "0s", "--format", "json"]);
+    let capped = service.cyber(&[
+        "exec",
+        "--workflow",
+        "x",
+        "--timeout",
+        "0s",
+        "--format",
+        "json",
+    ]);
     exits(&capped, 4);
     assert_eq!(json(&capped)["stop_reason"], "budget_exceeded");
-    exits(&service.cyber(&["exec", "--workflow", "x", "--args", "[1]"]), 2);
+    exits(
+        &service.cyber(&["exec", "--workflow", "x", "--args", "[1]"]),
+        2,
+    );
     exits(&service.cyber(&["exec", "--workflow", "x", "a prompt"]), 2);
 }
 

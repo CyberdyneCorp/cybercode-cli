@@ -755,6 +755,13 @@ pub trait ToolHost: Send + Sync {
         false
     }
 
+    /// Whether workflow agents sharing a prompt prefix start after the first one's first
+    /// response (`workflows` → Prompt-cache warm-up for fan-out): hosts whose agents are
+    /// real child Sessions on a provider.
+    fn warms_prompt_cache(&self) -> bool {
+        false
+    }
+
     /// Run a Workflow script's direct read-only tool call (`workflows` → Direct read-only
     /// tools). Failures are typed: `PermissionDenied` for a refused permission, otherwise
     /// `ExecutionFailure`.

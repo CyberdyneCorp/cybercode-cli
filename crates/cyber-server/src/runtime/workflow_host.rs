@@ -36,6 +36,7 @@ use super::workflow_ask::{Asked, ScriptQuestion, no_user};
 use super::workflow_control::{Control, Signal};
 use super::workflow_replay::{Outcome, Plan, Replay};
 use super::workflow_scheduler::{Slot, WorkflowScheduler};
+use super::workflow_warmup::{self, Groups, Release, Role};
 use super::workflows::{
     AGENT_SETTLED, AGENT_STARTED, CALL_RECORDED, LOG, PHASE, RunLog, WorkflowAgent, WorkflowRun,
 };
@@ -106,6 +107,8 @@ pub(super) struct RunHost {
     budget_view: RefCell<Value>,
     /// Records of the run so far, against [`MAX_RUN_RECORDS`] and [`MAX_RUN_RECORD_BYTES`].
     records: RecordCount,
+    /// Prompt-prefix groups for cache warm-up, when the host warms.
+    warmup: Option<Groups>,
     /// A host call other than `agent()` was already rejected for the wall-clock budget.
     wall_rejected: Cell<bool>,
 }
@@ -251,6 +254,7 @@ impl RunHost {
             writers: runtime.workflow_writers(&run.directory),
             budget_view: RefCell::new(Value::Null),
             records: RecordCount::of(&runtime.inner.store, &run.id),
+            warmup: runtime.workflow_warmup().then(Groups::default),
             wall_rejected: Cell::new(false),
         }
         .with_initial_budget()
@@ -497,6 +501,15 @@ impl RunHost {
             return self.record_call("agent", seq, &key, outcome);
         }
         let resumed = self.replay.unsettled(&key);
+        let role = self.warm_role(&prepared, resumed.is_none());
+        if let Some(Role::Follower(group)) = &role {
+            // Paused or stopped meanwhile: `slot` ends the attempt.
+            futures::future::select(Box::pin(group.released()), Box::pin(self.signalled())).await;
+        }
+        let release = match role {
+            Some(Role::Leader(group)) => Some(Release(group)),
+            _ => None,
+        };
         let slot = self.slot().await?;
         if resumed.is_none()
             && let Err(error) = self.charge_agent()
@@ -511,6 +524,9 @@ impl RunHost {
             .then(|| RunWorktree::new(&self.run_id, self.started.get()));
         prepared.record.branch = worktree.as_ref().map(|tree| tree.branch.clone());
         self.record_agent(AGENT_STARTED, &prepared.record, seq, None)?;
+        if let Some(release) = &release {
+            self.watch_first_response(&prepared.record.id, release);
+        }
         self.in_flight.set(self.in_flight.get() + 1);
         let outcome = self
             .spawn(&prepared, resumed.is_some(), worktree, slot)
@@ -523,6 +539,36 @@ impl RunHost {
         }
         let outcome = self.budget_failure(outcome);
         self.settle(prepared, seq, outcome)
+    }
+
+    /// The call's place in its prompt-prefix group; a resumed agent continues at once.
+    fn warm_role(&self, prepared: &Prepared, fresh: bool) -> Option<Role> {
+        let groups = self.warmup.as_ref().filter(|_| fresh)?;
+        Some(groups.join(
+            prepared.agent.as_deref(),
+            prepared.record.model.as_deref(),
+            prepared.schema.as_ref(),
+        ))
+    }
+
+    /// Release a leader's group at its child's first provider response. Subscribed before
+    /// the child starts, so its first output is not missed.
+    fn watch_first_response(&self, agent_id: &str, release: &Release) {
+        let Some(runtime) = self.runtime.upgrade() else {
+            return;
+        };
+        if release.0.is_released() {
+            return;
+        }
+        let events = runtime.inner.bus.subscribe();
+        self.handle
+            .spawn(workflow_warmup::release_on_first_response(
+                events,
+                Arc::clone(&self.store),
+                self.owner.session_id.clone(),
+                agent_id.to_owned(),
+                Arc::clone(&release.0),
+            ));
     }
 
     /// Wait while the run is pausing; a paused run with nothing in flight ends.
@@ -839,9 +885,9 @@ impl RunHost {
         }
         let outcome = match question.declared(&self.args) {
             Some(answer) => Outcome::Value(answer),
-            None if !self.interactive => Outcome::Error(no_user(
-                "no interactive user can answer ask() in this run",
-            )),
+            None if !self.interactive => {
+                Outcome::Error(no_user("no interactive user can answer ask() in this run"))
+            }
             None => self.answer(question).await?,
         };
         self.record_call("ask", seq, &key, outcome)

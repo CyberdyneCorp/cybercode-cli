@@ -2,9 +2,9 @@
 
 mod background;
 mod delegation;
-mod workflow;
 pub(crate) mod report;
 pub(crate) mod setup;
+mod workflow;
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -189,7 +189,9 @@ fn launch(
         };
         let mut out = Out::new(format, &args, &session);
         let code = match (review, &args.workflow) {
-            (_, Some(target)) => workflow::execute(&client, ctx, &session, &args, target, out).await,
+            (_, Some(target)) => {
+                workflow::execute(&client, ctx, &session, &args, target, out).await
+            }
             (Some(target), None) => {
                 out.review(target);
                 execute_session(&client, &session, &args, prompt, timeout, out).await

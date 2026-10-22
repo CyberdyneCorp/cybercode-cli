@@ -170,12 +170,7 @@ fn args_and_host_globals_are_frozen() {
     assert_eq!(
         output.value,
         json!([
-            "src",
-            "function",
-            "function",
-            "function",
-            "function",
-            "object"
+            "src", "function", "function", "function", "function", "object"
         ])
     );
 }

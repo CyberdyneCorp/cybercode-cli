@@ -329,7 +329,11 @@ impl ToolHost for Agents {
     ) -> BoxFuture<'_, Result<Value, Diagnostic>> {
         Box::pin(async move {
             let mut calls = self.tool_calls.lock().unwrap();
-            calls.push((request.tool.clone(), request.input.clone(), request.interactive));
+            calls.push((
+                request.tool.clone(),
+                request.input.clone(),
+                request.interactive,
+            ));
             Ok(json!({"paths": [format!("call {}", calls.len())], "truncated": false}))
         })
     }
@@ -2980,7 +2984,12 @@ async fn direct_tool_results_are_recorded_and_replayed_after_a_pause() {
     assert_eq!(run.status, WorkflowRunStatus::Completed, "{run:?}");
     assert_eq!(
         run.result,
-        Some(json!([["call 1"], "PermissionDenied", "hold b done", "c done"]))
+        Some(json!([
+            ["call 1"],
+            "PermissionDenied",
+            "hold b done",
+            "c done"
+        ]))
     );
     let calls = agents.tool_calls.lock().unwrap().clone();
     assert_eq!(calls, [("glob".into(), json!({"pattern": "*.rs"}), false)]);
@@ -3001,7 +3010,10 @@ async fn a_run_reports_its_agents_compactions() {
     let f = fixture(&agents);
     let owner = f.session("default").await;
     let run = f
-        .start(&owner, "export default async () => (await agent('a')).text;\n")
+        .start(
+            &owner,
+            "export default async () => (await agent('a')).text;\n",
+        )
         .await;
     f.settled(&run.id).await;
     let child = f.runtime.workflow_agents(&run.id).unwrap()[0]

@@ -343,10 +343,18 @@ impl Out {
         let error = run
             .get("error")
             .filter(|error| !error.is_null())
-            .map(|error| json!(format!("{}: {}", error["kind"].as_str().unwrap_or("?"), error["message"].as_str().unwrap_or("?"))))
+            .map(|error| {
+                json!(format!(
+                    "{}: {}",
+                    error["kind"].as_str().unwrap_or("?"),
+                    error["message"].as_str().unwrap_or("?")
+                ))
+            })
             .or_else(|| run.get("reason").filter(|r| r.is_string()).cloned())
             .unwrap_or(Value::Null);
-        if code != 0 && let Some(message) = error.as_str() {
+        if code != 0
+            && let Some(message) = error.as_str()
+        {
             self.error(message);
         }
         let value = run

@@ -1370,6 +1370,10 @@ impl ToolHost for BuiltinHost {
         self.workflow_writer(directory, agent)
     }
 
+    fn warms_prompt_cache(&self) -> bool {
+        true
+    }
+
     fn workflow_tool(
         &self,
         request: cyber_server::runtime::WorkflowToolRequest,

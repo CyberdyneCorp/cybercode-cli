@@ -181,11 +181,7 @@ fn budget(args: &RunArgs) -> Result<Value, CliError> {
 }
 
 /// The start request body: a saved name, or a module file's source as an inline script.
-pub(crate) fn start_body(
-    ctx: &Context,
-    args: &RunArgs,
-    session: &str,
-) -> Result<Value, CliError> {
+pub(crate) fn start_body(ctx: &Context, args: &RunArgs, session: &str) -> Result<Value, CliError> {
     let script_args = match &args.args {
         None => json!({}),
         Some(text) => match serde_json::from_str::<Value>(text) {

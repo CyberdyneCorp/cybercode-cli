@@ -624,6 +624,21 @@ impl Runtime {
 
     /// Set the server-wide Workflow agent limit once, before any run starts
     /// (`workflows.max_concurrent`, reduced to the core count). False when already set.
+    /// `workflows.prompt_cache_warmup`, server-wide like the agent limit (default on).
+    pub fn configure_workflow_warmup(&self, enabled: bool) {
+        self.inner
+            .workflow_warmup_off
+            .store(!enabled, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(super) fn workflow_warmup(&self) -> bool {
+        self.inner.tools.warms_prompt_cache()
+            && !self
+                .inner
+                .workflow_warmup_off
+                .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     pub fn configure_workflow_concurrency(&self, limit: usize) -> bool {
         self.inner
             .workflow_scheduler

@@ -373,7 +373,10 @@ async fn tasks_lists_workflow_runs_and_stop_all_stops_them() {
     let script = "export const meta = { name: 'slow', description: 'A long agent' };\nexport default async () => (await agent('RUN-FOREGROUND now')).text;\n";
     let started = server
         .client
-        .post("/workflows/runs", json!({"session_id": id, "script": script}))
+        .post(
+            "/workflows/runs",
+            json!({"session_id": id, "script": script}),
+        )
         .await
         .unwrap();
     let run_id = started["data"]["id"].as_str().unwrap().to_owned();

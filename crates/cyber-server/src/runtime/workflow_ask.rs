@@ -50,9 +50,13 @@ impl ScriptQuestion {
         let (text, options, multiple) = match value {
             Value::String(text) => (text.as_str(), &Value::Null, false),
             Value::Object(map) => (
-                map.get("question").and_then(Value::as_str).unwrap_or_default(),
+                map.get("question")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
                 map.get("options").unwrap_or(&Value::Null),
-                map.get("multiple").and_then(Value::as_bool).unwrap_or(false),
+                map.get("multiple")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
             ),
             _ => return Err(invalid("ask() expects a question string or { question }")),
         };
@@ -115,7 +119,9 @@ fn question_options(value: &Value) -> Result<Vec<QuestionOption>, Diagnostic> {
                 Value::String(label) => (label.as_str(), ""),
                 Value::Object(map) => (
                     map.get("label").and_then(Value::as_str).unwrap_or_default(),
-                    map.get("description").and_then(Value::as_str).unwrap_or_default(),
+                    map.get("description")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
                 ),
                 _ => ("", ""),
             };
@@ -168,9 +174,9 @@ impl Runtime {
             QuestionReply::Dismissed => {
                 Asked::Unanswered(no_user("the user dismissed the question"))
             }
-            QuestionReply::Unattended => Asked::Unanswered(no_user(
-                "no interactive user can answer ask() in this run",
-            )),
+            QuestionReply::Unattended => {
+                Asked::Unanswered(no_user("no interactive user can answer ask() in this run"))
+            }
         })
     }
 

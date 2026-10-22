@@ -18,7 +18,11 @@ pub(super) fn location(config: &Value) -> Result<WorkflowLocation, ApiError> {
 /// directories.
 pub(super) fn library(global_config_dir: &Path, location: &Path) -> WorkflowLibrary {
     let project = !ProcessEnv.flag("CYBER_DISABLE_PROJECT_CONFIG");
-    WorkflowLibrary::of(workflow_start::discover(global_config_dir, location, project))
+    WorkflowLibrary::of(workflow_start::discover(
+        global_config_dir,
+        location,
+        project,
+    ))
 }
 
 /// The saved Workflow `name` of a Location. `CYBER_DISABLE_PROJECT_CONFIG` skips project

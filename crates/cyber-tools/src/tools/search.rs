@@ -275,9 +275,12 @@ pub(crate) async fn grep_value(ctx: &Ctx<'_>) -> Result<Value, ToolError> {
         let room = max - matches.len();
         truncated = found.len() > room;
         let shown = ctx.resource(&path);
-        matches.extend(found.into_iter().take(room).map(|(line, text)| {
-            json!({"path": shown, "line": line, "text": text})
-        }));
+        matches.extend(
+            found
+                .into_iter()
+                .take(room)
+                .map(|(line, text)| json!({"path": shown, "line": line, "text": text})),
+        );
         if truncated {
             break;
         }
