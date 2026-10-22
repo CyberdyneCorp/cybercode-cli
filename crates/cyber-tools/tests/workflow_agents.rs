@@ -147,6 +147,37 @@ async fn agents_are_child_sessions_of_the_owner_under_the_run_mode() {
     assert!(flow.runtime.state(&owner).await.unwrap().entries.is_empty());
 }
 
+/// `CYBER_WORKFLOW_RUN_ID` reaches the processes a workflow agent's tools start, and only
+/// those (`workflows` → agent() call).
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_workflow_agents_shell_sees_its_run_id() {
+    let command = r#"printf 'run=[%s]' "$CYBER_WORKFLOW_RUN_ID""#;
+    let flow = Flow::new(
+        vec![
+            call("b1", "bash", json!({"command": command})),
+            text("done"),
+            call("b2", "bash", json!({"command": command})),
+            text("owner done"),
+        ],
+        false,
+    );
+    let owner = flow.session("bypass").await;
+    let body = "export default async () => (await agent('task')).text;";
+    let run = run(&flow, &owner, body).await;
+    assert_eq!(run.status, WorkflowRunStatus::Completed, "{run:?}");
+    let agents = flow.runtime.workflow_agents(&run.id).unwrap();
+    let child = agents[0].session_id.as_deref().unwrap();
+    let seen = flow.output(child, "b1").await;
+    assert!(seen.contains(&format!("run=[{}]", run.id)), "{seen}");
+
+    // The owner's own tools run outside the run.
+    flow.prompt(&owner, "go").await;
+    flow.settle(&owner).await;
+    let seen = flow.output(&owner, "b2").await;
+    assert!(seen.contains("run=[]"), "{seen}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_missing_result_is_retried_once_then_schema_mismatch() {
     let flow = Flow::new(vec![text("no result"), text("still no result")], false);

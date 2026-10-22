@@ -62,7 +62,7 @@ Increment 2 delivered the runtime core (section 6) ahead of resume, so 3.1 is do
 
 - [x] 4.1 `ToolHost::spawn_workflow_agent` (default: rejects with `AgentFailed`, unsupported), implemented in `BuiltinHost` next to `subtask_request`, with an idempotent `operation_key` from the run and call key. `AppHost` forwards it.
 - [x] 4.2 `agent()` resolves to `{ text, session_id, cost, tokens }` and gets an `agt_` ID.
-- [ ] 4.3 Child Sessions carry `CYBER_WORKFLOW_RUN_ID` in tool child processes. (Increment 2: child Sessions carry `workflow_run_id`; the environment variable remains.)
+- [x] 4.3 Child Sessions carry `CYBER_WORKFLOW_RUN_ID` in tool child processes. (Increment 2: child Sessions carry `workflow_run_id`. Gaps: every sandboxed tool process of a workflow agent or its subagents, and hook commands with a `workflow_run_id`, get the variable; an inherited value is removed elsewhere. Test: `workflow_agents::a_workflow_agents_shell_sees_its_run_id`.)
 - [x] 4.4 A `schema` is validated, and a mismatch is reported as `SchemaMismatch` after a single result retry. A provider error after retries is reported as `AgentFailed`.
 - [x] 4.5 Global FIFO cap `min(max_concurrent, cores)` across runs, which `parallel({ concurrency })` can only narrow. Workflow agents are excluded from `agents.max_concurrent`.
 - [x] 4.6 Run budgets: the observability-costs Budget plus `max_agents`, from `meta`, the invocation or `budgets.run`. Exceeding one gives `BudgetExceeded: <budget>` and the `budget_exceeded` status. `ctx.budget` is live. Child costs roll up.

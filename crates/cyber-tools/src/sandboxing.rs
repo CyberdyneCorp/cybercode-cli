@@ -75,6 +75,10 @@ fn resolve(
     )
 }
 
+/// The Workflow Run of the Session a tool process was started for
+/// (`workflows` → agent() call): set for workflow agents and their subagents only.
+pub(crate) const WORKFLOW_RUN_ENV: &str = "CYBER_WORKFLOW_RUN_ID";
+
 /// A shell command under the effective sandbox (`bash -l` with `sandbox.env.login_shell`).
 pub(crate) async fn prepare(
     ctx: &Ctx<'_>,
@@ -234,6 +238,10 @@ async fn prepare_scoped_command(
         .collect();
     env.extend(wrapped.env);
     env.push(("TMPDIR".into(), tmp.display().to_string()));
+    env.retain(|(key, _)| key != WORKFLOW_RUN_ENV);
+    if let Some(run) = ctx.host.session_workflow_run(&ctx.inv.session_id).await {
+        env.push((WORKFLOW_RUN_ENV.into(), run));
+    }
     let loopback_isolated = sandbox.policy != Policy::FullAccess
         && (cfg!(windows) || sandbox.network != NetworkMode::On);
     let boundary = (sandbox.policy != Policy::FullAccess).then(|| Boundary {
