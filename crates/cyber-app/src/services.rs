@@ -642,12 +642,29 @@ impl Services for AppServices {
         }
     }
 
+    fn prepare_workflow_args<'a>(
+        &'a self,
+        owner: &'a cyber_server::runtime::TurnContext,
+        module: &'a cyber_workflow::WorkflowModule,
+        args: serde_json::Value,
+    ) -> futures::future::BoxFuture<'a, Result<serde_json::Value, cyber_server::http::ApiError>>
+    {
+        Box::pin(async move {
+            // An API client cannot answer a run's asks.
+            self.host
+                .prepare_workflow_args(owner, module, args, false)
+                .await
+                .map_err(workflows::prepare_error)
+        })
+    }
+
     fn workflow_library(
         &self,
         location: &Path,
     ) -> Result<cyber_server::runtime::workflow_start::WorkflowLibrary, cyber_server::http::ApiError>
     {
-        Ok(workflows::library(&self.global_config_dir, location))
+        let (config, _) = (self.config)(location).map_err(cyber_server::http::ApiError::invalid)?;
+        Ok(workflows::library(&self.global_config_dir, location, &config))
     }
 
     fn saved_workflow(
@@ -655,7 +672,8 @@ impl Services for AppServices {
         location: &Path,
         name: &str,
     ) -> Result<cyber_workflow::WorkflowModule, cyber_server::http::ApiError> {
-        workflows::saved(&self.global_config_dir, location, name)
+        let (config, _) = (self.config)(location).map_err(cyber_server::http::ApiError::invalid)?;
+        workflows::saved(&self.global_config_dir, location, name, &config)
     }
 
     fn default_model(&self, location: &Path) -> Option<String> {

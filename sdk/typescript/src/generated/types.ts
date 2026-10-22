@@ -1151,6 +1151,9 @@ export type LibraryOrigin = {
 } | {
   path: string;
   kind: "project";
+} | {
+  name: string;
+  kind: "bundled";
 };
 
 /** The latest reading of one provider window. */

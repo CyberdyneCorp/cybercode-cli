@@ -40,6 +40,7 @@ pub use browser::profiles::{Cleanup as BrowserCleanup, cleanup as cleanup_browse
 pub use budget::Budget;
 pub use host::{
     BuiltinHost, ConfigFn, HostOptions, IsolationOptions, PermissionTest, PermissionTestReport,
+    PrepareError,
 };
 pub use remote_skills::{FetchRequest, PolicyFetcher, RemoteSkillFetcher};
 pub use schema::validate as validate_input;

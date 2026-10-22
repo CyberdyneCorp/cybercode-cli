@@ -431,8 +431,21 @@ async fn the_library_lists_saved_workflows_by_precedence_with_issues() {
         .iter()
         .map(|entry| entry["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["audit", "release"], "{listed}");
-    let release = &listed["workflows"][1];
+    assert_eq!(
+        names,
+        ["audit", "migrate", "plan", "release", "research", "review"],
+        "{listed}"
+    );
+    let entry = |listing: &Value, name: &str| -> Value {
+        listing["workflows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["name"] == name)
+            .cloned()
+            .unwrap()
+    };
+    let release = entry(&listed, "release");
     assert_eq!(release["description"], "Project");
     assert_eq!(release["origin"]["kind"], "project", "{release}");
     assert_eq!(release["phases"], json!(["One"]));
@@ -445,7 +458,13 @@ async fn the_library_lists_saved_workflows_by_precedence_with_issues() {
         shadowed.ends_with("config/workflows/release.js"),
         "{release}"
     );
-    assert_eq!(listed["workflows"][0]["origin"]["kind"], "global");
+    let audit = entry(&listed, "audit");
+    assert_eq!(audit["origin"]["kind"], "global");
+    assert_eq!(audit["shadowed"], json!(["bundled:audit"]));
+    let review = entry(&listed, "review");
+    assert_eq!(review["origin"], json!({"kind": "bundled", "name": "review"}));
+    assert_eq!(review["budgets"]["max_agents"], 24);
+    assert!(review["estimate"].as_str().unwrap().starts_with("lenses"));
     let issue = &listed["issues"][0];
     assert!(
         issue["path"].as_str().unwrap().ends_with("broken.js"),
@@ -461,7 +480,7 @@ async fn the_library_lists_saved_workflows_by_precedence_with_issues() {
             None,
         )
         .await;
-    assert_eq!(other["workflows"][1]["origin"]["kind"], "global", "{other}");
+    assert_eq!(entry(&other, "release")["origin"]["kind"], "global", "{other}");
 
     let health = server.ok(Method::GET, "/health", None).await;
     assert!(
@@ -3269,4 +3288,95 @@ async fn an_inline_runs_script_is_saved_into_the_project_workflows() {
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     server.close().await;
+}
+
+fn git(root: &std::path::Path, args: &[&str]) {
+    let status = std::process::Command::new("git")
+        .current_dir(root)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .args(args)
+        .status()
+        .unwrap();
+    assert!(status.success(), "git {args:?}");
+}
+
+/// `workflows` → Bundled workflow contracts: a bundled run's args are checked against
+/// `meta.args` and prepared by the host before any run record exists. Invalid args, an
+/// invalid review target and a non-interactive migration without allow rules start no
+/// run; a review gets the resolved diff and a research run learns the web is denied.
+#[cfg(unix)]
+#[tokio::test]
+async fn bundled_runs_validate_and_prepare_their_args_before_a_run_exists() {
+    let model = ScriptedModel::start(reply);
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    git(&root, &["init", "--quiet", "-b", "main"]);
+    git(&root, &["config", "user.name", "Workflow"]);
+    git(&root, &["config", "user.email", "test@example.invalid"]);
+    std::fs::write(root.join("a.rs"), "fn a() {}\n").unwrap();
+    git(&root, &["add", "a.rs"]);
+    git(&root, &["commit", "--quiet", "-m", "initial"]);
+    std::fs::write(root.join("a.rs"), "fn a(x: u8) {}\n").unwrap();
+    let paths = paths(&root);
+    paths.ensure().unwrap();
+    let mut config = model.config();
+    config["permissions"] = json!({"websearch": "deny"});
+    std::fs::write(paths.config.join("cyber.json"), config.to_string()).unwrap();
+    let server = Server::open(temp).await;
+    let owner = server.session().await;
+    let start = |name: &str, args: Value| {
+        Some(json!({"session_id": owner, "name": name, "args": args}))
+    };
+
+    let (status, body) = server
+        .call(Method::POST, "/workflows/runs", start("review", json!({"max_findings": 99})))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["message"].as_str().unwrap().starts_with("ExecutionFailure: args.max_findings: "),
+        "{body}"
+    );
+    let (status, body) = server
+        .call(Method::POST, "/workflows/runs", start("review", json!({"target": "main.."})))
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["_tag"], "ReviewTargetError", "{body}");
+    assert_eq!(body["code"], "invalid_target", "{body}");
+    let (status, body) = server
+        .call(
+            Method::POST,
+            "/workflows/runs",
+            start("migrate", json!({"instructions": "rename", "files": ["a.rs"]})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["reason"], "PermissionDenied", "{body}");
+    assert!(body["message"].as_str().unwrap().contains("edit a.rs"), "{body}");
+    let runs = server.ok(Method::GET, "/workflows/runs", None).await;
+    assert_eq!(runs["data"], json!([]), "{runs}");
+
+    let started = server
+        .ok(Method::POST, "/workflows/runs", start("review", json!({"lenses": ["tests"]})))
+        .await;
+    let review = started["data"]["id"].as_str().unwrap().to_owned();
+    let diff = &started["data"]["args"]["diff"];
+    assert_eq!(diff["files"][0]["path"], "a.rs", "{started}");
+    assert!(diff["files"][0]["patch"].as_str().unwrap().contains("+fn a(x: u8) {}"));
+    assert_eq!(started["data"]["origin"], json!({"kind": "bundled", "name": "review"}));
+    let started = server
+        .ok(
+            Method::POST,
+            "/workflows/runs",
+            start("research", json!({"question": "q", "sources": ["web", "repo"]})),
+        )
+        .await;
+    let research = started["data"]["id"].as_str().unwrap().to_owned();
+    assert_eq!(started["data"]["args"]["web_permitted"], json!(false), "{started}");
+    for id in [review, research] {
+        server
+            .ok(Method::POST, &format!("/workflows/runs/{id}/stop"), Some(json!({})))
+            .await;
+    }
 }

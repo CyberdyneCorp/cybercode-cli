@@ -284,7 +284,8 @@ pub fn workflow_resource(module: &cyber_workflow::WorkflowModule) -> String {
         Origin::Saved {
             scope: Scope::Global,
             ..
-        } => name.clone(),
+        }
+        | Origin::Bundled { .. } => name.clone(),
         Origin::Saved {
             scope: Scope::Project,
             ..

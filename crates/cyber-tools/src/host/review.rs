@@ -40,6 +40,46 @@ pub(super) async fn target_block(
     reader: &Policy,
     arguments: &str,
 ) -> Result<String, CommandPlanError> {
+    let (requested, diff, withheld) = resolved(ctx, reader, arguments).await?;
+    Ok(render(&requested, &diff, &withheld))
+}
+
+/// Resolves `arguments` like [`target_block`] and returns the diff as data for the
+/// bundled `review` Workflow (`args.diff`): `{base, head, files: [{path, status, patch}],
+/// limitations}`. A withheld file has no patch.
+pub(super) async fn target_diff(
+    ctx: &Ctx<'_>,
+    reader: &Policy,
+    arguments: &str,
+) -> Result<serde_json::Value, CommandPlanError> {
+    let (_, diff, _) = resolved(ctx, reader, arguments).await?;
+    let files: Vec<serde_json::Value> = diff
+        .files
+        .iter()
+        .map(|file| {
+            serde_json::json!({
+                "path": file.path,
+                "old_path": file.old_path,
+                "status": status_label(file),
+                "binary": file.binary,
+                "patch": file.patch,
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "base": diff.base,
+        "head": diff.head,
+        "files": files,
+        "limitations": diff.limitations,
+    }))
+}
+
+/// The requested target, its filtered diff and the withheld paths.
+async fn resolved(
+    ctx: &Ctx<'_>,
+    reader: &Policy,
+    arguments: &str,
+) -> Result<(Target, ReviewDiff, BTreeSet<String>), CommandPlanError> {
     let requested = Target::parse(arguments)?;
     if let Some(root) = repository_root(&ctx.location) {
         check_root(ctx, &root)?;
@@ -76,7 +116,7 @@ pub(super) async fn target_block(
             "read policy withholds every reviewable change; nothing was reviewed",
         ));
     }
-    Ok(render(&requested, &diff, &withheld))
+    Ok((requested, diff, withheld))
 }
 
 /// The nearest ancestor holding a `.git` entry; the helper verifies identity.

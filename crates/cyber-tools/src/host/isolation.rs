@@ -163,7 +163,7 @@ impl BuiltinHost {
     /// The request a Session would evaluate: a tool authorizes under its action (`write`
     /// as `edit`, `powershell`, `monitor` and `pty_*` as `bash` commands, `send_file` as
     /// `read`).
-    fn test_request(&self, location: &Path, test: &PermissionTest) -> Result<Request, String> {
+    pub(super) fn test_request(&self, location: &Path, test: &PermissionTest) -> Result<Request, String> {
         let tool = test.tool.as_deref().unwrap_or("bash");
         let action = crate::tools::action_of(tool);
         let command = test

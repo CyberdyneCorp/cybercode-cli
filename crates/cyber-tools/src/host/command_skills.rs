@@ -212,9 +212,26 @@ impl BuiltinHost {
         policy: crate::permissions::Policy,
         arguments: &str,
     ) -> Result<String, CommandPlanError> {
-        // Withholding follows the reviewer's own ceiling, not the invoker's mode.
         let reader = self.policy_for(inv, Some("reviewer")).await?;
-        let ctx = super::Ctx {
+        let ctx = self.review_ctx(inv, policy);
+        super::review::target_block(&ctx, &reader, arguments).await
+    }
+
+    /// The diff of a review target as data, resolved as `/review` resolves it.
+    pub(super) async fn review_diff(
+        &self,
+        inv: &Invocation,
+        policy: crate::permissions::Policy,
+        arguments: &str,
+    ) -> Result<serde_json::Value, CommandPlanError> {
+        let reader = self.policy_for(inv, Some("reviewer")).await?;
+        let ctx = self.review_ctx(inv, policy);
+        super::review::target_diff(&ctx, &reader, arguments).await
+    }
+
+    fn review_ctx<'a>(&'a self, inv: &'a Invocation, policy: crate::permissions::Policy) -> super::Ctx<'a> {
+        // Withholding follows the reviewer's own ceiling, not the invoker's mode.
+        super::Ctx {
             skill_paths: Default::default(),
             loaded_skill: Default::default(),
             compiler_feedback: Default::default(),
@@ -225,8 +242,7 @@ impl BuiltinHost {
             cancel: tokio_util::sync::CancellationToken::new(),
             hook_decision: None,
             denial: Default::default(),
-        };
-        super::review::target_block(&ctx, &reader, arguments).await
+        }
     }
 }
 

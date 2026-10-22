@@ -2299,6 +2299,23 @@
               "path"
             ],
             "description": "A `.cyber/workflows` directory of the project."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "const": "bundled"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "description": "Embedded in the binary."
           }
         ],
         "description": "Where a library entry comes from."

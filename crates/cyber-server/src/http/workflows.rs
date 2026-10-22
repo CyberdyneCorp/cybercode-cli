@@ -155,7 +155,8 @@ fn lifecycle(error: RuntimeError) -> ApiError {
     }
 }
 
-fn start_error(error: StartError) -> ApiError {
+/// A run that cannot start, as the API reports it.
+pub fn start_error(error: StartError) -> ApiError {
     match error {
         StartError::Module(error) => diagnostic(error),
         StartError::NotFound(_) => ApiError::not_found("WorkflowNotFoundError", error.to_string()),
@@ -178,9 +179,15 @@ async fn start(
             ));
         }
     };
-    state
+    let owner_turn = owner_context(&owner);
+    state.services.authorize_workflow_run(&owner_turn, &module)?;
+    let args = body
+        .args
+        .unwrap_or_else(|| Value::Object(Default::default()));
+    let args = state
         .services
-        .authorize_workflow_run(&owner_context(&owner), &module)?;
+        .prepare_workflow_args(&owner_turn, &module, args)
+        .await?;
     let settings = state.services.workflow_location(&location)?;
     let budget = workflow_start::client_budget(&settings, &module, body.budget.as_ref())
         .map_err(start_error)?;
@@ -191,9 +198,7 @@ async fn start(
         .runtime
         .start_workflow_run(StartWorkflowRun {
             module,
-            args: body
-                .args
-                .unwrap_or_else(|| Value::Object(Default::default())),
+            args,
             session_id: owner.id,
             limits: settings.limits,
             tiers: settings.tiers,
