@@ -370,6 +370,14 @@ impl ToolHost for AppHost {
         self.builtin.workflow_agent_writes(directory, agent)
     }
 
+    fn workflow_tool(
+        &self,
+        request: cyber_server::runtime::WorkflowToolRequest,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<serde_json::Value, cyber_workflow::Diagnostic>> {
+        self.builtin.workflow_tool(request, cancel)
+    }
+
     fn shell(
         &self,
         directory: &str,

@@ -26,13 +26,14 @@ impl Tool for Workflow {
     fn def(&self) -> ToolDef {
         def(
             "workflow",
-            "Start a Workflow Run: a saved Workflow by name, or an inline JavaScript module (export const meta = {name, description, phases?}; export default async () => { ... } using agent(), parallel(), pipeline(), phase(), log() and checkpoint()). The run executes in the background on the server; its summary arrives later as a queued message. Returns the run handle.",
+            "Start a Workflow Run: a saved Workflow by name, or an inline JavaScript module (export const meta = {name, description, phases?}; export default async () => { ... } using agent(), parallel(), pipeline(), phase(), log(), checkpoint() and, when meta.tools or the tools option names them, tools.read({path, offset?, limit?}), tools.glob({pattern, path?, max?}) and tools.grep({pattern, path?, include?, max?})). The run executes in the background on the server; its summary arrives later as a queued message. Returns the run handle.",
             json!({"type":"object", "additionalProperties":false, "properties":{
                 "name":{"type":"string", "description":"A saved Workflow's meta.name"},
                 "script":{"type":"string", "description":"An inline JavaScript Workflow module"},
                 "args":{"type":"object", "description":"The script's frozen args"},
                 "budget":{"type":"object", "description":"Run budget fields: max_cost_usd, max_tokens, max_turns, max_wall_seconds, max_agents"},
-                "max_concurrent":{"type":"integer", "minimum":1, "description":"At most this many of the run's agents at once (capped at the server-wide workflows.max_concurrent)"}
+                "max_concurrent":{"type":"integer", "minimum":1, "description":"At most this many of the run's agents at once (capped at the server-wide workflows.max_concurrent)"},
+                "tools":{"type":"array", "items":{"enum":["read", "glob", "grep"]}, "description":"Read-only tools the script may call directly (tools.read, tools.glob, tools.grep) besides those its meta.tools names"}
             }}),
             RetrySafety::Never,
             false,
@@ -69,8 +70,9 @@ fn module(ctx: &Ctx<'_>, input: &Value) -> Result<WorkflowModule, ToolError> {
     }
 }
 
-/// What the approval shows: the workflow, its phases and the budgets it runs under.
-fn approval(module: &WorkflowModule, budget: &Value) -> Value {
+/// What the approval shows: the workflow, its phases, the budgets it runs under and the
+/// tools it calls directly.
+fn approval(module: &WorkflowModule, budget: &Value, tools: &[String]) -> Value {
     let origin = match &module.origin {
         Origin::Saved { path, .. } => json!(path),
         Origin::Inline => json!("inline"),
@@ -80,6 +82,7 @@ fn approval(module: &WorkflowModule, budget: &Value) -> Value {
         "description": module.meta.description,
         "phases": module.meta.phases.iter().map(|phase| phase.title.clone()).collect::<Vec<_>>(),
         "budget": budget,
+        "tools": module.meta.tools.iter().chain(tools).collect::<Vec<_>>(),
         "origin": origin,
         "digest": module.digest,
     })
@@ -107,6 +110,8 @@ async fn run(ctx: &Ctx<'_>) -> Result<String, ToolError> {
         workflow_start::budget(&settings, &module, input.get("budget")).map_err(start_failed)?;
     let share = workflow_start::share(&settings, &module, input.get("max_concurrent"))
         .map_err(start_failed)?;
+    let tools =
+        workflow_start::invocation_tools(input.get("tools")).map_err(start_failed)?;
     let shown = serde_json::to_value(&budget).unwrap_or(Value::Null);
     let request = |resource: String| Request {
         action: WORKFLOW_RUN.into(),
@@ -118,7 +123,7 @@ async fn run(ctx: &Ctx<'_>) -> Result<String, ToolError> {
     ctx.authorize(
         request(resource.clone()),
         vec![resource],
-        approval(&module, &shown),
+        approval(&module, &shown, &tools),
     )
     .await?;
     let args = match input.get("args") {
@@ -138,6 +143,7 @@ async fn run(ctx: &Ctx<'_>) -> Result<String, ToolError> {
             starter: RunStarter::Session {
                 interactive: ctx.inv.asker.attended(),
             },
+            tools,
         })
         .await
         .map_err(|error| failed(error.to_string()))?;

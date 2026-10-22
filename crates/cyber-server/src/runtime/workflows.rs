@@ -138,6 +138,10 @@ pub struct WorkflowRun {
     /// or save into `.cyber/workflows/`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub script_file: Option<String>,
+    /// Direct read-only tools the invocation allowlists besides `meta.tools`
+    /// (`workflows` → Direct read-only tools).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
     /// `sha256:` digest of the current revision's script source.
     pub digest: String,
     /// Digest of the engine limits and model tiers the current revision runs with.
@@ -272,6 +276,9 @@ pub struct StartWorkflowRun {
     /// The run's share of the agent slots ([`super::workflow_start::share`]).
     pub share: RunShare,
     pub starter: RunStarter,
+    /// Direct read-only tools the invocation allowlists besides `meta.tools`
+    /// ([`super::workflow_start::invocation_tools`]).
+    pub tools: Vec<String>,
 }
 
 /// A run's share of the agent slots as a start or resume resolved it (`workflows` → Fair
@@ -827,6 +834,7 @@ impl Runtime {
             mode: owner.mode.clone(),
             origin: serde_json::to_value(&start.module.origin).unwrap_or(Value::Null),
             script_file: None,
+            tools: start.tools,
             digest: start.module.digest.clone(),
             config_digest: config_digest(&start.limits, &start.tiers),
             revision: 1,
@@ -972,6 +980,7 @@ impl Runtime {
         let input = RunInput {
             args: run.args.clone(),
             ctx: json!({"run_id": run.id, "name": run.name, "session_id": run.session_id, "directory": run.directory}),
+            tools: run.tools.clone(),
         };
         spawn_engine(
             run,

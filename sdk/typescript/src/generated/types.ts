@@ -2381,6 +2381,11 @@ export type RunDetail = {
    * or save into `.cyber/workflows/`.
    */
   script_file?: string | null;
+  /**
+   * Direct read-only tools the invocation allowlists besides `meta.tools`
+   * (`workflows` → Direct read-only tools).
+   */
+  tools?: string[];
   /** `sha256:` digest of the current revision's script source. */
   digest: string;
   /** Digest of the engine limits and model tiers the current revision runs with. */
@@ -2871,6 +2876,11 @@ export type StartBody = {
    * at that limit; overrides `meta.max_concurrent` and `workflows.max_concurrent_per_run`.
    */
   max_concurrent?: number | null;
+  /**
+   * Direct read-only tools (`read`, `glob`, `grep`) the script may call besides those
+   * its `meta.tools` names.
+   */
+  tools?: string[] | null;
 };
 
 /** One local day of the period. */
@@ -3352,6 +3362,11 @@ export type WorkflowRun = {
    * or save into `.cyber/workflows/`.
    */
   script_file?: string | null;
+  /**
+   * Direct read-only tools the invocation allowlists besides `meta.tools`
+   * (`workflows` → Direct read-only tools).
+   */
+  tools?: string[];
   /** `sha256:` digest of the current revision's script source. */
   digest: string;
   /** Digest of the engine limits and model tiers the current revision runs with. */
@@ -3443,6 +3458,11 @@ export type WorkflowRunSummary = {
    * or save into `.cyber/workflows/`.
    */
   script_file?: string | null;
+  /**
+   * Direct read-only tools the invocation allowlists besides `meta.tools`
+   * (`workflows` → Direct read-only tools).
+   */
+  tools?: string[];
   /** `sha256:` digest of the current revision's script source. */
   digest: string;
   /** Digest of the engine limits and model tiers the current revision runs with. */

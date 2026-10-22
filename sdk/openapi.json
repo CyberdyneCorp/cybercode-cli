@@ -2420,6 +2420,17 @@
             "minimum": 1,
             "description": "The run's share of the server-wide Workflow agent slots, a positive integer capped\nat that limit; overrides `meta.max_concurrent` and `workflows.max_concurrent_per_run`.",
             "default": null
+          },
+          "tools": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Direct read-only tools (`read`, `glob`, `grep`) the script may call besides those\nits `meta.tools` names.",
+            "default": null
           }
         },
         "required": [
@@ -2467,6 +2478,13 @@
               "null"
             ],
             "description": "An inline script's copy at `<state>/workflows/<run_id>.js`, to read, edit, relaunch\nor save into `.cyber/workflows/`."
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Direct read-only tools the invocation allowlists besides `meta.tools`\n(`workflows` → Direct read-only tools)."
           },
           "digest": {
             "type": "string",
@@ -2747,6 +2765,13 @@
               "null"
             ],
             "description": "An inline script's copy at `<state>/workflows/<run_id>.js`, to read, edit, relaunch\nor save into `.cyber/workflows/`."
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Direct read-only tools the invocation allowlists besides `meta.tools`\n(`workflows` → Direct read-only tools)."
           },
           "digest": {
             "type": "string",
@@ -3074,6 +3099,13 @@
               "null"
             ],
             "description": "An inline script's copy at `<state>/workflows/<run_id>.js`, to read, edit, relaunch\nor save into `.cyber/workflows/`."
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Direct read-only tools the invocation allowlists besides `meta.tools`\n(`workflows` → Direct read-only tools)."
           },
           "digest": {
             "type": "string",

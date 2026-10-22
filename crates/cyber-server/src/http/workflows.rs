@@ -73,6 +73,11 @@ pub(super) struct StartBody {
     #[serde(default)]
     #[schemars(with = "Option<std::num::NonZeroU32>")]
     max_concurrent: Option<Value>,
+    /// Direct read-only tools (`read`, `glob`, `grep`) the script may call besides those
+    /// its `meta.tools` names.
+    #[serde(default)]
+    #[schemars(with = "Option<Vec<String>>")]
+    tools: Option<Value>,
 }
 
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
@@ -180,6 +185,7 @@ async fn start(
         .map_err(start_error)?;
     let share = workflow_start::share(&settings, &module, body.max_concurrent.as_ref())
         .map_err(start_error)?;
+    let tools = workflow_start::invocation_tools(body.tools.as_ref()).map_err(start_error)?;
     let run = state
         .runtime
         .start_workflow_run(StartWorkflowRun {
@@ -193,6 +199,7 @@ async fn start(
             budget,
             share,
             starter: RunStarter::Api,
+            tools,
         })
         .await?;
     Ok((StatusCode::CREATED, Json(Data { data: run })))

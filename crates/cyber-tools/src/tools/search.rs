@@ -18,6 +18,15 @@ use crate::host::Ctx;
 use crate::permissions::Request;
 
 const GLOB_LIMIT: usize = 100;
+/// Paths a Workflow script's `tools.glob` returns by default and at most: scripts fan out
+/// over files, so their limit is wider than the model's.
+const SCRIPT_GLOB_DEFAULT: usize = 1_000;
+const SCRIPT_GLOB_MAX: usize = 10_000;
+/// Matches a script's `tools.grep` returns by default and at most, as the grep tool.
+const SCRIPT_GREP_DEFAULT: usize = 100;
+const SCRIPT_GREP_MAX: usize = 1_000;
+/// Characters of a matching line a result keeps.
+const MATCH_CHARS: usize = 500;
 
 pub(crate) struct Glob;
 pub(crate) struct Grep;
@@ -214,4 +223,82 @@ fn render(path: &Path, lines: &[&str], hits: &[usize], context: usize) -> String
         })
         .collect();
     format!("{}:\n{}", path.display(), rows.join("\n"))
+}
+
+/// A script's `max`, else `default`, capped at `cap`.
+fn script_limit(input: &Value, default: usize, cap: usize) -> usize {
+    number(input, "max").map_or(default, |max| (max as usize).clamp(1, cap))
+}
+
+/// `tools.glob` of a Workflow script (`workflows` → Direct read-only tools): the glob
+/// tool's permission checks, ignore rules and hidden paths, returning `{paths, truncated}`
+/// in path order, Location-relative inside the Location.
+pub(crate) async fn glob_value(ctx: &Ctx<'_>) -> Result<Value, ToolError> {
+    let input = &ctx.inv.input;
+    let pattern = text(input, "pattern");
+    let base = scope(ctx, "glob", pattern).await?;
+    let m = matcher(pattern)?;
+    let max = script_limit(input, SCRIPT_GLOB_DEFAULT, SCRIPT_GLOB_MAX);
+    let mut paths: Vec<PathBuf> = walker(&base, crate::sandboxing::hidden(ctx))
+        .filter(|p| glob_matches(&m, &base, p))
+        .collect();
+    paths.sort();
+    let truncated = paths.len() > max;
+    paths.truncate(max);
+    let paths: Vec<String> = paths.iter().map(|path| ctx.resource(path)).collect();
+    Ok(json!({"paths": paths, "truncated": truncated}))
+}
+
+/// `tools.grep` of a Workflow script: the grep tool's checks, returning
+/// `{matches: [{path, line, text}], truncated}` in path and line order.
+pub(crate) async fn grep_value(ctx: &Ctx<'_>) -> Result<Value, ToolError> {
+    let input = &ctx.inv.input;
+    let pattern = text(input, "pattern");
+    let base = scope(ctx, "grep", pattern).await?;
+    let regex = Regex::new(pattern).map_err(|e| failed(format!("Invalid regex: {e}")))?;
+    let include = match text(input, "include") {
+        "" => None,
+        glob => Some(matcher(glob)?),
+    };
+    let max = script_limit(input, SCRIPT_GREP_DEFAULT, SCRIPT_GREP_MAX);
+    let mut files: Vec<PathBuf> = walker(&base, crate::sandboxing::hidden(ctx))
+        .filter(|p| include.as_ref().is_none_or(|m| glob_matches(m, &base, p)))
+        .collect();
+    files.sort();
+    let mut matches = Vec::new();
+    let mut truncated = false;
+    for path in files {
+        if ctx.cancel.is_cancelled() {
+            return Err(ToolError::Aborted);
+        }
+        let found = file_matches(&path, &regex, max + 1 - matches.len());
+        let room = max - matches.len();
+        truncated = found.len() > room;
+        let shown = ctx.resource(&path);
+        matches.extend(found.into_iter().take(room).map(|(line, text)| {
+            json!({"path": shown, "line": line, "text": text})
+        }));
+        if truncated {
+            break;
+        }
+    }
+    Ok(json!({"matches": matches, "truncated": truncated}))
+}
+
+/// Up to `limit` matching lines of a text file: 1-based line number and the line, cut at
+/// [`MATCH_CHARS`]. Unreadable and binary files have none.
+fn file_matches(path: &Path, regex: &Regex, limit: usize) -> Vec<(usize, String)> {
+    let Ok(bytes) = std::fs::read(path) else {
+        return Vec::new();
+    };
+    if is_binary(&bytes) {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&bytes)
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| regex.is_match(line))
+        .take(limit)
+        .map(|(index, line)| (index + 1, line.chars().take(MATCH_CHARS).collect()))
+        .collect()
 }

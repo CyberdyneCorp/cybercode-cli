@@ -180,7 +180,7 @@ pub use host::{
     ModelResolver, NoSnapshots, NoTools, Reconciliation, ResolvedModel, RestoreError, RuleEffect,
     RunWorktree, SessionEnvelope, SkillSuggestion, Snapshot, Snapshots, TeamWorktree, ToolDef,
     ToolHost, ToolOutcome, ToolScope, TurnContext, TurnWorktree, WorkflowAgentOutput,
-    WorkflowAgentRequest,
+    WorkflowAgentRequest, WorkflowToolRequest,
 };
 pub use model::{
     AssistantEntry, CallState, CallStatus, Delivery, Entry, InboxRow, InputStatus, LastStep,

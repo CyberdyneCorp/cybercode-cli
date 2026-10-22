@@ -37,6 +37,7 @@ async fn start(flow: &Flow, owner: &str, body: &str) -> String {
             budget: cyber_core::budget::RunBudget::resolve(&json!({}), &[]).unwrap(),
             share: Default::default(),
             starter: Default::default(),
+            tools: Vec::new(),
         })
         .await
         .unwrap()
@@ -734,4 +735,66 @@ async fn two_runs_of_one_session_run_together_and_stop_independently() {
         "{summary:?}"
     );
     flow.runtime.shutdown().await;
+}
+
+/// `workflows` → Direct read-only tools on the built-in host: `tools.glob`, `tools.grep`
+/// and `tools.read` return structured data from the owner's Location under the built-in
+/// checks, and an ask in a non-interactive run is refused for want of an approver.
+#[tokio::test(flavor = "multi_thread")]
+async fn direct_tools_return_structured_results_and_refuse_unattended_asks() {
+    let flow = Flow::new(Vec::new(), false);
+    std::fs::create_dir_all(flow.f.repo.join("src")).unwrap();
+    std::fs::write(flow.f.repo.join("src/b.rs"), "fn b() {}\n// TODO b\n").unwrap();
+    std::fs::write(flow.f.repo.join("src/a.rs"), "// TODO a\nfn a() {}\n").unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let owner = flow.session("default").await;
+    let source = format!(
+        "export const meta = {{ name: 'scan', description: 'Scan', tools: ['glob', 'grep', 'read'] }};\n\
+         export default async () => {{\n\
+           const files = await tools.glob({{ pattern: 'src/*.rs' }});\n\
+           const todos = await tools.grep({{ pattern: 'TODO', include: '*.rs' }});\n\
+           const page = await tools.read({{ path: 'src/a.rs', limit: 1 }});\n\
+           let refused = null;\n\
+           try {{ await tools.glob({{ pattern: '*', path: {:?} }}); }} catch (e) {{ refused = `${{e.kind}}: ${{e.message}}`; }}\n\
+           return {{ files, todos, page, refused }};\n\
+         }};\n",
+        outside.path().display().to_string()
+    );
+    let run = flow
+        .runtime
+        .start_workflow_run(StartWorkflowRun {
+            module: WorkflowModule::inline(source).unwrap(),
+            args: json!({}),
+            session_id: owner,
+            limits: Limits::default(),
+            tiers: BTreeMap::new(),
+            budget: cyber_core::budget::RunBudget::resolve(&json!({}), &[]).unwrap(),
+            share: Default::default(),
+            starter: Default::default(),
+            tools: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let run = settled(&flow, &run.id).await;
+    assert_eq!(run.status, WorkflowRunStatus::Completed, "{run:?}");
+    let result = run.result.unwrap();
+    assert_eq!(
+        result["files"],
+        json!({"paths": ["src/a.rs", "src/b.rs"], "truncated": false})
+    );
+    assert_eq!(
+        result["todos"]["matches"],
+        json!([
+            {"path": "src/a.rs", "line": 1, "text": "// TODO a"},
+            {"path": "src/b.rs", "line": 2, "text": "// TODO b"},
+        ])
+    );
+    assert_eq!(
+        result["page"],
+        json!({"content": "// TODO a\n", "truncated": true, "next_offset": 2})
+    );
+    assert_eq!(
+        result["refused"],
+        "PermissionDenied: No interactive approver for workflow run"
+    );
 }

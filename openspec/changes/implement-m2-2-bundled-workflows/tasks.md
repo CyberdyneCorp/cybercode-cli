@@ -26,9 +26,9 @@ The production-path test named in each section must pass before the section is t
 
 ## 3. Direct read-only tools (M2.1 remainder)
 
-- [ ] 3.1 `tools.read`, `tools.glob`, `tools.grep` in `prelude.js`, gated by `meta.tools` or the invocation's `tools`; otherwise `PermissionDenied: tool not allowed by meta.tools`; no mutating tool exposed.
-- [ ] 3.2 Host side in `runtime/workflow_host.rs`: the owner's `ToolHost` with the run's Mode ceiling, `read`/`external_directory` rules, deny_read, output limits; structured results; non-interactive `ask` rejected with `No interactive approver for workflow run`.
-- [ ] 3.3 Replay: results persisted as `workflow.host.settled.1` keyed by kind, normalized input and ordinal; a resumed run gets the recorded result even after files change.
+- [x] 3.1 `tools.read`, `tools.glob`, `tools.grep` in `prelude.js`, gated by `meta.tools` or the invocation's `tools`; otherwise `PermissionDenied: tool not allowed by meta.tools`; no mutating tool exposed. (Delivered with the M2.1 gaps; the engine, not the prelude, checks the allowlist.)
+- [x] 3.2 Host side: `ToolHost::workflow_tool` (`BuiltinHost::direct_tool`) with the run Mode ceiling, `read`/`external_directory` rules, deny_read and limits; structured results (`{paths, truncated}` in path order, default 1,000 and `max` up to 10,000; `{matches: [{path, line, text}], truncated}`, default 100 and `max` up to 1,000; `{content, truncated, next_offset}`); a non-interactive `ask` is rejected with `No interactive approver for workflow run`.
+- [x] 3.3 Replay: results persisted as `workflow.call.recorded.1` records of kind `tool` (the M2.1 host-call record; the design's `workflow.host.settled.1` was not added) keyed by tool, canonical input and ordinal; a resumed run gets the recorded result even after files change.
   - Production path: `crates/cyber-app/tests/bundled_workflows.rs` `script_tools_glob_and_grep_respect_rules_and_replay_after_restart` (scenario "Script lists files to fan out"; a deny_read glob hides a file; restart mid-run and the file list is unchanged).
 
 ## 4. Shared module conventions

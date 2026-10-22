@@ -202,18 +202,20 @@ fn entry(entry: Entry) -> Option<LibraryEntry> {
     })
 }
 
+/// An invocation's `tools`: the direct read-only tools it allowlists besides
+/// `meta.tools`; mutating tools are refused.
+pub fn invocation_tools(value: Option<&Value>) -> Result<Vec<String>, StartError> {
+    match value {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(value) => cyber_workflow::meta::tool_list(value).ok_or_else(|| {
+            StartError::Invalid("tools must be an array naming read, glob or grep".into())
+        }),
+    }
+}
+
 /// `meta.tools`: the direct read-only tools a module allowlists.
 pub fn meta_tools(module: &WorkflowModule) -> Vec<String> {
-    module
-        .meta
-        .raw
-        .get("tools")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_owned)
-        .collect()
+    module.meta.tools.clone()
 }
 
 /// An inline module, checked like a saved one.

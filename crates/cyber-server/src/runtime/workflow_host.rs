@@ -28,7 +28,10 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 use super::budget::RunSpend;
-use super::host::{RunWorktree, ToolHost, TurnContext, WorkflowAgentOutput, WorkflowAgentRequest};
+use super::host::{
+    RunWorktree, ToolHost, TurnContext, WorkflowAgentOutput, WorkflowAgentRequest,
+    WorkflowToolRequest,
+};
 use super::workflow_control::{Control, Signal};
 use super::workflow_replay::{Outcome, Plan, Replay};
 use super::workflow_scheduler::{Slot, WorkflowScheduler};
@@ -75,6 +78,8 @@ pub(super) struct RunHost {
     control: Arc<Control>,
     run_id: String,
     owner: TurnContext,
+    /// Asks of direct tool calls may reach the owner's clients.
+    interactive: bool,
     tiers: BTreeMap<String, Option<String>>,
     budget: RunBudget,
     replay: Replay,
@@ -227,6 +232,7 @@ impl RunHost {
             control,
             run_id: run.id.clone(),
             owner,
+            interactive: run.interactive,
             tiers,
             budget: run_budget(run),
             replay,
@@ -767,6 +773,50 @@ impl RunHost {
         view
     }
 
+    /// A direct tool call after the replay prefix: a recorded result of the same call
+    /// (same tool, input and ordinal) is reused, so a resumed run sees the files as they
+    /// were; otherwise the tool runs for the owner on the tokio runtime. A stop or shutdown
+    /// meanwhile ends the attempt without recording the call.
+    async fn serve_tool(
+        &self,
+        seq: u64,
+        key: String,
+        tool: String,
+        input: Value,
+    ) -> Result<Value, Diagnostic> {
+        self.replay
+            .after_prefix()
+            .await
+            .map_err(|error| self.fail_closed(error))?;
+        if let Some(outcome) = self.replay.reusable(&key) {
+            return self.record_call("tool", seq, &key, outcome);
+        }
+        let cancel = self.control.cancel.child_token();
+        let _stop = cancel.clone().drop_guard();
+        let lease = self.control.lease();
+        let request = WorkflowToolRequest {
+            run_id: self.run_id.clone(),
+            call_key: key.clone(),
+            owner: self.owner.clone(),
+            tool,
+            input,
+            interactive: self.interactive,
+        };
+        let tools = Arc::clone(&self.tools);
+        let outcome = self
+            .handle
+            .spawn(async move {
+                let _lease = lease;
+                tools.workflow_tool(request, cancel).await
+            })
+            .await
+            .unwrap_or_else(|error| Err(failed(format!("workflow tool task ended: {error}"))));
+        if self.control.cancel.is_cancelled() && self.control.signal() != Signal::Running {
+            return Err(self.halt());
+        }
+        self.record_call("tool", seq, &key, Outcome::of(&outcome))
+    }
+
     /// A checkpoint after the replay prefix: its recorded value, else the given one.
     async fn serve_checkpoint(
         &self,
@@ -818,6 +868,22 @@ impl WorkflowHost for RunHost {
                 Plan::Mismatch(error) => Err(self.fail_closed(error)),
                 Plan::Replay { index, outcome } => self.replayed(index, outcome).await,
                 Plan::Free { seq } => self.serve_checkpoint(seq, key, value).await,
+            }
+        })
+    }
+
+    fn tool(&self, name: String, input: Value) -> HostFuture<'_> {
+        let key = self.call_key(
+            &format!("tool {name}"),
+            &canonical(&input).to_string(),
+            &Map::new(),
+        );
+        let plan = self.replay.issue("tool", &key);
+        Box::pin(async move {
+            match plan {
+                Plan::Mismatch(error) => Err(self.fail_closed(error)),
+                Plan::Replay { index, outcome } => self.replayed(index, outcome).await,
+                Plan::Free { seq } => self.serve_tool(seq, key, name, input).await,
             }
         })
     }

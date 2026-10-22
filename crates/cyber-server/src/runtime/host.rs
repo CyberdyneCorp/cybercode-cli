@@ -489,6 +489,24 @@ pub struct WorkflowAgentRequest {
     pub slot: super::workflow_scheduler::Slot,
 }
 
+/// A direct read-only tool call of a Workflow script (`workflows` → Direct read-only
+/// tools): it runs for the run's owner Session under the run Mode, with the built-in
+/// tool's permission checks and limits, and returns structured data.
+#[derive(Debug, Clone)]
+pub struct WorkflowToolRequest {
+    pub run_id: String,
+    /// Stable for this call across relaunches of the run: the replay key and its ordinal.
+    pub call_key: String,
+    /// The owner Session; its `mode` is the run Mode.
+    pub owner: TurnContext,
+    /// `read`, `glob` or `grep`.
+    pub tool: String,
+    pub input: Value,
+    /// A permission ask may reach the owner's clients; otherwise it is rejected with
+    /// `No interactive approver for workflow run`.
+    pub interactive: bool,
+}
+
 /// The managed worktree of an isolated Workflow agent: `run-<ulid>-<index>` on branch
 /// `cyber/run-<ulid>/<index>`, where `<index>` is the agent's 1-based start ordinal in
 /// the run. It is kept until the run is archived or `cyber worktree prune` runs.
@@ -735,6 +753,22 @@ pub trait ToolHost: Send + Sync {
     /// false.
     fn workflow_agent_writes(&self, _directory: &str, _agent: Option<&str>) -> bool {
         false
+    }
+
+    /// Run a Workflow script's direct read-only tool call (`workflows` → Direct read-only
+    /// tools). Failures are typed: `PermissionDenied` for a refused permission, otherwise
+    /// `ExecutionFailure`.
+    fn workflow_tool(
+        &self,
+        _request: WorkflowToolRequest,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<Value, cyber_workflow::Diagnostic>> {
+        Box::pin(async {
+            Err(cyber_workflow::Diagnostic::new(
+                cyber_workflow::DiagnosticKind::PermissionDenied,
+                "direct tools are not available in this host",
+            ))
+        })
     }
 
     /// Spawn a Workflow agent and wait for its result (`workflows` → agent() call). Failures

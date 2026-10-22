@@ -1371,6 +1371,14 @@ impl ToolHost for BuiltinHost {
         self.workflow_writer(directory, agent)
     }
 
+    fn workflow_tool(
+        &self,
+        request: cyber_server::runtime::WorkflowToolRequest,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<Value, cyber_workflow::Diagnostic>> {
+        Box::pin(self.direct_tool(request, cancel))
+    }
+
     fn shell(
         &self,
         directory: &str,
@@ -1894,6 +1902,13 @@ fn deny_message(reason: &str) -> String {
     } else {
         format!("Permission denied: {reason}")
     }
+}
+
+/// Whether a denial is [`unattended`]'s: an ask no approver could answer.
+pub(crate) fn is_unattended_denial(message: &str) -> bool {
+    [Mode::Auto, Mode::Default]
+        .into_iter()
+        .any(|mode| message.contains(&unattended(mode)))
 }
 
 /// `permissions-modes` → Non-interactive behavior.
