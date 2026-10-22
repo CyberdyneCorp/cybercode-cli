@@ -32,11 +32,15 @@ Bundled Workflows SHALL be embedded in the `cyber` binary, carry the origin `bun
 - `research`: args `question` (required), `sources` (subset of `web`, `repo`, `docs`), `angles` (default 3, at most 6) and `max_sources` (default 12). Searchers SHALL run per source and angle, readers SHALL extract claims with locations, and each claim used in the answer SHALL be cross-checked by an independent agent; a claim supported by one source SHALL be marked `verified: false`. When `web` is requested but the web tools are not permitted, the result SHALL say so in `limitations` and use the other sources. The result SHALL contain `answer`, `claims` with sources and `verified`, and `sources`. Default budgets: 40 agents, 5 USD, 1 hour.
 - `plan`: args `task` (required), `angles` (2–6, default `mvp-first`, `risk-first`, `user-first`), `judges` (default 3) and `context` (paths). Read-only planners SHALL draft one plan per angle, judges SHALL score every draft on correctness, completeness, risk, effort and testability, and a final agent SHALL merge the highest-scoring draft with named grafts from the others. The result SHALL contain `plan_markdown`, `chosen`, `scores` and `grafts`, and no file SHALL be edited. Default budgets: 14 agents, 3 USD, 30 minutes.
 
-`/review` and `cyber review` SHALL run the bundled `review` Workflow when no discovered `review` skill or command overrides it, and SHALL report its findings as the `vcs-integration` "Local review command" requires; `cyber review` SHALL exit 0 when the run completes, 4 when a budget stopped it (printing the partial findings) and 1 when it fails.
+`/review` and `cyber review` SHALL run the `review` Workflow of the Location's library when no discovered `review` skill or command overrides the bundled one, and SHALL report its findings as the `vcs-integration` "Local review command" requires; `cyber review` SHALL exit 0 when the run completes, 4 when a budget stopped it (printing the partial findings) and 1 when it fails. A `review` run in which every reviewer failed SHALL fail rather than report no findings. When the bundled Workflows are disabled and no saved `review` Workflow exists, `/review` and `cyber review` SHALL run the bundled review skill as before.
 
 #### Scenario: Review verifies findings
 - **WHEN** `/review` runs on a diff where the correctness lens raises two findings and the verifier refutes one
 - **THEN** the TUI shows one finding, and the run result has `refuted: 1`
+
+#### Scenario: Review without the bundled Workflows
+- **WHEN** `CYBER_DISABLE_BUNDLED_WORKFLOWS=1` is set and the user runs `cyber review`
+- **THEN** the bundled review skill's reviewer Job reviews the target and no Workflow Run is created
 
 #### Scenario: Invalid review target creates no run
 - **WHEN** the user runs `cyber workflows run review --args '{"target":"main.."}'`
