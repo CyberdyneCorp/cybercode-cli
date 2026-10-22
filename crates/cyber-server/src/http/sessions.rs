@@ -437,6 +437,7 @@ async fn create(
         rules: body.rules,
         max_steps: body.max_steps,
         worktree_id: None,
+        source_directory: None,
         messaging: body.messaging,
         // Only the team runtime makes team members; a client cannot claim membership.
         team: None,

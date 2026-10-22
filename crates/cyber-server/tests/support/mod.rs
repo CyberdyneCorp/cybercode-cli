@@ -170,6 +170,8 @@ pub struct Tools {
     pub checks: Mutex<Vec<String>>,
     /// Exit codes checks report first, in order; then `check_exit`, else 0.
     pub goal_check_exits: Mutex<std::collections::VecDeque<Option<i32>>>,
+    /// The `goals` settings of every Location.
+    pub goal_settings: Mutex<cyber_core::goals::GoalSettings>,
 }
 
 pub fn def(name: &str, safety: RetrySafety, parallel: bool) -> ToolDef {
@@ -218,6 +220,7 @@ impl Tools {
             check_exit: Mutex::default(),
             checks: Mutex::default(),
             goal_check_exits: Mutex::default(),
+            goal_settings: Mutex::default(),
         })
     }
 
@@ -244,6 +247,19 @@ impl LocationGuard for TestLocationGuard {
 }
 
 impl ToolHost for Tools {
+    fn goal_settings(
+        &self,
+        _directory: &str,
+    ) -> Result<
+        (
+            cyber_core::goals::GoalSettings,
+            Option<cyber_core::budget::Budget>,
+        ),
+        String,
+    > {
+        Ok((self.goal_settings.lock().unwrap().clone(), None))
+    }
+
     fn check(
         &self,
         _directory: &str,

@@ -137,6 +137,10 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         id: "20261025010000_goals",
         sql: include_str!("../migrations/20261025010000_goals.sql"),
     },
+    Migration {
+        id: "20261025020000_session_source_directory",
+        sql: include_str!("../migrations/20261025020000_session_source_directory.sql"),
+    },
 ];
 
 pub(crate) enum Outcome {

@@ -48,7 +48,12 @@ pub const PHASE: &str = "workflow.phase.1";
 pub const LOG: &str = "workflow.log.1";
 /// The run summary was admitted to the starting Session (`workflows` → Run results).
 pub const RUN_NOTIFIED: &str = "workflow.run.notified.1";
-const KINDS: [&str; 14] = [
+/// `ask()` waits for the owner's answer: the run is `waiting_input` (`workflows` → ask()
+/// user interaction).
+pub const RUN_WAITING: &str = "workflow.run.waiting.1";
+/// The answer arrived: the run is `running` again.
+pub const RUN_ANSWERED: &str = "workflow.run.answered.1";
+const KINDS: [&str; 16] = [
     RUN_STARTED,
     RUN_PAUSED,
     RUN_RESUMED,
@@ -63,9 +68,11 @@ const KINDS: [&str; 14] = [
     PHASE,
     LOG,
     RUN_NOTIFIED,
+    RUN_WAITING,
+    RUN_ANSWERED,
 ];
 /// Lifecycle events that carry the whole run.
-pub(super) const LIFECYCLE: [&str; 7] = [
+pub(super) const LIFECYCLE: [&str; 9] = [
     RUN_PAUSED,
     RUN_RESUMED,
     RUN_DISPATCHED,
@@ -73,6 +80,8 @@ pub(super) const LIFECYCLE: [&str; 7] = [
     RUN_COMPLETED,
     RUN_FAILED,
     RUN_STOPPED,
+    RUN_WAITING,
+    RUN_ANSWERED,
 ];
 /// The refusal when a workflow agent, or a Session below one, would own a new run
 /// (`workflows` → Permissions for runs).
@@ -138,6 +147,10 @@ pub struct WorkflowRun {
     /// or save into `.cyber/workflows/`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub script_file: Option<String>,
+    /// Direct read-only tools the invocation allowlists besides `meta.tools`
+    /// (`workflows` → Direct read-only tools).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
     /// `sha256:` digest of the current revision's script source.
     pub digest: String,
     /// Digest of the engine limits and model tiers the current revision runs with.
@@ -248,6 +261,14 @@ pub struct WorkflowAgent {
     /// When the agent settled; absent while it runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ended_ms: Option<i64>,
+    /// Compactions of the agent's child Session (`compaction` → Compaction in subagents and
+    /// workflows); counted when the run is read, never recorded in the event.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub compactions: u64,
+}
+
+fn is_zero(count: &u64) -> bool {
+    *count == 0
 }
 
 /// One `log()` call.
@@ -272,6 +293,9 @@ pub struct StartWorkflowRun {
     /// The run's share of the agent slots ([`super::workflow_start::share`]).
     pub share: RunShare,
     pub starter: RunStarter,
+    /// Direct read-only tools the invocation allowlists besides `meta.tools`
+    /// ([`super::workflow_start::invocation_tools`]).
+    pub tools: Vec<String>,
 }
 
 /// A run's share of the agent slots as a start or resume resolved it (`workflows` → Fair
@@ -405,8 +429,9 @@ fn project_lifecycle(tx: &Transaction<'_>, event: &StoredEvent) -> rusqlite::Res
     )?;
     match event.kind.as_str() {
         RUN_REVISED => project_revision(tx, event)?,
-        RUN_RESUMED | RUN_DISPATCHED => {
-            // A resume that queued the run starts its clock at dispatch.
+        RUN_RESUMED | RUN_DISPATCHED | RUN_ANSWERED => {
+            // A resume that queued the run starts its clock at dispatch; time spent
+            // waiting for an answer is not running time.
             if data["status"] == "running" {
                 tx.execute(
                     "UPDATE workflow_run_budget SET activated_ms = ?2 WHERE run_id = ?1",
@@ -599,6 +624,21 @@ impl Runtime {
 
     /// Set the server-wide Workflow agent limit once, before any run starts
     /// (`workflows.max_concurrent`, reduced to the core count). False when already set.
+    /// `workflows.prompt_cache_warmup`, server-wide like the agent limit (default on).
+    pub fn configure_workflow_warmup(&self, enabled: bool) {
+        self.inner
+            .workflow_warmup_off
+            .store(!enabled, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(super) fn workflow_warmup(&self) -> bool {
+        self.inner.tools.warms_prompt_cache()
+            && !self
+                .inner
+                .workflow_warmup_off
+                .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     pub fn configure_workflow_concurrency(&self, limit: usize) -> bool {
         self.inner
             .workflow_scheduler
@@ -754,11 +794,40 @@ impl Runtime {
 
     /// Agents of a run, in start or settlement order.
     pub fn workflow_agents(&self, run_id: &str) -> Result<Vec<WorkflowAgent>, RuntimeError> {
-        rows(
+        let mut agents: Vec<WorkflowAgent> = rows(
             &self.inner.store,
             "SELECT data FROM workflow_agent WHERE run_id = ?1 ORDER BY settled_seq",
             Some(run_id.to_owned()),
-        )
+        )?;
+        let counts = self.agent_compactions(run_id)?;
+        for agent in &mut agents {
+            if let Some(count) = agent.session_id.as_ref().and_then(|id| counts.get(id)) {
+                agent.compactions = *count;
+            }
+        }
+        Ok(agents)
+    }
+
+    /// Completed compactions per child Session of the run's agents.
+    fn agent_compactions(
+        &self,
+        run_id: &str,
+    ) -> Result<std::collections::HashMap<String, u64>, RuntimeError> {
+        let run = run_id.to_owned();
+        Ok(self.inner.store.read(move |db| {
+            let mut statement = db.prepare(
+                "SELECT e.aggregate_id, COUNT(*) FROM event e
+                 WHERE e.type = ?2 AND e.aggregate_id IN
+                   (SELECT json_extract(a.data, '$.session_id') FROM workflow_agent a WHERE a.run_id = ?1)
+                 GROUP BY e.aggregate_id",
+            )?;
+            let counts = statement
+                .query_map(params![run, super::events::COMPACTION_COMPLETED], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64))
+                })?
+                .collect::<Result<_, _>>()?;
+            Ok(counts)
+        })?)
     }
 
     /// The run log (`log()` calls), oldest first.
@@ -827,6 +896,7 @@ impl Runtime {
             mode: owner.mode.clone(),
             origin: serde_json::to_value(&start.module.origin).unwrap_or(Value::Null),
             script_file: None,
+            tools: start.tools,
             digest: start.module.digest.clone(),
             config_digest: config_digest(&start.limits, &start.tiers),
             revision: 1,
@@ -922,6 +992,47 @@ impl Runtime {
         Ok(Some(path.display().to_string()))
     }
 
+    /// Save an inline run's script as a project Workflow, `.cyber/workflows/<meta.name>.js`
+    /// in the run's Location (`workflows` → Model-authored workflows): the edited
+    /// `script_file` when it still exists, else the latest revision's source. An existing
+    /// file is kept unless `force`. Returns the written path.
+    pub fn save_workflow_script(
+        &self,
+        run_id: &str,
+        force: bool,
+    ) -> Result<std::path::PathBuf, RuntimeError> {
+        let run = self.existing_workflow_run(run_id)?;
+        if run.origin.get("kind").and_then(Value::as_str) != Some("inline") {
+            return Err(RuntimeError::Conflict(format!(
+                "Run {run_id} runs a saved Workflow; only an inline script can be saved"
+            )));
+        }
+        let source = match run.script_file.as_deref().map(std::fs::read_to_string) {
+            Some(Ok(source)) => source,
+            _ => self.workflow_run_source(run_id)?.ok_or_else(|| {
+                RuntimeError::Corrupt(format!("Run {run_id} has no stored script"))
+            })?,
+        };
+        let module = WorkflowModule::inline(source)
+            .map_err(|error| RuntimeError::Invalid(error.to_string()))?;
+        let dir = std::path::Path::new(&run.directory)
+            .join(".cyber")
+            .join("workflows");
+        let path = dir.join(format!("{}.js", module.meta.name));
+        if path.exists() && !force {
+            return Err(RuntimeError::Conflict(format!(
+                "{} exists; save with force to replace it",
+                path.display()
+            )));
+        }
+        std::fs::create_dir_all(&dir)
+            .and_then(|()| std::fs::write(&path, &module.source))
+            .map_err(|error| {
+                RuntimeError::Invalid(format!("could not save {}: {error}", path.display()))
+            })?;
+        Ok(path)
+    }
+
     /// The first event of a run, with its source for later revisions and relaunches and
     /// the `ctx.budget` its first revision starts with.
     fn record_start(
@@ -972,6 +1083,7 @@ impl Runtime {
         let input = RunInput {
             args: run.args.clone(),
             ctx: json!({"run_id": run.id, "name": run.name, "session_id": run.session_id, "directory": run.directory}),
+            tools: run.tools.clone(),
         };
         spawn_engine(
             run,

@@ -486,7 +486,28 @@ pub struct WorkflowAgentRequest {
     pub resume: bool,
     /// Run the child in its own managed worktree (`worktrees` → Workflow agent isolation).
     pub worktree: Option<RunWorktree>,
+    /// `goal: {condition, check?, budget?}` with the budget capped by the run's
+    /// remaining budget: the child's active Goal.
+    pub goal: Option<Value>,
     pub slot: super::workflow_scheduler::Slot,
+}
+
+/// A direct read-only tool call of a Workflow script (`workflows` → Direct read-only
+/// tools): it runs for the run's owner Session under the run Mode, with the built-in
+/// tool's permission checks and limits, and returns structured data.
+#[derive(Debug, Clone)]
+pub struct WorkflowToolRequest {
+    pub run_id: String,
+    /// Stable for this call across relaunches of the run: the replay key and its ordinal.
+    pub call_key: String,
+    /// The owner Session; its `mode` is the run Mode.
+    pub owner: TurnContext,
+    /// `read`, `glob` or `grep`.
+    pub tool: String,
+    pub input: Value,
+    /// A permission ask may reach the owner's clients; otherwise it is rejected with
+    /// `No interactive approver for workflow run`.
+    pub interactive: bool,
 }
 
 /// The managed worktree of an isolated Workflow agent: `run-<ulid>-<index>` on branch
@@ -533,6 +554,27 @@ impl TeamWorktree {
     }
 }
 
+/// The managed worktree of a forked Goal (`goals` → Parallel goals across sessions):
+/// `goal-<ulid>` on branch `cyber/goal-<ulid>`, based on the source Session's HEAD.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoalWorktree {
+    pub name: String,
+    pub branch: String,
+}
+
+impl GoalWorktree {
+    pub fn new(goal_id: &str) -> Self {
+        let id = goal_id
+            .strip_prefix("gol_")
+            .unwrap_or(goal_id)
+            .to_ascii_lowercase();
+        Self {
+            name: format!("goal-{id}"),
+            branch: format!("cyber/goal-{id}"),
+        }
+    }
+}
+
 /// A settled Workflow agent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkflowAgentOutput {
@@ -548,6 +590,9 @@ pub struct WorkflowAgentOutput {
     /// The branch of an isolated child's worktree.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
+    /// The terminal status of the child's Goal, when the call set one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal_status: Option<String>,
 }
 
 pub trait ToolHost: Send + Sync {
@@ -737,6 +782,29 @@ pub trait ToolHost: Send + Sync {
         false
     }
 
+    /// Whether workflow agents sharing a prompt prefix start after the first one's first
+    /// response (`workflows` → Prompt-cache warm-up for fan-out): hosts whose agents are
+    /// real child Sessions on a provider.
+    fn warms_prompt_cache(&self) -> bool {
+        false
+    }
+
+    /// Run a Workflow script's direct read-only tool call (`workflows` → Direct read-only
+    /// tools). Failures are typed: `PermissionDenied` for a refused permission, otherwise
+    /// `ExecutionFailure`.
+    fn workflow_tool(
+        &self,
+        _request: WorkflowToolRequest,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<Value, cyber_workflow::Diagnostic>> {
+        Box::pin(async {
+            Err(cyber_workflow::Diagnostic::new(
+                cyber_workflow::DiagnosticKind::PermissionDenied,
+                "direct tools are not available in this host",
+            ))
+        })
+    }
+
     /// Spawn a Workflow agent and wait for its result (`workflows` → agent() call). Failures
     /// are typed: `AgentFailed`, `SchemaMismatch` or `PermissionDenied`.
     fn spawn_workflow_agent(
@@ -810,6 +878,18 @@ pub trait ToolHost: Send + Sync {
         _cancel: CancellationToken,
     ) -> BoxFuture<'a, Result<SessionInfo, String>> {
         Box::pin(async { Err("team worktrees are not supported by this host".to_string()) })
+    }
+
+    /// Create the root Session `request` of a forked Goal in its own managed worktree,
+    /// based on `source`'s current HEAD (`goals` → Parallel goals across sessions).
+    fn create_goal_fork_session<'a>(
+        &'a self,
+        _source: &'a SessionInfo,
+        _request: super::CreateSession,
+        _worktree: &'a GoalWorktree,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<SessionInfo, String>> {
+        Box::pin(async { Err("goal fork worktrees are not supported by this host".to_string()) })
     }
 
     /// The `goals` settings and the `budgets.goal` default of a Location (`goals`).

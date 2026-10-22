@@ -41,6 +41,9 @@ pub struct NewGoal {
     pub check: Option<String>,
     /// The effective Budget (`max_turns` always set).
     pub budget: Budget,
+    /// The `goals.templates` entry it came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
     pub created_ms: i64,
 }
 
@@ -136,6 +139,8 @@ pub struct Goal {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub check: Option<String>,
     pub budget: Budget,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
     pub status: GoalStatus,
     /// The last verdict's reason, or why it paused or ended.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -168,6 +173,7 @@ impl Goal {
             condition: new.condition,
             check: new.check,
             budget: new.budget,
+            template: new.template,
             status,
             reason: None,
             last_verdict: None,

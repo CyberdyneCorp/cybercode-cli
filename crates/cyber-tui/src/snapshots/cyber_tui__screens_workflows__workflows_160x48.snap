@@ -47,6 +47,6 @@ expression: shown
 │                                                                                                                                                              │
 │                                                                                                                                                              │
 │                                                                                                                                                              │
-│ enter open · p pause/resume · r resume · x stop · R resume interrupted · s script · l log · a all · esc                                                      │
+│ enter open · p pause/resume · r resume · x stop · R resume interrupted · s script · w save · l log · a all · esc                                             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  ~/work/app                                                       ⚙ 3 workflows · 1 queued · —  ctrl+p commands

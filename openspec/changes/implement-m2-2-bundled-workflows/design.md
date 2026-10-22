@@ -39,7 +39,7 @@ Bundled runs record `origin: {kind: "bundled", name}` and the digest, and resume
 
 Each call goes through the run owner's `ToolHost` with the same permission evaluation (the run's Mode as ceiling, `read` and `external_directory` rules, deny_read), output limits and sandbox as the built-in tool, but returns structured data (`{paths, truncated}`, `{matches: [{path, line, text}], truncated}`, `{content, truncated}`). A permission `ask` during a non-interactive run is rejected with `No interactive approver for workflow run`, as for agents.
 
-Replay: a direct tool call is a host call. Its result is persisted as `workflow.host.settled.1` keyed by kind, normalized input and ordinal (the "Replay of workflow host calls" requirement), so a resumed run sees the same file list even if files changed. A changed input is a new call.
+Replay: a direct tool call is a host call. Its result is persisted as `workflow.call.recorded.1` records of kind `tool`, keyed by normalized input and ordinal (the "Replay of workflow host calls" requirement), so a resumed run sees the same file list even if files changed. A changed input is a new call.
 
 ### 4. Shared conventions of the five modules
 

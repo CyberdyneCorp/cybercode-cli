@@ -169,7 +169,18 @@
     );
   }
 
+  // Direct read-only tools. The engine checks each call against `meta.tools` and the
+  // invocation's allowlist, so a script cannot widen it.
+  function directTool(name) {
+    return function (input) {
+      return call("tool", { tool: name, input: input === undefined ? {} : input });
+    };
+  }
+  const tools = {};
+  for (const name of ["read", "glob", "grep"]) tools[name] = freeze(directTool(name));
+
   lock("agent", freeze(agent));
+  lock("tools", freeze(tools));
   lock("ask", freeze(ask));
   lock("checkpoint", freeze(checkpoint));
   lock("phase", freeze(phase));

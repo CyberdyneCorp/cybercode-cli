@@ -2180,6 +2180,208 @@
         ],
         "description": "A single-use ticket for `GET /jobs/{id}/pty/connect`."
       },
+      "WorkflowLibrary": {
+        "type": "object",
+        "properties": {
+          "workflows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryEntry"
+            }
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryIssue"
+            }
+          }
+        },
+        "required": [
+          "workflows",
+          "issues"
+        ],
+        "description": "The Workflow library of a Location (`workflows` → Workflow library over HTTP): every\nentry a run can start by name, and the modules that failed to load."
+      },
+      "LibraryEntry": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "phases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Declared phase titles."
+          },
+          "args": {
+            "description": "`meta.args`: the JSON Schema of the run's `args`."
+          },
+          "budgets": {
+            "description": "`meta.budget`: the module's default run budget."
+          },
+          "estimate": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`meta.estimate`: how many agents a run starts, in words."
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "`meta.tools`: the read-only tools the script calls directly."
+          },
+          "origin": {
+            "$ref": "#/components/schemas/LibraryOrigin"
+          },
+          "digest": {
+            "type": "string",
+            "description": "`sha256:<hex>` of the source."
+          },
+          "shadowed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The definitions this entry replaces, lowest precedence first."
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "phases",
+          "tools",
+          "origin",
+          "digest",
+          "shadowed"
+        ],
+        "description": "One library entry, as its `meta` declares it."
+      },
+      "LibraryOrigin": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "const": "global"
+              }
+            },
+            "required": [
+              "kind",
+              "path"
+            ],
+            "description": "`<config>/workflows`."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "const": "project"
+              }
+            },
+            "required": [
+              "kind",
+              "path"
+            ],
+            "description": "A `.cyber/workflows` directory of the project."
+          }
+        ],
+        "description": "Where a library entry comes from."
+      },
+      "LibraryIssue": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "diagnostic": {
+            "$ref": "#/components/schemas/Diagnostic"
+          }
+        },
+        "required": [
+          "path",
+          "diagnostic"
+        ],
+        "description": "A module that failed to load, with its diagnostic."
+      },
+      "Diagnostic": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/DiagnosticKind"
+          },
+          "message": {
+            "type": "string"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Position"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "message"
+        ],
+        "description": "One Workflow failure: a kind, a message and, for script errors, where it happened."
+      },
+      "DiagnosticKind": {
+        "type": "string",
+        "enum": [
+          "ParseError",
+          "UnsupportedSyntax",
+          "ExecutionFailure",
+          "AgentFailed",
+          "SchemaMismatch",
+          "BudgetExceeded",
+          "ModelUnavailable",
+          "NoInteractiveUser",
+          "Timeout",
+          "PermissionDenied",
+          "WorkflowReplayMismatch"
+        ],
+        "description": "The single kind every Workflow failure is reported with."
+      },
+      "Position": {
+        "type": "object",
+        "properties": {
+          "line": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "column": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "line",
+          "column"
+        ],
+        "description": "A 1-based source position in the Workflow script."
+      },
       "StartBody": {
         "type": "object",
         "additionalProperties": false,
@@ -2217,6 +2419,17 @@
             "format": "uint32",
             "minimum": 1,
             "description": "The run's share of the server-wide Workflow agent slots, a positive integer capped\nat that limit; overrides `meta.max_concurrent` and `workflows.max_concurrent_per_run`.",
+            "default": null
+          },
+          "tools": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Direct read-only tools (`read`, `glob`, `grep`) the script may call besides those\nits `meta.tools` names.",
             "default": null
           }
         },
@@ -2265,6 +2478,13 @@
               "null"
             ],
             "description": "An inline script's copy at `<state>/workflows/<run_id>.js`, to read, edit, relaunch\nor save into `.cyber/workflows/`."
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Direct read-only tools the invocation allowlists besides `meta.tools`\n(`workflows` → Direct read-only tools)."
           },
           "digest": {
             "type": "string",
@@ -2497,69 +2717,6 @@
           "reserved"
         ]
       },
-      "Diagnostic": {
-        "type": "object",
-        "properties": {
-          "kind": {
-            "$ref": "#/components/schemas/DiagnosticKind"
-          },
-          "message": {
-            "type": "string"
-          },
-          "position": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Position"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "kind",
-          "message"
-        ],
-        "description": "One Workflow failure: a kind, a message and, for script errors, where it happened."
-      },
-      "DiagnosticKind": {
-        "type": "string",
-        "enum": [
-          "ParseError",
-          "UnsupportedSyntax",
-          "ExecutionFailure",
-          "AgentFailed",
-          "SchemaMismatch",
-          "BudgetExceeded",
-          "ModelUnavailable",
-          "NoInteractiveUser",
-          "Timeout",
-          "PermissionDenied",
-          "WorkflowReplayMismatch"
-        ],
-        "description": "The single kind every Workflow failure is reported with."
-      },
-      "Position": {
-        "type": "object",
-        "properties": {
-          "line": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 0
-          },
-          "column": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 0
-          }
-        },
-        "required": [
-          "line",
-          "column"
-        ],
-        "description": "A 1-based source position in the Workflow script."
-      },
       "Page_WorkflowRunSummary": {
         "type": "object",
         "properties": {
@@ -2608,6 +2765,13 @@
               "null"
             ],
             "description": "An inline script's copy at `<state>/workflows/<run_id>.js`, to read, edit, relaunch\nor save into `.cyber/workflows/`."
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Direct read-only tools the invocation allowlists besides `meta.tools`\n(`workflows` → Direct read-only tools)."
           },
           "digest": {
             "type": "string",
@@ -2936,6 +3100,13 @@
             ],
             "description": "An inline script's copy at `<state>/workflows/<run_id>.js`, to read, edit, relaunch\nor save into `.cyber/workflows/`."
           },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Direct read-only tools the invocation allowlists besides `meta.tools`\n(`workflows` → Direct read-only tools)."
+          },
           "digest": {
             "type": "string",
             "description": "`sha256:` digest of the current revision's script source."
@@ -3222,6 +3393,12 @@
             ],
             "format": "int64",
             "description": "When the agent settled; absent while it runs."
+          },
+          "compactions": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Compactions of the agent's child Session (`compaction` → Compaction in subagents and\nworkflows); counted when the run is read, never recorded in the event."
           }
         },
         "required": [
@@ -3258,6 +3435,40 @@
             "default": null
           }
         }
+      },
+      "SaveBody": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "force": {
+            "type": "boolean",
+            "description": "Replace an existing `.cyber/workflows/<name>.js`.",
+            "default": false
+          }
+        }
+      },
+      "Data_SavedScript": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SavedScript"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "SavedScript": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "description": "Where a saved script was written."
       },
       "Page_WorkflowLogEntry": {
         "type": "object",
@@ -3792,6 +4003,13 @@
             ],
             "description": "The unmanaged Location `exit_worktree` returns to, while the Session runs in\na worktree it entered with `enter_worktree`."
           },
+          "source_directory": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Location a root Session in its own managed worktree was started from (a\nforked Goal, a teammate): Session listings of that Location include it."
+          },
           "parent_id": {
             "type": [
               "string",
@@ -4192,6 +4410,13 @@
               "null"
             ],
             "description": "The unmanaged Location `exit_worktree` returns to, while the Session runs in\na worktree it entered with `enter_worktree`."
+          },
+          "source_directory": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Location a root Session in its own managed worktree was started from (a\nforked Goal, a teammate): Session listings of that Location include it."
           },
           "parent_id": {
             "type": [
@@ -10849,6 +11074,12 @@
           "budget": {
             "$ref": "#/components/schemas/Budget"
           },
+          "template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "status": {
             "$ref": "#/components/schemas/GoalStatus"
           },
@@ -11060,7 +11291,9 @@
         "additionalProperties": false,
         "properties": {
           "condition": {
-            "type": "string"
+            "type": "string",
+            "description": "Required unless `template` is given.",
+            "default": ""
           },
           "check": {
             "type": [
@@ -11082,12 +11315,24 @@
           },
           "mode": {
             "$ref": "#/components/schemas/GoalMode"
+          },
+          "template": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "args": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The text that replaces `$ARGUMENTS` in the template's condition.",
+            "default": null
           }
         },
-        "required": [
-          "condition"
-        ],
-        "description": "`POST .../goals`."
+        "description": "`POST .../goals`. With `template`, the condition, check and budget come from\n`goals.templates.<template>` (`$ARGUMENTS` becomes `args`); a given `check` or\n`budget` overrides the template's."
       },
       "GoalMode": {
         "oneOf": [
@@ -11114,6 +11359,75 @@
         "required": [
           "data"
         ]
+      },
+      "ForkGoal": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "condition": {
+            "type": "string"
+          },
+          "check": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Budget"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "condition"
+        ],
+        "description": "`POST .../goals/fork`."
+      },
+      "Data_GoalFork": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/GoalFork"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "GoalFork": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The worktree branch; absent when the fork shares the source's checkout."
+          },
+          "goal": {
+            "$ref": "#/components/schemas/Goal"
+          }
+        },
+        "required": [
+          "session_id",
+          "directory",
+          "goal"
+        ],
+        "description": "The Session a fork started and its active Goal."
       },
       "GoalOrder": {
         "type": "object",
@@ -13554,6 +13868,63 @@
         "x-websocket": true
       }
     },
+    "/api/v1/workflows": {
+      "get": {
+        "operationId": "v1.workflow.library",
+        "summary": "List the Workflow library of the Location: saved Workflows by precedence, with their origin, and the modules that failed to load",
+        "tags": [
+          "workflow"
+        ],
+        "parameters": [
+          {
+            "name": "directory",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowLibrary"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/workflows/runs": {
       "post": {
         "operationId": "v1.workflow.run",
@@ -13949,6 +14320,65 @@
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflows/runs/{id}/save": {
+      "post": {
+        "operationId": "v1.workflow.save",
+        "summary": "Save an inline run's script as the project Workflow .cyber/workflows/<meta.name>.js; 409 when the file exists unless force",
+        "tags": [
+          "workflow"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SavedScript"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveBody"
               }
             }
           }
@@ -20008,7 +20438,7 @@
       },
       "post": {
         "operationId": "v1.session.createGoal",
-        "summary": "Set the active Goal (`mode: set`, the default, clears the current one and starts a Turn toward it) or queue one (`mode: add`)",
+        "summary": "Set the active Goal (`mode: set`, the default, clears the current one and starts a Turn toward it) or queue one (`mode: add`); `template` takes the condition, check and budget from `goals.templates`",
         "tags": [
           "session"
         ],
@@ -20052,7 +20482,7 @@
             }
           },
           "404": {
-            "description": "SessionNotFoundError",
+            "description": "SessionNotFoundError or GoalTemplateNotFoundError",
             "content": {
               "application/json": {
                 "schema": {
@@ -20145,6 +20575,85 @@
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/goals/fork": {
+      "post": {
+        "operationId": "v1.session.forkGoal",
+        "summary": "Pursue a Goal in a new background root Session, in its own managed worktree when `goals.fork_isolation` is `worktree` and the Location is a git checkout",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_GoalFork"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "GoalConditionTooLongError or InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "SessionNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForkGoal"
               }
             }
           }

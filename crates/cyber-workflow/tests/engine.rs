@@ -71,6 +71,10 @@ impl WorkflowHost for FakeHost {
         Box::pin(async move { Ok(value) })
     }
 
+    fn tool(&self, name: String, input: Value) -> HostFuture<'_> {
+        Box::pin(async move { Ok(json!({ "tool": name, "input": input })) })
+    }
+
     fn phase(&self, title: &str) -> Result<(), Diagnostic> {
         self.phases.borrow_mut().push(title.into());
         Ok(())
@@ -98,6 +102,7 @@ fn execute_with(
     let input = RunInput {
         args: json!({ "target": "src" }),
         ctx: json!({ "run_id": "run_test" }),
+        tools: Vec::new(),
     };
     block_on(run(&module, input, limits, host))
 }
@@ -165,12 +170,7 @@ fn args_and_host_globals_are_frozen() {
     assert_eq!(
         output.value,
         json!([
-            "src",
-            "function",
-            "function",
-            "function",
-            "function",
-            "undefined"
+            "src", "function", "function", "function", "function", "object"
         ])
     );
 }
@@ -676,4 +676,43 @@ fn ctx_budget_is_a_live_frozen_host_snapshot() {
         output.value,
         json!({ "before": 0, "after": 2, "frozen": true, "keys": ["run_id", "budget"] })
     );
+}
+
+/// `workflows` → Direct read-only tools: `tools.*` reach the host only when `meta.tools` or
+/// the invocation allowlists them, and `meta.tools` names
+/// only read-only tools.
+#[test]
+fn direct_tools_obey_the_meta_and_invocation_allowlists() {
+    let source = "export const meta = { name: 'tools', description: 'Tools', tools: ['glob'] };\n\
+        export default async () => {\n\
+          const found = await tools.glob({ pattern: '*.rs' });\n\
+          const read = await tools.read({ path: 'a.rs' });\n\
+          let denied = null;\n\
+          try { await tools.grep({ pattern: 'x' }); } catch (e) { denied = `${e.kind}: ${e.message}`; }\n\
+          return { found, read, denied };\n\
+        };\n";
+    let module = WorkflowModule::inline(source).unwrap();
+    assert_eq!(module.meta.tools, ["glob"]);
+    let input = RunInput {
+        tools: vec!["read".into()],
+        args: json!({}),
+        ctx: json!({}),
+    };
+    let output = block_on(run(&module, input, Limits::default(), &FakeHost::default())).unwrap();
+    assert_eq!(
+        output.value["found"],
+        json!({ "tool": "glob", "input": { "pattern": "*.rs" } })
+    );
+    assert_eq!(output.value["read"]["tool"], "read");
+    assert_eq!(
+        output.value["denied"],
+        "PermissionDenied: tool not allowed by meta.tools: grep"
+    );
+
+    let edit = WorkflowModule::inline(
+        "export const meta = { name: 'w', description: 'W', tools: ['edit'] };",
+    )
+    .unwrap_err();
+    assert_eq!(edit.kind, DiagnosticKind::ParseError);
+    assert!(edit.message.contains("meta.tools"), "{edit}");
 }

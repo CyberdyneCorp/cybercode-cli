@@ -300,7 +300,7 @@ async fn script_failures_and_invalid_starts_are_reported() {
         run["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("option goal is not available"),
+            .contains("agent() option goal: invalid type"),
         "{run}"
     );
     assert_eq!(run["agents_detail"], json!([]));
@@ -373,7 +373,7 @@ async fn workflow_routes_require_authentication_and_name_the_group_when_unavaila
     assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
 
     for (method, path) in [
-        (Method::GET, "/workflows"),
+        (Method::POST, "/workflows"),
         (Method::GET, "/workflows/saved"),
     ] {
         let (status, body) = server.call(method.clone(), path, None).await;
@@ -394,6 +394,83 @@ async fn workflow_routes_require_authentication_and_name_the_group_when_unavaila
         assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path}: {body}");
         assert_eq!(body["_tag"], "WorkflowRunNotFoundError");
     }
+    server.close().await;
+}
+
+fn saved_module(name: &str, description: &str) -> String {
+    format!(
+        "export const meta = {{ name: '{name}', description: '{description}', phases: [{{ title: 'One' }}], args: {{ type: 'object' }}, budget: {{ max_agents: 3 }}, estimate: 'one agent', tools: ['glob'] }};\nexport default async () => null;\n"
+    )
+}
+
+/// `workflows` → Workflow library over HTTP: saved Workflows of the Location by
+/// precedence, with origin, digest and shadowed definitions, and the issues; the
+/// capability is reported by `/health`.
+#[tokio::test]
+async fn the_library_lists_saved_workflows_by_precedence_with_issues() {
+    let model = ScriptedModel::start(reply);
+    let server = Server::start(model.config()).await;
+    let global = server.temp.path().join("config/workflows");
+    let project = server.temp.path().join(".cyber/workflows");
+    for dir in [&global, &project] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    std::fs::write(global.join("release.js"), saved_module("release", "Global")).unwrap();
+    std::fs::write(global.join("audit.js"), saved_module("audit", "Audit")).unwrap();
+    std::fs::write(
+        project.join("release.js"),
+        saved_module("release", "Project"),
+    )
+    .unwrap();
+    std::fs::write(project.join("broken.js"), "export const meta = 1;").unwrap();
+
+    let listed = server.ok(Method::GET, "/workflows", None).await;
+    let names: Vec<&str> = listed["workflows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["audit", "release"], "{listed}");
+    let release = &listed["workflows"][1];
+    assert_eq!(release["description"], "Project");
+    assert_eq!(release["origin"]["kind"], "project", "{release}");
+    assert_eq!(release["phases"], json!(["One"]));
+    assert_eq!(release["budgets"], json!({"max_agents": 3}));
+    assert_eq!(release["estimate"], "one agent");
+    assert_eq!(release["tools"], json!(["glob"]));
+    assert!(release["digest"].as_str().unwrap().starts_with("sha256:"));
+    let shadowed = release["shadowed"][0].as_str().unwrap();
+    assert!(
+        std::path::Path::new(shadowed).ends_with("config/workflows/release.js"),
+        "{release}"
+    );
+    assert_eq!(listed["workflows"][0]["origin"]["kind"], "global");
+    let issue = &listed["issues"][0];
+    assert!(
+        issue["path"].as_str().unwrap().ends_with("broken.js"),
+        "{listed}"
+    );
+    assert_eq!(issue["diagnostic"]["kind"], "ParseError", "{issue}");
+
+    let elsewhere = tempfile::tempdir().unwrap();
+    let other = server
+        .ok(
+            Method::GET,
+            &format!("/workflows?directory={}", elsewhere.path().display()),
+            None,
+        )
+        .await;
+    assert_eq!(other["workflows"][1]["origin"]["kind"], "global", "{other}");
+
+    let health = server.ok(Method::GET, "/health", None).await;
+    assert!(
+        health["features"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("workflow")),
+        "{health}"
+    );
     server.close().await;
 }
 
@@ -626,6 +703,59 @@ async fn max_agents_over_http_rejects_the_next_agent_and_ends_budget_exceeded() 
         )
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    server.close().await;
+}
+
+/// The goal evaluator (its system prompt judges goals) always says met; agents answer.
+#[cfg(unix)]
+fn goal_reply(body: &Value) -> Value {
+    let judging = body["messages"].as_array().into_iter().flatten().any(|m| {
+        m["role"] == "system"
+            && m["content"]
+                .as_str()
+                .is_some_and(|c| c.contains("judge whether a coding agent"))
+    });
+    if judging {
+        return json!({"content": json!({"verdict": "met", "reason": "file X compiles"}).to_string()});
+    }
+    json!({"content": "migrated file X"})
+}
+
+/// `goals` → Goals on workflow agents and subagents: `agent(..., {goal})` keeps the child
+/// working until its check passes: the first `met` fails the check and continues, the
+/// second holds; the result carries `goal_status`, and the goal's budget is capped by
+/// what the run has left. The check is a POSIX shell command.
+#[cfg(unix)]
+#[tokio::test]
+async fn workflow_agent_with_goal_runs_until_check_passes() {
+    let model = ScriptedModel::start(goal_reply);
+    let server = Server::start(model.config()).await;
+    let owner = server.session().await;
+    let script = r#"export const meta = { name: 'goal-agent', description: 'Agent with a goal' };
+export default async () => agent('Migrate file X', { goal: { condition: 'file X compiles',
+  check: '[ -f .goal-mark ] || { touch .goal-mark; exit 1; }', budget: { max_turns: 5 } } });
+"#;
+    let run_id = server
+        .start_run(json!({"session_id": owner, "script": script, "budget": {"max_turns": 3}}))
+        .await;
+    let run = server.settled_run(&run_id).await;
+    assert_eq!(run["status"], "completed", "{run}");
+    assert_eq!(run["result"]["goal_status"], "met", "{run}");
+    let child = run["result"]["session_id"].as_str().unwrap();
+    let goals = server.app.runtime.goals(child).await.unwrap();
+    let goal = goals.goals.values().next().unwrap();
+    assert_eq!(goal.condition, "file X compiles");
+    assert_eq!(
+        goal.budget.max_turns,
+        Some(3),
+        "capped by the run's max_turns"
+    );
+    let checks: Vec<_> = goal
+        .evaluations
+        .iter()
+        .map(|e| e.check.as_ref().unwrap().exit_code)
+        .collect();
+    assert_eq!(checks, [Some(1), Some(0)]);
     server.close().await;
 }
 
@@ -1472,6 +1602,53 @@ fn gated_reply(body: &Value) -> Value {
     json!({ "gate": label })
 }
 
+/// [`gated_reply`], with the goal evaluator saying met.
+fn gated_goal_reply(body: &Value) -> Value {
+    if body.to_string().contains("judge whether a coding agent") {
+        return json!({"content": json!({"verdict": "met", "reason": "the run finished"}).to_string()});
+    }
+    gated_reply(body)
+}
+
+/// `workflows` → goal evaluation is deferred while runs the Session started are active
+/// (`goals` → Deferred evaluation during background work): the owner's goal Turn ends
+/// while its run's agent waits at a gate, and no verdict is asked for until it is gone.
+#[tokio::test]
+async fn goal_evaluation_waits_for_the_sessions_active_run() {
+    let model = ScriptedModel::start(gated_goal_reply);
+    let server = Server::start(model.config()).await;
+    let owner = server.session().await;
+    let run_id = server
+        .start_run(json!({"session_id": owner, "script": gated_script("held", "g1")}))
+        .await;
+    wait_for("g1 at the gate", || model.held() == ["g1"]).await;
+    let goal = server
+        .ok(
+            Method::POST,
+            &format!("/sessions/{owner}/goals"),
+            Some(json!({"condition": "the held run finished"})),
+        )
+        .await;
+    assert_eq!(goal["data"]["status"], "active");
+    server.app.runtime.wait_idle(&owner).await;
+    let judged = || {
+        model
+            .requests()
+            .iter()
+            .filter(|r| r.to_string().contains("judge whether a coding agent"))
+            .count()
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(judged(), 0, "no verdict while the run is active");
+    let goals = server.app.runtime.goals(&owner).await.unwrap();
+    assert!(goals.pending_eval, "evaluation is owed");
+
+    model.open_gate();
+    let run = server.settled_run(&run_id).await;
+    assert_eq!(run["status"], "completed", "{run}");
+    server.close().await;
+}
+
 /// Labels of `prefix` waiting at the gate.
 fn held_of(model: &ScriptedModel, prefix: char) -> usize {
     model
@@ -1488,7 +1665,8 @@ fn held_of(model: &ScriptedModel, prefix: char) -> usize {
 async fn runs_share_the_agent_limit_fairly_and_a_share_caps_its_run() {
     let model = ScriptedModel::start(gated_reply);
     let mut config = model.config();
-    config["workflows"] = json!({"max_concurrent": 2});
+    // The scripted provider holds whole responses, so warm-up would hold the fan-out.
+    config["workflows"] = json!({"max_concurrent": 2, "prompt_cache_warmup": false});
     let server = Server::start(config).await;
     let owner = server.session().await;
     let a = server
@@ -1595,7 +1773,8 @@ async fn a_bad_share_is_refused_and_a_resume_changes_the_share_without_a_revisio
 async fn a_resume_without_a_share_keeps_the_runs_share() {
     let model = ScriptedModel::start(gated_reply);
     let mut config = model.config();
-    config["workflows"] = json!({"max_concurrent": 2});
+    // The scripted provider holds whole responses, so warm-up would hold the fan-out.
+    config["workflows"] = json!({"max_concurrent": 2, "prompt_cache_warmup": false});
     let server = Server::start(config).await;
     let owner = server.session().await;
     let run = server
@@ -2765,7 +2944,8 @@ impl Server {
 async fn queued_agents_are_counted_and_progress_streams_on_the_runs_location() {
     let model = ScriptedModel::start(gated_reply);
     let mut config = model.config();
-    config["workflows"] = json!({"max_concurrent": 16});
+    // The scripted provider holds whole responses, so warm-up would hold the fan-out.
+    config["workflows"] = json!({"max_concurrent": 16, "prompt_cache_warmup": false});
     let server = Server::start(config).await;
     let elsewhere = server.temp.path().canonicalize().unwrap().join("elsewhere");
     std::fs::create_dir_all(&elsewhere).unwrap();
@@ -3143,5 +3323,50 @@ async fn a_run_of_a_session_in_a_symlinked_directory_is_listed_from_either_spell
     }
     model.open_gate();
     assert_eq!(server.ended_run(&run).await["status"], "completed");
+    server.close().await;
+}
+
+/// `workflows` → Model-authored workflows, "Save an inline workflow": an inline run's
+/// script is saved as `.cyber/workflows/<meta.name>.js` of its Location; an existing file
+/// needs `force`, and a saved Workflow's run has nothing to save.
+#[tokio::test]
+async fn an_inline_runs_script_is_saved_into_the_project_workflows() {
+    let model = ScriptedModel::start(reply);
+    let server = Server::start(model.config()).await;
+    let owner = server.session().await;
+    let script = "export const meta = { name: 'keep-me', description: 'Saved' };\nexport default async () => 1;\n";
+    let id = server
+        .start_run(json!({"session_id": owner, "script": script}))
+        .await;
+    server.settled_run(&id).await;
+    let path = format!("/workflows/runs/{id}/save");
+    let saved = server.ok(Method::POST, &path, None).await;
+    let file = server
+        .temp
+        .path()
+        .canonicalize()
+        .unwrap()
+        .join(".cyber/workflows/keep-me.js");
+    assert_eq!(saved["data"]["path"], file.display().to_string());
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), script);
+
+    let (status, body) = server.call(Method::POST, &path, Some(json!({}))).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    server
+        .ok(Method::POST, &path, Some(json!({"force": true})))
+        .await;
+
+    let named = server
+        .start_run(json!({"session_id": owner, "name": "keep-me"}))
+        .await;
+    server.settled_run(&named).await;
+    let (status, body) = server
+        .call(Method::POST, &format!("/workflows/runs/{named}/save"), None)
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    let (status, _) = server
+        .call(Method::POST, "/workflows/runs/run_missing/save", None)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
     server.close().await;
 }

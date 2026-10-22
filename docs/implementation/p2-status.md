@@ -2,9 +2,20 @@
 
 P2 evidence lives here and is kept separate from the P1 files (`p1-status.md`, `p1-handoff.md` and `p1-acceptance-audit.md`). The plan, the requirement-to-task mapping and the scope exclusions are in [`openspec/changes/implement-m2-1-workflow-runtime`](../../openspec/changes/implement-m2-1-workflow-runtime/proposal.md).
 
-## Session goals and loops (2026-10-22 reconciliation)
+## Goals, slice 2 (`implement-m2-3-goals`, 2026-10-22)
 
-Goals (M2.3) have an implemented core: conditions and an ordered queue, evaluator verdicts, optional sandboxed checks, per-Goal budgets, pause/resume/skip/edit/reorder, restart recovery, hooks and `cyber exec --goal` exit codes. The [guide](../local-core-guide.md#goals-p2-m23) describes the usable subset; [`implement-m2-3-goals`](../../openspec/changes/implement-m2-3-goals/tasks.md) retains unfinished TUI controls, the dedicated CLI acceptance tests, goals on agents/workflows, fork/templates and end-to-end acceptance. This is implementation status, not a new acceptance sign-off.
+- Templates: `/goal use <name> [text]` and `POST .../goals {template, args}` (`GoalTemplateNotFoundError` 404). Test: `goal_use_template_substitutes_arguments` (`crates/cyber-app/tests/goals.rs`).
+- Fork: `/goal fork` and `POST .../goals/fork` start a root Session in a `goal-<ulid>` worktree on `cyber/goal-<ulid>`. Root worktree Sessions record `source_directory`, so `cyber sessions list` in the source checkout lists forks and worktree teammates. Test: `goal_fork_starts_background_session_in_worktree` (regression: listed from the source checkout).
+- Goals on agents: the `agent` tool and workflow `agent()` accept `goal`; results carry `goal_status`; a workflow agent's goal budget is capped by the run's remaining budget. Tests: `agent_tool_goal_returns_goal_status`, `workflow_agent_with_goal_runs_until_check_passes` (`crates/cyber-app/tests/workflows.rs`), `an_agent_goal_budget_is_capped_by_what_the_run_has_left`.
+- The model `goal` tool behind `goal.set` (ask by default). Test: `the_model_goal_tool_asks_by_default`, golden `crates/cyber-tools/tests/goldens/goal.txt`.
+- Unattended asks pause the Goal with `Waiting for approval` after `goals.unattended_ask_seconds` without a watching client. Test: `unattended_ask_pauses_goal_waiting_for_approval` (`crates/cyber-server/tests/goals.rs`).
+- Hooks and restart: `goal_completed_hook_receives_goal_json`, `restart_mid_goal_evaluates_before_continuing` (a rebuilt App).
+- Workflow runs defer evaluation (M2.1 5.8): `goal_evaluation_waits_for_the_sessions_active_run`.
+- `cyber exec --goal` SIGINT exits 130: `exec_goal_sigint_exits_130`.
+- TUI: panel keys, sidebar Goal section; snapshots `goal_panel_120x40`, `goal_sidebar_160x40`, `goal_sidebar_light_160x40`.
+- Not done: the live end-to-end acceptance on the real binary (task 10.2) and archiving (10.3).
+
+## Session loops (2026-10-22 reconciliation)
 
 Session loops (M2.4) implement fixed and self-paced iterations, `schedule_wakeup`, queued delivery, overlap skip/coalesce, quiet-check collapsing, iteration/time/command/budget stops, persistence and the HTTP/TUI surfaces. See the [guide](../local-core-guide.md#loops-p2-m24) and [`implement-m2-4-loops`](../../openspec/changes/implement-m2-4-loops/tasks.md). In-session cron, persistent service schedules, notifications, hooks, `--until-goal` integration and exec slash invocation remain open.
 
@@ -467,6 +478,22 @@ Increment 2 delivers what the brief named "runtime core": real agents, the globa
 ### Still open after M2.1
 
 `ask()`/`waiting_input`, direct read-only `tools`, prompt-cache warm-up, `CYBER_WORKFLOW_RUN_ID`, compaction reporting, the TUI monitor and Save action, `exec --workflow`, Job integration, saved-Workflow listing over HTTP and capability discovery, reserved budgets (4.16), M2.2 bundled Workflows, P3 runners.
+
+## M2.1 Workflow runtime: gaps (2026-10-22)
+
+Change `implement-m2-1-workflow-runtime`, tasks 4.3, 4.8, 4.9, 4.11, 4.15, 5.1, 5.4, 5.5, 5.6 and 5.7; M2.2 tasks 2.1 and 3.1–3.3 with them.
+
+- **`CYBER_WORKFLOW_RUN_ID`** in every sandboxed tool process of a workflow agent (and its subagents) and in hook commands of a run, read from the store without the Session lock. Test: `workflow_agents::a_workflow_agents_shell_sees_its_run_id`.
+- **Workflow library over HTTP.** `GET /api/v1/workflows` (`v1.workflow.library`), `client.workflows.library()`, `workflow` in `/health` `features`. Test: `workflows::the_library_lists_saved_workflows_by_precedence_with_issues`.
+- **Direct read-only tools.** `meta.tools` and the invocation's `tools`, enforced by the engine; `ToolHost::workflow_tool` with the built-in checks; results recorded as `tool` calls and replayed. Tests: `engine::direct_tools_obey_the_meta_and_invocation_allowlists`, `workflow_runs::direct_tool_results_are_recorded_and_replayed_after_a_pause`, `workflow_agents::direct_tools_return_structured_results_and_refuse_unattended_asks`.
+- **`ask()`.** `runtime/workflow_ask.rs`, `workflow.run.waiting.1`/`workflow.run.answered.1`, `args.answers`. Tests: `workflow_agents::ask_waits_for_the_owner_or_uses_declared_answers`, `workflow_agents::stopping_a_waiting_run_withdraws_its_question`.
+- **`cyber exec --workflow`.** Test: `cli::exec_runs_a_workflow_and_maps_its_end_to_exit_codes`.
+- **`/tasks` and `/stop`.** Test: `screens_tasks::tasks_lists_workflow_runs_and_stop_all_stops_them`.
+- **Save.** `POST /workflows/runs/{id}/save`, `w` in the monitor. Test: `workflows::an_inline_runs_script_is_saved_into_the_project_workflows`.
+- **Compaction reporting.** `compactions` per agent, `⟲N` in the monitor. Test: `workflow_runs::a_run_reports_its_agents_compactions`.
+- **Prompt-cache warm-up.** `runtime/workflow_warmup.rs`, `workflows.prompt_cache_warmup`. Test: `workflow_agents::a_fan_out_sharing_a_prefix_waits_for_the_first_response`.
+
+Still open: reserved budgets (4.16), Session export of run summaries and transcript retention (5.9, which need `cyber sessions export` and storage retention), goal deferral while runs are active (5.8, goals change).
 
 ## M2.1 Workflow runtime: review fixes
 

@@ -8,7 +8,7 @@ ROADMAP M2.2 ("Bundled workflows: review, audit (find → verify), migrate (fan-
 
 - `workflows` → "Saved and bundled workflows" requires five bundled modules. `crates/cyber-workflow/src/discovery.rs` discovers only global and project roots, and `module::Origin` has no bundled variant. `cyber workflows list` shows nothing on a fresh install.
 - `vcs-integration` → "Local review command" says that from P2 `/review` and `cyber review` run the bundled `review` workflow, which checks several angles in parallel and verifies each finding. Today they still run the single-agent P1 `review` skill.
-- The M2.1 runtime left out pieces the bundled modules need (`docs/implementation/p2-status.md`, "Not implemented"): direct read-only `tools.read/glob/grep` (so a script can't list the files it fans out over), and saved-Workflow listing over HTTP (`GET /api/v1/workflows` answers `503`), which the TUI and the model's `workflow` tool need to offer the library.
+- The M2.1 gap work now ships direct read-only `tools.read/glob/grep` and saved-Workflow listing over HTTP (`GET /api/v1/workflows`). Reuse that foundation for bundled discovery, args schemas and the client Library surfaces; those shipped pieces are not new work in this change.
 
 Without bundled workflows, the orchestration features are only reachable by people who write workflow scripts. The roadmap promises them out of the box, matching Claude Code's bundled `/review` multi-agent review and its dynamic workflows.
 

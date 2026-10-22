@@ -17,6 +17,8 @@ pub struct GoalRequest {
     pub condition: String,
     pub check: Option<String>,
     pub budget: Option<Budget>,
+    /// The `goals.templates` entry it came from ([`Runtime::goal_from_template`]).
+    pub template: Option<String>,
 }
 
 /// Fields of a Goal to change; `check: Some(None)` removes the check.
@@ -61,7 +63,7 @@ impl Runtime {
         Ok(handle.state.lock().await.goals.clone())
     }
 
-    fn goal_settings(
+    pub(super) fn goal_settings(
         &self,
         directory: &str,
     ) -> Result<(GoalSettings, Option<Budget>), RuntimeError> {
@@ -69,6 +71,66 @@ impl Runtime {
             .tools
             .goal_settings(directory)
             .map_err(RuntimeError::Invalid)
+    }
+
+    /// `/goal use <template> [text]`: the Goal `goals.templates.<name>` describes, with
+    /// `$ARGUMENTS` replaced by `args`.
+    pub async fn goal_from_template(
+        &self,
+        session_id: &str,
+        name: &str,
+        args: &str,
+    ) -> Result<GoalRequest, RuntimeError> {
+        let directory = self
+            .inner
+            .handle(session_id)
+            .await?
+            .state
+            .lock()
+            .await
+            .info
+            .directory
+            .clone();
+        let (settings, _) = self.goal_settings(&directory)?;
+        let template = settings
+            .templates
+            .get(name)
+            .ok_or_else(|| RuntimeError::GoalTemplateNotFound(name.to_owned()))?;
+        Ok(GoalRequest {
+            condition: template.condition_for(args),
+            check: template.check.clone(),
+            budget: template.budget.clone(),
+            template: Some(name.to_owned()),
+        })
+    }
+
+    /// Make `request` the active Goal of a new child Session before its task prompt is
+    /// admitted (`goals` → Goals on workflow agents and subagents): the task prompt starts
+    /// the work, so no goal prompt is admitted; the Goal reaches the model through
+    /// `core/goal` and is evaluated after each Turn.
+    pub async fn assign_goal(
+        &self,
+        session_id: &str,
+        request: GoalRequest,
+    ) -> Result<Goal, RuntimeError> {
+        let (new, mut events) = self.new_goal(session_id, request, true).await?;
+        events.insert(0, event(records::SET, &new));
+        let handle = self.inner.handle(session_id).await?;
+        {
+            let mut state = handle.state.lock().await;
+            let (cost_before, tokens_before) = self.spend(session_id, &state)?;
+            events.push(event(
+                records::ACTIVATED,
+                &Activated {
+                    goal_id: new.goal_id.clone(),
+                    cost_before,
+                    tokens_before,
+                    activated_ms: now_ms(),
+                },
+            ));
+            self.inner.commit_locked(&mut state, events)?;
+        }
+        self.goal(session_id, &new.goal_id).await
     }
 
     /// `/goal <condition>`: clear the current Goal and make this one active, starting a
@@ -135,6 +197,7 @@ impl Runtime {
             condition: request.condition.trim().to_owned(),
             check: request.check.filter(|c| !c.trim().is_empty()),
             budget: effective_budget(request.budget, configured),
+            template: request.template,
             created_ms: now_ms(),
         };
         Ok((new, clear))

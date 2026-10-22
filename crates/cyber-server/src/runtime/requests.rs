@@ -389,6 +389,7 @@ impl Inner {
         // The status refresh reads this Session's state, so its lock is released first.
         drop(state);
         self.request_status_changed(&request).await;
+        runtime.watch_unattended_ask(&request);
         true
     }
 
