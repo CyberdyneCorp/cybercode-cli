@@ -60,10 +60,16 @@ struct Agents {
     stall: AtomicBool,
     /// `stall` calls entered.
     stalled: AtomicUsize,
+    /// `stall` calls wait for [`Agents::unstall`] instead of [`STALL`].
+    stall_held: AtomicBool,
+    unstall: Notify,
 }
 
 /// How long a `stall` tool call ignores cancellation: longer than a subtree stop waits.
 const STALL: Duration = Duration::from_millis(2500);
+/// How long a poll waits for a run to settle; a loaded Windows runner needs well over ten
+/// seconds for 300 durable checkpoints.
+const SETTLE: Duration = Duration::from_secs(60);
 
 /// Releases gated agents one at a time: the longest waiting one, or one by its task.
 struct Gate {
@@ -233,8 +239,13 @@ impl ToolHost for Agents {
             if call.name != "stall" {
                 return ToolOutcome::Failed("no tools".into());
             }
+            let unstall = self.unstall.notified();
             self.stalled.fetch_add(1, Ordering::SeqCst);
-            tokio::time::sleep(STALL).await;
+            if self.stall_held.load(Ordering::SeqCst) {
+                unstall.await;
+            } else {
+                tokio::time::sleep(STALL).await;
+            }
             ToolOutcome::Ok("stalled".into())
         })
     }
@@ -419,7 +430,8 @@ fn module(body: &str) -> WorkflowModule {
 
 /// Poll until `done` holds.
 async fn eventually(what: &str, mut done: impl FnMut() -> bool) {
-    for _ in 0..1000 {
+    let deadline = std::time::Instant::now() + SETTLE;
+    while std::time::Instant::now() < deadline {
         if done() {
             return;
         }
@@ -506,7 +518,8 @@ impl Fixture {
     }
 
     async fn settled(&self, id: &str) -> WorkflowRun {
-        for _ in 0..1000 {
+        let deadline = std::time::Instant::now() + SETTLE;
+        while std::time::Instant::now() < deadline {
             let run = self.runtime.workflow_run(id).unwrap().unwrap();
             if run.status != WorkflowRunStatus::Running {
                 return run;
@@ -518,7 +531,8 @@ impl Fixture {
 
     /// Wait until the run's last attempt let go of its engine and agents.
     async fn quiet(&self, id: &str) {
-        for _ in 0..1000 {
+        let deadline = std::time::Instant::now() + SETTLE;
+        while std::time::Instant::now() < deadline {
             if !self.runtime.workflow_agents_exiting(id).unwrap() {
                 return;
             }
@@ -1220,7 +1234,8 @@ async fn shutdown_and_recovery_leave_running_runs_paused_for_resume() {
         .await
         .unwrap();
     let mut done = None;
-    for _ in 0..1000 {
+    let deadline = std::time::Instant::now() + SETTLE;
+    while std::time::Instant::now() < deadline {
         let current = restarted.workflow_run(&run.id).unwrap().unwrap();
         if current.status != WorkflowRunStatus::Running {
             done = Some(current);
@@ -1329,7 +1344,8 @@ async fn a_slot_freed_during_shutdown_dispatches_no_queued_run() {
 
 /// Poll `runtime` until the run ended.
 async fn ended_on(runtime: &Runtime, id: &str) -> WorkflowRun {
-    for _ in 0..1000 {
+    let deadline = std::time::Instant::now() + SETTLE;
+    while std::time::Instant::now() < deadline {
         let run = runtime.workflow_run(id).unwrap().unwrap();
         if run.status.is_terminal() {
             return run;
@@ -2269,8 +2285,11 @@ fn run_children(store: &Store, run_id: &str) -> Vec<String> {
 /// is paused and its script ends, and both are recorded at once.
 #[tokio::test(flavor = "multi_thread")]
 async fn stopping_a_run_whose_agents_are_slow_to_exit_does_not_block_another_run() {
+    // A's agents stall until released, so A's stop lasts as long as its sweeps wait for
+    // them (two seconds a child) however slow the runner is.
     let agents = Arc::new(Agents {
         stall: AtomicBool::new(true),
+        stall_held: AtomicBool::new(true),
         ..Default::default()
     });
     let f = fixture(&agents);
@@ -2305,11 +2324,11 @@ async fn stopping_a_run_whose_agents_are_slow_to_exit_does_not_block_another_run
     eventually("A's stop sweeping its children", || {
         children
             .iter()
-            .all(|child| !f.events(child, "session.subtree.stopping.1").is_empty())
+            .any(|child| !f.events(child, "session.subtree.stopping.1").is_empty())
     })
     .await;
 
-    // Waiting for A would take most of STALL; half of it leaves room for a slow runner.
+    // Waiting for A would take seconds; half of STALL leaves room for a slow runner.
     let asked = std::time::Instant::now();
     let paused = f.runtime.pause_workflow_run(&b.id).await.unwrap();
     assert_eq!(paused.status, WorkflowRunStatus::Paused);
@@ -2336,6 +2355,8 @@ async fn stopping_a_run_whose_agents_are_slow_to_exit_does_not_block_another_run
     let b = f.runtime.workflow_run(&b.id).unwrap().unwrap();
     assert_eq!(b.result, Some(json!("gate b done")), "{b:?}");
 
+    agents.stall_held.store(false, Ordering::SeqCst);
+    agents.unstall.notify_waiters();
     let stopped = stopping.await.unwrap().unwrap();
     assert_eq!(stopped.status, WorkflowRunStatus::Stopped);
     f.quiet(&a.id).await;
@@ -2520,7 +2541,8 @@ async fn isolated_agents_of_two_runs_get_distinct_worktrees_named_by_run() {
 impl Fixture {
     /// Wait until the run ended (completed, failed, budget-exceeded or stopped).
     async fn ended(&self, id: &str) -> WorkflowRun {
-        for _ in 0..1000 {
+        let deadline = std::time::Instant::now() + SETTLE;
+        while std::time::Instant::now() < deadline {
             let run = self.runtime.workflow_run(id).unwrap().unwrap();
             if run.status.is_terminal() {
                 return run;
