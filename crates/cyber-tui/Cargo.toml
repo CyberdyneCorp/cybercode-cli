@@ -20,6 +20,7 @@ pulldown-cmark = { version = "=0.13.4", default-features = false }
 ratatui = "0.30"
 serde.workspace = true
 serde_json.workspace = true
+jsonschema = { version = "0.58.6", default-features = false }
 syntect = { version = "=5.3.0", default-features = false, features = ["default-syntaxes", "parsing", "regex-fancy"] }
 tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
 two-face = { version = "=0.5.2", default-features = false, features = ["syntect-fancy"] }

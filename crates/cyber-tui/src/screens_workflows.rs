@@ -801,3 +801,73 @@ fn with_warmup_off(mut workflows: Value) -> Value {
     workflows["prompt_cache_warmup"] = json!(false);
     workflows
 }
+
+fn ctrl_u(app: &mut App) {
+    app.on_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+}
+
+fn select_entry(app: &mut App, name: &str) {
+    let library = &mut app.workflows.library;
+    library.selected = library
+        .listed()
+        .iter()
+        .position(|entry| entry.name == name)
+        .unwrap_or_else(|| panic!("{name} is not in the library"));
+}
+
+/// `workflows` → Saved and bundled workflows: Tab shows the Location's library with origin
+/// badges; Enter opens the args form prefilled from the defaults, which refuses args the
+/// schema rejects and starts the run for the Session; `o` shows the source.
+#[tokio::test]
+async fn the_library_tab_lists_the_library_and_starts_a_workflow_from_its_form() {
+    let f = Fixture::new(json!({})).await;
+    let mut app = f.monitor().await;
+    let project = std::path::Path::new(&app.session.directory).join(".cyber/workflows");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("release.js"),
+        script("release", &["Ship"], "return 1;"),
+    )
+    .unwrap();
+    let actions = press(&mut app, KeyCode::Tab);
+    f.drive(&mut app, actions).await;
+    assert!(app.workflows.library_tab);
+    let names: Vec<&str> = app.workflows.library.listed().iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, ["audit", "migrate", "plan", "release", "research", "review"]);
+    for (width, height) in [(120, 40), (80, 24)] {
+        let shown = stabilized(&mut app, |app| render(app, width, height, &Opts::default()));
+        insta::assert_snapshot!(format!("workflow_library_{width}x{height}"), shown);
+    }
+
+    select_entry(&mut app, "research");
+    press(&mut app, KeyCode::Enter);
+    let form = app.workflows.library.form.clone().unwrap();
+    assert_eq!(form.text, r#"{"sources":["repo","docs"],"angles":3,"max_sources":12}"#);
+    let shown = stabilized(&mut app, |app| render(app, 120, 40, &Opts::default()));
+    insta::assert_snapshot!("workflow_library_form_120x40", shown);
+    ctrl_u(&mut app);
+    type_line(&mut app, r#"{"question":"q","angles":9}"#);
+    assert!(press(&mut app, KeyCode::Enter).is_empty());
+    let error = app.workflows.library.form.as_ref().unwrap().error.clone().unwrap();
+    assert!(error.starts_with("args.angles: "), "{error}");
+    ctrl_u(&mut app);
+    type_line(&mut app, r#"{"question":"q","sources":["repo"],"angles":1}"#);
+    let actions = press(&mut app, KeyCode::Enter);
+    assert!(matches!(
+        actions.as_slice(),
+        [Action::Workflow(crate::workflows::Request::StartRun { .. })]
+    ));
+    f.drive(&mut app, actions).await;
+    assert!(!app.workflows.library_tab);
+    assert!(app.toast.as_ref().unwrap().0.starts_with("Started research"));
+    assert!(app.workflows.summaries().iter().any(|run| run.name == "research"));
+
+    let actions = press(&mut app, KeyCode::Tab);
+    f.drive(&mut app, actions).await;
+    select_entry(&mut app, "review");
+    key(&mut app, 'o');
+    let source = app.workflows.library.source.as_ref().unwrap();
+    assert!(source.lines[0].starts_with("export const meta"), "{:?}", source.lines[0]);
+    press(&mut app, KeyCode::Esc);
+    assert!(app.workflows.library.source.is_none() && app.workflows.library_tab);
+}

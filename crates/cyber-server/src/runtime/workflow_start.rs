@@ -165,6 +165,9 @@ pub struct LibraryEntry {
     pub digest: String,
     /// The definitions this entry replaces, lowest precedence first.
     pub shadowed: Vec<String>,
+    /// The module source, when asked for (`source=true`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 /// Where a library entry comes from.
@@ -234,6 +237,7 @@ fn entry(entry: Entry) -> Option<LibraryEntry> {
             .iter()
             .map(|path| path.display().to_string())
             .collect(),
+        source: Some(module.source.clone()),
     })
 }
 

@@ -251,6 +251,9 @@ async fn save(
 struct LibraryQuery {
     /// The Location; the request's when absent.
     directory: Option<String>,
+    /// Include each entry's module source.
+    #[serde(default)]
+    source: bool,
 }
 
 /// The Workflow library of a Location (`workflows` → Workflow library over HTTP).
@@ -264,7 +267,13 @@ async fn library(
             .map_err(|_| ApiError::invalid(format!("no such directory: {directory}")))?,
         None => location(&parts, &state.options.default_directory)?,
     };
-    state.services.workflow_library(&directory).map(Json)
+    let mut library = state.services.workflow_library(&directory)?;
+    if !query.source {
+        for entry in &mut library.workflows {
+            entry.source = None;
+        }
+    }
+    Ok(Json(library))
 }
 
 /// `status=running,queued`: each name a run status.

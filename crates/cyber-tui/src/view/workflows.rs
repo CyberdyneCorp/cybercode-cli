@@ -70,6 +70,8 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         draw_log(f, app, log, area);
     } else if let Some(view) = &w.run {
         draw_run(f, app, view, area);
+    } else if w.library_tab {
+        super::workflow_library::draw(f, app, area);
     } else {
         draw_list(f, app, area);
     }
@@ -77,7 +79,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 
 /// The rounded frame with a title on each side; the right one is left out when both
 /// do not fit, and the left one is cut to the width.
-fn frame(app: &App, width: u16, left: String, right: String) -> Block<'static> {
+pub(super) fn frame(app: &App, width: u16, left: String, right: String) -> Block<'static> {
     let t = &app.theme;
     let room = (width as usize).saturating_sub(4);
     let left = truncate_end(&left, room.saturating_sub(2));
@@ -101,7 +103,7 @@ fn frame(app: &App, width: u16, left: String, right: String) -> Block<'static> {
 }
 
 /// The rows of `area` inside its frame: the body and the key line.
-fn split(block: &Block, area: Rect) -> (Rect, Rect) {
+pub(super) fn split(block: &Block, area: Rect) -> (Rect, Rect) {
     let inner = block.inner(area);
     let body = Rect {
         height: inner.height.saturating_sub(1),
@@ -115,7 +117,7 @@ fn split(block: &Block, area: Rect) -> (Rect, Rect) {
     (body, keys)
 }
 
-fn muted(app: &App, text: impl Into<String>) -> Line<'static> {
+pub(super) fn muted(app: &App, text: impl Into<String>) -> Line<'static> {
     Line::from(Span::styled(
         text.into(),
         Style::default().fg(app.theme.text_muted),
@@ -123,7 +125,7 @@ fn muted(app: &App, text: impl Into<String>) -> Line<'static> {
 }
 
 /// `text` cut or padded to exactly `width` columns.
-fn pad(text: &str, width: usize) -> String {
+pub(super) fn pad(text: &str, width: usize) -> String {
     let cut = truncate_end(text, width);
     let used = unicode_width::UnicodeWidthStr::width(cut.as_str());
     format!("{cut}{}", " ".repeat(width.saturating_sub(used)))
@@ -304,7 +306,7 @@ fn tally(runs: &[Summary]) -> String {
     }
 }
 
-fn location(app: &App) -> String {
+pub(super) fn location(app: &App) -> String {
     if app.workflows.all {
         "all Locations".into()
     } else {
@@ -545,7 +547,7 @@ fn run_lines(
 }
 
 /// The keys of a view, or the pending confirmation instead.
-fn key_line(app: &App, inner: usize, keys: Vec<String>) -> Line<'static> {
+pub(super) fn key_line(app: &App, inner: usize, keys: Vec<String>) -> Line<'static> {
     let t = &app.theme;
     if let Some(confirm) = &app.workflows.confirm {
         let text = match confirm {
@@ -587,6 +589,8 @@ fn list_keys(app: &App) -> Vec<String> {
             "workflows_scope",
         ],
     );
+    // Right after `enter open`, so it stays visible when the line is cut.
+    keys.insert(keys.len().min(1), "tab library".into());
     keys.push("esc".into());
     keys
 }

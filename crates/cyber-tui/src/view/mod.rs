@@ -15,6 +15,7 @@ pub(crate) mod sidebar;
 mod team;
 mod themes;
 pub mod welcome;
+mod workflow_library;
 mod workflows;
 mod wrap;
 

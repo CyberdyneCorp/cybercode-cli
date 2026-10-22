@@ -416,6 +416,15 @@ pub enum Request {
         run_id: String,
         fallback: Box<Summary>,
     },
+    /// The Location's Workflow library, for the Library tab.
+    Library { generation: u64, directory: String },
+    /// Start a library Workflow for the open Session.
+    StartRun {
+        directory: String,
+        session: String,
+        name: String,
+        args: Value,
+    },
 }
 
 /// Why the server refused an operation.
@@ -461,6 +470,15 @@ pub enum Reply {
         result: Result<Box<Summary>, String>,
         fallback: Box<Summary>,
     },
+    Library {
+        generation: u64,
+        /// The entries and the number of modules that failed to load.
+        result: Result<(Vec<crate::workflow_library::Entry>, usize), String>,
+    },
+    Started {
+        name: String,
+        result: Result<Value, Refusal>,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -479,6 +497,9 @@ pub struct WorkflowsState {
     pub refusals: BTreeMap<String, String>,
     pub confirm: Option<Confirm>,
     pub thread: Option<Thread>,
+    /// The Library tab is shown instead of the runs.
+    pub library_tab: bool,
+    pub library: crate::workflow_library::Library,
     /// A list read is due once the one in flight answers.
     again: bool,
     /// Runs whose events asked for a read; those still missing after it belong to
@@ -654,6 +675,9 @@ impl App {
         w.log = None;
         w.confirm = None;
         w.thread = None;
+        w.library_tab = false;
+        w.library.form = None;
+        w.library.source = None;
         self.overlay = Overlay::Workflows;
         self.workflows.reload()
     }
@@ -731,6 +755,8 @@ impl App {
                 agent_id,
                 result,
             } => return self.thread_found(owner, agent_id, result),
+            Reply::Library { generation, result } => self.library_listed(generation, result),
+            Reply::Started { name, result } => return self.library_started(&name, result),
             Reply::Log { run_id, result } => {
                 if let Some(log) = w.log.as_mut().filter(|log| log.run_id == run_id) {
                     let generation = log.lines.start();
@@ -819,9 +845,15 @@ impl App {
             self.log_key(key);
             return Vec::new();
         }
+        if self.workflows.library_tab {
+            return self.library_key(key);
+        }
         let action = self.keymap.action("workflows", &key, false);
         if self.workflows.run.is_some() {
             return self.run_key(action, key);
+        }
+        if key.code == KeyCode::Tab {
+            return self.toggle_library();
         }
         self.list_key(action, key)
     }
@@ -1093,7 +1125,7 @@ impl App {
 }
 
 /// Up, Down, Home and End over `0..=last`.
-fn step(selected: usize, last: usize, code: KeyCode) -> usize {
+pub(crate) fn step(selected: usize, last: usize, code: KeyCode) -> usize {
     match code {
         KeyCode::Up => selected.saturating_sub(1),
         KeyCode::Down => (selected + 1).min(last),
@@ -1120,7 +1152,7 @@ fn wall_ms() -> i64 {
         .map_or(0, |d| d.as_millis() as i64)
 }
 
-fn refusal(error: cyber_client::ClientError) -> Refusal {
+pub(crate) fn refusal(error: cyber_client::ClientError) -> Refusal {
     let reason = match &error {
         cyber_client::ClientError::Api { body, .. } => body["reason"].as_str().map(str::to_owned),
         _ => None,
@@ -1231,6 +1263,16 @@ async fn child_of(
 pub(crate) async fn perform(client: &cyber_client::Client, request: Request) -> Reply {
     use crate::perform::err;
     match request {
+        Request::Library {
+            generation,
+            directory,
+        } => crate::workflow_library::list(client, generation, &directory).await,
+        Request::StartRun {
+            directory,
+            session,
+            name,
+            args,
+        } => crate::workflow_library::start(client, &directory, &session, name, args).await,
         Request::List {
             generation,
             directory,

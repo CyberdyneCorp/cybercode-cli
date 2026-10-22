@@ -465,6 +465,10 @@ async fn the_library_lists_saved_workflows_by_precedence_with_issues() {
     assert_eq!(review["origin"], json!({"kind": "bundled", "name": "review"}));
     assert_eq!(review["budgets"]["max_agents"], 24);
     assert!(review["estimate"].as_str().unwrap().starts_with("lenses"));
+    assert!(review.get("source").is_none(), "{review}");
+    let sourced = server.ok(Method::GET, "/workflows?source=true", None).await;
+    let source = entry(&sourced, "review")["source"].as_str().unwrap().to_owned();
+    assert!(source.contains("function dedupFindings"));
     let issue = &listed["issues"][0];
     assert!(
         issue["path"].as_str().unwrap().ends_with("broken.js"),

@@ -334,10 +334,10 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "get",
             "/workflows",
             "v1.workflow.library",
-            "List the Workflow library of the Location: saved Workflows by precedence, with their origin, and the modules that failed to load",
+            "List the Workflow library of the Location: bundled and saved Workflows by precedence, with their origin, and the modules that failed to load; source=true includes each module's source",
         )
         .located()
-        .query(&["directory"])
+        .query(&["directory", "source"])
         .ok::<crate::runtime::workflow_start::WorkflowLibrary>(g),
         op(
             "post",

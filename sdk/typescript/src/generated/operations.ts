@@ -1013,6 +1013,7 @@ export interface Operations {
     path: Record<string, never>;
     query: {
       directory?: QueryValue;
+      source?: QueryValue;
     };
     body: undefined;
     response: S.WorkflowLibrary;
@@ -2836,7 +2837,7 @@ export const operations = {
     method: "GET",
     path: "/api/v1/workflows",
     pathParams: [],
-    query: ["directory"],
+    query: ["directory", "source"],
     body: "none",
     located: true,
     unwrap: false,
@@ -3507,7 +3508,7 @@ export function createGroups(caller: Caller) {
       /** Read a Workflow Run's summary with its agents (agents_detail) (`GET /api/v1/workflows/runs/{id}`) */
       get: (id: string, options?: RequestOptions): Promise<Operations["v1.workflow.get"]["response"]> =>
         caller.call("v1.workflow.get", { path: { id } }, options),
-      /** List the Workflow library of the Location: saved Workflows by precedence, with their origin, and the modules that failed to load (`GET /api/v1/workflows`) */
+      /** List the Workflow library of the Location: bundled and saved Workflows by precedence, with their origin, and the modules that failed to load; source=true includes each module's source (`GET /api/v1/workflows`) */
       library: (query?: Operations["v1.workflow.library"]["query"], options?: RequestOptions): Promise<Operations["v1.workflow.library"]["response"]> =>
         caller.call("v1.workflow.library", { query }, options),
       /** List Workflow Run summaries of the Location (directory=all for every Location), active runs first, then the newest (`GET /api/v1/workflows/runs`) */
