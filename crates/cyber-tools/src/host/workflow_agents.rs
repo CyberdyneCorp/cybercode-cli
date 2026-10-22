@@ -7,7 +7,9 @@
 
 use std::path::PathBuf;
 
-use cyber_server::runtime::{Asker, Invocation, WorkflowAgentOutput, WorkflowAgentRequest};
+use cyber_server::runtime::{
+    Asker, Invocation, WorkflowAgentOutput, WorkflowAgentRequest, WorkflowToolRequest,
+};
 use cyber_workflow::{Diagnostic, DiagnosticKind};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
@@ -101,6 +103,65 @@ impl BuiltinHost {
         self.workflow_output(&output)
     }
 
+    /// A Workflow script's direct read-only tool call (`workflows` → Direct read-only
+    /// tools), for the owner under the run Mode. A non-interactive run has no approver: an
+    /// ask is rejected with `No interactive approver for workflow run`.
+    pub(super) async fn direct_tool(
+        &self,
+        request: WorkflowToolRequest,
+        cancel: CancellationToken,
+    ) -> Result<Value, Diagnostic> {
+        let WorkflowToolRequest {
+            run_id,
+            call_key,
+            owner,
+            tool,
+            input,
+            interactive,
+        } = request;
+        let asker = match (interactive, self.runtime()) {
+            (true, Some(runtime)) => runtime
+                .operation_asker(&owner.session_id)
+                .await
+                .map_err(tool_failed)?,
+            _ => Asker::detached(),
+        };
+        let inv = Invocation {
+            registration: None,
+            session_id: owner.session_id,
+            directory: owner.directory,
+            agent: owner.agent,
+            mode: owner.mode,
+            message_id: String::new(),
+            call_id: cyber_core::ids::new_id("call"),
+            name: tool.clone(),
+            input,
+            attempt: 1,
+            operation_key: format!("{run_id}:{call_key}"),
+            asker,
+            rules: owner.rules,
+        };
+        let ctx = Ctx {
+            skill_paths: Default::default(),
+            loaded_skill: Default::default(),
+            compiler_feedback: Default::default(),
+            hook_decision: None,
+            denial: Default::default(),
+            host: self,
+            policy: self.policy(&inv).await.map_err(tool_failed)?,
+            location: PathBuf::from(&inv.directory),
+            inv: &inv,
+            cancel,
+        };
+        let value = match tool.as_str() {
+            "read" => tools::fs::read_value(&ctx).await,
+            "glob" => tools::search::glob_value(&ctx).await,
+            "grep" => tools::search::grep_value(&ctx).await,
+            other => return Err(tool_failed(format!("unknown direct tool {other}"))),
+        };
+        value.map_err(|error| tool_failure(&tool, error))
+    }
+
     /// Whether `owner` has the child Session named `agent_id`.
     async fn child_exists(&self, owner: &str, agent_id: &str) -> bool {
         match self.runtime() {
@@ -181,6 +242,26 @@ impl BuiltinHost {
 
 /// Tools that edit files (`tools::action_of` maps them to `edit`).
 const EDIT_TOOLS: [&str; 4] = ["write", "edit", "apply_patch", "notebook_edit"];
+
+fn tool_failed(error: impl std::fmt::Display) -> Diagnostic {
+    Diagnostic::execution(error.to_string())
+}
+
+/// A direct tool's failure: a refused permission is `PermissionDenied`, reported as the
+/// unattended workflow refusal when no approver could answer.
+fn tool_failure(tool: &str, error: ToolError) -> Diagnostic {
+    let message = match error {
+        ToolError::Failed(message) => message,
+        ToolError::Aborted => return tool_failed(format!("tools.{tool} was interrupted")),
+    };
+    if super::is_unattended_denial(&message) {
+        return denied(cyber_server::runtime::NO_WORKFLOW_APPROVER);
+    }
+    if message.starts_with("Permission denied") || message.starts_with("Rejected by user") {
+        return denied(message);
+    }
+    tool_failed(message)
+}
 
 fn agent_failed(error: impl std::fmt::Display) -> Diagnostic {
     Diagnostic::new(DiagnosticKind::AgentFailed, error.to_string())

@@ -582,6 +582,7 @@ fn list_keys(app: &App) -> Vec<String> {
             "workflows_stop",
             "workflows_resume_interrupted",
             "workflows_script",
+            "workflows_save",
             "workflows_log",
             "workflows_scope",
         ],
@@ -604,6 +605,7 @@ fn run_keys(app: &App) -> Vec<String> {
             "workflows_stop",
             "workflows_log",
             "workflows_script",
+            "workflows_save",
         ],
     ));
     keys.push("esc back".into());
@@ -750,6 +752,9 @@ fn agent_spoken(agent: &Agent) -> String {
     parts.push(format!("{} tokens", agent.tokens));
     parts.push(money_words(agent.cost));
     parts.extend(agent.duration_ms.map(time_words));
+    if agent.compactions > 0 {
+        parts.push(format!("compacted {} times", agent.compactions));
+    }
     parts.join(", ")
 }
 
@@ -803,6 +808,12 @@ fn agent_line(app: &App, agent: &Agent, selected: bool, inner: usize) -> Line<'s
         format!("{:>6}", duration_text(agent.duration_ms)),
         Style::default().fg(t.text_muted),
     ));
+    if agent.compactions > 0 {
+        spans.push(Span::styled(
+            format!("  ⟲{}", agent.compactions),
+            Style::default().fg(t.text_muted),
+        ));
+    }
     if let Some(branch) = agent.branch.as_ref().filter(|_| wide) {
         spans.push(Span::styled(
             format!("  {branch}"),

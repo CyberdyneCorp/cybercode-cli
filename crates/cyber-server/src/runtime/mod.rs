@@ -139,6 +139,7 @@ mod worktree_events;
 pub use worktree_events::{WorktreeChange, WorktreeExit, WorktreeNotice, relocates};
 mod worktree_output;
 pub use worktree_output::{SessionSetupSink, SetupChannel, SetupUpdate};
+mod workflow_ask;
 mod workflow_control;
 mod workflow_host;
 mod workflow_progress;
@@ -149,6 +150,7 @@ mod workflow_results;
 mod workflow_scheduler;
 pub mod workflow_start;
 mod workflow_summary;
+mod workflow_warmup;
 mod workflows;
 pub use workflow_control::{AGENTS_EXITING, ResumeWorkflowRun};
 pub use workflow_host::{MAX_CHECKPOINT_BYTES, MAX_RUN_RECORD_BYTES, MAX_RUN_RECORDS};
@@ -188,7 +190,7 @@ pub use host::{
     LocationLease, ModelResolver, NoSnapshots, NoTools, Reconciliation, ResolvedModel,
     RestoreError, RuleEffect, RunWorktree, SessionEnvelope, SkillSuggestion, Snapshot, Snapshots,
     TeamWorktree, ToolDef, ToolHost, ToolOutcome, ToolScope, TurnContext, TurnWorktree,
-    WorkflowAgentOutput, WorkflowAgentRequest,
+    WorkflowAgentOutput, WorkflowAgentRequest, WorkflowToolRequest,
 };
 pub use model::{
     AssistantEntry, CallState, CallStatus, Delivery, Entry, InboxRow, InputStatus, LastStep,
@@ -758,6 +760,8 @@ pub(crate) struct Inner {
     /// The server-wide fair scheduler of Workflow agent slots (`workflows` → Fair agent
     /// scheduling, Concurrency limit).
     workflow_scheduler: std::sync::OnceLock<workflow_scheduler::WorkflowScheduler>,
+    /// `workflows.prompt_cache_warmup: false`.
+    workflow_warmup_off: std::sync::atomic::AtomicBool,
     /// The server-wide run queue (`workflows` → Run queue).
     workflow_queue: std::sync::OnceLock<workflow_queue::WorkflowQueue>,
     /// Executing Workflow Run attempts (`workflows` → Run lifecycle states).
@@ -866,6 +870,7 @@ impl Runtime {
             subtree_stops: StdMutex::default(),
             subtree_stop_lock: Mutex::new(()),
             workflow_scheduler: std::sync::OnceLock::new(),
+            workflow_warmup_off: Default::default(),
             workflow_queue: std::sync::OnceLock::new(),
             workflow_controls: StdMutex::default(),
             workflow_closing: std::sync::atomic::AtomicBool::new(false),

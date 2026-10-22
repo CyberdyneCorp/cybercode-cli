@@ -88,7 +88,9 @@ impl Fixture {
         let server = Server::start_reply(
             reply,
             json!({ "main": {} }),
-            json!({ "workflows": workflows }),
+            // The scripted model holds whole responses at its gates, so warm-up would hold
+            // every fan-out behind its first agent.
+            json!({ "workflows": with_warmup_off(workflows) }),
             false,
         )
         .await;
@@ -790,4 +792,12 @@ async fn at_most_the_selected_running_row_animates_among_twenty() {
     app.workflows.selected = (running + 1) % 20;
     buffer(&mut app, 160, 48, &moving(2_000));
     assert_eq!(app.next_frame(), None);
+}
+
+fn with_warmup_off(mut workflows: Value) -> Value {
+    if !workflows.is_object() {
+        workflows = json!({});
+    }
+    workflows["prompt_cache_warmup"] = json!(false);
+    workflows
 }

@@ -40,6 +40,9 @@ pub struct WorkflowSettings {
     /// Resume the runs a restart interrupted once recovery ends (`Recovery of several
     /// runs`); otherwise they stay `paused` until resumed.
     pub resume_after_restart: bool,
+    /// Start agents of a fan-out that share a prompt prefix after the first one's first
+    /// response, so they read its cached prefix (`Prompt-cache warm-up for fan-out`).
+    pub prompt_cache_warmup: bool,
     /// QuickJS heap limit per run.
     pub max_memory_mb: u32,
     /// Synchronous script CPU per run, excluding time awaiting host calls.
@@ -67,6 +70,7 @@ impl Default for WorkflowSettings {
             max_concurrent_per_run: None,
             max_running_runs: 8,
             resume_after_restart: false,
+            prompt_cache_warmup: true,
             max_memory_mb: 256,
             script_cpu_seconds: 60,
             tiers,
@@ -102,11 +106,8 @@ impl WorkflowSettings {
             match key.as_str() {
                 "tiers" => tiers(value, &mut settings.tiers)?,
                 "auto" => settings.auto = auto(value)?,
-                "resume_after_restart" => {
-                    settings.resume_after_restart = value.as_bool().ok_or_else(|| {
-                        format!("{KEY}.resume_after_restart: expected true or false, got {value}")
-                    })?;
-                }
+                "resume_after_restart" => settings.resume_after_restart = boolean(key, value)?,
+                "prompt_cache_warmup" => settings.prompt_cache_warmup = boolean(key, value)?,
                 "max_concurrent_per_run" => {
                     settings.max_concurrent_per_run = (!value.is_null())
                         .then(|| integer(key, value))
@@ -200,4 +201,10 @@ fn tier_target(name: &str, value: &Value) -> Result<TierTarget, String> {
         .filter(|(provider, model)| !provider.is_empty() && !model.is_empty())
         .map(|_| TierTarget::Model(text.into()))
         .ok_or_else(invalid)
+}
+
+fn boolean(key: &str, value: &Value) -> Result<bool, String> {
+    value
+        .as_bool()
+        .ok_or_else(|| format!("{KEY}.{key}: expected true or false, got {value}"))
 }

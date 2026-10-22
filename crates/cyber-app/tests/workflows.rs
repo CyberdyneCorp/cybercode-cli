@@ -373,7 +373,7 @@ async fn workflow_routes_require_authentication_and_name_the_group_when_unavaila
     assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
 
     for (method, path) in [
-        (Method::GET, "/workflows"),
+        (Method::POST, "/workflows"),
         (Method::GET, "/workflows/saved"),
     ] {
         let (status, body) = server.call(method.clone(), path, None).await;
@@ -394,6 +394,83 @@ async fn workflow_routes_require_authentication_and_name_the_group_when_unavaila
         assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path}: {body}");
         assert_eq!(body["_tag"], "WorkflowRunNotFoundError");
     }
+    server.close().await;
+}
+
+fn saved_module(name: &str, description: &str) -> String {
+    format!(
+        "export const meta = {{ name: '{name}', description: '{description}', phases: [{{ title: 'One' }}], args: {{ type: 'object' }}, budget: {{ max_agents: 3 }}, estimate: 'one agent', tools: ['glob'] }};\nexport default async () => null;\n"
+    )
+}
+
+/// `workflows` → Workflow library over HTTP: saved Workflows of the Location by
+/// precedence, with origin, digest and shadowed definitions, and the issues; the
+/// capability is reported by `/health`.
+#[tokio::test]
+async fn the_library_lists_saved_workflows_by_precedence_with_issues() {
+    let model = ScriptedModel::start(reply);
+    let server = Server::start(model.config()).await;
+    let global = server.temp.path().join("config/workflows");
+    let project = server.temp.path().join(".cyber/workflows");
+    for dir in [&global, &project] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    std::fs::write(global.join("release.js"), saved_module("release", "Global")).unwrap();
+    std::fs::write(global.join("audit.js"), saved_module("audit", "Audit")).unwrap();
+    std::fs::write(
+        project.join("release.js"),
+        saved_module("release", "Project"),
+    )
+    .unwrap();
+    std::fs::write(project.join("broken.js"), "export const meta = 1;").unwrap();
+
+    let listed = server.ok(Method::GET, "/workflows", None).await;
+    let names: Vec<&str> = listed["workflows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["audit", "release"], "{listed}");
+    let release = &listed["workflows"][1];
+    assert_eq!(release["description"], "Project");
+    assert_eq!(release["origin"]["kind"], "project", "{release}");
+    assert_eq!(release["phases"], json!(["One"]));
+    assert_eq!(release["budgets"], json!({"max_agents": 3}));
+    assert_eq!(release["estimate"], "one agent");
+    assert_eq!(release["tools"], json!(["glob"]));
+    assert!(release["digest"].as_str().unwrap().starts_with("sha256:"));
+    let shadowed = release["shadowed"][0].as_str().unwrap();
+    assert!(
+        std::path::Path::new(shadowed).ends_with("config/workflows/release.js"),
+        "{release}"
+    );
+    assert_eq!(listed["workflows"][0]["origin"]["kind"], "global");
+    let issue = &listed["issues"][0];
+    assert!(
+        issue["path"].as_str().unwrap().ends_with("broken.js"),
+        "{listed}"
+    );
+    assert_eq!(issue["diagnostic"]["kind"], "ParseError", "{issue}");
+
+    let elsewhere = tempfile::tempdir().unwrap();
+    let other = server
+        .ok(
+            Method::GET,
+            &format!("/workflows?directory={}", elsewhere.path().display()),
+            None,
+        )
+        .await;
+    assert_eq!(other["workflows"][1]["origin"]["kind"], "global", "{other}");
+
+    let health = server.ok(Method::GET, "/health", None).await;
+    assert!(
+        health["features"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("workflow")),
+        "{health}"
+    );
     server.close().await;
 }
 
@@ -1588,7 +1665,8 @@ fn held_of(model: &ScriptedModel, prefix: char) -> usize {
 async fn runs_share_the_agent_limit_fairly_and_a_share_caps_its_run() {
     let model = ScriptedModel::start(gated_reply);
     let mut config = model.config();
-    config["workflows"] = json!({"max_concurrent": 2});
+    // The scripted provider holds whole responses, so warm-up would hold the fan-out.
+    config["workflows"] = json!({"max_concurrent": 2, "prompt_cache_warmup": false});
     let server = Server::start(config).await;
     let owner = server.session().await;
     let a = server
@@ -1695,7 +1773,8 @@ async fn a_bad_share_is_refused_and_a_resume_changes_the_share_without_a_revisio
 async fn a_resume_without_a_share_keeps_the_runs_share() {
     let model = ScriptedModel::start(gated_reply);
     let mut config = model.config();
-    config["workflows"] = json!({"max_concurrent": 2});
+    // The scripted provider holds whole responses, so warm-up would hold the fan-out.
+    config["workflows"] = json!({"max_concurrent": 2, "prompt_cache_warmup": false});
     let server = Server::start(config).await;
     let owner = server.session().await;
     let run = server
@@ -2865,7 +2944,8 @@ impl Server {
 async fn queued_agents_are_counted_and_progress_streams_on_the_runs_location() {
     let model = ScriptedModel::start(gated_reply);
     let mut config = model.config();
-    config["workflows"] = json!({"max_concurrent": 16});
+    // The scripted provider holds whole responses, so warm-up would hold the fan-out.
+    config["workflows"] = json!({"max_concurrent": 16, "prompt_cache_warmup": false});
     let server = Server::start(config).await;
     let elsewhere = server.temp.path().canonicalize().unwrap().join("elsewhere");
     std::fs::create_dir_all(&elsewhere).unwrap();
@@ -3243,5 +3323,50 @@ async fn a_run_of_a_session_in_a_symlinked_directory_is_listed_from_either_spell
     }
     model.open_gate();
     assert_eq!(server.ended_run(&run).await["status"], "completed");
+    server.close().await;
+}
+
+/// `workflows` → Model-authored workflows, "Save an inline workflow": an inline run's
+/// script is saved as `.cyber/workflows/<meta.name>.js` of its Location; an existing file
+/// needs `force`, and a saved Workflow's run has nothing to save.
+#[tokio::test]
+async fn an_inline_runs_script_is_saved_into_the_project_workflows() {
+    let model = ScriptedModel::start(reply);
+    let server = Server::start(model.config()).await;
+    let owner = server.session().await;
+    let script = "export const meta = { name: 'keep-me', description: 'Saved' };\nexport default async () => 1;\n";
+    let id = server
+        .start_run(json!({"session_id": owner, "script": script}))
+        .await;
+    server.settled_run(&id).await;
+    let path = format!("/workflows/runs/{id}/save");
+    let saved = server.ok(Method::POST, &path, None).await;
+    let file = server
+        .temp
+        .path()
+        .canonicalize()
+        .unwrap()
+        .join(".cyber/workflows/keep-me.js");
+    assert_eq!(saved["data"]["path"], file.display().to_string());
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), script);
+
+    let (status, body) = server.call(Method::POST, &path, Some(json!({}))).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    server
+        .ok(Method::POST, &path, Some(json!({"force": true})))
+        .await;
+
+    let named = server
+        .start_run(json!({"session_id": owner, "name": "keep-me"}))
+        .await;
+    server.settled_run(&named).await;
+    let (status, body) = server
+        .call(Method::POST, &format!("/workflows/runs/{named}/save"), None)
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    let (status, _) = server
+        .call(Method::POST, "/workflows/runs/run_missing/save", None)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
     server.close().await;
 }
