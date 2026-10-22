@@ -218,6 +218,11 @@ pub const BUILTIN: &[(&str, &str)] = &[
         "team",
         "Agent teams (experimental): the team view; /team start <definition>, /team stop, /team resume",
     ),
+    (
+        "login",
+        "Sign in to a subscription: /login openai (ChatGPT Plus/Pro)",
+    ),
+    ("logout", "Sign out of a subscription: /logout openai"),
     ("fork", "Fork this Session into a new one"),
     ("new", "Start a new Session"),
     ("rewind", "Rewind code and conversation to a message"),
