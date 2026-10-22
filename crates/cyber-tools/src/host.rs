@@ -255,9 +255,8 @@ impl BuiltinHost {
 
     /// The Workflow Run a Session belongs to (its own or an ancestor's), for
     /// `CYBER_WORKFLOW_RUN_ID` in the processes its tools start.
-    pub(crate) async fn session_workflow_run(&self, session_id: &str) -> Option<String> {
-        let runtime = self.runtime()?;
-        runtime.session_workflow_run(session_id).await
+    pub(crate) fn process_workflow_run(&self, session_id: &str) -> Option<String> {
+        self.runtime()?.process_workflow_run(session_id)
     }
 
     fn agent_profile(

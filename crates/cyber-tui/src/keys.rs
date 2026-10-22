@@ -141,6 +141,7 @@ const DEFAULTS: &[(&str, &str, &str, &str)] = &[
         "resume interrupted",
     ),
     ("workflows", "workflows_script", "s", "script"),
+    ("workflows", "workflows_save", "w", "save"),
     ("workflows", "workflows_log", "l", "log"),
     ("workflows", "workflows_scope", "a", "all"),
 ];

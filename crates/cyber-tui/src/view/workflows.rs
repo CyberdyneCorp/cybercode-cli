@@ -582,6 +582,7 @@ fn list_keys(app: &App) -> Vec<String> {
             "workflows_stop",
             "workflows_resume_interrupted",
             "workflows_script",
+            "workflows_save",
             "workflows_log",
             "workflows_scope",
         ],
@@ -604,6 +605,7 @@ fn run_keys(app: &App) -> Vec<String> {
             "workflows_stop",
             "workflows_log",
             "workflows_script",
+            "workflows_save",
         ],
     ));
     keys.push("esc back".into());

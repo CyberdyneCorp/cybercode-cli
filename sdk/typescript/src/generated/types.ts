@@ -515,6 +515,10 @@ export type Data_RunDetail = {
   data: RunDetail;
 };
 
+export type Data_SavedScript = {
+  data: SavedScript;
+};
+
 export type Data_ScopeUsage = {
   data: ScopeUsage;
 };
@@ -2495,6 +2499,16 @@ export type RunUsageReport = {
 
 /** How the host process of `main` is started. */
 export type Runtime = "node" | "bun" | "deno" | "python" | "native";
+
+export type SaveBody = {
+  /** Replace an existing `.cyber/workflows/<name>.js`. */
+  force?: boolean;
+};
+
+/** Where a saved script was written. */
+export type SavedScript = {
+  path: string;
+};
 
 /** One of the usage reports a scope returns, discriminated by `scope`. */
 export type ScopeUsage = SessionUsage | RunUsageReport;

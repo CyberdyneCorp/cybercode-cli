@@ -363,6 +363,8 @@ pub enum Op {
     Stop,
     /// Every run a restart interrupted (`resume_interrupted`).
     ResumeInterrupted,
+    /// Save an inline run's script into `.cyber/workflows/` (`force` replaces a file).
+    Save { force: bool },
 }
 
 /// Monitor reads and writes, performed by [`perform`].
@@ -743,6 +745,11 @@ impl App {
         let w = &mut self.workflows;
         match (result, &run_id) {
             (Ok(report), None) => self.interrupted_done(&report),
+            (Ok(saved), Some(id)) if matches!(op, Op::Save { .. }) => {
+                w.refusals.remove(id);
+                let path = saved["path"].as_str().unwrap_or_default();
+                self.toast(format!("Saved {}", printable(path)));
+            }
             (Ok(_), Some(id)) => {
                 w.refusals.remove(id);
             }
@@ -935,6 +942,7 @@ impl App {
                 Vec::new()
             }
             "workflows_script" => self.open_script(&run),
+            "workflows_save" => self.run_op(run_id, Op::Save { force: false }),
             "workflows_log" => self.open_log(run),
             _ => Vec::new(),
         }
@@ -1172,6 +1180,7 @@ fn op_path(run_id: Option<&str>, op: Op, all: bool) -> (String, Value) {
             json!({}),
         ),
         Op::ResumeInterrupted => ("/workflows/runs/resume_interrupted".into(), json!({})),
+        Op::Save { force } => (path("save"), json!({ "force": force })),
     }
 }
 
@@ -1455,6 +1464,10 @@ mod tests {
         assert_eq!(
             op_path(Some("a/b"), Op::Stop, false).0,
             "/workflows/runs/a%2Fb/stop"
+        );
+        assert_eq!(
+            op_path(Some("run_1"), Op::Save { force: false }, false),
+            ("/workflows/runs/run_1/save".into(), json!({"force": false}))
         );
     }
 

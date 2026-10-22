@@ -239,7 +239,7 @@ async fn prepare_scoped_command(
     env.extend(wrapped.env);
     env.push(("TMPDIR".into(), tmp.display().to_string()));
     env.retain(|(key, _)| key != WORKFLOW_RUN_ENV);
-    if let Some(run) = ctx.host.session_workflow_run(&ctx.inv.session_id).await {
+    if let Some(run) = ctx.host.process_workflow_run(&ctx.inv.session_id) {
         env.push((WORKFLOW_RUN_ENV.into(), run));
     }
     let loopback_isolated = sandbox.policy != Policy::FullAccess

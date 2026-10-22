@@ -940,6 +940,47 @@ impl Runtime {
         Ok(Some(path.display().to_string()))
     }
 
+    /// Save an inline run's script as a project Workflow, `.cyber/workflows/<meta.name>.js`
+    /// in the run's Location (`workflows` → Model-authored workflows): the edited
+    /// `script_file` when it still exists, else the latest revision's source. An existing
+    /// file is kept unless `force`. Returns the written path.
+    pub fn save_workflow_script(
+        &self,
+        run_id: &str,
+        force: bool,
+    ) -> Result<std::path::PathBuf, RuntimeError> {
+        let run = self.existing_workflow_run(run_id)?;
+        if run.origin.get("kind").and_then(Value::as_str) != Some("inline") {
+            return Err(RuntimeError::Conflict(format!(
+                "Run {run_id} runs a saved Workflow; only an inline script can be saved"
+            )));
+        }
+        let source = match run.script_file.as_deref().map(std::fs::read_to_string) {
+            Some(Ok(source)) => source,
+            _ => self.workflow_run_source(run_id)?.ok_or_else(|| {
+                RuntimeError::Corrupt(format!("Run {run_id} has no stored script"))
+            })?,
+        };
+        let module = WorkflowModule::inline(source)
+            .map_err(|error| RuntimeError::Invalid(error.to_string()))?;
+        let dir = std::path::Path::new(&run.directory)
+            .join(".cyber")
+            .join("workflows");
+        let path = dir.join(format!("{}.js", module.meta.name));
+        if path.exists() && !force {
+            return Err(RuntimeError::Conflict(format!(
+                "{} exists; save with force to replace it",
+                path.display()
+            )));
+        }
+        std::fs::create_dir_all(&dir)
+            .and_then(|()| std::fs::write(&path, &module.source))
+            .map_err(|error| {
+                RuntimeError::Invalid(format!("could not save {}: {error}", path.display()))
+            })?;
+        Ok(path)
+    }
+
     /// The first event of a run, with its source for later revisions and relaunches and
     /// the `ctx.budget` its first revision starts with.
     fn record_start(

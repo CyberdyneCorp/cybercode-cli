@@ -3209,3 +3209,43 @@ async fn a_run_of_a_session_in_a_symlinked_directory_is_listed_from_either_spell
     assert_eq!(server.ended_run(&run).await["status"], "completed");
     server.close().await;
 }
+
+/// `workflows` → Model-authored workflows, "Save an inline workflow": an inline run's
+/// script is saved as `.cyber/workflows/<meta.name>.js` of its Location; an existing file
+/// needs `force`, and a saved Workflow's run has nothing to save.
+#[tokio::test]
+async fn an_inline_runs_script_is_saved_into_the_project_workflows() {
+    let model = ScriptedModel::start(reply);
+    let server = Server::start(model.config()).await;
+    let owner = server.session().await;
+    let script = "export const meta = { name: 'keep-me', description: 'Saved' };\nexport default async () => 1;\n";
+    let id = server
+        .start_run(json!({"session_id": owner, "script": script}))
+        .await;
+    server.settled_run(&id).await;
+    let path = format!("/workflows/runs/{id}/save");
+    let saved = server.ok(Method::POST, &path, None).await;
+    let file = server.temp.path().canonicalize().unwrap().join(".cyber/workflows/keep-me.js");
+    assert_eq!(saved["data"]["path"], file.display().to_string());
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), script);
+
+    let (status, body) = server.call(Method::POST, &path, Some(json!({}))).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    server
+        .ok(Method::POST, &path, Some(json!({"force": true})))
+        .await;
+
+    let named = server
+        .start_run(json!({"session_id": owner, "name": "keep-me"}))
+        .await;
+    server.settled_run(&named).await;
+    let (status, body) = server
+        .call(Method::POST, &format!("/workflows/runs/{named}/save"), None)
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    let (status, _) = server
+        .call(Method::POST, "/workflows/runs/run_missing/save", None)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    server.close().await;
+}

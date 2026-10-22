@@ -396,6 +396,14 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         )
         .ok::<Data<crate::runtime::WorkflowRun>>(g),
         op(
+            "post",
+            "/workflows/runs/{id}/save",
+            "v1.workflow.save",
+            "Save an inline run's script as the project Workflow .cyber/workflows/<meta.name>.js; 409 when the file exists unless force",
+        )
+        .optional_body::<super::workflows::SaveBody>(g)
+        .ok::<Data<super::workflows::SavedScript>>(g),
+        op(
             "get",
             "/workflows/runs/{id}/logs",
             "v1.workflow.logs",

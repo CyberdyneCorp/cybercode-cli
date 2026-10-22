@@ -42,6 +42,7 @@ pub fn routes() -> Router<AppState> {
         .route("/workflows/runs/{id}/resume", post(resume))
         .route("/workflows/runs/{id}/stop", post(stop))
         .route("/workflows/runs/{id}/logs", get(logs))
+        .route("/workflows/runs/{id}/save", post(save))
         .route("/workflows", get(library).fallback(unavailable))
         .route("/workflows/{*rest}", any(unavailable))
 }
@@ -203,6 +204,42 @@ async fn start(
         })
         .await?;
     Ok((StatusCode::CREATED, Json(Data { data: run })))
+}
+
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(super) struct SaveBody {
+    /// Replace an existing `.cyber/workflows/<name>.js`.
+    #[serde(default)]
+    force: bool,
+}
+
+/// Where a saved script was written.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(super) struct SavedScript {
+    path: String,
+}
+
+/// Save an inline run's script into the project's `.cyber/workflows/` (`workflows` →
+/// Model-authored workflows).
+async fn save(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Option<Json<SaveBody>>,
+) -> Result<Json<Data<SavedScript>>, ApiError> {
+    if state.runtime.workflow_run(&id)?.is_none() {
+        return Err(not_found(&id));
+    }
+    let force = body.is_some_and(|Json(body)| body.force);
+    let path = state
+        .runtime
+        .save_workflow_script(&id, force)
+        .map_err(lifecycle)?;
+    Ok(Json(Data {
+        data: SavedScript {
+            path: path.display().to_string(),
+        },
+    }))
 }
 
 #[derive(Debug, Default, Deserialize)]

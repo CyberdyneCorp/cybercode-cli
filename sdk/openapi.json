@@ -3430,6 +3430,40 @@
           }
         }
       },
+      "SaveBody": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "force": {
+            "type": "boolean",
+            "description": "Replace an existing `.cyber/workflows/<name>.js`.",
+            "default": false
+          }
+        }
+      },
+      "Data_SavedScript": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SavedScript"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "SavedScript": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "description": "Where a saved script was written."
+      },
       "Page_WorkflowLogEntry": {
         "type": "object",
         "properties": {
@@ -13620,6 +13654,65 @@
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflows/runs/{id}/save": {
+      "post": {
+        "operationId": "v1.workflow.save",
+        "summary": "Save an inline run's script as the project Workflow .cyber/workflows/<meta.name>.js; 409 when the file exists unless force",
+        "tags": [
+          "workflow"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SavedScript"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveBody"
               }
             }
           }

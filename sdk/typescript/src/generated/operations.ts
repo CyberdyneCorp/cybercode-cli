@@ -1061,6 +1061,12 @@ export interface Operations {
     body: S.StartBody;
     response: S.WorkflowRun;
   };
+  "v1.workflow.save": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: S.SaveBody;
+    response: S.SavedScript;
+  };
   "v1.workflow.stop": {
     path: { id: string };
     query: Record<string, never>;
@@ -2908,6 +2914,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.workflow.save": {
+    tag: "workflow",
+    name: "save",
+    method: "POST",
+    path: "/api/v1/workflows/runs/{id}/save",
+    pathParams: ["id"],
+    query: [],
+    body: "optional",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.workflow.stop": {
     tag: "workflow",
     name: "stop",
@@ -3510,6 +3528,9 @@ export function createGroups(caller: Caller) {
       /** Start a Workflow Run from a saved name or an inline script; it executes in the server (`POST /api/v1/workflows/runs`) */
       run: (body: Operations["v1.workflow.run"]["body"], options?: RequestOptions): Promise<Operations["v1.workflow.run"]["response"]> =>
         caller.call("v1.workflow.run", { body }, options),
+      /** Save an inline run's script as the project Workflow .cyber/workflows/<meta.name>.js; 409 when the file exists unless force (`POST /api/v1/workflows/runs/{id}/save`) */
+      save: (id: string, body?: Operations["v1.workflow.save"]["body"], options?: RequestOptions): Promise<Operations["v1.workflow.save"]["response"]> =>
+        caller.call("v1.workflow.save", { path: { id }, body }, options),
       /** Stop a run and cancel its in-flight agents (`POST /api/v1/workflows/runs/{id}/stop`) */
       stop: (id: string, options?: RequestOptions): Promise<Operations["v1.workflow.stop"]["response"]> =>
         caller.call("v1.workflow.stop", { path: { id } }, options),
