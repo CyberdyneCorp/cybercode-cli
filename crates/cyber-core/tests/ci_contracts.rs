@@ -1,42 +1,68 @@
-//! Native CI must retain an earlier command failure when later commands would pass.
+//! Native CI contracts: the Windows jobs build the test binaries once and keep a failing
+//! command's exit status.
 use serde_yaml_ng::Value;
 
-fn windows_native_batches() -> Vec<(String, String)> {
-    let workflow: Value =
-        serde_yaml_ng::from_str(include_str!("../../../.github/workflows/ci.yml")).unwrap();
-    let mut batches = Vec::new();
+fn workflow() -> Value {
+    serde_yaml_ng::from_str(include_str!("../../../.github/workflows/ci.yml")).unwrap()
+}
+
+/// `(step name, run script)` of every step of the native Windows jobs.
+fn windows_steps() -> Vec<(String, String)> {
+    let workflow = workflow();
+    let mut steps = Vec::new();
     for job in workflow["jobs"].as_mapping().unwrap().values() {
         if job["runs-on"].as_str() != Some("windows-2025") {
             continue;
         }
         for step in job["steps"].as_sequence().unwrap() {
-            let Some(run) = step["run"].as_str() else {
-                continue;
-            };
-            if run
-                .lines()
-                .filter(|line| line.trim_start().starts_with("cargo "))
-                .count()
-                > 1
-            {
-                batches.push((step["name"].as_str().unwrap().into(), run.into()));
+            if let Some(run) = step["run"].as_str() {
+                let name = step["name"].as_str().unwrap_or_default();
+                steps.push((name.into(), run.into()));
             }
         }
     }
-    batches
+    steps
+}
+
+fn cargo_lines(run: &str) -> impl Iterator<Item = &str> {
+    run.lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("cargo "))
+}
+
+/// A `cargo` command that selects other packages resolves dependency features differently
+/// and rebuilds the crate stack; with one per subset the Windows job outgrew its 6-hour
+/// limit. Only the feature-gated sandbox tests build separately.
+#[test]
+fn every_native_windows_cargo_command_selects_the_whole_workspace() {
+    let steps = windows_steps();
+    let commands: Vec<_> = steps
+        .iter()
+        .flat_map(|(name, run)| cargo_lines(run).map(move |line| (name, line)))
+        .collect();
+    assert!(
+        commands
+            .iter()
+            .any(|(_, line)| line.contains("nextest run") && line.contains("--profile ci-windows")),
+        "expected the native Windows test run"
+    );
+    for (name, line) in commands {
+        if line.contains("--features") {
+            continue;
+        }
+        assert!(
+            line.contains(" --workspace"),
+            "{name} rebuilds for its own package selection: {line}"
+        );
+    }
 }
 
 #[test]
-fn every_batched_windows_cargo_command_preserves_its_failure() {
-    let batches = windows_native_batches();
-    assert!(
-        !batches.is_empty(),
-        "expected native multi-command coverage"
-    );
-    for (name, run) in batches {
+fn piped_windows_cargo_commands_preserve_their_failure() {
+    for (name, run) in windows_steps() {
         let lines: Vec<_> = run.lines().map(str::trim).collect();
         for (i, line) in lines.iter().enumerate() {
-            if line.starts_with("cargo ") {
+            if line.starts_with("cargo ") && line.contains(" | ") {
                 assert_eq!(
                     lines.get(i + 1).copied(),
                     Some("if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }"),
@@ -47,50 +73,18 @@ fn every_batched_windows_cargo_command_preserves_its_failure() {
     }
 }
 
-#[cfg(windows)]
-#[test]
-fn native_powershell_batches_stop_on_first_failure_even_when_later_commands_succeed() {
-    for (name, run) in windows_native_batches() {
-        let mut first = true;
-        let probe = run
-            .lines()
-            .map(|line| {
-                if !line.trim_start().starts_with("cargo ") {
-                    return line.to_owned();
-                }
-                let code = if first { 7 } else { 0 };
-                first = false;
-                format!("cmd /C exit {code}")
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        let output = std::process::Command::new("pwsh")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &probe])
-            .output()
-            .unwrap();
-        assert_eq!(output.status.code(), Some(7), "{name}: {output:?}");
-    }
-}
-
 #[test]
 fn windows_snapshot_logs_are_published_immediately_without_hiding_test_failures() {
-    let workflow: Value =
-        serde_yaml_ng::from_str(include_str!("../../../.github/workflows/ci.yml")).unwrap();
-    let job = workflow["jobs"]
-        .as_mapping()
-        .unwrap()
-        .values()
-        .find(|job| job["runs-on"].as_str() == Some("windows-2025"))
-        .unwrap();
-    let steps = job["steps"].as_sequence().unwrap();
+    let workflow = workflow();
+    let steps = workflow["jobs"]["windows"]["steps"].as_sequence().unwrap();
     let index = steps
         .iter()
         .position(|step| step["name"].as_str() == Some("Native migration source snapshots"))
         .unwrap();
     let run = steps[index]["run"].as_str().unwrap();
-    assert!(
-        run.contains("--test import_snapshot 2>&1 | Tee-Object -FilePath migration-snapshot.log")
-    );
+    assert!(run.contains(
+        "-E 'binary_id(cyber-core::import_snapshot)' 2>&1 | Tee-Object -FilePath migration-snapshot.log"
+    ));
     assert_eq!(
         run.lines().nth(1),
         Some("if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }")
