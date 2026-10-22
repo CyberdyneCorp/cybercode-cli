@@ -798,3 +798,101 @@ async fn direct_tools_return_structured_results_and_refuse_unattended_asks() {
         "PermissionDenied: No interactive approver for workflow run"
     );
 }
+
+/// Start a run of `body` as `starter` with `args`.
+async fn start_as(flow: &Flow, owner: &str, body: &str, starter: RunStarter, args: Value) -> String {
+    flow.runtime
+        .start_workflow_run(StartWorkflowRun {
+            module: module(body),
+            args,
+            session_id: owner.into(),
+            limits: Limits::default(),
+            tiers: BTreeMap::new(),
+            budget: cyber_core::budget::RunBudget::resolve(&json!({}), &[]).unwrap(),
+            share: Default::default(),
+            starter,
+            tools: Vec::new(),
+        })
+        .await
+        .unwrap()
+        .id
+}
+
+/// Poll a run until it has ended.
+async fn ended(flow: &Flow, id: &str) -> WorkflowRun {
+    for _ in 0..1000 {
+        let run = flow.runtime.workflow_run(id).unwrap().unwrap();
+        if !run.status.is_active() {
+            return run;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("run {id} did not end");
+}
+
+fn run_status(flow: &Flow, id: &str) -> WorkflowRunStatus {
+    flow.runtime.workflow_run(id).unwrap().unwrap().status
+}
+
+/// `workflows` → ask() user interaction: an interactive run waits in `waiting_input` for
+/// the owner's answer to a question with options, and `args.answers` answers a question
+/// without asking; a run without a user rejects with `NoInteractiveUser`.
+#[tokio::test(flavor = "multi_thread")]
+async fn ask_waits_for_the_owner_or_uses_declared_answers() {
+    let flow = Flow::new(vec![text("noted"), text("noted")], true);
+    let owner = flow.session("default").await;
+    let body = "export default async () => {\n  const pick = await ask({ question: 'Migrate 60 files in 12 batches?', options: ['yes', 'no'] });\n  const note = await ask('Anything else?');\n  return { pick, note };\n};\n";
+    let starter = RunStarter::Session { interactive: true };
+    let args = json!({"answers": {"Anything else?": "nothing"}});
+    let id = start_as(&flow, &owner, body, starter, args).await;
+    let request = flow.pending(&owner).await;
+    let PendingKind::Question { questions } = &request.kind else {
+        panic!("expected a question: {request:?}");
+    };
+    assert_eq!(questions[0].question, "Migrate 60 files in 12 batches?");
+    assert_eq!(questions[0].options.len(), 2);
+    eventually("waiting_input", || {
+        run_status(&flow, &id) == WorkflowRunStatus::WaitingInput
+    })
+    .await;
+    assert!(flow.runtime.workflow_agents(&id).unwrap().is_empty());
+    let answers = vec![vec!["yes".to_string()]];
+    flow.runtime
+        .answer_question(&request.id, QuestionReply::Answers { answers })
+        .await
+        .unwrap();
+    let run = ended(&flow, &id).await;
+    assert_eq!(run.status, WorkflowRunStatus::Completed, "{run:?}");
+    assert_eq!(run.result, Some(json!({"pick": "yes", "note": "nothing"})));
+
+    let body = "export default async () => {\n  try { await ask('Go?'); } catch (e) { return `${e.kind}: ${e.message}`; }\n};\n";
+    let id = start_as(&flow, &owner, body, RunStarter::Api, json!({})).await;
+    let run = ended(&flow, &id).await;
+    assert_eq!(
+        run.result,
+        Some(json!(
+            "NoInteractiveUser: no interactive user can answer ask() in this run"
+        ))
+    );
+}
+
+/// A stop while `ask()` waits withdraws the question and records no answer.
+#[tokio::test(flavor = "multi_thread")]
+async fn stopping_a_waiting_run_withdraws_its_question() {
+    let flow = Flow::new(Vec::new(), true);
+    let owner = flow.session("default").await;
+    let body = "export default async () => ask('Proceed?');\n";
+    let starter = RunStarter::Session { interactive: true };
+    let id = start_as(&flow, &owner, body, starter, json!({})).await;
+    flow.pending(&owner).await;
+    eventually("waiting_input", || {
+        run_status(&flow, &id) == WorkflowRunStatus::WaitingInput
+    })
+    .await;
+    flow.runtime.stop_workflow_run(&id).await.unwrap();
+    eventually("the question withdrawn", || {
+        flow.runtime.pending_requests(Some(&owner)).is_empty()
+    })
+    .await;
+    assert_eq!(run_status(&flow, &id), WorkflowRunStatus::Stopped);
+}

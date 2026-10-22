@@ -48,7 +48,12 @@ pub const PHASE: &str = "workflow.phase.1";
 pub const LOG: &str = "workflow.log.1";
 /// The run summary was admitted to the starting Session (`workflows` → Run results).
 pub const RUN_NOTIFIED: &str = "workflow.run.notified.1";
-const KINDS: [&str; 14] = [
+/// `ask()` waits for the owner's answer: the run is `waiting_input` (`workflows` → ask()
+/// user interaction).
+pub const RUN_WAITING: &str = "workflow.run.waiting.1";
+/// The answer arrived: the run is `running` again.
+pub const RUN_ANSWERED: &str = "workflow.run.answered.1";
+const KINDS: [&str; 16] = [
     RUN_STARTED,
     RUN_PAUSED,
     RUN_RESUMED,
@@ -63,9 +68,11 @@ const KINDS: [&str; 14] = [
     PHASE,
     LOG,
     RUN_NOTIFIED,
+    RUN_WAITING,
+    RUN_ANSWERED,
 ];
 /// Lifecycle events that carry the whole run.
-pub(super) const LIFECYCLE: [&str; 7] = [
+pub(super) const LIFECYCLE: [&str; 9] = [
     RUN_PAUSED,
     RUN_RESUMED,
     RUN_DISPATCHED,
@@ -73,6 +80,8 @@ pub(super) const LIFECYCLE: [&str; 7] = [
     RUN_COMPLETED,
     RUN_FAILED,
     RUN_STOPPED,
+    RUN_WAITING,
+    RUN_ANSWERED,
 ];
 /// The refusal when a workflow agent, or a Session below one, would own a new run
 /// (`workflows` → Permissions for runs).
@@ -412,8 +421,9 @@ fn project_lifecycle(tx: &Transaction<'_>, event: &StoredEvent) -> rusqlite::Res
     )?;
     match event.kind.as_str() {
         RUN_REVISED => project_revision(tx, event)?,
-        RUN_RESUMED | RUN_DISPATCHED => {
-            // A resume that queued the run starts its clock at dispatch.
+        RUN_RESUMED | RUN_DISPATCHED | RUN_ANSWERED => {
+            // A resume that queued the run starts its clock at dispatch; time spent
+            // waiting for an answer is not running time.
             if data["status"] == "running" {
                 tx.execute(
                     "UPDATE workflow_run_budget SET activated_ms = ?2 WHERE run_id = ?1",

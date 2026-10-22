@@ -32,6 +32,7 @@ use super::host::{
     RunWorktree, ToolHost, TurnContext, WorkflowAgentOutput, WorkflowAgentRequest,
     WorkflowToolRequest,
 };
+use super::workflow_ask::{Asked, ScriptQuestion, no_user};
 use super::workflow_control::{Control, Signal};
 use super::workflow_replay::{Outcome, Plan, Replay};
 use super::workflow_scheduler::{Slot, WorkflowScheduler};
@@ -78,8 +79,10 @@ pub(super) struct RunHost {
     control: Arc<Control>,
     run_id: String,
     owner: TurnContext,
-    /// Asks of direct tool calls may reach the owner's clients.
+    /// `ask()` and the asks of direct tool calls may reach the owner's clients.
     interactive: bool,
+    /// The run's `args`, whose `answers` declare `ask()` answers in advance.
+    args: Value,
     tiers: BTreeMap<String, Option<String>>,
     budget: RunBudget,
     replay: Replay,
@@ -233,6 +236,7 @@ impl RunHost {
             run_id: run.id.clone(),
             owner,
             interactive: run.interactive,
+            args: run.args.clone(),
             tiers,
             budget: run_budget(run),
             replay,
@@ -817,6 +821,56 @@ impl RunHost {
         self.record_call("tool", seq, &key, Outcome::of(&outcome))
     }
 
+    /// An `ask()` after the replay prefix: its recorded answer, an answer `args.answers`
+    /// declares, `NoInteractiveUser` in a run without a user, else the owner's answer.
+    async fn serve_ask(
+        &self,
+        seq: u64,
+        key: String,
+        question: ScriptQuestion,
+    ) -> Result<Value, Diagnostic> {
+        self.replay
+            .after_prefix()
+            .await
+            .map_err(|error| self.fail_closed(error))?;
+        if let Some(outcome) = self.replay.reusable(&key) {
+            return self.record_call("ask", seq, &key, outcome);
+        }
+        let outcome = match question.declared(&self.args) {
+            Some(answer) => Outcome::Value(answer),
+            None if !self.interactive => Outcome::Error(no_user(
+                "no interactive user can answer ask() in this run",
+            )),
+            None => self.answer(question).await?,
+        };
+        self.record_call("ask", seq, &key, outcome)
+    }
+
+    /// Wait for the owner's answer on the tokio runtime; a pause or stop meanwhile ends
+    /// the attempt.
+    async fn answer(&self, question: ScriptQuestion) -> Result<Outcome, Diagnostic> {
+        let runtime = self
+            .runtime
+            .upgrade()
+            .ok_or_else(|| self.fail_closed(failed("the server is shutting down")))?;
+        let (run_id, control) = (self.run_id.clone(), Arc::clone(&self.control));
+        let lease = self.control.lease();
+        let asked = self
+            .handle
+            .spawn(async move {
+                let _lease = lease;
+                runtime.workflow_ask(&run_id, &question, control).await
+            })
+            .await;
+        match asked {
+            Ok(Ok(Asked::Answer(answer))) => Ok(Outcome::Value(answer)),
+            Ok(Ok(Asked::Unanswered(error))) => Ok(Outcome::Error(error)),
+            Ok(Ok(Asked::Halted)) => Err(self.halt()),
+            Ok(Err(error)) => Err(self.fail_closed(failed(error.to_string()))),
+            Err(error) => Err(self.fail_closed(failed(format!("ask() task ended: {error}")))),
+        }
+    }
+
     /// A checkpoint after the replay prefix: its recorded value, else the given one.
     async fn serve_checkpoint(
         &self,
@@ -889,11 +943,19 @@ impl WorkflowHost for RunHost {
     }
 
     fn ask(&self, question: Value) -> HostFuture<'_> {
-        let error = Diagnostic::new(
-            DiagnosticKind::NoInteractiveUser,
-            "no interactive user can answer ask() in this run",
-        );
-        self.rejected("ask", json!({ "question": question }), error)
+        let parsed = ScriptQuestion::parse(&question);
+        let key = self.call_key("ask", &canonical(&question).to_string(), &Map::new());
+        let plan = self.replay.issue("ask", &key);
+        Box::pin(async move {
+            match (plan, parsed) {
+                (Plan::Mismatch(error), _) => Err(self.fail_closed(error)),
+                (Plan::Replay { index, outcome }, _) => self.replayed(index, outcome).await,
+                (Plan::Free { seq }, Ok(question)) => self.serve_ask(seq, key, question).await,
+                (Plan::Free { seq }, Err(error)) => {
+                    self.serve_rejected("ask", seq, &key, error).await
+                }
+            }
+        })
     }
 
     fn rejected(&self, kind: &str, payload: Value, error: Diagnostic) -> HostFuture<'_> {
