@@ -31,6 +31,15 @@ if pathlib.Path('graceful-children').exists():
     subprocess.Popen([sys.executable,'-c',"import signal,pathlib,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); pathlib.Path('stubborn-ready').write_text('ready'); time.sleep(7); pathlib.Path('escaped').write_text('must not survive')"])
     while not pathlib.Path('child-ready').exists() or not pathlib.Path('stubborn-ready').exists(): time.sleep(.01)
 
+# A reply is the response to the server's own request: a notification the client sends
+# meanwhile (`notifications/cancelled` before it stops the server) is not an answer.
+def reply_to(rid):
+    while True:
+        line=sys.stdin.readline()
+        if not line: return None
+        message=json.loads(line)
+        if message.get('id')==rid and 'method' not in message: return message
+
 def lines():
     while True:
         line=sys.stdin.readline()
@@ -57,18 +66,20 @@ for line in lines():
         if name=='structured': result['structuredContent']={'answer':42}
         if pathlib.Path('sampling.json').exists():
             print(json.dumps({'jsonrpc':'2.0','id':'sample','method':'sampling/createMessage','params':json.loads(pathlib.Path('sampling.json').read_text())}),flush=True)
-            reply=json.loads(sys.stdin.readline())
+            reply=reply_to('sample')
+            if reply is None: sys.exit(0)
             pathlib.Path('sampling-reply').write_text(json.dumps(reply))
             while pathlib.Path('sampling-loop').exists():
                 time.sleep(.05)
                 print(json.dumps({'jsonrpc':'2.0','id':'sample','method':'sampling/createMessage','params':json.loads(pathlib.Path('sampling.json').read_text())}),flush=True)
-                line=sys.stdin.readline()
-                if not line: break
-                reply=json.loads(line)
+                next_reply=reply_to('sample')
+                if next_reply is None: break
+                reply=next_reply
             result['content'][0]['text']=json.dumps(reply.get('result',reply.get('error')))
         if pathlib.Path('elicitation.json').exists():
             print(json.dumps({'jsonrpc':'2.0','id':'form','method':'elicitation/create','params':json.loads(pathlib.Path('elicitation.json').read_text())}),flush=True)
-            reply=json.loads(sys.stdin.readline())
+            reply=reply_to('form')
+            if reply is None: sys.exit(0)
             pathlib.Path('elicitation-reply').write_text(json.dumps(reply))
             result['content'][0]['text']=json.dumps(reply.get('result',reply.get('error')))
     print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':result}),flush=True)
