@@ -350,6 +350,11 @@ impl Follow<'_> {
         let mut waiting = false;
         let deadline = tokio::time::sleep(timeout.unwrap_or(Duration::from_secs(u64::MAX / 4)));
         tokio::pin!(deadline);
+        // One listener for the whole run: a `ctrl_c()` made anew in each `select!` exists
+        // only while that `select!` waits, so a SIGINT arriving while an event is handled
+        // has no receiver and is lost.
+        let interrupt = tokio::signal::ctrl_c();
+        tokio::pin!(interrupt);
         loop {
             let done = tokio::select! {
                 event = events.next() => match event {
@@ -365,7 +370,7 @@ impl Follow<'_> {
                     stop(self.client, self.id, self.run, self.owned, "timeout").await;
                     false
                 }
-                _ = tokio::signal::ctrl_c(), if self.run.stop_requested.is_none() => {
+                _ = &mut interrupt, if self.run.stop_requested.is_none() => {
                     stop(self.client, self.id, self.run, self.owned, "interrupted").await;
                     false
                 }
