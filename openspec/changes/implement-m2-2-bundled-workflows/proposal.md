@@ -1,6 +1,6 @@
 ## Delivery update (2026-10-22)
 
-The five original modules shipped first. The next library slice is [`solve`](../add-verified-solve-workflow/proposal.md): independent model attempts, authoritative checks and an independent recommendation; it reuses sections 1–4 of this change, and its contracts, design and tests live in that sibling change. "Five modules" below refers to this change's original module scope; the combined target library has six. A release lists only modules that actually ship.
+The five original modules shipped first. The verified [`solve`](../archive/2026-10-23-add-verified-solve-workflow/proposal.md) extension shipped in PR #23: independent model attempts, authoritative checks and an independent recommendation. It reuses sections 1–4 of this change; its reviewed contracts, design and acceptance evidence are archived in that linked change. "Five modules" below refers to this change's original scope; the shipped library now has six.
 
 ## Why
 

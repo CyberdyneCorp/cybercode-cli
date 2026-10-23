@@ -501,7 +501,7 @@ This is the full product scope, spanning P0–P4. See the [roadmap](../ROADMAP.m
 | Models & identity | `provider-catalog`, `provider-credentials`, `cyber-account` |
 | Agent runtime | `session-runtime`, `system-context`, `memory`, `compaction`, `agents-subagents` |
 | Tools & safety | `workspace-trust`, `tool-registry`, `builtin-tools`, `permissions-modes`, `sandbox`, `snapshots-checkpoints`, `worktrees`, `code-intelligence` |
-| Autonomy & orchestration | `workflows`, `goals`, `loops-scheduling`, `background-tasks`, `agent-teams` |
+| Autonomy & orchestration | `verified-workflows`, `workflows`, `goals`, `loops-scheduling`, `background-tasks`, `agent-teams` |
 | Connectivity | `server-api`, `client-sdk`, `cross-session-messaging`, `remote-control`, `runners-cloud`, `routines`, `channels` |
 | Extensibility | `hooks`, `plugins-marketplace`, `mcp`, `skills-commands` |
 | Surfaces | `tui`, `web-client`, `exec-mode`, `editor-integration`, `vcs-integration`, `session-sharing` |
@@ -1279,7 +1279,7 @@ export default async function () {
 
 The library also includes [`solve`](verified-workflows.md): independent candidate worktrees, host-owned checks, a read-only judge and server-derived evidence. Its default soft budget is $5, five agents and 30 minutes; each solver has at most 20 steps. Checks use literal argv and need command permissions. The owner checkout stays unchanged.
 
-Five Workflows ship inside the `cyber` binary. They have the lowest precedence: a global (`~/.config/cyber/workflows`) or project (`.cyber/workflows`) module with the same name replaces one, and the listing names what it shadows (`bundled:audit`).
+Six Workflows ship inside the `cyber` binary. They have the lowest precedence: a global (`~/.config/cyber/workflows`) or project (`.cyber/workflows`) module with the same name replaces one, and the listing names what it shadows (`bundled:audit`).
 
 | Workflow | What it does | Args (defaults) | Default budget |
 |---|---|---|---|
@@ -1288,6 +1288,7 @@ Five Workflows ship inside the `cyber` binary. They have the lowest precedence: 
 | `migrate` | One edit-capable agent per batch in its own worktree: it edits, runs the `check` commands and commits on its branch; a verifier reads the branch diff. Nothing is merged; the result suggests `git merge <branches>` | `instructions`, `files` or `pattern` (+ `contains`), `batch_size` (5, ≤ 25), `check`, `confirm_over` (20), `max_batches` (40), `yes` | 80 agents, $15, 4 h |
 | `research` | Searchers per source and angle, readers extracting claims with locations, an independent cross-check per claim, then an answer citing verified claims only | `question`, `sources` (`repo`, `docs`; `web` when the web tools are allowed), `angles` (3, ≤ 6), `max_sources` (12) | 40 agents, $5, 1 h |
 | `plan` | Read-only planners per angle, judges scoring every draft on correctness, completeness, risk, effort and testability, then a merge of the best draft with named grafts | `task`, `angles` (`mvp-first`, `risk-first`, `user-first`), `judges` (3), `context` | 14 agents, $3, 30 min |
+| `solve` | Independent patches in managed worktrees, host-owned checks, a separate read-only judge and an evidence report; no automatic merge | `task`, `candidates` (2–4; defaults `fast`, `smart`, `verify`), `checks` (1–8 literal argv arrays), `judge_model` (`verify`) | 5 agents, $5 soft ceiling, 30 min; 20 steps per solver |
 
 ```bash
 cyber workflows list                                   # NAME, ORIGIN (bundled/global/project), DESCRIPTION

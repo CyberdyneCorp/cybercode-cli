@@ -28,4 +28,4 @@ Automatic merging or PR publication; guarantees that passing tests proves correc
 
 ## Status
 
-Implementation started on 2026-10-23 after PR #17 merged the reviewed proposal. The shared library shipped in PR #18. The solve implementation now includes admission, pinned isolated candidates, host-owned checks and recovery records, independent judging, server-derived evidence, client views and usage documentation. Validation and acceptance evidence are tracked in tasks.md; live paid-model acceptance has not been run and no model-quality parity is claimed.
+Implemented and merged in PR #23 on 2026-10-23 after PR #17 merged the reviewed proposal. The shared library shipped in PR #18. The solve implementation now includes admission, pinned isolated candidates, host-owned checks and recovery records, independent judging, server-derived evidence, client views and usage documentation. All 13 PR CI jobs pass. Validation and acceptance evidence are tracked in tasks.md; live paid-model acceptance has not been run and no model-quality parity is claimed.

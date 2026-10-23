@@ -21,7 +21,7 @@ The README quickstart lists saved workflows and links to the example that create
 
 ## Current P1 inventory
 
-There are **48 capabilities and 894 requirements** across all phases, including **270 P1 requirements**. Phase tags use the first tag in each requirement, matching `scripts/spec_inventory.py`. The 13 editor requirements moved to P3 are excluded from this P1 total.
+There are **49 capabilities and 899 requirements** across all phases, including **270 P1 requirements**. Phase tags use the first tag in each requirement, matching `scripts/spec_inventory.py`. The 13 editor requirements moved to P3 are excluded from this P1 total.
 
 | Capability | Canonical P1 requirements |
 |---|---:|
