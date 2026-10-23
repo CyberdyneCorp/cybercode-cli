@@ -1,10 +1,12 @@
 # P2 implementation status
 
-## Verified solve: admission increment (2026-10-23)
+## Verified solve (2026-10-23)
 
-PR #18 delivered the library foundation and five modules. The `add-verified-solve-workflow` change now starts with read-only admission: bounded typed task/candidate/check args, model-tier resolution for all solvers and the judge, explicit read ceilings, and a clean committed base captured through sandboxed Git metadata and the external-filter-free libgit2 helper. The production HTTP tests cover invalid/forged inputs, unavailable models, non-Git/dirty/untracked checkouts, read denial and retained literal argv without executing it. A same-size edit regression proves inspection never executes a repository clean filter. Parser tests are portable; Git integration is Unix-only and native Windows remains unverified.
+The sixth bundled workflow implements clean-base admission, two to four isolated solvers pinned to that commit, host-owned literal-argv checks with durable intents and settlements, and an independent judge forced into Plan mode. Submitted solver subtrees are fenced against further admission. Full-access configuration, extra writable roots and ambient temp access cannot widen solve command writes beyond the candidate boundary. Direct file-tool writes outside it are denied.
 
-The `solve` module is not listed or runnable yet. Separate work remains for isolated candidates, host-owned checks with unknown-outcome recovery, the independent judge and authoritative evidence/client views. A captured clean base is an admission observation, not a verification proof or a lease that survives subsequent edits.
+Source fingerprints cover complete raw tracked and non-ignored source contents, including binary contents and symlink targets; truncated patches are never source identity. Checks retain bounded logs and seven outcomes. Interrupted native intents are not redispatched automatically. Matching server ledger records populate `solve_evidence` on the detail API and the terminal evidence rows; overriding modules cannot create that authority through JSON output.
+
+The usage and limits are documented in [Verified workflows](../verified-workflows.md). Production and real-binary scripted acceptance, platform CI and remaining evidence are tracked in [`add-verified-solve-workflow/tasks.md`](../../openspec/changes/add-verified-solve-workflow/tasks.md). Live paid-model acceptance has not been run for this change, and no model-quality parity claim is made.
 
 P2 evidence lives here and is kept separate from the P1 files (`p1-status.md`, `p1-handoff.md` and `p1-acceptance-audit.md`). The plan, the requirement-to-task mapping and the scope exclusions are in [`openspec/changes/implement-m2-1-workflow-runtime`](../../openspec/changes/implement-m2-1-workflow-runtime/proposal.md).
 

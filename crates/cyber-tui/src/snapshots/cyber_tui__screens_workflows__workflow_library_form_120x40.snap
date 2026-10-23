@@ -2,19 +2,19 @@
 source: crates/cyber-tui/src/screens_workflows.rs
 expression: shown
 ---
-╭ Workflows · Library · ~/work/app ─────────────────────────────────────────────────────────────────────── 6 Workflows ╮
+╭ Workflows · Library · ~/work/app ─────────────────────────────────────────────────────────────────────── 7 Workflows ╮
 │   audit          [bundled]  Codebase-wide bug or security sweep: read-only finders per chunk of files, then independ…│
 │   migrate        [bundled]  File-by-file migration in batches: each batch is edited in its own worktree, checked wit…│
 │   plan           [bundled]  Plans drafted from several independent angles, scored by judges on a fixed rubric, then …│
 │   release        [project]  Monitor                                                                                  │
 │ ▸ research       [bundled]  Cross-checked research: searchers per source and angle, readers that extract claims with…│
 │   review         [bundled]  Multi-angle code review of a diff: read-only reviewers per lens and file group, then an …│
+│   solve          [bundled]  Try independent patches in isolated worktrees, run host-owned verification and ask an in…│
 │                                                                                                                      │
 │ Run research                                                                                                         │
 │ agents: sources × angles searchers + one reader per source (at most max_sources) + one cross-check per claim (at mos…│
 │ args (JSON):                                                                                                         │
 │ › {"sources":["repo","docs"],"angles":3,"max_sources":12}▏                                                           │
-│                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │

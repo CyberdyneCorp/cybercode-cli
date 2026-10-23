@@ -249,6 +249,24 @@ async fn resolve(
     target: &Target,
     merge_base: bool,
 ) -> Result<ReviewDiff, CommandPlanError> {
+    resolve_with_base(ctx, target, merge_base, None).await
+}
+
+pub(super) async fn solve_snapshot(
+    ctx: &Ctx<'_>,
+    base: &str,
+) -> Result<ReviewDiff, CommandPlanError> {
+    let diff = resolve_with_base(ctx, &Target::Uncommitted, false, Some(base)).await?;
+    check_root(ctx, &diff.root)?;
+    Ok(diff)
+}
+
+async fn resolve_with_base(
+    ctx: &Ctx<'_>,
+    target: &Target,
+    merge_base: bool,
+    base: Option<&str>,
+) -> Result<ReviewDiff, CommandPlanError> {
     let directory = crate::sandboxing::session_tmp(ctx).map_err(|error| match error {
         crate::tools::ToolError::Failed(message) => unavailable(message),
         crate::tools::ToolError::Aborted => unavailable("cancelled"),
@@ -259,6 +277,7 @@ async fn resolve(
         _ => None,
     };
     let request = serde_json::to_string(&cyber_core::review::resolve::Request {
+        worktree_base: base.map(str::to_owned),
         location: ctx.location.clone(),
         target: target.clone(),
         overrides: overrides.0.clone(),

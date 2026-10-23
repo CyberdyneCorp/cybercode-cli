@@ -2648,6 +2648,8 @@ export type RunDetail = {
   interrupted?: boolean;
   /** Every agent of the run, in start or settlement order. */
   agents_detail: WorkflowAgent[];
+  /** Authoritative check evidence, absent for saved/inline overrides, including those named solve. */
+  solve_evidence?: SolveEvidence | null;
 };
 
 /** The `scope` of a Workflow Run usage report. */
@@ -3060,6 +3062,28 @@ export type SkillInfo = {
 
 /** The scope a skill was discovered in. */
 export type SkillOrigin = "builtin" | "user" | "project" | "config" | "plugin";
+
+export type SolveCandidateEvidence = {
+  candidate_id: string;
+  label?: string | null;
+  session_id?: string | null;
+  branch?: string | null;
+  model?: string | null;
+  source_sha256?: string | null;
+  patch_sha256?: string | null;
+  checks: unknown[];
+  host_verified: boolean;
+  cost_usd: number;
+  tokens: number;
+};
+
+/** Server-derived evidence. Module output cannot populate this authority field. */
+export type SolveEvidence = {
+  run_id: string;
+  revision: number;
+  base: unknown;
+  candidates: SolveCandidateEvidence[];
+};
 
 /** Where a plugin comes from. */
 export type Source = {

@@ -326,6 +326,16 @@ fn user_options(spawn: &mut Spawn, input: &Value) -> Result<(), ToolError> {
     Ok(())
 }
 
+fn cap_solve_steps(spawn: &mut Spawn) {
+    if spawn
+        .source
+        .run_worktree()
+        .is_some_and(|tree| tree.base.is_some())
+    {
+        spawn.max_steps = Some(20);
+    }
+}
+
 async fn effective_parent(runtime: &Runtime, session: &str) -> Result<SessionInfo, ToolError> {
     let state = runtime
         .state(session)
@@ -456,6 +466,7 @@ async fn spawn_child(
     }
     spawn.source = source;
     user_options(&mut spawn, &ctx.inv.input)?;
+    cap_solve_steps(&mut spawn);
     if let Some(existing) = &resume {
         let state = runtime
             .state(&existing.id)

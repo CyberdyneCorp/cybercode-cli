@@ -433,7 +433,9 @@ async fn the_library_lists_saved_workflows_by_precedence_with_issues() {
         .collect();
     assert_eq!(
         names,
-        ["audit", "migrate", "plan", "release", "research", "review"],
+        [
+            "audit", "migrate", "plan", "release", "research", "review", "solve"
+        ],
         "{listed}"
     );
     let entry = |listing: &Value, name: &str| -> Value {

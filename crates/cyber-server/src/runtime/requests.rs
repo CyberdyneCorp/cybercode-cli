@@ -364,7 +364,17 @@ impl Inner {
             QUESTION_ASKED
         };
         let mut state = handle.state.lock().await;
-        let stored = match self.record_locked(&mut state, vec![event(kind_name, &request)]) {
+        let mut asked = event(kind_name, &request);
+        if kind_name == PERMISSION_ASKED
+            && super::workflow_solve::owns_verification(&asker.session_id)
+        {
+            let Ok(authority) = runtime.capture_child_admission(&asker.session_id) else {
+                return false;
+            };
+            asked.data["admission_bindings"] =
+                serde_json::to_value(&authority.bindings).expect("authority serializes");
+        }
+        let stored = match self.record_locked(&mut state, vec![asked]) {
             Ok(stored) => stored,
             Err(e) => {
                 // A request that cannot be recorded is never shown; say why instead of failing silently.

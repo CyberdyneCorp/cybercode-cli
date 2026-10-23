@@ -115,6 +115,9 @@ pub(super) struct RunDetail {
     summary: WorkflowRunSummary,
     /// Every agent of the run, in start or settlement order.
     agents_detail: Vec<WorkflowAgent>,
+    /// Authoritative check evidence, absent for saved/inline overrides, including those named solve.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    solve_evidence: Option<crate::runtime::SolveEvidence>,
 }
 
 fn diagnostic(error: Diagnostic) -> ApiError {
@@ -357,6 +360,7 @@ async fn show(
         data: RunDetail {
             summary,
             agents_detail,
+            solve_evidence: state.runtime.solve_evidence(&id)?,
         },
     }))
 }

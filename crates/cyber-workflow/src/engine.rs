@@ -91,6 +91,15 @@ type SettledCall<'a> = Pin<Box<dyn Future<Output = (u32, Result<Value, Diagnosti
 pub trait WorkflowHost {
     fn agent(&self, call: AgentCall) -> HostFuture<'_>;
     fn checkpoint(&self, name: String, value: Value) -> HostFuture<'_>;
+    /// Trusted bundled solve protocol; unavailable to other modules by default.
+    fn solve(&self, _input: Value) -> HostFuture<'_> {
+        Box::pin(async {
+            Err(Diagnostic::new(
+                DiagnosticKind::PermissionDenied,
+                "solve host protocol unavailable",
+            ))
+        })
+    }
     fn ask(&self, _question: Value) -> HostFuture<'_> {
         Box::pin(async {
             Err(Diagnostic::new(
@@ -515,6 +524,7 @@ impl Engine {
                 checkpoint_call(&payload).map(|(name, value)| host.checkpoint(name, value))
             }
             "ask" => Ok(host.ask(payload["question"].clone())),
+            "solve" => Ok(host.solve(payload.clone())),
             "tool" => tool_call(&payload, &self.tools).map(|(name, input)| host.tool(name, input)),
             other => Err(Diagnostic::execution(format!("unknown host call {other}"))),
         };

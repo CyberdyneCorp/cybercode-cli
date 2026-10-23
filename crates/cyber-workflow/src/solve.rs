@@ -1,5 +1,5 @@
 //! Admission inputs for the verified `solve` workflow. This module does not assert that
-//! candidates or their checks ran; that authority belongs to the host's future evidence.
+//! candidates or their checks ran; that authority belongs to matching host-retained evidence.
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};

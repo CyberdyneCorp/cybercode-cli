@@ -208,7 +208,10 @@ fn listed_names(listing: &Value) -> Vec<(String, String)> {
 
 fn assert_list_json(listing: &Value) {
     let names: Vec<String> = listed_names(listing).into_iter().map(|(n, _)| n).collect();
-    assert_eq!(names, ["audit", "migrate", "plan", "research", "review"]);
+    assert_eq!(
+        names,
+        ["audit", "migrate", "plan", "research", "review", "solve"]
+    );
     let audit = &listing["workflows"][0];
     assert_eq!(audit["origin"], "project");
     assert_eq!(audit["scope"], "project");
@@ -221,7 +224,7 @@ fn assert_list_json(listing: &Value) {
     assert_eq!(listing["issues"][0]["diagnostic"]["position"]["line"], 2);
 }
 
-/// `workflows` → Saved and bundled workflows: a fresh install lists the five bundled
+/// `workflows` → Saved and bundled workflows: a fresh install lists the bundled
 /// Workflows, and `show` prints one with its estimate and args (the source with
 /// `--source`).
 #[test]
@@ -233,10 +236,11 @@ fn bundled_workflows_are_listed_and_shown() {
     let o = run(&["workflows", "list", "--format", "json"]);
     assert!(o.status.success(), "{}", stderr(&o));
     let entries = listed_names(&json(&o));
-    let expected: Vec<(String, String)> = ["audit", "migrate", "plan", "research", "review"]
-        .iter()
-        .map(|name| ((*name).to_owned(), "bundled".to_owned()))
-        .collect();
+    let expected: Vec<(String, String)> =
+        ["audit", "migrate", "plan", "research", "review", "solve"]
+            .iter()
+            .map(|name| ((*name).to_owned(), "bundled".to_owned()))
+            .collect();
     assert_eq!(entries, expected);
 
     let o = run(&["workflows", "show", "review"]);

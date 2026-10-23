@@ -321,6 +321,12 @@ impl BuiltinHost {
 
     /// Recheck visibility before a call can reach either execution host.
     pub fn check_agent_tool(&self, call: &Invocation) -> Result<(), String> {
+        if call.mode == "plan"
+            && self.solve_isolation(&call.session_id)?
+            && !matches!(call.name.as_str(), "read" | "glob" | "grep")
+        {
+            return Err("The solve judge only has read, glob and grep tools".into());
+        }
         let profile = self.agent_profile(Path::new(&call.directory), &call.agent)?;
         if !profile_allows_tool(&profile, &call.name) {
             return Err(format!(
@@ -1149,6 +1155,15 @@ impl ToolHost for BuiltinHost {
                 .chain(self.plugin_definitions(turn))
                 .filter(|d| !fully_denied(&rules, &d.spec.name)),
         );
+        if turn.mode == "plan" {
+            match self.solve_isolation(&turn.session_id) {
+                Ok(true) => {
+                    tools.retain(|tool| matches!(tool.spec.name.as_str(), "read" | "glob" | "grep"))
+                }
+                Err(_) => return Vec::new(),
+                _ => {}
+            }
+        }
         let tools = self.filter_agent_tools(turn, tools);
         self.with_agent_catalogue(turn, &rules, tools)
     }
@@ -1784,6 +1799,26 @@ impl Ctx<'_> {
         mut metadata: Value,
     ) -> Result<(), ToolError> {
         req.tool = Some(self.inv.name.clone());
+        if self
+            .host
+            .solve_isolation(&self.inv.session_id)
+            .map_err(ToolError::Failed)?
+        {
+            let root = canonical(&self.location);
+            if req
+                .mutates
+                .iter()
+                .any(|path| !canonical(path).starts_with(&root))
+            {
+                return Err(self
+                    .denied(
+                        &req,
+                        "solve isolation",
+                        "Solve candidates cannot write outside their checkout".into(),
+                    )
+                    .await);
+            }
+        }
         let decision = self.policy.decide(&req);
         if let Decision::Deny(reason) = decision {
             return Err(self.denied(&req, "rule", deny_message(&reason)).await);
@@ -2118,3 +2153,5 @@ impl BuiltinHost {
         sources
     }
 }
+
+mod workflow_verify;

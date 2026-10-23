@@ -1,5 +1,5 @@
 //! Read-only solve admission. Captured input is not verification evidence: running
-//! candidates/checks and an authoritative report remain separate implementation stages.
+//! candidates/checks and the authoritative report use separate host paths.
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::Path;
@@ -26,6 +26,23 @@ fn unavailable_model(message: impl Into<String>) -> PrepareError {
 }
 
 impl BuiltinHost {
+    /// Narrow solve children even when the owner permits full-access commands.
+    pub(crate) fn solve_isolation(&self, session: &str) -> Result<bool, String> {
+        let Some(runtime) = self.runtime() else {
+            return Ok(false);
+        };
+        let Some(id) = self.process_workflow_run(session) else {
+            return Ok(false);
+        };
+        let run = runtime
+            .workflow_run(&id)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "workflow authority disappeared".to_owned())?;
+        Ok(run.origin == json!({"kind":"bundled","name":"solve"})
+            && cyber_workflow::bundled::module("solve")
+                .is_some_and(|module| module.digest == run.digest))
+    }
+
     pub(super) async fn prepare_solve(
         &self,
         owner: &TurnContext,

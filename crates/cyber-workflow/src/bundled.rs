@@ -1,5 +1,5 @@
 //! The Workflows embedded in the binary (`workflows` → Saved and bundled workflows, Bundled
-//! workflow contracts): `review`, `audit`, `migrate`, `research` and `plan`.
+//! workflow contracts): `review`, `audit`, `migrate`, `research`, `plan` and `solve`.
 //!
 //! Modules cannot import, so each embedded source is the module followed by the shared
 //! helpers of `bundled/common.js`, joined at compile time. The digest covers both, so a
@@ -27,12 +27,13 @@ macro_rules! bundled {
 }
 
 /// `(name, source)` of every bundled Workflow, in listing order.
-const SOURCES: [(&str, &str); 5] = [
+const SOURCES: [(&str, &str); 6] = [
     bundled!("audit"),
     bundled!("migrate"),
     bundled!("plan"),
     bundled!("research"),
     bundled!("review"),
+    bundled!("solve"),
 ];
 
 /// The bundled Workflows, parsed once.
@@ -72,7 +73,10 @@ mod tests {
     #[test]
     fn every_bundled_module_parses_and_is_named_after_its_file() {
         let names: Vec<&str> = modules().iter().map(|m| m.meta.name.as_str()).collect();
-        assert_eq!(names, ["audit", "migrate", "plan", "research", "review"]);
+        assert_eq!(
+            names,
+            ["audit", "migrate", "plan", "research", "review", "solve"]
+        );
         for (module, (file, _)) in modules().iter().zip(SOURCES) {
             assert_eq!(module.meta.name, file);
             assert_eq!(
@@ -134,6 +138,10 @@ mod tests {
             ],
             "research" => vec![("question", "how does it work?".into())],
             "plan" => vec![("task", "add a cache".into())],
+            "solve" => vec![
+                ("task", "fix issue".into()),
+                ("checks", serde_json::json!([{"argv":["cargo","test"]}])),
+            ],
             _ => Vec::new(),
         }
     }

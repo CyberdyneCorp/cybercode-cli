@@ -6,22 +6,22 @@
 
 ## 2. Isolated candidates
 
-- [ ] 2.1 Launch two to four independent child Sessions on managed worktrees from the recorded base, using existing scheduling and ceilings.
-- [ ] 2.2 Record candidate authority, branch, final source/diff digest and settled owned execution before verification.
-- [ ] 2.3 Production-path tests: same base/different models, same-model disclosure, setup failure, denied edit/command and no owner/sibling file mutation.
+- [x] 2.1 Launch two to four independent child Sessions on managed worktrees from the recorded base, using existing scheduling and ceilings.
+- [x] 2.2 Record candidate authority, branch, final source/diff digest and settled owned execution before verification.
+- [x] 2.3 Production-path tests: same base/different models, same-model disclosure, setup failure, denied edit/command and no owner/sibling file mutation.
 
 ## 3. Host verification
 
-- [ ] 3.1 Implement host-only permission/hook/sandbox-aware checks, source fencing, bounded logs and the seven check outcomes.
-- [ ] 3.2 Add durable records/schema migration as required; reuse only matching settled evidence and fence unknown native effects.
-- [ ] 3.3 Regression tests: agent says "passed" but exits nonzero; check mutates source; denied command never launches; timeout/cancellation/unknown is not success; truncated logs remain labelled; restart never duplicates an unresolved effect.
+- [x] 3.1 Implement host-only permission/hook/sandbox-aware checks, source fencing, bounded logs and the seven check outcomes.
+- [x] 3.2 Add durable records/schema migration as required; reuse only matching settled evidence and fence unknown native effects.
+- [x] 3.3 Regression tests: agent says "passed" but exits nonzero; check mutates source; denied command never launches; timeout/cancellation/unknown is not success; truncated logs remain labelled; restart never duplicates an unresolved effect.
 
 ## 4. Judge and report
 
-- [ ] 4.1 New read-only judge Session with the documented rubric, untrusted-data framing and structured output validation.
-- [ ] 4.2 Enforce eligibility outside model output, reject an ineligible selection and permit no recommendation.
-- [ ] 4.3 Persist/report candidates, checks, usage, limits, judge and nullable recommendation; return partial evidence on budget/interrupt.
-- [ ] 4.4 Tests: a project `solve` override cannot fabricate host-evidence badges; good/bad/deceptive candidates, all fail, judge unavailable, same judge model, budget overshoot disclosure and no automatic merge/publication.
+- [x] 4.1 New read-only judge Session with the documented rubric, untrusted-data framing and structured output validation.
+- [x] 4.2 Enforce eligibility outside model output, reject an ineligible selection and permit no recommendation.
+- [x] 4.3 Persist/report candidates, checks, usage, limits, judge and nullable recommendation; return partial evidence on budget/interrupt.
+- [x] 4.4 Tests: a project `solve` override cannot fabricate host-evidence badges; good/bad/deceptive candidates, all fail, judge unavailable, same judge model, budget overshoot disclosure and no automatic merge/publication.
 
 ## 5. Client surfaces and acceptance
 
@@ -39,3 +39,11 @@ Evidence: four parser unit tests plus five `cyber-app` production HTTP cases in 
 Regression evidence: a same-size edit under a repository clean filter reproduced a write to the owner checkout with native `git status`; the filter test failed before switching status inspection to the sandboxed libgit2 helper and passes after it.
 
 Validation of the admission increment: `cargo test --locked -p cyber-workflow` (68 passed), `cargo test --locked -p cyber-app --test workflows` (48 passed), affected-crate all-target Clippy with warnings denied, formatting, generated SDK consistency and strict OpenSpec validation (85 items) pass. Cross-spec lint reports 0 errors and 23 warnings. This is local macOS evidence; the full workspace and native Linux/Windows execution were not rerun.
+
+## Runtime implementation evidence (2026-10-23)
+
+Implemented in the PR #23 branch: the sixth embedded module, immutable candidate bases, 20-step solver ceilings, source/subtree fencing, literal-argv native checks, durable snapshot/intent/settlement aggregates, bounded logs and explicit unknown effects, read/glob/grep-only Plan-mode judging, eligibility validation, authoritative API/SDK/terminal evidence and usage documentation.
+
+Local production tests cover separate candidate patches, host rejection of false solver claims, source mutation, command denial, full-access/extra-root escape attempts, setup failure, denied edits, same-model disclosure, restarts during solving/checking/judging, interactive approval after submission, bounded/truncated logs, timeout and detached-descendant unknown settlement with no subsequent native dispatch. The real CLI acceptance compares three candidates across two model identities, rejects one and recommends a passing patch while preserving the owner checkout. Parser, engine and source-fingerprint regressions cover malformed admission, ineligible judge selections, budget partials, binary source, symlinks and deleted directories. SDK authority/artifact round-trip and terminal snapshots are included.
+
+Validation in progress: final tests after main integration, generated API consistency, full workspace checks and platform CI. Live paid-model acceptance (5.3) is opt-in and has not been run; this change makes no model-quality parity claim. Do not archive or mark the remaining client/acceptance tasks complete without final verification.

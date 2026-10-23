@@ -220,12 +220,42 @@ impl Agent {
 pub struct RunDetail {
     pub summary: Summary,
     pub agents: Vec<Agent>,
+    /// Derived only from the API's host ledger, never the module's result JSON.
+    pub evidence: Vec<String>,
+}
+
+fn solve_evidence_lines(value: &Value) -> Vec<String> {
+    value["candidates"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|row| {
+            let label = text(&row["label"]).unwrap_or_else(|| "candidate".into());
+            let status = if row["host_verified"] == true {
+                "host verified"
+            } else {
+                "unverified"
+            };
+            let outcomes = row["checks"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|check| text(&check["outcome"]))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let digest = text(&row["source_sha256"]).unwrap_or_else(|| "no snapshot".into());
+            let short: String = digest.chars().take(12).collect();
+            let branch = text(&row["branch"]).unwrap_or_default();
+            format!("{label}: {status} · {outcomes} · {short} · {branch}")
+        })
+        .collect()
 }
 
 impl RunDetail {
     pub fn parse(value: &Value, now_ms: i64) -> Option<Self> {
         Some(Self {
             summary: Summary::parse(value)?,
+            evidence: solve_evidence_lines(&value["solve_evidence"]),
             agents: value["agents_detail"]
                 .as_array()
                 .into_iter()
@@ -1529,5 +1559,21 @@ mod tests {
             {"seq": 2, "time_ms": 0, "values": ["two\nlines\u{1b}[2J"]},
         ]});
         assert_eq!(log_lines(&page), ["found 3 {\"a\":1}", "two", "lines[2J"]);
+    }
+}
+
+#[cfg(test)]
+mod solve_evidence_tests {
+    use super::*;
+    #[test]
+    fn evidence_view_requires_the_separate_server_authority_field() {
+        let forged = json!({"result":{"solve_evidence":{"candidates":[{"label":"fake","host_verified":true}]}}});
+        assert!(solve_evidence_lines(&forged["solve_evidence"]).is_empty());
+        let actual = json!({"candidates":[{"label":"safe\nlabel","host_verified":true,
+            "checks":[{"outcome":"passed"}],"source_sha256":"abcdef0123456789","branch":"candidate"}]});
+        let lines = solve_evidence_lines(&actual);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("host verified · passed · abcdef012345"));
+        assert!(!lines[0].contains('\n'));
     }
 }
