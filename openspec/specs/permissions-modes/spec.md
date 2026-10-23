@@ -34,7 +34,7 @@ Decides, for every tool action, whether it runs automatically (`allow`), needs a
 - **THEN** fetching `https://wiki.internal.example.com` is denied with reason `org policy`
 
 ### Requirement: Default rules
-(P0) Without configuration the system SHALL apply: `* ask`; `read`, `glob`, `grep` and `list` allow within the Location; `edit`, `bash` and external mutations ask; `external_directory ask` except the tool-output, jobs, temp, skill and worktree directories; `read` and `edit` `ask` for `*.env` and `*.env.*` but `allow` for `*.env.example`; `question`, `plan_enter` and `plan_exit` allow for primary agents (`mode` `primary` or `all`) and deny for subagent-only and hidden agents; `doom_loop ask`; `message.send ask` for cross-machine targets; `workflow.run ask`; `remote.attach ask`.
+(P0) Without configuration the system SHALL apply: `* ask`; `read`, `glob`, `grep` and `list` allow within the Location; `edit`, `bash` and external mutations ask; `external_directory ask` except the tool-output, jobs, temp, skill and worktree directories; `read` and `edit` `ask` for `*.env` and `*.env.*` but `allow` for `*.env.example`; `question`, `plan_enter` and `plan_exit` allow for primary agents (`mode` `primary` or `all`) and deny for subagent-only and hidden agents; `doom_loop ask`; `message.send allow` for targets on the same server and `message.send ask` for cross-machine targets (any address containing `@`); `list_sessions` and `watch_session` allow; `workflow.run ask`; `remote.attach ask`.
 
 #### Scenario: Reading .env asks
 - **WHEN** the model reads `.env.local` with default rules
@@ -43,6 +43,14 @@ Decides, for every tool action, whether it runs automatically (`allow`), needs a
 #### Scenario: Subagent cannot ask questions
 - **WHEN** an `explore` subagent calls `question`
 - **THEN** the call is denied and the subagent is told to return its best answer instead
+
+#### Scenario: Local message without a prompt
+- **WHEN** the model calls `send_message` to another Session on the same server with default rules
+- **THEN** no permission request is raised, and the receiver's inbound rules and the rate limits still apply
+
+#### Scenario: Peer message asks
+- **WHEN** the model calls `send_message` to `migration@desk` with default rules
+- **THEN** a `message.send` permission request is raised before the message leaves the Session
 
 ### Requirement: Protected paths
 (P0) The system SHALL treat these as protected for mutation: `.git/` (the repository metadata directory, not the working tree); the configuration documents `cyber.json`, `cyber.jsonc`, `.cyber/cyber.jsonc`, `.cyber/cyber.local.jsonc`, `.cyber/hooks.jsonc`, `.cyber/mcp.json`, `.cyber/plugins.json`, `.cyber/plugins.local.json`, `.cyber/plugins.lock` and `.cyber/plugins/`; shell startup files (`~/.bashrc`, `~/.zshrc`, `~/.profile`, `~/.config/fish/config.fish`); `~/.ssh/`, `~/.gnupg/`, `~/.aws/credentials` and `~/.config/cyber/`. The `.cyber/` content directories `plans/`, `workflows/`, `agents/`, `skills/`, `commands/`, `teams/`, `output-styles/` and files `.cyber/import-report-*.md` SHALL NOT be protected; they follow ordinary `edit` rules so the system can write plans, saved workflows, generated agents and recorded skills. Mutating a protected path SHALL require `ask` in every Mode, including `bypass` and `auto`, unless an explicit config rule names the exact path with `allow`. The `sandbox` capability SHALL enforce the same partition for OS-level writes.
@@ -128,18 +136,30 @@ Decides, for every tool action, whether it runs automatically (`allow`), needs a
 - **THEN** the call is denied and the run continues
 
 ### Requirement: bypass mode
-(P1) `bypass` SHALL evaluate every request as `allow` except explicit user/global deny ceilings, protected paths, critical-path removals, workspace trust and org policy denies. It SHALL be enabled only when the process runs inside the OS sandbox with `workspace-write` or stricter, or inside a detected container or VM, or when `--dangerously-bypass-permissions` is passed explicitly. Enabling it outside these conditions SHALL fail with `bypass mode requires a sandbox, a container, or --dangerously-bypass-permissions`.
+(P1) `bypass` SHALL evaluate every request as `allow` except explicit user/global deny ceilings, protected paths, critical-path removals, workspace trust and org policy denies. It SHALL be enabled only when the process runs inside the OS sandbox with `workspace-write` or stricter, or inside a detected container or VM, or when `--dangerously-bypass-permissions` is passed explicitly. `--dangerously-skip-permissions` SHALL count as that explicit flag where the CLI accepts it (`cyber exec --embedded|--ephemeral`, an embedded TUI) and SHALL also select `bypass`; it SHALL NOT override org policy `modes.disable`. Enabling it outside these conditions SHALL fail with `bypass mode requires a sandbox, a container, or --dangerously-bypass-permissions`.
 
 #### Scenario: Bypass refused on bare host
 - **WHEN** the user sets `mode: "bypass"` with sandbox `full-access` on a host machine and no flag
 - **THEN** the Session refuses to start in bypass and reports the requirement
 
+#### Scenario: Skip flag does not override policy
+- **WHEN** org policy lists `bypass` in `modes.disable` and a user runs `cyber exec --embedded --dangerously-skip-permissions "deploy"`
+- **THEN** the command prints `bypass mode is disabled by your organization` and fails
+
 ### Requirement: Doom-loop detection
-(P0) When the last 3 tool calls of an assistant message are the same tool with byte-identical input, the system SHALL raise a `doom_loop` permission request with the tool name as resource before the next call. In `auto` and `dont-ask` it SHALL halt the Drain with `Repeated identical tool calls detected`.
+(P0) When the third consecutive tool call has the same tool name and byte-identical input as the previous two calls in the current run, the system SHALL raise a `doom_loop` permission request with the tool name as resource before executing that third call. The history SHALL reset when new input is promoted, so separate runs do not accumulate repetitions. In `auto`, `dont-ask` and `bypass` it SHALL halt the Drain with `Repeated identical tool calls detected`.
 
 #### Scenario: Identical calls interrupted
 - **WHEN** the model calls `read src/a.rs` with the same arguments three times in a row
-- **THEN** a `doom_loop` request is raised before the fourth call
+- **THEN** a `doom_loop` request is raised before executing the third call
+
+#### Scenario: Repeated calls in bypass
+- **WHEN** a `bypass` Session attempts a third consecutive byte-identical call
+- **THEN** the Drain halts with `Repeated identical tool calls detected` and the third call does not execute
+
+#### Scenario: Separate runs
+- **WHEN** the same tool and input are used once in each of three separately prompted runs
+- **THEN** those calls do not raise a `doom_loop` request
 
 ### Requirement: Permission requests, routes and events
 (P0) Pending requests SHALL carry `{ id: per_..., session_id, action, resources, always_patterns, metadata (diff, command), tool: { message_id, call_id } }`. They SHALL be held per Location and declined when the Location shuts down. The server SHALL expose `GET /api/v1/permissions/requests`, `POST /api/v1/sessions/:id/permissions/:request_id/reply` `{ reply, message? }`, and the events `permission.asked.1` and `permission.replied.1`.

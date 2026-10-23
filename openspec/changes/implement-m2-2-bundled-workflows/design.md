@@ -1,3 +1,7 @@
+## Delivery update (2026-10-22)
+
+The first delivery slice is now the shared library foundation plus [`solve`](../add-verified-solve-workflow/proposal.md): independent model attempts, authoritative checks and an independent recommendation. Reuse sections 1–4 of this change as needed; the five original modules remain planned later increments, not prerequisites for shipping `solve`. The detailed `solve` contracts, design and tests live in that sibling change. "Five modules" below refers to this change's original module scope; the combined target library has six. A release lists only modules that actually ship.
+
 ## Context
 
 The M2.1 runtime runs Workflow modules: a pure-literal `export const meta` plus a default async function, executed by QuickJS on an engine thread per run (`crates/cyber-workflow/src/engine.rs`, `prelude.js`), with durable `agent()` results keyed by prompt, options and ordinal (`crates/cyber-server/src/runtime/workflow_host.rs`), budgets and `ctx.budget`, model tiers `fast`/`smart`/`verify`, write isolation into worktrees, and, since `add-parallel-workflow-runs`, a run queue, fair agent scheduling and the `/workflows` monitor.
@@ -22,7 +26,7 @@ Bundled runs record `origin: {kind: "bundled", name}` and the digest, and resume
 
 ### 2. Library surface
 
-- `GET /api/v1/workflows` (`v1.workflow.library`) returns `{workflows: [{name, description, phases, args, budgets, origin, digest, shadowed}], issues: [...]}` for a `directory` query (the Location). The route replaces the `503` catch-all for that exact path; other unimplemented paths keep `503`.
+- `GET /api/v1/workflows` (`v1.workflow.library`) returns `{workflows: [{name, description, phases, args, budget, origin, digest, shadowed}], issues: [...]}` for a `directory` query (the Location). The route replaces the `503` catch-all for that exact path; other unimplemented paths keep `503`.
 - `cyber workflows list` adds an `ORIGIN` column (`bundled`, `global`, `project`) and `--format json`.
 - `cyber workflows show <name>` prints meta, the args schema, default budgets, origin and, with `--source`, the module source.
 - `cyber workflows eject <name> [--global] [--force]` writes the bundled source to `.cyber/workflows/<name>.js` (or the global root), refusing to overwrite without `--force`. The ejected copy then overrides the bundled one, so a project can tune prompts and lenses.
@@ -35,12 +39,12 @@ Bundled runs record `origin: {kind: "bundled", name}` and the digest, and resume
 
 Each call goes through the run owner's `ToolHost` with the same permission evaluation (the run's Mode as ceiling, `read` and `external_directory` rules, deny_read), output limits and sandbox as the built-in tool, but returns structured data (`{paths, truncated}`, `{matches: [{path, line, text}], truncated}`, `{content, truncated}`). A permission `ask` during a non-interactive run is rejected with `No interactive approver for workflow run`, as for agents.
 
-Replay: a direct tool call is a host call. Its result is persisted as `workflow.host.settled.1` keyed by kind, normalized input and ordinal (the "Replay of workflow host calls" requirement), so a resumed run sees the same file list even if files changed. A changed input is a new call.
+Replay: a direct tool call is a host call. Its result is persisted as `workflow.call.recorded.1` records of kind `tool`, keyed by normalized input and ordinal (the "Replay of workflow host calls" requirement), so a resumed run sees the same file list even if files changed. A changed input is a new call.
 
 ### 4. Shared conventions of the five modules
 
 - **Args** are declared as a JSON Schema in `meta.args`; the host validates them before the run starts and rejects invalid args with `ExecutionFailure: args.<path> …` and no run record.
-- **Budgets** are declared in `meta.budgets`, merged under invocation flags and `budgets.run` (the stricter value wins). `meta.estimate` is a literal string describing the agent count (e.g. "lenses × diff groups + one verifier per finding"); the `workflow.run` approval shows it next to the effective `max_agents` and `max_cost_usd`, which are the hard bounds.
+- **Budgets** are declared in `meta.budget`, resolved under `workflows` → Run budgets: module/model inputs may only lower inherited ceilings; explicit authenticated API/CLI overrides follow the shared contract. `meta.estimate` is a literal string describing the agent count (e.g. "lenses × diff groups + one verifier per finding"); the `workflow.run` approval shows it next to the effective `max_agents` and `max_cost_usd`, which are dispatch ceilings; soft cost limits may overshoot while already admitted calls finish, and unpriced or unknown usage remains explicit.
 - **Sizing.** Every fan-out is computed from args with a hard cap, logged when it drops work: `log({dropped: n, reason})`, and repeated in the result's `limitations` ("No silent caps").
 - **Partial results.** Every `agent()` call is wrapped; a `BudgetExceeded` rejection stops further fan-out and the module returns what it has with `partial: true` and the budget named. Other agent failures become a `limitations` entry for that item, never a silent omission.
 - **Tiers.** Finders, readers and drafters use `fast`; verifiers and judges use `verify`; synthesis uses `smart`. The tiers map through `workflows.tiers`, so a user with one model runs everything on it.

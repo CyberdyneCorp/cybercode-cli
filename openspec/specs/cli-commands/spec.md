@@ -108,11 +108,15 @@ Exit codes SHALL be:
 - **THEN** `cyber service start` stops the old server and spawns a new detached `cyber serve --register`
 
 ### Requirement: Attach command
-(P0) `cyber attach <url|session>` SHALL open the TUI against a running server or session. For a URL it SHALL accept `--password`/`-p` and `--username`/`-u`. For a session reachable through the Relay it SHALL require a logged-in Cyber Account (see `remote-control`).
+(P0) `cyber attach <url|session>` SHALL open the TUI against a running server or session. For a URL it SHALL accept `--password`/`-p` and `--username`/`-u`. For `<session>@<peer>` it SHALL attach through the configured peer (see `cross-session-messaging` → Peer attach). For a session reachable through the Relay it SHALL require a logged-in Cyber Account (see `remote-control`).
 
 #### Scenario: Attach with password
 - **WHEN** the user runs `cyber attach http://10.0.0.5:4747 -p s3cret`
 - **THEN** the TUI connects with HTTP Basic credentials `cyber:s3cret`
+
+#### Scenario: Attach to a peer Session
+- **WHEN** the user runs `cyber attach migration@desk` and `desk` is a configured remote with an `attach` grant
+- **THEN** the TUI opens that Session through the peer listener after `desk` approves `remote.attach`
 
 ### Requirement: Account commands
 (P3) `cyber login [--no-browser] [--issuer <url>]`, `cyber logout [--all]` and `cyber whoami [--json]` SHALL manage the Cyber Account as specified in `cyber-account`. `whoami` SHALL print the subject, email, active org, entitlements and token expiry, or `not logged in` with exit code 0.
@@ -123,15 +127,15 @@ Exit codes SHALL be:
 
 ### Requirement: Resource command groups
 (P0) Resource groups SHALL use consistent verbs: `list` (alias `ls`), `show <id>`, `delete <id>` (alias `rm`) and, where applicable, `create`, `stop`, `resume`. These groups SHALL exist with at least these subcommands:
-- `sessions` (list, show, delete, export, import, fork, rename, rewind, repair-context, share, unshare)
+- `sessions` (list, show, delete, tree, checkout, label, export, import, fork, rename, rewind, repair-context, share, unshare)
 - `agents` (list, show, create), `models` (list, refresh), `providers` (list, login, logout, use), `skills` (list, show), `commands` (list), `memory` (list, show, edit, delete, path)
 - `worktree` (list, remove, prune), `review`, `pr <number>`, `git` (commit-msg, pr-description), `web`
 - `workflows` (run, list, runs, show, pause, resume, stop, logs), `goals` (set, list, show, pause, resume, clear), `loops` (add, list, show, pause, resume, run, rm, promote), `teams` (list, show, stop, resume), `routines` (create, list, show, edit, fire, pause, resume, rm, runs), `handoff`, `teleport <session>`, `apply <session>`
-- `tokens` (create, list, revoke), `peers` (list, add, rm, test, discover), `remote` (enable, disable, pair, devices, revoke, log), `runners` (list, use, logs), `runner` (start, drain), `messages` (list, send), `channels` (add, list, show, test, rotate-secret, log, disable, enable, rm), `orchestrator` (serve), `relay` (serve), `share` (serve), `github` (install), `acp`, `ide` (install)
+- `tokens` (create, list, revoke), `peers` (list, add, rm, test, discover, invite, revoke), `remote` (enable, disable, pair, devices, revoke, log), `runners` (list, use, logs), `runner` (start, drain), `messages` (list, send), `channels` (add, list, show, test, rotate-secret, log, disable, enable, rm), `orchestrator` (serve), `relay` (serve), `share` (serve), `github` (install), `acp`, `ide` (install)
 - `mcp` (add, list, get, remove, auth, logout, debug, serve), `plugins` (install, list, info, update, remove, enable, disable, validate, marketplace, eval), `hooks` (list, trust, untrust, test), `permissions` (list, revoke, test, auto), `trust` (inspect, approve, revoke), `sandbox` (status, test, explain, run), `features` (list, enable, disable), `lsp` (status), `fmt` (status), `env` (create, list, edit, rm), `import` (claude, codex, opencode, auto, --detect)
 - `db` (query, path, vacuum, backup, restore, encrypt, decrypt), `telemetry` (show), `eval` (run)
 
-A singular alias of `sessions`, a standalone export command and a session-file import under `import` SHALL NOT exist.
+A singular alias of `sessions`, a standalone export command and a session-file import under `import` SHALL NOT exist. A Session argument of `cyber sessions`, `cyber -r` and `cyber exec --session` SHALL resolve, among the Location's Sessions, as an ID, then an exact title, then a unique ID prefix; a title or prefix that matches several Sessions SHALL exit 2 and list their IDs. `cyber sessions delete` SHALL require `--yes`.
 
 #### Scenario: List output formats
 - **WHEN** the user runs `cyber sessions list --format json`
@@ -141,6 +145,14 @@ A singular alias of `sessions`, a standalone export command and a session-file i
 - **WHEN** `cyber sessions list` writes a table to a TTY without `--limit`
 - **THEN** output is paged through `$PAGER` (default `less -RS`)
 
+#### Scenario: Resume by title
+- **WHEN** a Session of the Location is titled `Auth refactor` and the user runs `cyber exec --session "Auth refactor" "go on"`
+- **THEN** the prompt is admitted to that Session
+
+#### Scenario: Ambiguous title
+- **WHEN** two Sessions of the Location are titled `same` and the user runs `cyber sessions show same`
+- **THEN** the CLI exits 2 and lists both Session IDs
+
 ### Requirement: Raw API command
 (P0) `cyber api <operationId | METHOD /path>` SHALL send one authenticated request to the background server (starting it if needed), accepting `-d`/`--data <json|@file>`, `-H`/`--header name:value` (up to 100) and `--param key=value`, and SHALL write the response body to stdout. Operation IDs SHALL be the OpenAPI operation IDs of the form `v1.<group>.<operation>`. A non-2xx response SHALL produce exit code 1.
 
@@ -149,7 +161,7 @@ A singular alias of `sessions`, a standalone export command and a session-file i
 - **THEN** the CLI sends `GET /api/v1/sessions?limit=5` with the server credentials and prints the JSON body
 
 ### Requirement: Doctor and debug commands
-(P0) `cyber doctor` SHALL check and report, as pass/warn/fail lines: config parse and validation, provider credentials, model catalog freshness, database integrity (`PRAGMA quick_check`), sandbox availability, ripgrep and git availability, LSP binaries, MCP connectivity, server health and account token validity. It SHALL exit 1 when any check fails. `cyber debug` SHALL expose `config` (resolved, secrets redacted), `paths`, `info`, `agent <name>`, `tool <name> --params <json>`, `context` (rendered system context) and `events <session>`.
+(P0) `cyber doctor` SHALL check and report, as pass/warn/fail lines: config parse and validation, provider credentials, model catalog freshness, database integrity (`PRAGMA quick_check`), sandbox availability, ripgrep and git availability, LSP binaries, MCP connectivity, server health, account token validity, and instruction files. The `instructions` line SHALL list, by source path and in load order, the instruction files (`AGENTS.md`, `CLAUDE.md`, `CONTEXT.md`, `CYBER.md`, overrides and imports) that a new Session at the Location loads. It SHALL read `compat.claude` from the same per-Location config as the runtime, and SHALL warn about truncated or left-out files, files outside the project, not regular or refused by the `read` permission rules, and unresolved or refused imports. When the Location's config fails to load it SHALL list no project files, as the runtime loads none. It SHALL exit 1 when any check fails. `cyber debug` SHALL expose `config` (resolved, secrets redacted), `paths`, `info`, `agent <name>`, `tool <name> --params <json>`, `context` (rendered system context) and `events <session>`.
 
 #### Scenario: Doctor detects missing sandbox dependency
 - **WHEN** the user runs `cyber doctor` on Linux without `bwrap` installed
@@ -159,6 +171,10 @@ A singular alias of `sessions`, a standalone export command and a session-file i
 #### Scenario: Debug config redaction
 - **WHEN** config contains `providers.openai.api_key = "sk-abc"` and the user runs `cyber debug config`
 - **THEN** the printed value is `"***"`
+
+#### Scenario: Doctor lists CYBER.md
+- **WHEN** the project contains `AGENTS.md` and a `CYBER.md` larger than `instructions.max_bytes`, and the user runs `cyber doctor`
+- **THEN** the instructions line lists `AGENTS.md` and then `CYBER.md` by path, and warns that `CYBER.md` was truncated
 
 ### Requirement: Shell completion
 (P0) `cyber completion <bash|zsh|fish|powershell>` SHALL print a completion script that covers commands, flags, agent names, model refs and session IDs. Dynamic values SHALL be resolved by calling `cyber __complete` with a 500 ms timeout.
@@ -208,11 +224,19 @@ A singular alias of `sessions`, a standalone export command and a session-file i
 - **THEN** the paths that would be removed are listed with sizes and nothing is deleted
 
 ### Requirement: Stats command
-(P0) `cyber stats [--days N] [--project <id>] [--models] [--tools] [--format json]` SHALL aggregate stored Sessions into totals of sessions, turns, tokens (input, output, reasoning, cache read, cache write), cost, tool usage, and per-model and per-workflow usage.
+(P0) `cyber stats [--days N] [--project <id>] [--models] [--tools] [--by origin] [--format json]` SHALL aggregate stored Sessions into totals of sessions, turns, tokens (input, output, reasoning, cache read, cache write), cost, tool usage, and per-model and per-workflow usage. (P1) Sessions, Turns, tokens, cost, streaks and the per-model table SHALL come from `GET /api/v1/usage/stats` of the shared server (`--days N` as `period=Nd`, 1 to 371; `--project <dir>` as `directory`, the project containing `<dir>`), so they match the TUI Stats tab. `--tools` SHALL count tool calls by name from the `tool_call` projection, for Sessions in scope that were active since the period's start. `--format json` SHALL print that response's `data` unchanged, plus `tools` when `--tools` is given. `--by origin` SHALL add one row per usage origin (`cross-session-messaging` → Usage attribution).
 
 #### Scenario: Last seven days
 - **WHEN** the user runs `cyber stats --days 7 --models`
-- **THEN** totals include only Sessions updated in the last 7 days, with one row per model
+- **THEN** totals include only Turns from the last 7 local days, with one row per model
+
+#### Scenario: CLI and TUI agree
+- **WHEN** the user runs `cyber stats --days 30 --format json` and opens the TUI Stats tab with `Last 30 days`
+- **THEN** both show the same total tokens, Sessions and current streak
+
+#### Scenario: Usage by origin
+- **WHEN** the user runs `cyber stats --by origin` after prompting one Session and messaging another
+- **THEN** separate rows for `user` and `session` show their turns, tokens and cost
 
 ### Requirement: Signal handling
 (P0) On the first SIGINT during `exec` or the TUI, the CLI SHALL interrupt the active Drain, keeping all admitted input. A second SIGINT within 2 seconds SHALL exit with code 130. SIGTERM SHALL interrupt all Drains owned by the process and exit within 5 seconds.
@@ -227,3 +251,28 @@ A singular alias of `sessions`, a standalone export command and a session-file i
 #### Scenario: Version output
 - **WHEN** the user runs `cyber --version` on a stable build
 - **THEN** the output matches `cyber 1.4.2 (stable, 3f2a9c1, aarch64-apple-darwin)`
+
+### Requirement: Peers command
+(P2) `cyber peers` SHALL manage direct peers: `list [--json]` prints remotes (name, URL, fingerprint prefix, state, latency) and grants (name, scopes, created, last used, expiry), flagging a grant with no remote of the same name; `add <name> <code>`, `rm <name>` (removes the remote and its stored token), `test <name>` (prints machine, version, scopes and latency, exit 1 with the error tag on failure), `discover`, `invite <name>` and `revoke <name>`. Tokens SHALL be printed only by `invite`, once.
+
+#### Scenario: Grant without a way back
+- **WHEN** `desk` has a grant `laptop` but no remote named `laptop`
+- **THEN** `cyber peers list` on `desk` marks `laptop` `can receive, cannot reply` and prints the command to run on `laptop`
+
+### Requirement: Session branch commands
+(P1) `cyber sessions` SHALL provide:
+
+- `tree <session>`: prints the user-message tree as ASCII with the active path marked, or as the server's tree nodes with `--format json`.
+- `checkout <session> <message|label> [--code] [--exact]`: makes a branch active.
+- `label <session> <name> [--at <message>] [--delete]`: sets or removes a label. Without `--at`, it labels the active tip.
+- `export <session> [--all-branches]`: writes the Session and its messages as one JSON document, with the active path by default and every branch (each message with `parent_message_id`) with `--all-branches`.
+
+A message argument SHALL accept an ID, a unique ID prefix or a label. A busy Session SHALL make `checkout` exit 1 with `SessionBusyError`, and an ambiguous prefix SHALL exit 2 and list the matching IDs.
+
+#### Scenario: Checkout from the CLI
+- **WHEN** the user runs `cyber sessions checkout "Auth refactor" fix-a --code`
+- **THEN** the labeled branch becomes active, files are restored to its last snapshot, and the command prints the new tip and the restored file count
+
+#### Scenario: Export every branch
+- **WHEN** the user runs `cyber sessions export <session> --all-branches` on a Session with two branches
+- **THEN** the document lists the messages of both branches in creation order with `branches: "all"`, and without the flag only the active path with `branches: "active"`

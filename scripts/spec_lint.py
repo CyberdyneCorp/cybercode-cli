@@ -51,6 +51,8 @@ ROUTE_TO_GROUP = {
     "mcp": "mcp", "skills": "skill", "commands": "command", "hooks": "hook", "plugins": "plugin",
     "config": "config", "account": "account", "event": "event", "health": "health",
     "openapi": "health", "ws": "event", "orgs": "account",
+    "service": "service", "system": "system", "files": "fs",
+    "peer": "peer", "peers": "peers", "teams": "teams", "team-definitions": "teams",
 }
 
 

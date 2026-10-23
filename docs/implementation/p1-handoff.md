@@ -1,5 +1,7 @@
 # P1 handoff — updated 2026-10-14 (hooks increments and review fixes re-validated: step 5)
 
+This is a historical implementation handoff. For current canonical scope and documentation corrections, use the [2026-10-22 reconciliation](spec-doc-reconciliation.md), the feature reference and the newer dated status entries.
+
 Implementation checkpoint: the `cyber review` commit on `main` (after `c5e798e`), pushed. Step 2 and step 3 below are complete. The M1.3 lifecycle-hook increment (step 4) is committed and pushed after it; it was validated locally on 2026-10-12.
 
 The last increments fork parent history for user skills that declare an agent, keep `cyber exec` running until owned background work hands back, and add `cyber review`/`/review`. Local validation: 2,129 workspace tests passed (0 failed, 3 ignored) before the final review fixes, which were re-verified with the affected suites (`bundled_skills`, `git_review`, `cyber-core` review units, `review_command`); workspace all-target Clippy with warnings denied, formatting, generated SDK and strict specifications passed. Specification lint reports zero errors and 21 warnings. See [implementation status](p1-status.md) for evidence and limits.

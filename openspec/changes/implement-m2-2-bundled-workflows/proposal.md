@@ -1,10 +1,14 @@
+## Delivery update (2026-10-22)
+
+The first delivery slice is now the shared library foundation plus [`solve`](../add-verified-solve-workflow/proposal.md): independent model attempts, authoritative checks and an independent recommendation. Reuse sections 1–4 of this change as needed; the five original modules remain planned later increments, not prerequisites for shipping `solve`. The detailed `solve` contracts, design and tests live in that sibling change. "Five modules" below refers to this change's original module scope; the combined target library has six. A release lists only modules that actually ship.
+
 ## Why
 
 ROADMAP M2.2 ("Bundled workflows: review, audit (find → verify), migrate (fan-out with worktrees), research (cross-checked), plan-from-angles") is not implemented. M2.1 (`fc61f9f`) and `add-parallel-workflow-runs` (`0b784c0`) ship the runtime: the QuickJS engine, `agent()`/`parallel()`/`pipeline()`/`phase()`, durable resume, budgets, model tiers, write isolation, the run queue and the `/workflows` monitor. What users can run, though, is only what they write themselves:
 
 - `workflows` → "Saved and bundled workflows" requires five bundled modules. `crates/cyber-workflow/src/discovery.rs` discovers only global and project roots, and `module::Origin` has no bundled variant. `cyber workflows list` shows nothing on a fresh install.
 - `vcs-integration` → "Local review command" says that from P2 `/review` and `cyber review` run the bundled `review` workflow, which checks several angles in parallel and verifies each finding. Today they still run the single-agent P1 `review` skill.
-- The M2.1 runtime left out pieces the bundled modules need (`docs/implementation/p2-status.md`, "Not implemented"): direct read-only `tools.read/glob/grep` (so a script can't list the files it fans out over), and saved-Workflow listing over HTTP (`GET /api/v1/workflows` answers `503`), which the TUI and the model's `workflow` tool need to offer the library.
+- The M2.1 gap work now ships direct read-only `tools.read/glob/grep` and saved-Workflow listing over HTTP (`GET /api/v1/workflows`). Reuse that foundation for bundled discovery, args schemas and the client Library surfaces; those shipped pieces are not new work in this change.
 
 Without bundled workflows, the orchestration features are only reachable by people who write workflow scripts. The roadmap promises them out of the box, matching Claude Code's bundled `/review` multi-agent review and its dynamic workflows.
 

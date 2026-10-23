@@ -41,11 +41,15 @@ Gives parallel Sessions, subagents and Workflow agents their own git checkouts s
 - **THEN** the parent receives the branch name and a diff summary of the 3 files
 
 ### Requirement: Workflow agent isolation
-(P2) Workflow agents launched with `{ isolation: "worktree" }` SHALL each receive their own managed worktree named `run_<id>-<index>`. Worktrees from completed runs SHALL be retained until the run is archived or `cyber worktree prune` runs.
+(P2) Workflow agents launched with `{ isolation: "worktree" }` SHALL each receive their own managed worktree named `run-<id>-<index>` on branch `cyber/run-<id>/<index>`, where `<id>` is the lowercase ULID of the `run_` ID and `<index>` is the agent's 1-based start ordinal in the run, so names satisfy the managed worktree name pattern. Worktrees from completed runs SHALL be retained until the run is archived or `cyber worktree prune` runs.
 
 #### Scenario: Parallel migration agents
 - **WHEN** a workflow fans out 10 agents with worktree isolation
 - **THEN** 10 distinct worktrees exist and no two agents write to the same checkout
+
+#### Scenario: Valid worktree names
+- **WHEN** run `run_01JABCDEFGHJKMNPQRSTVWXYZ0` starts its third isolated agent
+- **THEN** the worktree is named `run-01jabcdefghjkmnpqrstvwxyz0-3` on branch `cyber/run-01jabcdefghjkmnpqrstvwxyz0/3`
 
 ### Requirement: Enter and exit tools
 (P1) The system SHALL provide `enter_worktree { name?, path? }`, which creates or switches the current Session into a worktree and changes the Location, and `exit_worktree { keep?: boolean }`, which returns to the original Location. Both SHALL be gated by the `worktree` permission. `exit_worktree` SHALL be unavailable to Sessions that were started isolated.

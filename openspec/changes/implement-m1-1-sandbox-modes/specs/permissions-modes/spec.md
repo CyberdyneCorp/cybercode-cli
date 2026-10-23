@@ -229,3 +229,7 @@
 #### Scenario: Stored bypass refused after restart
 - **WHEN** a Session created in `bypass` with `--dangerously-bypass-permissions` is prompted after the server restarts without the flag on a bare host
 - **THEN** the Turn fails with the requirement before any tool runs
+
+#### Scenario: Skip flag does not override policy
+- **WHEN** org policy lists `bypass` in `modes.disable` and a user runs `cyber exec --embedded --dangerously-skip-permissions "deploy"`
+- **THEN** the command prints `bypass mode is disabled by your organization` and fails

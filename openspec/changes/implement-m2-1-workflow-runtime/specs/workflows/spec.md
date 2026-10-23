@@ -66,11 +66,15 @@
 - **THEN** the run fails closed and nothing is recorded for the call
 
 ### Requirement: Concurrency limit
-(P2) The system SHALL run at most `workflows.max_concurrent` (default 16, range 1–256, reduced to the number of CPU cores when lower) workflow agents at once across all runs of a server, queueing further `agent()` calls FIFO. `parallel({ concurrency })` SHALL further limit a group but SHALL NOT exceed the global limit. A `concurrency` that is not a positive integer SHALL reject with `ExecutionFailure`.
+(P2) The system SHALL run at most `workflows.max_concurrent` (default 16, range 1–256, reduced to the number of CPU cores when lower) workflow agents at once across all runs of a server, queueing further `agent()` calls and sharing the slots between runs as "Fair agent scheduling" defines. `parallel({ concurrency })` SHALL further limit a group but SHALL NOT exceed the global limit or the run's share. A `concurrency` that is not a positive integer SHALL reject with `ExecutionFailure`.
 
 #### Scenario: Large fan-out queued
 - **WHEN** a script launches 100 agents in parallel with the default limit on a 32-core machine
 - **THEN** 16 run at a time and the rest wait
+
+#### Scenario: Limit shared by runs
+- **WHEN** two runs each launch 50 agents with a limit of 16
+- **THEN** at most 16 of their agents run at once in total
 
 ### Requirement: Model tiers and mixing
 (P2) The `model` option of `agent()` SHALL accept a model ref or a tier name defined in `workflows.tiers` (defaults: `fast` → `model_roles.small`, `smart` → `model_roles.default`, `verify` → `model_roles.advisor` or the default model). Tier names SHALL match `^[a-z][a-z0-9_-]{0,31}$`, and each tier value SHALL be a model ref `provider/model[#variant]` or `role:<role>` naming a model role (`default`, `small`, `advisor`, `evaluator`, `compaction`, `title`); other values SHALL be configuration errors. Different calls in one run MAY use different providers. An unknown tier SHALL reject the call with `ModelUnavailable`.
@@ -97,6 +101,18 @@
 ### Requirement: Run monitor
 (P2) The `/workflows` view and `GET /api/v1/workflows/runs` SHALL list runs with name, status, current phase, agents `done/running/queued/failed`, tokens, cost and elapsed time, and SHALL let the user open any agent's transcript, pause (`p`), resume, stop (`x`, as in the `tui` Workflow monitor) and open the script. Live updates SHALL stream over the event stream.
 
+Each listed run SHALL carry:
+- `agents: { total, completed, running, queued, failed, cancelled, interrupted }`, where `queued` counts issued calls waiting for a slot of the global limit;
+- `tokens` and `cost_usd` of the run's agents;
+- `elapsed_ms` of active time (time spent `queued` or `paused` excluded);
+- `share`;
+- `queue_position` while `queued`;
+- `interrupted: true` while the run is paused by a server restart (its latest lifecycle event is a pause with `interrupted: true`), so a client that reconnects after a restart can tell that pause from a user's.
+
+The list SHALL accept `status` (comma-separated), `session_id`, `directory` (default the request Location, `all` for every Location), `limit` (default 50, max 200) and `cursor`. It SHALL return active runs first, then the newest. `GET /api/v1/workflows/runs/{id}` SHALL return the same summary with the run's agents (`agents_detail`), each with `started_ms` from its first start and, once settled, `ended_ms`, so a monitor can show its duration.
+
+Besides the durable `workflow.*` events, the server SHALL emit the non-durable live event `workflow.run.progress` (`{ run_id, status, phase, agents, tokens, cost_usd }`) on the instance stream of the run's Location. It SHALL be emitted only when one of these values changed, at most every 250 ms per run. It SHALL carry nothing that the list does not return, so a client that reconnects or lags resynchronizes with the list.
+
 #### Scenario: Inspect an agent
 - **WHEN** the user selects a running agent in the monitor
 - **THEN** its child Session transcript opens with live updates
@@ -105,20 +121,32 @@
 - **WHEN** the user presses `x` on a running run in `/workflows`
 - **THEN** the run stops and its in-flight agents are cancelled
 
+#### Scenario: Queued agents counted
+- **WHEN** a run has 16 agents running and 84 calls waiting for a slot
+- **THEN** its listed `agents` reads `running: 16, queued: 84`, and a `workflow.run.progress` event follows within 250 ms of each change
+
+#### Scenario: Filter active runs
+- **WHEN** a client calls `GET /api/v1/workflows/runs?status=running,queued&directory=all`
+- **THEN** it receives only running and queued runs, of every Location, with their summaries
+
 ### Requirement: Write isolation default
-(P2) When more than one concurrently running workflow agent has edit permission in the same Location, the runtime SHALL default those agents to `isolation: "worktree"` unless the call sets `isolation: "none"` explicitly, and SHALL report each agent's branch in its result. An agent has edit permission when its agent profile's tool set offers an edit tool (`write`, `edit`, `apply_patch` or `notebook_edit`) and the run Mode is not `plan`. Agent calls issued together (one `parallel()` fan-out) SHALL count as concurrent before the first of them starts. The default SHALL apply only in a git checkout, where a worktree can isolate the agent; outside one, agents stay in the Location. Creating a run's worktree SHALL obey deny rules for `worktree` but SHALL NOT ask, because the user approved the run.
+(P2) When more than one concurrently running workflow agent has edit permission in the same Location, whether the agents belong to one run or to several, the runtime SHALL default those agents to `isolation: "worktree"` unless the call sets `isolation: "none"` explicitly, and SHALL report each agent's branch in its result. An agent has edit permission when its agent profile's tool set offers an edit tool (`write`, `edit`, `apply_patch` or `notebook_edit`) and the run Mode is not `plan`. Agent calls issued together (one `parallel()` fan-out) SHALL count as concurrent before the first of them starts, and edit-capable calls issued and not yet settled by any run in the Location SHALL count. The default SHALL apply only in a git checkout, where a worktree can isolate the agent; outside one, agents stay in the Location. Creating a run's worktree SHALL obey deny rules for `worktree` but SHALL NOT ask, because the user approved the run.
 
 #### Scenario: Concurrent writers isolated
 - **WHEN** a script launches 5 `general` agents in parallel without `isolation`
 - **THEN** each runs in its own worktree and its result includes `branch`
 
 #### Scenario: Single writer in place
-- **WHEN** a script awaits one `general` agent at a time
+- **WHEN** a script awaits one `general` agent at a time and no other run has an edit-capable agent in the Location
 - **THEN** each agent works in the owner's checkout and its result has no `branch`
 
 #### Scenario: Explicit opt-out
 - **WHEN** a script launches 2 agents in parallel with `isolation: "none"`
 - **THEN** both work in the owner's checkout
+
+#### Scenario: Writers of two runs isolated
+- **WHEN** runs A and B in the same Location each await one `general` agent without `isolation`, and the two agents overlap in time
+- **THEN** the agent that starts second runs in its own worktree and reports its `branch`
 
 ### Requirement: Permissions for runs
 (P2) Starting a run SHALL require the `workflow.run` permission (`ask` by default in `default` Mode, `allow` in `auto` and `bypass`) on the workflow's origin-qualified resource: its name for a global or bundled saved Workflow, `project:<name>` for a project one and `inline:<name>@<digest>` for an inline script. A script declares its own name, so a rule or an "always" approval for one origin SHALL NOT cover a script of another origin, or another inline script, declaring the same name. A deny rule for the bare name SHALL refuse every origin. Starting or resuming a run over the API or the CLI SHALL honour the owner Session's deny rules for both resources and answer `403` with reason `PermissionDenied`; the authenticated client approves the run by asking for it, so `ask` lets it start. The default SHALL be an explicit rule whose source inspection reports as `default`; a configured `workflow.run` rule replaces it, and in `auto` Mode only the default rule allows without the classifier. The approval request SHALL carry the workflow name, phases and budgets. Agents of the run SHALL run under the run's Mode as a ceiling: a resume SHALL use the stricter of the Mode recorded at start and the owner Session's current Mode. A run started non-interactively (over the API or with `cyber workflows run`) SHALL only use permissions pre-approved by rules, because any `ask` from an agent (or its subagents) SHALL be auto-rejected with feedback `No interactive approver for workflow run`. A workflow agent SHALL NOT start a Workflow Run: the server SHALL refuse a run whose owner Session, or any of its ancestors, belongs to a run (`409`, `Workflow agents cannot start Workflow Runs`), whether through the `workflow` tool, the API or the CLI, and SHALL refuse it when that ancestry cannot be read.
@@ -163,7 +191,13 @@
 - **THEN** the run continues as revision 2 with the edited script's digest and behaviour
 
 ### Requirement: Run results
-(P2) A completed run SHALL produce its script return value (JSON-safe, max 1 MiB, otherwise stored as `<state>/workflows/<run_id>.result.json` with a preview), per-agent child Sessions with transcripts, and a summary message admitted to the starting Session with `delivery: queue`, source `workflow` and message ID `msg_workflow_<run_id>` (`msg_workflow_<run_id>_<n>` for the attempt after the `n`th resume), containing the return value preview, agent counts, cost and duration. Failed, budget-exceeded and stopped runs SHALL be summarized the same way. The starting Session SHALL receive exactly one summary per ended attempt, including across server restarts; a resume SHALL clear the previous attempt's result, result file and preview, so a resumed run that ends again sends a new summary with its own result. A run started by the Session's `workflow` tool SHALL make the Session continue if idle; a run started over the API SHALL leave the summary queued without waking the Session.
+(P2) A completed run SHALL produce its script return value (JSON-safe, max 1 MiB, otherwise stored as `<state>/workflows/<run_id>.result.json` with a preview), per-agent child Sessions with transcripts, and a summary message admitted to the starting Session with `delivery: queue`, source `workflow` and message ID `msg_workflow_<run_id>` (`msg_workflow_<run_id>_<n>` for the attempt after the `n`th resume). The summary SHALL contain the return value preview, agent counts, cost and duration.
+
+Failed, budget-exceeded and stopped runs SHALL be summarized the same way. The starting Session SHALL receive exactly one summary per ended attempt, including across server restarts. A resume SHALL clear the previous attempt's result, result file and preview, so a resumed run that ends again sends a new summary with its own result.
+
+A run started by the Session's `workflow` tool SHALL make the Session continue if idle. A run started over the API SHALL leave the summary queued without waking the Session.
+
+When several `workflow` summaries are consecutive at the head of a Session's queue at a promotion boundary, up to 8 of them SHALL be promoted together into one Turn, in admission order.
 
 #### Scenario: Result handback
 - **WHEN** a run started from a Session completes
@@ -181,8 +215,22 @@
 - **WHEN** the server stops after admitting a summary but before recording it
 - **THEN** the next start does not admit a second summary
 
+#### Scenario: Two runs end together
+- **WHEN** two runs started by Session S's `workflow` tool end while S is busy with a Turn
+- **THEN** when that Turn ends, S runs one Turn whose input holds both summaries, in the order they were admitted
+
 ### Requirement: Workflow CLI
-(P2) The CLI SHALL provide `cyber workflows list` (saved and bundled), `run <name|file> [--args JSON] [--max-cost N] [--max-turns N] [--max-tokens N] [--timeout D] [--max-agents N] [--runner <id>] [--wait]`, `runs` (recent runs of the Location), `show <run_id>`, `pause <run_id>`, `resume <run_id> [--revision]`, `stop <run_id>` and `logs <run_id>`. The run commands SHALL talk to the shared server, which owns the run; `run` without `--wait` prints the run ID. `run --wait` SHALL stream progress and exit 0 on `completed`, 1 on `failed` (and on `stopped` or `paused` by another client), 4 on `BudgetExceeded`, and 130 when interrupted, stopping the run; an interrupt SHALL be honoured whether it arrives during a poll or between polls. `--runner` SHALL be rejected as unavailable until remote runners ship (P3).
+(P2) The CLI SHALL provide these commands:
+- `cyber workflows list` (saved and bundled);
+- `run <name|file> [--args JSON] [--max-cost N] [--max-turns N] [--max-tokens N] [--timeout D] [--max-agents N] [--max-concurrent N] [--runner <id>] [--wait]`;
+- `runs [--all] [--status S[,S…]] [--watch]` (recent runs of the Location, or of every Location with `--all`);
+- `show <run_id>`, `pause <run_id>`, `resume <run_id> [--revision]`, `resume --interrupted`, `stop <run_id>` and `logs <run_id>`.
+
+The run commands SHALL talk to the shared server, which owns the run. `run` without `--wait` SHALL print the run ID.
+
+`runs` SHALL show ID, name, status, phase, agents `done/running/queued/failed` (`#N in queue` for a queued run), tokens, cost and elapsed time. `runs --watch` SHALL keep the list current from live events until interrupted, redrawing in place on a terminal and printing one line (or, with `--format json`, one JSON object) per change otherwise, and SHALL exit 0 on Ctrl-C without changing any run.
+
+`run --wait` SHALL stream progress and exit 0 on `completed`, 1 on `failed` (and on `stopped` or `paused` by another client), 4 on `BudgetExceeded`, and 130 when interrupted, stopping the run. An interrupt SHALL be honoured whether it arrives during a poll or between polls, and `queued` SHALL count as not yet ended. `--runner` SHALL be rejected as unavailable until remote runners ship (P3).
 
 #### Scenario: CI usage
 - **WHEN** CI runs `cyber workflows run audit --wait --max-cost 10`
@@ -192,8 +240,20 @@
 - **WHEN** a user runs `cyber workflows run audit --runner r1`
 - **THEN** the command exits 2 saying `--runner` is not available in this build yet, and no run starts
 
+#### Scenario: Watch several runs
+- **WHEN** a user runs `cyber workflows runs --watch` while two runs execute and a third is queued
+- **THEN** the table shows all three with live agent counts and the queue position, and Ctrl-C exits 0 with all three still active
+
 ### Requirement: Run lifecycle states
-(P2) A Workflow Run (`run_` ID) SHALL have status `queued`, `running`, `waiting_input`, `paused`, `completed`, `failed`, `budget_exceeded` or `stopped`. Pause SHALL stop scheduling new agents while letting in-flight agents finish; an `agent()` call still waiting for a slot of the global limit when the run pauses SHALL NOT start, and stays unrecorded so a resume serves it. Stop SHALL cancel in-flight agents and mark them `cancelled`, and a script that ends (completed or failed) while agents are in flight SHALL cancel them and mark them `cancelled` too; after a crash, the next server process to hold the per-user server lock SHALL release child execution ownership the crashed server held, so the run's interrupted agents can resume their child Sessions; resume SHALL continue a `paused`, `failed`, `stopped` or `budget_exceeded` run through the resume mechanism. Transitions SHALL be durable events (`workflow.run.started.1`, `workflow.run.paused.1`, `workflow.run.resumed.1`, `workflow.run.completed.1`, `workflow.run.failed.1`, `workflow.run.stopped.1`), serialized with the script's own end: a run has at most one terminal event per attempt, a stop recorded first wins, and a script that ends on its own after a pause records its end and result.
+(P2) A Workflow Run (`run_` ID) SHALL have status `queued`, `running`, `waiting_input`, `paused`, `completed`, `failed`, `budget_exceeded` or `stopped`. `queued` SHALL mean the run waits for a run slot ("Run queue"); dispatch SHALL move it to `running`.
+
+Pause SHALL stop scheduling new agents while letting in-flight agents finish. An `agent()` call still waiting for a slot of the global limit when the run pauses SHALL NOT start, and stays unrecorded so a resume serves it. Pausing a `queued` run SHALL remove it from the run queue.
+
+Stop SHALL cancel in-flight agents and mark them `cancelled`, and a script that ends (completed or failed) while agents are in flight SHALL cancel them and mark them `cancelled` too. After a crash, the next server process to hold the per-user server lock SHALL release child execution ownership the crashed server held, so the run's interrupted agents can resume their child Sessions.
+
+Resume SHALL continue a `paused`, `failed`, `stopped` or `budget_exceeded` run through the resume mechanism, and SHALL queue it when every run slot is taken.
+
+Transitions SHALL be durable events (`workflow.run.started.1`, `workflow.run.dispatched.1`, `workflow.run.paused.1`, `workflow.run.resumed.1`, `workflow.run.completed.1`, `workflow.run.failed.1`, `workflow.run.stopped.1`), serialized per run with the script's own end: a run has at most one terminal event per attempt, a stop recorded first wins, and a script that ends on its own after a pause records its end and result. Serialization SHALL be per run, as "Concurrent runs" requires.
 
 #### Scenario: Pause lets agents finish
 - **WHEN** the user pauses a run with 4 agents in flight
@@ -214,6 +274,10 @@
 #### Scenario: Resume refused while agents alive
 - **WHEN** the user relaunches a stopped run whose cancelled agents have not exited yet
 - **THEN** the relaunch is refused with `Run has agents still exiting; retry shortly`
+
+#### Scenario: Pause a queued run
+- **WHEN** the user pauses a run with status `queued`
+- **THEN** it becomes `paused` without any agent having started, and a later resume queues it again
 
 ### Requirement: Run budgets
 (P2) A run SHALL accept the Budget object defined by `observability-costs` (`max_turns`, `max_tokens`, `max_cost_usd`, `max_wall_seconds` default 14400, `enforcement`) plus the workflow-specific `max_agents` (default 200), from `meta`, invocation options or `budgets.run`. `budgets.run` and the defaults SHALL be a ceiling: `meta.budget` and the `workflow` tool's `budget` MAY only lower a limit (a larger value keeps the current one, and `null` for a limit already set is refused), so neither a script nor the model can widen what the user configured. Only the authenticated client SHALL override a limit upward, explicitly, through the `budget` of an API (or CLI) start or resume. Past `max_wall_seconds`, the first host call other than `agent()` SHALL reject with `BudgetExceeded: max_wall_seconds` and any later one SHALL end the run, so a script without agents also ends at its wall budget. When a budget would be exceeded, new `agent()` calls SHALL reject with `BudgetExceeded` naming the budget, in-flight agents SHALL finish, and `ctx.budget` SHALL expose `{ spent_tokens, spent_cost_usd, agents_started, remaining }` to the script. `ctx.budget` SHALL be the snapshot taken when the revision started and refreshed each time a host call result reaches the script; it SHALL be recorded with the result and replayed as recorded, so a script that branches on it repeats the recorded attempt. Cost and token dispatch SHALL obey the soft/reserved enforcement and uncertain usage rules in observability-costs, including checks before each child provider Turn. A halted budgeted run SHALL enter `budget_exceeded`.

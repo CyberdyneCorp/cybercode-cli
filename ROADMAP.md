@@ -72,15 +72,17 @@ Current M1.1 work adds invocation-specific Windows AppContainer profiles, direct
 - `cyber import claude` reproduces a reference Claude Code setup (agents, skills, MCP, hooks) with no manual edits.
 - Publish SWE-bench Verified, Terminal-Bench and internal-suite comparisons with exact harness/model versions, budgets and trial counts. Meet the versioned internal quality gate; comparative parity remains a measured product objective, not an unqualified claim.
 
-The [P1 acceptance audit](docs/implementation/p1-acceptance-audit.md) lists the 214 P1 requirements in scope (227 before `defer-editor-integration` moved the 13 editor-integration requirements to P3) and the remaining delivery areas; the [acceptance plan](docs/implementation/p1-acceptance-plan.md) classifies all 214 (2026-10-19, after batch C and cross-session messaging: 158 done locally, 5 implemented without evidence, 25 partial, 23 not implemented, 3 needing only external evidence). No P1 milestone is fully accepted. **Cross-session messaging (same server, P1, not owned by an M1.x milestone): Status: implemented** (change `implement-cross-session-messaging`): all 18 P1 requirements are done locally with production-path tests (App over HTTP, the `cyber` binary, the TUI against a real server, MCP serve), and were accepted by hand on the real binary and `cyber serve` against a scripted local provider on 2026-10-19 (18 scenarios, three bugs fixed with regression tests). It completes `cyber mcp serve`'s ten tools. Open: the automated end-to-end suite (tasks 14.1–14.4), native Linux and Windows CI runs, and the archive; direct peers are implemented in P2 (`add-messaging-direct-peers`, below) and the Relay transport follows in P3 (M3.3). Production auto-mode tool classification is implemented locally; ancestor review acceptance and complete permission/native enforcement remain priorities.
+The [current inventory](docs/implementation/spec-doc-reconciliation.md) contains 270 canonical P1 requirements after contract synchronization and the editor deferral. The [P1 acceptance audit](docs/implementation/p1-acceptance-audit.md) and its classifications are a historical 214-requirement snapshot; 213 current capability/name pairs match its plan and 57 require explicit classification. Expanded clauses still require review. For the historical snapshot, the [acceptance plan](docs/implementation/p1-acceptance-plan.md) classifies all 214 (2026-10-19, after batch C and cross-session messaging: 158 done locally, 5 implemented without evidence, 25 partial, 23 not implemented, 3 needing only external evidence). No P1 milestone is fully accepted. **Cross-session messaging (same server, P1, not owned by an M1.x milestone): Status: implemented** (change `implement-cross-session-messaging`): the 18 P1 requirements tracked by the 2026-10-19 acceptance snapshot are done locally with production-path tests (App over HTTP, the `cyber` binary, the TUI against a real server, MCP serve), and were accepted by hand on the real binary and `cyber serve` against a scripted local provider on 2026-10-19 (18 scenarios, three bugs fixed with regression tests). It completes `cyber mcp serve`'s ten tools. Open: the automated end-to-end suite (tasks 14.1–14.4), native Linux and Windows CI runs, and the archive; direct peers are implemented in P2 (`add-messaging-direct-peers`, below) and the Relay transport follows in P3 (M3.3). Production auto-mode tool classification is implemented locally; ancestor review acceptance and complete permission/native enforcement remain priorities.
+
+**Local web dashboard (`web-client`, P1, not owned by an M1.x milestone): Status: specified, not implemented.** [`implement-local-web-dashboard`](openspec/changes/implement-local-web-dashboard/proposal.md) plans a responsive Session/transcript view, composer, permission/question inbox and existing workflow/Job/Goal controls. Browser approvals use server-owned request identities, interactive-presence expiry and acknowledged replies. Loopback, a user-managed SSH forward or a TLS-protected LAN/VPN endpoint work without a Cyber Account; the browser password grants owner authority. No automatic tunnel or public exposure is added. Relay/paired Device access remains M3.2. The full TUI-equivalent web target follows the first dashboard slice.
 
 ## P2: Autonomy & orchestration (flagship)
 
 **Capabilities:** `workflows` (including automatic orchestration), `goals`, `loops-scheduling`, `agent-teams` (behind feature `teams`), `cross-session-messaging` (direct peers), `tui` (agent view, workflow monitor, goal panel), `background-tasks` (`notify`, `send_file`), `skills-commands` (bundled `batch`, `review`, `audit`), `exec-mode` (`--goal`, `--workflow`).
 
 **Milestones**
-1. **M2.1 Workflow runtime:** QuickJS sandbox, `agent()/parallel()/pipeline()/phase()`, determinism guards, event-sourced resume, budgets, model tiers (`fast` / `smart` / `verify`). *Status: implemented and accepted end to end with the real binary and a scripted local provider, including the gaps (`ask()`, direct read-only tools, prompt-cache warm-up, `exec --workflow`, `/tasks`, the Workflow library over HTTP, Save); reserved budget enforcement and Session export of run summaries remain; see [P2 evidence](docs/implementation/p2-status.md).*
-2. **M2.2 Bundled workflows:** review, audit (find → verify), migrate (fan-out with worktrees), research (cross-checked), plan-from-angles.
+1. **M2.1 Workflow runtime:** QuickJS sandbox, `agent()/parallel()/pipeline()/phase()`, determinism guards, event-sourced resume, budgets, model tiers (`fast` / `smart` / `verify`). *Status: implemented and accepted end to end with the real binary and a scripted local provider, including the gaps (`ask()`, direct read-only tools, prompt-cache warm-up, `exec --workflow`, `/tasks`, the Workflow library over HTTP, Save); reserved budget enforcement and finished-transcript retention remain (Session export includes run summaries); see [P2 evidence](docs/implementation/p2-status.md).*
+2. **M2.2 Verified workflow library:** **Status: specified, not implemented.** First delivery slice: the shared library foundation and `solve` (2–4 independent model attempts in worktrees → host-run checks tied to exact source revisions → an independent judge → an evidence report and optional recommendation; no automatic merge). Default soft budget: 5 USD / 30 minutes. See [`add-verified-solve-workflow`](openspec/changes/add-verified-solve-workflow/proposal.md). The existing [`implement-m2-2-bundled-workflows`](openspec/changes/implement-m2-2-bundled-workflows/proposal.md) still plans review, audit (find → verify), migrate (fan-out with worktrees), research (cross-checked) and plan-from-angles as subsequent library increments.
 3. **M2.3 Goals:** active goal + goal queue, evaluator verdicts, `check` commands, budgets, `exec --goal` exit codes. **Status: implemented** (change `implement-m2-3-goals`): `/goal` with queue, pause/resume/skip/clear/edit and reorder, the evaluator after each Turn with continuation and completion, checks, budgets, blocking-error pauses, deferred evaluation during background work, restore after restart, `core/goal` context, notifications, hooks, HTTP routes, the TUI panel, footer and sidebar, `exec --goal`, templates, `/goal fork` into a worktree Session, goals on subagents and workflow `agent()`, the model `goal` tool and unattended-ask pauses. The live end-to-end acceptance on the real binary remains.
 4. **M2.4 Loops & cron:** `/loop` fixed and self-paced, in-session cron, daemon-backed persistent loops. **Status: Session loops implemented** (change `implement-m2-4-loops`): fixed-interval and self-paced `/loop` with `schedule_wakeup`, queued delivery with overlap skip/coalesce, noop collapsing, `--max`/`--for`/`--until`/budget stops, restore after restart, HTTP routes and the TUI. In-session cron tools, persistent `cyber loops` schedules, jitter, notifications, loop hooks and `--until-goal` remain.
 5. **M2.5 Agent view & teams:** `cyber agents` dashboard; experimental lead/teammates with a shared task list. **Status: agent teams implemented, behind the experimental `teams` feature** (change `implement-agent-teams`, sections 1–9): definitions, spawning with worktree isolation and the lead's Mode ceiling and deny rules, the shared task board with dependencies and atomic claims, team messaging and idle notices, file ownership, `team_merge` that leaves the lead's checkout unchanged on conflicts, team budgets, stop/resume with restart recovery, HTTP/SDK/CLI and the TUI team view; accepted by hand on 2026-10-20 with the real binary and a scripted local provider (15 scenarios, [evidence](docs/implementation/p2-status.md#agent-teams-2026-10-20)). The `cyber agents` dashboard (agent view), an automated end-to-end suite, Windows runs and the archive remain; distributed teammates are P3.
@@ -98,7 +100,7 @@ The [P1 acceptance audit](docs/implementation/p1-acceptance-audit.md) lists the 
 
 **Milestones**
 1. **M3.1 Cyber Account:** `cyber login` via CyberdyneAuth (OIDC code + PKCE, loopback redirect), keyring storage, refresh serialized across processes, `whoami`, entitlements and org claims.
-2. **M3.2 Relay + remote control:** outbound WebSocket relay, E2E encryption (X25519), QR device pairing, device list/revoke, push notifications, web client; `cyber relay serve` for self-hosting.
+2. **M3.2 Relay + remote control:** outbound WebSocket relay, E2E encryption (X25519), QR device pairing, device list/revoke, push notifications, web client; `cyber relay serve` for self-hosting. Reuse the P1 local-dashboard bundle with the account/paired-Device Relay transport; private-network P1 approvals do not imply this milestone is implemented.
 3. **M3.3 Cross-machine messaging:** relay transport, approval by default, org opt-in.
 4. **M3.4 Runners:** orchestrator + self-hosted runner pools, environments, session identity tokens; `--cloud`, `teleport` (remote → local) and **`handoff` (live local → remote)**.
 5. **M3.5 Automation:** routines (schedule / API / GitHub / webhook triggers), channels (webhook, MCP channel, chat bridges), GitHub App/Action + auto-fix PRs.
@@ -163,7 +165,7 @@ Local use never depends on CyberdyneAuth. Self-hosters can point `account.issuer
 
 ## Requirement inventory
 
-The table counts requirements in `openspec/specs` by phase tag (47 capabilities, 0 untagged). It is generated from the first phase tag of each requirement; use `python3 scripts/spec_inventory.py` to refresh it. Later-phase extensions inside a requirement do not add another count.
+The table counts requirements in `openspec/specs` by phase tag (48 capabilities, 0 untagged). It is generated from the first phase tag of each requirement; use `python3 scripts/spec_inventory.py` to refresh it. Later-phase extensions inside a requirement do not add another count.
 
 The pending change `defer-editor-integration` moves 13 `editor-integration` requirements from P1 to P3. The table reflects canonical specs, so it changes when that change is archived (P1 227 → 214, P3 145 → 158).
 
@@ -175,48 +177,49 @@ The pending change `defer-editor-integration` moves 13 `editor-integration` requ
 | `browser-verification` |  | 2 |  |  |  | 2 |
 | `builtin-tools` | 16 | 4 | 1 |  |  | 21 |
 | `channels` |  |  |  | 16 |  | 16 |
-| `cli-commands` | 18 | 1 |  | 2 |  | 21 |
+| `cli-commands` | 18 | 2 | 1 | 2 |  | 23 |
 | `client-sdk` | 14 | 1 | 2 | 1 |  | 18 |
 | `code-intelligence` |  | 12 |  |  | 1 | 13 |
 | `compaction` | 15 | 3 | 1 |  |  | 19 |
 | `compat-import` | 1 | 10 | 1 |  |  | 12 |
 | `configuration` | 18 | 2 |  |  |  | 20 |
-| `cross-session-messaging` |  | 18 | 1 | 1 |  | 20 |
+| `cross-session-messaging` |  | 20 | 5 | 1 |  | 26 |
 | `cyber-account` |  |  |  | 17 |  | 17 |
-| `editor-integration` |  | 13 |  | 1 | 1 | 15 |
+| `editor-integration` |  |  |  | 14 | 1 | 15 |
 | `exec-mode` | 11 | 5 | 2 | 1 |  | 19 |
 | `goals` |  |  | 21 |  |  | 21 |
 | `harness-evaluation` | 4 |  |  |  |  | 4 |
 | `hooks` |  | 20 | 2 |  |  | 22 |
 | `installation-upgrade` | 12 | 1 |  |  |  | 13 |
 | `loops-scheduling` |  |  | 14 | 1 |  | 15 |
-| `mcp` | 14 | 6 | 2 |  |  | 22 |
+| `mcp` | 14 | 7 | 1 |  |  | 22 |
+| `mcp-server` |  | 11 | 4 | 1 |  | 16 |
 | `memory` |  | 13 |  | 1 |  | 14 |
-| `observability-costs` | 8 | 10 |  | 1 |  | 19 |
+| `observability-costs` | 8 | 15 | 1 | 1 |  | 25 |
 | `org-policy` |  |  |  | 15 |  | 15 |
 | `permissions-modes` | 15 | 7 |  |  |  | 22 |
 | `plugins-marketplace` |  | 14 | 2 |  | 6 | 22 |
-| `provider-catalog` | 17 | 5 | 2 |  |  | 24 |
-| `provider-credentials` | 12 | 5 |  | 2 |  | 19 |
+| `provider-catalog` | 17 | 6 | 2 |  |  | 25 |
+| `provider-credentials` | 12 | 7 |  | 2 |  | 21 |
 | `remote-control` |  |  |  | 17 | 1 | 18 |
 | `routines` |  |  |  | 16 |  | 16 |
 | `runners-cloud` |  |  |  | 22 |  | 22 |
 | `sandbox` | 7 | 8 |  | 1 |  | 16 |
-| `server-api` | 22 |  |  | 2 |  | 24 |
-| `session-runtime` | 23 | 3 |  |  |  | 26 |
+| `server-api` | 22 | 2 | 2 | 2 |  | 28 |
+| `session-runtime` | 23 | 6 |  |  |  | 29 |
 | `session-sharing` |  |  |  | 10 | 2 | 12 |
 | `skills-commands` | 14 | 5 | 1 |  |  | 20 |
 | `snapshots-checkpoints` | 12 | 3 | 1 |  |  | 16 |
 | `storage-events` | 17 | 2 |  | 2 |  | 21 |
 | `system-context` | 12 | 5 | 1 |  |  | 18 |
 | `tool-registry` | 15 | 3 |  |  |  | 18 |
-| `tui` | 19 | 7 | 3 | 1 | 1 | 31 |
+| `tui` | 19 | 32 | 5 | 1 | 1 | 58 |
 | `vcs-integration` | 2 | 3 |  | 10 |  | 15 |
 | `web-client` |  | 1 |  | 1 | 1 | 3 |
-| `workflows` |  |  | 26 | 2 | 1 | 29 |
+| `workflows` |  |  | 31 | 2 | 1 | 34 |
 | `workspace-trust` | 4 |  |  |  |  | 4 |
 | `worktrees` |  | 9 | 4 |  |  | 13 |
-| **Total** | **330** | **230** | **102** | **145** | **15** | **822** |
+| **Total** | **330** | **270** | **120** | **159** | **15** | **894** |
 
 
 Most capabilities span phases. A spec is a product contract, and each phase implements the slice tagged for it. For example, `tui` has its basics in P0, rewind and modes in P1, the agent view and workflow monitor in P2, remote indicators in P3 and mods panes in P4.

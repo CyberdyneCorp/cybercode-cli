@@ -110,3 +110,11 @@
 - **WHEN** an idle application or an application whose runtime shutdown has completed loses all external runtime, host and database owners
 - **THEN** its built-in host callback SHALL NOT keep the runtime, host or database alive through a reference cycle
 - **AND** session tools SHALL still be able to use their callback while a runtime owner remains alive
+
+#### Scenario: Keep a busy server of an older build
+- **WHEN** the registered server of another build has a running Turn
+- **THEN** it keeps running, the client uses it, and stderr says it runs an older build and to run `cyber service restart` when idle
+
+#### Scenario: Another install's server
+- **WHEN** the registered server of another build was started from another executable path, or predates `GET /api/v1/service`
+- **THEN** it is never stopped by `start`; the client uses it and prints the same warning

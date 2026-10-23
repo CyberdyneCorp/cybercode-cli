@@ -17,19 +17,27 @@ The server API is the single public contract every Cyber Code client uses: the T
 - **THEN** each request is handled by the Location services of its own directory without starting a second server
 
 ### Requirement: Background service management
-(P0) The system SHALL provide `cyber service start|stop|restart|status`. `start` SHALL reuse a registered server whose `GET /api/v1/health` answers within 2 seconds with a matching version, and otherwise SHALL spawn a detached `cyber serve --register` and poll every 50 ms, up to 100 attempts, for a healthy registration. A registered server SHALL write `~/.local/state/cyber/server.json` (mode 0600) with `id`, `version`, `url`, `socket` and `pid`, and SHALL remove it on shutdown when the file still holds its own `id`.
+(P0) The system SHALL provide `cyber service start|stop|restart|status`. Every binary SHALL embed a build identity, and SHALL stamp its executable (canonical path, length and modification time) when it starts. `start` SHALL reuse a registered server whose `GET /api/v1/health` answers within 2 seconds with this client's version and build, and, when the registration names this client's executable path, with this client's executable stamp. A registered server of another version, build or stamp is stale. A stale server SHALL be stopped and replaced only when its registration names this client's executable path and the authenticated `GET /api/v1/service` reports its registration `id`, no running Session and no active workflow run; the client SHALL then print `restarted the Cyber server: it was running an older build` to stderr. A stale server that runs work, belongs to another executable path, or cannot report its work SHALL be kept and used, and the client SHALL print `The Cyber server runs an older build; restart it with `cyber service restart` when idle` to stderr. With no healthy registered server, `start` SHALL spawn a detached `cyber serve --register` and poll every 50 ms, up to 100 attempts, for a healthy registration. A registered server SHALL write `~/.local/state/cyber/server.json` (mode 0600) with `id`, `version`, `build`, `binary`, `binary_stamp`, `url`, `socket` and `pid`, and SHALL remove it on shutdown when the file still holds its own `id`. Every client that starts the service (TUI, `exec`, `api`, `mcp serve` and the resource commands) SHALL use this rule.
 
 #### Scenario: Reuse a healthy server
-- **WHEN** `cyber service start` runs and `server.json` points to a server reporting the same version
+- **WHEN** `cyber service start` runs and `server.json` points to a server reporting the same version and build
 - **THEN** no new process is spawned and the existing URL is printed
 
 #### Scenario: Replace a stale server
-- **WHEN** the registered server reports a different version or does not answer within 2 seconds
-- **THEN** the stale server is stopped (SIGTERM, then SIGKILL after 5 seconds if the same registration is still healthy), a new server is spawned, and `server.json` is rewritten
+- **WHEN** `cyber` was rebuilt or upgraded, and the registered server started from the same executable path reports another build or stamp with no running Session or workflow run
+- **THEN** the old server is stopped, a new server is spawned from the new binary, `server.json` is rewritten with the new build, and stderr says `restarted the Cyber server: it was running an older build`
+
+#### Scenario: Keep a busy server of an older build
+- **WHEN** the registered server of another build has a running Turn
+- **THEN** it keeps running, the client uses it, and stderr says it runs an older build and to run `cyber service restart` when idle
+
+#### Scenario: Another install's server
+- **WHEN** the registered server of another build was started from another executable path, or predates `GET /api/v1/service`
+- **THEN** it is never stopped by `start`; the client uses it and prints the same warning
 
 #### Scenario: Status
 - **WHEN** the user runs `cyber service status`
-- **THEN** it prints `running <url> (v<version>)` for a healthy matching server, otherwise `stopped`, and removes a stale `server.json`
+- **THEN** it reports the registration, whether it is healthy for this version, and whether it is `stale` for this build
 
 ### Requirement: Listener defaults
 (P0) The server SHALL bind `127.0.0.1` by default. It SHALL try port 4747 first and fall back to an OS-assigned free port. On macOS and Linux it SHALL also listen on the Unix domain socket `~/.local/state/cyber/cyber.sock` (mode 0600). `--hostname`, `--port` and `--socket` SHALL override these defaults, and `--no-tcp` SHALL disable the TCP listener.
@@ -87,14 +95,14 @@ The server API is the single public contract every Cyber Code client uses: the T
 - **THEN** the request runs against the Location recorded on `ses_1`
 
 ### Requirement: Route groups
-(P0) The server SHALL expose exactly these route groups under `/api/v1`: `health`, `location`, `session`, `message`, `permission`, `question`, `agent`, `model`, `provider`, `credential`, `tool`, `fs`, `pty`, `workflow`, `goal`, `loop`, `job`, `messaging` (cross-session messages), `remote`, `runner`, `routine`, `channel`, `worktree`, `memory`, `lsp`, `formatter`, `usage`, `vcs`, `ide`, `policy`, `mcp`, `skill`, `command`, `hook`, `plugin`, `config`, `account`, `oauth` and `event`. Group names are OpenAPI tags and operation-ID prefixes (e.g. `v1.session.prompt`). This list is the single registry of first path segments; a capability SHALL NOT introduce a route outside these groups without adding the group here. URL paths SHALL use the plural collection form (`/api/v1/sessions/{id}`, `/api/v1/sessions/{id}/messages`, `/api/v1/permissions/requests`, `/api/v1/workflows/runs`, `/api/v1/channels`, `/api/v1/routines`, `/api/v1/runners`, `/api/v1/agents`, `/api/v1/worktrees`, `/api/v1/credentials`, `/api/v1/oauth-attempts`), except singletons and streams (`/api/v1/health`, `/api/v1/config`, `/api/v1/account`, `/api/v1/policy`, `/api/v1/vcs`, `/api/v1/usage`, `/api/v1/memory`, `/api/v1/lsp`, `/api/v1/formatters`, `/api/v1/ide`, `/api/v1/event`, `/api/v1/fs`, `/api/v1/messaging`, `/api/v1/ws`). A group whose capability belongs to a later phase SHALL respond `503` `ServiceUnavailableError` with `service` naming the group until it is implemented.
+(P0) The server SHALL expose exactly these route groups under `/api/v1`: `health`, `location`, `session`, `message`, `permission`, `question`, `agent`, `model`, `provider`, `credential`, `tool`, `fs`, `pty`, `workflow`, `goal`, `loop`, `job`, `messaging` (cross-session messages), `remote`, `runner`, `routine`, `channel`, `worktree`, `memory`, `lsp`, `formatter`, `usage`, `vcs`, `service` (local service lifecycle), `system` (machine stats), `peer` (peer listener), `peers` (local peer management), `teams` (teams and definitions), `ide`, `policy`, `mcp`, `skill`, `command`, `hook`, `plugin`, `config`, `account`, `oauth` and `event`. Group names are OpenAPI tags and operation-ID prefixes (e.g. `v1.session.prompt`). `/api/v1/files` belongs to `fs`; `/api/v1/team-definitions` belongs to `teams`; `/api/v1/peer/*` is served only on the peer listener. This list is the single registry of route groups; a capability SHALL NOT introduce a route outside these groups without adding the group here. URL paths SHALL use the plural collection form (`/api/v1/sessions/{id}`, `/api/v1/sessions/{id}/messages`, `/api/v1/permissions/requests`, `/api/v1/workflows/runs`, `/api/v1/channels`, `/api/v1/routines`, `/api/v1/runners`, `/api/v1/agents`, `/api/v1/worktrees`, `/api/v1/credentials`, `/api/v1/oauth-attempts`), except singletons and streams (`/api/v1/health`, `/api/v1/config`, `/api/v1/account`, `/api/v1/policy`, `/api/v1/vcs`, `/api/v1/system`, `/api/v1/usage`, `/api/v1/memory`, `/api/v1/lsp`, `/api/v1/formatters`, `/api/v1/ide`, `/api/v1/event`, `/api/v1/fs`, `/api/v1/messaging`, `/api/v1/ws`). A group whose capability belongs to a later phase SHALL respond `503` `ServiceUnavailableError` with `service` naming the group until it is implemented.
 
 #### Scenario: Unimplemented group
 - **WHEN** a client calls `GET /api/v1/runners` on a build without runner support
 - **THEN** the server responds `503` with `{ "_tag": "ServiceUnavailableError", "service": "runner" }`
 
 ### Requirement: Session and prompt routes
-(P0) The server SHALL provide `GET|POST /api/v1/sessions`, `GET|PATCH|DELETE /api/v1/sessions/:sessionID`, `POST .../fork`, `POST .../prompt`, `POST .../interrupt`, `POST .../agent`, `POST .../model`, `POST .../mode`, `POST .../compact`, `POST .../rewind`, `POST .../revert/stage|clear|commit`, `GET .../messages`, `GET .../messages/:messageID`, `GET .../inbox`, `PATCH|DELETE .../inbox/:messageID`, `POST .../inbox/:messageID/release`, `POST .../inbox/:messageID/drop`, `GET .../context`, `GET .../diff`, `GET .../history` and `GET .../events`. `POST .../prompt` SHALL accept `{ id?, parts, delivery?: "steer"|"queue"|"hold", resume?: boolean }`, durably admit the prompt, and respond `202` with `{ data: Admitted }`. It SHALL wake the Session's Drain unless `resume` is `false` or `delivery` is `hold`. The inbox release and drop routes SHALL be the only way to release or drop any held item, whatever its origin (user, cross-session message, channel event).
+(P0) The server SHALL provide `GET|POST /api/v1/sessions`, `GET|PATCH|DELETE /api/v1/sessions/:sessionID`, `POST .../fork`, `POST .../prompt`, `POST .../interrupt`, `POST .../agent`, `POST .../model`, `POST .../mode`, `POST .../compact`, `POST .../rewind`, `POST .../revert/stage|clear|commit`, `GET .../messages`, `GET .../messages/:messageID`, `GET .../inbox`, `PATCH|DELETE .../inbox/:messageID`, `POST .../inbox/:messageID/release`, `POST .../inbox/:messageID/drop`, `GET .../context`, `GET .../diff`, `GET .../history` and `GET .../events`, and (P1) `GET|POST .../recap`. `POST .../prompt` SHALL accept `{ id?, parts, delivery?: "steer"|"queue"|"hold", resume?: boolean }`, durably admit the prompt, and respond `202` with `{ data: Admitted }`. It SHALL wake the Session's Drain unless `resume` is `false` or `delivery` is `hold`. The inbox release and drop routes SHALL be the only way to release or drop any held item, whatever its origin (user, cross-session message, channel event).
 
 #### Scenario: Queue delivery
 - **WHEN** a client posts a prompt with `delivery: "queue"` while the Session is running
@@ -103,6 +111,10 @@ The server API is the single public contract every Cyber Code client uses: the T
 #### Scenario: Hold delivery
 - **WHEN** a prompt is admitted with `delivery: "hold"`
 - **THEN** it is not promoted until a user approves it via `POST /api/v1/sessions/:sessionID/inbox/:messageID/release`
+
+#### Scenario: Recap route
+- **WHEN** a client calls `POST /api/v1/sessions/:sessionID/recap` on a Session with finished Turns
+- **THEN** the response contains the recap text and the `through_seq` it covers
 
 ### Requirement: Idempotency keys
 (P0) Every non-GET route SHALL accept an `Idempotency-Key` header of 1–128 printable characters. The server SHALL retain the key, request hash and response for 24 hours per authenticated principal. A retry with the same key and body SHALL return the original response with header `Idempotent-Replayed: true`, and a retry with the same key but a different body SHALL fail with `409` `ConflictError`.
@@ -140,11 +152,15 @@ The server API is the single public contract every Cyber Code client uses: the T
 - **THEN** the upgrade is refused with `401`
 
 ### Requirement: Tagged error model
-(P0) Declared failures SHALL be JSON objects tagged by `_tag`, with these statuses: `InvalidRequestError` 400, `InvalidCursorError` 400, `UnauthorizedError` 401, `ForbiddenError` 403, `EntitlementRequiredError` 402, `NotFoundError` variants 404 (`SessionNotFoundError`, `MessageNotFoundError`, `RunNotFoundError`, …), `ConflictError` 409, `SessionBusyError` 409, `ReviewTargetError` 422 with `code` (from `v1.command.run`, `vcs-integration` → Local review command), `RateLimitedError` 429 with `retryAfterMs`, `UnknownError` 500 with a `ref` of the form `err_<id>` logged server-side, and `ServiceUnavailableError` 503.
+(P0) Declared failures SHALL be JSON objects tagged by `_tag`, with these statuses: `InvalidRequestError` 400, `InvalidCursorError` 400, `UnauthorizedError` 401, `ForbiddenError` 403, `AccountRequiredError` 403, `EntitlementRequiredError` 402, `NotFoundError` variants 404 (`SessionNotFoundError`, `MessageNotFoundError`, `RunNotFoundError`, `AddressNotFoundError`, …), `ConflictError` 409, `SessionBusyError` 409, `AmbiguousAddressError` 409 with `candidates`, `MessageTooLargeError` 413 with `size` and `limit`, `ReviewTargetError` 422 with `code` (from `v1.command.run`, `vcs-integration` → Local review command), `RateLimitedError` 429 with `retryAfterMs`, `UnknownError` 500 with a `ref` of the form `err_<id>` logged server-side, and `ServiceUnavailableError` 503.
 
 #### Scenario: Unexpected failure
 - **WHEN** a handler fails with an undeclared error
 - **THEN** the response is `500` with `{ "_tag": "UnknownError", "message": "...", "ref": "err_..." }` and the same `ref` appears in the server log
+
+#### Scenario: Ambiguous message address
+- **WHEN** a client posts to `/api/v1/messaging/send` with `to: "migration"` and two Sessions have that name
+- **THEN** the response is `409` with `_tag: "AmbiguousAddressError"` and `candidates` listing both Session IDs
 
 ### Requirement: Pagination
 (P0) List routes SHALL return `{ data, cursor: { previous?, next? } }` with opaque cursors, `limit` 1–200 (default 50) and `order` `asc` or `desc` (default `desc`). A malformed or expired cursor SHALL fail with `InvalidCursorError`.
@@ -175,10 +191,10 @@ The server API is the single public contract every Cyber Code client uses: the T
 - **THEN** requests are served without a TCP or socket listener and the user's registered server is unaffected
 
 ### Requirement: mDNS discovery
-(P0) When `--mdns` is set and the bind host is not loopback, the server SHALL publish a `_cyber._tcp` service named `cyber-<port>` and SHALL unpublish it on shutdown. With a loopback bind it SHALL log a warning and skip publishing.
+(P0) When `--mdns` is set (or user config sets `peers.mdns`, P2), the server SHALL publish its peer listener as described in "Peer discovery" and SHALL unpublish it on shutdown; the main API SHALL never be published. When there is no peer listener or it is on loopback, the server SHALL log a warning and skip publishing.
 
 #### Scenario: Loopback with mDNS
-- **WHEN** `cyber serve --mdns` binds `127.0.0.1`
+- **WHEN** `cyber serve --mdns` binds `127.0.0.1` and the peer listener is on loopback or not configured
 - **THEN** no service is published and a warning is logged
 
 ### Requirement: Raw API command
@@ -189,11 +205,15 @@ The server API is the single public contract every Cyber Code client uses: the T
 - **THEN** the first five Sessions are printed as JSON
 
 ### Requirement: Health and version
-(P0) `GET /api/v1/health` SHALL be unauthenticated and return `{ healthy: true, version, apiVersion: "v1", features: [...] }`. `features` SHALL list the enabled capability groups so clients can adapt to phased builds.
+(P0) `GET /api/v1/health` SHALL be unauthenticated and return `{ healthy: true, version, build, apiVersion: "v1", features: [...] }`. `build` SHALL be the server binary's build identity. `features` SHALL list the enabled capability groups so clients can adapt to phased builds. The authenticated `GET /api/v1/service` SHALL return the listening server's `id`, `version`, `build`, `pid`, executable path, the number of Sessions running a Turn and the number of workflow runs queued, running or waiting for input; a transport that owns no listener SHALL answer `404 ServiceUnavailableError`.
 
 #### Scenario: Feature probe
 - **WHEN** a mobile client calls `/api/v1/health`
 - **THEN** it learns whether `workflow`, `goal` and `remote` are available before showing those screens
+
+#### Scenario: Build probe
+- **WHEN** a client of another build calls `/api/v1/health`
+- **THEN** the response's `build` differs from the client's, and `GET /api/v1/service` tells the client whether the server is running work
 
 ### Requirement: Response compression
 (P0) The server SHALL gzip or zstd-encode compressible responses of at least 1024 bytes when `Accept-Encoding` allows it. It SHALL NOT compress SSE streams, WebSocket frames or responses that already have an encoding.
@@ -208,3 +228,57 @@ The server API is the single public contract every Cyber Code client uses: the T
 #### Scenario: SDK embedded mode
 - **WHEN** the TypeScript SDK starts `cyber serve --stdio` and sends `{"jsonrpc":"2.0","id":1,"method":"v1.session.create","params":{...}}`
 - **THEN** a Session is created in the private database and the reply carries the same body as `POST /api/v1/sessions`
+
+### Requirement: File browsing routes
+(P1) The server SHALL provide, in the `fs` route group (`v1.fs.list`, `v1.fs.search`, `v1.fs.content`) and scoped to the request's Location, `GET /api/v1/files?path=<rel>&hidden=<bool>`, which returns one directory level as `entries[]` of `{name, path, kind: file|directory|symlink, size, git_status, ignored, target?, read: allow|ask|deny}`, plus `hidden` (dot and ignored entries left out), `changed` (the project's changed-file count) and `root` (the canonical project root that entry paths are relative to). It SHALL sort directories first and then by name, and SHALL cap results at 2,000 entries with `truncated: true`. A directory's `git_status` SHALL be `M` when any path below it changed. It SHALL also provide `GET /api/v1/files/search?directory=&query=&limit=` for fuzzy path search over non-ignored files, and `GET /api/v1/files/content?directory=&path=` returning `{text | binary: true, size, language, lines, truncated}`. These routes SHALL take `session_id` when present, so that the Session's permission rules and Mode apply; without it the Location's rules apply in `default` mode, and an `ask` SHALL be refused because no Session can be asked. Listing a level SHALL require `list` on it. A search SHALL require `list` on the project root and SHALL leave out every hit whose directory the rules do not allow listing without asking. Only a regular file or a directory SHALL be opened; any other kind (such as a FIFO or a device) SHALL be refused with `400` before it is opened, and no open SHALL wait. Content SHALL be served only when the `read` decision is `allow` (an `ask` from a client with a Session SHALL go through the normal permission request), and otherwise the route SHALL return `403 ForbiddenError {reason: permission, decision}`. Paths SHALL be resolved relative to the project root and canonicalized; any path or symlink target outside the project SHALL return `403 ForbiddenError {reason: outside_project}`. Content and listings SHALL be read from the file or directory the decision was made on; when the path names another object by the time it is read (for example a symlink or hard link swapped in during an `ask`), the route SHALL return `403 ForbiddenError {reason: changed}` without its content. Content SHALL be capped at 1 MiB.
+
+#### Scenario: Listing a level
+- **WHEN** a client lists `crates` in a project with a `.gitignore`d `target/`
+- **THEN** the response has the crate directories with git status, and `target` appears only with `hidden=true`, marked `ignored`
+
+#### Scenario: Path escape refused
+- **WHEN** a client requests content for `../../etc/passwd` or a symlink pointing outside the project
+- **THEN** the response is `403` with `reason: outside_project` and no bytes of the file
+
+#### Scenario: Denied file
+- **WHEN** the Session's rules deny `read` for `secrets/key.pem`
+- **THEN** the listing shows it with `read: deny`, and the content route returns `403` with `reason: permission`
+
+### Requirement: Peer listener
+(P2) When user config sets `peers.listen`, the server SHALL open a second listener that serves only `/api/v1/peer/*` and answers `404` for every other path; the main API SHALL keep its own bind. A non-loopback peer listener SHALL use TLS with a self-signed ECDSA P-256 certificate the server generates on first use and keeps in `<state>/peer-tls/` (mode 0600); `tls: false` SHALL be refused unless the address is loopback. The fingerprint SHALL be the SHA-256 of the certificate's SubjectPublicKeyInfo and SHALL be recorded in `server.json`. Requests carrying an `Origin` header SHALL be refused with `403`. `peers` SHALL be accepted only from user config; project and local config setting it SHALL fail validation.
+
+#### Scenario: Only peer routes are served
+- **WHEN** a client with a valid peer token requests `GET /api/v1/sessions` on the peer listener
+- **THEN** the response is `404`
+
+#### Scenario: Plain listener off loopback
+- **WHEN** user config sets `peers.listen: { address: "0.0.0.0:4748", tls: false }`
+- **THEN** the server refuses to start the peer listener and logs why, and the main API still starts
+
+#### Scenario: Browser request
+- **WHEN** a request to the peer listener has `Origin: http://192.168.1.20:8080`
+- **THEN** the response is `403`
+
+### Requirement: Peer discovery
+(P2) With `peers.mdns: true` (default `false`) and a non-loopback peer listener, the server SHALL publish `_cyber._tcp` named `cyber-<machine>` with TXT `role=peer`, `v=1`, `machine` and `fp`, and SHALL unpublish it on shutdown. `cyber peers discover [--timeout <duration>]` SHALL list discovered servers with machine, address, fingerprint and whether each is already a remote. Discovery SHALL NOT add a peer or grant trust; `cyber peers add` SHALL fail when a discovered fingerprint for the same address differs from the pairing code's.
+
+#### Scenario: Discover a desktop
+- **WHEN** `desk` publishes its peer listener and `laptop` runs `cyber peers discover`
+- **THEN** `desk` is listed with its address and fingerprint and `not added`
+
+### Requirement: Session branch routes
+(P1) The server SHALL provide:
+
+- `GET /api/v1/sessions/:sessionID/tree`, returning user-message nodes `{ id, parent_id, preview, created_at, labels, active, tip, descendants }`.
+- `POST .../checkout` with `{ message_id?, label?, exact?: boolean, code?: boolean }`, returning the new active tip and, when `code` is true, the applied revert state.
+- `PUT .../labels/:name` with `{ message_id }`, and `DELETE .../labels/:name`.
+
+`GET .../messages` SHALL return only the active path unless `branches=all` is given, in which case every message SHALL include `parent_message_id`. Checkout on a busy Session SHALL fail with `409` and `SessionBusyError`. An unknown message or label SHALL fail with `404`.
+
+#### Scenario: Linear view for existing clients
+- **WHEN** a client that does not know about branches calls `GET .../messages` on a Session with two branches
+- **THEN** it receives the active path in order, exactly as a linear conversation
+
+#### Scenario: Checkout by label
+- **WHEN** a client posts `{ "label": "fix-a" }` to `.../checkout` on an idle Session
+- **THEN** the path ending at the labeled message's newest tip becomes active and the response names that tip

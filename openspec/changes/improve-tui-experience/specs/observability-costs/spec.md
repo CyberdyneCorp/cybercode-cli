@@ -102,7 +102,9 @@ It SHALL also return `subagents`: the share of the window total per subagent gro
 - **THEN** the Session route reports `context` as `{ used_tokens: 100, window: 200000, compact_at: 199000, utilization: 0.0005 }`
 
 ### Requirement: Usage commands
-(P1) The system SHALL provide `/cost` (session and descendants: tokens by class, cost, cache hit rate), `/status` (model, mode, agent, context window use, sandbox state, account, MCP and LSP summary), `/usage` (the current Session tree's breakdown, configured Budgets, provider-reported limits and contributing factors for the last 24 hours or 7 days) and `/stats` (activity, streaks and per-model totals for all time, the last 7 days and the last 30 days). In the TUI these SHALL open the matching tab of the Settings panel. It SHALL also provide `cyber stats [--days N] [--models] [--tools] [--project <id>] [--plugins] [--format json]`.
+(P1) The system SHALL provide `/cost` (session and descendants: tokens by class, cost, cache hit rate), `/status` (model, mode, agent, context window use, sandbox state, account, MCP and LSP summary), `/usage` (the current Session tree's breakdown, configured Budgets, provider-reported limits and contributing factors for the last 24 hours or 7 days) and `/stats` (activity, streaks and per-model totals for all time, the last 7 days and the last 30 days). In the TUI these SHALL open the matching tab of the Settings panel. It SHALL also provide `cyber stats [--days N] [--models] [--tools] [--by origin] [--project <id>] [--plugins] [--format json]`.
+
+`--by origin` SHALL report the usage origins defined by `cross-session-messaging` → Usage attribution.
 
 #### Scenario: Stats for a week
 - **WHEN** the user runs `cyber stats --days 7 --models`

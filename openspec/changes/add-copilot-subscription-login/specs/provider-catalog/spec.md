@@ -16,7 +16,7 @@
   - `Editor-Version: cyber/<version>`,
   - `Openai-Intent: conversation-edits`,
   - `X-Initiator`: `user` for the first model call after a promoted user prompt (an input with `source` `user`, an MCP server prompt the user ran as a slash command, or a `/loop` iteration), and `agent` for every other model call: later calls of the same Turn, calls a tool or hook makes during it (prompt hook checks, `webfetch` summaries, MCP sampling), the first call of a Turn another source opens (Job and monitor handbacks, cross-Session, channel and team messages, workflow results, hook rows, child Sessions' tasks), titles, compaction and recaps.
-  
+
   Requests with image input SHALL also carry `Copilot-Vision-Request: true`.
 - **Protocol:** the Copilot protocol SHALL NOT be selectable through `api.kind` or models.dev data.
 
