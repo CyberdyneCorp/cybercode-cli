@@ -602,17 +602,29 @@ impl RunHost {
         prepared.record.id = resumed
             .clone()
             .unwrap_or_else(|| cyber_core::ids::new_id("agt"));
-        // A resumed child keeps its checkout; a new one is the run's next start ordinal.
-        let worktree = (resumed.is_none() && self.isolates(&prepared.isolation)).then(|| {
-            let mut tree = RunWorktree::new(&self.run_id, self.started.get());
+        // Keep the planned checkout even if the interruption preceded child creation.
+        // The tool host ignores this plan when it resumes an existing child, but needs
+        // it when no child was created; otherwise that fallback would run in the owner.
+        let mut worktree = match resumed.as_deref() {
+            Some(id) => self.recorded_worktree(id, &key)?,
+            None => self
+                .isolates(&prepared.isolation)
+                .then(|| RunWorktree::new(&self.run_id, self.started.get())),
+        };
+        if resumed.is_some()
+            && matches!(prepared.isolation, Isolation::Worktree)
+            && worktree.is_none()
+        {
+            return Err(failed("the isolated agent has no recorded worktree plan"));
+        }
+        if let Some(tree) = &mut worktree {
             tree.base = self.solve_base.clone();
             tree.common_dir = self.solve_base.as_ref().and_then(|_| {
                 self.args["solve_admission"]["base"]["common_dir"]
                     .as_str()
                     .map(str::to_owned)
             });
-            tree
-        });
+        }
         prepared.record.branch = worktree.as_ref().map(|tree| tree.branch.clone());
         self.record_agent(AGENT_STARTED, &prepared.record, seq, None)?;
         if let Some(release) = &release {
@@ -630,6 +642,35 @@ impl RunHost {
         }
         let outcome = self.budget_failure(outcome);
         self.settle(prepared, seq, outcome)
+    }
+
+    /// Recover the original naming ordinal from the durable, host-generated branch.
+    /// A resumed call must never pick a new checkout or lose its isolation choice.
+    fn recorded_worktree(&self, id: &str, key: &str) -> Result<Option<RunWorktree>, Diagnostic> {
+        let runtime = self
+            .runtime
+            .upgrade()
+            .ok_or_else(|| failed("the server is shutting down"))?;
+        let record = runtime
+            .workflow_agents(&self.run_id)
+            .map_err(|error| failed(error.to_string()))?
+            .into_iter()
+            .find(|record| record.id == id && record.call_key == key)
+            .ok_or_else(|| failed("the resumed agent has no matching start record"))?;
+        let Some(branch) = record.branch else {
+            return Ok(None);
+        };
+        let index = branch
+            .rsplit('/')
+            .next()
+            .and_then(|index| index.parse::<u64>().ok())
+            .filter(|index| *index > 0)
+            .ok_or_else(|| failed("the recorded worktree branch is invalid"))?;
+        let tree = RunWorktree::new(&self.run_id, index);
+        if tree.branch != branch {
+            return Err(failed("the recorded worktree belongs to another run"));
+        }
+        Ok(Some(tree))
     }
 
     /// The call's place in its prompt-prefix group; a resumed agent continues at once.

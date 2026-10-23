@@ -965,6 +965,39 @@ async fn a_changed_script_fails_closed_without_a_revision_and_reuses_matching_ca
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn resuming_an_uncreated_isolated_child_keeps_its_planned_worktree() {
+    let agents = Arc::new(Agents::default());
+    let f = fixture(&agents);
+    let owner = f.session("default").await;
+    let run = f
+        .start(
+            &owner,
+            "export default async () => await agent('hold isolated', {isolation: 'worktree'});",
+        )
+        .await;
+    eventually("isolated admission before creating a child", || {
+        agents.holding.load(Ordering::SeqCst) == 1
+    })
+    .await;
+    let first = agents.seen()[0].clone();
+    assert!(first.worktree.is_some());
+    f.runtime.stop_workflow_run(&run.id).await.unwrap();
+    f.quiet(&run.id).await;
+    agents.release();
+    f.resume(&run.id, None, false).await.unwrap();
+    let ended = f.settled(&run.id).await;
+    assert_eq!(ended.status, WorkflowRunStatus::Completed);
+    let resumed = agents.seen()[1].clone();
+    assert!(resumed.resume);
+    assert_eq!(resumed.agent_id, first.agent_id);
+    assert_eq!(resumed.worktree, first.worktree);
+    assert_eq!(
+        f.runtime.workflow_agents(&run.id).unwrap()[0].branch,
+        first.worktree.map(|tree| tree.branch)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn stop_cancels_agents_and_resume_waits_for_agents_still_exiting() {
     let agents = Arc::new(Agents::default());
     let f = fixture(&agents);

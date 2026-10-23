@@ -66,6 +66,10 @@ Verified workflows produce reviewable candidate patches with host-recorded check
 - **WHEN** the server restarts after checks are recorded and before judging
 - **THEN** resume reuses those checks only for their exact recorded source/check identities and starts no duplicate solver
 
+#### Scenario: Restart before an isolated child exists
+- **WHEN** the server stops after recording an isolated solver start but before its child Session is created
+- **THEN** resume retains the recorded worktree plan and pinned base, or fails closed; it never creates the solver in the owner checkout
+
 #### Scenario: Budget stops an attempt
 - **WHEN** the soft budget blocks new dispatch after two candidates settle
 - **THEN** the report preserves their evidence, lists the remaining work as incomplete and discloses actual recorded spend and pricing limits
