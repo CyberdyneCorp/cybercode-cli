@@ -1539,6 +1539,9 @@ mod mouse_tests {
 
     use crate::app::App;
 
+    // Unix terminals get escape sequences; on Windows crossterm may use the console
+    // API instead, which writes nothing to the buffer.
+    #[cfg(unix)]
     #[test]
     fn capture_turns_on_the_terminal_mouse_reports_and_off_again() {
         let mut on = Vec::new();
