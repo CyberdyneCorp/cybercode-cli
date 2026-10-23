@@ -394,6 +394,50 @@ impl Out {
         code
     }
 
+    /// The result of a `cyber review` run of the `review` Workflow: its findings (partial
+    /// when a budget stopped it) in the review result shape, or its error.
+    pub fn review_run_finish(
+        mut self,
+        run: &Value,
+        code: u8,
+        started: Instant,
+        args: &ExecArgs,
+        session: &Value,
+    ) -> u8 {
+        let target = self.review.take().map(|review| review.target);
+        let mut result = run_summary(run, &self.session_id, code, started);
+        if let Some(target) = &target {
+            target_fields(&mut result, &target.normalized(), Some(target.kind()));
+        }
+        let (code, text) = match run_findings(run, code) {
+            Ok((findings, value)) => {
+                let partial = value["partial"] == true;
+                result["reviewed"] = json!(!partial);
+                result["findings"] = json!(findings.findings);
+                result["limitations"] = json!(findings.limitations);
+                result["counts"] = json!(findings.counts());
+                result["refuted"] = value["refuted"].clone();
+                result["partial"] = json!(partial);
+                result["result"] = value["summary"].clone();
+                (code, findings.render_text())
+            }
+            Err(message) => {
+                let code = if code == 0 { super::EXIT_ERROR } else { code };
+                self.error(&message);
+                result["error"] = json!(message);
+                result["stop_reason"] = json!(if code == super::EXIT_INTERRUPTED {
+                    "interrupted"
+                } else {
+                    "error"
+                });
+                result["exit_code"] = json!(code);
+                (code, String::new())
+            }
+        };
+        self.emit(result, &text, args, session);
+        code
+    }
+
     /// The settled reviewer delegation and its Job, when the command forked.
     pub fn review_job(&mut self, delegation: Option<&str>, fork: Option<ForkOutcome>) {
         if let Some(review) = &mut self.review {
@@ -635,6 +679,56 @@ impl Out {
             eprintln!("session: {}", self.session_id);
         }
     }
+}
+
+/// The fields every `cyber review` run result carries.
+fn run_summary(run: &Value, session: &str, code: u8, started: Instant) -> Value {
+    let stop_reason = match (run["status"].as_str(), code) {
+        (_, super::EXIT_INTERRUPTED) => "interrupted",
+        (Some("completed"), _) => "end_turn",
+        (Some("budget_exceeded"), _) => "budget_exceeded",
+        _ => "error",
+    };
+    json!({
+        "result": "",
+        "run_id": run["id"],
+        "session_id": session,
+        "usage": {"tokens": run["tokens"]},
+        "cost_usd": run["cost_usd"],
+        "duration_ms": started.elapsed().as_millis() as u64,
+        "stop_reason": stop_reason,
+        "error": null,
+        "exit_code": code,
+    })
+}
+
+/// The validated findings of a completed or budget-stopped `review` run, and its result.
+fn run_findings(run: &Value, code: u8) -> Result<(Findings, Value), String> {
+    let value = &run["result"];
+    let ended = matches!(
+        run["status"].as_str(),
+        Some("completed" | "budget_exceeded")
+    );
+    if !ended || code == super::EXIT_INTERRUPTED || !value.is_object() {
+        let error = &run["error"];
+        return Err(match (error["kind"].as_str(), error["message"].as_str()) {
+            (Some(kind), Some(message)) if !message.starts_with(kind) => {
+                format!("{kind}: {message}")
+            }
+            (_, Some(message)) => message.to_owned(),
+            _ if value.is_null() && run["result_file"].is_string() => format!(
+                "the review result is in {}",
+                run["result_file"].as_str().unwrap_or_default()
+            ),
+            _ => format!(
+                "the review run ended {}",
+                run["status"].as_str().unwrap_or("without a result")
+            ),
+        });
+    }
+    Findings::from_workflow_result(value)
+        .map(|findings| (findings, value.clone()))
+        .map_err(|error| error.to_string())
 }
 
 /// `cyber review`: the target and, once the run settled, the reviewer Job.

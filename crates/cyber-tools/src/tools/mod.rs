@@ -34,7 +34,7 @@ mod terminal;
 mod tool_search;
 mod web;
 pub(crate) mod websearch;
-mod workflow;
+pub(crate) mod workflow;
 mod worktree;
 
 use cyber_llm::ToolSpec;

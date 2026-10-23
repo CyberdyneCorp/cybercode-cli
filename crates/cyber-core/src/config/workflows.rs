@@ -43,6 +43,8 @@ pub struct WorkflowSettings {
     /// Start agents of a fan-out that share a prompt prefix after the first one's first
     /// response, so they read its cached prefix (`Prompt-cache warm-up for fan-out`).
     pub prompt_cache_warmup: bool,
+    /// Offer the Workflows bundled with the binary (`Saved and bundled workflows`).
+    pub bundled: bool,
     /// QuickJS heap limit per run.
     pub max_memory_mb: u32,
     /// Synchronous script CPU per run, excluding time awaiting host calls.
@@ -71,6 +73,7 @@ impl Default for WorkflowSettings {
             max_running_runs: 8,
             resume_after_restart: false,
             prompt_cache_warmup: true,
+            bundled: true,
             max_memory_mb: 256,
             script_cpu_seconds: 60,
             tiers,
@@ -108,6 +111,7 @@ impl WorkflowSettings {
                 "auto" => settings.auto = auto(value)?,
                 "resume_after_restart" => settings.resume_after_restart = boolean(key, value)?,
                 "prompt_cache_warmup" => settings.prompt_cache_warmup = boolean(key, value)?,
+                "bundled" => settings.bundled = boolean(key, value)?,
                 "max_concurrent_per_run" => {
                     settings.max_concurrent_per_run = (!value.is_null())
                         .then(|| integer(key, value))

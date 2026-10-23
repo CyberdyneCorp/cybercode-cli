@@ -155,7 +155,8 @@ fn lifecycle(error: RuntimeError) -> ApiError {
     }
 }
 
-fn start_error(error: StartError) -> ApiError {
+/// A run that cannot start, as the API reports it.
+pub fn start_error(error: StartError) -> ApiError {
     match error {
         StartError::Module(error) => diagnostic(error),
         StartError::NotFound(_) => ApiError::not_found("WorkflowNotFoundError", error.to_string()),
@@ -178,9 +179,17 @@ async fn start(
             ));
         }
     };
+    let owner_turn = owner_context(&owner);
     state
         .services
-        .authorize_workflow_run(&owner_context(&owner), &module)?;
+        .authorize_workflow_run(&owner_turn, &module)?;
+    let args = body
+        .args
+        .unwrap_or_else(|| Value::Object(Default::default()));
+    let args = state
+        .services
+        .prepare_workflow_args(&owner_turn, &module, args)
+        .await?;
     let settings = state.services.workflow_location(&location)?;
     let budget = workflow_start::client_budget(&settings, &module, body.budget.as_ref())
         .map_err(start_error)?;
@@ -191,9 +200,7 @@ async fn start(
         .runtime
         .start_workflow_run(StartWorkflowRun {
             module,
-            args: body
-                .args
-                .unwrap_or_else(|| Value::Object(Default::default())),
+            args,
             session_id: owner.id,
             limits: settings.limits,
             tiers: settings.tiers,
@@ -246,6 +253,9 @@ async fn save(
 struct LibraryQuery {
     /// The Location; the request's when absent.
     directory: Option<String>,
+    /// Include each entry's module source.
+    #[serde(default)]
+    source: bool,
 }
 
 /// The Workflow library of a Location (`workflows` → Workflow library over HTTP).
@@ -259,7 +269,13 @@ async fn library(
             .map_err(|_| ApiError::invalid(format!("no such directory: {directory}")))?,
         None => location(&parts, &state.options.default_directory)?,
     };
-    state.services.workflow_library(&directory).map(Json)
+    let mut library = state.services.workflow_library(&directory)?;
+    if !query.source {
+        for entry in &mut library.workflows {
+            entry.source = None;
+        }
+    }
+    Ok(Json(library))
 }
 
 /// `status=running,queued`: each name a run status.
@@ -371,9 +387,9 @@ async fn stop(
     Ok(Json(Data { data: run }))
 }
 
-/// Relaunch through replay. Saved Workflows and an inline script's `script_file` are read
-/// again, so an edit needs `revision: true`; an inline run whose file is gone runs its
-/// stored source.
+/// Relaunch through replay. Saved Workflows, bundled ones (as this build ships them) and
+/// an inline script's `script_file` are read again, so a change needs `revision: true`; an
+/// inline run whose file is gone runs its stored source.
 async fn resume(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -415,6 +431,7 @@ async fn relaunch(
     let location = std::path::PathBuf::from(&run.directory);
     let module = match run.origin["kind"].as_str() {
         Some("saved") => services.saved_workflow(&location, &run.name)?,
+        Some("bundled") => bundled_module(run)?,
         _ => WorkflowModule::inline(inline_source(runtime, run)?).map_err(diagnostic)?,
     };
     let owner = runtime.state(&run.session_id).await?.info;
@@ -430,6 +447,19 @@ async fn relaunch(
         revision: false,
         share,
     })
+}
+
+/// The bundled Workflow a run started from, as this build ships it.
+fn bundled_module(run: &WorkflowRun) -> Result<WorkflowModule, ApiError> {
+    let name = run.origin["name"].as_str().unwrap_or(&run.name);
+    cyber_workflow::bundled::module(name)
+        .cloned()
+        .ok_or_else(|| {
+            ApiError::not_found(
+                "WorkflowNotFoundError",
+                format!("This build has no bundled Workflow named {name:?}"),
+            )
+        })
 }
 
 /// How the runtime rebuilds runs after a restart (`workflows` → Recovery of several runs):

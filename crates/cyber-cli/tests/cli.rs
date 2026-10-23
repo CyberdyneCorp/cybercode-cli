@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 #[path = "../../cyber-app/tests/support/scripted_model.rs"]
 mod scripted_model;
@@ -145,31 +145,7 @@ fn workflows_list_shows_saved_workflows_with_project_overrides_and_parse_errors(
         .output()
         .unwrap();
     assert!(o.status.success(), "{}", stderr(&o));
-    let text = stdout(&o);
-    let lines: Vec<&str> = text.lines().collect();
-    assert!(
-        lines.iter().any(|l| l.starts_with("audit")
-            && l.contains("[project]")
-            && l.contains("Audit auth endpoints")),
-        "{text}"
-    );
-    assert!(
-        lines.iter().any(|l| l.starts_with("plan")
-            && l.contains("[global]")
-            && l.contains("Plan from angles")),
-        "{text}"
-    );
-    assert!(
-        lines
-            .iter()
-            .any(|l| l.starts_with("review") && l.contains("Multi-angle review")),
-        "{text}"
-    );
-    assert!(!text.contains("Global audit"), "{text}");
-    assert!(
-        text.contains("computed.js: ParseError: meta must be a pure literal (2:29)"),
-        "{text}"
-    );
+    assert_list_rows(&stdout(&o), &global.join("audit.js"));
 
     let o = env
         .command(&["workflows", "list", "--format", "json"])
@@ -177,21 +153,170 @@ fn workflows_list_shows_saved_workflows_with_project_overrides_and_parse_errors(
         .output()
         .unwrap();
     assert!(o.status.success(), "{}", stderr(&o));
-    let listing = json(&o);
-    let names: Vec<&str> = listing["workflows"]
+    assert_list_json(&json(&o));
+}
+
+/// The cells of `name`'s row in `workflows list` output.
+fn list_row(text: &str, name: &str) -> Vec<String> {
+    text.lines()
+        .find(|l| l.starts_with(&format!("{name} ")))
+        .unwrap_or_else(|| panic!("no row for {name}: {text}"))
+        .split("  ")
+        .map(str::trim)
+        .filter(|cell| !cell.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn assert_list_rows(text: &str, global_audit: &Path) {
+    assert!(text.starts_with("NAME"), "{text}");
+    let audit = list_row(text, "audit");
+    assert_eq!(audit[1], "project", "{text}");
+    assert!(audit[2].starts_with("Audit auth endpoints"), "{text}");
+    assert_eq!(
+        audit[3],
+        format!("(shadows bundled:audit, {})", global_audit.display())
+    );
+    for (name, origin) in [
+        ("plan", "global"),
+        ("review", "project"),
+        ("migrate", "bundled"),
+        ("research", "bundled"),
+    ] {
+        assert_eq!(list_row(text, name)[1], origin, "{text}");
+    }
+    assert!(!text.contains("Global audit"), "{text}");
+    assert!(
+        text.contains("computed.js: ParseError: meta must be a pure literal (2:29)"),
+        "{text}"
+    );
+}
+
+fn listed_names(listing: &Value) -> Vec<(String, String)> {
+    listing["workflows"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|w| w["name"].as_str().unwrap())
-        .collect();
-    assert_eq!(names, ["audit", "plan", "review"]);
+        .map(|w| {
+            (
+                w["name"].as_str().unwrap().to_owned(),
+                w["origin"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+
+fn assert_list_json(listing: &Value) {
+    let names: Vec<String> = listed_names(listing).into_iter().map(|(n, _)| n).collect();
+    assert_eq!(names, ["audit", "migrate", "plan", "research", "review"]);
     let audit = &listing["workflows"][0];
+    assert_eq!(audit["origin"], "project");
     assert_eq!(audit["scope"], "project");
     assert_eq!(audit["phases"][0]["title"], "Scan");
     assert!(audit["digest"].as_str().unwrap().starts_with("sha256:"));
-    assert_eq!(audit["shadowed"].as_array().unwrap().len(), 1);
+    assert_eq!(audit["shadowed"].as_array().unwrap().len(), 2);
+    assert_eq!(listing["workflows"][1]["origin"], "bundled");
+    assert_eq!(listing["workflows"][1]["path"], Value::Null);
     assert_eq!(listing["issues"][0]["diagnostic"]["kind"], "ParseError");
     assert_eq!(listing["issues"][0]["diagnostic"]["position"]["line"], 2);
+}
+
+/// `workflows` → Saved and bundled workflows: a fresh install lists the five bundled
+/// Workflows, and `show` prints one with its estimate and args (the source with
+/// `--source`).
+#[test]
+fn bundled_workflows_are_listed_and_shown() {
+    let env = Env::new();
+    let repo = env.repo("{}");
+    let run = |args: &[&str]| env.command(args).current_dir(&repo).output().unwrap();
+
+    let o = run(&["workflows", "list", "--format", "json"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    let entries = listed_names(&json(&o));
+    let expected: Vec<(String, String)> = ["audit", "migrate", "plan", "research", "review"]
+        .iter()
+        .map(|name| ((*name).to_owned(), "bundled".to_owned()))
+        .collect();
+    assert_eq!(entries, expected);
+
+    let o = run(&["workflows", "show", "review"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    let shown = stdout(&o);
+    assert!(shown.starts_with("review  (bundled)"), "{shown}");
+    assert!(shown.contains("estimate: lenses × diff groups"), "{shown}");
+    assert!(shown.contains("\"max_findings\""), "{shown}");
+    assert!(!shown.contains("function dedupFindings"), "{shown}");
+    let o = run(&["workflows", "show", "review", "--source"]);
+    assert!(stdout(&o).contains("function dedupFindings"));
+}
+
+/// `eject` copies a bundled Workflow into the project, where the copy then overrides the
+/// bundled one; it refuses to overwrite an existing file and names it.
+#[test]
+fn an_ejected_workflow_overrides_the_bundled_one_and_is_never_overwritten() {
+    let env = Env::new();
+    let repo = env.repo("{}");
+    let run = |args: &[&str]| env.command(args).current_dir(&repo).output().unwrap();
+
+    let o = run(&["workflows", "eject", "audit"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    let ejected = repo.join(".cyber/workflows/audit.js");
+    let source = std::fs::read_to_string(&ejected).unwrap();
+    std::fs::write(&ejected, source.replace("Codebase-wide bug", "Edited bug")).unwrap();
+    let listing = json(&run(&["workflows", "list", "--format", "json"]));
+    let audit = &listing["workflows"][0];
+    assert_eq!(audit["origin"], "project");
+    assert!(
+        audit["description"]
+            .as_str()
+            .unwrap()
+            .starts_with("Edited bug")
+    );
+    assert_eq!(audit["shadowed"], json!(["bundled:audit"]));
+
+    let o = run(&["workflows", "eject", "audit"]);
+    assert_eq!(o.status.code(), Some(1));
+    assert!(
+        stderr(&o).contains(&ejected.display().to_string()),
+        "{}",
+        stderr(&o)
+    );
+    assert!(
+        std::fs::read_to_string(&ejected)
+            .unwrap()
+            .contains("Edited bug")
+    );
+    assert_eq!(run(&["workflows", "eject", "nope"]).status.code(), Some(1));
+}
+
+/// `workflows.bundled: false` and `CYBER_DISABLE_BUNDLED_WORKFLOWS=1` hide the bundled
+/// Workflows.
+#[test]
+fn bundled_workflows_can_be_turned_off() {
+    let env = Env::new();
+    let repo = env.repo("{}");
+    let count = |command: &mut Command| {
+        let o = command.current_dir(&repo).output().unwrap();
+        json(&o)["workflows"].as_array().unwrap().len()
+    };
+    std::fs::create_dir_all(repo.join(".cyber")).unwrap();
+    std::fs::write(
+        repo.join(".cyber/cyber.jsonc"),
+        r#"{"workflows": {"bundled": false}}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        count(&mut env.command(&["workflows", "list", "--format", "json"])),
+        0
+    );
+    std::fs::remove_file(repo.join(".cyber/cyber.jsonc")).unwrap();
+    let mut disabled = env.command(&["workflows", "list", "--format", "json"]);
+    disabled.env("CYBER_DISABLE_BUNDLED_WORKFLOWS", "1");
+    assert_eq!(count(&mut disabled), 0);
+    assert_eq!(
+        count(&mut env.command(&["workflows", "list", "--format", "json"])),
+        5
+    );
 }
 
 /// A shared server the test started through the CLI, stopped when the test ends.

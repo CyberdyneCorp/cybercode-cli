@@ -2687,9 +2687,14 @@ fn review_reply(body: &serde_json::Value) -> serde_json::Value {
 }
 
 fn git_in(repo: &std::path::Path, args: &[&str]) {
+    // A test run inside `git bisect run` inherits GIT_DIR, which `-C` does not override:
+    // the test would then commit to and configure the enclosing checkout.
     let status = std::process::Command::new("git")
         .arg("-C")
         .arg(repo)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .args(args)
         .status()
         .unwrap();
@@ -2801,6 +2806,192 @@ async fn review_against_app_server_renders_findings_and_ignores_unrelated_jobs()
         "{:?}",
         app.toast
     );
+    server.host.runtime.shutdown().await;
+}
+
+/// The review run fetches among an event's actions (run events also refresh monitors).
+fn run_fetches(actions: Vec<Action>) -> Vec<Action> {
+    actions
+        .into_iter()
+        .filter(|action| matches!(action, Action::ReviewRun { .. }))
+        .collect()
+}
+
+fn review_run(id: &str, status: &str, result: serde_json::Value) -> serde_json::Value {
+    json!({"id": id, "name": "review", "status": status, "result": result,
+        "error": if status == "failed" { json!({"kind": "ExecutionFailure", "message": "every reviewer failed: x"}) } else { json!(null) }})
+}
+
+fn run_findings(partial: bool) -> serde_json::Value {
+    let finding = |file: &str, line: u64, severity: &str| {
+        json!({"file": file, "line": line, "severity": severity, "summary": "s",
+            "failure_scenario": "f"})
+    };
+    json!({"summary": "2 findings", "findings": [finding("b.rs", 3, "low"), finding("a.rs", 1, "critical")],
+        "limitations": ["reviewer: no tests ran"], "refuted": 1, "partial": partial, "stats": {}})
+}
+
+/// `workflows` → Bundled workflow contracts: with a `review` Workflow in the library,
+/// `/review` starts a run of it, follows the run's end and shows its findings.
+#[test]
+fn review_runs_the_review_workflow_when_the_library_has_one() {
+    let mut app = App::new(session(false), vec![], "cyber");
+    app.review.set_workflow(true);
+    typed(&mut app, "/review main..HEAD");
+    app.completion = None;
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        vec![Action::StartReview {
+            arguments: "main..HEAD".into()
+        }]
+    );
+    assert!(app.review_started("run_1").is_empty());
+    let other = json!({"id": "run_other"});
+    assert!(run_fetches(app.on_event("workflow.run.completed.1", &other)).is_empty());
+    let fetch = run_fetches(app.on_event("workflow.run.completed.1", &json!({"id": "run_1"})));
+    assert_eq!(
+        fetch,
+        vec![Action::ReviewRun {
+            run: "run_1".into()
+        }]
+    );
+    app.review_run(&review_run("run_1", "completed", run_findings(false)));
+    assert!(matches!(app.overlay, Overlay::Findings));
+    let shown = screen(&app);
+    let at = |needle: &str| {
+        shown
+            .find(needle)
+            .unwrap_or_else(|| panic!("{needle}:\n{shown}"))
+    };
+    assert!(at("a.rs:1") < at("b.rs:3"));
+    assert!(shown.contains("no tests ran"), "{shown}");
+    assert!(!shown.contains("partial"), "{shown}");
+    // An invalid target is refused locally, as on the skill path.
+    app.on_key(key(KeyCode::Esc));
+    typed(&mut app, "/review HEAD@{1}");
+    app.completion = None;
+    assert!(app.on_key(key(KeyCode::Enter)).is_empty());
+}
+
+/// The run may end before its start's response arrives; a budget-stopped run shows its
+/// partial findings, and a failed run its error.
+#[test]
+fn a_review_run_that_ends_early_partially_or_fails_is_reported() {
+    let mut app = App::new(session(false), vec![], "cyber");
+    app.review.set_workflow(true);
+    typed(&mut app, "/review");
+    app.completion = None;
+    app.on_key(key(KeyCode::Enter));
+    assert!(run_fetches(app.on_event("workflow.run.failed.1", &json!({"id": "run_2"}))).is_empty());
+    assert_eq!(
+        app.review_started("run_2"),
+        vec![Action::ReviewRun {
+            run: "run_2".into()
+        }]
+    );
+    app.review_run(&review_run("run_2", "budget_exceeded", run_findings(true)));
+    assert!(screen(&app).contains("partial: a budget stopped the review"));
+    app.on_key(key(KeyCode::Esc));
+
+    typed(&mut app, "/review");
+    app.completion = None;
+    app.on_key(key(KeyCode::Enter));
+    app.review_started("run_3");
+    app.on_event("workflow.run.failed.1", &json!({"id": "run_3"}));
+    app.review_run(&review_run("run_3", "failed", json!(null)));
+    assert_eq!(app.overlay, Overlay::None);
+    let toast = &app.toast.as_ref().unwrap().0;
+    assert!(
+        toast.contains("review failed: every reviewer failed"),
+        "{toast}"
+    );
+    // A run nobody awaits is ignored.
+    app.toast = None;
+    app.review_run(&review_run("run_3", "completed", run_findings(false)));
+    assert!(app.toast.is_none() && app.overlay == Overlay::None);
+}
+
+/// Reviewers and verifiers of the `review` Workflow answer with structured results.
+fn workflow_review_reply(body: &serde_json::Value) -> serde_json::Value {
+    let text = body.to_string();
+    let result = |value: serde_json::Value| {
+        json!({"tool_calls":[{"index":0,"id":"call_result","type":"function",
+            "function":{"name":"return_result","arguments":value.to_string()}}]})
+    };
+    if text.contains("Task: verify") {
+        return result(json!({"refuted": false, "evidence": "the patch shows it"}));
+    }
+    if text.contains("Task: review") {
+        return result(
+            json!({"findings":[{"file":"a.rs","line":1,"severity":"high",
+            "summary":"WORKFLOW-FINDING","failure_scenario":"callers break"}],"limitations":[]}),
+        );
+    }
+    json!({"content":"noted"})
+}
+
+/// The production path: the TUI learns from the server that the library has a `review`
+/// Workflow, `/review` starts it, and the findings come from the run's result.
+#[tokio::test]
+async fn review_runs_the_bundled_workflow_against_the_app_server() {
+    use crate::screens::Server;
+    use futures::StreamExt;
+    let mut extra = json!({"permissions":{"agent":"allow","read":"allow"}});
+    if cfg!(windows) {
+        extra["sandbox"] = json!({"policy":"full-access"});
+    }
+    let server = Server::start_reply(workflow_review_reply, json!({"main":{}}), extra, false).await;
+    let repo = server.root().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    git_in(&repo, &["init", "-q"]);
+    git_in(&repo, &["config", "user.email", "t@example.com"]);
+    git_in(&repo, &["config", "user.name", "T"]);
+    std::fs::write(repo.join("a.rs"), "fn a() {}\n").unwrap();
+    git_in(&repo, &["add", "a.rs"]);
+    git_in(&repo, &["commit", "-q", "-m", "init"]);
+    std::fs::write(repo.join("a.rs"), "fn a(x: u8) {}\n").unwrap();
+    let client = server.client.at(&repo.display().to_string());
+    let created = client
+        .post("/sessions", json!({"model":"test/main","mode":"default"}))
+        .await
+        .unwrap();
+    let id = created["data"]["id"].as_str().unwrap().to_owned();
+    let ui = Session {
+        id: id.clone(),
+        directory: repo.display().to_string(),
+        ..Session::default()
+    };
+    let mut app = App::new(ui, Vec::new(), "cyber");
+    let commands = crate::perform::commands(&client).await;
+    crate::runner::apply(&mut app, commands, &mut Default::default());
+    let mut events = Box::pin(client.events(false).await.unwrap());
+    typed(&mut app, "/review");
+    app.completion = None;
+    let mut actions = app.on_key(key(KeyCode::Enter));
+    assert_eq!(
+        actions,
+        vec![Action::StartReview {
+            arguments: String::new()
+        }]
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        loop {
+            while let Some(action) = actions.pop() {
+                let msg = crate::perform::perform(&client, &app.session, action).await;
+                actions.extend(crate::runner::apply(&mut app, msg, &mut Default::default()));
+            }
+            if matches!(app.overlay, Overlay::Findings) {
+                return;
+            }
+            let event = events.next().await.expect("event stream");
+            actions = app.on_event(&event.kind, &event.data);
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("the review findings were never shown: {:?}", app.toast));
+    let shown = screen(&app);
+    assert!(shown.contains("WORKFLOW-FINDING"), "{shown}");
+    assert!(shown.contains("a.rs:1"), "{shown}");
     server.host.runtime.shutdown().await;
 }
 

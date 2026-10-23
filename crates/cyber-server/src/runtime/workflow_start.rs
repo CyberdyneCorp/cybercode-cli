@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use cyber_core::budget::RunBudget;
 use cyber_core::config::{TierTarget, WorkflowSettings};
+use cyber_core::env::EnvSource;
 use cyber_llm::catalog::{ModelRole, tier_role_ref};
 use cyber_workflow::{Diagnostic, Entry, Limits, Listing, Origin, Scope, WorkflowModule};
 use serde::Serialize;
@@ -83,23 +84,51 @@ pub fn tier_model(config: &Value, target: &TierTarget) -> Option<String> {
     }
 }
 
-/// The Workflows a Location can run by name: global, then project directories from the
-/// project root down to the Location. `project_config: false` skips project directories
-/// (`CYBER_DISABLE_PROJECT_CONFIG`).
-pub fn discover(global_config_dir: &Path, location: &Path, project_config: bool) -> Listing {
-    let project_root = cyber_core::config::project_root(location);
-    let project = project_config.then_some((location, project_root.as_path()));
-    cyber_workflow::discover(&cyber_workflow::roots(global_config_dir, project))
+/// Which Workflow sources a Location's library includes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LibrarySources {
+    /// Project directories; `false` under `CYBER_DISABLE_PROJECT_CONFIG`.
+    pub project: bool,
+    /// The bundled Workflows: `workflows.bundled` and not
+    /// `CYBER_DISABLE_BUNDLED_WORKFLOWS`.
+    pub bundled: bool,
 }
 
-/// The saved Workflow `name` of a Location (see [`discover`]).
+impl LibrarySources {
+    /// The sources a Location's configuration and the environment allow.
+    pub fn of(config: &Value, env: &dyn EnvSource) -> Self {
+        let setting = WorkflowSettings::from_config(config).map_or(true, |s| s.bundled);
+        Self {
+            project: !env.flag("CYBER_DISABLE_PROJECT_CONFIG"),
+            bundled: cyber_workflow::bundled::enabled(
+                setting,
+                env.flag(cyber_workflow::bundled::DISABLE_ENV),
+            ),
+        }
+    }
+}
+
+/// The Workflows a Location can run by name: the bundled ones, then global, then project
+/// directories from the project root down to the Location, each overriding the earlier.
+pub fn discover(global_config_dir: &Path, location: &Path, sources: LibrarySources) -> Listing {
+    let project_root = cyber_core::config::project_root(location);
+    let project = sources
+        .project
+        .then_some((location, project_root.as_path()));
+    cyber_workflow::discover_library(
+        &cyber_workflow::roots(global_config_dir, project),
+        sources.bundled,
+    )
+}
+
+/// The Workflow `name` of a Location's library (see [`discover`]).
 pub fn saved(
     global_config_dir: &Path,
     location: &Path,
     name: &str,
-    project_config: bool,
+    sources: LibrarySources,
 ) -> Result<WorkflowModule, StartError> {
-    discover(global_config_dir, location, project_config)
+    discover(global_config_dir, location, sources)
         .find(name)
         .cloned()
         .ok_or_else(|| StartError::NotFound(name.to_owned()))
@@ -136,6 +165,9 @@ pub struct LibraryEntry {
     pub digest: String,
     /// The definitions this entry replaces, lowest precedence first.
     pub shadowed: Vec<String>,
+    /// The module source, when asked for (`source=true`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 /// Where a library entry comes from.
@@ -146,6 +178,8 @@ pub enum LibraryOrigin {
     Global { path: String },
     /// A `.cyber/workflows` directory of the project.
     Project { path: String },
+    /// Embedded in the binary.
+    Bundled { name: String },
 }
 
 /// A module that failed to load, with its diagnostic.
@@ -181,6 +215,7 @@ fn entry(entry: Entry) -> Option<LibraryEntry> {
                 Scope::Project => LibraryOrigin::Project { path },
             }
         }
+        Origin::Bundled { name } => LibraryOrigin::Bundled { name: name.clone() },
         Origin::Inline => return None,
     };
     let raw = &module.meta.raw;
@@ -202,6 +237,7 @@ fn entry(entry: Entry) -> Option<LibraryEntry> {
             .iter()
             .map(|path| path.display().to_string())
             .collect(),
+        source: Some(module.source.clone()),
     })
 }
 
@@ -219,6 +255,41 @@ pub fn invocation_tools(value: Option<&Value>) -> Result<Vec<String>, StartError
 /// `meta.tools`: the direct read-only tools a module allowlists.
 pub fn meta_tools(module: &WorkflowModule) -> Vec<String> {
     module.meta.tools.clone()
+}
+
+/// Check a run's `args` against the module's `meta.args` JSON Schema before any run record
+/// exists (`workflows` → Bundled workflow contracts). The first violation fails as
+/// `ExecutionFailure: args.<path> …`; a module without `meta.args` takes any object.
+pub fn validate_args(module: &WorkflowModule, args: &Value) -> Result<(), StartError> {
+    if !args.is_object() {
+        return Err(args_error("args", "expected an object"));
+    }
+    let Some(schema) = &module.meta.args else {
+        return Ok(());
+    };
+    let validator = jsonschema::validator_for(schema).map_err(|error| {
+        args_error("meta.args", &format!("is not a valid JSON Schema: {error}"))
+    })?;
+    match validator.iter_errors(args).next() {
+        None => Ok(()),
+        Some(error) => {
+            let path = args_path(&error.instance_path().to_string());
+            Err(args_error(&path, &error.to_string()))
+        }
+    }
+}
+
+/// `args.a.0.b` for the JSON pointer `/a/0/b`.
+fn args_path(pointer: &str) -> String {
+    pointer
+        .split('/')
+        .skip(1)
+        .map(|token| token.replace("~1", "/").replace("~0", "~"))
+        .fold("args".to_owned(), |path, token| format!("{path}.{token}"))
+}
+
+fn args_error(path: &str, message: &str) -> StartError {
+    StartError::Module(Diagnostic::execution(format!("{path}: {message}")))
 }
 
 /// An inline module, checked like a saved one.
@@ -293,6 +364,52 @@ fn positive(value: &Value) -> Option<u32> {
         .as_u64()
         .filter(|n| *n > 0)
         .map(|n| u32::try_from(n).unwrap_or(u32::MAX))
+}
+
+#[cfg(test)]
+mod args_tests {
+    use super::*;
+
+    fn module(args: &str) -> WorkflowModule {
+        WorkflowModule::inline(format!(
+            "export const meta = {{ name: 'm', description: 'd', args: {args} }};"
+        ))
+        .unwrap()
+    }
+
+    fn message(error: StartError) -> String {
+        match error {
+            StartError::Module(diagnostic) => diagnostic.to_string(),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn args_are_validated_against_meta_args_and_name_their_path() {
+        let schema = module(
+            "{ type: 'object', properties: { lenses: { type: 'array', items: { enum: ['a', 'b'] } }, n: { type: 'integer', maximum: 3 } }, required: ['n'], additionalProperties: false }",
+        );
+        assert!(validate_args(&schema, &json!({"n": 2, "lenses": ["a"]})).is_ok());
+        let wrong = message(validate_args(&schema, &json!({"n": 2, "lenses": ["c"]})).unwrap_err());
+        assert!(
+            wrong.starts_with("ExecutionFailure: args.lenses.0: "),
+            "{wrong}"
+        );
+        let big = message(validate_args(&schema, &json!({"n": 9})).unwrap_err());
+        assert!(big.starts_with("ExecutionFailure: args.n: "), "{big}");
+        let missing = message(validate_args(&schema, &json!({})).unwrap_err());
+        assert!(missing.starts_with("ExecutionFailure: args: "), "{missing}");
+        assert!(missing.contains("\"n\""), "{missing}");
+        let not_object = message(validate_args(&schema, &json!([])).unwrap_err());
+        assert_eq!(not_object, "ExecutionFailure: args: expected an object");
+    }
+
+    #[test]
+    fn a_module_without_meta_args_takes_any_object() {
+        let free =
+            WorkflowModule::inline("export const meta = { name: 'm', description: 'd' };").unwrap();
+        assert!(validate_args(&free, &json!({"anything": [1, 2]})).is_ok());
+    }
 }
 
 #[cfg(test)]

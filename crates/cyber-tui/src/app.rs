@@ -113,6 +113,14 @@ pub enum Action {
         session: String,
         delegation: String,
     },
+    /// Start a run of the `review` Workflow for this Session's target.
+    StartReview {
+        arguments: String,
+    },
+    /// Fetch the awaited review run, which ended.
+    ReviewRun {
+        run: String,
+    },
     Interrupt,
     Reply {
         request: String,
@@ -1121,6 +1129,18 @@ impl App {
         self.review_outcome(outcome);
     }
 
+    /// The review run was admitted.
+    pub fn review_started(&mut self, run: &str) -> Vec<Action> {
+        let outcome = self.review.run_started(run);
+        self.review_outcome(outcome)
+    }
+
+    /// The awaited review run, fetched after it ended.
+    pub fn review_run(&mut self, run: &Value) {
+        let outcome = self.review.run_settled(run);
+        self.review_outcome(outcome);
+    }
+
     fn job_ended(&mut self, job: &Value) -> Vec<Action> {
         let outcome = self.review.job_ended(job);
         self.review_outcome(outcome)
@@ -1144,6 +1164,7 @@ impl App {
                     delegation,
                 }];
             }
+            crate::review::Ended::FetchRun(run) => return vec![Action::ReviewRun { run }],
             crate::review::Ended::Unrelated => {}
         }
         Vec::new()
@@ -1667,10 +1688,13 @@ impl App {
             }
             "exit" | "quit" => vec![Action::Quit],
             "review" => match self.review.submit(&self.session.id, args) {
-                Ok(id) => vec![Action::Command {
+                Ok(crate::review::Submit::Command(id)) => vec![Action::Command {
                     name: name.into(),
                     arguments: args.into(),
                     id,
+                }],
+                Ok(crate::review::Submit::Workflow) => vec![Action::StartReview {
+                    arguments: args.into(),
                 }],
                 Err(message) => {
                     self.toast(format!("review: {message}"));
@@ -2031,6 +2055,9 @@ impl App {
         self.delivery_event(kind, data);
         let mut actions = if kind == "job.ended.1" {
             self.job_ended(data)
+        } else if kind.starts_with("workflow.run.") {
+            let outcome = self.review.run_event(kind, data);
+            self.review_outcome(outcome)
         } else if kind.starts_with("session.prompt.admitted") {
             let message = data["message_id"].as_str().unwrap_or_default();
             let outcome = self.review.admitted(message);

@@ -1254,7 +1254,7 @@ export default async function () {
   ```
 
   With `"workflows": { "max_concurrent": 2 }` in the global `cyber.jsonc`, two agents run at a time and the third starts when one ends. Each agent is a child Session of the run's owner Session with `workflow_run_id` set and its `agt_` ID as subagent name; because the three agents of the fan-out can edit files, each gets its own `cyber/run-<id>/<n>` worktree. Add `--max-tokens 50` to see a budget end (`budget_exceeded`, exit `4`; agents still in flight are recorded `cancelled`), or run `cyber workflows stop <run_id>` from another terminal (`stopped`, exit `1` for the waiting command). If the server dies mid-run, the run is `paused` when it comes back; `cyber workflows resume <run_id>` replays settled agents from the store without new model calls and continues the interrupted one in its existing child Session.
-- **Not available yet.** Saved-Workflow listing under `/api/v1/workflows` answers `503 ServiceUnavailableError` with `service: "workflow"`. `ask()`, direct read-only `tools`, prompt-cache warm-up, `exec --workflow`, bundled Workflows (M2.2) and remote runners (P3) are not available yet.
+- **Not available yet.** Reserved budget enforcement (`"enforcement": "reserved"`) and remote runners (P3).
 - **Configuration.** The `workflows` key accepts:
 
   | Key | Default | Range or values |
@@ -1264,6 +1264,7 @@ export default async function () {
   | `max_running_runs` | 8 | 1–64 |
   | `resume_after_restart` | `false` | `true`, `false` |
   | `prompt_cache_warmup` | `true` | `true`, `false` |
+  | `bundled` | `true` | `true`, `false` (also `CYBER_DISABLE_BUNDLED_WORKFLOWS=1`) |
   | `max_memory_mb` | 256 | 16–4096 |
   | `script_cpu_seconds` | 60 | 1–3600 |
   | `auto` | `suggest` | `off`, `suggest`, `on` |
@@ -1274,7 +1275,34 @@ export default async function () {
   Unknown keys and invalid values fail configuration loading.
 - **Sandbox.** Scripts run in QuickJS. They have no filesystem, network, imports, `eval` or `Function`, timers, `WebAssembly`, `WeakRef`, `FinalizationRegistry`, `SharedArrayBuffer` or `Atomics`. `Date.now()`, `Math.random()`, `performance.now()` and `new Date()` with no argument throw. Pass values through `args` instead. Describing an uncaught error counts against `script_cpu_seconds`. A script may have at most 10,000 host calls pending, and their payloads count against `max_memory_mb`; past either bound the call throws `ExecutionFailure` at once. `meta` may nest objects and arrays at most 64 levels deep.
 
-Design and progress: [`implement-m2-1-workflow-runtime`](../openspec/changes/implement-m2-1-workflow-runtime/proposal.md), [`add-parallel-workflow-runs`](../openspec/changes/add-parallel-workflow-runs/proposal.md) and [P2 evidence](implementation/p2-status.md).
+### Bundled Workflows (P2 M2.2)
+
+Five Workflows ship inside the `cyber` binary. They have the lowest precedence: a global (`~/.config/cyber/workflows`) or project (`.cyber/workflows`) module with the same name replaces one, and the listing names what it shadows (`bundled:audit`).
+
+| Workflow | What it does | Args (defaults) | Default budget |
+|---|---|---|---|
+| `review` | Read-only reviewers per lens and diff group (≤ 48 KiB of patch each), then one `verify`-tier refuter per finding | `target` (uncommitted), `lenses` (`correctness`, `security`, `tests`, `maintainability`), `max_findings` (30, ≤ 60), `verify` (`true`) | 24 agents, $2, 30 min |
+| `audit` | Finders per chunk of files (by directory), then `votes` refuters for critical/high findings (majority drops them) and one for the rest | `scope` (`**/*`), `exclude`, `focus` (`both`), `max_files` (400, ≤ 2000), `chunk_files` (12), `votes` (3) | 120 agents, $10, 2 h |
+| `migrate` | One edit-capable agent per batch in its own worktree: it edits, runs the `check` commands and commits on its branch; a verifier reads the branch diff. Nothing is merged; the result suggests `git merge <branches>` | `instructions`, `files` or `pattern` (+ `contains`), `batch_size` (5, ≤ 25), `check`, `confirm_over` (20), `max_batches` (40), `yes` | 80 agents, $15, 4 h |
+| `research` | Searchers per source and angle, readers extracting claims with locations, an independent cross-check per claim, then an answer citing verified claims only | `question`, `sources` (`repo`, `docs`; `web` when the web tools are allowed), `angles` (3, ≤ 6), `max_sources` (12) | 40 agents, $5, 1 h |
+| `plan` | Read-only planners per angle, judges scoring every draft on correctness, completeness, risk, effort and testability, then a merge of the best draft with named grafts | `task`, `angles` (`mvp-first`, `risk-first`, `user-first`), `judges` (3), `context` | 14 agents, $3, 30 min |
+
+```bash
+cyber workflows list                                   # NAME, ORIGIN (bundled/global/project), DESCRIPTION
+cyber workflows show review [--source]                 # meta, args schema, default budget, estimate
+cyber workflows run audit --args '{"scope":"src/auth/**","focus":"security"}' --wait
+cyber exec --workflow plan --args '{"task":"add a cache"}' --format json
+cyber workflows eject audit [--global] [--force]       # copy it to .cyber/workflows/audit.js to customize
+```
+
+- **Args are checked first.** Every surface (HTTP, CLI, the `workflow` tool, the TUI form) validates `args` against the module's `meta.args` JSON Schema before a run exists; a violation fails with `ExecutionFailure: args.<path> …`.
+- **Host preparation.** `review` resolves its `target` with the `/review` resolver under the reviewer's own permissions and passes the diff as `args.diff`; an invalid target, an empty diff or a fully withheld one fails with `ReviewTargetError` (422) and no run. A non-interactive `migrate` (API, CLI, exec) fails up front with `403 PermissionDenied` naming each `edit` and `bash` rule it lacks, since no one could approve its agents. `research` drops `web` with a `limitations` entry when the reviewer may not use `websearch`/`webfetch` here.
+- **Honest results.** Each returns `{summary, …, limitations, partial, stats}`. Every fan-out is capped and what it dropped is logged and listed in `limitations`; an agent failure is a `limitations` entry; when a budget stops new agents the run returns what it has with `partial: true` (`budget_exceeded`, exit 4). A `review` whose every reviewer failed fails instead of passing clean. File, diff and web text reaches agents only inside delimited data blocks.
+- **`/review` and `cyber review`.** When the library has a `review` Workflow and no `review` skill or command overrides the bundled one, both run it: the TUI follows the run and shows its findings (partial ones when a budget stopped it), and `cyber review` exits 0, 4 (partial findings printed) or 1. With the bundled Workflows disabled, the bundled review skill runs as before.
+- **The model and the TUI.** The `workflow.run` approval shows the effective budgets and the module's estimate; the model's context lists the library (bundled first, at most 20) and tells it to prefer an entry over an inline script. In `/workflows`, Tab opens the Library tab: Enter opens an args form prefilled from the defaults and starts the run for the Session, `o` shows the source.
+- **Upgrades.** A bundled run records origin `{kind: "bundled", name}` and the source digest; a release that changes a bundled source is a new revision on resume (`--accept-revision`), as for an edited saved module. `tools.glob` takes `sizes: true` to return each file's size, which `audit` uses to skip files over 256 KiB.
+
+Design and progress: [`implement-m2-1-workflow-runtime`](../openspec/changes/implement-m2-1-workflow-runtime/proposal.md), [`implement-m2-2-bundled-workflows`](../openspec/changes/implement-m2-2-bundled-workflows/proposal.md), [`add-parallel-workflow-runs`](../openspec/changes/add-parallel-workflow-runs/proposal.md) and [P2 evidence](implementation/p2-status.md).
 
 ## Migration detection
 

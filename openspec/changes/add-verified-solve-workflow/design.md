@@ -49,7 +49,7 @@ Verification records are durable, keyed by run, candidate, source digest, check-
 
 ### 6. Library delivery order
 
-Implement the shared M2.2 foundation, then `solve` end to end through CLI and HTTP/SDK, then TUI display. The five originally planned modules remain later library increments. Listings expose only modules that actually ship, with their real origin; no placeholder entry is offered as runnable. The dashboard consumes the public report after it exists.
+Implement the shared M2.2 foundation, then `solve` end to end through CLI and HTTP/SDK, then TUI display. The five originally planned modules already ship (`implement-m2-2-bundled-workflows`), so the foundation is reused, not rebuilt. Listings expose only modules that actually ship, with their real origin; no placeholder entry is offered as runnable. The dashboard consumes the public report after it exists.
 
 ## Verification
 

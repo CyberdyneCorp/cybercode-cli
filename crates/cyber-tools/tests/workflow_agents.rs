@@ -769,11 +769,12 @@ async fn direct_tools_return_structured_results_and_refuse_unattended_asks() {
         "export const meta = {{ name: 'scan', description: 'Scan', tools: ['glob', 'grep', 'read'] }};\n\
          export default async () => {{\n\
            const files = await tools.glob({{ pattern: 'src/*.rs' }});\n\
+           const sized = await tools.glob({{ pattern: 'src/*.rs', sizes: true }});\n\
            const todos = await tools.grep({{ pattern: 'TODO', include: '*.rs' }});\n\
            const page = await tools.read({{ path: 'src/a.rs', limit: 1 }});\n\
            let refused = null;\n\
            try {{ await tools.glob({{ pattern: '*', path: {:?} }}); }} catch (e) {{ refused = `${{e.kind}}: ${{e.message}}`; }}\n\
-           return {{ files, todos, page, refused }};\n\
+           return {{ files, sized, todos, page, refused }};\n\
          }};\n",
         outside.path().display().to_string()
     );
@@ -798,6 +799,10 @@ async fn direct_tools_return_structured_results_and_refuse_unattended_asks() {
     assert_eq!(
         result["files"],
         json!({"paths": ["src/a.rs", "src/b.rs"], "truncated": false})
+    );
+    assert_eq!(
+        result["sized"],
+        json!({"paths": ["src/a.rs", "src/b.rs"], "sizes": [20, 20], "truncated": false})
     );
     assert_eq!(
         result["todos"]["matches"],

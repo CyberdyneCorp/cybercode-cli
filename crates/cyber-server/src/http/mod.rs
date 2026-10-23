@@ -41,6 +41,7 @@ mod teams;
 mod usage;
 pub mod vcs;
 mod workflows;
+pub use workflows::start_error as workflow_start_error;
 pub mod worktrees;
 pub use workflows::{ServicesRelaunch, WorkflowLocation};
 
@@ -499,6 +500,22 @@ pub trait Services: Send + Sync {
             "workflow",
             "Workflow Runs are unavailable in this host",
         ))
+    }
+    /// The `args` a run of `module` starts with (`workflows` → Bundled workflow contracts):
+    /// checked against `meta.args`, then prepared by the host as `meta.prepare` names
+    /// (a review target's diff, a migration's permissions, a research run's web access).
+    /// Fails before any run record exists. Hosts without preparation only validate.
+    fn prepare_workflow_args<'a>(
+        &'a self,
+        _owner: &'a crate::runtime::TurnContext,
+        module: &'a cyber_workflow::WorkflowModule,
+        args: serde_json::Value,
+    ) -> BoxFuture<'a, Result<serde_json::Value, ApiError>> {
+        Box::pin(async move {
+            crate::runtime::workflow_start::validate_args(module, &args)
+                .map_err(workflows::start_error)?;
+            Ok(args)
+        })
     }
     /// The saved Workflow named `name` for a Location (`workflows` → Saved and bundled
     /// workflows).

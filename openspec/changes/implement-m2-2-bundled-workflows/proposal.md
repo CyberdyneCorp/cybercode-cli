@@ -1,6 +1,6 @@
 ## Delivery update (2026-10-22)
 
-The first delivery slice is now the shared library foundation plus [`solve`](../add-verified-solve-workflow/proposal.md): independent model attempts, authoritative checks and an independent recommendation. Reuse sections 1–4 of this change as needed; the five original modules remain planned later increments, not prerequisites for shipping `solve`. The detailed `solve` contracts, design and tests live in that sibling change. "Five modules" below refers to this change's original module scope; the combined target library has six. A release lists only modules that actually ship.
+The five original modules shipped first. The next library slice is [`solve`](../add-verified-solve-workflow/proposal.md): independent model attempts, authoritative checks and an independent recommendation; it reuses sections 1–4 of this change, and its contracts, design and tests live in that sibling change. "Five modules" below refers to this change's original module scope; the combined target library has six. A release lists only modules that actually ship.
 
 ## Why
 

@@ -1,7 +1,7 @@
 ## 1. Review and shared library foundation
 
 - [ ] 1.1 Review proposal, design, delta scenarios and the clean-checkout/soft-budget limits before runtime implementation.
-- [ ] 1.2 Implement or reuse M2.2 sections 1–4: embedded origin, discovery/overrides, args schemas, library HTTP/CLI/SDK, approvals and bounded results. Ship only implemented modules in listings.
+- [ ] 1.2 Implement or reuse M2.2 sections 1–4: embedded origin, discovery/overrides, args schemas, library HTTP/CLI/SDK, approvals and bounded results. Ship only implemented modules in listings. (The foundation exists: `implement-m2-2-bundled-workflows` shipped it with the five original modules.)
 - [ ] 1.3 Add `solve` schema/defaults, model resolution and captured base identity; reject invalid inputs, missing models and dirty/non-Git bases before any child starts.
 
 ## 2. Isolated candidates

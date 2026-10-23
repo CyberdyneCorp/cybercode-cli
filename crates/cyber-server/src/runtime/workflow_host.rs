@@ -1193,10 +1193,25 @@ async fn reopen(runtime: &WeakRuntime, owner: &str, agent_id: &str) -> Result<()
 }
 
 /// What `await agent(...)` resolves to: the validated object for a schema, else
-/// `{ text, session_id, cost, tokens }`.
+/// `{ text, session_id, cost, tokens }`. An isolated agent's result includes its `branch`
+/// either way (`workflows` → Write isolation for concurrent agents); a schema's object
+/// that already has a `branch` field keeps its own.
 fn script_value(output: WorkflowAgentOutput, structured: bool) -> Value {
     match output.structured {
-        Some(value) if structured => value,
+        Some(mut value) if structured => {
+            if let Some(object) = value.as_object_mut() {
+                let extras = [
+                    ("branch", output.branch),
+                    ("goal_status", output.goal_status),
+                ];
+                for (key, extra) in extras {
+                    if let Some(extra) = extra {
+                        object.entry(key).or_insert(extra.into());
+                    }
+                }
+            }
+            value
+        }
         _ => {
             let mut value = json!({
                 "text": output.text,
@@ -1310,5 +1325,47 @@ mod tests {
         let a = json!({"b": 1, "a": {"y": [1, {"d": 2, "c": 3}], "x": null}});
         let b = json!({"a": {"x": null, "y": [1, {"c": 3, "d": 2}]}, "b": 1});
         assert_eq!(canonical(&a).to_string(), canonical(&b).to_string());
+    }
+}
+
+#[cfg(test)]
+mod script_value_tests {
+    use super::*;
+
+    fn output(structured: Option<Value>, branch: Option<&str>) -> WorkflowAgentOutput {
+        WorkflowAgentOutput {
+            session_id: "ses_1".into(),
+            text: "done".into(),
+            structured,
+            cost: 0.5,
+            tokens: 10,
+            branch: branch.map(str::to_owned),
+            goal_status: None,
+        }
+    }
+
+    #[test]
+    fn an_agent_with_a_goal_and_a_schema_reports_its_goal_status() {
+        let mut met = output(Some(json!({"ok": true})), None);
+        met.goal_status = Some("met".into());
+        assert_eq!(
+            script_value(met, true),
+            json!({"ok": true, "goal_status": "met"})
+        );
+    }
+
+    #[test]
+    fn an_isolated_agent_with_a_schema_reports_its_branch() {
+        let value = script_value(output(Some(json!({"ok": true})), Some("cyber/wf-1")), true);
+        assert_eq!(value, json!({"ok": true, "branch": "cyber/wf-1"}));
+        let own = script_value(
+            output(Some(json!({"branch": "x"})), Some("cyber/wf-1")),
+            true,
+        );
+        assert_eq!(own, json!({"branch": "x"}));
+        let plain = script_value(output(Some(json!({"ok": true})), None), true);
+        assert_eq!(plain, json!({"ok": true}));
+        let text = script_value(output(None, Some("cyber/wf-2")), false);
+        assert_eq!(text["branch"], "cyber/wf-2");
     }
 }

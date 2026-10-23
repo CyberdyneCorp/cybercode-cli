@@ -495,6 +495,28 @@ Change `implement-m2-1-workflow-runtime`, tasks 4.3, 4.8, 4.9, 4.11, 4.15, 5.1, 
 
 Still open: reserved budgets (4.16) and finished-transcript retention (5.9, which needs storage retention). Session export of run summaries is done by `add-session-export`, and goal deferral while runs are active (5.8) by the goals change.
 
+## M2.2 Bundled workflows (2026-10-22)
+
+Change `implement-m2-2-bundled-workflows`, every task except 10.2 (pty captures). Built on the M2.1 gaps branch.
+
+- **Five bundled Workflows** in `crates/cyber-workflow/src/bundled/` (`review`, `audit`, `migrate`, `research`, `plan`, each joined with `common.js` at compile time), origin `{kind: "bundled", name}`, lowest precedence, hidden by `workflows.bundled: false` or `CYBER_DISABLE_BUNDLED_WORKFLOWS=1`. Engine tests run every module against a scripted host (`crates/cyber-workflow/tests/bundled.rs`, 17 tests): review verification and refutation, the `max_findings` cap, a review whose reviewers all failed, audit caps, skips and majority votes, partial results on `BudgetExceeded`, migrate batching, its confirmation gate and a failed check, research without web access, plan grafts, and every `common.js` helper (including a data block whose text contains the terminator).
+- **Library surface.** `cyber workflows list` (ORIGIN column, `--format json`), `cyber workflows show <name> [--source]`, `cyber workflows eject <name> [--global] [--force]`; `GET /api/v1/workflows` reports bundled entries (and sources with `source=true`). Tests: `crates/cyber-cli/tests/cli.rs` (`bundled_workflows_are_listed_and_shown`, `an_ejected_workflow_overrides_the_bundled_one_and_is_never_overwritten`, `bundled_workflows_can_be_turned_off`), `crates/cyber-app/tests/workflows.rs` `the_library_lists_saved_workflows_by_precedence_with_issues`.
+- **Args and host preparation** before any run record: `meta.args` validation (`ExecutionFailure: args.<path>`), the review diff (`ReviewTargetError`, no run), migrate's up-front permission check (`403 PermissionDenied` naming the rules) and research's web access. Test: `crates/cyber-app/tests/workflows.rs` `bundled_runs_validate_and_prepare_their_args_before_a_run_exists`.
+- **`/review` and `cyber review`** run the `review` Workflow unless a `review` skill or command overrides it (the skill remains when the bundled Workflows are disabled). Tests: `crates/cyber-cli/tests/review_command.rs` (workflow path: verified findings, target errors and a clean tree without a run, a budget-stopped run exiting 4 with partial findings, the project override with the Workflows available; the 15 P1 tests pin the skill path), `crates/cyber-tui/src/tests.rs` (`review_runs_the_review_workflow_when_the_library_has_one`, `a_review_run_that_ends_early_partially_or_fails_is_reported`, `review_runs_the_bundled_workflow_against_the_app_server`).
+- **TUI Library tab** (Tab in `/workflows`): origin badges, an args form checked against the schema, the source view. Test: `crates/cyber-tui/src/screens_workflows.rs` `the_library_tab_lists_the_library_and_starts_a_workflow_from_its_form` against a real server, snapshots at 120×40 and 80×24.
+- **Real binary.** `crates/cyber-cli/tests/bundled_workflows.rs` runs all five with `cyber exec --embedded --workflow` against a scripted OpenAI-compatible model that answers by task: review on a two-file diff, audit coverage and a turn budget exiting 4 with `partial: true`, migrate committing each batch on its own worktree branch while the checkout stays clean, research from cross-checked claims, plan merging the best draft.
+
+### Bugs found and fixed (each with a regression test)
+
+- **Isolated agents lost their branch with a schema.** `agent()` with `schema` returned only the validated object, dropping the worktree `branch` the spec requires in the result. Test: `workflow_host::script_value_tests::an_isolated_agent_with_a_schema_reports_its_branch`.
+- **Bundled runs resumed as inline scripts.** Resume treated any origin other than `saved` as inline, so a rule denying `inline:*` refused it and a release's changed source was never read. Test: `crates/cyber-app/tests/workflows.rs` `a_bundled_run_resumes_as_the_bundled_workflow`.
+- **A TUI test helper wrote to the enclosing checkout.** `git_in` ran `git -C <tmp repo>`, which an inherited `GIT_DIR` (as under `git bisect run`) overrides, so the test configured and committed to the outer repository. It now drops `GIT_DIR`, `GIT_WORK_TREE` and `GIT_INDEX_FILE`.
+
+### Open
+
+- 10.2: pty/pyte PNG captures of the Library tab, the form, `/review` findings and an `audit` fan-out.
+- A run against a live model; automatic orchestration (`workflows.auto`) beyond the library listing; the archive.
+
 ## M2.1 Workflow runtime: review fixes
 
 Fourteen review findings were checked; thirteen were real (two of them, the HTTP and CLI `workflow.run` check, were one bug). Each fix has a regression test that fails without it.

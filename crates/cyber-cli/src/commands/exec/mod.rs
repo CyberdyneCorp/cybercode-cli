@@ -4,6 +4,7 @@ mod background;
 mod delegation;
 pub(crate) mod goals;
 pub(crate) mod report;
+mod review_run;
 pub(crate) mod setup;
 mod workflow;
 
@@ -217,6 +218,9 @@ fn launch(
         let code = match (review, &args.workflow) {
             (_, Some(target)) => {
                 workflow::execute(&client, ctx, &session, &args, target, out).await
+            }
+            (Some(target), None) if review_run::uses_workflow(&client).await => {
+                review_run::execute(&client, ctx, &session, &args, target, out).await
             }
             (Some(target), None) => {
                 out.review(target);

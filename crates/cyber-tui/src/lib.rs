@@ -39,6 +39,7 @@ mod team;
 mod theme;
 mod turns;
 mod view;
+mod workflow_library;
 mod workflow_watch;
 mod workflows;
 

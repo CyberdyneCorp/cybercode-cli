@@ -10,8 +10,6 @@ use std::time::Duration;
 
 use clap::{Args, Subcommand};
 use cyber_client::Client;
-use cyber_core::env::EnvSource;
-use cyber_workflow::{Listing, Origin, Scope, WorkflowModule};
 use serde_json::{Map, Value, json};
 
 use crate::cli::GlobalArgs;
@@ -19,6 +17,7 @@ use crate::context::Context;
 use crate::error::CliError;
 use crate::output;
 
+mod library;
 mod runs;
 
 /// `run --wait` when the run exceeded its budget.
@@ -29,8 +28,12 @@ const POLL: Duration = Duration::from_millis(200);
 
 #[derive(Debug, Subcommand)]
 pub enum WorkflowsCmd {
-    /// List saved Workflows (project overrides global) and modules that fail to load.
+    /// List the Workflow library (project overrides global, both override bundled) and
+    /// modules that fail to load.
     List,
+    /// Copy a bundled Workflow's source into `.cyber/workflows/` (or the global
+    /// directory) to customize it; the copy then overrides the bundled one.
+    Eject(library::EjectArgs),
     /// Start a Workflow Run from a saved name or a script file.
     Run(RunArgs),
     /// List recent Workflow Runs of this Location: active runs first, then the newest.
@@ -45,8 +48,15 @@ pub enum WorkflowsCmd {
         #[arg(long)]
         watch: bool,
     },
-    /// Show one Workflow Run and its agents.
-    Show { run_id: String },
+    /// Show one Workflow Run and its agents (`run_…`), or a library Workflow's meta, args
+    /// schema, default budget and origin (a Workflow name).
+    Show {
+        /// A run ID, or a Workflow name.
+        target: String,
+        /// With a Workflow name, also print the module source.
+        #[arg(long)]
+        source: bool,
+    },
     /// Pause a Workflow Run: in-flight agents finish, no new agent starts.
     Pause { run_id: String },
     /// Resume a paused, failed or stopped Workflow Run, or with `--interrupted` every run a
@@ -102,8 +112,13 @@ pub struct RunArgs {
 }
 
 pub fn run(cmd: WorkflowsCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
-    if let WorkflowsCmd::List = cmd {
-        return list(&discover(ctx), global);
+    match &cmd {
+        WorkflowsCmd::List => return library::list(ctx, global),
+        WorkflowsCmd::Show { target, source } if cyber_workflow::meta::valid_name(target) => {
+            return library::show(ctx, global, target, *source);
+        }
+        WorkflowsCmd::Eject(args) => return library::eject(ctx, global, args),
+        _ => {}
     }
     if let WorkflowsCmd::Run(args) = &cmd {
         // Refused before any server starts.
@@ -130,12 +145,12 @@ async fn remote(
     global: &GlobalArgs,
 ) -> Result<(), CliError> {
     match cmd {
-        WorkflowsCmd::List => unreachable!("listed locally"),
+        WorkflowsCmd::List | WorkflowsCmd::Eject(_) => unreachable!("answered locally"),
         WorkflowsCmd::Run(args) => start(client, ctx, global, args).await,
         WorkflowsCmd::Runs { all, status, watch } => {
             runs::runs(client, global, runs::RunsQuery { all, status }, watch).await
         }
-        WorkflowsCmd::Show { run_id } => show(client, global, &run_id).await,
+        WorkflowsCmd::Show { target, .. } => show(client, global, &target).await,
         WorkflowsCmd::Pause { run_id } => control(client, global, &run_id, "pause", None).await,
         WorkflowsCmd::Resume {
             run_id: Some(run_id),
@@ -548,84 +563,6 @@ async fn logs(client: &Client, global: &GlobalArgs, id: &str) -> Result<(), CliE
             })
             .collect();
         println!("{}", values.join(" "));
-    }
-    Ok(())
-}
-
-/// Saved Workflows of the Location: global, then project directories from the project root
-/// down to the Location. `CYBER_DISABLE_PROJECT_CONFIG` skips project directories.
-pub fn discover(ctx: &Context) -> Listing {
-    let project_root = cyber_core::config::project_root(&ctx.location);
-    let project = (!ctx.env.flag("CYBER_DISABLE_PROJECT_CONFIG"))
-        .then_some((ctx.location.as_path(), project_root.as_path()));
-    cyber_workflow::discover(&cyber_workflow::roots(&ctx.paths.config, project))
-}
-
-fn scope_name(module: &WorkflowModule) -> &'static str {
-    match module.origin {
-        Origin::Saved {
-            scope: Scope::Project,
-            ..
-        } => "project",
-        Origin::Saved {
-            scope: Scope::Global,
-            ..
-        } => "global",
-        Origin::Inline => "inline",
-    }
-}
-
-fn view(listing: &Listing) -> Value {
-    let workflows: Vec<Value> = listing
-        .workflows
-        .iter()
-        .map(|entry| {
-            let module = &entry.module;
-            let path = match &module.origin {
-                Origin::Saved { path, .. } => json!(path),
-                Origin::Inline => Value::Null,
-            };
-            json!({
-                "name": module.meta.name,
-                "description": module.meta.description,
-                "phases": module.meta.phases,
-                "args": module.meta.args,
-                "scope": scope_name(module),
-                "path": path,
-                "digest": module.digest,
-                "shadowed": entry.shadowed,
-            })
-        })
-        .collect();
-    json!({ "workflows": workflows, "issues": listing.issues })
-}
-
-fn list(listing: &Listing, global: &GlobalArgs) -> Result<(), CliError> {
-    if output::is_json(global.format) {
-        return output::json(&view(listing));
-    }
-    if listing.workflows.is_empty() && listing.issues.is_empty() {
-        println!(
-            "No saved workflows. Add modules to .cyber/workflows/ or ~/.config/cyber/workflows/."
-        );
-    }
-    let width = listing
-        .workflows
-        .iter()
-        .map(|e| e.module.meta.name.len())
-        .max()
-        .unwrap_or(0);
-    for entry in &listing.workflows {
-        let meta = &entry.module.meta;
-        println!(
-            "{:width$}  [{}]  {}",
-            meta.name,
-            scope_name(&entry.module),
-            meta.description
-        );
-    }
-    for issue in &listing.issues {
-        println!("issue: {}: {}", issue.path.display(), issue.diagnostic);
     }
     Ok(())
 }

@@ -1,6 +1,6 @@
 ## Delivery update (2026-10-22)
 
-The first delivery slice is now the shared library foundation plus [`solve`](../add-verified-solve-workflow/proposal.md): independent model attempts, authoritative checks and an independent recommendation. Reuse sections 1–4 of this change as needed; the five original modules remain planned later increments, not prerequisites for shipping `solve`. The detailed `solve` contracts, design and tests live in that sibling change. "Five modules" below refers to this change's original module scope; the combined target library has six. A release lists only modules that actually ship.
+The five original modules shipped first. The next library slice is [`solve`](../add-verified-solve-workflow/proposal.md): independent model attempts, authoritative checks and an independent recommendation; it reuses sections 1–4 of this change, and its contracts, design and tests live in that sibling change. "Five modules" below refers to this change's original module scope; the combined target library has six. A release lists only modules that actually ship.
 
 ## Context
 
@@ -136,3 +136,15 @@ All tests run without network or a real provider:
 - **Bundled prompt quality.** Prompts are product surface; they live in plain `.js` files, are covered by golden tests of the prompts' fixed parts, and users can eject and edit.
 - **Concatenated helpers change the digest.** Any helper edit is a new revision for every bundled module; acceptable, since a release is a revision anyway.
 - **migrate in CI.** Non-interactive runs auto-reject asks; without allow rules for `edit` and `bash` every batch fails. The module checks permissions up front through a dry run (`permissions test` path) and fails early with the rules it needs, instead of spawning agents that will be refused.
+
+## Implementation notes (2026-10-22)
+
+- **Budget key.** Modules declare `meta.budget` (singular), the key M2.1 runs already read; the library entry reports it as `budgets`.
+- **Replay record.** Direct tool results are recorded as M2.1's `workflow.call.recorded.1` records of kind `tool`; `workflow.host.settled.1` was not added.
+- **`review` ordering.** Reviews of every (lens, group) run with `parallel()`, then findings are deduplicated globally, capped at `max_findings` and verified, so the cap also bounds the verifiers (the estimate's `min(findings, max_findings)`). A run whose every reviewer failed throws, so CI does not read it as clean.
+- **Host preparation** is named by `meta.prepare`: `review_target` (the diff), `migrate_permissions` (only for runs no one can answer: the edit of each file, or the pattern, and each check command must be allowed for the `general` agent under the owner's rules, else `403 PermissionDenied` naming them) and `research_sources` (`args.web_permitted`). Hosts that prepare also validate `args` against `meta.args` first; both happen before a run record exists. Prepared keys (`diff`, `web_permitted`) are added after validation, so a client cannot supply them where the schema forbids extra keys.
+- **Isolated agents with a schema** now keep their `branch` in the structured result (the spec's "Write isolation" requirement); `migrate` reads it.
+- **`tools.glob` sizes.** `tools.glob({..., sizes: true})` adds `sizes` (bytes, same order) so `audit` can skip files over 256 KiB without reading them.
+- **`/review` routing** is decided by the client from `GET /commands` (the built-in `review`) and `GET /workflows` (a `review` entry). The bundled review skill stays as the path when the bundled Workflows are disabled. The TUI follows the run's end event and reads the run's result; `cyber review` follows the run like `exec --workflow`.
+- **Resume** of a bundled run reloads the bundled module this build ships (it was resumed as an inline script, which also changed its `workflow.run` resource).
+- **Library tab.** The args form is one line of JSON, checked against `meta.args` in the TUI before it is posted; `GET /api/v1/workflows?source=true` includes each entry's source for `o`.

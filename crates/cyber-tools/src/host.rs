@@ -9,6 +9,7 @@ pub(crate) mod review;
 mod skill_catalog;
 mod template_expand;
 mod workflow_agents;
+mod workflow_prepare;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -60,6 +61,7 @@ pub struct HostOptions {
 }
 
 pub use isolation::{IsolationOptions, PermissionTest, PermissionTestReport};
+pub use workflow_prepare::PrepareError;
 
 pub struct BuiltinHost {
     pub(crate) weak: std::sync::Weak<Self>,
@@ -2047,6 +2049,12 @@ impl BuiltinHost {
                 tools::loops::GUIDANCE.into(),
             );
         }
+        if visible.iter().any(|d| {
+            d.spec.name == "workflow" && d.scope == cyber_server::runtime::ToolScope::Builtin
+        }) && let Some(text) = tools::workflow::library_listing(self, location)
+        {
+            sources.insert(tools::workflow::LIBRARY_KEY.into(), text);
+        }
         sources
     }
 
@@ -2087,6 +2095,7 @@ impl BuiltinHost {
             tools::messaging::GUIDANCE_KEY,
             tools::loops::GUIDANCE_KEY,
             tools::team::GUIDANCE_KEY,
+            tools::workflow::LIBRARY_KEY,
         ] {
             sources
                 .entry(key.into())

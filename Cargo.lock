@@ -1068,6 +1068,7 @@ dependencies = [
  "futures",
  "insta",
  "jiff",
+ "jsonschema",
  "pulldown-cmark",
  "ratatui",
  "rusqlite",
@@ -1085,6 +1086,7 @@ name = "cyber-workflow"
 version = "0.1.0"
 dependencies = [
  "futures",
+ "jsonschema",
  "rquickjs",
  "schemars",
  "serde",

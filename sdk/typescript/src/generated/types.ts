@@ -1313,6 +1313,8 @@ export type LibraryEntry = {
   digest: string;
   /** The definitions this entry replaces, lowest precedence first. */
   shadowed: string[];
+  /** The module source, when asked for (`source=true`). */
+  source?: string | null;
 };
 
 /** A module that failed to load, with its diagnostic. */
@@ -1328,6 +1330,9 @@ export type LibraryOrigin = {
 } | {
   path: string;
   kind: "project";
+} | {
+  name: string;
+  kind: "bundled";
 };
 
 /** The latest reading of one provider window. */

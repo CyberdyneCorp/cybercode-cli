@@ -1,8 +1,9 @@
 //! Saved Workflow discovery (`workflows` → Saved and bundled workflows).
 //!
-//! Roots are scanned lowest precedence first: the global `~/.config/cyber/workflows`, then
-//! each project `.cyber/workflows` from the outermost ancestor to the Location. A later
-//! root replaces an earlier Workflow of the same `meta.name`, so project overrides global.
+//! Roots are scanned lowest precedence first: the bundled Workflows (when offered), the
+//! global `~/.config/cyber/workflows`, then each project `.cyber/workflows` from the
+//! outermost ancestor to the Location. A later root replaces an earlier Workflow of the
+//! same `meta.name`, so project overrides global and both override bundled.
 //! Traversal is bounded and never follows links; unreadable or invalid modules are listed
 //! as issues with their diagnostic instead of hiding the rest.
 
@@ -76,7 +77,18 @@ impl Listing {
 
 /// Discover saved Workflows under `roots` (lowest precedence first).
 pub fn discover(roots: &[Root]) -> Listing {
+    discover_library(roots, false)
+}
+
+/// The Workflow library: the bundled Workflows when `bundled`, overridden by the saved
+/// ones under `roots` (lowest precedence first).
+pub fn discover_library(roots: &[Root], bundled: bool) -> Listing {
     let mut scan = Scan::default();
+    if bundled {
+        for module in crate::bundled::modules() {
+            scan.insert(module.clone());
+        }
+    }
     for root in roots {
         if let Some(files) = scan.files(&root.path) {
             for path in files {
@@ -181,7 +193,7 @@ impl Scan {
         match self.found.get_mut(&name) {
             Some(entry) => {
                 let old = std::mem::replace(&mut entry.module, module);
-                entry.shadowed.push(saved_path(&old).to_path_buf());
+                entry.shadowed.push(definition(&old));
             }
             None => {
                 self.found.insert(
@@ -196,10 +208,12 @@ impl Scan {
     }
 }
 
-fn saved_path(module: &WorkflowModule) -> &Path {
+/// How a shadowed definition is named: its path, or `bundled:<name>`.
+fn definition(module: &WorkflowModule) -> PathBuf {
     match &module.origin {
-        Origin::Saved { path, .. } => path,
-        Origin::Inline => Path::new(""),
+        Origin::Saved { path, .. } => path.clone(),
+        Origin::Bundled { name } => PathBuf::from(format!("bundled:{name}")),
+        Origin::Inline => PathBuf::new(),
     }
 }
 
@@ -335,6 +349,65 @@ mod tests {
                 ("typed.ts".to_string(), DiagnosticKind::UnsupportedSyntax)
             ]
         );
+    }
+
+    #[test]
+    fn bundled_workflows_have_the_lowest_precedence() {
+        let tmp = tempfile::tempdir().unwrap();
+        let global = tmp.path().join("config");
+        let project = tmp.path().join("repo");
+        write(&global.join("workflows/plan.js"), "plan", "global plan");
+        write(
+            &project.join(".cyber/workflows/audit.js"),
+            "audit",
+            "project audit",
+        );
+        write(&global.join("workflows/audit.js"), "audit", "global audit");
+        let roots = roots(&global, Some((&project, &project)));
+
+        let listing = discover_library(&roots, true);
+        let origins: Vec<(&str, String)> = listing
+            .workflows
+            .iter()
+            .map(|e| {
+                let origin = match &e.module.origin {
+                    Origin::Bundled { .. } => "bundled".to_owned(),
+                    Origin::Saved { scope, .. } => format!("{scope:?}").to_lowercase(),
+                    Origin::Inline => "inline".to_owned(),
+                };
+                (e.module.meta.name.as_str(), origin)
+            })
+            .collect();
+        assert_eq!(
+            origins,
+            [
+                ("audit", "project".to_owned()),
+                ("migrate", "bundled".to_owned()),
+                ("plan", "global".to_owned()),
+                ("research", "bundled".to_owned()),
+                ("review", "bundled".to_owned()),
+            ]
+        );
+        let audit = &listing.workflows[0];
+        assert_eq!(
+            audit.shadowed,
+            [
+                PathBuf::from("bundled:audit"),
+                global.join("workflows/audit.js")
+            ]
+        );
+        assert_eq!(
+            listing.workflows[2].shadowed,
+            [PathBuf::from("bundled:plan")]
+        );
+
+        let without = discover_library(&roots, false);
+        let names: Vec<&str> = without
+            .workflows
+            .iter()
+            .map(|e| e.module.meta.name.as_str())
+            .collect();
+        assert_eq!(names, ["audit", "plan"]);
     }
 
     #[test]

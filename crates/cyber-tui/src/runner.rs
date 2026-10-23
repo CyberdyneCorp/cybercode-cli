@@ -628,14 +628,21 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
             items,
             palette,
             bundled_review,
+            workflow_review,
         } => {
             app.commands = items;
             app.server_commands = palette;
             app.review.set_bundled(bundled_review);
+            app.review.set_workflow(workflow_review);
         }
         Msg::Catalog(catalog) => app.catalog = catalog,
         Msg::Refused { command, message } => app.refused(&command, &message),
         Msg::ReviewDelegation(record) => app.review_delegation(&record),
+        Msg::ReviewStarted(run) => {
+            let actions = app.review_started(&run);
+            return actions;
+        }
+        Msg::ReviewRun(run) => app.review_run(&run),
         Msg::Files(files) => app.files = files,
         Msg::Agents { directory, items } => {
             if directory == app.session.directory {
@@ -1329,6 +1336,7 @@ mod mode_tests {
                 items: vec![choice("review")],
                 palette: Vec::new(),
                 bundled_review: false,
+                workflow_review: false,
             }),
             &mut Refresh::default(),
         );
@@ -1354,6 +1362,7 @@ mod mode_tests {
                 items: vec![choice("review"), choice("gh:review_pr")],
                 palette: Vec::new(),
                 bundled_review: false,
+                workflow_review: false,
             }),
             &mut Refresh::default(),
         );

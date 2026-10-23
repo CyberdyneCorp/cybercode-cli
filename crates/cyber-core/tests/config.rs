@@ -1577,6 +1577,15 @@ fn workflow_resume_after_restart_is_a_boolean_that_defaults_to_false() {
 }
 
 #[test]
+fn bundled_workflows_are_offered_unless_turned_off() {
+    let read = |value: Value| config::WorkflowSettings::from_config(&json!({"workflows": value}));
+    assert!(read(json!({})).unwrap().bundled);
+    assert!(!read(json!({"bundled": false})).unwrap().bundled);
+    let error = read(json!({"bundled": "no"})).unwrap_err();
+    assert!(error.contains("workflows.bundled"), "{error}");
+}
+
+#[test]
 fn workflow_settings_have_defaults_and_validate_ranges_and_tiers() {
     let f = Fixture::new();
     f.write(

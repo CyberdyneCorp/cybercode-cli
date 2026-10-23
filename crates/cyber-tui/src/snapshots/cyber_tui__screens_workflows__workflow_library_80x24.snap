@@ -1,0 +1,28 @@
+---
+source: crates/cyber-tui/src/screens_workflows.rs
+expression: shown
+---
+╭ Workflows · Library · ~/work/app ─────────────────────────────── 6 Workflows ╮
+│ ▸ audit          [bundled]  Codebase-wide bug or security sweep: read-only f…│
+│   migrate        [bundled]  File-by-file migration in batches: each batch is…│
+│   plan           [bundled]  Plans drafted from several independent angles, s…│
+│   release        [project]  Monitor                                          │
+│   research       [bundled]  Cross-checked research: searchers per source and…│
+│   review         [bundled]  Multi-angle code review of a diff: read-only rev…│
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│ enter run · o source · tab runs · esc                                        │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ ~/work/app                                              $0.00  ctrl+p commands

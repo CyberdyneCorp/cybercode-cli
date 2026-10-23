@@ -2251,6 +2251,13 @@
               "type": "string"
             },
             "description": "The definitions this entry replaces, lowest precedence first."
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The module source, when asked for (`source=true`)."
           }
         },
         "required": [
@@ -2299,6 +2306,23 @@
               "path"
             ],
             "description": "A `.cyber/workflows` directory of the project."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "const": "bundled"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "description": "Embedded in the binary."
           }
         ],
         "description": "Where a library entry comes from."
@@ -13952,13 +13976,21 @@
     "/api/v1/workflows": {
       "get": {
         "operationId": "v1.workflow.library",
-        "summary": "List the Workflow library of the Location: saved Workflows by precedence, with their origin, and the modules that failed to load",
+        "summary": "List the Workflow library of the Location: bundled and saved Workflows by precedence, with their origin, and the modules that failed to load; source=true includes each module's source",
         "tags": [
           "workflow"
         ],
         "parameters": [
           {
             "name": "directory",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "source",
             "in": "query",
             "required": false,
             "schema": {

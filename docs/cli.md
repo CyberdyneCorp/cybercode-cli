@@ -802,10 +802,11 @@ cyber workflows [OPTIONS] <COMMAND>
 
 **Subcommands:**
 
-- [`list`](#cyber-workflows-list): List saved Workflows (project overrides global) and modules that fail to load
+- [`list`](#cyber-workflows-list): List the Workflow library (project overrides global, both override bundled) and modules that fail to load
+- [`eject`](#cyber-workflows-eject): Copy a bundled Workflow's source into `.cyber/workflows/` (or the global directory) to customize it; the copy then overrides the bundled one
 - [`run`](#cyber-workflows-run): Start a Workflow Run from a saved name or a script file
 - [`runs`](#cyber-workflows-runs): List recent Workflow Runs of this Location: active runs first, then the newest
-- [`show`](#cyber-workflows-show): Show one Workflow Run and its agents
+- [`show`](#cyber-workflows-show): Show one Workflow Run and its agents (`run_…`), or a library Workflow's meta, args schema, default budget and origin (a Workflow name)
 - [`pause`](#cyber-workflows-pause): Pause a Workflow Run: in-flight agents finish, no new agent starts
 - [`resume`](#cyber-workflows-resume): Resume a paused, failed or stopped Workflow Run, or with `--interrupted` every run a server restart interrupted
 - [`stop`](#cyber-workflows-stop): Stop a Workflow Run and cancel its in-flight agents
@@ -813,11 +814,28 @@ cyber workflows [OPTIONS] <COMMAND>
 
 ## `cyber workflows list`
 
-List saved Workflows (project overrides global) and modules that fail to load
+List the Workflow library (project overrides global, both override bundled) and modules that fail to load
 
 ```text
 cyber workflows list [OPTIONS]
 ```
+
+## `cyber workflows eject`
+
+Copy a bundled Workflow's source into `.cyber/workflows/` (or the global directory) to customize it; the copy then overrides the bundled one
+
+```text
+cyber workflows eject [OPTIONS] <NAME>
+```
+
+**Arguments:**
+
+- `<NAME>`: The bundled Workflow to copy.
+
+**Options:**
+
+- `--global`: Write it to the global `workflows/` directory instead of the project.
+- `--force`: Replace an existing file.
 
 ## `cyber workflows run`
 
@@ -859,15 +877,19 @@ cyber workflows runs [OPTIONS]
 
 ## `cyber workflows show`
 
-Show one Workflow Run and its agents
+Show one Workflow Run and its agents (`run_…`), or a library Workflow's meta, args schema, default budget and origin (a Workflow name)
 
 ```text
-cyber workflows show [OPTIONS] <RUN_ID>
+cyber workflows show [OPTIONS] <TARGET>
 ```
 
 **Arguments:**
 
-- `<RUN_ID>`
+- `<TARGET>`: A run ID, or a Workflow name.
+
+**Options:**
+
+- `--source`: With a Workflow name, also print the module source.
 
 ## `cyber workflows pause`
 
