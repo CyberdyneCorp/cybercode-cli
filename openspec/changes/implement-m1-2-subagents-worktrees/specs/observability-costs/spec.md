@@ -82,3 +82,7 @@
 - **AND** unpriced calls and incomplete historical attribution SHALL prevent known priced spending from being presented as a complete total
 - **AND** the user SHALL be able to refresh the open snapshot and dismiss it without sending a provider prompt
 - **AND** late or foreign refreshes SHALL NOT overwrite the current Session snapshot, ordinary conversation refreshes SHALL NOT replace atomic billing evidence, and malformed/failed reports SHALL retain prior evidence with an explicit refresh error
+
+#### Scenario: Cost opens the Usage tab
+- **WHEN** the user types `/cost` in the TUI
+- **THEN** the Settings panel opens on the Usage tab at the Session section

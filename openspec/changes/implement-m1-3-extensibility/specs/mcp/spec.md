@@ -279,6 +279,10 @@
 - **AND** ordinary schema, agent, hook, permission and cancellation boundaries SHALL apply
 - **AND** unknown names SHALL fail before waiting and readiness SHALL NOT authorize calls against a previous Turn catalog
 
+#### Scenario: Configured but not started
+- **WHEN** a server is configured globally and no Session has opened the Location yet
+- **THEN** `GET /api/v1/mcp` reports it `idle` with `transport` `remote`, and it connects once a Session opens the Location
+
 ### Requirement: Shutdown cleanup
 (P0) When a Location closes or the server stops, the system SHALL close all MCP clients and terminate local servers and their process groups (SIGTERM, then SIGKILL after 5 s on POSIX; job object termination on Windows).
 

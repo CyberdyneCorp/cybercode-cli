@@ -14,3 +14,11 @@
 #### Scenario: Session bookkeeping needs no approval
 - **WHEN** the model calls `todo` or `history_search` with default rules
 - **THEN** the call runs without a permission request
+
+#### Scenario: Local message without a prompt
+- **WHEN** the model calls `send_message` to another Session on the same server with default rules
+- **THEN** no permission request is raised, and the receiver's inbound rules and the rate limits still apply
+
+#### Scenario: Peer message asks
+- **WHEN** the model calls `send_message` to `migration@desk` with default rules
+- **THEN** a `message.send` permission request is raised before the message leaves the Session

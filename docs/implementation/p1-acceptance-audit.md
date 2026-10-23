@@ -1,5 +1,9 @@
 # P1 acceptance audit
 
+## Current scope (2026-10-22)
+
+The tables and sign-offs below are a historical 214-requirement acceptance snapshot, not the current canonical inventory. After contract synchronization and the editor deferral, the canonical specs contain **270 P1 requirements**. Of those, **213** have a matching capability/name row in the historical plan; **57** need explicit classification against their full current clauses. A name match does not revalidate expanded clauses or carry acceptance across platforms. See the [current inventory and reconciliation](spec-doc-reconciliation.md) for the complete counts and unmatched requirements. No new acceptance is claimed by the documentation sync.
+
 ## Corrections (2026-10-17)
 
 All 214 requirements were re-checked against the code and tests at `3ed02a3`. Each one is classified in the [P1 acceptance plan](p1-acceptance-plan.md): 47 done locally, 29 implemented but missing acceptance evidence, 52 partial, 84 not implemented and 2 needing only external evidence. The plan also lists the 24 increments that close the gaps. Corrections applied to this file:

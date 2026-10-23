@@ -15,6 +15,10 @@
 - **WHEN** a client posts `{ "name": "release-notes", "arguments": "v1.2" }` to `POST /api/v1/sessions/:sessionID/command`
 - **THEN** the skill body with `$1` replaced by `v1.2` is admitted as the prompt and the response is `202` with the receipt
 
+#### Scenario: Recap route
+- **WHEN** a client calls `POST /api/v1/sessions/:sessionID/recap` on a Session with finished Turns
+- **THEN** the response contains the recap text and the `through_seq` it covers
+
 ### Requirement: WebSocket transport
 (P0) The server SHALL offer `GET /api/v1/ws` as a WebSocket alternative carrying the same event envelopes and accepting JSON-RPC 2.0 requests that map 1:1 to OpenAPI operation IDs. Remote Devices connected through the Relay SHALL use this transport. Request `params` SHALL be `{ path?, query?, body?, directory?, idempotencyKey? }`; `result` SHALL be the HTTP response body, and failures SHALL use error code `-32000 - <HTTP status>` with the tagged error body as `data`. Calling `v1.event.subscribe` or `v1.session.events` SHALL return `{ subscription }` and then stream `event` notifications `{ subscription, event }` until `v1.rpc.unsubscribe`. `v1.tool.register` `{ name, description, input }` and `v1.tool.unregister` `{ name }` SHALL manage application-registered tools bound to the connection; the server SHALL run them by sending the client a `tool.execute` request `{ name, input, session_id, call_id }` and settle the client's `result` or `error` as the tool outcome. The same protocol SHALL be served by `cyber serve --stdio`.
 

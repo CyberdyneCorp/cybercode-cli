@@ -141,8 +141,8 @@ fn module(ctx: &Ctx<'_>, input: &Value) -> Result<WorkflowModule, ToolError> {
 }
 
 /// What the approval shows: the workflow, its phases, the effective budgets it runs under
-/// (the stricter of `meta.budget`, the invocation and `budgets.run`), its agent estimate and
-/// the tools it calls directly.
+/// (the shared Run budgets resolution of `meta.budget`, the invocation and `budgets.run`),
+/// its agent estimate and the tools it calls directly.
 fn approval(module: &WorkflowModule, budget: &Value, tools: &[String]) -> Value {
     let origin = match &module.origin {
         Origin::Saved { path, .. } => json!(path),

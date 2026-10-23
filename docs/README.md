@@ -10,7 +10,8 @@ Start with the [project README](../README.md) for setup, architecture and the so
 | See the terminal UI and commands | [Screenshots](screenshots/README.md) |
 | Understand phase and milestone scope | [Roadmap](../ROADMAP.md) |
 | Check current P1 evidence | [Implementation status](implementation/p1-status.md) |
-| Audit remaining P1 requirements | [Acceptance audit](implementation/p1-acceptance-audit.md) |
+| Check current canonical counts and acceptance coverage | [Spec/documentation reconciliation](implementation/spec-doc-reconciliation.md) |
+| Read the historical P1 acceptance audit | [Acceptance audit](implementation/p1-acceptance-audit.md) |
 | Check P0 measurements and exit gates | [P0 evidence](measurements/p0-exit-evidence.md) |
 | Use the API from another program | [TypeScript SDK](../sdk/typescript/README.md) and [OpenAPI](../sdk/openapi.json) |
 | Run benchmarks or local-model evaluations | [Evaluation guide](../eval/README.md) |
@@ -18,3 +19,12 @@ Start with the [project README](../README.md) for setup, architecture and the so
 | Inspect product contracts | [OpenSpec specifications](../openspec/specs) |
 
 Specifications include future work. A specification's presence does not mean the feature is implemented or accepted; use the feature reference and acceptance audit together.
+
+## Proposed next delivery slices
+
+These are OpenSpec plans for review, not shipped features:
+
+- [Verified `solve` workflow](../openspec/changes/add-verified-solve-workflow/proposal.md): shared library foundation, isolated model attempts, host-run checks, independent judge and evidence. Builds on the existing M2.2 library plan.
+- [Local web dashboard and browser approvals](../openspec/changes/implement-local-web-dashboard/proposal.md): P1 private access, live request handling and reconnect; account/Relay access stays P3.
+
+Review each proposal, design, scenarios and tasks before runtime implementation. The [roadmap](../ROADMAP.md) records the phases and delivery order.

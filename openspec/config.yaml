@@ -4,7 +4,9 @@ context: |
   OpenSpec root for Cyber Code (CLI `cyber`): an open-source (Apache-2.0), model-agnostic coding-agent
   harness. It combines the shared core of OpenCode v1/v2, Codex-style ergonomics, and Claude Code's
   orchestration features (workflows, goals, loops, remote control, cross-session messaging, cloud runners).
-  Greenfield: these specs describe the TARGET product, not shipped behavior. Each requirement carries a
+  These specs describe the TARGET product, including implemented contracts and planned requirements;
+  synchronization does not imply implementation or acceptance. Consult docs/features.md and the
+  dated acceptance evidence for shipped behavior and remaining scope. Each requirement carries a
   roadmap phase tag (P0..P4) defined in ROADMAP.md; read ../README.md for the architecture and glossary first.
   Stack: Rust core (tokio) shipped as one static binary `cyber`; TypeScript SDK (@cyber-code/sdk) and
   plugin kit (@cyber-code/plugin). Plugins run out-of-process over JSON-RPC 2.0 (stdio); workflow scripts

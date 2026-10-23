@@ -143,11 +143,23 @@ The session runtime records Sessions and their durable input inbox, then runs ad
 - **THEN** the Session receives a short generated title such as `Fix flaky login test`
 
 ### Requirement: Fork, rename, archive, delete
-(P0) The system SHALL fork a Session from an optional message (copying history before it with fresh IDs into a new Session titled `<title> (fork #N)`), rename it, archive it (hidden from default lists but resumable), and delete it (cascading to child Sessions, inbox rows, snapshots metadata, and published `session.deleted.1` events).
+(P0) The system SHALL fork a Session from an optional message (copying history before it with fresh IDs into a new Session titled `<title> (fork #N)`), rename it, archive it (hidden from default lists but resumable), and delete it (cascading to child Sessions, inbox rows, snapshots metadata, and published `session.deleted.1` events). A user-set title SHALL be trimmed, with runs of whitespace (newlines included) joined into one space, control characters removed and at most 100 characters kept; a title that is empty after cleaning SHALL fail with `InvalidRequestError` and change nothing. Once a user sets a title, a generated title SHALL never replace it, including the result of a title request already in flight.
 
 #### Scenario: Fork from a message
 - **WHEN** the user forks at message 12 of 20
 - **THEN** a new Session contains copies of messages 1–11 and the original is unchanged
+
+#### Scenario: Rename is cleaned
+- **WHEN** a client renames a Session to `"  Auth\n refactor\u001b]0;x\u0007 "`
+- **THEN** its title is `Auth refactor]0;x`
+
+#### Scenario: Empty rename refused
+- **WHEN** a client renames a Session to `" \t "`
+- **THEN** the request fails with `InvalidRequestError` and the title is unchanged
+
+#### Scenario: User title survives title generation
+- **WHEN** the user renames a Session to `Mine` while the title request for its first prompt is still running
+- **THEN** the generated title is discarded and the title stays `Mine`
 
 ### Requirement: Session listing and paging
 (P0) The system SHALL list Sessions filtered by directory, project, workspace, parent, archived flag, and title search, ordered by `updated_at` descending by default, with opaque cursors and a limit of 1–200 (default 50), and SHALL page a Session's messages by durable sequence with the same cursor contract.
@@ -190,3 +202,54 @@ The session runtime records Sessions and their durable input inbox, then runs ad
 #### Scenario: Large screenshot downscaled
 - **WHEN** the user pastes a 4000×3000 PNG of 9 MiB
 - **THEN** the stored attachment is at most 2000 px on its longest side and under 5 MiB, and the model receives the downscaled image
+
+### Requirement: Assistant message timing
+(P1) Each assistant history entry returned by `GET .../messages` and `GET .../messages/:messageID` SHALL carry `agent` (the agent pinned by `session.step.started.1`), `started_ms` (the time of that event) and `ended_ms` (the time of `session.step.ended.1` or `session.step.failed.1`, null while the Turn runs) and `error_kind` (the `session.step.failed.1` kind, such as `interrupted`, else null). Each user entry SHALL carry `promoted_ms`. The values SHALL come from durable event times, so they are identical after replay or a server restart.
+
+#### Scenario: Timing survives restart
+- **WHEN** a Turn starts at 10:00:00.000 and ends at 10:00:11.300, and the server then restarts
+- **THEN** the assistant entry still reports `started_ms` and `ended_ms` 11,300 ms apart
+
+### Requirement: Session recap
+(P1) The system SHALL generate a Session recap on `POST /api/v1/sessions/:sessionID/recap` with the `small` model role, no tools, at most 120 output tokens, and a prompt asking for one or two sentences in the first person past tense about what was done and what comes next. The result SHALL be trimmed to 400 characters with reasoning tags removed, and stored as a durable `session.recap.generated.1` event with `text`, `model` and `through_seq` (the last durable sequence it covers). The call's usage SHALL be recorded as `usage.recorded.1` with purpose `recap`. When the stored recap already covers the latest finished Turn, the route SHALL return it without a model call. `GET /api/v1/sessions/:sessionID/recap` SHALL return the latest recap or `null`. A Session with no finished Turn SHALL answer `409 ConflictError` with reason `nothing_to_recap`. A failed model call SHALL answer the model error (`503 ServiceUnavailableError` with `service: "model"`) and leave the previous recap in place; a reply that is empty after cleaning records its usage and answers the same way. The recap also carries `generated_ms` (the event time). Concurrent requests for one Session are served one at a time, so they make at most one model call. The prompt holds the newest 16,000 characters of the conversation (user and assistant text, each cut to 2,000 characters, and the names of the tools each assistant message called).
+
+#### Scenario: Cached recap
+- **WHEN** a recap exists through the latest finished Turn and a client posts to `/recap` again
+- **THEN** the stored recap is returned and no model call is made
+
+#### Scenario: Recap usage is attributed
+- **WHEN** a recap is generated
+- **THEN** a `usage.recorded.1` event with purpose `recap` is appended and counted in the Session's totals
+
+### Requirement: Session branches
+(P1) A Session's messages SHALL form a tree, and the Session SHALL have one active path from its active tip to the root. Only messages on the active path SHALL be sent to the model.
+
+- **Rewind keeps the branch:** a committed conversation rewind (target `conversation` or `both`) to a user message SHALL move the active tip to that message's parent and keep the message and its descendants as an inactive branch. The next admitted prompt SHALL become a sibling of the rewound message.
+- **Checkout:** checking out a message SHALL make active the path to the most recently created tip under it, or to the message itself with `exact`. Checkout SHALL require the Session to be idle (no Drain, no promotable input, no compaction in progress and no running background Job or delegation, whose result would be handed back into the newly active path), checked again when the checkout is recorded, and fail with `SessionBusyError` otherwise; a refused checkout SHALL put back any files it restored. When requested, it SHALL restore the working tree to the snapshot after that tip's last step, through the three-phase revert. Checkout SHALL record `session.branch.checked_out.1`.
+- **Labels:** labels matching `[A-Za-z0-9._-]{1,48}` SHALL be unique per Session. They SHALL be set or cleared with `session.branch.labeled.1`, and SHALL be usable wherever a message ID is accepted for checkout.
+- **Compaction:** a Context Epoch summary SHALL be reused only when the messages it replaced are an ancestor prefix of the active path. Otherwise the context SHALL be assembled from the path's stored messages. While a compaction is in progress, a checkout or the commit of a conversation rewind SHALL fail with `SessionBusyError`, and a summary whose retained tail is not on the active path when it completes SHALL be discarded. A compaction that ends without recording an outcome (an interrupt, a disconnected client) SHALL NOT leave the Session refusing them.
+- **Existing Sessions:** replaying a Session whose events contain earlier conversation rewinds SHALL produce the corresponding branches, with the same active path as before. When such a log admits a rewound message ID again, both attempts SHALL be kept: the earlier one, with its descendants, under the derived ID `<id>~<n>`.
+
+#### Scenario: Rewind keeps the old attempt
+- **WHEN** a Session has user messages 1, 2, 3, the user rewinds the conversation to message 2, and then sends message 2b
+- **THEN** the active path is 1 → 2b, and messages 2 and 3 remain as an inactive branch visible in the tree
+
+#### Scenario: Return to an earlier attempt
+- **WHEN** the user checks out message 3 of that inactive branch
+- **THEN** the next Turn's context contains messages 1, 2 and 3 and not 2b, and `session.branch.checked_out.1` is recorded
+
+#### Scenario: Checkout while running
+- **WHEN** a client checks out a branch while the Session's Drain is running
+- **THEN** the request fails with `SessionBusyError` and the active path is unchanged
+
+#### Scenario: Checkout while a background Job runs
+- **WHEN** a Turn on branch A started a background Job and a client checks out branch B while the Job runs
+- **THEN** the request fails with `SessionBusyError`, and the Job's output never reaches a model request on B
+
+#### Scenario: Checkout during a compaction
+- **WHEN** a client checks out sibling branch B while a manual compaction of branch A is writing its summary
+- **THEN** the request fails with `SessionBusyError`, and no model request on B contains A's summary, also after a restart
+
+#### Scenario: Summary of a sibling is not reused
+- **WHEN** branch A was compacted and the user checks out sibling branch B, which shares only message 1 with A
+- **THEN** the context for B is assembled from B's stored messages and contains no part of A's summary

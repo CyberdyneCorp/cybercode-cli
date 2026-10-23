@@ -1,5 +1,9 @@
 # P1 acceptance plan (2026-10-17, updated 2026-10-19)
 
+## Current scope (2026-10-22)
+
+The tables and sign-offs below are a historical 214-requirement acceptance snapshot, not the current canonical inventory. After contract synchronization and the editor deferral, the canonical specs contain **270 P1 requirements**. Of those, **213** have a matching capability/name row in the historical plan; **57** need explicit classification against their full current clauses. A name match does not revalidate expanded clauses or carry acceptance across platforms. See the [current inventory and reconciliation](spec-doc-reconciliation.md) for the complete counts and unmatched requirements. No new acceptance is claimed by the documentation sync.
+
 This plan closes the [P1 acceptance audit](p1-acceptance-audit.md) so that ROADMAP milestones M1.1–M1.5 can be signed off. Every one of the 214 in-scope P1 requirements was re-checked against the code and tests on `main` at `3ed02a3`, not only against the docs. The 214 are the 227 canonical P1 requirements minus the 13 `editor-integration` requirements that the open change `defer-editor-integration` moves to P3. That change is not archived yet, so `openspec/specs/editor-integration/spec.md` still tags them P1. Nothing was built or run for this audit (no cargo): the classification rests on reading the source, the test bodies and the specs. Rows moved to (a) by increments 1–15 were later demonstrated on the real binary and server; see [Batch A acceptance run](#batch-a-acceptance-run-increments-15-2026-10-18), [Batch B acceptance run](#batch-b-acceptance-run-increments-69-2026-10-18) and [Batch C acceptance run](#batch-c-acceptance-run-increments-1015-2026-10-18).
 
 ## Classes

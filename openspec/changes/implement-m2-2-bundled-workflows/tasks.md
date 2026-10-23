@@ -1,3 +1,7 @@
+## Delivery update (2026-10-22)
+
+The five original modules shipped first. The next library slice is [`solve`](../add-verified-solve-workflow/proposal.md): independent model attempts, authoritative checks and an independent recommendation; it reuses sections 1–4 of this change, and its contracts, design and tests live in that sibling change. "Five modules" below refers to this change's original module scope; the combined target library has six. A release lists only modules that actually ship.
+
 Specified 2026-10-18; implemented 2026-10-22 except 10.2 (see the notes on each task). Sections 1–9 each ship working behavior with their own tests; section 10 is the end-to-end acceptance with the real binary. Implement after `implement-cross-session-messaging`, `add-messaging-direct-peers` and agent teams, per the roadmap order.
 
 Every test runs locally, with no network and no real provider:
@@ -13,7 +17,7 @@ The production-path test named in each section must pass before the section is t
 
 - [x] 1.1 `crates/cyber-workflow/src/bundled/` with `common.js` and placeholder modules; `bundled::modules()` concatenates each module with `common.js` (`concat!` + `include_str!`), parses once (`OnceLock`); `Origin::Bundled { name }` serialized as `{kind: "bundled", name}`.
 - [x] 1.2 Discovery returns bundled entries at the lowest precedence; a saved module of the same name lists `bundled:<name>` in `shadowed`; `workflows.bundled` (config, default true) and `CYBER_DISABLE_BUNDLED_WORKFLOWS=1` hide them. Config schema and validation in `crates/cyber-core/src/config/`.
-- [x] 1.3 Unit tests: every bundled module parses, `meta.name` equals its file stem, `meta.args` defaults validate against the schema, `meta.budgets` and `meta.estimate` present; precedence bundled < global < project; disabled hides all five.
+- [x] 1.3 Unit tests: every bundled module parses, `meta.name` equals its file stem, `meta.args` defaults validate against the schema, `meta.budget` and `meta.estimate` present; precedence bundled < global < project; disabled hides all five.
 - [x] 1.4 Runs by name resolve bundled modules; the run records origin and digest; resume treats a changed bundled digest as a revision (`--accept-revision`).
   - Production path: `crates/cyber-app/tests/bundled_workflows.rs` `a_bundled_workflow_runs_by_name_and_a_project_module_overrides_it` (scenario "Ejected copy overrides the bundled one" through files written by the test).
   - Done: `crates/cyber-workflow/tests/bundled.rs` (every module through the engine), `crates/cyber-app/tests/workflows.rs` `bundled_runs_validate_and_prepare_their_args_before_a_run_exists` (runs by name record `origin: {kind: "bundled", name}`) and `a_bundled_run_resumes_as_the_bundled_workflow` (resume reloads the bundled module; it was resumed as an inline script before). The ejected-override scenario is `crates/cyber-cli/tests/cli.rs` `an_ejected_workflow_overrides_the_bundled_one_and_is_never_overwritten`.
@@ -36,7 +40,7 @@ The production-path test named in each section must pass before the section is t
 ## 4. Shared module conventions
 
 - [x] 4.1 `common.js`: finding validation with the `vcs-integration` consumer rules, dedup keys, severity order, chunking by size and directory, `guarded(agent)` wrapper turning `BudgetExceeded` into a partial-result signal and other failures into `limitations` entries, the result envelope `{summary, limitations, partial, stats}`.
-- [x] 4.2 `workflow.run` approval shows effective budgets (stricter of meta, invocation, `budgets.run`) and `meta.estimate`; the `workflow` tool description lists library entries (≤ 20, bundled first) and prefers library Workflows; `workflows.auto` guidance names the five.
+- [x] 4.2 `workflow.run` approval shows effective budgets (the shared Run budgets resolution, including explicit authenticated overrides) and `meta.estimate`; the `workflow` tool description lists library entries (≤ 20, bundled first) and prefers library Workflows; `workflows.auto` guidance names the five.
 - [x] 4.3 QuickJS harness tests for every `common.js` helper, including a summary containing a data-block terminator that stays inside its block.
   - Production path: `crates/cyber-app/tests/bundled_workflows.rs` `the_workflow_tool_lists_the_library_and_the_approval_shows_budgets` (scenario "Model starts a bundled workflow by name" with a scripted model that calls `workflow {name: "audit"}`).
   - Done: the model's context lists the library (`core/workflows`, at most 20, bundled first, with argument names) whether or not `workflows.auto` is on; the approval carries `estimate`. Helper tests in `crates/cyber-workflow/tests/bundled.rs` run `common.js` through QuickJS. The scripted-model scenario "Model starts a bundled workflow by name" is not automated.
