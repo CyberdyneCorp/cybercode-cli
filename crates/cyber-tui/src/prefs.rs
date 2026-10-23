@@ -180,6 +180,7 @@ pub const EDITABLE: &[(&str, &[&str])] = &[
     ("reasoning", &["collapsed", "hidden", "expanded"]),
     ("diff_style", &["auto", "unified", "split"]),
     ("timestamps", &["off", "on"]),
+    ("mouse", &["on", "off"]),
     ("color", &["auto", "truecolor", "256", "16", "none"]),
     ("accessibility.reduced_motion", &["off", "on"]),
 ];
@@ -188,7 +189,7 @@ pub const EDITABLE: &[(&str, &[&str])] = &[
 fn boolean(key: &str) -> bool {
     matches!(
         key,
-        "timestamps" | "accessibility.reduced_motion" | "machine_stats"
+        "timestamps" | "accessibility.reduced_motion" | "machine_stats" | "mouse"
     )
 }
 

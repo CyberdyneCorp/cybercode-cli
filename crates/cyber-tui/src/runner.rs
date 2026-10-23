@@ -2,6 +2,7 @@
 //! Rendering modes and terminal integration).
 
 use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crossterm::event::{Event as TermEvent, EventStream, KeyEventKind};
@@ -178,6 +179,9 @@ fn setup() -> std::io::Result<Term> {
         event::EnableBracketedPaste,
         event::EnableFocusChange
     )?;
+    if MOUSE_CAPTURE.load(Ordering::Relaxed) {
+        execute!(out, event::EnableMouseCapture)?;
+    }
     if terminal::supports_keyboard_enhancement().unwrap_or(false) {
         let _ = execute!(
             out,
@@ -189,6 +193,26 @@ fn setup() -> std::io::Result<Term> {
     Terminal::new(CrosstermBackend::new(out))
 }
 
+/// Whether the UI holds mouse capture: [`setup`] restores it after a suspend (the
+/// editor), and [`teardown`] always releases it.
+static MOUSE_CAPTURE: AtomicBool = AtomicBool::new(false);
+
+/// Follow `tui.mouse`: capture the mouse so the wheel scrolls the UI, not the
+/// terminal's scrollback, or release it for the terminal's own selection.
+fn sync_mouse(out: &mut impl Write, on: bool) {
+    if MOUSE_CAPTURE.swap(on, Ordering::Relaxed) != on {
+        let _ = write_mouse(out, on);
+    }
+}
+
+fn write_mouse(out: &mut impl Write, on: bool) -> std::io::Result<()> {
+    if on {
+        execute!(out, event::EnableMouseCapture)
+    } else {
+        execute!(out, event::DisableMouseCapture)
+    }
+}
+
 fn teardown(terminal: &mut Term) {
     let mut out = std::io::stdout();
     let _ = execute!(
@@ -196,6 +220,7 @@ fn teardown(terminal: &mut Term) {
         event::PopKeyboardEnhancementFlags,
         event::DisableBracketedPaste,
         event::DisableFocusChange,
+        event::DisableMouseCapture,
         terminal::LeaveAlternateScreen
     );
     let _ = terminal::disable_raw_mode();
@@ -241,6 +266,7 @@ async fn event_loop(
     let mut tick = tokio::time::interval(Duration::from_millis(250));
     query_background(app);
     while !app.quit {
+        sync_mouse(&mut std::io::stdout(), app.mouse_capture());
         set_title(app);
         app.progress_sync();
         let frame = terminal
@@ -466,6 +492,7 @@ fn terminal_event(app: &mut App, ev: TermEvent) -> Vec<Action> {
             .probe_key(key)
             .map(|key| app.on_key(key))
             .unwrap_or_default(),
+        TermEvent::Mouse(mouse) => app.on_mouse(mouse),
         TermEvent::Paste(text) => {
             app.on_paste(&text);
             Vec::new()
@@ -1503,5 +1530,42 @@ mod mode_tests {
             app.toast.as_ref().map(|(text, _)| text.as_str()),
             Some("bypass mode is disabled by your organization")
         );
+    }
+}
+
+#[cfg(test)]
+mod mouse_tests {
+    use crossterm::event::{Event as TermEvent, KeyModifiers, MouseEvent, MouseEventKind};
+
+    use crate::app::App;
+
+    // Unix terminals get escape sequences; on Windows crossterm may use the console
+    // API instead, which writes nothing to the buffer.
+    #[cfg(unix)]
+    #[test]
+    fn capture_turns_on_the_terminal_mouse_reports_and_off_again() {
+        let mut on = Vec::new();
+        super::write_mouse(&mut on, true).unwrap();
+        let on = String::from_utf8(on).unwrap();
+        // Button and wheel reports, in SGR encoding.
+        assert!(on.contains("\x1b[?1000h"), "{on:?}");
+        assert!(on.contains("\x1b[?1006h"), "{on:?}");
+        let mut off = Vec::new();
+        super::write_mouse(&mut off, false).unwrap();
+        let off = String::from_utf8(off).unwrap();
+        assert!(off.contains("\x1b[?1000l"), "{off:?}");
+    }
+
+    #[test]
+    fn a_wheel_event_from_the_terminal_scrolls_the_transcript() {
+        let mut app = App::new(Default::default(), Vec::new(), "cyber");
+        let wheel = TermEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        super::terminal_event(&mut app, wheel);
+        assert_eq!(app.scroll, crate::mouse::WHEEL_LINES);
     }
 }
