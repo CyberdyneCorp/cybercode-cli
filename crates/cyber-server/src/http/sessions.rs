@@ -838,7 +838,7 @@ async fn background(
     }))
 }
 
-fn message_of(state: &SessionState, entry: &Entry) -> Message {
+pub(super) fn message_of(state: &SessionState, entry: &Entry) -> Message {
     let tree = state.branches();
     let tools = match entry {
         Entry::Assistant(a) => a
@@ -859,22 +859,28 @@ fn message_of(state: &SessionState, entry: &Entry) -> Message {
     }
 }
 
-/// The active path, or with `branches=all` every message in creation order.
-fn listed<'a>(s: &'a SessionState, q: &MessagesQuery) -> Result<Vec<&'a Entry>> {
-    match q.branches.as_deref() {
-        None => Ok(s.entries.iter().collect()),
-        Some("all") => {
-            let messages = s.messages_by_id();
-            Ok(s.branches()
-                .ordered()
-                .into_iter()
-                .filter_map(|id| messages.get(id).copied())
-                .collect())
-        }
+/// Whether a `branches` query asks for every branch: absent or `all`.
+pub(super) fn all_branches(branches: Option<&str>) -> Result<bool> {
+    match branches {
+        None => Ok(false),
+        Some("all") => Ok(true),
         Some(other) => Err(ApiError::invalid(format!(
             "branches must be \"all\", not {other:?}"
         ))),
     }
+}
+
+/// The active path, or with `all` every message in creation order.
+pub(super) fn listed(s: &SessionState, all: bool) -> Vec<&Entry> {
+    if !all {
+        return s.entries.iter().collect();
+    }
+    let messages = s.messages_by_id();
+    s.branches()
+        .ordered()
+        .into_iter()
+        .filter_map(|id| messages.get(id).copied())
+        .collect()
 }
 
 pub(crate) async fn messages(
@@ -894,7 +900,7 @@ pub(crate) async fn messages(
         })?,
         None => 0,
     };
-    let mut ordered = listed(&s, &q)?;
+    let mut ordered = listed(&s, all_branches(q.branches.as_deref())?);
     if q.order.as_deref() != Some("asc") {
         ordered.reverse();
     }

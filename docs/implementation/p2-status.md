@@ -489,7 +489,7 @@ Change `implement-m2-1-workflow-runtime`, tasks 4.3, 4.8, 4.9, 4.11, 4.15, 5.1, 
 - **Compaction reporting.** `compactions` per agent, `⟲N` in the monitor. Test: `workflow_runs::a_run_reports_its_agents_compactions`.
 - **Prompt-cache warm-up.** `runtime/workflow_warmup.rs`, `workflows.prompt_cache_warmup`. Test: `workflow_agents::a_fan_out_sharing_a_prefix_waits_for_the_first_response`.
 
-Still open: reserved budgets (4.16), Session export of run summaries and transcript retention (5.9, which need `cyber sessions export` and storage retention), goal deferral while runs are active (5.8, goals change).
+Still open: reserved budgets (4.16) and finished-transcript retention (5.9, which needs storage retention). Session export of run summaries is done by `add-session-export`, and goal deferral while runs are active (5.8) by the goals change.
 
 ## M2.1 Workflow runtime: review fixes
 

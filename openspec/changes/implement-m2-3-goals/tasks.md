@@ -4,7 +4,7 @@ Slice 1 (PR "Add Session goals") delivered sections 2–8 apart from the items b
 
 - 3.1 templates, 3.4 the model `goal` tool behind `goal.set` (asks by default);
 - 5.5 unattended-ask pauses, using a new client-presence signal (open live event streams per Location and Session);
-- 6.2 and 6.4: hook and real-App-restart tests; Session export (`cyber sessions export`) is not built yet, so the test checks the goal events on the Session stream it would carry;
+- 6.2 and 6.4: hook and real-App-restart tests; the Session export (change `add-session-export`) carries Goals with their evaluations (`workflow_agent_with_goal_runs_until_check_passes` exports the agent's Goal);
 - 7.1 panel keys (reorder is Shift+↑/↓), 7.3 the sidebar Goal section, 7.4 snapshots;
 - 8.4 the SIGINT test;
 - 9.x goals on `agent` and workflow `agent()`, `/goal fork`, `/goal use`.

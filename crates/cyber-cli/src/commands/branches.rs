@@ -1,6 +1,7 @@
-//! `cyber sessions tree|checkout|label|export` (`cli-commands` → Session branch
-//! commands): the user-message tree of a Session's branches, checkout, labels and the
-//! export of one or every branch, through the server's branch routes. A message argument is an ID, a label or a unique ID prefix.
+//! `cyber sessions tree|checkout|label` (`cli-commands` → Session branch commands): the
+//! user-message tree of a Session's branches, checkout and labels, through the server's
+//! branch routes; `cyber sessions export --all-branches` exports every branch. A message
+//! argument is an ID, a label or a unique ID prefix.
 
 use std::collections::BTreeMap;
 
@@ -104,18 +105,6 @@ async fn nodes(client: &Client, session: &str) -> Result<Vec<Value>, CliError> {
         .await
         .map_err(api)?;
     Ok(tree["data"].as_array().cloned().unwrap_or_default())
-}
-
-/// `cyber sessions export`: the Session and its messages as one JSON document, with
-/// the active path only or, with `all_branches`, every branch in creation order.
-pub async fn export(client: &Client, session: &Value, all_branches: bool) -> Result<(), CliError> {
-    let id = session["id"].as_str().unwrap_or_default();
-    let messages = messages(client, id, all_branches).await?;
-    output::json(&json!({
-        "session": session,
-        "branches": if all_branches { "all" } else { "active" },
-        "messages": messages,
-    }))
 }
 
 /// The active path's messages or every branch's, oldest first.

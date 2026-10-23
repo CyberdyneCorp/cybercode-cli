@@ -22,7 +22,7 @@ cyber [OPTIONS] [COMMAND]
 - `--mode <MODE>`: Permission mode: default, accept-edits, plan, auto, dont-ask or bypass. Global.
 - `--log-level <LEVEL>`: Minimum log level: error, warn, info (default), debug or trace. Also CYBER_LOG_LEVEL. Global.
 - `--print-logs`: Mirror log lines to stderr. Global.
-- `--format <FORMAT>`: Output format. The only output-format flag. Values: `table`, `json`, `text`, `stream-json`. Global.
+- `--format <FORMAT>`: Output format. The only output-format flag. Values: `table`, `json`, `text`, `stream-json`, `md`. Global.
 - `--pure`: Disable plugins and every hook and MCP server not managed by organization policy for this process. Also CYBER_PURE=1. Global.
 - `--features <LIST>`: Turn features on or off for this process, as a comma list where `-name` turns one off (`teams,-other`). Above CYBER_FEATURES and config; below organization policy. Commands served by the background server (`cyber teams list`, the TUI) follow its configuration instead: use `cyber features enable`, or the TUI with `--embedded`. Global.
 - `--worktree [<NAME>]`: Start a new Session in a managed worktree; omit NAME to generate one.
@@ -252,7 +252,7 @@ cyber sessions [OPTIONS] <COMMAND>
 - [`tree`](#cyber-sessions-tree): The Session's user-message tree: `*` marks the active path
 - [`checkout`](#cyber-sessions-checkout): Make another branch active; the Session must be idle
 - [`label`](#cyber-sessions-label): Set or remove a branch label
-- [`export`](#cyber-sessions-export): Write the Session and its messages as JSON to stdout: the active path, or every branch with `--all-branches`
+- [`export`](#cyber-sessions-export): Write a Session as JSON (default) or Markdown (--format md): its info, messages, tool calls, goals and workflow runs
 
 ## `cyber sessions list`
 
@@ -357,7 +357,7 @@ cyber sessions label [OPTIONS] <SESSION> <NAME>
 
 ## `cyber sessions export`
 
-Write the Session and its messages as JSON to stdout: the active path, or every branch with `--all-branches`
+Write a Session as JSON (default) or Markdown (--format md): its info, messages, tool calls, goals and workflow runs
 
 ```text
 cyber sessions export [OPTIONS] <SESSION>
@@ -369,6 +369,8 @@ cyber sessions export [OPTIONS] <SESSION>
 
 **Options:**
 
+- `--sanitize`: Replace prompts, answers, paths, URLs, tool inputs and outputs and metadata with [redacted:<kind>:<n>] markers, keeping structure, token counts and timings.
+- `--include-children`: Include child Sessions (subagents, workflow agents), recursively.
 - `--all-branches`: Include every branch; each message's `parent_message_id` links the tree.
 
 ## `cyber skills`

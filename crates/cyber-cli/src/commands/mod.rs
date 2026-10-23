@@ -29,6 +29,7 @@ pub mod providers;
 pub mod review;
 pub mod sandbox;
 pub mod serve;
+pub mod session_export;
 pub mod sessions;
 pub mod skills;
 pub mod stats;

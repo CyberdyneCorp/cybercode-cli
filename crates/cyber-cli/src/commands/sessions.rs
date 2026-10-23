@@ -1,6 +1,6 @@
-//! `cyber sessions` (`cli-commands` → Resource command groups): list, show, rename and
-//! delete the Location's Sessions through the background server, and their branches
-//! (`tree`, `checkout`, `label`, `export`). A Session is named by
+//! `cyber sessions` (`cli-commands` → Resource command groups): list, show, rename,
+//! delete and export the Location's Sessions through the background server, and their
+//! branches (`tree`, `checkout`, `label`). A Session is named by
 //! its ID, an exact title or a unique ID prefix; [`resolve`] is shared with
 //! `cyber --resume` and `cyber exec --session`.
 
@@ -76,11 +76,18 @@ pub enum SessionsCmd {
         #[arg(long)]
         delete: bool,
     },
-    /// Write the Session and its messages as JSON to stdout: the active path, or every
-    /// branch with `--all-branches`.
+    /// Write a Session as JSON (default) or Markdown (--format md): its info, messages,
+    /// tool calls, goals and workflow runs.
     Export {
         /// ID, exact title or unique ID prefix.
         session: String,
+        /// Replace prompts, answers, paths, URLs, tool inputs and outputs and metadata
+        /// with [redacted:<kind>:<n>] markers, keeping structure, token counts and timings.
+        #[arg(long)]
+        sanitize: bool,
+        /// Include child Sessions (subagents, workflow agents), recursively.
+        #[arg(long)]
+        include_children: bool,
         /// Include every branch; each message's `parent_message_id` links the tree.
         #[arg(long)]
         all_branches: bool,
@@ -152,12 +159,27 @@ async fn dispatch(client: &Client, cmd: SessionsCmd, global: &GlobalArgs) -> Res
             println!("deleted {id}");
             Ok(())
         }
+        SessionsCmd::Export {
+            session,
+            sanitize,
+            include_children,
+            all_branches,
+        } => {
+            let id = session_id(client, &session).await?;
+            let branches = if all_branches { "&branches=all" } else { "" };
+            let path = format!(
+                "/sessions/{}/export?sanitize={sanitize}&include_children={include_children}{branches}",
+                encode(&id)
+            );
+            let export = client.get(&path).await.map_err(api)?;
+            export_output(&export["data"], global)
+        }
         SessionsCmd::Other(_) => unreachable!("handled before connecting"),
         branch => dispatch_branch(client, branch, global).await,
     }
 }
 
-/// The branch commands: `tree`, `checkout`, `label` and `export`.
+/// The branch commands: `tree`, `checkout` and `label`.
 async fn dispatch_branch(
     client: &Client,
     cmd: SessionsCmd,
@@ -185,13 +207,6 @@ async fn dispatch_branch(
         } => {
             let id = session_id(client, &session).await?;
             super::branches::label(client, &id, &name, at.as_deref(), delete).await
-        }
-        SessionsCmd::Export {
-            session,
-            all_branches,
-        } => {
-            let found = resolve(client, &session).await?;
-            super::branches::export(client, &found, all_branches).await
         }
         _ => unreachable!("not a branch command"),
     }
@@ -304,6 +319,20 @@ pub async fn resolve(client: &Client, wanted: &str) -> Result<Value, CliError> {
             ))
             .with_hint("use the Session ID"))
         }
+    }
+}
+
+/// The export in `--format json` (the default) or `md`.
+fn export_output(export: &Value, global: &GlobalArgs) -> Result<(), CliError> {
+    match global.format {
+        None | Some(crate::cli::Format::Json) => output::json(export),
+        Some(crate::cli::Format::Md) => {
+            print!("{}", super::session_export::markdown(export));
+            Ok(())
+        }
+        Some(_) => Err(CliError::usage(
+            "cyber sessions export writes --format json or --format md",
+        )),
     }
 }
 
