@@ -3447,6 +3447,7 @@ async fn an_inline_runs_script_is_saved_into_the_project_workflows() {
     server.close().await;
 }
 
+#[cfg(unix)]
 fn git(root: &std::path::Path, args: &[&str]) {
     let status = std::process::Command::new("git")
         .current_dir(root)
