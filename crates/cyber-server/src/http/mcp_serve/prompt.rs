@@ -343,17 +343,29 @@ impl Admission {
         };
         let starts_run = !connection.state.runtime.is_running(&session_id);
         let before = wait::request_ids(connection, &session_id);
-        let mut body = json!({
+        let message_id = keys.map_or_else(|| cyber_core::ids::new_id("msg"), Keys::message_id);
+        let body = json!({
+            "id": message_id,
             "parts": [{ "type": "text", "text": self.prompt }],
             "delivery": self.delivery,
             "source": "user",
         });
         let mut headers = Vec::new();
         if let Some(keys) = keys {
-            body["id"] = json!(keys.message_id());
             headers.push(("idempotency-key", keys.prompt.as_str()));
         }
-        let mut receipt = route::send(
+        // Recorded before the admission, so the Turn the prompt starts is already
+        // attributed to `mcp` when its first step begins.
+        let input = McpServeInput {
+            message_id,
+            session_id: session_id.clone(),
+            mcp_client: connection.label.clone(),
+            depth: self.depth,
+            admitted_ms: create::now_ms(),
+            idempotency_key: keys.map(|keys| keys.base.clone()),
+        };
+        mcp_serve::replace_input(&connection.state.store, &input).map_err(ApiError::unknown)?;
+        let sent = route::send(
             connection,
             "v1.session.prompt",
             Call {
@@ -363,7 +375,16 @@ impl Admission {
                 ..Call::default()
             },
         )
-        .await?;
+        .await;
+        let mut receipt = match sent {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                // Nothing was admitted: no record names a prompt that does not exist.
+                mcp_serve::remove_input(&connection.state.store, &input.message_id)
+                    .map_err(ApiError::unknown)?;
+                return Err(error);
+            }
+        };
         let runtime = &connection.state.runtime;
         if let Some(run) = self.run
             && starts_run
@@ -374,7 +395,6 @@ impl Admission {
         let mut admitted = Admitted::from_receipt(&receipt["data"].take(), false);
         admitted.before = Some(before);
         admitted.depth = self.depth;
-        record_input(connection, &admitted, keys.map(|keys| keys.base.as_str()))?;
         Ok(admitted)
     }
 }

@@ -1769,6 +1769,83 @@ async fn a_call_cancelled_before_admission_still_admits() {
     assert_eq!(server.h.state(&id).await.inbox.len(), 1);
 }
 
+/// Usage attribution: the MCP serve record exists before the prompt is admitted, so the
+/// Turn's first step is `mcp` (regression: it was written after the admission returned,
+/// and a step that began first was attributed to `user`).
+#[tokio::test]
+async fn a_prompt_is_recorded_as_mcp_before_its_turn_starts() {
+    let server = Server::start_with("127.0.0.1:0", scripted(vec![text("attributed")])).await;
+    let hold = Arc::new(tokio::sync::Notify::new());
+    *server.h.tools.prompt_hold.lock().unwrap() = Some(Arc::clone(&hold));
+    let (mcp, _) = server
+        .initialize_as("2025-06-18", Some("claude-code"))
+        .await;
+    let id = server.h.session().await;
+    let waiting = server.spawn_post(
+        &mcp,
+        &prompt_frame(41, json!({"session_id": id, "prompt": "held"}), None),
+    );
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        server.h.tools.prompt_reached.acquire(),
+    )
+    .await
+    .expect("the prompt reached the hook")
+    .unwrap()
+    .forget();
+    let held = cyber_store::mcp_serve::recent_inputs(&server.h.store, &id, 10).unwrap();
+    assert_eq!(held.len(), 1, "recorded while the admission is in the hook");
+    assert_eq!(held[0].mcp_client, "claude-code");
+
+    hold.notify_one();
+    let sse = tokio::time::timeout(Duration::from_secs(10), waiting)
+        .await
+        .expect("the prompt finished")
+        .unwrap();
+    let result = tool_output(&sse.result(41));
+    assert_eq!(result["status"], "completed", "{result}");
+    assert_eq!(result["message_id"], json!(held[0].message_id));
+    let origins: Vec<(String, Option<String>)> = server
+        .h
+        .store
+        .read(|db| {
+            let mut statement = db.prepare("SELECT origin, mcp_client FROM usage_step")?;
+            let rows = statement
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<Result<_, _>>()?;
+            Ok(rows)
+        })
+        .unwrap();
+    assert_eq!(origins, [("mcp".into(), Some("claude-code".into()))]);
+}
+
+/// A prompt the admission refuses leaves no MCP serve record behind.
+#[tokio::test]
+async fn a_refused_prompt_leaves_no_mcp_record() {
+    let server = Server::start("127.0.0.1:0").await;
+    *server.h.tools.prompt_denial.lock().unwrap() = Some("no prompts today".into());
+    let (mcp, _) = server.initialize("2025-06-18").await;
+    let id = server.h.session().await;
+    for arguments in [
+        json!({"session_id": id, "prompt": "denied"}),
+        json!({"session_id": id, "prompt": "denied", "idempotency_key": "d1"}),
+    ] {
+        let denied = tool_error(&server.prompt(&mcp, arguments).await);
+        assert!(
+            denied["message"]
+                .as_str()
+                .unwrap()
+                .contains("no prompts today"),
+            "{denied}"
+        );
+    }
+    assert!(
+        cyber_store::mcp_serve::recent_inputs(&server.h.store, &id, 10)
+            .unwrap()
+            .is_empty()
+    );
+}
+
 #[tokio::test]
 async fn a_closed_stream_ends_the_wait_and_frees_its_slot() {
     let turns = vec![tools(&[("c1", "shell", "{}")]), text("finished")];
