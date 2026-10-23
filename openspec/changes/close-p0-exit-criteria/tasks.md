@@ -11,4 +11,4 @@ The local-model coding and long-task baseline remains a P0 gate; this change sup
 - [x] Push and verify all six platform builds.
 - [ ] Run and publish the local compatible-model baselines.
 - [x] Verify accounting regressions against main and include reasoning/compaction usage and cost.
-- [ ] Validate and rebuild the corrected release harness before full local runs.
+- [ ] Validate and rebuild the corrected release harness before full local runs. The suite summary now includes `tokens.reasoning`, with a regression test; a rebuilt-harness run and retained evidence are still required.
