@@ -693,7 +693,12 @@ fn review_timeout_cancels_only_the_owned_reviewer_job() {
     });
     let env = Env::new(&provider);
     env.write("a.rs", "changed\n");
-    let output = env.review(&["--format", "json", "--timeout", "3s"]);
+    // The timeout must fire while the reviewer is held, but its clock also covers the
+    // reviewer's start (admission, Job spawn, child Session, first provider request),
+    // which took over 3 s on loaded runners and stopped the fork before the reviewer
+    // asked the provider. The reviewer is held for 120 s, so a 15 s timeout still ends
+    // the run long before it answers.
+    let output = env.review(&["--format", "json", "--timeout", "15s"]);
     // A handback that survived exit would reach the provider once the reviewer answered.
     provider.release();
     thread::sleep(Duration::from_secs(1));

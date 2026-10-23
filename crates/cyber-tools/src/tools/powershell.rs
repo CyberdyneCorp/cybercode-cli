@@ -181,6 +181,9 @@ mod tests {
     }
 
     #[cfg(windows)]
+    const LEGACY_START_LIMIT: std::time::Duration = std::time::Duration::from_secs(180);
+
+    #[cfg(windows)]
     #[tokio::test]
     async fn legacy_interpreter_preserves_encoded_source_and_exit_status() {
         let root = tempfile::tempdir().unwrap();
@@ -202,11 +205,15 @@ mod tests {
             .stdout(std::process::Stdio::null())
             .stderr(std::fs::File::create(&diagnostics).unwrap());
         let mut child = command.spawn().await.unwrap();
-        let status = tokio::time::timeout(std::time::Duration::from_secs(30), child.wait())
+        // Only a hang guard. A cold Windows PowerShell 5.1 start loads the .NET Framework
+        // host from an unwarmed runner disk: on CI it takes 5-18s next to the parallel
+        // suite and has exceeded 30s, which says nothing about the encoding under test.
+        let status = tokio::time::timeout(LEGACY_START_LIMIT, child.wait())
             .await
             .unwrap_or_else(|error| {
+                let ran = root.path().join("encoded-source.txt").exists();
                 panic!(
-                    "legacy PowerShell did not exit: {error}; stderr: {}",
+                    "legacy PowerShell did not exit: {error}; script ran: {ran}; stderr: {}",
                     std::fs::read_to_string(&diagnostics).unwrap_or_default()
                 )
             })

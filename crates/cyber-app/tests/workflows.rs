@@ -1854,7 +1854,7 @@ async fn a_resume_without_a_share_keeps_the_runs_share() {
     let server = Server::start(config).await;
     let owner = server.session().await;
     let run = server
-        .start_run(json!({"session_id": owner, "script": gated_fan_out("capped", "s", 6), "max_concurrent": 1}))
+        .start_run(json!({"session_id": owner, "script": gated_fan_out("capped", "s", 8), "max_concurrent": 1}))
         .await;
     wait_for("s1 at the gate", || model.held() == ["s1"]).await;
     let pause = format!("/workflows/runs/{run}/pause");
@@ -1893,14 +1893,32 @@ async fn a_resume_without_a_share_keeps_the_runs_share() {
         .ok(Method::GET, &format!("/workflows/runs/{run}"), None)
         .await;
     assert_eq!(shown["data"]["share"], 2, "{shown}");
+    // Both relaunched agents reach the gate behind the requests the restart abandoned.
+    // A pause lets in-flight agents finish their Turns, so it is taken only once both are
+    // there, and their gates open before the resume: an agent still at the gate would
+    // hold the attempt alive and refuse every resume. s7 and s8 are left for the resume.
+    wait_for("the relaunched s5 and s6 behind the abandoned ones", || {
+        let mut held = model.held();
+        held.sort();
+        held == ["s5", "s5", "s6", "s6"]
+    })
+    .await;
     server.ok(Method::POST, &pause, None).await;
-    let (status, resumed) = resume_when_quiet(&server, &run, None).await;
-    assert!(status.is_success(), "{resumed}");
-    assert_eq!(resumed["data"]["share"], 2, "{resumed}");
-    // The requests the restart abandoned are still first at the gate.
     for _ in 0..4 {
         model.open_gate();
     }
+    let (status, resumed) = resume_when_quiet(&server, &run, None).await;
+    assert!(status.is_success(), "{resumed}");
+    assert_eq!(resumed["data"]["share"], 2, "{resumed}");
+    // The kept share grants the resumed attempt both slots again.
+    wait_for("s7 and s8 at the gate", || {
+        let mut held = model.held();
+        held.sort();
+        held == ["s7", "s8"]
+    })
+    .await;
+    model.open_gate();
+    model.open_gate();
     let ended = server.settled_run(&run).await;
     assert_eq!(ended["status"], "completed", "{ended}");
     assert_eq!(ended["share"], 2, "{ended}");
