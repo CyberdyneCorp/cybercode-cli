@@ -31,7 +31,7 @@ Windows CI run 38117417472 (on `7e7a33a`) exposed regressions from the `cyber re
 
    **Resume:**
    - Commit the four increments.
-   - Confirm the `cyber-app` `mcp` and `cyber-cli` `mcp_remote_exec` resource and prompt cases in the next Windows CI run; only the windows-gnu Clippy type-check has run so far. The local stdio cases (`support/mcp_stdio.rs`, python3 fixture) and the listing-`always` case are Unix-only; on Windows only the remote fixture cases run.
+   - Done (2026-10-23): the `cyber-app` `mcp` and `cyber-cli` `mcp_remote_exec` resource and prompt cases pass on native Windows in main CI run `39905096927`. The local stdio cases (`support/mcp_stdio.rs`, python3 fixture) and the listing-`always` case are Unix-only; on Windows only the remote fixture cases run.
    - Then pick up the open items: prompt argument completion (`completion/complete`), image and embedded-resource content in prompt messages, and reads beyond the 1 MiB frame (the 10 MiB blob limit). The stdio fixture cases and the TUI command reload landed with the review fixes ([status](p1-status.md#mcp-resources-and-prompts-review-fixes-2026-10-13)).
 
 10. Done locally, pushed (2026-10-13): MCP client elicitation, cancellation, roots and list-changed, increments 1 to 4 of 4.
@@ -44,7 +44,7 @@ Windows CI run 38117417472 (on `7e7a33a`) exposed regressions from the `cyber re
 
    **Resume:**
    - Commit the four increments (validated, not yet committed).
-   - Confirm the `cyber-app` `mcp`, `cyber-cli` `mcp_remote_exec` and `cyber-tools` `mcp_remote`/`mcp_protocol` suites on the next Windows CI run, and add a Windows equivalent of the Unix-only stdio cases.
+   - The `cyber-app` `mcp`, `cyber-cli` `mcp_remote_exec` and `cyber-tools` `mcp_remote`/`mcp_protocol` suites pass on native Windows in main CI run `39905096927` (2026-10-23). Still open: a Windows equivalent of the Unix-only stdio cases.
    - Then the open items in M1.3 `tasks.md` under the MCP handlers parent: remote sampling evidence and nested sampling cancellation, the URL-mode decision, clearing the bridge `Authorization` on logout, the stdio mid-frame cancel notice and prompt argument completion.
 11. Done locally, pushed (2026-10-14): skills and commands, increment 1 of 4 (agent-aware listing, inspection surfaces, discovery hardening). `core/skills` now uses the Session agent's profile and Session ruleset and never exceeds `skills.listing_budget_tokens`; `GET /api/v1/skills`, `cyber skills list|show`, `cyber commands list`, `cyber doctor` skill/command checks and the TUI `/skills` picker show source, scope, permission effect and diagnostics; `SKILL.md` discovery uses the commands fence (no links, 1 MiB) and validates `model`; the MCP instruction source is `core/mcp-instructions` and the old key is withdrawn. Evidence: [status](p1-status.md#skills-and-commands-increment-1-of-4-agent-aware-listing-inspection-and-discovery-hardening-2026-10-14), [audit](p1-acceptance-audit.md#skills-and-commands-requirement-audit-and-increment-1-of-4-2026-10-14) (every skills-commands requirement audited). The acceptance checklist now lists all 214 P1 requirements.
 
