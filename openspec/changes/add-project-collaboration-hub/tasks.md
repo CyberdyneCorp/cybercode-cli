@@ -9,7 +9,7 @@
 - [ ] 2.1 Implement the existing account contracts needed for collaboration: discovery, PKCE login, callback/state/nonce validation, headless completion, ID-token checks, whoami/logout and account-free local behavior.
 - [ ] 2.2 Add protected token storage, cross-process serialized refresh/rotation, credential filtering/redaction and collaboration scope/audience checks. Preserve independent LLM-provider login.
 - [ ] 2.3 Test real local OIDC protocol fixtures: two subjects, bad issuer/audience/signature, unknown key rotation, expired tokens, missing scope, concurrent refresh, revoked/deactivated users, missing/empty org authorization, stale JWTs after org removal, service-token impersonation, expired authorization leases, Auth outages, step-up authentication, preserved account MFA for internal users and offline local use.
-- [ ] 2.4 Document/verify CyberdyneAuth client, audience, required introspection service, optional directory service and scope dependencies (A1/A4/A8). Do not claim live issuer acceptance from a fixture.
+- [ ] 2.4 Document/verify CyberdyneAuth client, audience, required introspection service, optional directory service and scope dependencies (A1/A4/A8). Public discovery/OpenAPI evidence and remaining provisioning gaps are recorded in [the live contract](auth-contract.md); authenticated acceptance remains pending. Do not claim live issuer acceptance from a fixture.
 
 ## 3. Hub domain, persistence and authorization
 

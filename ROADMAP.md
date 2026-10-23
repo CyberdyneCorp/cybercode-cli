@@ -135,7 +135,7 @@ These items need changes or configuration in [CyberdyneCorp/CyberdyneAuth](https
 | A5 | **RFC 8628 device authorization grant** for SSH/headless logins | P3; discovery/client capability selects it, with the PKCE paste flow as fallback | implemented upstream as an opt-in feature; deployment enablement, client grant and Cyber CLI acceptance remain |
 | A6 | Optional token-exchange (RFC 8693) so runners get per-session down-scoped tokens | P3 M3.4 | upstream feature request |
 | A7 | Long-lived automation tokens (`cyber tokens create`): non-rotating access tokens with selectable scopes and a 90-day maximum lifetime, revocable, excluded from step-up actions | P3 M3.1 | **upstream feature request** |
-| A8 | Register `cyber:collaborate` and configure the CLI access-token audience and required collaboration hub introspection client | P3 project collaboration | proposed dependency; upstream/operator configuration not yet verified |
+| A8 | Register `cyber:collaborate` and configure the CLI access-token audience and required collaboration hub introspection client | P3 project collaboration | [live contract](openspec/changes/add-project-collaboration-hub/auth-contract.md) checked 2026-10-23: scope absent from discovery; client/audience/service provisioning unverified |
 
 Local use never depends on CyberdyneAuth. Self-hosters can point `account.issuer` at their own CyberdyneAuth deployment.
 

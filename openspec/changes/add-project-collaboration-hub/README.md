@@ -7,5 +7,6 @@ Status: proposed, awaiting artifact review. The user selected a self-hosted hub;
 - [Proposal and scope](proposal.md)
 - [Design and trust boundaries](design.md)
 - [Implementation and acceptance tasks](tasks.md)
+- [Live authentication deployment contract and readiness](auth-contract.md)
 
 The active goal covers implementation after review, not only this specification. Existing local Teams and own-machine peers remain unchanged.

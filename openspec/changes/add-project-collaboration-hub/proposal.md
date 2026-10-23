@@ -50,4 +50,4 @@ The local web dashboard may later consume these APIs, but is not a prerequisite.
 
 2026-10-23: pulled `main` at `8e7085a02dec908713ccdbaf96542e5d7826dbf3`; GitHub had no open PRs. The new implementation goal is active. Self-hosted hub topology was selected by the user. This proposal is awaiting artifact review; it is not implementation approval.
 
-Security review clarification: use CyberdyneAuth live token introspection to distinguish active user accounts from service credentials and refresh the authorized organization set. Organization/project authorization is separate from Git hosting access. No running Auth instance or collaboration implementation has been validated yet.
+Security review clarification: use CyberdyneAuth live token introspection to distinguish active user accounts from service credentials and refresh the authorized organization set. Organization/project authorization is separate from Git hosting access. The [live Auth public contract](auth-contract.md) has been checked; authenticated flows, required provisioning and collaboration implementation remain unverified.
