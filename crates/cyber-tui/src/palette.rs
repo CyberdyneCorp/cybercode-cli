@@ -39,6 +39,7 @@ pub enum Ui {
     RenameSession,
     SessionTree,
     LabelBranch,
+    ExportSession,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -68,6 +69,12 @@ const BUILTINS: &[(&str, &str, Option<&str>, bool)] = &[
         true,
     ),
     ("fork", "fork this session", Some("session_fork"), false),
+    (
+        "export",
+        "write this session to an HTML, Markdown or JSON file",
+        None,
+        true,
+    ),
     (
         "tree",
         "branches of this session; check one out",
@@ -277,6 +284,12 @@ const LATER_ACTIONS: &[(&str, &str, Option<&str>, Ui)] = &[
         "every branch of this session; check one out or label it",
         None,
         Ui::SessionTree,
+    ),
+    (
+        "Export session",
+        "write this session to an HTML page in the Location",
+        None,
+        Ui::ExportSession,
     ),
     (
         "Label branch",

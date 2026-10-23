@@ -858,12 +858,15 @@ name = "cyber-client"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "chrono",
  "cyber-llm",
  "cyber-server",
  "futures",
  "http-body-util",
+ "pulldown-cmark",
  "reqwest",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "ulid",

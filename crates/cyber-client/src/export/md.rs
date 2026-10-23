@@ -1,5 +1,4 @@
-//! `cyber sessions export` (`storage-events` → Session export): the server's export as
-//! JSON (the default) or Markdown, written to stdout.
+//! `--format md`: the server's export document as Markdown.
 
 use std::fmt::Write as _;
 

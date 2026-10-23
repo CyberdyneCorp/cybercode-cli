@@ -5,7 +5,7 @@
 //! `cyber --resume` and `cyber exec --session`.
 
 use clap::Subcommand;
-use cyber_client::Client;
+use cyber_client::{Client, export};
 use serde_json::{Value, json};
 
 use crate::cli::GlobalArgs;
@@ -76,8 +76,8 @@ pub enum SessionsCmd {
         #[arg(long)]
         delete: bool,
     },
-    /// Write a Session as JSON (default) or Markdown (--format md): its info, messages,
-    /// tool calls, goals and workflow runs.
+    /// Write a Session as JSON (default), Markdown (--format md) or one self-contained
+    /// HTML page (--format html): its info, messages, tool calls, goals and workflow runs.
     Export {
         /// ID, exact title or unique ID prefix.
         session: String,
@@ -91,6 +91,10 @@ pub enum SessionsCmd {
         /// Include every branch; each message's `parent_message_id` links the tree.
         #[arg(long)]
         all_branches: bool,
+        /// Write the export to this file, atomically, instead of stdout. A symlink is
+        /// refused; an existing file keeps its permissions, a new one is private.
+        #[arg(short, long, value_name = "FILE")]
+        output: Option<std::path::PathBuf>,
     },
     #[command(external_subcommand)]
     Other(Vec<String>),
@@ -164,15 +168,17 @@ async fn dispatch(client: &Client, cmd: SessionsCmd, global: &GlobalArgs) -> Res
             sanitize,
             include_children,
             all_branches,
+            output,
         } => {
+            let format = export_format(global)?;
             let id = session_id(client, &session).await?;
-            let branches = if all_branches { "&branches=all" } else { "" };
-            let path = format!(
-                "/sessions/{}/export?sanitize={sanitize}&include_children={include_children}{branches}",
-                encode(&id)
-            );
-            let export = client.get(&path).await.map_err(api)?;
-            export_output(&export["data"], global)
+            let options = export::Options {
+                all_branches,
+                include_children,
+                sanitize,
+            };
+            let document = export::document(client, &id, options).await.map_err(api)?;
+            write_export(&document, format, output.as_deref())
         }
         SessionsCmd::Other(_) => unreachable!("handled before connecting"),
         branch => dispatch_branch(client, branch, global).await,
@@ -322,17 +328,37 @@ pub async fn resolve(client: &Client, wanted: &str) -> Result<Value, CliError> {
     }
 }
 
-/// The export in `--format json` (the default) or `md`.
-fn export_output(export: &Value, global: &GlobalArgs) -> Result<(), CliError> {
+/// The export format `--format` names: `json` (the default), `md` or `html`.
+fn export_format(global: &GlobalArgs) -> Result<export::Format, CliError> {
     match global.format {
-        None | Some(crate::cli::Format::Json) => output::json(export),
-        Some(crate::cli::Format::Md) => {
-            print!("{}", super::session_export::markdown(export));
+        None | Some(crate::cli::Format::Json) => Ok(export::Format::Json),
+        Some(crate::cli::Format::Md) => Ok(export::Format::Markdown),
+        Some(crate::cli::Format::Html) => Ok(export::Format::Html),
+        Some(_) => Err(CliError::usage(
+            "cyber sessions export writes --format json, md or html",
+        )),
+    }
+}
+
+/// The rendered export on stdout, or atomically in `output`.
+fn write_export(
+    document: &Value,
+    format: export::Format,
+    output: Option<&std::path::Path>,
+) -> Result<(), CliError> {
+    let generator = format!("cyber {}", cyber_core::version::build_info().version);
+    let rendered = export::render(document, format, &generator);
+    match output {
+        Some(path) => export::write_atomic(path, rendered.as_bytes()).map_err(|e| {
+            CliError::runtime(format!(
+                "cannot write the export to {}: {e}",
+                path.display()
+            ))
+        }),
+        None => {
+            print!("{rendered}");
             Ok(())
         }
-        Some(_) => Err(CliError::usage(
-            "cyber sessions export writes --format json or --format md",
-        )),
     }
 }
 

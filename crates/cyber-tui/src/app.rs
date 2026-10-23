@@ -202,6 +202,8 @@ pub enum Action {
     Branch(crate::branches::Request),
     /// `/login` and `/logout` (`tui` → Provider login commands).
     Login(crate::login::LoginRequest),
+    /// `/export` (`tui` → Export command).
+    Export(crate::export::Request),
     /// Open a file in `$VISUAL`/`$EDITOR` (`s` on a Workflow Run: its script).
     EditFile(String),
     Quit,
@@ -345,6 +347,8 @@ pub enum Overlay {
     Tree,
     /// `/login`: a provider sign-in; its state is `App::login`.
     Login,
+    /// `/export`: replace the existing file?
+    ConfirmExport(crate::export::Request),
 }
 
 /// Text the small model drafts for the user (`vcs-integration` → Commit and PR text
@@ -947,6 +951,7 @@ impl App {
             Overlay::Workflows => self.workflows_key(key),
             Overlay::Rename(_) => self.rename_key(key),
             Overlay::Login => self.login_key(key),
+            Overlay::ConfirmExport(_) => self.confirm_export_key(key),
             Overlay::FileDiff { .. } => {
                 self.file_diff_key(key);
                 Vec::new()
@@ -1034,6 +1039,7 @@ impl App {
             Ui::RenameSession => return self.rename_command(""),
             Ui::SessionTree => return self.tree_command(),
             Ui::LabelBranch => self.composer.set_text("/label "),
+            Ui::ExportSession => return self.export_command(""),
         }
         Vec::new()
     }
@@ -1638,6 +1644,7 @@ impl App {
             "reload-plugins" => vec![Action::LoadPlugins { reload: true }, Action::LoadCommands],
             "resume" | "sessions" => vec![Action::LoadSessions],
             "rename" => self.rename_command(args),
+            "export" => self.export_command(args),
             "tree" => self.tree_command(),
             "label" => self.label_command(args),
             "btw" | "side" => self.side_command(args),
