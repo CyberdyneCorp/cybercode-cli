@@ -96,7 +96,7 @@ The [current inventory](docs/implementation/spec-doc-reconciliation.md) contains
 
 ## P3: Connectivity
 
-**Capabilities:** `cyber-account` (including automation tokens), `remote-control`, `web-client` (Relay bundle), `cross-session-messaging` (cross-machine), `runners-cloud` (including `cyber apply`, best-of-N attempts), `workflows` and `agents-subagents` (remote agents), `agent-teams` (distributed teammates), `routines`, `channels`, `session-sharing`, `org-policy`, `vcs-integration` (GitHub App/Action, auto-fix PRs), `server-api` (Bearer account tokens, remote rate limits), `client-sdk` (Python), `editor-integration` (ACP, VS Code extension, IDE context and detection, deep links).
+**Capabilities:** `cyber-account` (including automation tokens), `remote-control`, `web-client` (Relay bundle), `cross-session-messaging` (cross-machine), `project-collaboration` (proposed human/agent project hub), `runners-cloud` (including `cyber apply`, best-of-N attempts), `workflows` and `agents-subagents` (remote agents), `agent-teams` (distributed teammates), `routines`, `channels`, `session-sharing`, `org-policy`, `vcs-integration` (GitHub App/Action, auto-fix PRs), `server-api` (Bearer account tokens, remote rate limits), `client-sdk` (Python), `editor-integration` (ACP, VS Code extension, IDE context and detection, deep links).
 
 **Milestones**
 1. **M3.1 Cyber Account:** `cyber login` via CyberdyneAuth (OIDC code + PKCE, loopback redirect), keyring storage, refresh serialized across processes, `whoami`, entitlements and org claims.
@@ -106,6 +106,8 @@ The [current inventory](docs/implementation/spec-doc-reconciliation.md) contains
 5. **M3.5 Automation:** routines (schedule / API / GitHub / webhook triggers), channels (webhook, MCP channel, chat bridges), GitHub App/Action + auto-fix PRs.
 6. **M3.6 Sharing & policy:** share service (private / org / public), redaction, server-managed org policy and spend limits.
 7. **M3.7 Editor clients:** `cyber acp` for Zed, JetBrains and other ACP clients; the VS Code extension (also on Open VSX) with inline diff review, selection mentions and plan review; IDE context and `cyber ide install`; `cyber://` deep links.
+
+**Project collaboration (P3): Status: proposed, awaiting artifact review; not implemented.** [`add-project-collaboration-hub`](openspec/changes/add-project-collaboration-hub/proposal.md) plans a user-selected self-hosted hub connecting an organization or group of friends around one Git repository, with OIDC identities, explicit owner/member/viewer membership, locally owned published agents, human/agent project and direct messages, shared task claims, offline delivery and revocation/reconnect safety. GitHub is the first documented Git host; collaboration invitations do not grant Git hosting access. The hub can read stored shared content and does not substitute for the ciphertext-only Relay. It coordinates work without remote shell authority or automatic merges. The implementation goal includes the needed account foundation, CLI/TUI/API/SDK and multi-principal real-process acceptance; it does not imply all M3 milestones are complete.
 
 **Exit criteria**
 - A phone can approve a permission request for a laptop session through a relay that only ever sees ciphertext (verified by a relay-side capture test).
@@ -133,6 +135,7 @@ These items need changes or configuration in [CyberdyneCorp/CyberdyneAuth](https
 | A5 | **RFC 8628 device authorization grant** for SSH/headless logins | P3 nice-to-have; `--no-browser` paste flow is the fallback | **upstream feature request** |
 | A6 | Optional token-exchange (RFC 8693) so runners get per-session down-scoped tokens | P3 M3.4 | upstream feature request |
 | A7 | Long-lived automation tokens (`cyber tokens create`): non-rotating access tokens with selectable scopes and a 90-day maximum lifetime, revocable, excluded from step-up actions | P3 M3.1 | **upstream feature request** |
+| A8 | Register `cyber:collaborate` and configure the CLI access-token audience and collaboration hub validation/introspection client | P3 project collaboration | proposed dependency; upstream/operator configuration not yet verified |
 
 Local use never depends on CyberdyneAuth. Self-hosters can point `account.issuer` at their own CyberdyneAuth deployment.
 
