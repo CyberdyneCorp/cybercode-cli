@@ -25,10 +25,10 @@
 
 ## 5. Client surfaces and acceptance
 
-- [ ] 5.1 CLI/API/SDK round-trip of the report and artifact links, existing exit semantics, library args form and TUI evidence view.
-- [ ] 5.2 Real-binary scripted acceptance: three candidates, one rejected by checks, recommendation with inspectable evidence, restart during solving/checking/judging and budget stop.
-- [ ] 5.3 Opt-in live multi-model acceptance with exact providers/models/versions, budgets, outcomes and failures retained; no quality-parity claim.
-- [ ] 5.4 Update feature/usage docs and M2.2 status only after implementation; archive only after task/evidence review.
+- [x] 5.1 CLI/API/SDK round-trip of the report and artifact links, existing exit semantics, library args form and TUI evidence view.
+- [x] 5.2 Real-binary scripted acceptance: three candidates, one rejected by checks, recommendation with inspectable evidence, restart during solving/checking/judging and budget stop.
+- [ ] 5.3 Deferred optional evidence: opt-in live multi-model acceptance with exact providers/models/versions, budgets, outcomes and failures retained. Not run; this archive makes no model-quality parity claim.
+- [x] 5.4 Update feature/usage docs and M2.2 status only after implementation; archive only after task/evidence review.
 
 ## Admission increment (2026-10-23)
 
@@ -50,4 +50,4 @@ Cost regression: an agent failure can leave inference usage unrecorded. The runt
 
 Local production tests cover separate candidate patches, host rejection of false solver claims, source mutation, command denial, full-access/extra-root and direct file-tool escape attempts, queued repository replacement, setup failure, denied edits, same-model disclosure, restarts during solving/checking/judging, interactive approval after submission, bounded/truncated logs, timeout and detached-descendant unknown settlement with no subsequent native dispatch. The real CLI acceptance compares three candidates across two model identities, rejects one and recommends a passing patch while preserving the owner checkout. Parser, engine and source-fingerprint regressions cover malformed admission, ineligible judge selections, budget partials, binary source, symlinks and deleted directories. SDK authority/artifact round-trip and terminal snapshots are included.
 
-Validation in progress: final tests after main integration, generated API consistency, full workspace checks and platform CI. Live paid-model acceptance (5.3) is opt-in and has not been run; this change makes no model-quality parity claim. Do not archive or mark the remaining client/acceptance tasks complete without final verification.
+Final acceptance: PR #23 merged as `4cc4bd47c9d8097c5af8b4de7fd5d4975bba72ff`. All 13 PR CI jobs pass on runtime source `c455cc319a70d7919da4f780148a36bbebf60783` ([run 39986038710](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/39986038710)): Linux/macOS workspace tests, native Windows curated tests/lint, SDK and six platform builds. Main integration is tracked by [run 39992643135](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/39992643135). Final local focused integration: 148 passed; workspace all-target Clippy with warnings denied, formatting, generated SDK consistency and strict OpenSpec validation pass. SDK authority/artifact round-trips and terminal snapshots passed. The real CLI three-candidate/two-model acceptance and four real-server crash/budget cases pass; see [acceptance evidence](../../../../docs/measurements/verified-solve-acceptance.md). Task 5.2 includes safe partial/fenced results after crashes, not automatic redispatch of unresolved native effects. Live paid-model acceptance (5.3) remains optional and unperformed; native Windows full solve Git/process acceptance is unverified. These limits do not establish model-quality parity.
