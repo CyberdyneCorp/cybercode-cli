@@ -11,6 +11,7 @@ mod envelope;
 mod error;
 mod event_location;
 mod events;
+mod export;
 mod files;
 mod goals;
 mod guard;
@@ -640,6 +641,7 @@ pub fn router(state: AppState) -> Router {
 pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router {
     let api = Router::new()
         .merge(sessions::routes())
+        .merge(export::routes())
         .merge(branches::routes())
         .merge(children::router())
         .merge(jobs::routes())
