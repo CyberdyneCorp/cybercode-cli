@@ -1,0 +1,32 @@
+## MODIFIED Requirements
+
+### Requirement: Requested scopes
+(P3) Login SHALL request `openid profile email offline_access cyber:relay cyber:runner cyber:share cyber:messaging cyber:collaborate`, minus any scope missing from the issuer's `scopes_supported` (a warning names the omitted scopes). Each account-gated feature SHALL check that its required scope is present in the token's `scope` claim and SHALL report `MissingScopeError` with a hint to run `cyber login` again when it is not.
+
+#### Scenario: Scope not supported by a self-hosted issuer
+- **WHEN** the issuer's `scopes_supported` lacks `cyber:runner`
+- **THEN** login proceeds without it, warns `issuer does not support scope cyber:runner; hosted runners will be unavailable`, and `cyber --cloud` later fails with `MissingScopeError`
+
+
+### Requirement: ID token and access token validation
+(P3) The CLI SHALL validate the ID token's signature against `jwks_uri` using the algorithm advertised there, plus `iss`, `aud` (= client_id), `exp`, `iat` (60 seconds of clock skew allowed) and `nonce`. Services that receive access tokens (Relay, Runners, Share, Routines, collaboration hub) SHALL validate signature, `iss` and `exp`. They SHALL check `aud` when the client has an access-token audience configured, and the required scope. The collaboration hub SHALL always require its configured access-token audience and `cyber:collaborate`; an ID token or access token without that audience SHALL NOT authorize project access. For immediate revocation checks they SHALL use RFC 7662 introspection with a service token, cached for at most 60 seconds.
+
+#### Scenario: Unknown key ID triggers a JWKS refresh
+- **WHEN** an ID token carries a `kid` absent from the cached JWKS
+- **THEN** the JWKS is refetched once, and validation fails with `UnknownSigningKeyError` only if the key is still absent
+
+
+#### Scenario: Missing collaboration audience or scope
+- **WHEN** a caller presents an otherwise valid token without the hub's configured audience or `cyber:collaborate`
+- **THEN** collaboration is refused without accepting a local password, peer grant or provider login as a fallback
+
+### Requirement: Headless login
+(P3) `cyber login --no-browser` SHALL print the authorization URL, which uses the loopback redirect, and SHALL accept either the pasted full redirect URL (from the browser address bar after the redirect fails to load on a remote machine) or the bare `code` value. It SHALL then validate `state` and complete the exchange. When the discovery document advertises `device_authorization_endpoint` and `urn:ietf:params:oauth:grant-type:device_code` in `grant_types_supported` (RFC 8628, enabled per issuer and permitted client), `--no-browser` SHALL instead use the device flow, printing the verification URI and user code.
+
+#### Scenario: Pasted redirect URL over SSH
+- **WHEN** a user on a remote host runs `cyber login --no-browser`, signs in on a laptop, and pastes `http://127.0.0.1:53682/callback?code=abc&state=xyz`
+- **THEN** the CLI validates `state = xyz` and completes the login
+
+#### Scenario: Device flow when available
+- **WHEN** discovery advertises `device_authorization_endpoint`
+- **THEN** `cyber login --no-browser` prints `Go to <verification_uri> and enter code ABCD-EFGH` and polls the token endpoint, honoring `interval` and `slow_down`
