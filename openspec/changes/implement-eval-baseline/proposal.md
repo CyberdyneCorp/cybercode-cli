@@ -19,4 +19,4 @@ The P0 exit criteria require a published live coding baseline: at least 20 tasks
 
 ## Impact
 
-No local-model baseline yet, because no local model server is installed. The suite saturates on `gpt-6-luna`, so harder tasks are needed before it can gate that model.
+When this change was proposed no local model server was installed, and the suite saturated on `gpt-6-luna`. `suite-coding-hard-v1` was added so strong models no longer saturate; local Qwen3.5 9B baselines through the OpenAI-compatible adapter are recorded under `eval/results/` and `eval/local-model/`.

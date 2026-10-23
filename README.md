@@ -190,6 +190,7 @@ A rewind keeps the attempt you abandoned. The Session's messages form a tree, an
 ./target/debug/cyber sessions label <session> attempt-two --at msg_01J…   # name a message (default: the active tip)
 ./target/debug/cyber sessions checkout <session> attempt-two --code  # make it active and restore its code
 ./target/debug/cyber sessions export <session> --all-branches        # JSON with every branch
+./target/debug/cyber sessions export <session> --format html -o run.html  # one self-contained page
 ```
 
 In the TUI, `/tree` opens the same tree (Enter checks out, `c` restores code, `l` labels) and `/label <name>` labels the active tip. A checkout is refused with `SessionBusyError` while a Turn or background Job runs. Details: [Session branches](docs/local-core-guide.md#session-branches).
@@ -252,7 +253,7 @@ In the TUI, a message from another machine reads `from review@laptop`, its held 
 | Area | Today | Details |
 |---|---|---|
 | Coding | Read/search, edit files and notebook cells, run commands, web tools | [Features](docs/features.md) |
-| Sessions | Durable admission, streaming, interrupt/resume, crash recovery, compaction; named Sessions (`/rename`, `cyber sessions rename`) resumed by title; branches: a rewind keeps the abandoned attempt, `/tree`, `/label` and `cyber sessions tree\|checkout\|label` switch between attempts, optionally restoring their code; `cyber sessions export` as JSON or Markdown, with children, every branch and `--sanitize` | [Naming and resuming](docs/local-core-guide.md#naming-and-resuming-sessions), [branches](docs/local-core-guide.md#session-branches) |
+| Sessions | Durable admission, streaming, interrupt/resume, crash recovery, compaction; named Sessions (`/rename`, `cyber sessions rename`) resumed by title; branches: a rewind keeps the abandoned attempt, `/tree`, `/label` and `cyber sessions tree\|checkout\|label` switch between attempts, optionally restoring their code; `cyber sessions export` as JSON, Markdown or a self-contained HTML page (`--format html`, `--output`), with children, every branch and `--sanitize`, and `/export` in the TUI | [Naming and resuming](docs/local-core-guide.md#naming-and-resuming-sessions), [branches](docs/local-core-guide.md#session-branches) |
 | Safety | Workspace trust, permission rules, protected paths, credential masking, macOS/Linux sandbox | Windows enforcement partial |
 | Recovery | Shadow-git snapshots, restore preserving user edits, backup and retention | Broader rewind UI pending |
 | Multiple agents | Subagents as child Sessions (`agent` tool, `/subtask`, background, isolated worktrees, `/agent`, `/tasks`); custom agent profiles with their own model, tools and skills; workflows fanning out many agents; several workflow runs at once; other agents driving Sessions over `cyber mcp serve`; Sessions messaging each other on one server and across your machines (`send_message`, `watch_session`, `cyber messages`, `/messages`, `cyber peers`, `cyber attach <session>@<peer>`); agent teams with a shared task board (`/team`, `cyber teams`, behind `teams`) | Subagents partial; agent teams experimental, behind the `teams` feature (off by default); the Relay transport not yet |

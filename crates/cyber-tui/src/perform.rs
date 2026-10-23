@@ -178,6 +178,8 @@ pub enum Msg {
     /// A Workflow monitor reply.
     Workflow(crate::workflows::Reply),
     Toast(String),
+    /// `/export`: the target exists and replacing it needs the user's confirmation.
+    ExportExists(crate::export::Request),
     /// The end of a background task's log, for `/tasks`.
     TaskLog {
         session_id: String,
@@ -883,7 +885,8 @@ pub async fn perform_owned(
         | Action::Workflow(_)
         | Action::Team(_)
         | Action::Branch(_)
-        | Action::Login(_) => scheduled(client, session, action).await,
+        | Action::Login(_)
+        | Action::Export(_) => scheduled(client, session, action).await,
         Action::SaveTheme(_)
         | Action::SaveProjectTheme(_)
         | Action::SavePreference { .. }
@@ -900,6 +903,7 @@ pub async fn perform_owned(
 async fn scheduled(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
     match action {
         Action::Branch(request) => crate::branches::perform(client, session, request).await,
+        Action::Export(request) => crate::export::perform(client, request).await,
         Action::Loop(request) => crate::loops::perform(client, request).await,
         Action::Team(request) => crate::team::perform(client, session, request).await,
         Action::Goal(request) => crate::goals::perform(client, request).await,

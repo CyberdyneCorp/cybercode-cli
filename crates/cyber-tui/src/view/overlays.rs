@@ -502,6 +502,10 @@ pub fn help(f: &mut Frame, app: &App, area: Rect) {
             "work until the condition is met; /goal add, pause, resume, skip, clear, edit",
         ),
         (
+            "/export [html|md|json] [path]",
+            "write this session to a file in the Location",
+        ),
+        (
             "/tree · /label <name>",
             "branches: check one out (c restores code, l labels); /label --clear <name>",
         ),
@@ -609,6 +613,30 @@ pub(super) fn confirm_stop_tasks(f: &mut Frame, app: &App, area: Rect) {
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
             .block(frame(app, "Stop background tasks?")),
+        rect,
+    );
+}
+
+/// `/export` onto an existing file.
+pub(super) fn confirm_export(
+    f: &mut Frame,
+    app: &App,
+    request: &crate::export::Request,
+    area: Rect,
+) {
+    let rect = centered(area, 90, 6);
+    let lines = vec![
+        Line::from(format!(
+            "{} exists. Replace it with this Session's export?",
+            crate::sidebar::clean(&request.path.display().to_string())
+        )),
+        Line::from("y / Enter to replace · n / Esc to keep it"),
+    ];
+    f.render_widget(Clear, rect);
+    f.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .block(frame(app, "Overwrite export?")),
         rect,
     );
 }

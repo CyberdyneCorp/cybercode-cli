@@ -131,6 +131,7 @@ fn tokens(results: &[TrialResult]) -> Value {
     json!({
         "input": sum(|r| r.tokens.input),
         "output": sum(|r| r.tokens.output),
+        "reasoning": sum(|r| r.tokens.reasoning),
         "cache_read": sum(|r| r.tokens.cache_read),
         "cache_write": sum(|r| r.tokens.cache_write),
     })
@@ -245,5 +246,50 @@ mod tests {
         assert_eq!(median(vec![4.0, 1.0]), Some(2.5));
         assert_eq!(civil(0), (1970, 1, 1));
         assert_eq!(civil(20_365), (2025, 10, 4));
+    }
+
+    fn trial_with(tokens: super::super::trial::Tokens) -> TrialResult {
+        TrialResult {
+            task: "t".into(),
+            trial: 1,
+            passed: true,
+            infrastructure_failure: false,
+            stop_reason: "end_turn".into(),
+            error: None,
+            turns: 1,
+            tool_calls: 0,
+            cost_usd: 0.0,
+            unpriced: false,
+            tokens,
+            latency_seconds: 1.0,
+            grader_exit: Some(0),
+            grader_tail: "PASS".into(),
+            session_id: "ses".into(),
+        }
+    }
+
+    #[test]
+    fn summary_tokens_include_every_class() {
+        use super::super::trial::Tokens;
+        let results = [
+            trial_with(Tokens {
+                input: 1,
+                output: 2,
+                reasoning: 3,
+                cache_read: 4,
+                cache_write: 5,
+            }),
+            trial_with(Tokens {
+                input: 10,
+                output: 20,
+                reasoning: 30,
+                cache_read: 40,
+                cache_write: 50,
+            }),
+        ];
+        assert_eq!(
+            tokens(&results),
+            json!({"input": 11, "output": 22, "reasoning": 33, "cache_read": 44, "cache_write": 55})
+        );
     }
 }

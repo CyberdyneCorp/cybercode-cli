@@ -11,10 +11,13 @@ publish.workspace = true
 cyber-llm = { path = "../cyber-llm" }
 cyber-server = { path = "../cyber-server" }
 axum = "0.8"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 futures = "0.3"
 http-body-util = "0.1"
+pulldown-cmark = { version = "=0.13.4", default-features = false }
 reqwest = { version = "0.13", features = ["json", "stream"] }
 serde_json.workspace = true
+tempfile.workspace = true
 thiserror.workspace = true
 tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
 ulid.workspace = true

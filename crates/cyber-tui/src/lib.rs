@@ -7,6 +7,7 @@ mod branches;
 mod children;
 mod composer;
 mod explorer;
+mod export;
 mod fuzzy;
 mod goals;
 mod highlight;
@@ -55,6 +56,8 @@ mod screens_chrome;
 mod screens_context;
 #[cfg(test)]
 mod screens_explorer;
+#[cfg(test)]
+mod screens_export;
 #[cfg(test)]
 mod screens_goals;
 #[cfg(test)]
