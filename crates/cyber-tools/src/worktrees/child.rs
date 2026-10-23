@@ -40,7 +40,7 @@ struct RootWorktree<'a> {
 
 enum ChildBase<'a> {
     Configured,
-    Pinned(&'a str),
+    Pinned(&'a cyber_server::runtime::RunWorktree),
     Removed(&'a Managed),
 }
 
@@ -266,7 +266,7 @@ impl BuiltinHost {
                     &worktree_request,
                     &branch,
                     user_requested,
-                    run.and_then(|tree| tree.base.as_deref())
+                    run.filter(|tree| tree.base.is_some())
                         .map_or(ChildBase::Configured, ChildBase::Pinned),
                 ),
             )
@@ -395,8 +395,11 @@ impl BuiltinHost {
             return Err(io::Error::new(io::ErrorKind::PermissionDenied, reason));
         }
         let mut settings = Settings::from_config(&config).map_err(io::Error::other)?;
-        if let ChildBase::Pinned(commit) = &base {
-            settings.base = (*commit).to_owned();
+        if let ChildBase::Pinned(tree) = &base {
+            settings.base = tree
+                .base
+                .clone()
+                .ok_or_else(|| io::Error::other("Missing pinned solve commit"))?;
         }
         let discovery = GitPort {
             ctx: &ctx,
@@ -405,6 +408,14 @@ impl BuiltinHost {
             read_only: Vec::new(),
         };
         let repository = Repository::discover(&discovery, &ctx.location).await?;
+        if let ChildBase::Pinned(tree) = &base
+            && tree.common_dir.as_deref() != repository.common_dir.to_str()
+        {
+            return Err(io::Error::other(
+                "Solve repository identity changed after admission",
+            ));
+        }
+
         let target =
             repository.target(&settings, &request.data, &request.project_id, &request.name)?;
         let execution = GitPort {

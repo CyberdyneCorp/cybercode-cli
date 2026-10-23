@@ -332,7 +332,12 @@ impl RunHost {
         .with_initial_budget()
     }
 
-    fn with_initial_budget(self) -> Self {
+    fn with_initial_budget(mut self) -> Self {
+        if self.solve_base.is_some()
+            && let Some(directory) = self.args["solve_admission"]["base"]["directory"].as_str()
+        {
+            self.owner.directory = directory.to_owned();
+        }
         let view = self
             .replay
             .initial_budget()
@@ -601,6 +606,11 @@ impl RunHost {
         let worktree = (resumed.is_none() && self.isolates(&prepared.isolation)).then(|| {
             let mut tree = RunWorktree::new(&self.run_id, self.started.get());
             tree.base = self.solve_base.clone();
+            tree.common_dir = self.solve_base.as_ref().and_then(|_| {
+                self.args["solve_admission"]["base"]["common_dir"]
+                    .as_str()
+                    .map(str::to_owned)
+            });
             tree
         });
         prepared.record.branch = worktree.as_ref().map(|tree| tree.branch.clone());

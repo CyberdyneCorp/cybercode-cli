@@ -61,20 +61,12 @@ impl BuiltinHost {
                 .read_events(&id, -1, 3)
                 .map_err(|error| failed(error.to_string()))?;
             if let Some(intent) = recorded.events.first() {
-                if intent.data["source_sha256"] != source
-                    || intent.data["definition_sha256"] != definition
-                {
-                    return Err(failed(
-                        "verification identity changed; new revision required",
-                    ));
-                }
-                if let Some(settled) = recorded.events.get(1) {
-                    evidence.push(settled.data.clone());
-                } else {
-                    evidence.push(json!({"id":id,"argv":check.argv,"outcome":"unknown","settled":false,
-                    "source_sha256":source,"definition_sha256":definition,"ordinal":ordinal,
-                    "limitation":"an earlier native attempt has no durable settlement; it was not repeated"}));
-                }
+                evidence.push(recover_check(
+                    &intent.data,
+                    recorded.events.get(1).map(|event| &event.data),
+                    source,
+                    &definition,
+                )?);
                 continue;
             }
             if evidence
@@ -183,6 +175,77 @@ impl BuiltinHost {
         Ok(intent)
     }
 }
+
+/// An intent is never settlement proof, regardless of fields in its payload. Only a
+/// separate matching terminal record may authorize reuse; unresolved effects stay fenced.
+fn recover_check(
+    intent: &Value,
+    settled: Option<&Value>,
+    source: &str,
+    definition: &str,
+) -> Result<Value, ToolError> {
+    if intent["source_sha256"] != source || intent["definition_sha256"] != definition {
+        return Err(failed(
+            "verification identity changed; new revision required",
+        ));
+    }
+    if let Some(settled) = settled {
+        let keys = [
+            "id",
+            "run_id",
+            "candidate",
+            "revision",
+            "source_sha256",
+            "definition_sha256",
+            "ordinal",
+            "argv",
+            "cwd",
+        ];
+        if keys.iter().any(|key| intent[*key] != settled[*key]) {
+            return Err(failed(
+                "verification settlement identity does not match its intent",
+            ));
+        }
+        return Ok(settled.clone());
+    }
+    let mut unknown = intent.clone();
+    unknown["outcome"] = "unknown".into();
+    unknown["settled"] = false.into();
+    unknown["limitation"] =
+        "an earlier native attempt has no durable settlement; it was not repeated".into();
+    Ok(unknown)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_intent_alone_cannot_authorize_reuse_even_when_it_claims_success() {
+        let intent = json!({"id":"check", "source_sha256":"source", "definition_sha256":"definition", "outcome":"passed", "settled":true});
+        let recovered = recover_check(&intent, None, "source", "definition").unwrap();
+        assert_eq!(recovered["outcome"], "unknown");
+        assert_eq!(recovered["settled"], false);
+        assert_eq!(recovered["id"], "check");
+    }
+
+    #[test]
+    fn recovery_requires_matching_source_definition_and_terminal_identity() {
+        let intent = json!({"id":"check", "source_sha256":"source", "definition_sha256":"definition", "ordinal":0, "outcome":"unknown"});
+        let mut settled = intent.clone();
+        settled["outcome"] = "passed".into();
+        settled["settled"] = true.into();
+        assert_eq!(
+            recover_check(&intent, Some(&settled), "source", "definition").unwrap(),
+            settled
+        );
+        assert!(recover_check(&intent, Some(&settled), "other source", "definition").is_err());
+        assert!(recover_check(&intent, Some(&settled), "source", "other definition").is_err());
+        settled["ordinal"] = 1.into();
+        assert!(recover_check(&intent, Some(&settled), "source", "definition").is_err());
+    }
+}
+
 fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

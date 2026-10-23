@@ -356,6 +356,8 @@ fn solve_runs_three_real_patches_rejects_a_failed_check_and_reports_a_recommenda
     assert_eq!(result["candidates"][1]["checks"][0]["outcome"], "failed");
     assert_eq!(result["candidates"][0]["checks"][0]["outcome"], "passed");
     assert!(result["stats"]["tokens"].as_u64().unwrap() > 0);
+    assert_eq!(result["budget"]["observed"]["unpriced"], true);
+    assert_eq!(result["budget"]["observed"]["cost_complete"], false);
     assert_eq!(result["stats"]["agents"], 4);
     assert_eq!(result["merged"], false);
     assert_eq!(git(&env.repo, &["rev-parse", "HEAD"]), before);

@@ -802,6 +802,18 @@ async fn solve_unknown_native_settlement_fences_later_checks_and_the_checkout_le
         .solve_evidence(run["id"].as_str().unwrap())
         .unwrap()
         .unwrap();
+    if cfg!(target_os = "linux") {
+        // Bubblewrap settles the entire namespace, including setsid descendants.
+        assert_eq!(run["result"]["verification_status"], "no_candidate_passed");
+        for row in &evidence.candidates {
+            assert_eq!(row.checks[0]["outcome"], "passed");
+            assert_eq!(row.checks[0]["settled"], true);
+            assert_eq!(row.checks[1]["outcome"], "failed");
+            assert!(!row.host_verified);
+        }
+        server.close().await;
+        return;
+    }
     assert_eq!(run["result"]["verification_status"], "incomplete", "{run}");
     for row in &evidence.candidates {
         assert_eq!(row.checks[0]["outcome"], "unknown", "{row:?}");
@@ -818,5 +830,135 @@ async fn solve_unknown_native_settlement_fences_later_checks_and_the_checkout_le
                 .is_err()
         );
     }
+    server.close().await;
+}
+
+#[tokio::test]
+async fn queued_solve_refuses_a_replaced_repository_before_creating_candidate_branches() {
+    let model = ScriptedModel::start(|body| {
+        if body["messages"].to_string().contains("occupy slot") {
+            json!({"hold":true})
+        } else {
+            solve_reply(body)
+        }
+    });
+    let temp = repository();
+    let root = temp.path().canonicalize().unwrap();
+    let replacement = tempfile::tempdir().unwrap();
+    let clone = replacement.path().join("clone");
+    git(
+        &root,
+        &[
+            "clone",
+            "--quiet",
+            "--no-hardlinks",
+            ".",
+            clone.to_str().unwrap(),
+        ],
+    );
+    let mut config = model.config();
+    config["permissions"] = json!("allow");
+    config["workflows"] = json!({"max_running_runs":1,"prompt_cache_warmup":false});
+    let server = open(temp, config).await;
+    let owner = server.session().await;
+    let occupy = "export const meta = { name:'occupy', description:'Hold one run slot' }; export default async()=>agent('occupy slot',{agent:'reviewer'});";
+    server
+        .start_run(json!({"session_id":owner,"script":occupy}))
+        .await;
+    wait_for("run slot is occupied", || !model.requests().is_empty()).await;
+    let run_id = server.start_run(json!({"session_id":owner,"name":"solve","args":{
+        "task":"fix source", "candidates":[{"label":"fast","model":"test/main"},{"label":"smart","model":"test/main"}],
+        "checks":[{"argv":["true"]}]}})).await;
+    assert_eq!(
+        server
+            .app
+            .runtime
+            .workflow_run(&run_id)
+            .unwrap()
+            .unwrap()
+            .status,
+        cyber_server::runtime::WorkflowRunStatus::Queued
+    );
+    std::fs::rename(root.join(".git"), root.join("state/original.git")).unwrap();
+    std::fs::write(
+        root.join(".git"),
+        format!("gitdir: {}\n", clone.join(".git").display()),
+    )
+    .unwrap();
+    model.release();
+    let run = server.ended_run(&run_id).await;
+    assert_eq!(run["result"]["recommended_candidate"], Value::Null, "{run}");
+    assert!(
+        run["result"]["limitations"]
+            .to_string()
+            .contains("repository identity changed"),
+        "{run}"
+    );
+    let branches = std::process::Command::new("git")
+        .args(["branch", "--list", "cyber/run-*"])
+        .current_dir(&clone)
+        .output()
+        .unwrap();
+    assert!(branches.status.success(), "{branches:?}");
+    assert!(branches.stdout.is_empty(), "{branches:?}");
+    assert_eq!(
+        std::fs::read_to_string(root.join("source.txt")).unwrap(),
+        "base\n"
+    );
+    server.close().await;
+}
+
+fn escape_file_reply(body: &Value) -> Value {
+    if body["messages"].to_string().contains("Task: judge solve") {
+        return solve_reply(body);
+    }
+    let text = body["messages"].to_string();
+    let at = text.find("OUTSIDE=").unwrap() + 8;
+    let target: String = text[at..]
+        .chars()
+        .take_while(|c| *c != '\\' && *c != '"' && !c.is_whitespace())
+        .collect();
+    let last = body["messages"].as_array().unwrap().last().unwrap();
+    let (name, id, input) = if last["role"] != "tool" {
+        ("read", "outside_read", json!({"path":target}))
+    } else if last["tool_call_id"] == "outside_read" {
+        (
+            "write",
+            "outside_write",
+            json!({"path":target,"content":"compromised"}),
+        )
+    } else {
+        return json!({"content":"done"});
+    };
+    json!({"tool_calls":[{"index":0,"id":id,"type":"function","function":{"name":name,"arguments":input.to_string()}}]})
+}
+
+#[tokio::test]
+async fn solve_file_tools_cannot_write_outside_the_candidate_even_after_reading_the_target() {
+    let model = ScriptedModel::start(escape_file_reply);
+    let temp = repository();
+    let root = temp.path().canonicalize().unwrap();
+    let mut config = model.config();
+    config["permissions"] = json!("allow");
+    config["sandbox"] = json!({"policy":"full-access"});
+    let server = open(temp, config).await;
+    let owner = server.session().await;
+    let run_id = server
+        .start_run(json!({"session_id":owner,"name":"solve","args":{
+        "task":format!("Try OUTSIDE={}",root.join("source.txt").display()),
+        "candidates":[{"label":"fast","model":"test/main"},{"label":"smart","model":"test/main"}],
+        "checks":[{"argv":["true"]}]}}))
+        .await;
+    let run = server.ended_run(&run_id).await;
+    assert_eq!(run["status"], "completed", "{run}");
+    assert_eq!(
+        std::fs::read_to_string(root.join("source.txt")).unwrap(),
+        "base\n"
+    );
+    assert!(model.requests().iter().any(|request| {
+        request["messages"]
+            .to_string()
+            .contains("Solve candidates cannot write outside their checkout")
+    }));
     server.close().await;
 }
