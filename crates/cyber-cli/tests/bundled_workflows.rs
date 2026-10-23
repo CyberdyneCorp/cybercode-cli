@@ -2,7 +2,9 @@
 //! contracts): `cyber exec --embedded --workflow <name>` against a scripted
 //! OpenAI-compatible model that answers each agent by the `Task:` line of its prompt.
 //! The review command (`cyber review`) and eject/override are covered in
-//! `review_command.rs` and `cli.rs`.
+//! `review_command.rs` and `cli.rs`. Unix-only: the fixture repository uses
+//! `GIT_CONFIG_GLOBAL=/dev/null` and the migrate checks run the POSIX `true` command.
+#![cfg(unix)]
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -222,7 +224,6 @@ fn ran(output: &Output, code: i32) -> Value {
     report["result"].clone()
 }
 
-#[cfg(unix)]
 #[test]
 fn review_verifies_its_findings_on_a_two_file_diff() {
     let env = Env::new();
@@ -241,7 +242,6 @@ fn review_verifies_its_findings_on_a_two_file_diff() {
     assert_eq!(result["partial"], false);
 }
 
-#[cfg(unix)]
 #[test]
 fn audit_reports_coverage_and_a_turn_budget_stops_it_with_exit_4() {
     let env = Env::new();
@@ -266,7 +266,6 @@ fn audit_reports_coverage_and_a_turn_budget_stops_it_with_exit_4() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn migrate_commits_each_batch_on_its_own_branch_and_merges_nothing() {
     let env = Env::new();
@@ -298,7 +297,6 @@ fn migrate_commits_each_batch_on_its_own_branch_and_merges_nothing() {
     assert_eq!(git(&env.repo, &["status", "--porcelain"]), "");
 }
 
-#[cfg(unix)]
 #[test]
 fn research_answers_from_cross_checked_claims() {
     let env = Env::new();
@@ -315,7 +313,6 @@ fn research_answers_from_cross_checked_claims() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn plan_merges_the_highest_scoring_draft() {
     let env = Env::new();
