@@ -781,6 +781,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "cyber-account"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "futures",
+ "getrandom 0.3.4",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "subtle",
+ "thiserror 2.0.21",
+ "tokio",
+ "url",
+ "zeroize",
+]
+
+[[package]]
 name = "cyber-app"
 version = "0.1.0"
 dependencies = [

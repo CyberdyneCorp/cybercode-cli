@@ -2,7 +2,7 @@
 
 - [x] 1.1 Pull current main, inspect existing Teams/peer/messaging/account/storage contracts and confirm self-hosted hub topology.
 - [x] 1.2 Complete and strictly validate proposal, design and capability deltas; synchronize roadmap and document this as proposed work.
-- [ ] 1.3 Review these artifacts with the user, including OIDC identity, project membership independent of Git permissions, hub-readable content and local-only execution. Record approval before runtime/auth/data-model implementation.
+- [x] 1.3 Review these artifacts with the user, including OIDC identity, project membership independent of Git permissions, hub-readable content and local-only execution. Approved by the user after PR #26 merged on 2026-10-23, with the instruction to implement it.
 
 ## 2. Account foundation
 
@@ -10,6 +10,10 @@
 - [ ] 2.2 Add protected token storage, cross-process serialized refresh/rotation, credential filtering/redaction and collaboration scope/audience checks. Preserve independent LLM-provider login.
 - [ ] 2.3 Test real local OIDC protocol fixtures: two subjects, bad issuer/audience/signature, unknown key rotation, expired tokens, missing scope, concurrent refresh, revoked/deactivated users, missing/empty org authorization, stale JWTs after org removal, service-token impersonation, expired authorization leases, Auth outages, step-up authentication, preserved account MFA for internal users and offline local use.
 - [ ] 2.4 Document/verify CyberdyneAuth client, audience, required introspection service, optional directory service and scope dependencies (A1/A4/A8). Public discovery/OpenAPI evidence and remaining provisioning gaps are recorded in [the live contract](auth-contract.md); authenticated acceptance remains pending. Do not claim live issuer acceptance from a fixture.
+
+### Account foundation increments
+
+Task 2.1 is intentionally still open. The first increment adds the `cyber-account` library's bounded, redirect-refusing discovery transport and in-memory PKCE preparation/full-callback validation, with protocol fixture tests. It does not yet bind the callback listener, open a browser, exchange/validate tokens, cache metadata, store credentials or wire account CLI/API commands. Task 2.2 and live deployment acceptance remain pending. See [implementation evidence](../../../docs/implementation/project-collaboration.md).
 
 ## 3. Hub domain, persistence and authorization
 
@@ -50,4 +54,4 @@
 
 ## Proposal validation (2026-10-23)
 
-Pinned OpenSpec 1.13.2 strict validation passes all 86 items. Canonical specification lint reports 0 errors and 23 warnings. The canonical inventory remains 49 capabilities / 899 requirements because this is an unimplemented proposed change. Changed Markdown relative file links and whitespace checks pass. Rust/SDK runtime tests were not rerun for this specification-only increment; implementation and its acceptance remain unchecked above. Topology selection is recorded; artifact approval (1.3) is still pending.
+Pinned OpenSpec 1.13.2 strict validation passes all 86 items. Canonical specification lint reports 0 errors and 23 warnings. The canonical inventory remains 49 capabilities / 899 requirements because this is an unimplemented proposed change. Changed Markdown relative file links and whitespace checks pass. Rust/SDK runtime tests were not rerun for this specification-only increment; implementation and its acceptance remain unchecked above. Topology selection is recorded; artifact approval (1.3) was subsequently received after PR #26 merged.

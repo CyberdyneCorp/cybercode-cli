@@ -21,7 +21,9 @@ failure-output = "immediate-final"
 slow-timeout = { period = "60s", terminate-after = 10 }
 # One line per test binary; add a test binary or a test name filter to run it on Windows.
 default-filter = '''
-binary_id(cyber-app) & (test(peer_tokens) | test(peer_discovery) | test(host::tests) | test(app_host_delegates_validated_agent_request_options))
+binary_id(cyber-account)
+| binary_id(cyber-account::oidc)
+| binary_id(cyber-app) & (test(peer_tokens) | test(peer_discovery) | test(host::tests) | test(app_host_delegates_validated_agent_request_options))
 | binary_id(cyber-app::backup)
 | binary_id(cyber-app::deliveries)
 | binary_id(cyber-app::intelligence)

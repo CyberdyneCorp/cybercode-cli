@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/cyber-account",
     "crates/cyber-core",
     "crates/cyber-store",
     "crates/cyber-llm",
