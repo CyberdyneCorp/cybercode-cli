@@ -38,6 +38,10 @@ export default async function solve() {
   phase("Report");
   const recommendation = await recommend(state, eligible, judge);
   const status = verificationStatus(state, rows, eligible, judge, recommendation);
+  if (unresolvedChecks(rows)) {
+    state.partial = true;
+    limit(state, "Some candidate verification is incomplete; only passing candidates were eligible for judging.");
+  }
   const candidates = admission.candidates;
   return envelope(state, recommendation === null ? "No patch recommended" : "Recommended patch: " + recommendation, {
     verification_status: status, recommended_candidate: recommendation,
@@ -115,11 +119,14 @@ async function recommend(state, eligible, judge) {
 }
 
 function verificationStatus(state, rows, eligible, judge, recommendation) {
-  const unresolved = rows.some((row) => row.checks.some((check) => ["unknown", "not_run", "cancelled", "timed_out"].includes(check.outcome)));
-  if (state.partial || unresolved) return "incomplete";
+  if (state.partial || unresolvedChecks(rows)) return "incomplete";
   if (eligible.length === 0) return "no_candidate_passed";
   if (judge === null) return "judge_unavailable";
   return recommendation === null ? "incomplete" : "recommended";
+}
+
+function unresolvedChecks(rows) {
+  return rows.some((row) => row.checks.some((check) => ["unknown", "not_run", "cancelled", "timed_out"].includes(check.outcome)));
 }
 
 function judgeEvidence(row) {

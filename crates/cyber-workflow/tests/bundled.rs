@@ -691,3 +691,16 @@ fn solve_retains_partial_candidates_when_budget_stops_inference() {
     assert_eq!(result["recommended_candidate"], Value::Null);
     assert_eq!(result["candidates"].as_array().unwrap().len(), 2);
 }
+
+#[test]
+fn solve_unsettled_checks_preserve_the_partial_result_exit_contract() {
+    let host = Scripted::new(|_, _| Ok(json!({"text":"claimed success"}))).tools(|_, input| {
+        json!({"label":input["label"],"eligible":false,
+            "checks":[{"outcome":"unknown","settled":false}]})
+    });
+    let result = execute("solve", solve_args(), &host).unwrap();
+    assert_eq!(result["partial"], true);
+    assert_eq!(result["verification_status"], "incomplete");
+    assert_eq!(result["recommended_candidate"], Value::Null);
+    assert_eq!(host.labels(), ["one", "two"]);
+}
