@@ -132,19 +132,22 @@ impl Runtime {
     }
     /// Missing local ownership after restart is uncertainty, never redispatch authority.
     pub fn delegation(&self, parent: &str, id: &str) -> Result<Option<Delegation>, RuntimeError> {
+        // The owner is observed before the record: an owner writes its final record before
+        // it unpublishes itself, so a record still active after the owner was seen missing
+        // is truly unowned. Read the other way round, an owner finishing between the two
+        // reads turned a just-admitted delegation into Unknown.
+        let owned = self
+            .inner
+            .delegations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(id)
+            .is_some_and(|control| control.source == parent && !control.done.is_cancelled());
         let Some((record, _)) = self.delegation_record(parent, id)? else {
             return Ok(None);
         };
         let mut data = record.data;
-        if active(data.status)
-            && !self
-                .inner
-                .delegations
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .get(id)
-                .is_some_and(|control| control.source == parent && !control.done.is_cancelled())
-        {
+        if active(data.status) && !owned {
             data.status = DelegationStatus::Unknown;
             data.error =
                 Some("Admission owner is unavailable; reconcile before any redispatch".into());

@@ -44,16 +44,33 @@ async fn start(flow: &Flow, owner: &str, body: &str) -> String {
         .id
 }
 
-/// Poll a run until it leaves `running`.
-async fn settled(flow: &Flow, id: &str) -> WorkflowRun {
-    for _ in 0..1000 {
-        let run = flow.runtime.workflow_run(id).unwrap().unwrap();
-        if run.status != WorkflowRunStatus::Running {
-            return run;
+/// How long a poll waits before it reports a hang. It bounds a wait, not a latency: a run
+/// that creates git worktrees takes 7-15s on a loaded Windows runner, more than the 1000
+/// polls of 10ms that once stood in for a deadline (and Windows rounds each sleep up).
+const HANG_LIMIT: Duration = Duration::from_secs(120);
+
+/// Poll until `probe` yields a value, or panic with `what` after [`HANG_LIMIT`].
+async fn poll<T>(what: impl std::fmt::Display, mut probe: impl FnMut() -> Option<T>) -> T {
+    let deadline = tokio::time::Instant::now() + HANG_LIMIT;
+    loop {
+        if let Some(value) = probe() {
+            return value;
         }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{what} within {HANG_LIMIT:?}"
+        );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    panic!("run {id} did not settle");
+}
+
+/// Poll a run until it leaves `running`.
+async fn settled(flow: &Flow, id: &str) -> WorkflowRun {
+    poll(format!("run {id} did not settle"), || {
+        let run = flow.runtime.workflow_run(id).unwrap().unwrap();
+        (run.status != WorkflowRunStatus::Running).then_some(run)
+    })
+    .await
 }
 
 async fn run(flow: &Flow, owner: &str, body: &str) -> WorkflowRun {
@@ -63,13 +80,7 @@ async fn run(flow: &Flow, owner: &str, body: &str) -> WorkflowRun {
 
 /// Poll until `done` holds.
 async fn eventually(what: &str, mut done: impl FnMut() -> bool) {
-    for _ in 0..1000 {
-        if done() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("{what} did not happen");
+    poll(format!("{what} did not happen"), || done().then_some(())).await;
 }
 
 /// A finished text answer, as a provider streams it.
@@ -848,14 +859,11 @@ async fn start_as(
 
 /// Poll a run until it has ended.
 async fn ended(flow: &Flow, id: &str) -> WorkflowRun {
-    for _ in 0..1000 {
+    poll(format!("run {id} did not end"), || {
         let run = flow.runtime.workflow_run(id).unwrap().unwrap();
-        if !run.status.is_active() {
-            return run;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("run {id} did not end");
+        (!run.status.is_active()).then_some(run)
+    })
+    .await
 }
 
 fn run_status(flow: &Flow, id: &str) -> WorkflowRunStatus {
@@ -925,20 +933,43 @@ async fn stopping_a_waiting_run_withdraws_its_question() {
     assert_eq!(run_status(&flow, &id), WorkflowRunStatus::Stopped);
 }
 
-/// Records when each request starts and when the first response begins; each response
-/// begins `delay` after its request.
+/// When a [`Staggered`] response begins.
+#[derive(Clone, Copy)]
+enum Hold {
+    /// After this long: the window in which a follower that ignored the leader would show.
+    Window(Duration),
+    /// Once this many requests have started, so starting together never depends on how
+    /// quickly a loaded machine creates the child sessions.
+    UntilStarted(usize),
+}
+
+/// Records when each request starts and when the first response begins.
 struct Staggered {
-    delay: Duration,
+    hold: Hold,
     starts: Arc<std::sync::Mutex<Vec<std::time::Instant>>>,
+    started: tokio::sync::watch::Sender<usize>,
     first_response: Arc<std::sync::Mutex<Option<std::time::Instant>>>,
 }
 
 impl Adapter for Staggered {
     fn stream(&self, _request: LlmRequest) -> BoxFuture<'_, Result<EventStream, LlmError>> {
         self.starts.lock().unwrap().push(std::time::Instant::now());
-        let (delay, first) = (self.delay, Arc::clone(&self.first_response));
+        self.started.send_modify(|count| *count += 1);
+        let mut started = self.started.subscribe();
+        let (hold, first) = (self.hold, Arc::clone(&self.first_response));
         Box::pin(async move {
-            tokio::time::sleep(delay).await;
+            match hold {
+                Hold::Window(delay) => tokio::time::sleep(delay).await,
+                // A missing start answers after the limit, and the caller's ordering
+                // assertion reports it.
+                Hold::UntilStarted(expected) => {
+                    let _ = tokio::time::timeout(
+                        HANG_LIMIT,
+                        started.wait_for(|count| *count >= expected),
+                    )
+                    .await;
+                }
+            }
             first
                 .lock()
                 .unwrap()
@@ -948,10 +979,11 @@ impl Adapter for Staggered {
     }
 }
 
-async fn fan_out(warmup: bool) -> (Vec<std::time::Instant>, std::time::Instant) {
+async fn fan_out(hold: Hold, warmup: bool) -> (Vec<std::time::Instant>, std::time::Instant) {
     let adapter = Arc::new(Staggered {
-        delay: Duration::from_millis(300),
+        hold,
         starts: Arc::default(),
+        started: tokio::sync::watch::Sender::new(0),
         first_response: Arc::default(),
     });
     let flow = flow_with(
@@ -976,7 +1008,7 @@ async fn fan_out(warmup: bool) -> (Vec<std::time::Instant>, std::time::Instant) 
 /// `workflows.prompt_cache_warmup: false` all start together.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_fan_out_sharing_a_prefix_waits_for_the_first_response() {
-    let (starts, first) = fan_out(true).await;
+    let (starts, first) = fan_out(Hold::Window(Duration::from_millis(300)), true).await;
     assert_eq!(starts.len(), 3);
     let mut sorted = starts.clone();
     sorted.sort();
@@ -986,6 +1018,6 @@ async fn a_fan_out_sharing_a_prefix_waits_for_the_first_response() {
         "followers start after the first response: {sorted:?} vs {first:?}"
     );
 
-    let (starts, first) = fan_out(false).await;
+    let (starts, first) = fan_out(Hold::UntilStarted(3), false).await;
     assert!(starts.iter().all(|start| *start < first), "{starts:?}");
 }

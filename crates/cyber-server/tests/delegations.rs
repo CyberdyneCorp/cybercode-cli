@@ -612,3 +612,33 @@ async fn reconciliation_does_not_replace_a_live_launch_owner() {
     assert_eq!(host.calls.load(Ordering::Relaxed), 1);
     first.shutdown().await;
 }
+
+/// Regression: a reader that saw the record still pending, then saw its owner already
+/// unpublished (it had just written the final record), reported an owned admission as
+/// Unknown; `cyber exec @agent` then failed with "Admission owner is unavailable".
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_finishing_owner_is_never_read_as_unavailable() {
+    let h = Harness::new(Setup::default());
+    let (runtime, host) = runtime(&h, false, false);
+    // Every admission's worker settles as soon as it starts, racing the reader below.
+    host.finish.cancel();
+    let parent = source(&runtime, &h).await;
+    for attempt in 0..200 {
+        let id = format!("op_finish{attempt}");
+        runtime
+            .start_delegation(&parent, &id, request())
+            .await
+            .unwrap();
+        let data = loop {
+            let data = runtime.delegation(&parent, &id).unwrap().unwrap();
+            if !matches!(
+                data.status,
+                DelegationStatus::Pending | DelegationStatus::Cancelling
+            ) {
+                break data;
+            }
+        };
+        assert_eq!(data.status, DelegationStatus::Failed, "{attempt}: {data:?}");
+    }
+    runtime.shutdown().await;
+}
