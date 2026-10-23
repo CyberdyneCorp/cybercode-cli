@@ -234,6 +234,22 @@ pub(crate) fn tagged(tag: &str, message: &str) -> String {
 
 pub(crate) mod worktrees;
 
+/// `--format html` belongs to `cyber sessions export` alone; anything else refuses it.
+fn html_only_for_export(cli: &Cli) -> Result<(), CliError> {
+    let export = matches!(
+        &cli.command,
+        Some(Command::Sessions {
+            cmd: sessions::SessionsCmd::Export { .. }
+        })
+    );
+    if cli.global.format == Some(crate::cli::Format::Html) && !export {
+        return Err(CliError::usage(
+            "--format html is only for \"cyber sessions export\"",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tagged_tests {
     /// Regression: `cyber messages send` and `cyber attach` printed
@@ -251,20 +267,4 @@ mod tagged_tests {
             "PeerAuthError: PeerAuthErrors happen"
         );
     }
-}
-
-/// `--format html` belongs to `cyber sessions export` alone; anything else refuses it.
-fn html_only_for_export(cli: &Cli) -> Result<(), CliError> {
-    let export = matches!(
-        &cli.command,
-        Some(Command::Sessions {
-            cmd: sessions::SessionsCmd::Export { .. }
-        })
-    );
-    if cli.global.format == Some(crate::cli::Format::Html) && !export {
-        return Err(CliError::usage(
-            "--format html is only for \"cyber sessions export\"",
-        ));
-    }
-    Ok(())
 }

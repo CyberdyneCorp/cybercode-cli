@@ -203,6 +203,10 @@ pub const BUILTIN: &[(&str, &str)] = &[
     ("resume", "Open another Session"),
     ("rename", "Rename this Session"),
     (
+        "export",
+        "Write this Session to an HTML, Markdown or JSON file",
+    ),
+    (
         "tree",
         "The Session's branches; check one out, restore its code or label it",
     ),
