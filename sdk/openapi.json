@@ -11036,49 +11036,86 @@
         ],
         "description": "`DELETE /api/v1/peers/grants/:name`."
       },
-      "Data_GoalsView": {
+      "Data_SessionExport": {
         "type": "object",
         "properties": {
           "data": {
-            "$ref": "#/components/schemas/GoalsView"
+            "$ref": "#/components/schemas/SessionExport"
           }
         },
         "required": [
           "data"
         ]
       },
-      "GoalsView": {
+      "SessionExport": {
         "type": "object",
         "properties": {
-          "current": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Goal"
-              },
-              {
-                "type": "null"
-              }
-            ]
+          "version": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
           },
-          "queue": {
+          "exported_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sanitized": {
+            "type": "boolean",
+            "description": "Text, paths, URLs, tool inputs and outputs and metadata are\n`[redacted:<kind>:<n>]` markers; structure, IDs, counts and timings are kept."
+          },
+          "session": {
+            "$ref": "#/components/schemas/SessionInfo"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/Totals"
+          },
+          "branches": {
+            "type": "string",
+            "description": "`active` (the active path) or `all` (every branch, in creation order)."
+          },
+          "messages": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Goal"
-            }
+              "$ref": "#/components/schemas/Message"
+            },
+            "description": "The messages in order, with their parts and, for answers, their tool calls; each\n`parent_message_id` links the branch tree."
           },
-          "ended": {
+          "goals": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Goal"
             },
-            "description": "Ended Goals, newest first, at most 20."
+            "description": "Every Goal of the Session, oldest first, with its evaluations."
+          },
+          "workflow_runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowRunSummary"
+            }
+          },
+          "children": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/SessionExport"
+            },
+            "description": "Child Sessions, oldest first; present with `include_children=true`."
           }
         },
         "required": [
-          "queue",
-          "ended"
+          "version",
+          "exported_ms",
+          "sanitized",
+          "session",
+          "totals",
+          "branches",
+          "messages",
+          "goals",
+          "workflow_runs"
         ],
-        "description": "`GET .../goals`: the current Goal, the queue in order and the most recent ended ones."
+        "description": "One exported Session."
       },
       "Goal": {
         "type": "object",
@@ -11309,6 +11346,50 @@
           "tail"
         ],
         "description": "The `check` that ran after a `met` verdict."
+      },
+      "Data_GoalsView": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/GoalsView"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "GoalsView": {
+        "type": "object",
+        "properties": {
+          "current": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Goal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "queue": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Goal"
+            }
+          },
+          "ended": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Goal"
+            },
+            "description": "Ended Goals, newest first, at most 20."
+          }
+        },
+        "required": [
+          "queue",
+          "ended"
+        ],
+        "description": "`GET .../goals`: the current Goal, the queue in order and the most recent ended ones."
       },
       "CreateGoal": {
         "type": "object",
@@ -20401,6 +20482,81 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Data_PeerRevoked"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/export": {
+      "get": {
+        "operationId": "v1.session.export",
+        "summary": "Export the Session: info, totals, messages with parts and tool calls, Goals and Workflow Run summaries; `include_children=true` nests child Sessions, `branches=all` exports every branch instead of the active path, and `sanitize=true` replaces content with `[redacted:<kind>:<n>]` markers",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sanitize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include_children",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "branches",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SessionExport"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "SessionNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
                 }
               }
             }

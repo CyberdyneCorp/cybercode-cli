@@ -1282,6 +1282,15 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .ok::<Data<super::peers::PeerRevoked>>(g),
         op(
             "get",
+            "/sessions/{sessionID}/export",
+            "v1.session.export",
+            "Export the Session: info, totals, messages with parts and tool calls, Goals and Workflow Run summaries; `include_children=true` nests child Sessions, `branches=all` exports every branch instead of the active path, and `sanitize=true` replaces content with `[redacted:<kind>:<n>]` markers",
+        )
+        .query(&["sanitize", "include_children", "branches"])
+        .ok::<Data<super::export::SessionExport>>(g)
+        .error::<ErrorBody>(g, 404, "SessionNotFoundError"),
+        op(
+            "get",
             "/sessions/{sessionID}/goals",
             "v1.session.goals",
             "The Session's current Goal, its queue in order and its 20 most recent ended Goals",

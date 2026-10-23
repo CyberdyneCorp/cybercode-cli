@@ -253,6 +253,18 @@ fn exports_the_active_path_or_every_branch(env: &Env, id: &str, first: &str, sec
         .filter(|m| m["parent_message_id"].is_null())
         .collect();
     assert_eq!(roots.len(), 2, "both attempts start at the root: {all}");
+    // A sanitized export keeps the tree: IDs and parent links are not content.
+    let clean = json(&env.cyber(&["sessions", "export", id, "--all-branches", "--sanitize"]));
+    assert_eq!(clean["branches"], "all");
+    let links = |export: &Value| -> Vec<Value> {
+        export["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["parent_message_id"].clone())
+            .collect()
+    };
+    assert_eq!(links(&clean), links(&all));
 }
 
 /// Label the first attempt by a unique prefix, then check it out by label with code;

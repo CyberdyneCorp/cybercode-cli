@@ -789,6 +789,49 @@ export default async () => agent('Migrate file X', { goal: { condition: 'file X 
         .map(|e| e.check.as_ref().unwrap().exit_code)
         .collect();
     assert_eq!(checks, [Some(1), Some(0)]);
+
+    // `storage-events` → Session export: the owner's run summary, and with
+    // include_children the agent child with its Goal and evaluations.
+    let export = server
+        .ok(
+            Method::GET,
+            &format!("/sessions/{owner}/export?include_children=true"),
+            None,
+        )
+        .await;
+    let export = &export["data"];
+    assert_eq!(export["workflow_runs"][0]["id"], json!(run_id), "{export}");
+    assert_eq!(export["workflow_runs"][0]["agents"]["total"], 1);
+    let children = export["children"].as_array().unwrap();
+    assert_eq!(children.len(), 1, "{export}");
+    assert_eq!(children[0]["session"]["id"], json!(child));
+    assert_eq!(children[0]["goals"][0]["condition"], "file X compiles");
+    assert_eq!(
+        children[0]["goals"][0]["evaluations"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    let plain = server
+        .ok(Method::GET, &format!("/sessions/{owner}/export"), None)
+        .await;
+    assert!(plain["data"].get("children").is_none(), "{plain}");
+    let clean = server
+        .ok(
+            Method::GET,
+            &format!("/sessions/{owner}/export?include_children=true&sanitize=true"),
+            None,
+        )
+        .await;
+    let text = clean["data"].to_string();
+    assert!(!text.contains("file X compiles"), "{text}");
+    assert!(!text.contains(".goal-mark"), "{text}");
+    assert_eq!(clean["data"]["children"][0]["sanitized"], true);
+    assert_eq!(
+        clean["data"]["children"][0]["goals"][0]["turns"],
+        children[0]["goals"][0]["turns"]
+    );
     server.close().await;
 }
 
