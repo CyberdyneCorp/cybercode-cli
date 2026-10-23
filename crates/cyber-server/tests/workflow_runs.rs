@@ -701,6 +701,25 @@ async fn repeated_calls_get_ordinals_and_failures_are_recorded() {
     assert_eq!(failed.session_id, None);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_agent_does_not_claim_complete_usage_or_pricing() {
+    let agents = Arc::new(Agents::default());
+    let f = fixture(&agents);
+    let owner = f.session("default").await;
+    let run = f
+        .start(
+            &owner,
+            "export default async () => { try { await agent('fail inference'); } catch (_) {} const immediate = ctx.budget; await checkpoint('after failure', true); return {immediate, after: ctx.budget}; };",
+        )
+        .await;
+    let ended = f.settled(&run.id).await;
+    let result = ended.result.unwrap();
+    for budget in [&result["immediate"], &result["after"]] {
+        assert_eq!(budget["usage_complete"], false, "{result}");
+        assert_eq!(budget["cost_complete"], false, "{result}");
+    }
+}
+
 /// Fair agent scheduling: a run that queues behind a larger one is served on the next free
 /// slot, then the two alternate, whatever the larger run's queue length.
 #[tokio::test(flavor = "multi_thread")]

@@ -348,11 +348,10 @@ impl RunHost {
 
     /// The run's spend now, as `ctx.budget` shows it.
     fn live_budget(&self) -> Value {
-        self.pricing_snapshot(budget_snapshot(
-            &self.budget,
-            &self.spend(),
-            self.started.get(),
-        ))
+        self.pricing_snapshot(
+            budget_snapshot(&self.budget, &self.spend(), self.started.get()),
+            false,
+        )
     }
 
     fn spend(&self) -> RunSpend {
@@ -905,7 +904,8 @@ impl RunHost {
         if let Some(outcome) = outcome {
             data["order"] = self.replay.take_order().into();
             data["outcome"] = serde_json::to_value(outcome).expect("outcomes serialize");
-            data["budget_snapshot"] = self.deliver_budget(&self.spend());
+            data["budget_snapshot"] =
+                self.deliver_budget(&self.spend(), record.status != "completed");
         }
         self.append(kind, data)
             .map_err(|error| self.fail_closed(error))
@@ -933,7 +933,7 @@ impl RunHost {
             "order": self.replay.take_order(),
             "call_key": call_key,
             "outcome": outcome,
-            "budget_snapshot": self.deliver_budget(&spend),
+            "budget_snapshot": self.deliver_budget(&spend, false),
         });
         self.append(CALL_RECORDED, data)
             .map_err(|error| self.fail_closed(error))?;
@@ -962,17 +962,30 @@ impl RunHost {
     }
 
     /// The `ctx.budget` a result reaching the script now carries, recorded with it.
-    fn deliver_budget(&self, spend: &RunSpend) -> Value {
-        let view = self.pricing_snapshot(budget_snapshot(&self.budget, spend, self.started.get()));
+    fn deliver_budget(&self, spend: &RunSpend, pending_failure: bool) -> Value {
+        let view = self.pricing_snapshot(
+            budget_snapshot(&self.budget, spend, self.started.get()),
+            pending_failure,
+        );
         *self.budget_view.borrow_mut() = view.clone();
         view
     }
 
-    fn pricing_snapshot(&self, mut value: Value) -> Value {
+    fn pricing_snapshot(&self, mut value: Value, pending_failure: bool) -> Value {
         let run = self.run_id.clone();
         let (unpriced, complete) = self.store.read(move |db| {
-            db.query_row("SELECT EXISTS(SELECT 1 FROM session WHERE workflow_run_id=?1 AND (unpriced_steps>0 OR children_unpriced_steps>0)), NOT EXISTS(SELECT 1 FROM session WHERE workflow_run_id=?1 AND children_usage_complete=0)", [&run], |row| Ok((row.get::<_,bool>(0)?,row.get::<_,bool>(1)?))).map_err(Into::into)
+            db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM session WHERE workflow_run_id=?1 AND (unpriced_steps>0 OR children_unpriced_steps>0)),
+                 NOT EXISTS(SELECT 1 FROM session WHERE workflow_run_id=?1 AND children_usage_complete=0)
+                 AND NOT EXISTS(SELECT 1 FROM event WHERE aggregate_id=?1 AND type='workflow.agent.settled.1'
+                    AND json_extract(data,'$.status') != 'completed')",
+                [&run],
+                |row| Ok((row.get::<_,bool>(0)?,row.get::<_,bool>(1)?)),
+            ).map_err(Into::into)
         }).unwrap_or((true,false));
+        // A failed inference may have incurred usage that never reached the server.
+        // Include the settlement being appended, before it is visible to the query.
+        let complete = complete && !pending_failure;
         value["unpriced"] = unpriced.into();
         value["usage_complete"] = complete.into();
         value["cost_complete"] = (complete && !unpriced).into();
