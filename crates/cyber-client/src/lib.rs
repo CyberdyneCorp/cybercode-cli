@@ -1,7 +1,9 @@
 //! A Rust client for the `/api/v1` HTTP API, over TCP or the in-process embedded transport.
 //! Used by `cyber exec` and the TUI; every call goes through the public routes. A third
 //! transport attaches to one Session of a peer through its peer listener ([`peer`]).
+//! [`export`] renders and writes the Session export document.
 
+pub mod export;
 mod peer;
 
 use std::sync::Arc;

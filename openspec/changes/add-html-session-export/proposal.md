@@ -8,7 +8,7 @@ Pi exports a session to a self-contained HTML page (`--export`, `/export`), whic
   - `--format html` writes one self-contained HTML file. It has no network requests (no external scripts, styles, fonts or images), escapes all session content, and contains:
     - the header (title, Location, model(s), times, token and cost totals),
     - messages with rendered Markdown,
-    - tool calls as collapsible blocks with input, output and unified diffs,
+    - tool calls as collapsible blocks with input and output,
     - reasoning collapsed by default,
     - subagent Sessions as nested sections with `--include-children`,
     - a light/dark theme following `prefers-color-scheme`.
@@ -25,4 +25,4 @@ Pi exports a session to a self-contained HTML page (`--export`, `/export`), whic
 
 ## Impact
 
-`crates/cyber-cli` (the HTML renderer and the export flag) and `crates/cyber-tui` (`/export`). No server or API change: export already reads through the store. Docs: the guide and the README Sessions row.
+`crates/cyber-client` (`export`: the HTML renderer, the Markdown renderer moved from `cyber-cli`, and the atomic writer), `crates/cyber-cli` (`--format html` and `--output` on `cyber sessions export`) and `crates/cyber-tui` (`/export`). No server or API change: the pages render the server's export document (`add-session-export`), which also applies `--sanitize`. Per-Turn unified diffs are not in that document yet, so the page shows file edits through the edit tools' inputs (see design). Docs: the guide, the feature reference and the README Sessions row.

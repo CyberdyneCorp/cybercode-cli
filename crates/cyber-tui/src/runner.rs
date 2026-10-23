@@ -674,6 +674,7 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
         } => app.team_reply(&session_id, *view, open, toast),
         Msg::Login(reply) => return app.login_reply(reply),
         Msg::Toast(text) => app.toast(text),
+        Msg::ExportExists(request) => app.export_exists(request),
         Msg::TaskLog {
             session_id,
             title,

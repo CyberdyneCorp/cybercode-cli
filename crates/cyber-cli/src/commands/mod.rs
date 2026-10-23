@@ -29,7 +29,6 @@ pub mod providers;
 pub mod review;
 pub mod sandbox;
 pub mod serve;
-pub mod session_export;
 pub mod sessions;
 pub mod skills;
 pub mod stats;
@@ -59,6 +58,7 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
     if cli.global.pure || cyber_core::plugins::pure(&cyber_core::env::ProcessEnv) {
         pure(&mut cli)?;
     }
+    html_only_for_export(&cli)?;
     let Some(command) = cli.command else {
         return tui::run(&cli.launch, &cli.global, None);
     };
@@ -251,4 +251,20 @@ mod tagged_tests {
             "PeerAuthError: PeerAuthErrors happen"
         );
     }
+}
+
+/// `--format html` belongs to `cyber sessions export` alone; anything else refuses it.
+fn html_only_for_export(cli: &Cli) -> Result<(), CliError> {
+    let export = matches!(
+        &cli.command,
+        Some(Command::Sessions {
+            cmd: sessions::SessionsCmd::Export { .. }
+        })
+    );
+    if cli.global.format == Some(crate::cli::Format::Html) && !export {
+        return Err(CliError::usage(
+            "--format html is only for \"cyber sessions export\"",
+        ));
+    }
+    Ok(())
 }
