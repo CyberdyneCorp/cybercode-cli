@@ -32,6 +32,9 @@ pub const MAX_REQUEST: usize = 8192;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
+    /// Solve-only working-tree comparison against an immutable admission commit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_base: Option<String>,
     pub location: PathBuf,
     pub target: Target,
     pub overrides: PathBuf,
@@ -73,6 +76,9 @@ pub struct ChangedFile {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewDiff {
+    /// Complete raw source fingerprint, present only for solve inspection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_sha256: Option<String>,
     pub target: Target,
     /// Canonical repository work tree root.
     pub root: PathBuf,
@@ -137,6 +143,11 @@ pub fn resolve(request: &Request) -> Result<ReviewDiff, ResolveError> {
     let (diff, base, head) = diff(&repo, request, &mut limitations)?;
     let files = files(&diff, &mut limitations)?;
     let mut result = ReviewDiff {
+        source_sha256: request
+            .worktree_base
+            .as_ref()
+            .map(|_| source_fingerprint(&repo))
+            .transpose()?,
         target: request.target.clone(),
         root,
         base: base.map(|oid| oid.to_string()),
@@ -147,6 +158,119 @@ pub fn resolve(request: &Request) -> Result<ReviewDiff, ResolveError> {
     };
     result.patch_sha256 = format!("{:x}", Sha256::digest(result.patch()));
     Ok(result)
+}
+
+/// Hash raw working files rather than formatted/truncated patches. Never follow symlinks
+/// or execute repository filters. Ignored build products do not enter the source set.
+fn source_fingerprint(repo: &git2::Repository) -> io::Result<String> {
+    use std::collections::BTreeSet;
+    let root = repo.workdir().ok_or_else(|| invalid("missing worktree"))?;
+    let mut paths = BTreeSet::new();
+    for entry in repo.index().map_err(git_error)?.iter() {
+        paths.insert(String::from_utf8(entry.path).map_err(invalid)?);
+    }
+    let head = repo
+        .head()
+        .map_err(git_error)?
+        .peel_to_tree()
+        .map_err(git_error)?;
+    head.walk(git2::TreeWalkMode::PreOrder, |parent, entry| {
+        if entry.kind() != Some(git2::ObjectType::Tree) {
+            if let Ok(name) = entry.name() {
+                paths.insert(format!("{parent}{name}"));
+            } else {
+                return git2::TreeWalkResult::Abort;
+            }
+        }
+        git2::TreeWalkResult::Ok
+    })
+    .map_err(git_error)?;
+    let mut options = git2::StatusOptions::new();
+    options
+        .include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .include_ignored(false);
+    for entry in repo.statuses(Some(&mut options)).map_err(git_error)?.iter() {
+        paths.insert(entry.path().map_err(git_error)?.to_owned());
+    }
+    if paths.len() > 50_000 {
+        return Err(invalid("source fingerprint exceeds 50000 paths"));
+    }
+    let mut hash = Sha256::new();
+    let mut remaining = 512_u64 * 1024 * 1024;
+    for path in paths {
+        let relative = Path::new(&path);
+        if relative.is_absolute()
+            || relative
+                .components()
+                .any(|part| !matches!(part, std::path::Component::Normal(_)))
+        {
+            return Err(invalid("unsafe source path"));
+        }
+        hash.update((path.len() as u64).to_le_bytes());
+        hash.update(path.as_bytes());
+        let full = root.join(relative);
+        // Refuse symlink parents: source inspection must stay inside the checkout.
+        let mut parent = root.to_path_buf();
+        for part in relative.parent().into_iter().flat_map(Path::components) {
+            parent.push(part);
+            match std::fs::symlink_metadata(&parent) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    return Err(invalid("symlink source parent"));
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => break,
+                Err(error) => return Err(error),
+            }
+        }
+        let metadata = match std::fs::symlink_metadata(&full) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                hash.update(b"deleted");
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        if metadata.file_type().is_symlink() {
+            hash.update(b"symlink");
+            let target = std::fs::read_link(&full)?;
+            let target = target
+                .to_str()
+                .ok_or_else(|| invalid("non UTF-8 symlink"))?;
+            hash.update((target.len() as u64).to_le_bytes());
+            hash.update(target.as_bytes());
+        } else if metadata.is_file() {
+            hash.update(b"file");
+            hash.update([u8::from(metadata.permissions().readonly())]);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                hash.update(metadata.permissions().mode().to_le_bytes());
+            }
+            let length = metadata.len();
+            remaining = remaining
+                .checked_sub(length)
+                .ok_or_else(|| invalid("source fingerprint exceeds 512 MiB"))?;
+            hash.update(length.to_le_bytes());
+            let mut reader = std::fs::File::open(full)?.take(length + 1);
+            let mut buffer = [0; 16384];
+            let mut read = 0;
+            loop {
+                let count = reader.read(&mut buffer)?;
+                if count == 0 {
+                    break;
+                }
+                read += count as u64;
+                hash.update(&buffer[..count]);
+            }
+            if read != length {
+                return Err(invalid("source changed during fingerprint"));
+            }
+        } else {
+            return Err(invalid("unsupported source type (including submodules)"));
+        }
+    }
+    Ok(format!("{:x}", hash.finalize()))
 }
 
 fn open(request: &Request) -> Result<(git2::Repository, PathBuf), ResolveError> {
@@ -304,7 +428,10 @@ fn diff<'r>(
     options.include_typechange(true);
     let (base, head) = match &request.target {
         Target::Uncommitted => {
-            let base = head_commit(repo)?;
+            let base = match &request.worktree_base {
+                Some(base) => Some(commit(repo, base)?),
+                None => head_commit(repo)?,
+            };
             options
                 .include_untracked(true)
                 .recurse_untracked_dirs(true)
@@ -501,6 +628,80 @@ mod tests {
         assert!(limitations[1].contains(" c "), "{limitations:?}");
     }
 
+    fn source_repo() -> (tempfile::TempDir, git2::Repository) {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(temp.path()).unwrap();
+        std::fs::write(temp.path().join("source.bin"), [0, 1, 2, 3]).unwrap();
+        std::fs::write(temp.path().join(".gitignore"), "/build/\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("source.bin")).unwrap();
+        index.add_path(Path::new(".gitignore")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let signature = git2::Signature::now("test", "test@example.invalid").unwrap();
+        {
+            let tree = repo.find_tree(tree_id).unwrap();
+            repo.commit(Some("HEAD"), &signature, &signature, "base", &tree, &[])
+                .unwrap();
+        }
+        (temp, repo)
+    }
+
+    #[test]
+    fn source_fingerprint_covers_binary_tracked_and_untracked_but_not_ignored_builds() {
+        let (temp, repo) = source_repo();
+        let first = source_fingerprint(&repo).unwrap();
+        std::fs::create_dir(temp.path().join("build")).unwrap();
+        std::fs::write(temp.path().join("build/output"), "artifact").unwrap();
+        assert_eq!(source_fingerprint(&repo).unwrap(), first);
+        std::fs::write(temp.path().join("source.bin"), [0, 1, 3, 2]).unwrap();
+        assert_ne!(source_fingerprint(&repo).unwrap(), first);
+        std::fs::write(temp.path().join("source.bin"), [0, 1, 2, 3]).unwrap();
+        assert_eq!(source_fingerprint(&repo).unwrap(), first);
+        std::fs::write(temp.path().join("new.txt"), "new source").unwrap();
+        assert_ne!(source_fingerprint(&repo).unwrap(), first);
+        std::fs::remove_file(temp.path().join("new.txt")).unwrap();
+        std::fs::remove_file(temp.path().join("source.bin")).unwrap();
+        assert_ne!(source_fingerprint(&repo).unwrap(), first);
+    }
+
+    #[test]
+    fn source_fingerprint_supports_deleting_an_entire_tracked_directory() {
+        let (temp, repo) = source_repo();
+        std::fs::create_dir(temp.path().join("nested")).unwrap();
+        std::fs::write(temp.path().join("nested/file"), "tracked").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("nested/file")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        let signature = git2::Signature::now("test", "test@example.invalid").unwrap();
+        repo.commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            "nested",
+            &tree,
+            &[&parent],
+        )
+        .unwrap();
+        let before = source_fingerprint(&repo).unwrap();
+        std::fs::remove_dir_all(temp.path().join("nested")).unwrap();
+        assert_ne!(source_fingerprint(&repo).unwrap(), before);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn source_fingerprint_hashes_symlink_targets_without_following_them() {
+        let (temp, repo) = source_repo();
+        let link = temp.path().join("link");
+        std::os::unix::fs::symlink("/missing-outside", &link).unwrap();
+        let first = source_fingerprint(&repo).unwrap();
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink("/different-outside", &link).unwrap();
+        assert_ne!(source_fingerprint(&repo).unwrap(), first);
+    }
+
     fn changed(path: &str, patch: Option<&str>) -> ChangedFile {
         ChangedFile {
             path: path.into(),
@@ -534,6 +735,7 @@ mod tests {
     fn limit_patch_spends_the_budget_only_on_remaining_patches() {
         let big = "y\n".repeat(MAX_PATCH / 2 + 1);
         let mut diff = ReviewDiff {
+            source_sha256: None,
             target: Target::Uncommitted,
             root: PathBuf::from("/r"),
             base: None,

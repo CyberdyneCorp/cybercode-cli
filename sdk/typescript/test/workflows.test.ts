@@ -169,3 +169,26 @@ test("workflows.run() sends max_concurrent as the run's share", async () => {
   assert.equal(handle.run.share, 2);
   assert.equal(handle.summary, undefined);
 });
+
+test("solve evidence remains separate from module output and large report artifacts survive result()", async () => {
+  const evidence: NonNullable<RunDetail["solve_evidence"]> = {
+    run_id: "run_1", revision: 1, base: { commit: "abc" }, candidates: [{
+      candidate_id: "agt_one", label: "one", session_id: "ses_one", branch: "candidate/one",
+      model: "test/main", source_sha256: "source", patch_sha256: "patch",
+      checks: [{ outcome: "passed", settled: true }], host_verified: true, cost_usd: 0.02, tokens: 100,
+    }],
+  };
+  const artifact = { result_file: "/state/run_1.result.json", result_preview: "{\"summary\":\"Recommended patch: one\"}" };
+  const { client } = mockClient(() => json(200, { data: detail("completed", {
+    name: "solve", origin: { kind: "bundled", name: "solve" }, solve_evidence: evidence, ...artifact,
+  }) }));
+  const handle = await client.workflows.get("run_1");
+  assert.deepEqual((await handle.status()).solve_evidence, evidence);
+  assert.deepEqual(await handle.result(), artifact);
+
+  const forged = mockClient(() => json(200, { data: detail("completed", {
+    name: "solve", origin: { kind: "inline" }, result: { solve_evidence: evidence, recommended_candidate: "fake" },
+  }) }));
+  const custom = await forged.client.workflows.get("run_1");
+  assert.equal((await custom.status()).solve_evidence, undefined);
+});

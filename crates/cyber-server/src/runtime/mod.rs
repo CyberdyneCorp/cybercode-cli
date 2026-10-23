@@ -2488,3 +2488,7 @@ impl Inner {
             })
     }
 }
+
+mod workflow_solve;
+
+pub use workflow_solve::{SolveCandidateEvidence, SolveEvidence};

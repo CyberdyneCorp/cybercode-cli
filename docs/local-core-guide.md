@@ -1277,6 +1277,8 @@ export default async function () {
 
 ### Bundled Workflows (P2 M2.2)
 
+The library also includes [`solve`](verified-workflows.md): independent candidate worktrees, host-owned checks, a read-only judge and server-derived evidence. Its default soft budget is $5, five agents and 30 minutes; each solver has at most 20 steps. Checks use literal argv and need command permissions. The owner checkout stays unchanged.
+
 Five Workflows ship inside the `cyber` binary. They have the lowest precedence: a global (`~/.config/cyber/workflows`) or project (`.cyber/workflows`) module with the same name replaces one, and the listing names what it shadows (`bundled:audit`).
 
 | Workflow | What it does | Args (defaults) | Default budget |

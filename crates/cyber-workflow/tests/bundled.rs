@@ -53,6 +53,10 @@ fn label(call: &AgentCall) -> String {
 }
 
 impl WorkflowHost for Scripted {
+    fn solve(&self, input: Value) -> HostFuture<'_> {
+        self.tool("__solve".into(), input)
+    }
+
     fn agent(&self, call: AgentCall) -> HostFuture<'_> {
         let result = (self.agent)(&label(&call), &call);
         self.calls.borrow_mut().push(call);
@@ -616,4 +620,87 @@ fn plan_merges_the_winner_with_named_grafts() {
         .filter(|l| l.starts_with("judge"))
         .count();
     assert_eq!(judges, 3);
+}
+
+fn solve_args() -> Value {
+    json!({"task":"fix issue", "checks":[{"argv":["cargo","test"],"timeout_seconds":30}],
+        "solve_admission":{"base":{"commit":"abc"},"judge_model":"test/judge","distinct_solver_models":2,
+        "candidates":[{"label":"one","model":"test/a"},{"label":"two","model":"test/b"}]}})
+}
+
+#[test]
+fn solve_only_recommends_host_verified_eligible_candidates() {
+    let host = Scripted::new(|label, call| {
+        if label == "solve judge" {
+            assert_eq!(call.options["agent"], "reviewer");
+            assert!(call.prompt.contains("correctness 40%"));
+            assert!(!call.prompt.contains("deceptive failed patch"));
+            return Ok(json!({"recommended_candidate":"one","rationale":"strongest","alternatives":[]}));
+        }
+        assert_eq!(call.options["isolation"], "worktree");
+        Ok(json!({"text":"All tests passed!","branch":"branch"}))
+    }).tools(|name, input| {
+        assert_eq!(name, "__solve");
+        let good = input["label"] == "one";
+        json!({"label":input["label"],"eligible":good,"source_sha256":"digest","patch":if good {"good patch"} else {"deceptive failed patch"},
+            "checks":[{"argv":["cargo","test"],"outcome":if good {"passed"} else {"failed"},"settled":true}]})
+    });
+    let result = execute("solve", solve_args(), &host).unwrap();
+    assert_eq!(result["recommended_candidate"], "one");
+    assert_eq!(result["verification_status"], "recommended");
+    assert_eq!(result["merged"], false);
+    assert_eq!(host.labels(), ["one", "two", "solve judge"]);
+}
+
+#[test]
+fn solve_rejects_ineligible_judge_selection_and_all_failed_checks() {
+    for any_passed in [true, false] {
+        let host = Scripted::new(|label, _| {
+            if label == "solve judge" { return Ok(json!({"recommended_candidate":"two","rationale":"forged","alternatives":[]})); }
+            Ok(json!({"text":"passed"}))
+        }).tools(move |_, input| json!({"label":input["label"],"eligible":any_passed && input["label"] == "one", "checks":[]}));
+        let result = execute("solve", solve_args(), &host).unwrap();
+        assert_eq!(result["recommended_candidate"], Value::Null);
+        assert_eq!(
+            result["verification_status"],
+            if any_passed {
+                "incomplete"
+            } else {
+                "no_candidate_passed"
+            }
+        );
+        assert_eq!(host.labels().len(), if any_passed { 3 } else { 2 });
+    }
+}
+
+#[test]
+fn solve_retains_partial_candidates_when_budget_stops_inference() {
+    let host = Scripted::new(|label, _| {
+        if label == "one" {
+            Ok(json!({"text":"done"}))
+        } else {
+            Err(Diagnostic::new(
+                DiagnosticKind::BudgetExceeded,
+                "cost limit",
+            ))
+        }
+    });
+    let result = execute("solve", solve_args(), &host).unwrap();
+    assert_eq!(result["partial"], true);
+    assert_eq!(result["verification_status"], "incomplete");
+    assert_eq!(result["recommended_candidate"], Value::Null);
+    assert_eq!(result["candidates"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn solve_unsettled_checks_preserve_the_partial_result_exit_contract() {
+    let host = Scripted::new(|_, _| Ok(json!({"text":"claimed success"}))).tools(|_, input| {
+        json!({"label":input["label"],"eligible":false,
+            "checks":[{"outcome":"unknown","settled":false}]})
+    });
+    let result = execute("solve", solve_args(), &host).unwrap();
+    assert_eq!(result["partial"], true);
+    assert_eq!(result["verification_status"], "incomplete");
+    assert_eq!(result["recommended_candidate"], Value::Null);
+    assert_eq!(host.labels(), ["one", "two"]);
 }

@@ -32,6 +32,15 @@ fn unavailable(error: impl std::fmt::Display) -> CommandPlanError {
     CommandPlanError::Unavailable(format!("Review target resolution failed: {error}"))
 }
 
+/// Read-only worktree inspection for solve admission. Unlike native `git status`,
+/// the libgit2 helper cannot execute repository clean filters. This does not filter
+/// out dirty paths: admission must refuse even changes the model cannot read.
+pub(super) async fn solve_diff(ctx: &Ctx<'_>) -> Result<ReviewDiff, CommandPlanError> {
+    let diff = resolve(ctx, &Target::Uncommitted, false).await?;
+    check_root(ctx, &diff.root)?;
+    Ok(diff)
+}
+
 /// Resolves `arguments` and returns the `<review-target>` data block.
 /// `ctx.policy` gates the host actions the user requested; `reader` is the
 /// reviewer's policy, which decides what file contents it may see.
@@ -240,6 +249,24 @@ async fn resolve(
     target: &Target,
     merge_base: bool,
 ) -> Result<ReviewDiff, CommandPlanError> {
+    resolve_with_base(ctx, target, merge_base, None).await
+}
+
+pub(super) async fn solve_snapshot(
+    ctx: &Ctx<'_>,
+    base: &str,
+) -> Result<ReviewDiff, CommandPlanError> {
+    let diff = resolve_with_base(ctx, &Target::Uncommitted, false, Some(base)).await?;
+    check_root(ctx, &diff.root)?;
+    Ok(diff)
+}
+
+async fn resolve_with_base(
+    ctx: &Ctx<'_>,
+    target: &Target,
+    merge_base: bool,
+    base: Option<&str>,
+) -> Result<ReviewDiff, CommandPlanError> {
     let directory = crate::sandboxing::session_tmp(ctx).map_err(|error| match error {
         crate::tools::ToolError::Failed(message) => unavailable(message),
         crate::tools::ToolError::Aborted => unavailable("cancelled"),
@@ -250,6 +277,7 @@ async fn resolve(
         _ => None,
     };
     let request = serde_json::to_string(&cyber_core::review::resolve::Request {
+        worktree_base: base.map(str::to_owned),
         location: ctx.location.clone(),
         target: target.clone(),
         overrides: overrides.0.clone(),

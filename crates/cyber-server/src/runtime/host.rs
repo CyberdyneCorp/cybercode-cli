@@ -517,6 +517,10 @@ pub struct WorkflowToolRequest {
 pub struct RunWorktree {
     pub name: String,
     pub branch: String,
+    /// Immutable solve admission commit; ordinary workflows use configured HEAD.
+    pub base: Option<String>,
+    /// Canonical repository metadata directory captured with a pinned solve base.
+    pub common_dir: Option<String>,
 }
 
 impl RunWorktree {
@@ -528,6 +532,8 @@ impl RunWorktree {
         Self {
             name: format!("run-{id}-{index}"),
             branch: format!("cyber/run-{id}/{index}"),
+            base: None,
+            common_dir: None,
         }
     }
 }

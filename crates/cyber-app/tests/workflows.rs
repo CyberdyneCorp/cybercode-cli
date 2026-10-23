@@ -433,7 +433,9 @@ async fn the_library_lists_saved_workflows_by_precedence_with_issues() {
         .collect();
     assert_eq!(
         names,
-        ["audit", "migrate", "plan", "release", "research", "review"],
+        [
+            "audit", "migrate", "plan", "release", "research", "review", "solve"
+        ],
         "{listed}"
     );
     let entry = |listing: &Value, name: &str| -> Value {
@@ -3642,3 +3644,7 @@ async fn a_bundled_run_resumes_as_the_bundled_workflow() {
         .await;
     server.close().await;
 }
+
+#[cfg(unix)]
+#[path = "support/solve_admission.rs"]
+mod solve_admission;

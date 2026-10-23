@@ -841,7 +841,9 @@ async fn the_library_tab_lists_the_library_and_starts_a_workflow_from_its_form()
         .collect();
     assert_eq!(
         names,
-        ["audit", "migrate", "plan", "release", "research", "review"]
+        [
+            "audit", "migrate", "plan", "release", "research", "review", "solve"
+        ]
     );
     for (width, height) in [(120, 40), (80, 24)] {
         let shown = stabilized(&mut app, |app| render(app, width, height, &Opts::default()));

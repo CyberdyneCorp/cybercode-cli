@@ -1,5 +1,13 @@
 # P2 implementation status
 
+## Verified solve (2026-10-23)
+
+The sixth bundled workflow implements clean-base admission, two to four isolated solvers pinned to that commit, host-owned literal-argv checks with durable intents and settlements, and an independent judge forced into Plan mode. Submitted solver subtrees are fenced against further admission. Full-access configuration, extra writable roots and ambient temp access cannot widen solve command writes beyond the candidate boundary. Direct file-tool writes outside it are denied.
+
+Source fingerprints cover complete raw tracked and non-ignored source contents, including binary contents and symlink targets; truncated patches are never source identity. Checks retain bounded logs and seven outcomes. Interrupted native intents are not redispatched automatically. Matching server ledger records populate `solve_evidence` on the detail API and the terminal evidence rows; overriding modules cannot create that authority through JSON output.
+
+The usage and limits are documented in [Verified workflows](../verified-workflows.md). Production and real-binary scripted acceptance, platform CI and remaining evidence are tracked in [`add-verified-solve-workflow/tasks.md`](../../openspec/changes/add-verified-solve-workflow/tasks.md). Live paid-model acceptance has not been run for this change, and no model-quality parity claim is made.
+
 P2 evidence lives here and is kept separate from the P1 files (`p1-status.md`, `p1-handoff.md` and `p1-acceptance-audit.md`). The plan, the requirement-to-task mapping and the scope exclusions are in [`openspec/changes/implement-m2-1-workflow-runtime`](../../openspec/changes/implement-m2-1-workflow-runtime/proposal.md).
 
 ## Goals, slice 2 (`implement-m2-3-goals`, 2026-10-22)

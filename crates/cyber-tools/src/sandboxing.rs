@@ -183,6 +183,19 @@ async fn prepare_scoped_command(
     if scope.unsandboxed {
         sandbox.policy = Policy::FullAccess;
     }
+    let isolated_solve = ctx
+        .host
+        .solve_isolation(&ctx.inv.session_id)
+        .map_err(failed)?;
+    if isolated_solve {
+        if sandbox.policy == Policy::FullAccess {
+            sandbox.policy = Policy::WorkspaceWrite;
+        }
+        if ctx.inv.mode == "plan" {
+            sandbox.policy = Policy::ReadOnly;
+        }
+        sandbox.extra_writable.clear();
+    }
     let tmp = session_tmp(ctx)?;
     let refused = Arc::new(Mutex::new(Vec::new()));
     let (asks, proxy) =
@@ -208,7 +221,7 @@ async fn prepare_scoped_command(
             .chain([tmp.clone(), ctx.host.opts.tool_output_dir.clone()])
             .chain(sandbox.extra_writable.iter().cloned())
             .collect(),
-        None => roots(ctx, &sandbox, &tmp, scope.ambient_temp),
+        None => roots(ctx, &sandbox, &tmp, scope.ambient_temp && !isolated_solve),
     };
     let launch = Launch {
         read_only: writable

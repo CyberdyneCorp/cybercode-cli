@@ -21,6 +21,9 @@ pub(super) const FENCED: &str = "session.admission.fenced.1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Binding {
+    /// Only host verification captures this capability; ordinary Session admission cannot.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    solve_verification: bool,
     pub(super) id: String,
     created_id: String,
     parent: Option<String>,
@@ -267,7 +270,13 @@ impl Runtime {
         Ok(AdmissionAuthority {
             runtime: Arc::downgrade(&self.inner),
             cancellations: Vec::new(),
-            bindings: self.inner.open_admission_chain(source)?,
+            bindings: {
+                let mut bindings = self.inner.open_admission_chain(source)?;
+                if let Some(first) = bindings.first_mut() {
+                    first.solve_verification = super::workflow_solve::owns_verification(source);
+                }
+                bindings
+            },
         })
     }
 
@@ -312,6 +321,7 @@ impl Inner {
     fn open_admission_chain(&self, source: &str) -> Result<Vec<Binding>, RuntimeError> {
         let source_id = source.to_owned();
         let source = source_id.clone();
+        let verification = super::workflow_solve::owns_verification(&source);
         let (exists, bindings, open) = self.store.read(move |conn| {
             let snapshot = conn.unchecked_transaction()?;
             let exists = snapshot.query_row(
@@ -321,7 +331,9 @@ impl Inner {
             )?;
             let bindings = snapshot_chain(&snapshot, &source)?;
             let open = match &bindings {
-                Some(bindings) => chain_is_open(&snapshot, bindings)?,
+                Some(bindings) => {
+                    chain_is_open_for(&snapshot, bindings, verification.then_some(source.as_str()))?
+                }
                 None => false,
             };
             snapshot.commit()?;
@@ -343,7 +355,21 @@ impl Inner {
 }
 
 fn chain_is_open(conn: &Connection, bindings: &[Binding]) -> Result<bool, StoreError> {
+    chain_is_open_for(conn, bindings, None)
+}
+fn chain_is_open_for(
+    conn: &Connection,
+    bindings: &[Binding],
+    verification: Option<&str>,
+) -> Result<bool, StoreError> {
     for binding in bindings {
+        if verification != Some(binding.id.as_str()) {
+            let fence = format!("solve_fence_{}", binding.id);
+            let submitted = conn.query_row("SELECT EXISTS(SELECT 1 FROM event WHERE aggregate_id=?1 AND type='workflow.solve.submitted.1')", [&fence], |row| row.get::<_, bool>(0))?;
+            if submitted {
+                return Ok(false);
+            }
+        }
         let closed = super::subtree_reopen::active_scope(conn, &binding.id)?.is_some();
         if closed {
             return Ok(false);
@@ -411,6 +437,7 @@ pub(super) fn snapshot_chain(
             local_seq,
             operations: Vec::new(),
             guards: Vec::new(),
+            solve_verification: false,
         });
     }
     Ok(Some(bindings))
@@ -437,13 +464,15 @@ pub(super) fn bindings_current(
     let Some(mut current) = snapshot_chain(conn, &source.id)? else {
         return Ok(false);
     };
-    if current.len() != captured.len() || !chain_is_open(conn, &current)? {
+    let verification = source.solve_verification.then_some(source.id.as_str());
+    if current.len() != captured.len() || !chain_is_open_for(conn, &current, verification)? {
         return Ok(false);
     }
     for (current, captured) in current.iter_mut().zip(captured) {
         if !operations_current(conn, captured)? || !guards_current(conn, &captured.guards)? {
             return Ok(false);
         }
+        current.solve_verification = captured.solve_verification;
         current.operations = captured.operations.clone();
         current.guards = captured.guards.clone();
         if captured.local_seq.is_some() && current.local_seq.is_none() {
@@ -530,7 +559,7 @@ pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), S
             .map_err(|e| e.to_string())?
             .flatten(),
         super::hooks::STARTED => event.data["session_id"].as_str().map(str::to_string),
-        "job.started.1" => Some(event.aggregate_id.clone()),
+        "job.started.1" | super::events::PERMISSION_ASKED => Some(event.aggregate_id.clone()),
         super::activity::CHANGED if event.data["status"] == "pending" => {
             event.data["session_id"].as_str().map(str::to_string)
         }
@@ -621,7 +650,25 @@ fn check_closed_admission(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(
         let chain = snapshot_chain(tx, target)
             .map_err(|e| e.to_string())?
             .ok_or("Admission ancestry has a cycle or a missing ancestor")?;
-        if !chain_is_open(tx, &chain).map_err(|e| e.to_string())? {
+        let verification = if matches!(
+            event.kind.as_str(),
+            super::activity::CHANGED | super::hooks::STARTED | super::events::PERMISSION_ASKED
+        ) {
+            event
+                .data
+                .get("admission_bindings")
+                .cloned()
+                .and_then(|value| serde_json::from_value::<Vec<Binding>>(value).ok())
+                .and_then(|bindings| {
+                    bindings
+                        .first()
+                        .filter(|binding| binding.solve_verification && binding.id == target)
+                        .map(|binding| binding.id.clone())
+                })
+        } else {
+            None
+        };
+        if !chain_is_open_for(tx, &chain, verification.as_deref()).map_err(|e| e.to_string())? {
             return Err(CLOSED.into());
         }
     }
@@ -677,6 +724,7 @@ mod receipt_evidence_tests {
             local_seq: Some(7),
             operations: vec![],
             guards: vec![],
+            solve_verification: false,
         }];
         let mut launched = captured.clone();
         launched[0].operations.push("op_request".into());

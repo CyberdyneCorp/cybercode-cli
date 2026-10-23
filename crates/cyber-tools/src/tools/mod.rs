@@ -184,3 +184,5 @@ pub(crate) fn number(input: &Value, key: &str) -> Option<u64> {
 pub(crate) fn failed(message: impl Into<String>) -> ToolError {
     ToolError::Failed(message.into())
 }
+
+pub(crate) mod solve_check;

@@ -3300,6 +3300,17 @@
               "$ref": "#/components/schemas/WorkflowAgent"
             },
             "description": "Every agent of the run, in start or settlement order."
+          },
+          "solve_evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SolveEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Authoritative check evidence, absent for saved/inline overrides, including those named solve."
           }
         },
         "required": [
@@ -3434,6 +3445,100 @@
           "tokens"
         ],
         "description": "One `agent()` call (`workflow.agent.started.1`, then `workflow.agent.settled.1`)."
+      },
+      "SolveEvidence": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "base": true,
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SolveCandidateEvidence"
+            }
+          }
+        },
+        "required": [
+          "run_id",
+          "revision",
+          "base",
+          "candidates"
+        ],
+        "description": "Server-derived evidence. Module output cannot populate this authority field."
+      },
+      "SolveCandidateEvidence": {
+        "type": "object",
+        "properties": {
+          "candidate_id": {
+            "type": "string"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "patch_sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "checks": {
+            "type": "array",
+            "items": true
+          },
+          "host_verified": {
+            "type": "boolean"
+          },
+          "cost_usd": {
+            "type": "number",
+            "format": "double"
+          },
+          "tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "candidate_id",
+          "checks",
+          "host_verified",
+          "cost_usd",
+          "tokens"
+        ]
       },
       "ResumeBody": {
         "type": "object",

@@ -12,7 +12,7 @@ Args:
 
 - `task`: nonempty string, at most 32 KiB UTF-8.
 - `candidates`: two to four `{ label, model }` entries; unique labels (1–48 characters, letters/digits/underscore/hyphen), `model` a configured ref or tier. Defaults: `fast`, `smart`, `verify`, with those labels.
-- `checks`: one to eight `{ argv, timeout_seconds? }` entries; nonempty argv, no implicit shell expansion; default timeout 300 seconds, range 1–3600. `sh -c` or another explicit shell remains an ordinary permission-checked command.
+- `checks`: one to eight `{ argv, timeout_seconds? }` entries; nonempty argv, at most 256 arguments, 32768 UTF-8 bytes per argument and 131072 bytes per check, no NUL or implicit shell expansion; default timeout 300 seconds, range 1–3600. `sh -c` or another explicit shell remains an ordinary permission-checked command.
 - `judge_model`: model ref or tier, default `verify`.
 
 Resolve and record each model ref before launching candidates. Missing models, no Git repository, tracked modifications or non-ignored untracked files fail before creating child Sessions. Never stash user changes. Record the clean HEAD commit and checkout identity as the common base. Ignored build dependencies are recreated by existing sandboxed worktree setup; disclose missing prerequisites rather than copying credentials or claiming equivalent environments.
@@ -58,3 +58,18 @@ Use scripted providers with intentionally good, bad and deceptive candidates, re
 ## Tradeoffs
 
 Several attempts cost more than one. Verification can still miss bugs. A clean Git base initially excludes dirty-checkout tasks. Soft budgets cannot promise a hard spend ceiling. These limits are visible in the approval and result; the workflow provides inspectable evidence and a recommendation for human review.
+
+## Implementation (2026-10-23)
+
+The start path recognizes `meta.prepare: "solve"`. A pure typed parser applies defaults and rejects invalid/unknown fields, including client-supplied `solve_admission`. After resolving all refs against Location tiers and the owner model, the host reads HEAD/root metadata through the existing sandboxed Git execution port with optional index writes disabled, and uses the existing read-only libgit2 helper for dirty-file inspection so repository clean filters cannot execute. It rejects dirty/unborn/non-Git checkouts. It reads HEAD before and after status and refuses a changed base. Explicit owner read/external-directory denials apply before reading the corresponding root.
+
+Normalized args retain a `solve_admission` object containing the commit, repository paths, requested/effective candidate models, judge ref and count of distinct solver models (variants of one provider/model do not create model diversity). These are admission observations, not execution leases or verified-check records. Saved/inline modules may request read-only preparation, but gain no mutating tool or verified-result authority from it. The embedded solve entry alone can invoke the dedicated verification bridge; both origin and source digest are checked. Its internal worktree recipe pins the recorded commit and canonical repository metadata directory; candidate creation refuses an identity change after admission. General workflows retain configured-base behavior.
+
+
+The libgit2 inspection request optionally carries a pinned worktree base. Its solve-only source fingerprint hashes sorted tracked and non-ignored paths, raw file contents and modes, deletions and symlink targets without executing Git filters. Unsupported source types and inspection limits fail closed. Review-only requests retain their previous behavior.
+
+Candidate submission records `workflow.solve.submitted.1`; ancestry admission checks reject later solver/descendant work. The host callback captures a narrowly scoped verification capability for its own native activity and hooks, including transaction-time guard checks; ordinary clients cannot grant it. Pending subtree actors and Jobs prevent verification. Native checkout leases stay unknown when evidence cannot establish settlement. Command sandboxing narrows full-access/extra writable roots and ambient temporary-directory access for solve children, and file tools refuse writes outside the candidate. The judge is forced into Plan mode with only read/glob/grep tools, independent of profile overrides.
+
+`workflow.solve.evidence.1` records snapshots and check intent/settlement under deterministic run/revision/candidate/ordinal aggregates. Existing event storage needs no new projection table. A pending intent is returned as unknown and never redispatched. Checks use literal argv with permissions and pre/post hooks, owned process-tree settlement and bounded output. Submitted-source mutation invalidates a passing exit. Unknown outcomes prevent subsequent native checks. Log ordering is labelled stdout-then-stderr.
+
+The detail API derives `solve_evidence` directly from matching ledger identities, not module JSON. It remains available for partial runs; the existing result-file mechanism carries large reports. SDK types include the authority field and the terminal monitor renders its outcomes, source digest and branch. Usage reports disclose incomplete pricing, effective soft limits and measured overshoot. No paid live-model acceptance or quality-parity claim is included in scripted acceptance.

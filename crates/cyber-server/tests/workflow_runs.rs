@@ -701,6 +701,25 @@ async fn repeated_calls_get_ordinals_and_failures_are_recorded() {
     assert_eq!(failed.session_id, None);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_agent_does_not_claim_complete_usage_or_pricing() {
+    let agents = Arc::new(Agents::default());
+    let f = fixture(&agents);
+    let owner = f.session("default").await;
+    let run = f
+        .start(
+            &owner,
+            "export default async () => { try { await agent('fail inference'); } catch (_) {} const immediate = ctx.budget; await checkpoint('after failure', true); return {immediate, after: ctx.budget}; };",
+        )
+        .await;
+    let ended = f.settled(&run.id).await;
+    let result = ended.result.unwrap();
+    for budget in [&result["immediate"], &result["after"]] {
+        assert_eq!(budget["usage_complete"], false, "{result}");
+        assert_eq!(budget["cost_complete"], false, "{result}");
+    }
+}
+
 /// Fair agent scheduling: a run that queues behind a larger one is served on the next free
 /// slot, then the two alternate, whatever the larger run's queue length.
 #[tokio::test(flavor = "multi_thread")]
@@ -962,6 +981,39 @@ async fn a_changed_script_fails_closed_without_a_revision_and_reuses_matching_ca
     assert_eq!(run.result, Some(json!(["a done", 1, "b2 done"])));
     assert_eq!(agents.prompts(), ["a", "hold b", "b2"]);
     assert_eq!(f.events(&run.id, "workflow.run.revised.1").len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn resuming_an_uncreated_isolated_child_keeps_its_planned_worktree() {
+    let agents = Arc::new(Agents::default());
+    let f = fixture(&agents);
+    let owner = f.session("default").await;
+    let run = f
+        .start(
+            &owner,
+            "export default async () => await agent('hold isolated', {isolation: 'worktree'});",
+        )
+        .await;
+    eventually("isolated admission before creating a child", || {
+        agents.holding.load(Ordering::SeqCst) == 1
+    })
+    .await;
+    let first = agents.seen()[0].clone();
+    assert!(first.worktree.is_some());
+    f.runtime.stop_workflow_run(&run.id).await.unwrap();
+    f.quiet(&run.id).await;
+    agents.release();
+    f.resume(&run.id, None, false).await.unwrap();
+    let ended = f.settled(&run.id).await;
+    assert_eq!(ended.status, WorkflowRunStatus::Completed);
+    let resumed = agents.seen()[1].clone();
+    assert!(resumed.resume);
+    assert_eq!(resumed.agent_id, first.agent_id);
+    assert_eq!(resumed.worktree, first.worktree);
+    assert_eq!(
+        f.runtime.workflow_agents(&run.id).unwrap()[0].branch,
+        first.worktree.map(|tree| tree.branch)
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

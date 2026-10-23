@@ -134,7 +134,11 @@ impl BuiltinHost {
             mode: owner.mode,
             message_id: String::new(),
             call_id: cyber_core::ids::new_id("call"),
-            name: tool.clone(),
+            name: if tool == "__solve" {
+                "bash".into()
+            } else {
+                tool.clone()
+            },
             input,
             attempt: 1,
             operation_key: format!("{run_id}:{call_key}"),
@@ -154,6 +158,7 @@ impl BuiltinHost {
             cancel,
         };
         let value = match tool.as_str() {
+            "__solve" => self.verify_solve(&ctx, &run_id).await,
             "read" => tools::fs::read_value(&ctx).await,
             "glob" => tools::search::glob_value(&ctx).await,
             "grep" => tools::search::grep_value(&ctx).await,

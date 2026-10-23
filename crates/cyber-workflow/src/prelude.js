@@ -179,6 +179,7 @@
   const tools = {};
   for (const name of ["read", "glob", "grep"]) tools[name] = freeze(directTool(name));
 
+  lock("verifyCandidate", freeze((input) => call("solve", input)));
   lock("agent", freeze(agent));
   lock("tools", freeze(tools));
   lock("ask", freeze(ask));

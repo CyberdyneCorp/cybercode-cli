@@ -386,6 +386,7 @@ mod tests {
                 ("plan", "global".to_owned()),
                 ("research", "bundled".to_owned()),
                 ("review", "bundled".to_owned()),
+                ("solve", "bundled".to_owned()),
             ]
         );
         let audit = &listing.workflows[0];

@@ -53,7 +53,9 @@ pub const RUN_NOTIFIED: &str = "workflow.run.notified.1";
 pub const RUN_WAITING: &str = "workflow.run.waiting.1";
 /// The answer arrived: the run is `running` again.
 pub const RUN_ANSWERED: &str = "workflow.run.answered.1";
-const KINDS: [&str; 16] = [
+const KINDS: [&str; 18] = [
+    "workflow.solve.evidence.1",
+    "workflow.solve.submitted.1",
     RUN_STARTED,
     RUN_PAUSED,
     RUN_RESUMED,
@@ -1082,7 +1084,7 @@ impl Runtime {
         );
         let input = RunInput {
             args: run.args.clone(),
-            ctx: json!({"run_id": run.id, "name": run.name, "session_id": run.session_id, "directory": run.directory}),
+            ctx: json!({"run_id": run.id, "name": run.name, "session_id": run.session_id, "directory": run.directory, "run_budget":run.budget}),
             tools: run.tools.clone(),
         };
         spawn_engine(

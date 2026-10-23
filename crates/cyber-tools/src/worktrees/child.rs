@@ -38,6 +38,12 @@ struct RootWorktree<'a> {
     label: &'static str,
 }
 
+enum ChildBase<'a> {
+    Configured,
+    Pinned(&'a cyber_server::runtime::RunWorktree),
+    Removed(&'a Managed),
+}
+
 impl BuiltinHost {
     /// Create the teammate Session `request` in its own managed worktree, based on the
     /// lead's current HEAD. The user approved the spawn (`team.manage`), so creation obeys
@@ -260,7 +266,8 @@ impl BuiltinHost {
                     &worktree_request,
                     &branch,
                     user_requested,
-                    None,
+                    run.filter(|tree| tree.base.is_some())
+                        .map_or(ChildBase::Configured, ChildBase::Pinned),
                 ),
             )
             .await?;
@@ -335,7 +342,7 @@ impl BuiltinHost {
         request: &WorktreeSessionRequest,
         branch: &str,
         user_requested: bool,
-        removed: Option<&Managed>,
+        base: ChildBase<'_>,
     ) -> io::Result<(Repository, Managed, SetupRecipe)> {
         let ctx = Ctx {
             skill_paths: Default::default(),
@@ -387,7 +394,13 @@ impl BuiltinHost {
         }) {
             return Err(io::Error::new(io::ErrorKind::PermissionDenied, reason));
         }
-        let settings = Settings::from_config(&config).map_err(io::Error::other)?;
+        let mut settings = Settings::from_config(&config).map_err(io::Error::other)?;
+        if let ChildBase::Pinned(tree) = &base {
+            settings.base = tree
+                .base
+                .clone()
+                .ok_or_else(|| io::Error::other("Missing pinned solve commit"))?;
+        }
         let discovery = GitPort {
             ctx: &ctx,
             writable: Some(vec![]),
@@ -395,6 +408,14 @@ impl BuiltinHost {
             read_only: Vec::new(),
         };
         let repository = Repository::discover(&discovery, &ctx.location).await?;
+        if let ChildBase::Pinned(tree) = &base
+            && tree.common_dir.as_deref() != repository.common_dir.to_str()
+        {
+            return Err(io::Error::other(
+                "Solve repository identity changed after admission",
+            ));
+        }
+
         let target =
             repository.target(&settings, &request.data, &request.project_id, &request.name)?;
         let execution = GitPort {
@@ -416,7 +437,7 @@ impl BuiltinHost {
             authority
                 .verify(&runtime, &inv.session_id)
                 .map_err(io::Error::other)?;
-            if let Some(removed) = removed {
+            if let ChildBase::Removed(removed) = &base {
                 repository
                     .recreate_removed(
                         &execution,
@@ -523,7 +544,7 @@ impl BuiltinHost {
                     &request,
                     &removed.branch,
                     user_requested,
-                    Some(&removed),
+                    ChildBase::Removed(&removed),
                 ),
             )
             .await?;

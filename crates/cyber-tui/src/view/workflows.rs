@@ -648,13 +648,14 @@ fn draw_run(f: &mut Frame, app: &App, view: &RunView, area: Rect) {
     f.render_widget(block, area);
     let inner = body.width as usize;
     let mut lines = vec![run_progress(app, run, inner)];
-    lines.extend(tree_lines(
-        app,
-        detail,
-        view.selected,
-        inner,
-        body.height as usize - 1,
-    ));
+    lines.extend(
+        detail
+            .evidence
+            .iter()
+            .map(|line| muted(app, truncate_end(line, inner))),
+    );
+    let available = (body.height as usize).saturating_sub(lines.len());
+    lines.extend(tree_lines(app, detail, view.selected, inner, available));
     if let Some(refusal) = app.workflows.refusals.get(&run.id) {
         lines.push(refusal_line(app, refusal, inner));
     }

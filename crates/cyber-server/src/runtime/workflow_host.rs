@@ -80,6 +80,7 @@ pub(super) struct RunHost {
     interactive: bool,
     /// The run's `args`, whose `answers` declare `ask()` answers in advance.
     args: Value,
+    solve_base: Option<String>,
     tiers: BTreeMap<String, Option<String>>,
     budget: RunBudget,
     replay: Replay,
@@ -302,6 +303,15 @@ impl RunHost {
             owner,
             interactive: run.interactive,
             args: run.args.clone(),
+            solve_base: (run.origin == json!({"kind":"bundled", "name":"solve"})
+                && cyber_workflow::bundled::module("solve")
+                    .is_some_and(|module| module.digest == run.digest))
+            .then(|| {
+                run.args["solve_admission"]["base"]["commit"]
+                    .as_str()
+                    .map(str::to_owned)
+            })
+            .flatten(),
             tiers,
             budget: run_budget(run),
             replay,
@@ -322,7 +332,12 @@ impl RunHost {
         .with_initial_budget()
     }
 
-    fn with_initial_budget(self) -> Self {
+    fn with_initial_budget(mut self) -> Self {
+        if self.solve_base.is_some()
+            && let Some(directory) = self.args["solve_admission"]["base"]["directory"].as_str()
+        {
+            self.owner.directory = directory.to_owned();
+        }
         let view = self
             .replay
             .initial_budget()
@@ -333,7 +348,10 @@ impl RunHost {
 
     /// The run's spend now, as `ctx.budget` shows it.
     fn live_budget(&self) -> Value {
-        budget_snapshot(&self.budget, &self.spend(), self.started.get())
+        self.pricing_snapshot(
+            budget_snapshot(&self.budget, &self.spend(), self.started.get()),
+            false,
+        )
     }
 
     fn spend(&self) -> RunSpend {
@@ -583,9 +601,29 @@ impl RunHost {
         prepared.record.id = resumed
             .clone()
             .unwrap_or_else(|| cyber_core::ids::new_id("agt"));
-        // A resumed child keeps its checkout; a new one is the run's next start ordinal.
-        let worktree = (resumed.is_none() && self.isolates(&prepared.isolation))
-            .then(|| RunWorktree::new(&self.run_id, self.started.get()));
+        // Keep the planned checkout even if the interruption preceded child creation.
+        // The tool host ignores this plan when it resumes an existing child, but needs
+        // it when no child was created; otherwise that fallback would run in the owner.
+        let mut worktree = match resumed.as_deref() {
+            Some(id) => self.recorded_worktree(id, &key)?,
+            None => self
+                .isolates(&prepared.isolation)
+                .then(|| RunWorktree::new(&self.run_id, self.started.get())),
+        };
+        if resumed.is_some()
+            && matches!(prepared.isolation, Isolation::Worktree)
+            && worktree.is_none()
+        {
+            return Err(failed("the isolated agent has no recorded worktree plan"));
+        }
+        if let Some(tree) = &mut worktree {
+            tree.base = self.solve_base.clone();
+            tree.common_dir = self.solve_base.as_ref().and_then(|_| {
+                self.args["solve_admission"]["base"]["common_dir"]
+                    .as_str()
+                    .map(str::to_owned)
+            });
+        }
         prepared.record.branch = worktree.as_ref().map(|tree| tree.branch.clone());
         self.record_agent(AGENT_STARTED, &prepared.record, seq, None)?;
         if let Some(release) = &release {
@@ -603,6 +641,35 @@ impl RunHost {
         }
         let outcome = self.budget_failure(outcome);
         self.settle(prepared, seq, outcome)
+    }
+
+    /// Recover the original naming ordinal from the durable, host-generated branch.
+    /// A resumed call must never pick a new checkout or lose its isolation choice.
+    fn recorded_worktree(&self, id: &str, key: &str) -> Result<Option<RunWorktree>, Diagnostic> {
+        let runtime = self
+            .runtime
+            .upgrade()
+            .ok_or_else(|| failed("the server is shutting down"))?;
+        let record = runtime
+            .workflow_agents(&self.run_id)
+            .map_err(|error| failed(error.to_string()))?
+            .into_iter()
+            .find(|record| record.id == id && record.call_key == key)
+            .ok_or_else(|| failed("the resumed agent has no matching start record"))?;
+        let Some(branch) = record.branch else {
+            return Ok(None);
+        };
+        let index = branch
+            .rsplit('/')
+            .next()
+            .and_then(|index| index.parse::<u64>().ok())
+            .filter(|index| *index > 0)
+            .ok_or_else(|| failed("the recorded worktree branch is invalid"))?;
+        let tree = RunWorktree::new(&self.run_id, index);
+        if tree.branch != branch {
+            return Err(failed("the recorded worktree belongs to another run"));
+        }
+        Ok(Some(tree))
     }
 
     /// The call's place in its prompt-prefix group; a resumed agent continues at once.
@@ -763,7 +830,10 @@ impl RunHost {
             prepared.schema.clone(),
         );
         let (tools, runtime) = (Arc::clone(&self.tools), self.runtime.clone());
-        let (owner, run_id) = (self.owner.clone(), self.run_id.clone());
+        let (mut owner, run_id) = (self.owner.clone(), self.run_id.clone());
+        if self.solve_base.is_some() && record.label.as_deref() == Some("solve judge") {
+            owner.mode = "plan".into();
+        }
         let task = self.handle.spawn(async move {
             let _lease = lease;
             let (agent_id, call_key, model, label, prompt, agent, schema) = request;
@@ -834,7 +904,8 @@ impl RunHost {
         if let Some(outcome) = outcome {
             data["order"] = self.replay.take_order().into();
             data["outcome"] = serde_json::to_value(outcome).expect("outcomes serialize");
-            data["budget_snapshot"] = self.deliver_budget(&self.spend());
+            data["budget_snapshot"] =
+                self.deliver_budget(&self.spend(), record.status != "completed");
         }
         self.append(kind, data)
             .map_err(|error| self.fail_closed(error))
@@ -862,7 +933,7 @@ impl RunHost {
             "order": self.replay.take_order(),
             "call_key": call_key,
             "outcome": outcome,
-            "budget_snapshot": self.deliver_budget(&spend),
+            "budget_snapshot": self.deliver_budget(&spend, false),
         });
         self.append(CALL_RECORDED, data)
             .map_err(|error| self.fail_closed(error))?;
@@ -891,10 +962,34 @@ impl RunHost {
     }
 
     /// The `ctx.budget` a result reaching the script now carries, recorded with it.
-    fn deliver_budget(&self, spend: &RunSpend) -> Value {
-        let view = budget_snapshot(&self.budget, spend, self.started.get());
+    fn deliver_budget(&self, spend: &RunSpend, pending_failure: bool) -> Value {
+        let view = self.pricing_snapshot(
+            budget_snapshot(&self.budget, spend, self.started.get()),
+            pending_failure,
+        );
         *self.budget_view.borrow_mut() = view.clone();
         view
+    }
+
+    fn pricing_snapshot(&self, mut value: Value, pending_failure: bool) -> Value {
+        let run = self.run_id.clone();
+        let (unpriced, complete) = self.store.read(move |db| {
+            db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM session WHERE workflow_run_id=?1 AND (unpriced_steps>0 OR children_unpriced_steps>0)),
+                 NOT EXISTS(SELECT 1 FROM session WHERE workflow_run_id=?1 AND children_usage_complete=0)
+                 AND NOT EXISTS(SELECT 1 FROM event WHERE aggregate_id=?1 AND type='workflow.agent.settled.1'
+                    AND json_extract(data,'$.status') != 'completed')",
+                [&run],
+                |row| Ok((row.get::<_,bool>(0)?,row.get::<_,bool>(1)?)),
+            ).map_err(Into::into)
+        }).unwrap_or((true,false));
+        // A failed inference may have incurred usage that never reached the server.
+        // Include the settlement being appended, before it is visible to the query.
+        let complete = complete && !pending_failure;
+        value["unpriced"] = unpriced.into();
+        value["usage_complete"] = complete.into();
+        value["cost_complete"] = (complete && !unpriced).into();
+        value
     }
 
     /// A direct tool call after the replay prefix: a recorded result of the same call
@@ -927,11 +1022,19 @@ impl RunHost {
             interactive: self.interactive,
         };
         let tools = Arc::clone(&self.tools);
+        let runtime = self.runtime.clone();
         let outcome = self
             .handle
             .spawn(async move {
                 let _lease = lease;
-                tools.workflow_tool(request, cancel).await
+                if request.tool == "__solve" {
+                    let runtime = runtime
+                        .upgrade()
+                        .ok_or_else(|| failed("runtime unavailable"))?;
+                    runtime.verify_solve_candidate(request, cancel).await
+                } else {
+                    tools.workflow_tool(request, cancel).await
+                }
             })
             .await
             .unwrap_or_else(|error| Err(failed(format!("workflow tool task ended: {error}"))));
@@ -1011,6 +1114,18 @@ impl RunHost {
 /// first polled: the engine dispatches a batch of calls before polling any of them, so a
 /// recorded result can wait for a call of its batch that is polled later.
 impl WorkflowHost for RunHost {
+    fn solve(&self, input: Value) -> HostFuture<'_> {
+        if self.solve_base.is_none() {
+            return Box::pin(async {
+                Err(Diagnostic::new(
+                    DiagnosticKind::PermissionDenied,
+                    "only the embedded solve revision may request verification",
+                ))
+            });
+        }
+        self.tool("__solve".into(), input)
+    }
+
     fn agent(&self, call: AgentCall) -> HostFuture<'_> {
         let key = self.call_key("agent", &call.prompt, &call.options);
         let plan = self.replay.issue("agent", &key);

@@ -1,4 +1,4 @@
-//! The five bundled Workflows on the real binary (`workflows` → Bundled workflow
+//! The bundled Workflows on the real binary (`workflows` → Bundled workflow
 //! contracts): `cyber exec --embedded --workflow <name>` against a scripted
 //! OpenAI-compatible model that answers each agent by the `Task:` line of its prompt.
 //! The review command (`cyber review`) and eject/override are covered in
@@ -48,6 +48,23 @@ fn reply(body: &Value) -> Value {
         return json!({"content": "Title"});
     }
     let task = task(body);
+    if task.starts_with("solve ") && task != "judge solve" {
+        if last_tool_call(body).as_deref() == Some("solve_write") {
+            return json!({"content":"Tests passed!"});
+        }
+        let patch = if task == "solve bad" {
+            "fn broken() {}"
+        } else {
+            "fn fixed() {}"
+        };
+        return json!({"tool_calls":[{"index":0,"id":"solve_write","type":"function",
+            "function":{"name":"bash","arguments":json!({"command":format!("printf '{patch}\\n' > a.rs")}).to_string()}}]});
+    }
+    if task == "judge solve" {
+        return result(
+            json!({"recommended_candidate":"fast","rationale":"focused passing patch","alternatives":["other"]}),
+        );
+    }
     match last_tool_call(body).as_deref() {
         Some("call_result") => return json!({"content": "done"}),
         Some("call_edit") => return migrated(&task),
@@ -159,6 +176,7 @@ impl Env {
         std::fs::create_dir_all(root.join("home")).unwrap();
         std::fs::create_dir_all(&repo).unwrap();
         let mut config = model.config();
+        config["providers"]["test"]["models"]["second"] = json!({});
         config["permissions"] = json!("allow");
         config["sandbox"] = json!({"policy": "full-access"});
         std::fs::write(root.join("cyber/config/cyber.jsonc"), config.to_string()).unwrap();
@@ -323,4 +341,28 @@ fn plan_merges_the_highest_scoring_draft() {
         json!([{"from": "user-first", "what": "a usability check"}])
     );
     assert_eq!(result["plan_markdown"], "# Plan");
+}
+
+#[test]
+fn solve_runs_three_real_patches_rejects_a_failed_check_and_reports_a_recommendation() {
+    let env = Env::new();
+    let before = git(&env.repo, &["rev-parse", "HEAD"]);
+    let result = ran(&env.exec("solve", json!({"task":"fix the function", "judge_model":"test/main",
+        "candidates":[{"label":"fast","model":"test/main"},{"label":"bad","model":"test/second"},{"label":"other","model":"test/main"}],
+        "checks":[{"argv":["grep","-q","fixed","a.rs"]}]}), &[]), 0);
+    assert_eq!(result["verification_status"], "recommended", "{result}");
+    assert_eq!(result["recommended_candidate"], "fast");
+    assert_eq!(result["distinct_solver_models"], 2);
+    assert_eq!(result["candidates"][1]["checks"][0]["outcome"], "failed");
+    assert_eq!(result["candidates"][0]["checks"][0]["outcome"], "passed");
+    assert!(result["stats"]["tokens"].as_u64().unwrap() > 0);
+    assert_eq!(result["budget"]["observed"]["unpriced"], true);
+    assert_eq!(result["budget"]["observed"]["cost_complete"], false);
+    assert_eq!(result["stats"]["agents"], 4);
+    assert_eq!(result["merged"], false);
+    assert_eq!(git(&env.repo, &["rev-parse", "HEAD"]), before);
+    assert_eq!(
+        std::fs::read_to_string(env.repo.join("a.rs")).unwrap(),
+        "fn a() {}\n"
+    );
 }
