@@ -1380,6 +1380,22 @@ async fn ended_on(runtime: &Runtime, id: &str) -> WorkflowRun {
     panic!("run {id} did not end");
 }
 
+/// `ids` in the order a resume reports them: by `started_ms`, then by ID. Runs started
+/// in the same millisecond have random-tailed ULIDs, so start order is not ID order.
+fn resume_order(runtime: &Runtime, ids: &[String]) -> Vec<String> {
+    let mut keyed: Vec<(i64, String)> = ids
+        .iter()
+        .map(|id| {
+            (
+                runtime.workflow_run(id).unwrap().unwrap().started_ms,
+                id.clone(),
+            )
+        })
+        .collect();
+    keyed.sort();
+    keyed.into_iter().map(|(_, id)| id).collect()
+}
+
 /// A script whose first agent holds until released, then a second one.
 fn held_pair(name: &str) -> String {
     format!(
@@ -1473,7 +1489,8 @@ async fn a_crash_with_two_runs_mid_flight_pauses_both_and_dispatches_the_queued_
         .resume_interrupted_workflow_runs(None)
         .await
         .unwrap();
-    assert_eq!(report.resumed, [a.id.clone(), b.id.clone()], "{report:?}");
+    let order = resume_order(&restarted, &[a.id.clone(), b.id.clone()]);
+    assert_eq!(report.resumed, order, "{report:?}");
     assert!(report.refused.is_empty(), "{report:?}");
     for (run, name) in [(&a, "a"), (&b, "b")] {
         let run = ended_on(&restarted, &run.id).await;
@@ -1573,7 +1590,11 @@ async fn resuming_interrupted_runs_leaves_a_user_paused_run_paused() {
         .resume_interrupted_workflow_runs(Some(&f.dir.path().join("repo")))
         .await
         .unwrap();
-    assert_eq!(report.resumed, interrupted, "{report:?}");
+    assert_eq!(
+        report.resumed,
+        resume_order(&restarted, &interrupted),
+        "{report:?}"
+    );
     assert!(report.refused.is_empty(), "{report:?}");
     for id in &interrupted {
         let run = ended_on(&restarted, id).await;

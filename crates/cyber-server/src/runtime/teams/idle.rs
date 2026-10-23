@@ -142,9 +142,41 @@ impl Runtime {
         let Some(idle) = self.idle_teammate(session_id).await? else {
             return Ok(());
         };
-        let Some((team, member)) = self.recorded_member(session_id)? else {
+        // Read the member and record it under the team status lock: a stop that ends
+        // between the read and the commit would otherwise be overwritten by `idle`
+        // (only a resume clears `stopped`), and a stopped team's lead would be notified.
+        let recorded = {
+            let _status = self.inner.team_status.lock().await;
+            let Some((team, member)) = self.recorded_member(session_id)? else {
+                return Ok(());
+            };
+            let notified = self.record_idle(&team, &member, &idle).await?;
+            (team, member, notified)
+        };
+        let (team, member, Some(tasks_in_progress)) = recorded else {
             return Ok(());
         };
+        // The envelope's `session_id` is the teammate's: the hook runs on its Session.
+        let fields = json!({
+            "team_id": team.id,
+            "member": member.name,
+            "tasks_in_progress": tasks_in_progress,
+            "last_status": idle.last_status,
+        });
+        self.inner
+            .teammate_idle_hook(session_id, &member.name, fields)
+            .await;
+        Ok(())
+    }
+
+    /// Record `member` idle; while `team` is active, admit the idle notice to its lead in
+    /// the same commit. The member's tasks in progress when a notice was sent.
+    async fn record_idle(
+        &self,
+        team: &Team,
+        member: &Member,
+        idle: &IdleTeammate,
+    ) -> Result<Option<Vec<String>>, RuntimeError> {
         let updated = event(
             records::MEMBER_UPDATED,
             &MemberUpdated {
@@ -155,7 +187,8 @@ impl Runtime {
             },
         );
         if team.status != "active" {
-            return self.inner.commit_to_lead(&team, vec![updated]).await;
+            self.inner.commit_to_lead(team, vec![updated]).await?;
+            return Ok(None);
         }
         let board = self.board(&team.id)?;
         let tasks_in_progress: Vec<String> = board
@@ -186,17 +219,7 @@ impl Runtime {
             vec![updated, event(records::MEMBER_IDLE, &recorded)],
         )
         .await?;
-        // The envelope's `session_id` is the teammate's: the hook runs on its Session.
-        let fields = json!({
-            "team_id": team.id,
-            "member": member.name,
-            "tasks_in_progress": tasks_in_progress,
-            "last_status": idle.last_status,
-        });
-        self.inner
-            .teammate_idle_hook(session_id, &member.name, fields)
-            .await;
-        Ok(())
+        Ok(Some(tasks_in_progress))
     }
 
     /// The team and member row of a teammate whose status may change: not `stopped`
@@ -236,6 +259,8 @@ impl Runtime {
         } else {
             return Ok(());
         };
+        // As for idle: no status recorded over a stop that ends meanwhile.
+        let _status = self.inner.team_status.lock().await;
         let Some((team, member)) = self.recorded_member(session_id)? else {
             return Ok(());
         };

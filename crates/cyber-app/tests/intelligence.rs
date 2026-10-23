@@ -149,7 +149,10 @@ async fn lsp_status_authenticates_observes_actual_roots_and_does_not_start_serve
     }
     f.settings(json!({"lsp":{"fixture":{"command":[candidate],"extensions":[".fixture-lsp"],"env":{"SECRET":"private-lsp-environment"}}},"sandbox":{"network":"off"}}));
     f.app.host.warm_lsp(&f.root, file, "snapshot".into());
-    let after = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+    // The broken state follows an admission scan, sandbox preparation and a failed spawn
+    // in the background; the limit only guards a hang. On a loaded Windows runner that
+    // chain has taken more than the 3s this once allowed.
+    let after = tokio::time::timeout(std::time::Duration::from_secs(30), async {
         loop {
             let body: Value = f
                 .client
@@ -169,7 +172,7 @@ async fn lsp_status_authenticates_observes_actual_roots_and_does_not_start_serve
             {
                 break body;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
     })
     .await

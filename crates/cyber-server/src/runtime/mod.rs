@@ -781,7 +781,9 @@ pub(crate) struct Inner {
     team_spawn: Mutex<()>,
     /// Team status changes (`agent-teams` → Team budgets, Shutdown and resume): a budget
     /// stop, a stop, its end and a resume read the team's status and record the change
-    /// one at a time, so a team is exceeded or stopped once per active period.
+    /// one at a time, so a team is exceeded or stopped once per active period. A
+    /// teammate's idle or live status is read and recorded under it too, so none lands
+    /// over a stop (only a resume clears `stopped`).
     team_status: Mutex<()>,
     /// Peer Sessions of the reachable listing, reused for 15 s (`cross-session-messaging`
     /// → Peer watches and listing).

@@ -5,6 +5,11 @@ use cyber_server::runtime::Asker;
 use serde_json::json;
 use tokio::sync::mpsc;
 
+/// How long a client test waits for an RPC frame or a hook's marker before failing as
+/// hung. Both follow a hook command's process spawn, which on a CI runner saturated by
+/// the suite's start can take seconds; the waits themselves are on the real event.
+const HOOK_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
 async fn application(root: &std::path::Path) -> App {
     let paths = Paths {
         data: root.join("data"),
@@ -330,7 +335,7 @@ impl ClientFixture {
         let mut running = self.host.execute(call, CancellationToken::new());
         let frame = tokio::select! {
             result=&mut running => panic!("client RPC refused unexpectedly: {result:?}"),
-            frame=tokio::time::timeout(std::time::Duration::from_secs(3),self.frames.recv()) => frame.unwrap().unwrap(),
+            frame=tokio::time::timeout(HOOK_WAIT,self.frames.recv()) => frame.unwrap().unwrap(),
         };
         reply["id"] = frame["id"].clone();
         self.host.remote.resolve(&reply);
@@ -496,7 +501,7 @@ async fn client_replacement_during_permission_hook_cannot_receive_the_approved_o
     let directory = std::path::Path::new(&f.turn.directory);
     tokio::select! {
         result=&mut running => panic!("expected pending permission hook, got {result:?}"),
-        wait=tokio::time::timeout(std::time::Duration::from_secs(3),async {while !directory.join("permission-start").exists() {tokio::time::sleep(std::time::Duration::from_millis(10)).await;}}) => wait.unwrap()
+        wait=tokio::time::timeout(HOOK_WAIT,async {while !directory.join("permission-start").exists() {tokio::time::sleep(std::time::Duration::from_millis(10)).await;}}) => wait.unwrap()
     }
     f.host
         .remote
