@@ -3624,3 +3624,7 @@ async fn a_bundled_run_resumes_as_the_bundled_workflow() {
         .await;
     server.close().await;
 }
+
+#[cfg(unix)]
+#[path = "support/solve_admission.rs"]
+mod solve_admission;

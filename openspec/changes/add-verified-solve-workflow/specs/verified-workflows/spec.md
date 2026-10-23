@@ -4,7 +4,7 @@ Verified workflows produce reviewable candidate patches with host-recorded check
 ## ADDED Requirements
 
 ### Requirement: Solve workflow arguments and admission
-(P2) The bundled `solve` Workflow SHALL accept `task` (nonempty, at most 32768 UTF-8 bytes), `candidates` (2–4 uniquely labelled model refs or tiers, default `fast`, `smart`, `verify`), `checks` (1–8 `{ argv, timeout_seconds? }` objects with nonempty argv, timeout default 300, range 1–3600) and `judge_model` (default `verify`). It SHALL resolve and record models and a clean Git HEAD before starting child Sessions; a non-Git checkout, tracked changes, non-ignored untracked files, invalid args or an unavailable model SHALL fail before children are created, without stashing or modifying user files. Default `meta.budget` SHALL set 5 agents, 5 USD and 1800 seconds, with at most 20 steps per solver. Effective budgets SHALL resolve under `workflows` → Run budgets, including explicit authenticated overrides; module/model inputs SHALL NOT widen inherited ceilings. All owner permission and Session budget ceilings SHALL apply. The approval SHALL show models, candidate count, checks and effective soft budgets, including possible in-flight overshoot and incomplete pricing.
+(P2) The bundled `solve` Workflow SHALL accept `task` (nonempty, at most 32768 UTF-8 bytes), `candidates` (2–4 uniquely labelled model refs or tiers, default `fast`, `smart`, `verify`), `checks` (1–8 `{ argv, timeout_seconds? }` objects with nonempty argv, timeout default 300, range 1–3600; at most 256 arguments, 32768 UTF-8 bytes per argument and 131072 bytes per check; no NUL) and `judge_model` (default `verify`). It SHALL resolve and record models and a clean Git HEAD before starting child Sessions; a non-Git checkout, tracked changes, non-ignored untracked files, invalid args or an unavailable model SHALL fail before children are created, without stashing or modifying user files. Default `meta.budget` SHALL set 5 agents, 5 USD and 1800 seconds, with at most 20 steps per solver. Effective budgets SHALL resolve under `workflows` → Run budgets, including explicit authenticated overrides; module/model inputs SHALL NOT widen inherited ceilings. All owner permission and Session budget ceilings SHALL apply. The approval SHALL show models, candidate count, checks and effective soft budgets, including possible in-flight overshoot and incomplete pricing.
 
 #### Scenario: Mixed-model attempt
 - **WHEN** the user starts `cyber workflows run solve --args` with three valid model refs and a check argv in a clean Git checkout
@@ -17,6 +17,10 @@ Verified workflows produce reviewable candidate patches with host-recorded check
 #### Scenario: One configured model
 - **WHEN** the three default tiers all resolve to one model
 - **THEN** the workflow may run three attempts and reports one distinct model rather than claiming model diversity
+
+#### Scenario: Forged admission metadata
+- **WHEN** a caller includes `solve_admission` in its input
+- **THEN** argument validation refuses it before a run or child is created; only host-observed admission data can be recorded
 
 ### Requirement: Independent isolated candidate execution
 (P2) Each solver SHALL use its own child Session and managed worktree from the recorded common base, under the owner's effective tool, sandbox, Mode and budget ceilings. Solvers SHALL not receive sibling transcripts or write sibling or owner checkouts. A candidate SHALL advance only after its owned tools and Jobs have settled; its source snapshot/diff digest, Session, branch and usage SHALL be retained in the run report. Setup failures and unknown native ownership SHALL remain explicit and SHALL NOT become successful candidates.

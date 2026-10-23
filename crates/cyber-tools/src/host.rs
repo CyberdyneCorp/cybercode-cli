@@ -10,6 +10,7 @@ mod skill_catalog;
 mod template_expand;
 mod workflow_agents;
 mod workflow_prepare;
+mod workflow_solve;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};

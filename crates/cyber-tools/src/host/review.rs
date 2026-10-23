@@ -32,6 +32,15 @@ fn unavailable(error: impl std::fmt::Display) -> CommandPlanError {
     CommandPlanError::Unavailable(format!("Review target resolution failed: {error}"))
 }
 
+/// Read-only worktree inspection for solve admission. Unlike native `git status`,
+/// the libgit2 helper cannot execute repository clean filters. This does not filter
+/// out dirty paths: admission must refuse even changes the model cannot read.
+pub(super) async fn solve_diff(ctx: &Ctx<'_>) -> Result<ReviewDiff, CommandPlanError> {
+    let diff = resolve(ctx, &Target::Uncommitted, false).await?;
+    check_root(ctx, &diff.root)?;
+    Ok(diff)
+}
+
 /// Resolves `arguments` and returns the `<review-target>` data block.
 /// `ctx.policy` gates the host actions the user requested; `reader` is the
 /// reviewer's policy, which decides what file contents it may see.

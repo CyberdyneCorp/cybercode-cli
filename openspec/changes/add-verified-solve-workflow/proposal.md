@@ -28,4 +28,4 @@ Automatic merging or PR publication; guarantees that passing tests proves correc
 
 ## Status
 
-Proposed for review. No runtime implementation or acceptance is claimed.
+Implementation started on 2026-10-23 after PR #17 merged the reviewed proposal. The shared library already ships (PR #18); argument/model/clean-base admission is implemented in the first increment. Candidate execution, host checks, judging, report authority and a runnable bundled `solve` entry remain unimplemented; no end-to-end acceptance is claimed.

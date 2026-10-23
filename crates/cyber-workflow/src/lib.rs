@@ -11,6 +11,7 @@ pub mod engine;
 pub mod meta;
 pub mod module;
 mod scan;
+pub mod solve;
 
 pub use diagnostic::{Diagnostic, DiagnosticKind, Position};
 pub use discovery::{Entry, Issue, Listing, Root, discover, discover_library, read_module, roots};

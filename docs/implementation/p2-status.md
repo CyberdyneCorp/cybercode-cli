@@ -1,5 +1,11 @@
 # P2 implementation status
 
+## Verified solve: admission increment (2026-10-23)
+
+PR #18 delivered the library foundation and five modules. The `add-verified-solve-workflow` change now starts with read-only admission: bounded typed task/candidate/check args, model-tier resolution for all solvers and the judge, explicit read ceilings, and a clean committed base captured through sandboxed Git metadata and the external-filter-free libgit2 helper. The production HTTP tests cover invalid/forged inputs, unavailable models, non-Git/dirty/untracked checkouts, read denial and retained literal argv without executing it. A same-size edit regression proves inspection never executes a repository clean filter. Parser tests are portable; Git integration is Unix-only and native Windows remains unverified.
+
+The `solve` module is not listed or runnable yet. Separate work remains for isolated candidates, host-owned checks with unknown-outcome recovery, the independent judge and authoritative evidence/client views. A captured clean base is an admission observation, not a verification proof or a lease that survives subsequent edits.
+
 P2 evidence lives here and is kept separate from the P1 files (`p1-status.md`, `p1-handoff.md` and `p1-acceptance-audit.md`). The plan, the requirement-to-task mapping and the scope exclusions are in [`openspec/changes/implement-m2-1-workflow-runtime`](../../openspec/changes/implement-m2-1-workflow-runtime/proposal.md).
 
 ## Goals, slice 2 (`implement-m2-3-goals`, 2026-10-22)
