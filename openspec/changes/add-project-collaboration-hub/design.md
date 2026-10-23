@@ -31,6 +31,8 @@ The deployment operator configures the issuer, audience and initial hub administ
 
 Upstream dependencies are explicit: register the public CLI client and access-token audience, register the hub/introspection service if used, and add the collaboration scope in CyberdyneAuth (ROADMAP A1/A4/new A8). Tests use a real local OIDC protocol fixture with separate signed principals. Live issuer acceptance must be reported separately from fixture results; no deployment configuration is silently assumed to exist.
 
+Read-only upstream source review confirms an admin-managed scope/resource registry and optional device authorization support. This makes registering a collaboration scope/client a provisioning dependency, not evidence that an issuer source change is necessarily needed. Device login is selected only when discovery advertises it and the client is permitted to use it; otherwise keep the documented PKCE/headless fallback. No running issuer was configured or tested during this proposal.
+
 ## 3. Repository Binding and Membership
 
 A project descriptor contains its hub ID, name and canonical Git repository identity. For GitHub, SSH and HTTPS forms of the same host/owner/repository normalize together with credentials removed. Preserve host/port distinctions, distinguish forks, reject local filesystem remotes for network identity, and do not publish credentials or local absolute paths. An explicit owner-reviewed migration handles a repository rename/transfer; a changed `origin` never silently rebinds a running Session.

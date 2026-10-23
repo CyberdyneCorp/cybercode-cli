@@ -19,3 +19,14 @@
 #### Scenario: Missing collaboration audience or scope
 - **WHEN** a caller presents an otherwise valid token without the hub's configured audience or `cyber:collaborate`
 - **THEN** collaboration is refused without accepting a local password, peer grant or provider login as a fallback
+
+### Requirement: Headless login
+(P3) `cyber login --no-browser` SHALL print the authorization URL, which uses the loopback redirect, and SHALL accept either the pasted full redirect URL (from the browser address bar after the redirect fails to load on a remote machine) or the bare `code` value. It SHALL then validate `state` and complete the exchange. When the discovery document advertises `device_authorization_endpoint` and `urn:ietf:params:oauth:grant-type:device_code` in `grant_types_supported` (RFC 8628, enabled per issuer and permitted client), `--no-browser` SHALL instead use the device flow, printing the verification URI and user code.
+
+#### Scenario: Pasted redirect URL over SSH
+- **WHEN** a user on a remote host runs `cyber login --no-browser`, signs in on a laptop, and pastes `http://127.0.0.1:53682/callback?code=abc&state=xyz`
+- **THEN** the CLI validates `state = xyz` and completes the login
+
+#### Scenario: Device flow when available
+- **WHEN** discovery advertises `device_authorization_endpoint`
+- **THEN** `cyber login --no-browser` prints `Go to <verification_uri> and enter code ABCD-EFGH` and polls the token endpoint, honoring `interval` and `slow_down`

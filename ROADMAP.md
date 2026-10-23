@@ -132,7 +132,7 @@ These items need changes or configuration in [CyberdyneCorp/CyberdyneAuth](https
 | A2 | Add scopes `cyber:relay`, `cyber:runner`, `cyber:share`, `cyber:messaging` to the scope catalog | P3 M3.1 | small change |
 | A3 | Register entitlement product `cyber-code` (plans `free`, `pro`, `team`) and Stripe mapping | P3 hosted services | config + billing |
 | A4 | Confidential clients for hosted services (relay, share, orchestrator) with `access_token_audience`; client-credentials service tokens for introspection | P3 M3.2–M3.6 | config only |
-| A5 | **RFC 8628 device authorization grant** for SSH/headless logins | P3 nice-to-have; `--no-browser` paste flow is the fallback | **upstream feature request** |
+| A5 | **RFC 8628 device authorization grant** for SSH/headless logins | P3; discovery/client capability selects it, with the PKCE paste flow as fallback | implemented upstream as an opt-in feature; deployment enablement, client grant and Cyber CLI acceptance remain |
 | A6 | Optional token-exchange (RFC 8693) so runners get per-session down-scoped tokens | P3 M3.4 | upstream feature request |
 | A7 | Long-lived automation tokens (`cyber tokens create`): non-rotating access tokens with selectable scopes and a 90-day maximum lifetime, revocable, excluded from step-up actions | P3 M3.1 | **upstream feature request** |
 | A8 | Register `cyber:collaborate` and configure the CLI access-token audience and collaboration hub validation/introspection client | P3 project collaboration | proposed dependency; upstream/operator configuration not yet verified |
