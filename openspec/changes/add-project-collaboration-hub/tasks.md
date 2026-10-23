@@ -8,15 +8,17 @@
 
 - [ ] 2.1 Implement the existing account contracts needed for collaboration: discovery, PKCE login, callback/state/nonce validation, headless completion, ID-token checks, whoami/logout and account-free local behavior.
 - [ ] 2.2 Add protected token storage, cross-process serialized refresh/rotation, credential filtering/redaction and collaboration scope/audience checks. Preserve independent LLM-provider login.
-- [ ] 2.3 Test real local OIDC protocol fixtures: two subjects, bad issuer/audience/signature, unknown key rotation, expired tokens, missing scope, concurrent refresh, revoked login and offline local use.
-- [ ] 2.4 Document/verify CyberdyneAuth client, audience, service and scope dependencies (A1/A4/A8). Do not claim live issuer acceptance from a fixture.
+- [ ] 2.3 Test real local OIDC protocol fixtures: two subjects, bad issuer/audience/signature, unknown key rotation, expired tokens, missing scope, concurrent refresh, revoked/deactivated users, missing/empty org authorization, stale JWTs after org removal, service-token impersonation, expired authorization leases, Auth outages, step-up authentication, preserved account MFA for internal users and offline local use.
+- [ ] 2.4 Document/verify CyberdyneAuth client, audience, required introspection service, optional directory service and scope dependencies (A1/A4/A8). Do not claim live issuer acceptance from a fixture.
 
 ## 3. Hub domain, persistence and authorization
 
 - [ ] 3.1 Add typed project/member/runtime/agent/task/message identities, canonical repository descriptors and trusted local bindings; test URL equivalence, forks, credential stripping, remote changes and cross-project refusal.
 - [ ] 3.2 Add dedicated hub storage, migrations, durable events/projections, bounded writes and role/visibility-scoped queries. Exercise storage failure, restart, backups and idempotency conflicts.
 - [ ] 3.3 Add the separate HTTPS hub listener, OIDC access-token guard, explicit bootstrap principal, scope/audience validation, bounded requests/rate limits and no local-password/peer-token fallback.
-- [ ] 3.4 Implement owner/member/viewer roles, atomic expiring invitation redemption, last-owner guard, policy restrictions and audited role changes/removal. Include outsider and cross-project negative cases.
+- [ ] 3.4 Implement owner/member/viewer roles, organization/friends modes, pinned org IDs, internal invite-only/opt-in org enrollment without an extra code, policy-gated external guest grants, recipient-bound invitations or owner-approved pending applications, last-owner/step-up guards, policy restrictions and audited role changes/removal. Include outsider and cross-project negative cases.
+
+- [ ] 3.5 Add secret guest/friends approval codes: identity/project/role binding, ten-minute expiry, five attempts, issuance limits, keyed verification, atomic one-time activation, reissue/replay/crash tests, and no bypass of personal Auth MFA or internal-only trust rules.
 
 ## 4. Published participants and messaging
 
@@ -41,7 +43,7 @@
 ## 7. Acceptance, review and delivery
 
 - [ ] 7.1 Real-process acceptance with a hub, local OIDC fixture, Alice and Bob runtimes/clones and unauthorized Mallory: people and agents communicate both directions and claim/update shared work through actual clients.
-- [ ] 7.2 Fault/authorization matrix: dropped acknowledgements, competing claims, hub/client restarts, offline replay/expiry/resync, membership/agent revocation, pending-message release, cross-project access, spoofed authorship and unchanged local permissions/checkout state.
+- [ ] 7.2 Fault/authorization matrix: dropped acknowledgements, competing claims, hub/client restarts, offline replay/expiry/resync, hub membership/agent revocation, upstream user/org removal with a maximum 60-second window, no stacked cache extension, pending-message release, cross-project access, spoofed authorship and unchanged local permissions/checkout state.
 - [ ] 7.3 Run platform-appropriate integration suites, all-target Clippy, formatting, SDK/type generation and strict OpenSpec checks; perform code review using the code-review skill and fix findings.
 - [ ] 7.4 Retain exact commands/results, test environments and remaining live-issuer/multi-host evidence. Do not call unsupported acceptance types passed.
 - [ ] 7.5 Deliver descriptive, reviewable incremental PRs with green CI. After implementation merge and evidence review, archive the change into living specs and verify the resulting main CI.

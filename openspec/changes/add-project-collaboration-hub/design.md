@@ -25,11 +25,15 @@ The hub assigns author and project identities from authenticated membership or a
 
 Implement the `cyber-account` contracts required for this slice: discovery, public authorization-code/PKCE login, loopback or headless-paste completion, ID-token checks, account display/logout, protected keyring/file storage and cross-process refresh rotation. Add `cyber:collaborate` to requested scopes; a missing scope disables collaboration with an actionable error, never a less authenticated fallback.
 
-Hub access tokens require the configured issuer, valid signature/time, a nonempty subject, a mandatory configured API audience and `cyber:collaborate`. An ID token, LLM subscription credential, local password or peer grant is not a hub credential. JWT/key handling uses supported libraries and issuer discovery; refresh, issuer changes, key rotation and revocation get contract tests. Where introspection is configured, its revocation cache is at most 60 seconds; project membership and agent-capability revocation are checked on every operation regardless of token lifetime.
+Hub user access tokens require the configured issuer, valid signature/time, a nonempty subject, a mandatory configured API audience and `cyber:collaborate`. An ID token, service account, LLM subscription credential, local password or peer grant is not a human identity. JWT/key handling uses supported libraries and issuer discovery; refresh, issuer changes, key rotation and revocation get contract tests. For this CyberdyneAuth integration, server-to-server introspection is required: the result must be `active: true`, `token_type: user`, match the validated subject/audience and retain the required scope. The backend service credential used for introspection is distinct from the user's token and never reaches clients or models. An issuer without a supported live-validation contract cannot silently fall back to signature-only collaboration authorization.
+
+CyberdyneAuth's current introspection implementation rejects disabled/deleted users, revoked sessions/tokens and disabled OAuth clients, and recomputes `orgs` from active organization memberships. Pin organizations by their immutable ID from that current authorized set, not email domain, primary `org`, display name or a request field. The organization-members directory can support an owner user picker with a separate server-side `directory:read` credential; listing it is not necessary to trust a caller-supplied organization claim. An Auth organization and its admin-managed `github_login` are not live GitHub membership checks.
+
+Join, invitation redemption/approval, publication, role/owner changes and project-policy changes require uncached live user/organization validation. Ordinary project requests and agent authorization leases may reuse a positive result for at most 60 seconds, never beyond the access token's expiry. Derived runtime leases/capabilities must not extend this deadline: use the earliest underlying identity, organization and lease deadline rather than stacking cache lifetimes. Unavailable/unknown validation cannot refresh a lease or fall back to stale JWT claims; after the bounded authorization window it fails closed. Hub-local project/agent revocation is checked in each operation/transaction. Upstream user deactivation or removal of required organization membership has a documented maximum 60-second authorization window; it is not falsely described as instantaneous cancellation of local OS work.
 
 The deployment operator configures the issuer, audience and initial hub administrator `(issuer, sub)` through trusted local configuration. First login does not claim the hub. Local project files cannot change these values, open a listener, add a hub or publish an agent. A single-instance self-hosted deployment may disable commercial entitlement checks; it still requires identity, scope and project authorization. This is not permission to bypass account validation.
 
-Upstream dependencies are explicit: register the public CLI client and access-token audience, register the hub/introspection service if used, and add the collaboration scope in CyberdyneAuth (ROADMAP A1/A4/new A8). Tests use a real local OIDC protocol fixture with separate signed principals. Live issuer acceptance must be reported separately from fixture results; no deployment configuration is silently assumed to exist.
+Upstream dependencies are explicit: register the public CLI client and access-token audience, register the required backend introspection service (and optionally scoped org-directory access), and add the collaboration scope in CyberdyneAuth (ROADMAP A1/A4/new A8). Tests use a real local OIDC protocol fixture with separate signed principals and live introspection state. Live issuer acceptance must be reported separately from fixture results; no deployment configuration is silently assumed to exist.
 
 Read-only upstream source review confirms an admin-managed scope/resource registry and optional device authorization support. This makes registering a collaboration scope/client a provisioning dependency, not evidence that an issuer source change is necessarily needed. Device login is selected only when discovery advertises it and the client is permitted to use it; otherwise keep the documented PKCE/headless fallback. No running issuer was configured or tested during this proposal.
 
@@ -37,7 +41,31 @@ Read-only upstream source review confirms an admin-managed scope/resource regist
 
 A project descriptor contains its hub ID, name and canonical Git repository identity. For GitHub, SSH and HTTPS forms of the same host/owner/repository normalize together with credentials removed. Preserve host/port distinctions, distinguish forks, reject local filesystem remotes for network identity, and do not publish credentials or local absolute paths. An explicit owner-reviewed migration handles a repository rename/transfer; a changed `origin` never silently rebinds a running Session.
 
-Repository identity locates a project; it proves neither Git hosting access nor collaboration membership. A user joins through an owner-issued, single-use, 256-bit invitation with a default 24-hour expiry. Store only its hash. Bind redemption to a validated account, consume it atomically, and require interactive confirmation of hub, repository and role. Joining does not grant GitHub repository access. A clone or `.cyber/` file can suggest a descriptor but cannot accept membership or send data.
+Repository identity locates a project; it proves neither Git hosting access nor collaboration membership. A user joins through an owner-issued, single-use, 256-bit invitation with a default 24-hour expiry. Store only its hash. Prefer binding the invitation to an expected `(issuer, sub)` selected from verified identity data. If the recipient is not known at issue time, redemption creates a pending application containing the authenticated identity; an owner must approve it before any project history, participant data or write capability is disclosed. Recheck all identity/project policy checks at approval. Possession of an unbound invitation alone never grants access. Joining requires interactive confirmation of hub, repository and role and does not grant GitHub repository access. A clone or `.cyber/` file can suggest a descriptor but cannot accept membership or send data.
+
+Each project explicitly selects one membership mode at creation:
+
+| Mode/participant | Required authorization | Extra project join code |
+|---|---|---|
+| Organization / internal | Active Auth user, current membership in pinned `organization_id`, and permitted project enrollment/role | None |
+| Organization / external guest | Guests explicitly allowed by project and org/deployment policy, active Auth user, owner-approved identity-bound guest grant | Required |
+| Friends | Active Auth user and owner-approved identity-bound invitation/application | Required |
+
+Organization projects default to `invite_only`: same-org users still need a project role/invitation/approval, but no extra project code. An owner may explicitly choose `organization_members` enrollment with a default viewer role (or member when explicitly selected); it can never auto-grant owner. Thus an organization can deliberately let its staff join easily without making every private project visible merely because a person has an org claim.
+
+Organization projects default to external guests disabled. Enabling them requires both trusted org/deployment policy and explicit project-owner consent; the owner cannot bypass a deployment prohibition. Guest grants are a separate membership kind, visibly labelled in the roster, messages and published agents, default to viewer, may explicitly permit member, and never confer owner or org membership. Turning guest access off invalidates those grants and pending challenges. A removed internal org member is not automatically converted into a guest: new external access requires a new approved grant and code. Internal-only delivery allow rules do not silently match guest agents.
+
+The mode and organization binding remain immutable. Missing/empty `orgs` never means all organizations; an unrelated org role or global `is_admin` flag cannot substitute for the required project role. Org member administration remains in CyberdyneAuth. Project owners cannot add people to the Auth org, and the hub does not assume Auth org membership proves GitHub permissions.
+
+### Guest/friends join code
+
+After the owner approves the authenticated recipient and allowed role, the hub issues an eight-digit cryptographically random join code, expiring after ten minutes. Bind it to the opaque challenge, project, invitation/grant, expected `(issuer, sub)` and allowed role. Permit at most five attempts, one active challenge per user/project invitation and three issuances per user/project per hour. Reissue invalidates the prior challenge. Store a keyed verification MAC with a server-held key outside the database, not plaintext or a bare hash of a small numeric code; never log or expose it to model tools. Redeem and consume it atomically with fresh Auth/policy validation and membership activation. A retry after successful admission uses ordinary operation idempotency and cannot reactivate revoked membership.
+
+The founding owner of a new friends project is established through authorized hub project creation and fresh authentication, not a circular self-invitation. Subsequent invitation-based membership follows the code flow.
+
+The code is a one-time join/rejoin check, not a challenge for every message or ordinary reconnect of an active member. Revoked membership needs a new approved invitation/code rather than reuse of an old proof.
+
+The owner conveys this separate project code to the intended person through their chosen trusted channel. It is an application approval step, not a claim of a second authentication factor. Do not ask for, forward or share the owner's personal authenticator code. Account MFA remains an Auth responsibility and mandatory managed MFA still applies, including when no extra project code is needed internally. For an external/friends recipient, a bound invitation or approved application alone remains pending until the code is consumed; no project history/capability is exposed beforehand.
 
 Project roles:
 
@@ -47,7 +75,7 @@ Project roles:
 | Member | Read project content, post messages, publish owned Sessions, create tasks, claim unowned tasks and update permitted owned work |
 | Viewer | Read authorized project content; cannot send, publish, claim or mutate |
 
-Only the last owner cannot be removed/demoted. Role changes, invitation use and revocation are audited. Organization claims/policy may restrict operations; they do not automatically enroll all org members. Friends with no org claim can join by invitation. Inaccessible project IDs return no project metadata. The initial limits are 100 members, 1,000 published agents and 10,000 open tasks per project; limits are explicit and bounded in trusted hub configuration.
+The last owner cannot be removed/demoted. Invitation/membership administration requires an authentication time within 15 minutes (and managed MFA when required); refreshing a token does not renew that authentication time. Role changes, invitation use and revocation are audited. Friends without the pinned org claim can join a friends-mode project, or an explicitly permitted external guest grant, only through the approval/code path. Inaccessible project IDs return no project metadata. The initial limits are 100 members, 1,000 published agents and 10,000 open tasks per project; limits are explicit and bounded in trusted hub configuration.
 
 ## 4. Local Runtime and Published Agents
 
@@ -55,7 +83,7 @@ After login and explicit project join/binding, the local runtime connects outwar
 
 Publishing requires the Session's owner to opt in and bind it to a confirmed project checkout. Publish only its agent ID, member, alias, observed state and explicitly selected Git references. Do not upload the Session's transcript, environment, provider key, prompts, local path or full tool output. Return a short-lived, project/agent-scoped capability to the local runtime, never to the model. The hub retains only its hash. It permits message/task/presence operations allowed to that agent, not member administration, human impersonation or access to another project; renewal requires a still-active membership. Unpublishing or membership removal invalidates it and closes its subscriptions.
 
-Capabilities expire after 15 minutes and require an active runtime authorization lease, renewed with a valid account access token at least every 60 seconds. Local logout stops renewal and attempts immediate capability revocation; hub-side membership revocation is enforced on every request. Do not claim stronger issuer revocation than the configured expiry/introspection contract provides. Credential storage/redaction must cover these capabilities as well as account tokens. A Session's published project identity is immutable: unpublishing does not authorize moving its private accumulated context to another project. A different project uses a separate Session.
+Capabilities expire after 15 minutes and require an active runtime authorization lease bounded by their owner's latest live user/org validation, at most 60 seconds old. They cannot survive loss of the owner's required org membership by relying on their longer token lifetime. Local logout stops renewal and attempts immediate capability revocation; hub-side membership revocation is enforced on every request. Credential storage/redaction must cover these capabilities as well as account tokens. A Session's published project identity is immutable: unpublishing does not authorize moving its private accumulated context to another project. A different project uses a separate Session.
 
 Integrate through focused collaboration domain/store/service modules and a local runtime adapter. Keep coordination state separate from the Session Drain. Do not turn the local `AppState` owner password into multi-user authentication, and do not make the hub a model/tool runtime.
 
@@ -99,10 +127,12 @@ Proposed commands (not available yet):
 
 ```text
 cyber collab serve --issuer <url> --audience <aud> --bootstrap-sub <sub>
-cyber collab project create --repo <git-url> --name <name>
-cyber collab invite --project <id> --role member
+cyber collab project create --repo <git-url> --name <name> --organization <org-id>
+cyber collab project create --repo <git-url> --name <name> --friends
+cyber collab invite --project <id> --role member [--subject <sub>] [--guest]
 cyber collab invitations list|revoke --project <id>
 cyber collab join [--invite-stdin]
+cyber collab applications list|approve|reject --project <id>
 cyber collab bind --project <id> [--remote origin]
 cyber collab members list|set-role|remove --project <id>
 cyber collab publish --project <id> --session <session> --name <alias>
@@ -114,7 +144,7 @@ cyber collab leave --project <id>
 
 The hub binds loopback by default (port 4749). Off-loopback clients require HTTPS; support operator-managed TLS or a documented HTTPS reverse proxy, with no certificate-verification bypass. Serve only hub coordination routes. Local management/Session integration stays on the per-user API. Distinguish both in OpenAPI with listener metadata and generate typed SDK groups. Bound every route by authenticated project identity, not `x-cyber-directory`.
 
-Joining accepts an interactive secret paste or stdin rather than requiring an invitation in shell history. Invitation creation prints the one-time secret only to the requesting human; diagnostics, logs and normal member listings never print it.
+Joining accepts an interactive secret paste or stdin rather than requiring an invitation in shell history. Invitation/challenge issuance prints its one-time secret only to the requesting human; diagnostics, logs and normal member listings never print it. Joining prompts for any required project code as a secret, never a personal Auth MFA code.
 
 The TUI `/collab` panel shows the bound project, people/agents with offline status, conversation and tasks. Messages clearly name human/agent authorship. Existing held-message cards handle local consent. Model tools list participants, read authorized conversation/thread history, send messages and read/create/claim/update/comment on tasks only for the current published Session/project. Returned messages and task text remain untrusted tool data. Agent sends use `collab.message.send` and task mutations use `collab.task.write`, both asking by default unless explicitly allowed; project publication does not silently allow mutations. No invite, bind, role-management or publishing tools are offered to agents.
 
@@ -123,6 +153,7 @@ Expose the feature behind `features.collaboration`, off by default until accepta
 ## Risks and Open Decisions
 
 - OIDC client/service registration and the new scope need upstream/operator configuration. Implement fixture-tested behavior without claiming live deployment acceptance until it has run.
+- Identity proves the account and its Auth memberships, not employment, benign agent behavior or GitHub access. Organization administrators remain responsible for correct onboarding/offboarding; cached authorization has the bounded window described above.
 - Hub administrators can read shared state. This is an explicit trusted coordination service; ciphertext-only Relay remote control remains unchanged.
 - Git hosting permissions and collaboration memberships are independent. Automatic GitHub membership synchronization would require a separate reviewed integration.
 - Browser UX, managed SaaS, remote Runner scheduling and automatic Git bundle transfer are excluded. The first complete experience is CLI/TUI/API/SDK on a reachable self-hosted hub.

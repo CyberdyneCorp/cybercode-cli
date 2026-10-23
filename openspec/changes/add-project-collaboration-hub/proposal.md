@@ -7,7 +7,7 @@ The user selected a **self-hosted project hub**: one reachable server coordinate
 ## What Changes
 
 - Add an experimental P3 `project-collaboration` capability and `cyber collab` commands. One hub hosts multiple isolated projects, each anchored to a canonical Git repository identity; GitHub is the first documented example.
-- Give each person an authenticated identity and explicit project membership. Owners invite people as owners, members or viewers. A repository URL, matching clone, GitHub organization name or agent-supplied author field never grants access.
+- Give each person a currently active authenticated identity and explicit project membership. Organization projects pin a CyberdyneAuth organization ID: verified internal members need no extra project join code when the project join policy allows them. External guests require an explicitly enabled, owner-approved guest grant plus a user/project-bound verification code; friends' projects use the same authenticated invitation/code path. Owners grant owner/member/viewer project roles. A repository URL, matching clone, GitHub organization name or agent-supplied author field never grants access.
 - Let humans and explicitly published local agent Sessions exchange attributed project messages and participate in project conversations. Incoming agent prompts are held for the receiving user's approval by default.
 - Provide one durable project task board: owners, dependencies, atomic claims, revisions, comments and Git commit/PR references. A disconnected assignee keeps its claim; a timeout never authorizes another machine to repeat its work.
 - Persist offline delivery, idempotent operations and replay cursors. Reconnect, revocation and crash recovery must preserve project boundaries and avoid duplicate inbox admission.
@@ -27,7 +27,7 @@ Each increment needs its own regression coverage and reviewable PR. Scaffolded c
 ## Decisions for Review
 
 - **Identity:** reuse the repository's CyberdyneAuth/OIDC direction, rather than treating a friend's machine token as a human account. A self-hosted issuer is supported. Issuer/client registration and the new scope are deployment dependencies; an unverified GitHub handle is only a display label.
-- **Membership:** explicit project invitations work for a group of friends without an organization claim. Organization policy may restrict collaboration, but an `org` claim alone grants no project access. GitHub remains the Git host; automatic GitHub collaborator/team permission synchronization is not included in this slice.
+- **Membership:** project creation explicitly selects an organization-bound project or a friends' project. Internal members must be currently authorized by Auth for the pinned org and permitted by the project's join policy; they receive no additional project OTP challenge. Same-org access does not automatically open every private project. External users require an active Auth account, owner-approved guest invitation and an expiring user/project-bound join code. Guests are disabled by default for organization projects and may be forbidden by org/deployment policy. A project approval code is distinct from account MFA: existing CyberdyneAuth SSO/MFA is never disabled or shared. GitHub remains the Git host; Auth org labels are not independent proof of GitHub repository permissions.
 - **Hub trust:** this hub is an authorized reader of shared project messages and tasks. TLS protects transport. It is not the future ciphertext-only remote-control Relay, and no end-to-end encryption claim is made for hub-held content.
 - **Execution:** members explicitly publish Sessions and decide locally whether to accept incoming work. The hub cannot run shell commands, approve another person's tools, copy private transcripts, merge branches or move a Session between machines.
 - **Initial deployment:** a single-instance self-hosted hub uses its own SQLite database, following the accepted storage decision. Hosted multi-instance PostgreSQL and a managed SaaS deployment remain separate work.
@@ -49,3 +49,5 @@ The local web dashboard may later consume these APIs, but is not a prerequisite.
 ## Status
 
 2026-10-23: pulled `main` at `8e7085a02dec908713ccdbaf96542e5d7826dbf3`; GitHub had no open PRs. The new implementation goal is active. Self-hosted hub topology was selected by the user. This proposal is awaiting artifact review; it is not implementation approval.
+
+Security review clarification: use CyberdyneAuth live token introspection to distinguish active user accounts from service credentials and refresh the authorized organization set. Organization/project authorization is separate from Git hosting access. No running Auth instance or collaboration implementation has been validated yet.

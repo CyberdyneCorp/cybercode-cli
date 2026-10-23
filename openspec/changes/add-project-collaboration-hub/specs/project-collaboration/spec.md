@@ -26,11 +26,15 @@ Let an organization's members or a group of friends and their locally owned agen
 - **THEN** publishing fails with a repository mismatch and discloses no upstream project content
 
 ### Requirement: Human membership and project roles
-(P3) Membership SHALL bind validated `(issuer, sub)` identity to exactly one project role: owner, member or viewer. Owners SHALL manage project metadata, roles, invitations and revocation; members SHALL read, message, publish owned agents and coordinate permitted tasks; viewers SHALL be read-only. A single-use invitation SHALL use 32 random bytes, default to 24-hour expiry, store only its hash, bind redemption to an authenticated account and be consumed atomically. Only owners SHALL grant membership or change roles, and the last owner SHALL NOT be removed or demoted. Friends without organization claims SHALL be able to join by invitation; org claims and Git hosting access SHALL NOT automatically enroll anyone. Managed policy may further restrict access. Defaults SHALL bound each project to 100 members, 1,000 published agents and 10,000 open tasks.
+(P3) Membership SHALL bind validated `(issuer, sub)` identity to exactly one project role: owner, member or viewer. Owners SHALL manage project metadata, roles, invitations and revocation; members SHALL read, message, publish owned agents and coordinate permitted tasks; viewers SHALL be read-only. A single-use invitation SHALL use 32 random bytes, default to 24-hour expiry, store only its hash and be consumed atomically. It SHALL either bind to an expected `(issuer, sub)` or create a pending authenticated application that an owner must approve before any project data/capability is disclosed. Approval SHALL revalidate current identity and project policy; possessing an unbound invitation SHALL NOT automatically activate membership. Only owners SHALL authorize membership/role changes, including an explicit organization-enrollment policy; the hub SHALL NOT grant beyond that policy, and the last owner SHALL NOT be removed or demoted. Invitation/membership administration SHALL require authentication within the last 15 minutes and any managed MFA requirement; token refresh SHALL NOT count as fresh authentication. People without the pinned organization membership SHALL require a friends-mode invitation or an explicitly permitted external-guest grant, including the required join code; org claims and Git hosting access SHALL NOT automatically enroll anyone. Defaults SHALL bound each project to 100 members, 1,000 published agents and 10,000 open tasks.
 
 #### Scenario: Invitation reuse
 - **WHEN** two accounts concurrently redeem the same invitation
-- **THEN** at most one becomes a member and the other receives no project content or reusable credential
+- **THEN** at most one matching redemption/application is committed, activation still requires recipient binding or owner approval, and the other receives no project content or reusable credential
+
+#### Scenario: Stolen invitation
+- **WHEN** a different authenticated account obtains an invitation intended for another person
+- **THEN** a subject-bound invitation refuses it, while an unbound invitation grants only a pending application with no project access until owner approval
 
 #### Scenario: Viewer tries to claim work
 - **WHEN** a viewer sends a message, publishes an agent or mutates a task
@@ -39,6 +43,71 @@ Let an organization's members or a group of friends and their locally owned agen
 #### Scenario: Membership does not grant Git access
 - **WHEN** a friend joins a project without access to its private GitHub repository
 - **THEN** collaboration membership does not create GitHub access, and the client explains that Git permissions are managed separately
+
+### Requirement: Explicit organization and friends project modes
+(P3) Project creation SHALL explicitly choose `organization` mode with a pinned immutable Auth `organization_id`, or `friends` mode. Internal organization access SHALL require an active user, current membership in that exact Auth organization and a permitted project enrollment/role; every project owner SHALL satisfy that organization check. Internal users SHALL NOT face an extra project join-code challenge, while CyberdyneAuth SSO/MFA policy SHALL remain effective. Organization projects SHALL default to `invite_only`; an owner MAY explicitly permit `organization_members` enrollment with default viewer or explicitly selected member role, never owner. The stored mode/org binding SHALL remain authoritative. External guests SHALL default to disabled and require both org/deployment policy permission and explicit project consent. Each guest SHALL have a separately labelled, owner-approved grant and pass the user-bound join-code flow; guest role SHALL default to viewer and SHALL NOT exceed member. Disabling guests SHALL revoke their grants and pending challenges. Removed internal members SHALL NOT automatically become guests. Friends mode SHALL require active authenticated users and the approved invitation/code flow. Email/domain, a URL, a global admin flag or an unrelated role SHALL NOT substitute for authorization, and Auth org membership SHALL NOT be presented as a live GitHub permission check.
+
+#### Scenario: Valid account outside the organization
+- **WHEN** an active authenticated user holds an invitation but is outside the pinned Auth organization and external guest access is disabled
+- **THEN** the project refuses enrollment and access without disclosing content
+
+#### Scenario: Same organization without a project role
+- **WHEN** an active member of the pinned organization has no project membership and the project is invite-only
+- **THEN** the organization claim alone does not expose the project or its agents
+
+#### Scenario: Same organization without an extra code
+- **WHEN** current Auth validation proves the user belongs to the pinned organization and its project enrollment/role is allowed
+- **THEN** it can join without an additional project OTP, while existing Auth SSO/MFA requirements still apply
+
+#### Scenario: Approved external guest
+- **WHEN** both deployment/project policy permit guests and an owner approves an active external user's guest grant
+- **THEN** the user remains pending until the bound join code is consumed, then receives only the approved guest role and visible external attribution
+
+#### Scenario: User belongs to multiple organizations
+- **WHEN** the primary `org` differs but current authorized `orgs` contains the project's exact organization ID
+- **THEN** the organization gate may pass, while the separate project role is still required
+
+#### Scenario: Owner attempts to bypass the org gate
+- **WHEN** an owner changes the stored org identity, hides guest status or enables guests against deployment policy
+- **THEN** the stored binding, guest attribution and policy remain authoritative and the attempted bypass is refused
+
+### Requirement: Bound guest approval codes
+(P3) Invitation-based external-guest and friends-mode activation SHALL require an owner-approved authenticated recipient and a separate eight-digit cryptographically random project join code. Bind the code to project, invitation/grant, expected `(issuer, sub)` and role; expire it after ten minutes, allow at most five attempts and one active challenge per recipient/project invitation, and cap issuance at three per recipient/project per hour. Reissue SHALL invalidate the old challenge. Store only a keyed verification MAC under a server-held key, never plaintext or an unkeyed hash of the small code space. Fresh identity/policy checks, attempt accounting, one-time code consumption and membership activation SHALL be atomic. No project history or agent capability SHALL be granted before success. Codes SHALL be absent from logs, model tools, URLs and normal listings. This flow SHALL NOT disable account MFA or request another person's personal authenticator code. It SHALL apply to invitation-based joining/rejoining, not every message or ordinary reconnect of an already authorized member. Founding project-owner creation SHALL use authorized hub creation and fresh authentication rather than a circular self-invitation.
+
+#### Scenario: Code used by the wrong user or project
+- **WHEN** a valid code is submitted under a different subject, project, invitation or role
+- **THEN** activation fails and no authority is transferred
+
+#### Scenario: Expired, guessed or replayed code
+- **WHEN** a challenge expired, exhausted five attempts, was replaced or was already consumed
+- **THEN** it cannot activate membership, including under concurrent requests or after a server restart
+
+#### Scenario: Authorized guest reconnects
+- **WHEN** an already admitted guest reconnects with active Auth identity and a still-authorized guest grant
+- **THEN** normal authorization is revalidated without requiring a new project code; a revoked grant instead requires a new approved invitation and code
+
+#### Scenario: Guest message does not inherit internal trust
+- **WHEN** a new guest agent messages a Session that only auto-delivers verified internal members
+- **THEN** the message remains held/refused unless an explicit guest-authorizing local rule permits it
+
+### Requirement: Fresh active-user and organization validation
+(P3) The CyberdyneAuth integration SHALL combine signature/issuer/audience/expiry/scope checks with authenticated server-to-server introspection that reports `active: true`, `token_type: user` and the matching subject. Internal organization checks SHALL use the current authorized `orgs` returned by that live validation, never only an old JWT snapshot; missing/unknown/empty organization authorization SHALL NOT mean all organizations. Join/redemption/approval, publication and owner membership/policy mutations SHALL use uncached validation. Ordinary access and delegated agent/runtime leases SHALL depend on positive identity/org validation no older than 60 seconds, bounded by token expiry; nested caches/capability lifetimes SHALL NOT extend that deadline. Upstream user deactivation or removal of required organization membership SHALL deny new authorization within this maximum window, while local project revocation SHALL be checked on every operation. An outage/unknown response SHALL NOT renew authorization or trigger a signature-only fallback. An issuer without a supported live validation contract SHALL be refused for this feature. Service credentials SHALL remain backend-only and SHALL NOT enroll as people.
+
+#### Scenario: Stale JWT after organization removal
+- **WHEN** a user's signed JWT still lists an organization but live introspection no longer authorizes it
+- **THEN** the internal membership and its agents are refused despite the unexpired JWT and stored project role, with no automatic conversion to external guest
+
+#### Scenario: Deactivated user in a friends project
+- **WHEN** introspection reports the previously invited account inactive
+- **THEN** friends-mode membership does not authorize new reads, messages, claims or agent capability renewal
+
+#### Scenario: Stale cache during Auth outage
+- **WHEN** Auth cannot validate a user and the last positive validation has reached its 60-second deadline
+- **THEN** requests, stream delivery, held-message release and delegated-agent authorization fail closed without extending a runtime lease
+
+#### Scenario: Service token presented as a person
+- **WHEN** a valid service/client-credentials token is used to join or claim human membership
+- **THEN** it is refused as a human identity even if it has a valid signature and collaboration-looking scope
 
 ### Requirement: Owned agent identities and explicit publication
 (P3) A local Session SHALL participate as a published `cagt_` agent only after its owner explicitly binds and publishes it within an authorized project. The hub SHALL bind that agent to its owning member, runtime and Session reference, derive authorship from authentication, and issue only a project/agent-scoped capability to the local runtime, expiring after 15 minutes and requiring a runtime authorization lease renewed by valid account authentication within 60 seconds. Such capabilities SHALL NOT grant member administration, human impersonation or access to another project; their hashes alone SHALL be retained by the hub. A published Session's project identity SHALL be immutable, including after unpublishing; a different project SHALL use a separate Session. Display names and aliases SHALL NOT be authority, and ambiguous aliases SHALL require a stable ID. Publication SHALL expose only selected participant metadata and Git references; private transcripts, provider credentials, environment variables, absolute paths and tool outputs SHALL remain local. Heartbeats SHALL be every 20 seconds and presence offline after 60 seconds; presence SHALL NOT prove native settlement.
