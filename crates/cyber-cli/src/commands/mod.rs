@@ -37,6 +37,9 @@ pub mod stats;
 pub mod teams;
 pub mod trust;
 pub mod tui;
+pub mod uninstall;
+pub mod upgrade;
+pub mod web;
 pub mod workflows;
 
 use serde_json::json;
@@ -80,6 +83,10 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
         print!("{}", crate::cli_docs::markdown());
         return Ok(());
     }
+    // Before the context creates directories and opens a log in them.
+    if let Command::Uninstall(args) = &command {
+        return uninstall::run(args, &cli.global);
+    }
     let ctx = Context::new(&cli.global)?;
     // The MCP serve bridge logs to its own file and never loads the project configuration
     // first.
@@ -117,6 +124,7 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
         Command::Hooks { cmd } => hooks::run(cmd, &ctx, &cli.global),
         Command::Plugins { cmd } => plugins::run(cmd, &ctx, &cli.global),
         Command::Serve(args) => serve::serve(args, &ctx),
+        Command::Web(args) => web::run(args, &ctx),
         Command::Service { cmd } => serve::service(cmd, &ctx, &cli.global),
         Command::Api(args) => api::run(args, &ctx),
         Command::Messages { cmd } => messages::run(cmd, &ctx, &cli.global),
@@ -130,7 +138,11 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
         Command::Doctor => doctor::run(&ctx, &cli.global),
         Command::Stats(args) => stats::run(args, &ctx, &cli.global),
         Command::Eval { cmd } => eval::run(cmd, &ctx),
-        Command::External(_) | Command::Import(_) | Command::HelpMarkdown => {
+        Command::Upgrade(args) => upgrade::run(args, &ctx, &cli.global),
+        Command::External(_)
+        | Command::Import(_)
+        | Command::HelpMarkdown
+        | Command::Uninstall(_) => {
             unreachable!("handled above")
         }
     }

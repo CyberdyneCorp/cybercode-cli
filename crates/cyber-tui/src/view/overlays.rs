@@ -571,6 +571,10 @@ pub fn help(f: &mut Frame, app: &App, area: Rect) {
             "write this session to a file in the Location",
         ),
         (
+            "/output-style [name]",
+            "how replies are written, from the next turn; d in the picker saves the default",
+        ),
+        (
             "/tree · /label <name>",
             "branches: check one out (c restores code, l labels); /label --clear <name>",
         ),

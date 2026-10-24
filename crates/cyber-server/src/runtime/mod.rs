@@ -47,6 +47,8 @@ mod fork;
 mod forked_skills;
 mod hook_tests;
 mod hooks;
+mod installation;
+pub use installation::{InstallationNotice, UpdateStatus};
 mod lifecycle;
 mod lifecycle_events;
 pub use hook_tests::{
@@ -65,6 +67,7 @@ pub mod instructions;
 mod jobs;
 pub mod loops;
 mod names;
+mod output_style;
 pub mod teams;
 pub use handoff::Handoff;
 mod process_jobs;
@@ -83,6 +86,7 @@ pub use names::ChildExecution;
 pub use subtask::UserSubtask;
 pub use subtree_reopen::SubtreeReopenReport;
 pub use subtree_stop::{SubtreeStopReport, SubtreeStopStatus};
+mod interactive;
 mod location;
 mod mcp;
 mod mcp_depth;
@@ -186,6 +190,7 @@ pub use bus::LiveEvent;
 pub use compaction::CompactionConfig;
 pub use context::{ContextInputs, Observed as ContextObservation, base_prompt};
 pub use context_meter::ContextMeter;
+pub use cyber_core::prompts::ModelFamily;
 pub use events::{AuxiliaryUsage, CompactionTrigger, registry as event_registry};
 pub use host::{
     AgentInference, CatalogResolver, CheckOutcome, ChildContinuation, FileDecision, FileDiff,
@@ -392,6 +397,9 @@ pub struct CreateSession {
     pub messaging: Option<messaging::InboundOverride>,
     /// The team tag of a team member Session (`agent-teams`); only for root Sessions.
     pub team: Option<teams::TeamTag>,
+    /// The Session's own output style; only for root Sessions. The caller checks that
+    /// it is defined at the Location.
+    pub output_style: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -830,6 +838,8 @@ pub(crate) struct Inner {
     /// Set once the `workflow.run.progress` publisher runs.
     workflow_progress: std::sync::OnceLock<()>,
     pub(crate) waiters: StdMutex<Vec<requests::Waiter>>,
+    /// The last background update check (`installation-upgrade`).
+    update_status: StdMutex<Option<UpdateStatus>>,
     pub(crate) me: std::sync::Weak<Inner>,
 }
 
@@ -911,6 +921,7 @@ impl Runtime {
             team_spawn: Mutex::default(),
             team_status: Mutex::default(),
             peer_listings: StdMutex::default(),
+            update_status: StdMutex::default(),
             workflow_writers: StdMutex::default(),
             presence: presence::Presence::default(),
             workflow_dir: std::sync::OnceLock::new(),
@@ -1192,7 +1203,9 @@ impl Runtime {
             budget: req.budget,
             messaging: req.messaging,
             team: req.team,
+            output_style: req.output_style,
         };
+        output_style::check(&info, info.output_style.as_deref())?;
         if info.budget.is_none() {
             info.budget = self
                 .inner
@@ -2094,7 +2107,7 @@ impl Runtime {
         let model = handle.state.lock().await.info.model.clone();
         let resolved = self.inner.resolve(&model)?;
         self.inner
-            .with_idle_location(&handle, self.inner.start_epoch(&handle, &resolved.provider))
+            .with_idle_location(&handle, self.inner.start_epoch(&handle, &resolved))
             .await
     }
 
@@ -2378,6 +2391,18 @@ impl Inner {
             return Err(RuntimeError::SessionNotFound(id.into()));
         }
         let state = SessionState::replay(&events).map_err(RuntimeError::Corrupt)?;
+        if events
+            .iter()
+            .any(|event| event.kind == events::INTERACTIVE_MANAGED)
+        {
+            let directory = std::fs::canonicalize(&state.info.directory).map_or_else(
+                |_| state.info.directory.clone(),
+                |path| path.display().to_string(),
+            );
+            self.presence.manage(id, &directory).map_err(|_| {
+                RuntimeError::Invalid("browser-managed Session capacity reached".into())
+            })?;
+        }
         let handle = Arc::new(Handle {
             title_requested: std::sync::atomic::AtomicBool::new(!state.info.default_title),
             state: Mutex::new(state),

@@ -110,5 +110,5 @@ enum Target {
 - [Stale targets after a state change without a redraw] → The runner draws before each event. `select_row` also checks the list kind and the bounds, and a mismatch does nothing.
 - [Accidental grants] → One click never answers a prompt. The second click must hit the same option of the same request with no key between. The steps that persist rules or bypass a classifier take no clicks.
 - [Conflicts with `fix-tui-mouse-scroll`] → That change is not archived and also modifies "Rendering modes and terminal integration". This change's text is a superset of it, so archive `fix-tui-mouse-scroll` first.
-- [Sibling branches] → The output-style picker (`p0-styles`) reuses the generic picker, so its rows get clicks from `view/overlays.rs::picker` without further work. `app.rs` changes by one field and one line.
+- [Sibling branches] → The output-style picker (`p0-styles`) draws its own panel (`view/output_styles.rs`) rather than the generic picker, so it registers its rows as `List::OutputStyles` itself; like every overlay it is modal. `app.rs` changes by one field and one line.
 - [Mutex in drawing] → The lock is uncontended. Draw and input run on the same task, and the lock follows the `screen_links` pattern, including poisoned-lock recovery.

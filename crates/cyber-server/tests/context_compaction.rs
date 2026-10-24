@@ -40,7 +40,7 @@ async fn historical_epoch_without_a_system_prefix_keeps_legacy_request_bytes() {
     assert_eq!(
         requests[0].system,
         [
-            cyber_server::runtime::base_prompt("test"),
+            cyber_server::runtime::base_prompt(cyber_server::runtime::ModelFamily::Default),
             "Historical baseline bytes.".into()
         ]
     );
@@ -54,6 +54,34 @@ async fn historical_epoch_without_a_system_prefix_keeps_legacy_request_bytes() {
             .system_prefix
             .is_none()
     );
+}
+
+/// Regression: an epoch from before model families has no `family`; comparing it with the
+/// resolved family would rebuild every resumed Session's prefix.
+#[tokio::test]
+async fn epoch_without_a_family_keeps_its_prefix_bytes() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("reply")])],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    let seq = h.store.aggregate_seq(&id).unwrap().unwrap();
+    h.store.append(&id, cyber_store::Expected::Seq(seq), vec![cyber_store::NewEvent::new(
+        "session.context.epoch_started.1", serde_json::json!({
+            "epoch":1, "baseline":"Historical baseline bytes.", "snapshot":{}, "provider":"test",
+            "system_prefix":"Historical base prompt."
+        }),
+    )]).unwrap();
+    let restarted = h.restart();
+    restarted.admit(&id, admit("continue")).await.unwrap();
+    restarted.wait_idle(&id).await;
+    let requests = h.models.requests("test/main");
+    assert_eq!(
+        requests[0].system,
+        ["Historical base prompt.", "Historical baseline bytes."]
+    );
+    let epoch = restarted.state(&id).await.unwrap().epoch.unwrap();
+    assert_eq!((epoch.number, epoch.family), (1, None));
 }
 
 #[tokio::test]

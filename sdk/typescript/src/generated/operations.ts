@@ -173,6 +173,18 @@ export interface Operations {
     body: S.CommandBody;
     response: S.Receipt;
   };
+  "v1.config.outputStyles": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_StyleListing;
+  };
+  "v1.config.setOutputStyle": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.StyleBody;
+    response: S.Located_StyleListing;
+  };
   "v1.event.subscribe": {
     path: Record<string, never>;
     query: {
@@ -902,6 +914,12 @@ export interface Operations {
     body: S.StopService;
     response: S.StopAccepted;
   };
+  "v1.service.update": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.UpdateStatus;
+  };
   "v1.session.agent": {
     path: { sessionID: string };
     query: Record<string, never>;
@@ -1117,6 +1135,24 @@ export interface Operations {
     body: undefined;
     response: void;
   };
+  "v1.session.interactiveAttach": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.InteractiveClient;
+  };
+  "v1.session.interactiveRelease": {
+    path: { sessionID: string; clientID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: void;
+  };
+  "v1.session.interactiveRenew": {
+    path: { sessionID: string; clientID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.InteractiveClient;
+  };
   "v1.session.interrupt": {
     path: { sessionID: string };
     query: Record<string, never>;
@@ -1169,6 +1205,12 @@ export interface Operations {
     path: { sessionID: string };
     query: Record<string, never>;
     body: S.ModelBody;
+    response: S.Session;
+  };
+  "v1.session.outputStyle": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: S.StyleBody;
     response: S.Session;
   };
   "v1.session.pauseGoal": {
@@ -1769,6 +1811,30 @@ export const operations = {
     body: "required",
     located: false,
     unwrap: true,
+    stream: false,
+  },
+  "v1.config.outputStyles": {
+    tag: "config",
+    name: "outputStyles",
+    method: "GET",
+    path: "/api/v1/config/output-styles",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.config.setOutputStyle": {
+    tag: "config",
+    name: "setOutputStyle",
+    method: "PUT",
+    path: "/api/v1/config/output-style",
+    pathParams: [],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: false,
     stream: false,
   },
   "v1.event.subscribe": {
@@ -3103,6 +3169,18 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.service.update": {
+    tag: "service",
+    name: "update",
+    method: "GET",
+    path: "/api/v1/service/update",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
   "v1.session.agent": {
     tag: "session",
     name: "agent",
@@ -3499,6 +3577,42 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.session.interactiveAttach": {
+    tag: "session",
+    name: "interactiveAttach",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/interactive-clients",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.interactiveRelease": {
+    tag: "session",
+    name: "interactiveRelease",
+    method: "DELETE",
+    path: "/api/v1/sessions/{sessionID}/interactive-clients/{clientID}",
+    pathParams: ["sessionID", "clientID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.session.interactiveRenew": {
+    tag: "session",
+    name: "interactiveRenew",
+    method: "PUT",
+    path: "/api/v1/sessions/{sessionID}/interactive-clients/{clientID}",
+    pathParams: ["sessionID", "clientID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.interrupt": {
     tag: "session",
     name: "interrupt",
@@ -3576,6 +3690,18 @@ export const operations = {
     name: "model",
     method: "POST",
     path: "/api/v1/sessions/{sessionID}/model",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.outputStyle": {
+    tag: "session",
+    name: "outputStyle",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/output-style",
     pathParams: ["sessionID"],
     query: [],
     body: "required",
@@ -4346,6 +4472,14 @@ export function createGroups(caller: Caller) {
       run: (sessionID: string, body: Operations["v1.command.run"]["body"], options?: RequestOptions): Promise<Operations["v1.command.run"]["response"]> =>
         caller.call("v1.command.run", { path: { sessionID }, body }, options),
     },
+    config: {
+      /** Output styles of the Location (project ones only from a trusted checkout), the files that failed to load or are held for trust, and the configured and effective style (`GET /api/v1/config/output-styles`) */
+      outputStyles: (options?: RequestOptions): Promise<Operations["v1.config.outputStyles"]["response"]> =>
+        caller.call("v1.config.outputStyles", {}, options),
+      /** Set the global default output style (a built-in or user style; null sets default), keeping every other byte of the document (`PUT /api/v1/config/output-style`) */
+      setOutputStyle: (body: Operations["v1.config.setOutputStyle"]["body"], options?: RequestOptions): Promise<Operations["v1.config.setOutputStyle"]["response"]> =>
+        caller.call("v1.config.setOutputStyle", { body }, options),
+    },
     event: {
       /** Live events for a Location (scope=all for every Location) (`GET /api/v1/event`) */
       subscribe: (query?: Operations["v1.event.subscribe"]["query"], options?: StreamOptions): AsyncIterableIterator<S.EventEnvelope> =>
@@ -4724,6 +4858,9 @@ export function createGroups(caller: Caller) {
       /** Stop the server matching this registration identity (`POST /api/v1/service/stop`) */
       stop: (body: Operations["v1.service.stop"]["body"], options?: RequestOptions): Promise<Operations["v1.service.stop"]["response"]> =>
         caller.call("v1.service.stop", { body }, options),
+      /** The last background update check: current and latest version, bump kind, method and minimum supported version (`GET /api/v1/service/update`) */
+      update: (options?: RequestOptions): Promise<Operations["v1.service.update"]["response"]> =>
+        caller.call("v1.service.update", {}, options),
     },
     session: {
       /** Switch the agent (`POST /api/v1/sessions/{sessionID}/agent`) */
@@ -4825,6 +4962,15 @@ export function createGroups(caller: Caller) {
       /** Remove an unpromoted input (`DELETE /api/v1/sessions/{sessionID}/inbox/{messageID}`) */
       inboxRemove: (sessionID: string, messageID: string, options?: RequestOptions): Promise<Operations["v1.session.inboxRemove"]["response"]> =>
         caller.call("v1.session.inboxRemove", { path: { sessionID, messageID } }, options),
+      /** Create a 45-second owner-authenticated browser attachment (`POST /api/v1/sessions/{sessionID}/interactive-clients`) */
+      interactiveAttach: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.interactiveAttach"]["response"]> =>
+        caller.call("v1.session.interactiveAttach", { path: { sessionID } }, options),
+      /** Release only this browser attachment (`DELETE /api/v1/sessions/{sessionID}/interactive-clients/{clientID}`) */
+      interactiveRelease: (sessionID: string, clientID: string, options?: RequestOptions): Promise<Operations["v1.session.interactiveRelease"]["response"]> =>
+        caller.call("v1.session.interactiveRelease", { path: { sessionID, clientID } }, options),
+      /** Renew only a live browser attachment (`PUT /api/v1/sessions/{sessionID}/interactive-clients/{clientID}`) */
+      interactiveRenew: (sessionID: string, clientID: string, options?: RequestOptions): Promise<Operations["v1.session.interactiveRenew"]["response"]> =>
+        caller.call("v1.session.interactiveRenew", { path: { sessionID, clientID } }, options),
       /** Interrupt the running Drain (`POST /api/v1/sessions/{sessionID}/interrupt`) */
       interrupt: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.interrupt"]["response"]> =>
         caller.call("v1.session.interrupt", { path: { sessionID } }, options),
@@ -4846,6 +4992,9 @@ export function createGroups(caller: Caller) {
       /** Switch the model (`POST /api/v1/sessions/{sessionID}/model`) */
       model: (sessionID: string, body: Operations["v1.session.model"]["body"], options?: RequestOptions): Promise<Operations["v1.session.model"]["response"]> =>
         caller.call("v1.session.model", { path: { sessionID }, body }, options),
+      /** Switch the Session's own output style from the next Turn; null follows the configured style (`POST /api/v1/sessions/{sessionID}/output-style`) */
+      outputStyle: (sessionID: string, body: Operations["v1.session.outputStyle"]["body"], options?: RequestOptions): Promise<Operations["v1.session.outputStyle"]["response"]> =>
+        caller.call("v1.session.outputStyle", { path: { sessionID }, body }, options),
       /** Pause the active Goal: no evaluation or continuation until resumed (`POST /api/v1/sessions/{sessionID}/goals/pause`) */
       pauseGoal: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.pauseGoal"]["response"]> =>
         caller.call("v1.session.pauseGoal", { path: { sessionID } }, options),

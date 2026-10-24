@@ -292,6 +292,13 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .ok::<ServiceInfo>(g),
         op(
             "get",
+            "/service/update",
+            "v1.service.update",
+            "The last background update check: current and latest version, bump kind, method and minimum supported version",
+        )
+        .ok::<crate::runtime::UpdateStatus>(g),
+        op(
+            "get",
             "/jobs",
             "v1.job.list",
             "List durable background tasks",
@@ -593,6 +600,12 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .error::<ErrorBody>(g, 413, "AttachmentTooLargeError with size and limit")
         .error::<ErrorBody>(g, 415, "UnsupportedAttachmentError with media_type")
         .error::<ErrorBody>(g, 422, "UnsupportedModalityError with model and modality"),
+        op("post","/sessions/{sessionID}/interactive-clients","v1.session.interactiveAttach","Create a 45-second owner-authenticated browser attachment")
+            .status(201).ok::<Data<super::interactive::InteractiveClientLease>>(g),
+        op("put","/sessions/{sessionID}/interactive-clients/{clientID}","v1.session.interactiveRenew","Renew only a live browser attachment")
+            .ok::<Data<super::interactive::InteractiveClientLease>>(g).error::<ErrorBody>(g,404,"The attachment expired or does not match this Session/Location"),
+        op("delete","/sessions/{sessionID}/interactive-clients/{clientID}","v1.session.interactiveRelease","Release only this browser attachment").status(204),
+
         op(
             "post",
             "/sessions/{sessionID}/command",
@@ -661,6 +674,15 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         )
         .body::<ModeBody>(g)
         .ok::<Data<Session>>(g),
+        op(
+            "post",
+            "/sessions/{sessionID}/output-style",
+            "v1.session.outputStyle",
+            "Switch the Session's own output style from the next Turn; null follows the configured style",
+        )
+        .body::<super::output_styles::StyleBody>(g)
+        .ok::<Data<Session>>(g)
+        .error::<ErrorBody>(g, 400, "InvalidRequestError: an invalid, unknown or held style, or a Session with a parent"),
         op(
             "post",
             "/sessions/{sessionID}/wake",
@@ -1004,6 +1026,25 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .located()
         .ok::<Located<Vec<cyber_core::features::FeatureStatus>>>(g)
         .error::<ErrorBody>(g, 400, "InvalidRequestError, such as `ConfigInvalidError: unknown feature \"telepathy\"`"),
+        op(
+            "get",
+            "/config/output-styles",
+            "v1.config.outputStyles",
+            "Output styles of the Location (project ones only from a trusted checkout), the files that failed to load or are held for trust, and the configured and effective style",
+        )
+        .located()
+        .ok::<Located<cyber_core::output_styles::StyleListing>>(g)
+        .error::<ErrorBody>(g, 400, "InvalidRequestError: the Location's configuration is invalid"),
+        op(
+            "put",
+            "/config/output-style",
+            "v1.config.setOutputStyle",
+            "Set the global default output style (a built-in or user style; null sets default), keeping every other byte of the document",
+        )
+        .located()
+        .body::<super::output_styles::StyleBody>(g)
+        .ok::<Located<cyber_core::output_styles::StyleListing>>(g)
+        .error::<ErrorBody>(g, 400, "InvalidRequestError: an invalid or unknown style, or one defined only by a project"),
         op(
             "get",
             "/team-definitions",
@@ -1709,6 +1750,7 @@ pub fn document(version: &str) -> Value {
     let envelope = g.subschema_for::<EventEnvelope>();
     let _ = g.subschema_for::<crate::runtime::McpStatusUpdate>();
     let _ = g.subschema_for::<crate::runtime::McpToolsChanged>();
+    let _ = g.subschema_for::<crate::runtime::InstallationNotice>();
     let _ = g.subschema_for::<crate::runtime::MemoryChange>();
     let _ = g.subschema_for::<crate::runtime::WorkflowRunProgress>();
     let mut paths = Map::new();

@@ -9,6 +9,7 @@ pub mod layout;
 mod login;
 mod messages;
 mod messaging;
+mod output_styles;
 mod overlays;
 pub(crate) mod progress;
 mod rename;
@@ -93,7 +94,8 @@ pub fn draw(f: &mut Frame, app: &App) {
     if plan.header.height > 0 {
         draw_header(f, app, plan.header);
     }
-    let transcript = recap(f, app, plan.transcript);
+    let below_banner = banner(f, app, plan.transcript);
+    let transcript = recap(f, app, below_banner);
     // Panes first: the rows drawn on them are targets over them.
     app.mouse.push(transcript, Target::Pane(Pane::Transcript));
     app.mouse.push(plan.composer, Target::Pane(Pane::Composer));
@@ -149,6 +151,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Overlay::SideChat(chat) => overlays::side_chat(f, app, chat, area),
         Overlay::ConfirmStopTasks => overlays::confirm_stop_tasks(f, app, area),
         Overlay::ConfirmExport(request) => overlays::confirm_export(f, app, request, area),
+        Overlay::OutputStyles(picker) => output_styles::draw(f, app, picker, area),
         Overlay::ConfirmBypass => overlays::confirm_bypass(f, app, area),
     }
 }
@@ -179,6 +182,38 @@ fn full_screen(f: &mut Frame, app: &App, panel: Rect) {
         Overlay::Team => team::view(f, app, panel),
         Overlay::Collaboration => collaboration::view(f, app, panel),
         _ => settings::draw(f, app, panel),
+    }
+}
+
+/// The unsupported-version warning on the first row of `area`, while the rest keeps at
+/// least three rows; returns the area below it.
+fn banner(f: &mut Frame, app: &App, area: Rect) -> Rect {
+    let Some(text) = &app.update.banner else {
+        return area;
+    };
+    if area.height < 4 {
+        return area;
+    }
+    let width = area.width.saturating_sub(2);
+    let style = Style::default()
+        .fg(app.theme.warning)
+        .add_modifier(Modifier::BOLD);
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            layout::truncate_end(text, width as usize),
+            style,
+        ))),
+        Rect {
+            x: area.x + 1,
+            width,
+            height: 1,
+            ..area
+        },
+    );
+    Rect {
+        y: area.y + 1,
+        height: area.height - 1,
+        ..area
     }
 }
 

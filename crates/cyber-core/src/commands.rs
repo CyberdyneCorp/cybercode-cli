@@ -197,6 +197,10 @@ pub const BUILTIN: &[(&str, &str)] = &[
     ("model", "Switch the model"),
     ("mode", "Switch the permission mode"),
     (
+        "output-style",
+        "Switch this Session's output style from the next Turn",
+    ),
+    (
         "approve",
         "Confirm and replay the last classifier-blocked call once",
     ),

@@ -116,6 +116,111 @@ When you rebuild or upgrade `cyber`, the next client sees that the registered se
 
 `cyber service status` reports `stale: true` in that case. A server started before build identities existed is always kept with the warning. One `cyber service restart` moves you to the build that detects later rebuilds by itself.
 
+## Install, upgrade and uninstall
+
+### Install script
+
+Each GitHub Release carries `install.sh`, a POSIX `sh` script (the latest stable one is `https://github.com/CyberdyneCorp/cybercode-cli/releases/latest/download/install.sh`):
+
+```bash
+curl -fsSL https://github.com/CyberdyneCorp/cybercode-cli/releases/latest/download/install.sh | sh
+sh install.sh [--version <v>] [--dir <path>] [--channel stable|beta|nightly] [--no-modify-path]
+```
+
+- It detects the OS and CPU (`uname`) and, on Linux, musl (`/etc/alpine-release`, or `ldd --version` naming musl), then picks `cyber-<v>-<target>.tar.gz`. Windows uses the `.zip` from the release page.
+- Without `--version` it reads `channel-<channel>/<channel>.json`. A `--version` that is not semver or a `--channel` other than the three names exits 2, as does any unknown argument or a `--dir` holding `"`, `$`, `` ` ``, `\` or a newline.
+- When `<dir>/cyber --version` (or, without `--dir`, the `cyber` on `PATH`) already reports that version, it prints `cyber <v> already installed` and exits 0 without downloading.
+- It downloads `SHA256SUMS` and the archive with `curl` (or `wget`) into a temporary directory and checks the archive with `sha256sum` or `shasum -a 256`. A mismatch prints `checksum verification failed` and exits 1 before anything is written to the install directory. With `cosign` on `PATH` it also verifies `SHA256SUMS.sigstore.json` for the release workflow's identity at `refs/tags/v<v>`; without it, it says it checked the SHA-256 only.
+- It extracts `cyber` and `cyber-sandbox-exec` into a hidden directory inside the install directory (default `$CYBER_INSTALL_DIR`, else `~/.cyber/bin`) and renames each into place, the helper first, then writes the receipt `.cyber-receipt` beside them. The receipt is how `cyber upgrade` and `cyber uninstall` know a `--dir` install is a script install, since the PATH line does not set `CYBER_INSTALL_DIR`.
+- Unless `--no-modify-path`, it appends `# cyber installer: PATH` and `export PATH="<dir>:$PATH"` (`fish_add_path` for fish) to the first existing rc file for `$SHELL`: `~/.zshrc`; `~/.bashrc`, `~/.bash_profile`, `~/.profile`; fish's `config.fish`; else `~/.profile`. A file that already has the marker is left alone, and `cyber uninstall` removes exactly those two lines.
+- `CYBER_INSTALL_BASE_URL` replaces the release base URL, for a mirror or an offline install. The checksums then come from that mirror too, so setting it means trusting it; the `cosign` identity does not change.
+
+Other channels: the release archives themselves, `cargo install --locked --git https://github.com/CyberdyneCorp/cybercode-cli --tag v<version> cyber-cli`, and the repository `Dockerfile` (below). Homebrew (`cyber-code/tap/cyber`), npm (`@cyber-code/cli` with per-platform packages, each holding its target's binaries from the release archive), Scoop, WinGet, the AUR, Nix and a published container image are partial: their templates live under `packaging/` and every release attaches them rendered (`cyber.rb`, `cyber.scoop.json`, `cyber.winget.yaml`, `PKGBUILD`, `cyber.nix`, `cyber-npm-<v>.tar.gz`), but nothing is published to those registries yet.
+
+### Release packaging
+
+Pushing the tag `v<workspace version>` runs `.github/workflows/release.yml`; pull requests, branch pushes and manual runs never do.
+
+1. `verify` runs `scripts/tests` and checks the tag against the workspace version. The channel comes from the version: `-beta.N` is beta, `-nightly.YYYYMMDD` is nightly, no prerelease is stable, and anything else fails.
+2. `build` compiles 8 targets with `--locked --release`, `CYBER_CHANNEL` and `CYBER_GIT_SHA`: `aarch64`/`x86_64` Apple, Linux glibc and musl, and Windows MSVC (`windows-2025`, `windows-11-arm`). It checks `cyber --version` and runs `scripts/release_assets.py package`, which puts `cyber`, `cyber-sandbox-exec`, `README.md` (and `PREVIEW.txt` on Windows) at the archive root.
+3. `publish`, the only job with `contents: write` and `id-token: write`, runs once every build has passed. It writes `SHA256SUMS`, signs every archive and `SHA256SUMS` with `cosign sign-blob` (keyless, `<file>.sigstore.json`), renders `<channel>.json` and the `packaging/` templates, checks the asset list, creates the GitHub Release `v<version>` (a prerelease unless stable), and replaces `<channel>.json` on the rolling release `channel-<channel>` only when the version is newer by semver than the one it names. A backport tag (`v1.3.5` after `v1.4.0`) is released without becoming the latest or rolling the channel back, and releases run one at a time across tags. The repository variable `CYBER_MIN_SUPPORTED`, when set, becomes the manifest's `min_supported`.
+
+Actions are pinned by commit SHA, and no build cache is used. `scripts/release_assets.py` does the packaging, checksums, manifest and rendering with the Python standard library, so its tests (`python3 -m unittest discover -s scripts/tests`) run anywhere.
+
+### Release source and `cyber upgrade`
+
+Releases come from one release source embedded at build time, shown under `release` by `cyber debug info`:
+
+- Base URL `https://github.com/CyberdyneCorp/cybercode-cli/releases/download`. `v<version>/` holds `cyber-<version>-<target>.tar.gz` (`.zip` on Windows) and `SHA256SUMS`; `channel-<channel>/<channel>.json` holds the channel manifest (`version`, `published_at`, `notes_url`, `min_supported`).
+- Signing identity `https://github.com/CyberdyneCorp/cybercode-cli/.github/workflows/release.yml@refs/tags/v<version>`, issuer `https://token.actions.githubusercontent.com`.
+- Only the build variables `CYBER_RELEASE_BASE_URL`, `CYBER_RELEASE_IDENTITY` (the prefix before `v<version>`) and `CYBER_RELEASE_ISSUER` change them. No config key or runtime variable of a release build does.
+
+`cyber upgrade [VERSION] [--method <m>] [--channel stable|beta|nightly] [--dry-run]` reads the latest version from the channel manifest (a `dev` build reads `stable`). The lookup times out after 10 seconds, retries twice, and caches the answer for an hour in `<cache>/release-<channel>.json`. With `CYBER_OFFLINE` set it reads only the cache, of any age, and fails with `offline: no cached release information` without one. The install method is `script` when the binary is under `$CYBER_INSTALL_DIR` or `~/.cyber/bin`, or the install script's receipt `.cyber-receipt` sits beside it (so a `--dir` install is still `script`), otherwise it comes from the path (Homebrew, npm, pnpm, bun, Cargo, Scoop, WinGet, Nix, Docker) or from the package managers' own listings, each run without a shell and stopped after 3 seconds. `--format json` prints `{from, to, method, action}`, where `action` is `current`, `replaced`, `manager` or `manual`. `--dry-run` reads the manifest, prints the target, method and the action it would take (`"dry_run": true` in JSON), and downloads, runs and changes nothing. When the target is the running version it prints `cyber <v> is already installed` and changes nothing. A manifest version that is not newer than the running one (an older channel, a pre-release build reading `stable`) changes nothing either; only `cyber upgrade <older version>` downgrades. With `CYBER_OFFLINE` set, an upgrade that would download or run a package manager fails with `offline: installing cyber <v> needs the network` before any request.
+
+What happens next depends on the method:
+
+- `script`: cyber downloads `v<version>/SHA256SUMS` and `SHA256SUMS.sigstore.json` and verifies the Sigstore bundle against the trusted root embedded in the binary, for the identity `<prefix>v<version>` and the issuer, with the certificate chain, the SCT and the transparency-log inclusion all required. A signature for another version does not match. It then streams the archive (at most 512 MiB) to a hidden file beside the binary and checks its SHA-256 against its `SHA256SUMS` line. Only `cyber` and `cyber-sandbox-exec` at the archive root are extracted; an archive with an absolute or `..` member, a link or a device is refused. The helper is replaced first, then `cyber`: the new file takes the old one's mode and is synced, the old one is renamed to `cyber.old` (`cyber.old.exe` on Windows, where the running executable can be renamed but not overwritten), and the new one is renamed into place, putting the old one back if that fails. The next start of cyber removes `cyber.old`. Any failure prints `signature verification failed`, `checksum verification failed` or `download failed` and leaves the installed binary unchanged.
+- `brew`, `npm`, `pnpm`, `bun`, `cargo`, `scoop`, `winget`: cyber runs `brew upgrade cyber`, `npm i -g @cyber-code/cli@<v>` (`pnpm add -g`, `bun add -g`), `cargo install --locked --git https://github.com/CyberdyneCorp/cybercode-cli --tag v<v> cyber-cli`, `scoop update cyber` or `winget upgrade cyber-code.cyber`, resolved on `PATH` and run without a shell. When it fails, cyber prints the command and exits 1. When only a manager's listing named the method (the binary's path is not that manager's) and `--method` is not given, cyber prints `<m> lists a cyber package, but this binary is not from it; to upgrade that package, run: <command> (or "cyber upgrade --method <m>" to run it)` instead, with action `manual`, and runs nothing.
+- `nix`, `aur`, `docker`, `unknown`: cyber prints `installed via <m>; run: <command>` (for example `nix profile upgrade cyber-code`) and exits 0.
+
+`autoupdate` in `cyber.jsonc` takes `true`, `false` or `"notify"` (the default); any other value is a configuration error.
+
+### Background updates and the minimum supported version
+
+The running server checks the channel manifest 5 seconds after it starts and then every 24 hours, through the same cached lookup (User-Agent client `server`). It does not check when `autoupdate` is `false`, `CYBER_DISABLE_AUTOUPDATE`, `CYBER_OFFLINE` or `CI` is set, or the build's channel is `dev`. Organization policy can set `policy.autoupdate` (`true`, `false` or `"notify"`) in the managed policy file; it wins over every user and project layer, a user-written `policy.autoupdate` does not count, and a malformed policy turns the check off. The setting is re-read at every check.
+
+- A newer version is announced with the live-only event `installation.update_available.1` (`{current, latest, kind, notes_url}`, `kind` being `major`, `minor` or `patch`), on every instance stream whatever its Location.
+- With `autoupdate: true`, a patch release on a `script`, `brew` or `npm` install that the binary's path shows (a method from a manager's listing alone is only announced) is installed without asking (the verified self-update of `cyber upgrade`, or the manager's command) and announced with `installation.updated.1`. If that fails, the release is announced as available instead. A version already installed this way is not downloaded again, and once the server has upgraded itself it only announces later releases until it restarts. A configuration that does not load skips the check.
+- `GET /api/v1/service/update` returns the last result: `{current, channel, method, latest, kind, notes_url, min_supported, unsupported, updated, checked_at_ms}`, with `latest: null` before the first check.
+
+The server never restarts itself; the stale-build rule replaces it once it is idle. The TUI shows `cyber X.Y.Z is available — run "cyber upgrade"` or `cyber updated to X.Y.Z; restart cyber to use it` as a toast, from the event or, when it attaches after the check, from the endpoint, once per notice; a running Turn is never interrupted.
+
+When the cached manifest's `min_supported` is newer than the running version, `cyber exec` prints `warning: cyber <v> is no longer supported (minimum <m>); run "cyber upgrade"` on stderr before the run, and the TUI shows it as a banner above the transcript. Both read the cache only (the server reads it at start), never the network.
+
+### Container and CI
+
+The repository `Dockerfile` builds an image from prebuilt static binaries, so it needs no Rust toolchain: `debian:bookworm-slim` pinned by digest, with `git`, `ripgrep`, `ca-certificates` and `bubblewrap`, a `cyber` user (uid and gid 10001), `CYBER_HOME=/home/cyber/.cyber`, `CI=true`, `WORKDIR /work` and `ENTRYPOINT ["cyber"]`. Put the musl binaries under `dist/<arch>/` (Docker's `amd64` or `arm64`) first:
+
+```bash
+mkdir -p dist/amd64 && tar -xzf cyber-<v>-x86_64-unknown-linux-musl.tar.gz -C dist/amd64
+docker build -t cyber .
+docker run --rm -v "$PWD:/work" -e OPENAI_API_KEY cyber exec "fix the failing test"
+```
+
+No image is published yet (`ghcr.io/cyber-code/cyber` is a partial channel).
+
+With `CI` true (`1`, `true`, `yes` or `on`): `cyber` with no subcommand and `cyber attach` print `interactive TUI unavailable in CI; use "cyber exec"` and exit 2, the background update check is off, the TUI's first-run import and plugin offers are not shown, and `cyber exec` keeps its default `--format text`.
+
+### `cyber uninstall`
+
+`cyber uninstall [--keep-config] [--keep-data] [--dry-run] [--force]` lists what it removes, with sizes:
+
+- for a `script` install, `cyber`, `cyber-sandbox-exec`, their `.old` files and the install script's `.cyber-receipt` in the install directory;
+- each PATH line the install script added: the `# cyber installer: PATH` marker and the line after it, in `~/.zshrc`, `~/.bashrc`, `~/.bash_profile`, `~/.profile` or fish's `config.fish`;
+- the config, data, state and cache directories. `--keep-config` and `--keep-data` keep those two.
+
+Sizes are counted without following symlinks. `--dry-run` only prints the list (`--format json` gives each entry's `kind`, `path`, `size` and `removed`), and creates nothing. A package-manager install also lists `package manager: <command>`. Otherwise cyber asks `Remove these N items (X MiB)? [y/N]` (`… and run <command>?` for a package manager); without a terminal it exits 2 unless `--force` is given.
+
+On confirmation it:
+
+1. stops the background server, and exits 1 if that fails, unless `--force`;
+2. deletes the keyring entries cyber's own records name, unless `--keep-data`: MCP OAuth credentials listed in `mcp-auth-index.json`, the tokens of the peers in `peers.remotes`, and the secret settings of the resolved plugins. Provider logins are files in the data directory. A keyring failure is printed as a warning, and the command exits 1 at the end;
+3. runs the package manager's uninstall for `brew`, `npm`, `pnpm`, `bun`, `cargo`, `scoop` and `winget` installs (for example `brew uninstall cyber`), printing the command if it fails. It runs only when the binary's path shows that manager installed it; when only the manager's listing names a cyber package, the command is printed as a note to run by hand;
+4. removes the listed entries, then the emptied install directory and `CYBER_HOME`.
+
+Each directory is checked before the listing and again before it is removed. A directory that is not an absolute path without `.` or `..`, is a symlink, is the home directory or one of its ancestors, is a filesystem or drive root, or lies fewer than two levels below the home directory or the root is refused: the command exits 1 and removes nothing. Symlinks inside a cyber directory are unlinked, never followed. An rc file is rewritten atomically and keeps its permissions; a symlinked rc file is left alone with a note to edit it by hand. On Windows the running `cyber.exe` is renamed to `cyber.old.exe`, and the command says to delete it after cyber exits.
+
+### Testing against a local release source
+
+Debug builds (the `target/debug/cyber` that tests run) accept a test hook that release builds compile out:
+
+- `CYBER_TEST_RELEASE_BASE_URL=http://127.0.0.1:<port>` replaces the base URL, so lookups and downloads go to a local stub server.
+- `CYBER_TEST_RELEASE_TRUST=<dir>` replaces the signing identity with `<dir>/identity.json` (`{"identity_prefix": …, "issuer": …}`) and the trusted root with `<dir>/trusted_root.json`. A missing or invalid `identity.json` is an error. Under a test root the transparency-log inclusion proof and the SCT are not checked, since a throwaway root has neither log; the chain, identity, issuer, signed entry timestamp and signature still are.
+
+The `test-support` feature of `cyber-install` (`cyber_install::test_support::TestSigner`) issues that throwaway material: a CA, a log key, and cosign-shaped bundles whose leaf certificate names the identity and issuer. `crates/cyber-cli/tests/upgrade_cli.rs` runs the real binary this way against `crates/cyber-install/tests/support/stub_release.rs`. `crates/cyber-app/tests/update_check.rs` points the server's background check at the same stub through `ServeOptions::update` (`UpdateCheckOptions`: version, channel, environment, binary and cadence).
+
+`crates/cyber-cli/tests/install_script.rs` (Unix) runs the real `scripts/install.sh` under `sh` against the same stub through `CYBER_INSTALL_BASE_URL`, with fake archives whose `cyber` is a shell script, and finishes with the real `cyber uninstall --force`. The release scripts, the workflow trigger, the `Dockerfile` and the npm launcher are tested by `python3 -m unittest discover -s scripts/tests`; CI also runs `sh -n`, `dash -n` and `shellcheck -s sh` on the script.
+
 ## Sessions and subagents
 
 ### Naming and resuming Sessions
@@ -286,7 +391,7 @@ In the TUI, `/cost` and `/usage` open the Settings panel's **Usage** tab (see be
 
 `cyber stats [--days N] [--project <dir>] [--models] [--tools] [--by origin] [--format json]` asks the background server for that route, so it shows the TUI's numbers: `--days N` is `period=Nd`, `--project` is the project containing `<dir>` (relative to the Location), `--models` adds the per-model table, `--by origin` adds one row per usage origin (`user`, `session` for messages sent by another Session's agent, `client` for messages sent through the Messaging API or `cyber messages send`, `job` for background handbacks, `mcp` for MCP serve input, or the admission source such as `workflow`; the route always returns them as `origins`), and `--tools` adds tool calls by name from the `tool_call` projection, for Sessions active since the period's start. The text output ends its overview with the Stats tab's book comparison line and says `1 day` for one day. `--format json` prints the route's `data` unchanged, plus `tools` with `--tools`. Days are local to the server's zone.
 
-`cyber messages send <to> [text | -] [--from <session>] [--notify-when-idle] [--format json]` sends a cross-session message through the background server as client `cli` (or as `--from`, which `--notify-when-idle` and a `<session>@<peer>` target need); it exits 0 when the message is delivered or held, 1 when it is refused (the reason on stderr) or a peer cannot be reached or refuses the grant (`PeerUnreachableError`, `PeerAuthError`), and 2 for an unknown or ambiguous address (the candidates listed), a peer name no `peers.remotes` entry has (`PeerNotConfiguredError`, with the `cyber peers add` hint) or a text over 16384 bytes. `cyber messages list [--session <s>] [--direction in|out] [--limit N] [--format json]` prints a Session's message history, newest first (the Location's most recent Session by default), and `cyber messages list --reachable [--from <s>]` the Sessions a message can be sent to. `cyber peers` pairs machines for `name@machine` addresses ([README](../README.md#messaging-across-machines)).
+`cyber messages send <to> [text | -] [--from <session>] [--notify-when-idle] [--format json]` sends a cross-session message through the background server as client `cli` (or as `--from`, which `--notify-when-idle` and a `<session>@<peer>` target need); it exits 0 when the message is delivered or held, 1 when it is refused (the reason on stderr) or a peer cannot be reached or refuses the grant (`PeerUnreachableError`, `PeerAuthError`), and 2 for an unknown or ambiguous address (the candidates listed), a peer name no `peers.remotes` entry has (`PeerNotConfiguredError`, with the `cyber peers add` hint) or a text over 16384 bytes. `cyber messages list [--session <s>] [--direction in|out] [--limit N] [--format json]` prints a Session's message history, newest first (the Location's most recent Session by default), and `cyber messages list --reachable [--from <s>]` the Sessions a message can be sent to. `cyber peers` pairs machines for `name@machine` addresses ([direct peers guide](peers.md)).
 
 In the TUI, a received message shows as `✉ <from> · <session> · <time>` marked `untrusted` with its text below, a `send_message` call shows its target, outcome and message ID, and an idle notice is one `◷ <target> is idle · <time> · "<status>"` line. The footer shows `✉ N queued · M held` while messages wait. A held message appears as a card above the composer: Tab on an empty composer selects it, then `r` releases it, `d` drops it and Enter opens it in `/messages`. `/messages` (also in the palette; bind `messages_view` in `tui.keybinds`, unbound by default) lists the Session's messages and idle notices with time, direction, peer, outcome, size and first line; Tab cycles `all`/`in`/`out`/`held`, Enter expands a row to its full text, sha256 and times, `r`/`d` release or drop a held message, and `a` clears a `non_interactive` refusal (the one `cyber exec` sets).
 
@@ -409,7 +514,7 @@ An empty Session shows a welcome screen in the transcript area: the `CYBER CODE`
 
 **Status** reads `/health`, the Session, `/vcs`, `/mcp` and `/lsp`: the client and server versions (both in the warning color with `restart the service` when they differ), the Session title and ID, the Location, the branch (with `uncommitted changes`, or `not a git repository`), the agent, the model with its provider and variant, the Mode, the context meter as a 30-column bar with tokens and percent, the auto-compaction threshold, and the MCP (`2 of 3 connected · failed: docs`) and language-server summaries. A source that answers 404 or 503 is left out; sandbox and account rows appear only when `/health` reports them.
 
-**Config** edits the TUI preferences `theme`, `theme_mode`, `sidebar`, `machine_stats`, `recap`, `spinner`, `workflow_notifications`, `reasoning`, `diff_style`, `timestamps`, `mouse`, `color` and `accessibility.reduced_motion` in place: Up/Down select a row and Enter or Space moves it to its next value, which applies at once and is saved to `kv.json` in the state directory (`prefs.<key>` with the time it was saved; `theme` also keeps its old `theme` key). Each row shows its source: `default`, `global` (the global `tui.jsonc`), `project` (a `.cyber/tui.jsonc`), `saved` (`kv.json`) or `session` (a toggle such as Ctrl+T or `/timestamps` made in this run only). A `tui.jsonc` written after a saved value wins over it. Enter on `theme` opens the theme switcher instead of cycling. `diff_style` is stored for split diffs, which will read it. Core settings stay read-only: until the server has a `config` route the tab says `Core settings: use cyber config or edit cyber.jsonc`.
+**Config** edits the TUI preferences `theme`, `theme_mode`, `sidebar`, `machine_stats`, `recap`, `spinner`, `workflow_notifications`, `reasoning`, `diff_style`, `timestamps`, `mouse`, `color` and `accessibility.reduced_motion` in place: Up/Down select a row and Enter or Space moves it to its next value, which applies at once and is saved to `kv.json` in the state directory (`prefs.<key>` with the time it was saved; `theme` also keeps its old `theme` key). Each row shows its source: `default`, `global` (the global `tui.jsonc`), `project` (a `.cyber/tui.jsonc`), `saved` (`kv.json`) or `session` (a toggle such as Ctrl+T or `/timestamps` made in this run only). A `tui.jsonc` written after a saved value wins over it. Enter on `theme` opens the theme switcher instead of cycling. `diff_style` is stored for split diffs, which will read it. The `output style` row after them shows the Session's style and its source, and Enter opens the [output style picker](#choosing-a-style); a configured `output_style` is listed with its file under the core settings. Other core settings stay read-only: until the server has a `config` route the tab says `Core settings: use cyber config or edit cyber.jsonc`.
 
 **Usage** (`/usage`, or `/cost` at the Session section) reads the session usage breakdown: `Total cost` (`—` when every call was unpriced, `≥ $x · N unpriced calls` when some were or attribution is incomplete), `Total duration (API)` and `(wall)` (`3h 21m 0s`, `5d 23h 31m`), `Total code changes`, and `Usage by model`, one row per model with compact counts (`5.3k`, `352.7k`, `1.2m`) and its cost, the highest cost first. Below are the validated token table (own, descendants and total per class) and the cache hit rate that the old `/cost` overlay showed; a report for another Session or with inconsistent totals is refused, and a failed refresh keeps the last amounts with the error. Each configured Budget limit of the Session (`budgets.session`) and `budgets.daily` then gets a 40-column meter, `Session budget ($5.00)` or `Daily budget ($20.00)` with `N% used`, in the warning color from 80% and the error color from 100%; the daily one adds `Resets 12:00am (<zone>)`. Each window a provider reported (`GET /api/v1/usage/limits`) follows as a meter labelled `<provider> · <label>` (`anthropic · 5-hour limit`) with the same colors, then `Resets <time> (<zone>)` in local time, with the date when the reset is a day or more away, and `Reading from <age> ago` once the reading is older than 5 minutes. When a provider reports both daily and weekly windows, `d` shows the daily ones and `w` the weekly ones. Without a Budget and without a provider report there is no limits section. Last comes `What's contributing to your usage?` from `GET /api/v1/usage/insights` over every Session the server stored: the window (`Last 24h`, or `Last 7 days` after `w`; `d` returns), whether shares are `% of cost` or `% of tokens`, one bold `N% of your usage came from …` line with an advice line per factor of at least 5%, and a `Subagents` table of at most 8 groups; an empty window reads `No usage in the last 24h`. `r` refreshes (`R`, the old overlay's key, still works for one release).
 
@@ -477,7 +582,7 @@ python3 scripts/spec_inventory.py # refresh the ROADMAP requirement table
 
 ## Architecture
 
-See the architecture diagram in the [README](../README.md#architecture) and the [storage decision](../docs/decisions/0001-storage-architecture.md).
+See the [architecture diagrams](architecture.md) and the [storage decision](../docs/decisions/0001-storage-architecture.md).
 
 ## Naming
 
@@ -606,6 +711,54 @@ These are read from the server's environment (a value of `1`, `true`, `yes` or `
 No migration is needed: `CLAUDE.md` keeps loading in place. `cyber import` does not copy `CLAUDE.md` into `CYBER.md`, because both would then load and duplicate the content. To move Cyber-specific parts, put them in `CYBER.md` and, if the remaining guidance is shared, rename `CLAUDE.md` to `AGENTS.md`.
 
 Not implemented yet: `.cyber/rules/*.md` and `.claude/rules/*.md`, `.claude/CLAUDE.md`, the `~/.claude/CLAUDE.md` global fallback, a configurable `instructions.max_bytes`, per-source token sizes in `/context`, and `/init` (which is specified to generate `AGENTS.md`, not `CYBER.md`).
+
+## Base prompts and output styles
+
+The system prompt starts with the agent's `system` text when the agent sets one. Otherwise it starts with a short base prompt chosen by the model's family, followed by the Session's output style. The base prompts and the built-in styles are embedded in the binary (`crates/cyber-core/prompts/`).
+
+### Base prompts by model family
+
+Every base prompt is one shared core text plus a family addendum: `openai`, `anthropic`, `gemini`, `local` (open-weights models) or `default` (the core text alone). The family comes from the catalog model, not the provider id, so `openrouter/anthropic/claude-sonnet` gets the Anthropic prompt and `groq/gpt-oss-120b` the local one. The order is:
+
+1. Open-weights names (`gpt-oss`, `llama`, `qwen`, `mistral`, `deepseek`, `gemma`, `phi`, `glm`, `kimi`, …) select `local`.
+2. `claude` selects `anthropic`; `gpt`, `o1`, `o3`, `o4`, `codex` and `chatgpt` select `openai`; `gemini` selects `gemini`. The catalog family name is checked first, then the last `/` segment of the model id.
+3. Otherwise the protocol decides: Anthropic Messages is `anthropic`, OpenAI Responses and the ChatGPT plan are `openai`.
+4. Otherwise a provider without authentication or with a loopback URL is `local`, and anything else is `default`.
+
+A model switch that changes the family starts a new Context Epoch on the next Turn. Epochs recorded before families existed compare by provider only, so a restart never rebuilds their prefix.
+
+### Output styles
+
+The built-in styles are `default` (adds nothing), `concise`, `explanatory` and `learning`. Custom styles are Markdown files directly inside `~/.config/cyber/output-styles/` (user) and `.cyber/output-styles/` at the project root (project):
+
+```markdown
+---
+name: reviewer
+description: Reviews like a senior engineer
+---
+Point out risks first, then style. Quote the exact lines you mean.
+```
+
+- The name is the file stem and must match `^[a-z0-9][a-z0-9_-]{0,63}$`; `name` in the frontmatter, if present, must equal it.
+- The frontmatter may set only `name`, `description` and `keep-coding-instructions` (accepted for Claude Code files and ignored). Any other key, such as `permissions`, makes the file invalid. The trimmed body is the style text and must not be empty.
+- Only regular files of at most 32 KiB are read (128 files at most); links are refused.
+- A custom style cannot reuse a built-in name; the file is skipped and reported. A project style replaces a user style of the same name.
+- Project styles are repository content: they are part of the checkout's trust digest and load only while the checkout is trusted (`cyber trust inspect`, `cyber trust approve`). Until then they are held, and the listing says `project output styles are held until this checkout is trusted (cyber trust inspect)`. `CYBER_DISABLE_PROJECT_CONFIG=1` skips them.
+- An invalid or held file is reported with its path and reason and never stops the other styles from loading.
+
+A style only adds text. It never changes permissions, the Mode or its ceiling, the sandbox, the tools offered or the model.
+
+### Choosing a style
+
+A primary Session uses, in order: its own selection (made at creation or by a switch), the `output_style` key of the resolved configuration at its Location (`"output_style": "concise"` in `cyber.jsonc`), then `default`. Subagents, workflow agents and teammates have no style, because their output goes to another agent.
+
+- **TUI:** `/output-style` (or the palette's **Output style…**) opens a picker showing each style's origin and the `current` and `default` labels, with the listing's issues below; typing filters. Enter switches the Session, `d` also saves the style as your global default, and Esc closes without changes. `/output-style <name>` switches directly. Settings › Config has an `output style` row with its source (`session`, `config` or `default`); Enter opens the picker.
+- **Exec:** `cyber exec --output-style <name>` checks the name against the Location's listing before any Session exists and exits 2 with the reason (invalid, held or unknown) and the available names.
+- **HTTP:** `GET /api/v1/config/output-styles?directory=` lists the styles, the issues, the configured and effective style and why a configured style does not apply. `POST /api/v1/sessions` accepts `output_style`, `POST /api/v1/sessions/{id}/output-style` takes `{"style": "<name>" | null}`, and `PUT /api/v1/config/output-style` saves the global default (built-in and user styles only; `null` writes `default`). `GET /api/v1/sessions/{id}` reports the Session's `output_style`; the `GET /api/v1/sessions` list summary does not include it yet.
+
+An explicit selection naming an invalid, unknown or held style is refused. A configured style that is unavailable falls back to `default`, with a warning in the TUI (once per Session) and on `cyber exec`'s stderr (`warning: <reason>; the default output style applies`). A switch takes effect at the next Turn through a new Context Epoch: a running Turn keeps its prefix, and no mid-conversation message is sent. The switch is recorded as `session.output_style.switched.1` and survives a restart.
+
+Not implemented yet: output styles from plugins, importing `.claude/output-styles/` with `cyber import` (copy the files; the format is compatible), and a per-agent `output_style`.
 
 ## Hook configuration and trust review
 

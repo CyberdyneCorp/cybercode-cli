@@ -68,6 +68,7 @@ cyber [OPTIONS] [COMMAND]
 - [`review`](#cyber-review): Review uncommitted changes, a range, a commit or a pull request
 - [`pr`](#cyber-pr): Check out a pull request and resume the Session linked to it
 - [`git`](#cyber-git): Generate commit and pull request text with the small model
+- [`web`](#cyber-web): Open the local web dashboard and remote approval inbox
 - [`serve`](#cyber-serve): Run the server in the foreground
 - [`service`](#cyber-service): Manage the background server
 - [`api`](#cyber-api): Send one request to the server API
@@ -76,6 +77,8 @@ cyber [OPTIONS] [COMMAND]
 - [`messages`](#cyber-messages): Send messages between Sessions and read their message history
 - [`doctor`](#cyber-doctor): Check configuration, skills, commands, credentials, catalog, database, sandbox, tools and server
 - [`stats`](#cyber-stats): Usage statistics: activity, streaks, tokens, cost and per-model totals
+- [`upgrade`](#cyber-upgrade): Upgrade cyber to the channel's latest version or to VERSION
+- [`uninstall`](#cyber-uninstall): Remove cyber: its binary (script installs), PATH lines and directories
 - [`eval`](#cyber-eval): Run evaluation manifests and write reports
 
 ## `cyber login`
@@ -1665,6 +1668,7 @@ cyber exec [OPTIONS] [PROMPT]...
 - `--non-interactive-rules`: Add the never-ask rules to a reused Session too.
 - `--accept-messages`: Let other Sessions message the Session this run creates (by default it refuses them with `non_interactive`)
 - `--command <COMMAND>`: Run a skill or custom command with the prompt as its arguments.
+- `--output-style <NAME>`: Use this output style for the Session (a name from `/output-style`); it must be listed at the Location, or the run exits 2 before any Session exists.
 - `--workflow <NAME|PATH>`: Run a Workflow (a saved name or a `.js` module path) instead of a prompt; its return value is the result.
 - `--args <JSON>`: The Workflow's `args` as a JSON object.
 - `--file <FILES>`: Attach a file (repeatable): an image or PDF as an attachment, read by a local server under the `read` permission (sent inline with --attach); others as text.
@@ -1764,6 +1768,20 @@ cyber git pr-description [OPTIONS]
 
 - `--base <BASE>`: The base branch or commit (default: origin/HEAD, else main, else master)
 
+## `cyber web`
+
+Open the local web dashboard and remote approval inbox
+
+```text
+cyber web [OPTIONS]
+```
+
+**Options:**
+
+- `--hostname <HOSTNAME>`: Address to bind when starting a server (default 127.0.0.1). Off loopback requires HTTPS.
+- `--port <PORT>`: TCP port when starting a server (default 4747, falling back to a free port)
+- `--no-open`: Print the dashboard URL without opening a browser.
+
 ## `cyber serve`
 
 Run the server in the foreground
@@ -1774,7 +1792,7 @@ cyber serve [OPTIONS]
 
 **Options:**
 
-- `--hostname <HOSTNAME>`: Address to bind (default 127.0.0.1) Default: `127.0.0.1`.
+- `--hostname <HOSTNAME>`: Address to bind (default 127.0.0.1). Off loopback requires global server.tls. Default: `127.0.0.1`.
 - `--port <PORT>`: TCP port (default 4747, falling back to a free port)
 - `--socket <SOCKET>`: Unix socket path (default <state>/cyber.sock)
 - `--no-tcp`: Do not listen on TCP.
@@ -2570,6 +2588,39 @@ cyber stats [OPTIONS]
 - `--models`: One row per model.
 - `--tools`: Tool calls by name.
 - `--by <GROUP>`: One row per usage origin (`user`, `session`, `client`, `job`, `mcp`, ...) Values: `origin`.
+
+## `cyber upgrade`
+
+Upgrade cyber to the channel's latest version or to VERSION
+
+```text
+cyber upgrade [OPTIONS] [VERSION]
+```
+
+**Arguments:**
+
+- `[VERSION]`: Version to install (`1.4.0` or `v1.4.0`); defaults to the channel's latest.
+
+**Options:**
+
+- `--method <METHOD>`: Install method instead of the detected one: script, brew, npm, pnpm, bun, cargo, scoop, winget, aur, nix, docker or unknown.
+- `--channel <CHANNEL>`: Channel to read the latest version from; defaults to the build's (`dev` reads `stable`) Values: `stable`, `beta`, `nightly`.
+- `--dry-run`: Print what would be done (target version, method, action) and change nothing.
+
+## `cyber uninstall`
+
+Remove cyber: its binary (script installs), PATH lines and directories
+
+```text
+cyber uninstall [OPTIONS]
+```
+
+**Options:**
+
+- `--keep-config`: Keep the configuration directory.
+- `--keep-data`: Keep the data directory (sessions, memory, stored logins) and the keyring entries.
+- `--dry-run`: List what would be removed, with sizes, and change nothing.
+- `--force`: Remove without asking, and go on when the background server cannot be stopped.
 
 ## `cyber eval`
 

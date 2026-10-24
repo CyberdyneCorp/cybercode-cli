@@ -375,6 +375,12 @@ export type CompactBody = {
   instructions?: string | null;
 };
 
+/** The configured `output_style` of a Location and the layer that set it. */
+export type Configured = {
+  name: string;
+  source: string;
+};
+
 /** One part of a message. Tool results travel in user messages. */
 export type Content = {
   text: string;
@@ -455,6 +461,11 @@ export type CreateBody = {
    * `{ "inbound": "refuse", "reason": "non_interactive" }`).
    */
   messaging?: InboundOverride | null;
+  /**
+   * The Session's own output style; refused when it is invalid, unknown or held at
+   * the Location, or for a child Session.
+   */
+  output_style?: string | null;
 };
 
 /**
@@ -616,6 +627,10 @@ export type Data_GoalFork = {
 
 export type Data_GoalsView = {
   data: GoalsView;
+};
+
+export type Data_InteractiveClient = {
+  data: InteractiveClient;
 };
 
 export type Data_InterruptedResume = {
@@ -1858,6 +1873,22 @@ export type InsightFactor = {
 /** A contributing factor. */
 export type InsightFactorKind = "subagent_heavy" | "long_running" | "large_context" | "workflow";
 
+/** The data of `installation.update_available.1` and `installation.updated.1`. */
+export type InstallationNotice = {
+  current: string;
+  latest: string;
+  /** `major`, `minor` or `patch`. */
+  kind: string;
+  notes_url?: string | null;
+};
+
+export type InteractiveClient = {
+  client_id: string;
+  session_id: string;
+  /** Expiration in milliseconds since the Unix epoch. Authority uses a monotonic clock. */
+  expires_at: number;
+};
+
 /** What resuming the interrupted runs did. */
 export type InterruptedResume = {
   /** Resumed runs, in `started_ms` order; each is `running` or `queued`. */
@@ -2247,6 +2278,12 @@ export type Located_Session = {
 export type Located_SkillCatalog = {
   location: LocationInfo;
   data: SkillCatalog;
+};
+
+/** A Location-scoped response. */
+export type Located_StyleListing = {
+  location: LocationInfo;
+  data: StyleListing;
 };
 
 /** A Location-scoped response. */
@@ -2735,6 +2772,17 @@ export type Organization = {
 
 /** How an iteration ended. */
 export type Outcome = "completed" | "interrupted" | "failed" | "skipped_overlap" | "skipped_missed";
+
+/** An available output style. */
+export type OutputStyle = {
+  name: string;
+  description: string;
+  origin: StyleOrigin;
+  /** The file of a user or project style. */
+  path?: string | null;
+  /** Styles of the same name this one replaced (a user one under a project one). */
+  shadows: string[];
+};
 
 /** What to do with a tick that arrives while the previous iteration still runs. */
 export type Overlap = "skip" | "coalesce";
@@ -3506,6 +3554,11 @@ export type Session = {
    * changed. Teammates are root Sessions, so they outlive the lead.
    */
   team?: TeamTag | null;
+  /**
+   * The Session's own output style (`system-context` → Output style selection);
+   * `None` follows the Location's configuration. Only primary Sessions have one.
+   */
+  output_style?: string | null;
   /** `idle` or `running`. */
   status: string;
   /** Mode of the running Turn, or the selected mode while idle. */
@@ -3611,6 +3664,11 @@ export type SessionInfo = {
    * changed. Teammates are root Sessions, so they outlive the lead.
    */
   team?: TeamTag | null;
+  /**
+   * The Session's own output style (`system-context` → Output style selection);
+   * `None` follows the Location's configuration. Only primary Sessions have one.
+   */
+  output_style?: string | null;
 };
 
 /** Where a Session runs. */
@@ -3925,6 +3983,37 @@ export type StopService = {
   id: string;
 };
 
+/**
+ * `{ style: string | null }`: `null` returns a Session to its configured style, and
+ * sets the global default to `default`.
+ */
+export type StyleBody = {
+  style?: string | null;
+};
+
+/** A style file that did not load, and why. */
+export type StyleIssue = {
+  path: string;
+  message: string;
+};
+
+/**
+ * The styles of a Location with its configured and effective style (`GET
+ * /api/v1/config/output-styles`).
+ */
+export type StyleListing = {
+  styles: OutputStyle[];
+  issues: StyleIssue[];
+  configured?: Configured | null;
+  /** The style a new Session there uses. */
+  effective: string;
+  /** Why the configured style does not apply, when it does not. */
+  unavailable?: string | null;
+};
+
+/** Where a style came from. */
+export type StyleOrigin = "builtin" | "user" | "project";
+
 /** How a subagent group is named. */
 export type SubagentGroupKind = "agent" | "workflow" | "fork";
 
@@ -4123,6 +4212,28 @@ export type UpdateBody = {
   archived?: boolean | null;
   /** Set the Session's `messaging.inbound` override; `{ "inbound": null }` clears it. */
   messaging?: MessagingPatch | null;
+};
+
+/** The last update check, or the running build before the first one. */
+export type UpdateStatus = {
+  /** The running server's version. */
+  current: string;
+  /** The channel looked up (`dev` builds look up `stable`). */
+  channel: string;
+  /** How the server binary was installed, once a check detected it. */
+  method?: string | null;
+  /** The channel's latest version; `null` before the first check. */
+  latest?: string | null;
+  /** `major`, `minor` or `patch` when `latest` is newer than `current`. */
+  kind?: string | null;
+  notes_url?: string | null;
+  /** The oldest supported version, from the cached or fetched manifest. */
+  min_supported?: string | null;
+  /** `current` is older than `min_supported`. */
+  unsupported: boolean;
+  /** A silent patch upgrade installed `latest`; clients restart to use it. */
+  updated: boolean;
+  checked_at_ms?: number | null;
 };
 
 /**

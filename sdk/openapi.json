@@ -1968,6 +1968,76 @@
         ],
         "description": "The listening server and its running work, so a client of another build can decide\nwhether restarting it interrupts anything."
       },
+      "UpdateStatus": {
+        "type": "object",
+        "properties": {
+          "current": {
+            "type": "string",
+            "description": "The running server's version."
+          },
+          "channel": {
+            "type": "string",
+            "description": "The channel looked up (`dev` builds look up `stable`)."
+          },
+          "method": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "How the server binary was installed, once a check detected it."
+          },
+          "latest": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The channel's latest version; `null` before the first check."
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`major`, `minor` or `patch` when `latest` is newer than `current`."
+          },
+          "notes_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "min_supported": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The oldest supported version, from the cached or fetched manifest."
+          },
+          "unsupported": {
+            "type": "boolean",
+            "description": "`current` is older than `min_supported`."
+          },
+          "updated": {
+            "type": "boolean",
+            "description": "A silent patch upgrade installed `latest`; clients restart to use it."
+          },
+          "checked_at_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "current",
+          "channel",
+          "unsupported",
+          "updated"
+        ],
+        "description": "The last update check, or the running build before the first one."
+      },
       "Page_Job": {
         "type": "object",
         "properties": {
@@ -4229,6 +4299,13 @@
               }
             ],
             "description": "The team this Session is a member of (`agent-teams`), set at creation and never\nchanged. Teammates are root Sessions, so they outlive the lead."
+          },
+          "output_style": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Session's own output style (`system-context` → Output style selection);\n`None` follows the Location's configuration. Only primary Sessions have one."
           }
         },
         "required": [
@@ -4454,6 +4531,13 @@
               }
             ],
             "description": "Session-level `messaging.inbound` override (`cyber exec` refuses messages with\n`{ \"inbound\": \"refuse\", \"reason\": \"non_interactive\" }`)."
+          },
+          "output_style": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Session's own output style; refused when it is invalid, unknown or held at\nthe Location, or for a child Session."
           }
         }
       },
@@ -4637,6 +4721,13 @@
               }
             ],
             "description": "The team this Session is a member of (`agent-teams`), set at creation and never\nchanged. Teammates are root Sessions, so they outlive the lead."
+          },
+          "output_style": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Session's own output style (`system-context` → Output style selection);\n`None` follows the Location's configuration. Only primary Sessions have one."
           },
           "status": {
             "type": "string",
@@ -5748,6 +5839,38 @@
         ],
         "additionalProperties": true
       },
+      "Data_InteractiveClient": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/InteractiveClient"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "InteractiveClient": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Expiration in milliseconds since the Unix epoch. Authority uses a monotonic clock."
+          }
+        },
+        "required": [
+          "client_id",
+          "session_id",
+          "expires_at"
+        ]
+      },
       "CommandBody": {
         "type": "object",
         "properties": {
@@ -5985,6 +6108,20 @@
         "required": [
           "mode"
         ]
+      },
+      "StyleBody": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "style": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "description": "`{ style: string | null }`: `null` returns a Session to its configured style, and\nsets the global default to `default`."
       },
       "CompactBody": {
         "type": "object",
@@ -8931,6 +9068,142 @@
           "stable"
         ],
         "description": "How far along a feature is. `experimental` features are off by default."
+      },
+      "Located_StyleListing": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/StyleListing"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "StyleListing": {
+        "type": "object",
+        "properties": {
+          "styles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OutputStyle"
+            }
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StyleIssue"
+            }
+          },
+          "configured": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Configured"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "effective": {
+            "type": "string",
+            "description": "The style a new Session there uses."
+          },
+          "unavailable": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the configured style does not apply, when it does not."
+          }
+        },
+        "required": [
+          "styles",
+          "issues",
+          "effective"
+        ],
+        "description": "The styles of a Location with its configured and effective style (`GET\n/api/v1/config/output-styles`)."
+      },
+      "OutputStyle": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/StyleOrigin"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The file of a user or project style."
+          },
+          "shadows": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Styles of the same name this one replaced (a user one under a project one)."
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "origin",
+          "shadows"
+        ],
+        "description": "An available output style."
+      },
+      "StyleOrigin": {
+        "type": "string",
+        "enum": [
+          "builtin",
+          "user",
+          "project"
+        ],
+        "description": "Where a style came from."
+      },
+      "StyleIssue": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "message"
+        ],
+        "description": "A style file that did not load, and why."
+      },
+      "Configured": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "source"
+        ],
+        "description": "The configured `output_style` of a Location and the layer that set it."
       },
       "Located_Definitions": {
         "type": "object",
@@ -13313,6 +13586,33 @@
         ],
         "description": "`mcp.tools.changed.1`: a server's tools and prompts were published on (re)connect or\nre-listed after its `list_changed` notification. A live observation of the published names, never durable;\ninvoking them still requires ordinary authorization."
       },
+      "InstallationNotice": {
+        "type": "object",
+        "properties": {
+          "current": {
+            "type": "string"
+          },
+          "latest": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`major`, `minor` or `patch`."
+          },
+          "notes_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "current",
+          "latest",
+          "kind"
+        ],
+        "description": "The data of `installation.update_available.1` and `installation.updated.1`."
+      },
       "WorkflowRunProgress": {
         "type": "object",
         "properties": {
@@ -16443,6 +16743,38 @@
         }
       }
     },
+    "/api/v1/service/update": {
+      "get": {
+        "operationId": "v1.service.update",
+        "summary": "The last background update check: current and latest version, bump kind, method and minimum supported version",
+        "tags": [
+          "service"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/jobs": {
       "get": {
         "operationId": "v1.job.list",
@@ -18687,6 +19019,170 @@
         }
       }
     },
+    "/api/v1/sessions/{sessionID}/interactive-clients": {
+      "post": {
+        "operationId": "v1.session.interactiveAttach",
+        "summary": "Create a 45-second owner-authenticated browser attachment",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_InteractiveClient"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/interactive-clients/{clientID}": {
+      "put": {
+        "operationId": "v1.session.interactiveRenew",
+        "summary": "Renew only a live browser attachment",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "clientID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_InteractiveClient"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The attachment expired or does not match this Session/Location",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "v1.session.interactiveRelease",
+        "summary": "Release only this browser attachment",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "clientID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "OK"
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{sessionID}/command": {
       "post": {
         "operationId": "v1.command.run",
@@ -19126,6 +19622,75 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ModeBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/output-style": {
+      "post": {
+        "operationId": "v1.session.outputStyle",
+        "summary": "Switch the Session's own output style from the next Turn; null follows the configured style",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Session"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError: an invalid, unknown or held style, or a Session with a parent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StyleBody"
               }
             }
           }
@@ -21486,6 +22051,142 @@
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/output-styles": {
+      "get": {
+        "operationId": "v1.config.outputStyles",
+        "summary": "Output styles of the Location (project ones only from a trusted checkout), the files that failed to load or are held for trust, and the configured and effective style",
+        "tags": [
+          "config"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_StyleListing"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError: the Location's configuration is invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/output-style": {
+      "put": {
+        "operationId": "v1.config.setOutputStyle",
+        "summary": "Set the global default output style (a built-in or user style; null sets default), keeping every other byte of the document",
+        "tags": [
+          "config"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_StyleListing"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError: an invalid or unknown style, or one defined only by a project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StyleBody"
               }
             }
           }

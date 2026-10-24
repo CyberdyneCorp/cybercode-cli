@@ -358,7 +358,7 @@ pub fn parse(text: &str, path: &Path, max_teammates: u32) -> Result<TeamDefiniti
 }
 
 /// `(frontmatter, body)`; the frontmatter is `None` without an opening `---` line.
-fn split_frontmatter(text: &str) -> Result<(Option<&str>, &str), String> {
+pub(crate) fn split_frontmatter(text: &str) -> Result<(Option<&str>, &str), String> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let Some(rest) = text
         .strip_prefix("---\n")

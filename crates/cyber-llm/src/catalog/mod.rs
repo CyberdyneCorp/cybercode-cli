@@ -5,6 +5,7 @@ mod config;
 mod copilot;
 mod cost;
 mod credentials;
+mod family;
 mod model_ref;
 mod models_dev;
 mod roles;
@@ -22,6 +23,7 @@ use crate::types::{LlmRequest, Reasoning};
 
 pub use cost::compute as compute_cost;
 pub use credentials::{Credential, CredentialSource};
+pub use family::model_family;
 pub use model_ref::ModelRef;
 pub use roles::{ModelRole, default_model, recent_models, record_recent, role_ref, tier_role_ref};
 pub use source::{Loaded, Origin, SourceOptions, load as load_source};

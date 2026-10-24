@@ -1,0 +1,190 @@
+name: Release
+
+# A release is cut by pushing the tag `v<workspace version>` (`installation-upgrade` →
+# Release targets). Nothing else triggers this workflow: not pull requests, not branch
+# pushes, not a manual dispatch. scripts/tests/test_release_workflow.py checks that.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+# Explicit bash adds pipefail, on Windows runners too.
+defaults:
+  run:
+    shell: bash
+
+# One release at a time across tags, so two racing tags cannot both read the channel
+# manifest before either updates it.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify tag
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      channel: ${{ steps.tag.outputs.channel }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - name: Release asset tests
+        run: python -m unittest discover -s scripts/tests -v
+      - id: tag
+        name: Tag matches the workspace version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: python scripts/release_assets.py check-tag "$TAG" | tee -a "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.target }})
+    needs: verify
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    # No build cache: a release is built from the tagged sources alone.
+    env:
+      CYBER_CHANNEL: ${{ needs.verify.outputs.channel }}
+      CYBER_GIT_SHA: ${{ github.sha }}
+      VERSION: ${{ needs.verify.outputs.version }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - name: Native C build prerequisites
+        if: runner.os == 'Linux'
+        run: sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update && sudo apt-get install -y cmake pkg-config musl-tools
+      - name: Configure musl linker
+        if: endsWith(matrix.target, '-musl')
+        run: |
+          {
+            echo 'CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc'
+            echo 'CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc'
+            echo 'CC=musl-gcc'
+          } >> "$GITHUB_ENV"
+      - name: Build
+        run: cargo build --locked --release --workspace --bins --target "$TARGET"
+      - name: Smoke test
+        run: |
+          out="$(target/"$TARGET"/release/cyber --version)"
+          echo "$out"
+          case "$out" in
+            "cyber $VERSION ($CYBER_CHANNEL, "*) ;;
+            *) echo "unexpected version output"; exit 1 ;;
+          esac
+      - name: Package
+        run: python scripts/release_assets.py package --version "$VERSION" --target "$TARGET" --bin-dir "target/$TARGET/release" --out dist
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: archive-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  # The only job that can write the release or mint a Sigstore identity token. It runs
+  # after every build, so a failed target publishes nothing.
+  publish:
+    name: Publish
+    needs: [verify, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+      CHANNEL: ${{ needs.verify.outputs.channel }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: archive-*
+          merge-multiple: true
+          path: dist
+      - name: SHA256SUMS
+        run: python scripts/release_assets.py sums --version "$VERSION" dist
+      - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+      - name: Sign
+        # Keyless: the certificate names this workflow at refs/tags/v<version>, the
+        # identity `cyber upgrade` requires.
+        run: |
+          for file in dist/*.tar.gz dist/*.zip dist/SHA256SUMS; do
+            cosign sign-blob --yes --bundle "$file.sigstore.json" "$file"
+          done
+      - name: Channel manifest and packaging
+        env:
+          NOTES_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/v${{ needs.verify.outputs.version }}
+          MIN_SUPPORTED: ${{ vars.CYBER_MIN_SUPPORTED }}
+        run: |
+          cp scripts/install.sh dist/install.sh
+          mkdir -p channel
+          python scripts/release_assets.py manifest --version "$VERSION" --notes-url "$NOTES_URL" --min-supported "$MIN_SUPPORTED" --out "channel/$CHANNEL.json"
+          python scripts/release_assets.py render --version "$VERSION" --sums dist/SHA256SUMS --dist dist --out dist
+          python scripts/release_assets.py assets --version "$VERSION" dist
+      - id: order
+        name: Newer than the ${{ needs.verify.outputs.channel }} channel
+        # A backport tag (v1.3.5 after v1.4.0) is released but never becomes the
+        # channel's latest. A channel release without its manifest fails the download,
+        # and so the job: nothing is published on a guess.
+        run: |
+          mkdir -p published
+          if gh release view "channel-$CHANNEL" >/dev/null 2>&1; then
+            gh release download "channel-$CHANNEL" --pattern "$CHANNEL.json" --dir published
+          fi
+          python scripts/release_assets.py newer --version "$VERSION" --current "published/$CHANNEL.json" | tee -a "$GITHUB_OUTPUT"
+      - name: Release v${{ needs.verify.outputs.version }}
+        env:
+          NEWER: ${{ steps.order.outputs.newer }}
+        run: |
+          if [ "$CHANNEL" != stable ]; then kind=--prerelease
+          elif [ "$NEWER" = true ]; then kind=--latest
+          else kind=--latest=false; fi
+          gh release create "v$VERSION" --verify-tag "$kind" --title "cyber $VERSION" --generate-notes dist/*
+      - name: Channel ${{ needs.verify.outputs.channel }}
+        if: steps.order.outputs.newer == 'true'
+        run: |
+          if ! gh release view "channel-$CHANNEL" >/dev/null 2>&1; then
+            gh release create "channel-$CHANNEL" --latest=false --target "$GITHUB_SHA" \
+              --title "cyber $CHANNEL channel" --notes "The latest $CHANNEL release, for cyber upgrade."
+          fi
+          gh release upload "channel-$CHANNEL" "channel/$CHANNEL.json" --clobber

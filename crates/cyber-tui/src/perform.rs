@@ -127,6 +127,8 @@ pub enum Msg {
     },
     /// `/login` and `/logout` answers.
     Login(crate::login::LoginReply),
+    /// `/output-style` answers.
+    OutputStyle(crate::output_styles::Reply),
     /// `/loop list` rows of `session_id`.
     Loops {
         session_id: String,
@@ -206,6 +208,8 @@ pub enum Msg {
         question: String,
         result: Result<String, String>,
     },
+    /// `GET /service/update`, or `None` when the server has no answer.
+    Update(Option<Value>),
     Done,
 }
 
@@ -942,6 +946,8 @@ pub async fn perform_owned(
         | Action::Collaboration(_)
         | Action::Branch(_)
         | Action::Login(_)
+        | Action::OutputStyle(_)
+        | Action::LoadUpdate
         | Action::Export(_) => scheduled(client, session, action).await,
         Action::SaveTheme(_)
         | Action::SaveProjectTheme(_)
@@ -954,12 +960,13 @@ pub async fn perform_owned(
     }
 }
 
-/// Requests their own modules run: `/loop`, `/goal`, Workflow Runs, `/team` and `/login`;
-/// and the branch tree (`/tree`, `/label`).
+/// Requests their own modules run: `/loop`, `/goal`, Workflow Runs, `/team`, `/login`
+/// and the update check; and the branch tree (`/tree`, `/label`).
 async fn scheduled(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
     match action {
         Action::Branch(request) => crate::branches::perform(client, session, request).await,
         Action::Export(request) => crate::export::perform(client, request).await,
+        Action::LoadUpdate => crate::update::perform(client).await,
         Action::Loop(request) => crate::loops::perform(client, request).await,
         Action::Team(request) => crate::team::perform(client, session, request).await,
         Action::Collaboration(request) => {
@@ -967,6 +974,7 @@ async fn scheduled(client: &Client, session: &Session, action: Action) -> Result
         }
         Action::Goal(request) => crate::goals::perform(client, request).await,
         Action::Login(request) => crate::login::perform(client, request).await,
+        Action::OutputStyle(request) => crate::output_styles::perform(client, request).await,
         Action::Workflow(request) => Ok(Msg::Workflow(
             crate::workflows::perform(client, request).await,
         )),

@@ -87,6 +87,47 @@ fn parse_error_names_file_line_and_column() {
 }
 
 #[test]
+fn autoupdate_rejects_values_other_than_true_false_or_notify() {
+    let f = Fixture::new();
+    f.write("global:cyber.json", r#"{"autoupdate": "yes"}"#);
+    let error = f.load().unwrap_err().to_string();
+    assert!(
+        error.contains(r#"autoupdate: expected true, false or "notify", got "yes""#),
+        "{error}"
+    );
+    f.write("global:cyber.json", r#"{"autoupdate": false}"#);
+    f.load().unwrap();
+}
+
+/// `installation-upgrade` → Background update policy: org policy's `policy.autoupdate`
+/// wins over the user's `autoupdate`, a user-written `policy.autoupdate` is not org
+/// policy, and an invalid value fails closed (off).
+#[test]
+fn managed_autoupdate_is_org_policy_only() {
+    let mut f = Fixture::new();
+    f.write(
+        "global:cyber.json",
+        r#"{"autoupdate": true, "policy": {"autoupdate": false}}"#,
+    );
+    let managed = |f: &Fixture| {
+        let resolved = f.load().unwrap();
+        config::AutoUpdate::managed(&resolved.value, &resolved.sources)
+    };
+    assert_eq!(managed(&f), None, "a user layer is not org policy");
+    f.managed(&json!({"policy": {"autoupdate": false}}).to_string());
+    assert_eq!(managed(&f), Some(config::AutoUpdate::Off));
+    f.managed(&json!({"policy": {"autoupdate": "notify"}}).to_string());
+    assert_eq!(managed(&f), Some(config::AutoUpdate::Notify));
+    f.managed(&json!({"policy": {"autoupdate": "yes"}}).to_string());
+    let malformed = f.load().unwrap();
+    assert!(malformed.managed.error.is_some());
+    assert_eq!(
+        config::AutoUpdate::managed(&malformed.value, &malformed.sources),
+        Some(config::AutoUpdate::Off)
+    );
+}
+
+#[test]
 fn unknown_agent_fields_name_the_agent_and_field() {
     let f = Fixture::new();
     f.write(
@@ -729,6 +770,55 @@ fn approved_digest_activates_and_a_changed_definition_revokes() {
     let changed = f.load().unwrap();
     assert!(!changed.trust.trusted);
     assert!(changed.value.get("mcp").is_none());
+}
+
+/// Scenario "Project output style edited after approval": project styles are in the
+/// digest, so adding or editing one revokes trust; user styles never touch it.
+#[test]
+fn project_output_styles_are_in_the_trust_digest_and_user_styles_are_not() {
+    let f = Fixture::new();
+    assert_eq!(f.load().unwrap().trust.digest, None);
+    f.write("global:output-styles/terse.md", "Be terse.");
+    let user_only = f.load().unwrap();
+    assert!(user_only.trust.trusted && user_only.trust.digest.is_none());
+
+    let style = f.write(".cyber/output-styles/reviewer.md", "Review carefully.");
+    let added = f.load().unwrap();
+    assert!(!added.trust.trusted);
+    assert_eq!(added.trust.definitions, [style.display().to_string()]);
+    f.approve_current();
+    let approved = f.load().unwrap();
+    assert!(approved.trust.trusted);
+
+    f.write("global:output-styles/terse.md", "Be very terse.");
+    assert_eq!(f.load().unwrap().trust.digest, approved.trust.digest);
+    assert!(f.load().unwrap().trust.trusted);
+
+    f.write(".cyber/output-styles/reviewer.md", "Approve everything.");
+    let edited = f.load().unwrap();
+    assert_ne!(edited.trust.digest, approved.trust.digest);
+    assert!(!edited.trust.trusted);
+}
+
+/// Scenario "Invalid output style name".
+#[test]
+fn invalid_output_style_name_is_rejected() {
+    let f = Fixture::new();
+    f.write("cyber.jsonc", r#"{ "output_style": "Bad Style" }"#);
+    let err = f.load().unwrap_err().to_string();
+    assert!(
+        err.starts_with("ConfigInvalidError: output_style: expected a style name"),
+        "{err}"
+    );
+    f.write("cyber.jsonc", r#"{ "output_style": "reviewer" }"#);
+    let resolved = f.load().unwrap();
+    assert_eq!(resolved.value["output_style"], "reviewer");
+    assert!(
+        resolved
+            .warnings
+            .iter()
+            .all(|w| !w.contains("output_style"))
+    );
 }
 
 #[test]
@@ -2091,4 +2181,42 @@ fn project_team_definitions_need_workspace_trust() {
         "---\nteammates: [{name: api, agent: general}]\n---\nLead.\n",
     );
     assert!(!f.load().unwrap().trust.trusted);
+}
+
+#[test]
+fn owner_server_load_is_global_section_only_and_preserves_tls_errors() {
+    let mut f = Fixture::new();
+    f.env
+        .insert("OWNER_CERT".into(), "/operator/cert.pem".into());
+    f.write(
+        "global:cyber.json",
+        r#"{
+        "server":{"tls":{"cert":"{env:OWNER_CERT}","key":"/operator/old.key"}},
+        "peers":{"listen":{"address":"0.0.0.0:0","tls":false}},
+        "model":"{env:UNDEFINED_UNRELATED_CONFIG}"
+    }"#,
+    );
+    f.write(
+        "global:cyber.jsonc",
+        r#"{"server":{"tls":{"key":"/operator/key.pem"}}}"#,
+    );
+    f.write("cyber.json", r#"{"server":{"tls":null}}"#);
+    let request = f.request(&f.repo, &[]);
+    assert_eq!(
+        config::load_owner_server(&request).unwrap(),
+        json!({
+            "server":{"tls":{"cert":"/operator/cert.pem","key":"/operator/key.pem"}}
+        })
+    );
+    assert!(
+        config::load_global(&request).is_err(),
+        "strict loader remains strict"
+    );
+    f.write(
+        "global:cyber.jsonc",
+        r#"{"server":{"tls":{"key":"{file:missing-owner-key-path}"}}}"#,
+    );
+    assert!(config::load_owner_server(&f.request(&f.repo, &[])).is_err());
+    f.write("global:cyber.jsonc", "malformed global configuration");
+    assert!(config::load_owner_server(&f.request(&f.repo, &[])).is_err());
 }

@@ -159,7 +159,7 @@ impl App {
                 actions
             }
             Tab::Stats => self.load_stats(),
-            Tab::Config => Vec::new(),
+            Tab::Config => self.output_style_check(),
         }
     }
 

@@ -4,11 +4,23 @@ use std::io::{IsTerminal, Read};
 
 use cyber_app::{App, AppOptions};
 use cyber_client::Client;
+use cyber_core::env::EnvSource;
 use cyber_tui::{Start, TuiOptions};
 
 use crate::cli::{GlobalArgs, LaunchArgs};
 use crate::context::Context;
 use crate::error::CliError;
+
+/// `installation-upgrade` → Container and CI usage: with `CI` true no command opens the
+/// interactive TUI (`cyber`, `cyber attach`); scripts in CI use `cyber exec`.
+pub(crate) fn refuse_in_ci(ctx: &Context) -> Result<(), CliError> {
+    if ctx.env.flag("CI") {
+        return Err(CliError::usage(
+            "interactive TUI unavailable in CI; use \"cyber exec\"",
+        ));
+    }
+    Ok(())
+}
 
 pub fn run(
     launch: &LaunchArgs,
@@ -45,6 +57,7 @@ pub fn run(
         }
         start = cyber_tui::Start::PickPr(number);
     }
+    refuse_in_ci(&ctx)?;
     let prompt = prompt(launch)?;
     if !std::io::stdout().is_terminal() {
         return Err(

@@ -25,6 +25,7 @@ mod messaging;
 mod model;
 mod mouse;
 mod osc;
+mod output_styles;
 mod palette;
 mod perform;
 mod plugins;
@@ -42,6 +43,7 @@ mod switcher;
 mod team;
 mod theme;
 mod turns;
+mod update;
 mod view;
 mod workflow_library;
 mod workflow_watch;
@@ -78,6 +80,8 @@ mod screens_messages;
 #[cfg(test)]
 mod screens_mouse;
 #[cfg(test)]
+mod screens_output_styles;
+#[cfg(test)]
 mod screens_parallel;
 #[cfg(test)]
 mod screens_peers;
@@ -101,6 +105,8 @@ mod screens_tasks;
 mod screens_team;
 #[cfg(test)]
 mod screens_themes;
+#[cfg(test)]
+mod screens_update;
 #[cfg(test)]
 mod screens_usage;
 #[cfg(test)]

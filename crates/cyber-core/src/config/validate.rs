@@ -14,6 +14,7 @@ const KNOWN_KEYS: &[&str] = &[
     "agents",
     "default_agent",
     "mode",
+    "output_style",
     "permissions",
     "sandbox",
     "hooks",
@@ -59,6 +60,7 @@ const KNOWN_KEYS: &[&str] = &[
     "storage",
     "compat",
     "services",
+    "server",
     "features",
     "experimental",
     "autoupdate",
@@ -102,6 +104,7 @@ pub fn validate(
         }
     }
     check_mode(map.get("mode"), "mode", &mut issues);
+    check_output_style(map.get("output_style"), &mut issues);
     super::agents::check(map.get("agents"), &mut issues);
     for key in ["model", "small_model"] {
         check_model_ref(map.get(key), key, &mut issues);
@@ -137,6 +140,7 @@ fn settings_issues(value: &Value) -> Vec<String> {
         super::PeersSettings::from_config(value).err(),
         super::GitSettings::from_config(value).err(),
         crate::browser::BrowserSettings::from_config(value).err(),
+        super::AutoUpdate::from_config(value).err(),
         super::AttachmentSettings::from_config(value).err(),
     ];
     let mut issues: Vec<String> = sections.into_iter().flatten().collect();
@@ -169,6 +173,17 @@ pub(super) fn check_mode(value: Option<&Value>, path: &str, issues: &mut Vec<Str
         Some(other) => issues.push(format!(
             "{path}: expected one of {}, got {other}",
             MODES.join(", ")
+        )),
+    }
+}
+
+/// Syntax only: whether a style is defined depends on the Location.
+fn check_output_style(value: Option<&Value>, issues: &mut Vec<String>) {
+    match value {
+        None => {}
+        Some(Value::String(name)) if crate::output_styles::valid_name(name) => {}
+        Some(other) => issues.push(format!(
+            "output_style: expected a style name (lowercase letters, digits, '_' and '-'), got {other}"
         )),
     }
 }

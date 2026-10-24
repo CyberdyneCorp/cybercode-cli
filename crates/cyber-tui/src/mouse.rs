@@ -62,6 +62,8 @@ pub enum List {
     Tree,
     /// The Settings Config rows.
     Config,
+    /// The output style picker's styles.
+    OutputStyles,
     /// The sidebar's focusable rows.
     Sidebar,
 }
@@ -420,7 +422,8 @@ impl App {
             | List::Messages
             | List::Team
             | List::Tree
-            | List::Config => self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            | List::Config
+            | List::OutputStyles => self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
         }
     }
 
@@ -467,6 +470,11 @@ impl App {
                 .get(self.settings.config_row)
                 .map(|(name, _)| (*name).to_owned()),
             (List::Sidebar, Overlay::None) => self.selected_sidebar_item(),
+            (List::OutputStyles, Overlay::OutputStyles(p)) => {
+                let listing = self.output_styles.listing.as_ref()?;
+                let &i = p.visible(listing).get(p.selected)?;
+                Some(listing.styles[i].name.clone())
+            }
             _ => None,
         }
     }
@@ -495,6 +503,10 @@ impl App {
         let branches = self.branches.rows().len();
         let config = crate::prefs::EDITABLE.len();
         let config_tab = self.settings.tab == crate::settings::Tab::Config;
+        let styles = match (&self.overlay, &self.output_styles.listing) {
+            (Overlay::OutputStyles(p), Some(listing)) => p.visible(listing).len(),
+            _ => 0,
+        };
         let (selected, len) = match (list, &mut self.overlay) {
             (List::Picker, Overlay::Picker(p)) if p.pending.is_none() => {
                 (&mut p.selected, p.filtered.len())
@@ -510,6 +522,7 @@ impl App {
             (List::Config, Overlay::Settings) if config_tab => {
                 (&mut self.settings.config_row, config)
             }
+            (List::OutputStyles, Overlay::OutputStyles(p)) => (&mut p.selected, styles),
             _ => return false,
         };
         choose(selected, index, len)

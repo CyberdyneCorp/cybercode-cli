@@ -731,6 +731,21 @@ fn read_index(path: &Path) -> Result<Index, OAuthError> {
     Ok(index)
 }
 
+/// Every server the index at `index` names (credentials, markers and entries pending
+/// deletion), for `remove_server` on each: `cyber uninstall` sweeps the keyring from
+/// cyber's own records, so an absent index means no keyring call.
+pub fn indexed_servers(index: &Path) -> Result<BTreeSet<String>, OAuthError> {
+    let index = read_index(index)?;
+    let credentials = index.credentials.iter().map(|record| &record.server);
+    let markers = index.markers.iter().map(|marker| &marker.server);
+    let unlisted = index.unlisted.iter().map(|entry| &entry.server);
+    Ok(credentials
+        .chain(markers)
+        .chain(unlisted)
+        .cloned()
+        .collect())
+}
+
 /// Whether the legacy file takes part: never when nothing is at its path, so an absent
 /// file is no obstacle even where the file backend is refused; otherwise only where
 /// `supported` (the file backend's platform check) allows, and its refusal is surfaced.
@@ -1454,6 +1469,33 @@ mod tests {
                 .replace(&other_issuer, &refreshed.tokens, &first)
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn indexed_servers_names_every_server_with_a_record_or_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let index = dir.path().join("mcp-auth-index.json");
+        assert!(indexed_servers(&index).unwrap().is_empty());
+        let (store, _vault) = store(&dir);
+        store
+            .put(
+                &key("remote", URL, "https://as.example.test/"),
+                &credential("a"),
+            )
+            .unwrap();
+        store.mark("marked", URL, &AuthMarker::default()).unwrap();
+        store
+            .mark(
+                "marked",
+                URL,
+                &AuthMarker {
+                    needs_client_registration: true,
+                    ..AuthMarker::default()
+                },
+            )
+            .unwrap();
+        let servers: Vec<_> = indexed_servers(&index).unwrap().into_iter().collect();
+        assert_eq!(servers, ["marked", "remote"]);
     }
 
     #[test]
