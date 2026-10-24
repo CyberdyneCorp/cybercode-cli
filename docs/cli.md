@@ -2070,10 +2070,27 @@ cyber collab applications [OPTIONS] <COMMAND>
 
 **Subcommands:**
 
+- [`status`](#cyber-collab-applications-status): Read your own pending application and refresh identity for owner approval
 - [`list`](#cyber-collab-applications-list)
 - [`approve`](#cyber-collab-applications-approve)
 - [`reject`](#cyber-collab-applications-reject)
 - [`redeem`](#cyber-collab-applications-redeem): Confirm the displayed repository and optionally redeem a join code from stdin
+
+## `cyber collab applications status`
+
+Read your own pending application and refresh identity for owner approval
+
+```text
+cyber collab applications status [OPTIONS] --hub <HUB> <APPLICATION>
+```
+
+**Arguments:**
+
+- `<APPLICATION>`
+
+**Options:**
+
+- `--hub <HUB>`
 
 ## `cyber collab applications list`
 

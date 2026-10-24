@@ -82,7 +82,12 @@ export class HttpTransport implements Transport {
   private async headers(op: OperationSpec, extra: Record<string, string> = {}): Promise<Headers> {
     const headers = new Headers({ ...this.connection.headers, ...extra });
     const authorization = await this.connection.authorization();
-    if (authorization) headers.set("authorization", authorization);
+    if (op.tag === "hub" && !authorization?.startsWith("Bearer ")) {
+      // Hub metadata is public. A local owner password must never leave its
+      // execution boundary when a client is pointed at a project hub.
+      headers.delete("authorization");
+      if (op.name !== "hello") throw new CyberClientError("Transport", "hub operations require a separate bearer-authenticated client", { permanent: true });
+    } else if (authorization) headers.set("authorization", authorization);
     if (op.located && this.directory !== undefined) {
       headers.set("x-cyber-directory", encodeURIComponent(this.directory));
     }

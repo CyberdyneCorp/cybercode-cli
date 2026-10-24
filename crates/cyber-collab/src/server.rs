@@ -249,6 +249,11 @@ async fn handle(
         None
     };
     hub.rate(&actor, project)?;
+    if parts.get(2).is_some_and(|p| p == "deliveries") {
+        let project = parts[1].clone();
+        let copy = actor.clone();
+        hub.db.write(move|db|{copy.scope(db,&project,false)?;db.execute("UPDATE ch_objects SET body=json_set(body,'$.state','expired') WHERE kind='delivery' AND project=?1 AND json_extract(body,'$.message.expires_at')<=?2 AND json_extract(body,'$.state') IN ('queued','held')",params![project,now() as i64])?;Ok(())})?;
+    }
     if parts.get(2).is_some_and(|p| p == "deliveries") && parts.len() >= 5 {
         let recipient = actor.proof.account();
         actor.proof = hub
@@ -443,6 +448,20 @@ fn delivery_allowed(
     target: &str,
 ) -> Result<DeliveryAuthorization, Error> {
     let recipient = agent_owner(db, actor, target)?;
+    let delivery: Delivery = get(db, "delivery", &format!("{}:{target}", message.id))?;
+    let publication: Publication = get(db, "publication", recipient.id.as_str())?;
+    let recipient_generation = actor
+        .member
+        .as_ref()
+        .ok_or_else(Error::forbidden)?
+        .generation;
+    let receiving = publication.expires_at > now()
+        && publication.generation == recipient_generation
+        && !matches!(
+            delivery.state,
+            DeliveryState::Refused | DeliveryState::Dropped | DeliveryState::Expired
+        )
+        && (message.target != MessageTarget::Project || publication.subscribed);
     let author: Member = get(db, "member", message.owner.as_str())?;
     let proof = hub.auth_cached_source(db, &author)?;
     let source_active = author.active && author.generation == message.member_generation && proof;
@@ -453,7 +472,8 @@ fn delivery_allowed(
         }
         _ => true,
     };
-    let allowed = recipient.active
+    let allowed = receiving
+        && recipient.active
         && hub.runtime_live(&recipient.runtime)
         && source_active
         && published
@@ -556,17 +576,7 @@ fn read(
             let after = url::form_urlencoded::parse(query.as_bytes())
                 .find(|(k, _)| k == "after")
                 .map(|(_, v)| v.into_owned());
-            let messages = list::<Message>(db, "message", project)?
-                .into_iter()
-                .filter(|m| after.as_ref().is_none_or(|a| m.id.as_str() > a.as_str()))
-                .filter_map(|m| match visible(db, &actor, &m) {
-                    Ok(true) => Some(Ok(m)),
-                    Ok(false) => None,
-                    Err(e) => Some(Err(e)),
-                })
-                .take(500)
-                .collect::<Result<Vec<_>, _>>()?;
-            value(messages)
+            value(message_page(db, &actor, project, after.as_deref())?)
         }
         ["projects", _, "tasks"] => value(task_views(db, hub, project)?),
         ["projects", _, "deliveries"] => {
@@ -595,14 +605,7 @@ fn read(
             value(delivery_allowed(db, hub, &actor, &message, target)?)
         }
         ["projects", _, "snapshot"] => {
-            let messages = list::<Message>(db, "message", project)?
-                .into_iter()
-                .filter_map(|m| match visible(db, &actor, &m) {
-                    Ok(true) => Some(Ok(m)),
-                    Ok(false) => None,
-                    Err(e) => Some(Err(e)),
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+            let messages = message_page(db, &actor, project, None)?;
             let cursor: i64 = db.query_row(
                 "SELECT COALESCE(MAX(cursor),0) FROM ch_events WHERE project=?1",
                 [project],
@@ -620,6 +623,40 @@ fn read(
         ["projects", _, "events"] => events(db, &actor, project, query),
         _ => Err(Error::missing()),
     }
+}
+fn message_page(
+    db: &Connection,
+    actor: &Actor,
+    project: &str,
+    after: Option<&str>,
+) -> Result<Vec<Message>, Error> {
+    if let Some(id) = after {
+        id.parse::<MessageId>()
+            .map_err(|_| Error::invalid("invalid message cursor"))?;
+    }
+    let sql = if after.is_some() {
+        "SELECT body FROM ch_objects WHERE kind='message' AND project=?1 AND id>?2 ORDER BY id ASC"
+    } else {
+        "SELECT body FROM ch_objects WHERE kind='message' AND project=?1 AND id>?2 ORDER BY id DESC"
+    };
+    let mut statement = db.prepare(sql)?;
+    let rows = statement.query_map(params![project, after.unwrap_or("")], |r| {
+        r.get::<_, String>(0)
+    })?;
+    let mut messages = Vec::new();
+    for row in rows {
+        let message: Message = decode(&row?)?;
+        if visible(db, actor, &message)? {
+            messages.push(message);
+            if messages.len() == 500 {
+                break;
+            }
+        }
+    }
+    if after.is_none() {
+        messages.reverse();
+    }
+    Ok(messages)
 }
 fn task_views(db: &Connection, hub: &Hub, project: &str) -> Result<Vec<Task>, Error> {
     let mut tasks = list::<Task>(db, "task", project)?;
@@ -666,6 +703,17 @@ fn events(db: &Connection, actor: &Actor, project: &str, query: &str) -> Result<
         [project],
         |r| r.get(0),
     )?;
+    let current: i64 = db.query_row(
+        "SELECT COALESCE(MAX(cursor),0) FROM ch_events WHERE project=?1",
+        [project],
+        |r| r.get(0),
+    )?;
+    if after > current as u64 {
+        return Err(Error::new(
+            "ResyncRequiredError",
+            "cursor is newer than restored state; fetch an authorized snapshot",
+        ));
+    }
     if after > 0 && first as u64 > after.saturating_add(1) {
         return Err(Error::new(
             "ResyncRequiredError",
@@ -981,9 +1029,11 @@ fn publish(
     {
         return Err(Error::forbidden());
     }
-    let prior = list::<Publication>(db, "publication", project)?
-        .into_iter()
-        .find(|p| p.agent.owner == member.id && p.key == request.publication_key);
+    // An explicit revocation permanently retires the public agent identity.
+    // Reusing it could revive prompts queued before unpublish or membership removal.
+    use rusqlite::OptionalExtension;
+    let prior:Option<String>=db.query_row("SELECT p.body FROM ch_objects p JOIN ch_objects a ON a.kind='agent' AND a.id=p.id WHERE p.kind='publication' AND p.project=?1 AND json_extract(p.body,'$.key')=?2 AND json_extract(p.body,'$.generation')=?3 AND json_extract(a.body,'$.owner')=?4 AND json_extract(a.body,'$.active')=1 ORDER BY p.id DESC LIMIT 1",params![project,request.publication_key,member.generation as i64,member.id.as_str()],|row|row.get(0)).optional()?;
+    let prior: Option<Publication> = prior.map(|body| decode(&body)).transpose()?;
     let id = prior.map_or_else(AgentId::new, |p| p.agent.id);
     let agent = Agent {
         id,

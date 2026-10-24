@@ -103,13 +103,74 @@ actual native vault. Account credential/vault tests use injected memory vaults.
 The hub Auth manager's 4 fixture regressions pass, covering the original cache
 lease deadline, independent subjects, fresh user/org revocation and Auth outage
 checks, expired source credentials, and shared renewable backend service tokens.
-The enrollment module's 8 transactional regressions pass, including repository
+The enrollment module's 9 transactional regressions pass, including repository
 confirmation before history access, exact-recipient approval, keyed codes,
 durable failed attempts, atomic consumption, reissue/expiry/revocation, issuance
 limits unaffected by 10,001 older challenge rows, last-owner protection and
 cross-project refusal, positive cross-org guest admission/policy revocation, and
 preserved managed MFA for owner administration and internal admission, and
 recipient-only application status/descriptor visibility with revoked-admission
-refusal. These
+refusal, and withdrawal of descriptors after default-enrollment policy changes. These
 tests use local signed OIDC fixtures and protected
 fake/file stores; they do not establish live issuer or multi-host acceptance.
+
+## Hub HTTP, persistence and delivery checks (2026-10-24)
+
+Checkpoint `62d0b996` adds the dedicated hub, local connector and CLI/TUI/SDK
+surfaces to PR #27. It remains a draft while full CI and reconnect followups run.
+The hub stores shared content in a separate operator-owned SQLite database with
+FULL/WAL commits and a bounded writer. It exposes no local Session, shell or
+permission-answer API. The native TLS listener and explicitly pinned HTTPS proxy
+upstream are separate from the per-user owner listener.
+
+`CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=line-tables-only
+CARGO_PROFILE_TEST_DEBUG=line-tables-only cargo test -p cyber-collab --lib`
+passes 32 tests on macOS after the pending-application and history/cursor fixes.
+These include real HTTP with independently signed human and agent credentials,
+bootstrap refusal, current organization checks, direct-message privacy through
+history/events/snapshots, one-winner concurrent claims, stale updates, capability
+replay redaction, atomic friends admission and code-attempt retry deduplication.
+The database tests cover restart, online backup integrity, missing protected MAC
+keys, rollback after a storage failure and refusal of subsequent writes until
+restart. Recent-message queries filter visibility before the 500-message window;
+expired or newer-than-restored event cursors require snapshot resynchronization.
+
+Invitation tokens, join codes and agent capabilities are returned only once.
+Matching operation retries recover the committed public resource with the secret
+omitted. The database operation cache stores no raw issuance secret; numeric-code
+retry fingerprints use a separate keyed MAC domain. Fresh recipient and source
+Auth checks precede pending-message release, with final project/generation checks
+inside the database transaction. Uncertain identity leaves delivery unauthorized.
+
+`cargo clippy --workspace --all-targets -- -D warnings` passed locally before the
+final reconnect/status followup; focused account/hub all-target Clippy also passed
+on that followup. Strict OpenSpec validation passes 87 items; canonical lint has
+0 errors and 23 warnings. Generated SDK consistency passes. Full platform CI,
+the Linux positive binary/SDK acceptance test, and live deployment provisioning
+are recorded separately; these local results do not claim those outcomes.
+
+The Linux TypeScript SDK job for checkpoint `62d0b996` passed 114 tests with no
+skips, including the actual hub/CLI/SDK multi-user restart, privacy, task-fencing
+and held-consent acceptance test ([job evidence](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40064995203/job/120786270527)).
+This establishes fixture-backed binary acceptance; it does not establish live
+CyberdyneAuth provisioning or multi-host deployment acceptance.
+
+The reconnect followup adds identity/member-generation/policy-scoped durable
+cursors. An expired or restored cursor fetches an authorized bounded snapshot
+without admitting its content to an agent. Four local-store tests and two
+actual-owner/hub tests pass, including snapshot-only conversations, exactly-once
+targeted inbox admission and zero inference before receiver consent.
+
+Explicit unpublication permanently retires its public agent ID. Republishing
+creates a new identity, so old queued or held messages cannot revive after an
+agent is revoked and published again. Delivery polling persists seven-day
+expiration, and release checks reject expired/refused/dropped delivery state or
+withdrawn broadcast subscription. Dedicated HTTP regressions cover expiry,
+changed sender generations and revoked publication identities, as well as task
+dependency completion, cycles and cross-project references.
+
+The SDK now prevents local Basic credentials from reaching hub operations; public
+hello omits them and protected hub calls require explicit account Bearer auth
+before network I/O. The new real-hub terminal acceptance test compiles on macOS
+but is explicitly ignored outside Linux to avoid native-vault side effects.
+Its positive Linux result and final platform CI are tracked on PR #27.

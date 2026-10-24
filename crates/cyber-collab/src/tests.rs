@@ -666,3 +666,386 @@ async fn friends_enrollment_over_http_keeps_code_attempt_retries_idempotent() {
         .unwrap();
     assert!(!cache.contains(&code));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn recent_message_pages_ignore_private_traffic_and_restore_cursors_require_resync() {
+    let h = TestHub::new().await;
+    let p = h.project().await;
+    let bob = h.add(&p, "bob");
+    let project = p.id.clone();
+    let issuer = h.fixture.state.issuer.clone();
+    h.hub
+        .db
+        .write(move |db| {
+            let alice = list::<Member>(db, "member", project.as_str())?
+                .into_iter()
+                .find(|m| m.issuer == issuer && m.subject == "alice")
+                .unwrap();
+            for index in 1u128..=1010 {
+                let message = Message {
+                    id: format!("cmsg_{}", ulid::Ulid::from(index)).parse().unwrap(),
+                    project: project.clone(),
+                    author: Participant::Human(if index <= 505 {
+                        alice.id.clone()
+                    } else {
+                        bob.id.clone()
+                    }),
+                    owner: if index <= 505 {
+                        alice.id.clone()
+                    } else {
+                        bob.id.clone()
+                    },
+                    membership_kind: MembershipKind::Internal,
+                    member_generation: 1,
+                    depth: 0,
+                    hops: 1,
+                    target: if index <= 505 {
+                        MessageTarget::Project
+                    } else {
+                        MessageTarget::Direct(Participant::Human(bob.id.clone()))
+                    },
+                    reply_to: None,
+                    text: index.to_string(),
+                    created_at: now(),
+                    expires_at: now() + 604800,
+                };
+                put(
+                    db,
+                    "message",
+                    message.id.as_str(),
+                    project.as_str(),
+                    &message,
+                )?;
+            }
+            for _ in 0..6 {
+                event(db, project.as_str(), "test.updated", &json!({}))?;
+            }
+            db.execute("DELETE FROM ch_events WHERE cursor<5", [])?;
+            Ok(())
+        })
+        .unwrap();
+    let recent: Vec<Message> = h
+        .alice
+        .get(&format!("/projects/{}/messages", p.id))
+        .await
+        .unwrap();
+    assert_eq!(recent.len(), 500);
+    assert_eq!(recent[0].text, "6");
+    assert_eq!(recent.last().unwrap().text, "505");
+    let cursor = format!("cmsg_{}", ulid::Ulid::from(250u128));
+    let next: Vec<Message> = h
+        .alice
+        .get(&format!("/projects/{}/messages?after={cursor}", p.id))
+        .await
+        .unwrap();
+    assert_eq!(next.len(), 255);
+    assert_eq!(next[0].text, "251");
+    for cursor in [1, 100000] {
+        assert_eq!(
+            h.alice
+                .get::<EventPage>(&format!("/projects/{}/events?after={cursor}", p.id))
+                .await
+                .unwrap_err()
+                .tag,
+            "ResyncRequiredError"
+        );
+    }
+    let snapshot: Snapshot = h
+        .alice
+        .get(&format!("/projects/{}/snapshot", p.id))
+        .await
+        .unwrap();
+    assert_eq!(snapshot.cursor, 7);
+    assert!(
+        snapshot
+            .messages
+            .iter()
+            .all(|m| m.target == MessageTarget::Project)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn expired_delivery_and_changed_sender_generation_cannot_release() {
+    let h = TestHub::new().await;
+    let p = h.project().await;
+    h.add(&p, "bob");
+    let target = h.agent(&h.bob, &p, "target").await;
+    let client = HubClient::new(&h.url, Secret::new(target.capability.unwrap())).unwrap();
+    let message: Message = h
+        .alice
+        .mutate(
+            Method::POST,
+            &format!("/projects/{}/messages", p.id),
+            &Mutation::new(SendMessage {
+                target: MessageTarget::Direct(Participant::Agent(target.agent.id.clone())),
+                text: "expires offline".into(),
+                reply_to: None,
+                depth: 0,
+                hops: 1,
+            }),
+        )
+        .await
+        .unwrap()
+        .data;
+    let project = p.id.clone();
+    let id = message.id.clone();
+    let agent = target.agent.id.clone();
+    h.hub
+        .db
+        .write(move |db| {
+            let mut msg: Message = get(db, "message", id.as_str())?;
+            msg.expires_at = now() - 1;
+            put(db, "message", id.as_str(), project.as_str(), &msg)?;
+            let key = format!("{id}:{agent}");
+            let mut delivery: Delivery = get(db, "delivery", &key)?;
+            delivery.message.expires_at = msg.expires_at;
+            put(db, "delivery", &key, project.as_str(), &delivery)
+        })
+        .unwrap();
+    let pending: Vec<Delivery> = client
+        .get(&format!(
+            "/projects/{}/deliveries?agent={}",
+            p.id, target.agent.id
+        ))
+        .await
+        .unwrap();
+    assert!(pending.is_empty());
+    let path = format!(
+        "/projects/{}/deliveries/{}/{}/authorization",
+        p.id, message.id, target.agent.id
+    );
+    let auth: DeliveryAuthorization = client.get(&path).await.unwrap();
+    assert!(!auth.allowed);
+    let id = message.id;
+    let target_id = target.agent.id.clone();
+    h.hub
+        .db
+        .write(move |db| {
+            let mut msg: Message = get(db, "message", id.as_str())?;
+            msg.expires_at = now() + 604800;
+            put(db, "message", id.as_str(), msg.project.as_str(), &msg)?;
+            let delivery_id = format!("{id}:{target_id}");
+            let mut delivery: Delivery = get(db, "delivery", &delivery_id)?;
+            assert_eq!(delivery.state, DeliveryState::Expired);
+            delivery.state = DeliveryState::Held;
+            delivery.message = msg.clone();
+            put(
+                db,
+                "delivery",
+                &delivery_id,
+                msg.project.as_str(),
+                &delivery,
+            )?;
+            let mut member: Member = get(db, "member", msg.owner.as_str())?;
+            member.generation += 1;
+            put(
+                db,
+                "member",
+                member.id.as_str(),
+                member.project.as_str(),
+                &member,
+            )
+        })
+        .unwrap();
+    let auth: DeliveryAuthorization = client.get(&path).await.unwrap();
+    assert!(!auth.allowed);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn task_dependencies_block_claims_and_reject_cycles_or_another_project() {
+    let h = TestHub::new().await;
+    let p = h.project().await;
+    h.add(&p, "bob");
+    let base = format!("/projects/{}/tasks", p.id);
+    let parent: Task = h
+        .alice
+        .mutate(
+            Method::POST,
+            &base,
+            &Mutation::new(CreateTask {
+                title: "parent".into(),
+                description: String::new(),
+                dependencies: vec![],
+            }),
+        )
+        .await
+        .unwrap()
+        .data;
+    let child: Task = h
+        .alice
+        .mutate(
+            Method::POST,
+            &base,
+            &Mutation::new(CreateTask {
+                title: "child".into(),
+                description: String::new(),
+                dependencies: vec![parent.id.clone()],
+            }),
+        )
+        .await
+        .unwrap()
+        .data;
+    assert!(
+        h.bob
+            .mutate::<_, Task>(
+                Method::POST,
+                &format!("{base}/{}/claim", child.id),
+                &Mutation::new(ClaimTask {
+                    expected_revision: 1
+                })
+            )
+            .await
+            .is_err()
+    );
+    let owned: Task = h
+        .alice
+        .mutate(
+            Method::POST,
+            &format!("{base}/{}/claim", parent.id),
+            &Mutation::new(ClaimTask {
+                expected_revision: 1,
+            }),
+        )
+        .await
+        .unwrap()
+        .data;
+    let _: Task = h
+        .alice
+        .mutate(
+            Method::PATCH,
+            &format!("{base}/{}", parent.id),
+            &Mutation::new(UpdateTask {
+                expected_revision: owned.revision,
+                claim_generation: owned.claim_generation,
+                status: Some(TaskStatus::Done),
+                ..Default::default()
+            }),
+        )
+        .await
+        .unwrap()
+        .data;
+    let owned: Task = h
+        .bob
+        .mutate(
+            Method::POST,
+            &format!("{base}/{}/claim", child.id),
+            &Mutation::new(ClaimTask {
+                expected_revision: 1,
+            }),
+        )
+        .await
+        .unwrap()
+        .data;
+    assert!(
+        h.bob
+            .mutate::<_, Task>(
+                Method::PATCH,
+                &format!("{base}/{}", child.id),
+                &Mutation::new(UpdateTask {
+                    expected_revision: owned.revision,
+                    claim_generation: owned.claim_generation,
+                    dependencies: Some(vec![child.id]),
+                    ..Default::default()
+                })
+            )
+            .await
+            .is_err()
+    );
+    let other = h.project().await;
+    assert!(
+        h.alice
+            .mutate::<_, Task>(
+                Method::POST,
+                &format!("/projects/{}/tasks", other.id),
+                &Mutation::new(CreateTask {
+                    title: "wrong project".into(),
+                    description: String::new(),
+                    dependencies: vec![parent.id]
+                })
+            )
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn republishing_cannot_revive_a_revoked_agents_pending_prompts() {
+    let h = TestHub::new().await;
+    let p = h.project().await;
+    h.add(&p, "bob");
+    let source = h.agent(&h.alice, &p, "source").await;
+    let target = h.agent(&h.bob, &p, "target").await;
+    let sender = HubClient::new(&h.url, Secret::new(source.capability.unwrap())).unwrap();
+    let receiver = HubClient::new(&h.url, Secret::new(target.capability.unwrap())).unwrap();
+    let message: Message = sender
+        .mutate(
+            Method::POST,
+            &format!("/projects/{}/messages", p.id),
+            &Mutation::new(SendMessage {
+                target: MessageTarget::Direct(Participant::Agent(target.agent.id.clone())),
+                text: "old publication".into(),
+                reply_to: None,
+                depth: 0,
+                hops: 1,
+            }),
+        )
+        .await
+        .unwrap()
+        .data;
+    let path = format!(
+        "/projects/{}/deliveries/{}/{}/authorization",
+        p.id, message.id, target.agent.id
+    );
+    assert!(
+        receiver
+            .get::<DeliveryAuthorization>(&path)
+            .await
+            .unwrap()
+            .allowed
+    );
+    let _: MutationResult<serde_json::Value> = h
+        .alice
+        .mutate(
+            Method::DELETE,
+            &format!("/projects/{}/agents/{}", p.id, source.agent.id),
+            &Mutation::new(Empty {}),
+        )
+        .await
+        .unwrap();
+    let replacement = h.agent(&h.alice, &p, "source").await;
+    assert_ne!(replacement.agent.id, source.agent.id);
+    assert!(
+        !receiver
+            .get::<DeliveryAuthorization>(&path)
+            .await
+            .unwrap()
+            .allowed
+    );
+    let _: MutationResult<serde_json::Value> = h
+        .bob
+        .mutate(
+            Method::DELETE,
+            &format!("/projects/{}/agents/{}", p.id, target.agent.id),
+            &Mutation::new(Empty {}),
+        )
+        .await
+        .unwrap();
+    let replacement = h.agent(&h.bob, &p, "target").await;
+    assert_ne!(replacement.agent.id, target.agent.id);
+    let replacement = HubClient::new(&h.url, Secret::new(replacement.capability.unwrap())).unwrap();
+    assert!(
+        replacement
+            .get::<DeliveryAuthorization>(&path)
+            .await
+            .is_err()
+    );
+    assert!(
+        replacement
+            .get::<Vec<Delivery>>(&format!(
+                "/projects/{}/deliveries?agent={}",
+                p.id, target.agent.id
+            ))
+            .await
+            .is_err()
+    );
+}

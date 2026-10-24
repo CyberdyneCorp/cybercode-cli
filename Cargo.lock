@@ -1135,10 +1135,14 @@ dependencies = [
 name = "cyber-tui"
 version = "0.1.0"
 dependencies = [
+ "aws-lc-rs",
+ "axum",
  "chrono",
  "crossterm",
+ "cyber-account",
  "cyber-app",
  "cyber-client",
+ "cyber-collab",
  "cyber-core",
  "cyber-server",
  "cyber-store",
@@ -1146,8 +1150,10 @@ dependencies = [
  "insta",
  "jiff",
  "jsonschema",
+ "jsonwebtoken",
  "pulldown-cmark",
  "ratatui",
+ "reqwest",
  "rusqlite",
  "serde",
  "serde_json",

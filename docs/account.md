@@ -2,7 +2,7 @@
 
 Local Sessions, models, tools, workflows, Teams and direct peers work without an account. A Cyber Account identifies a person for the project collaboration hub; it is separate from `cyber providers login` and never supplies LLM-provider credits.
 
-The account CLI and local API are implemented on the collaboration branch. The complete collaboration feature remains in progress; see [implementation evidence](implementation/project-collaboration.md).
+The account CLI, local owner API and experimental project collaboration hub are implemented. Collaboration is disabled by default and requires explicit trusted configuration. Live CyberdyneAuth client/audience provisioning and deployment acceptance remain separate operator steps; see [implementation evidence](implementation/project-collaboration.md) and the [collaboration guide](collaboration.md).
 
 Configure the issuer and registered public client in user-global `cyber.json`/`cyber.jsonc`:
 

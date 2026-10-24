@@ -2,11 +2,11 @@
 
 Project collaboration connects people and their locally running agents around one Git repository through a self-hosted hub. The hub stores membership, conversations and shared tasks. Each person's tools and working tree stay on their own machine. The hub is a trusted reader of conversation content; collaboration is not end-to-end encrypted.
 
-This guide describes the implementation branch for PR #27. Consult [implementation evidence](implementation/project-collaboration.md) for checks actually completed and remaining deployment acceptance.
+The feature is experimental and off by default. Consult [implementation evidence](implementation/project-collaboration.md) for checks actually completed and remaining deployment acceptance.
 
 ## Deployment and identity
 
-Use a dedicated hub database and a reachable HTTPS endpoint. A reverse proxy may terminate TLS; keep the upstream listener private. Plain HTTP is accepted only for explicit literal-loopback development fixtures. Keep the operator-owned, mode-0600 hub database on a local filesystem across restarts. The writer uses WAL with FULL synchronous durability. Use SQLite online backup for a live database; copying only the database file while WAL writes are active is unsafe. Back up the protected `hub-secrets.json` secret map and its native vault key as well as the database. Secret namespaces include the installation path; restoring onto a different installation or host needs secure operator key migration, which is not automatic. Missing protected MAC keys fail startup. Treat the complete backup as sensitive project data. Do not expose a normal local `cyber serve` owner endpoint as a project hub.
+Use a dedicated hub database and a reachable HTTPS endpoint. A reverse proxy may terminate TLS; keep the upstream listener private. Plain HTTP is limited to literal loopback or the private upstream of an explicitly pinned HTTPS proxy. Keep the operator-owned, mode-0600 hub database on a local filesystem across restarts. The writer uses WAL with FULL synchronous durability. Use SQLite online backup for a live database; copying only the database file while WAL writes are active is unsafe. Back up the protected `hub-secrets.json` secret map and its native vault key as well as the database. Native-vault namespaces include the installation path; moving a native-vault-backed installation needs secure operator key migration, which is not automatic. Missing protected MAC keys fail startup. Treat the complete backup as sensitive project data. Do not expose a normal local `cyber serve` owner endpoint as a project hub.
 
 Configure the hub's exact OIDC issuer and registered access-token audience, its backend introspection client credentials, and the verified subject allowed to bootstrap projects. The bootstrap setting grants project creation, not automatic membership in other projects. Backend credentials belong in the deployment secret store, never a checkout, command argument, shared config or SDK application. An installed CLI's public OAuth client uses PKCE and has no client secret.
 
@@ -71,7 +71,7 @@ The local API determines the human author from the signed-in account. Agent tool
 
 Incoming agent messages are untrusted external content and are held by default. Inspect and release or refuse them using the existing `/messages` receiver inbox. Release rechecks current membership, publication and local policy before admission. A remote teammate cannot grant permission for local tools, approve local requests or execute a prompt by sending a message. A valid held message is still untrusted content after release.
 
-Offline delivery and reconnect replay do not imply execution. Delivery state distinguishes queued, held, released, refused, dropped and expired. Reconnect deduplicates durable incoming records; it does not replay a tool approval or release previously refused content.
+Conversation views and resynchronization snapshots contain the most recent 500 visible messages; the hub message endpoint supports forward history pages with `after`. Offline delivery and reconnect replay do not imply execution. Delivery state distinguishes queued, held, released, refused, dropped and expired. Reconnect deduplicates durable incoming records; it does not replay a tool approval or release previously refused content.
 
 ## Shared tasks and evidence
 
@@ -102,7 +102,7 @@ if (isCollaborationQueued(created)) {
 }
 ```
 
-These helpers act as the signed-in human. Model tools use the server's scoped agent bridge and local permission decisions. A separate bearer-authenticated `Cyber.connect({ baseUrl: hubUrl, auth: ... })` client exposes the typed `client.hub` group for custom hub clients. A hub bearer token never authenticates as a local server owner.
+These helpers act as the signed-in human. Model tools use the server's scoped agent bridge and local permission decisions. A separate bearer-authenticated `Cyber.connect({ baseUrl: hubUrl, auth: ... })` client exposes the typed `client.hub` group for custom hub clients. The SDK omits local Basic credentials from public hub metadata requests and refuses protected hub calls without an explicit bearer client before sending a request. A hub bearer token never authenticates as a local server owner.
 
 A transient mutation failure can return `{ status: "queued", operation_id, message }` after durable local persistence. This receipt does not mean the task or message was applied. Keep the operation ID, inspect `status.receipts` (`queued`, `applied`, `rejected`) and avoid creating a new operation for the same uncertain intent. SDK callers can supply `operationId` when explicitly retrying. The TUI shows recent receipt states and queued notices. A terminal authorization or revision failure rejects and removes the queued operation, so a later rejoin cannot revive stale intent.
 

@@ -25,7 +25,7 @@ export interface CollaborationQueuedReceipt {
 }
 export type CollaborationMutationResult<T> = T | CollaborationQueuedReceipt;
 export function isCollaborationQueued(value: unknown): value is CollaborationQueuedReceipt {
-  return typeof value === "object" && value !== null && "status" in value && value.status === "queued" && "operation_id" in value && typeof value.operation_id === "string";
+  return typeof value === "object" && value !== null && "status" in value && value.status === "queued" && "operation_id" in value && typeof value.operation_id === "string" && "message" in value && typeof value.message === "string";
 }
 export interface CollaborationMutationOptions extends RequestOptions {
   /** Keep this key when explicitly retrying an unknown outcome. Defaults to a fresh UUID. */
@@ -78,6 +78,7 @@ export function collaborationSession(client: CollaborationCaller, sessionID: str
 
 async function* watch(snapshot: (options?: RequestOptions) => Promise<CollaborationSnapshot>, options: CollaborationWatchOptions): AsyncIterableIterator<CollaborationSnapshot> {
   const { intervalMs = 5000, ...request } = options;
+  if (!Number.isFinite(intervalMs)) throw new RangeError("intervalMs must be finite");
   for (;;) {
     if (request.signal?.aborted) throw request.signal.reason ?? new Error("aborted");
     yield await snapshot(request);

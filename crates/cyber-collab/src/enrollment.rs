@@ -211,8 +211,8 @@ fn application_status(
             })
         }
         ApplicationStatus::NeedsConfirmation | ApplicationStatus::NeedsCode => {
-            current_invitation(db, &application)?;
             let project: Project = get(db, "project", app_project(&application)?.as_str())?;
+            admission_invitation(db, &application, &project)?;
             let kind = membership_kind(
                 &project,
                 application.view.kind == MembershipKind::Guest,
@@ -553,6 +553,20 @@ fn current_invitation(
     }
     Ok(Some(invitation))
 }
+fn admission_invitation(
+    db: &Connection,
+    application: &Application,
+    project: &Project,
+) -> Result<Option<Invitation>, Error> {
+    let invitation = current_invitation(db, application)?;
+    if invitation.is_none()
+        && !matches!(project.enrollment,Enrollment::OrganizationMembers{role} if role==application.view.role&&role!=Role::Owner)
+    {
+        return Err(Error::forbidden());
+    }
+    Ok(invitation)
+}
+
 fn approve(
     db: &Connection,
     _actor: &Actor,
@@ -569,7 +583,7 @@ fn approve(
     }
     let proof = recipient_proof(&application, config)?;
     let p: Project = get(db, "project", project)?;
-    let invitation = current_invitation(db, &application)?;
+    let invitation = admission_invitation(db, &application, &p)?;
     let kind = membership_kind(
         &p,
         application.view.kind == MembershipKind::Guest,
@@ -733,12 +747,7 @@ fn redeem(
     {
         return Err(Error::forbidden());
     }
-    let invitation = current_invitation(db, &application)?;
-    if invitation.is_none()
-        && !matches!(p.enrollment,Enrollment::OrganizationMembers{role} if role==application.view.role&&role!=Role::Owner)
-    {
-        return Err(Error::forbidden());
-    }
+    let invitation = admission_invitation(db, &application, &p)?;
     if application.view.status == ApplicationStatus::NeedsCode {
         let id = application
             .view
@@ -1527,5 +1536,30 @@ mod tests {
         )
         .unwrap();
         assert!(status(&s.bob).is_err());
+    }
+    #[tokio::test]
+    async fn withdrawn_or_changed_auto_enrollment_hides_unconfirmed_descriptor() {
+        let s = Setup::new(ProjectMode::Organization {
+            organization_id: "org-uuid".into(),
+        })
+        .await;
+        s.call(&s.owner,&["projects",s.project.id.as_str(),"policy"],"PATCH",json!({"expected_revision":1,"enrollment":{"kind":"organization_members","role":"viewer"},"guests_enabled":false})).unwrap();
+        let pending = s
+            .call(&s.bob, &["join"], "POST", json!({"project":s.project.id}))
+            .unwrap();
+        let id = pending["application"]["id"].as_str().unwrap();
+        let status = || {
+            let actor = s.bob.clone();
+            let id = id.to_owned();
+            let config = s.config.clone();
+            s.db.read(move |db| read(db, &actor, &["applications", &id], &config))
+        };
+        assert!(status().unwrap()["project"].is_object());
+        s.call(&s.owner,&["projects",s.project.id.as_str(),"policy"],"PATCH",json!({"expected_revision":2,"enrollment":{"kind":"invite_only"},"guests_enabled":false})).unwrap();
+        assert!(status().is_err());
+        assert!(s.redeem(id, None).is_err());
+        s.call(&s.owner,&["projects",s.project.id.as_str(),"policy"],"PATCH",json!({"expected_revision":3,"enrollment":{"kind":"organization_members","role":"member"},"guests_enabled":false})).unwrap();
+        assert!(status().is_err());
+        assert!(s.redeem(id, None).is_err());
     }
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CyberApiError, isCollaborationQueued } from "../src/index.js";
+import { CyberApiError, CyberClientError, isCollaborationQueued } from "../src/index.js";
 import { json, mockClient } from "./support.js";
 
 test("local helper preserves checkout and fences; an unknown transport outcome retries one operation", async () => {
@@ -62,4 +62,19 @@ test("a durable queued mutation is distinct from an applied task and keeps its r
   const result = await client.collaborations.forSession("ses_owner").createTask({ title: "Pending", description: "" });
   assert.ok(isCollaborationQueued(result));
   assert.equal(result.operation_id, "cop_pending");
+});
+
+test("queued guard rejects incomplete receipts and nonfinite watch delays cannot spin", async () => {
+  assert.equal(isCollaborationQueued({ status: "queued", operation_id: "cop_missing" }), false);
+  const { client, calls } = mockClient(() => json(200, { data: { enabled: false } }));
+  await assert.rejects(client.collaborations.forSession("ses_owner").watch({ intervalMs: Infinity }).next(), RangeError);
+  assert.equal(calls.length, 0);
+});
+
+test("hub metadata never leaks a local Basic password and protected hub calls fail before fetch", async () => {
+  const { client, calls } = mockClient(() => json(200, { data: { hub_id: "chub_fixture", issuer: "https://auth.test", audience: "hub" } }));
+  await client.hub.hello();
+  assert.equal(calls[0]!.headers.get("authorization"), null);
+  await assert.rejects(client.hub.tasks("cprj_one"), (error) => error instanceof CyberClientError && error.permanent);
+  assert.equal(calls.length, 1, "the local owner password was not sent to a protected hub route");
 });

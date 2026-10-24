@@ -3,6 +3,7 @@ mod agent;
 mod delivery;
 mod lifecycle;
 pub mod local;
+mod replay;
 use crate::account::Accounts;
 use cyber_collab::{
     api::*,
@@ -544,7 +545,7 @@ impl CollaborationService for Collaboration {
                 "bind" => self.bind(input).await,
                 "publish" => self.publish(input).await,
                 "unpublish" => self.unpublish(input).await,
-                "project.create" | "join" | "applications.redeem" => {
+                "project.create" | "join" | "applications.redeem" | "applications.status" => {
                     self.unbound(&operation, input).await
                 }
                 _ => self.project_call(&operation, input).await,

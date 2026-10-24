@@ -109,8 +109,9 @@ async fn real_hub_publication_delivers_once_held_and_logout_blocks_release() {
     let hub = Hub::with_vault(&config, Some(vault.clone())).await.unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
+    let serving_hub = hub.clone();
     let server = tokio::spawn(async move {
-        axum::serve(listener, router(hub)).await.unwrap();
+        axum::serve(listener, router(serving_hub)).await.unwrap();
     });
     let human = HubClient::new(&url, fixture.access()).unwrap();
     let created: MutationResult<Project> = human
@@ -127,6 +128,7 @@ async fn real_hub_publication_delivers_once_held_and_logout_blocks_release() {
         )
         .await
         .unwrap();
+    let project_revision = created.data.revision;
     let project = created.data.id;
     let secrets = HostSecrets::new(
         app.app.paths.data.clone(),
@@ -182,6 +184,60 @@ async fn real_hub_publication_delivers_once_held_and_logout_blocks_release() {
         )
         .await
         .unwrap();
+    // Force an expired persisted cursor. The authorized resync snapshot contains a
+    // project conversation entry which must never become executable agent input.
+    let _: MutationResult<Message> = human
+        .mutate(
+            reqwest::Method::POST,
+            &path,
+            &Mutation::new(SendMessage {
+                target: MessageTarget::Project,
+                text: "Snapshot only: RUN<<this must never execute>>".into(),
+                reply_to: None,
+                depth: 0,
+                hops: 1,
+            }),
+        )
+        .await
+        .unwrap();
+    let members: Vec<Member> = human
+        .get(&format!("/projects/{project}/members"))
+        .await
+        .unwrap();
+    let member = members
+        .iter()
+        .find(|member| member.subject == "alice")
+        .unwrap();
+    let scope = cyber_app::collaboration::local::CursorScope {
+        checkout: std::fs::canonicalize(&app.repo)
+            .unwrap()
+            .display()
+            .to_string(),
+        identity: serde_json::to_string(&(&fixture.state.issuer, "alice")).unwrap(),
+        hub: publication["hub_id"].as_str().unwrap().into(),
+        project: project.to_string(),
+        member: member.id.to_string(),
+        generation: member.generation,
+        project_revision,
+    };
+    connector.local.checkpoint(scope.clone(), 1).unwrap();
+    let project_id = project.to_string();
+    let snapshot_cursor = hub
+        .db
+        .write(move |db| {
+            let cursor: i64 = db.query_row(
+                "SELECT MAX(cursor) FROM ch_events WHERE project=?1",
+                [&project_id],
+                |row| row.get(0),
+            )?;
+            db.execute(
+                "DELETE FROM ch_events WHERE project=?1 AND cursor<?2",
+                (&project_id, cursor),
+            )?;
+            Ok(cursor as u64)
+        })
+        .unwrap();
+    assert!(snapshot_cursor > 2);
     let inbox = tokio::time::timeout(Duration::from_secs(35), async {
         loop {
             let state = app.app.runtime.state(&session).await.unwrap();
@@ -199,6 +255,10 @@ async fn real_hub_publication_delivers_once_held_and_logout_blocks_release() {
     .await
     .expect("targeted delivery must reach the normal held inbox");
     assert_eq!(inbox.status, InputStatus::Held);
+    assert!(
+        connector.local.cursor(scope).unwrap() >= snapshot_cursor,
+        "expired cursor must checkpoint the authorized snapshot without replaying its content"
+    );
     let state = app.app.runtime.state(&session).await.unwrap();
     assert_eq!(
         state

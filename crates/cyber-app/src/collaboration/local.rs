@@ -35,6 +35,30 @@ pub struct Publication {
     #[serde(default)]
     pub expires_at: u64,
 }
+/// A fresh membership/policy proof determines whether an old replay checkpoint is reusable.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CursorScope {
+    pub checkout: String,
+    pub identity: String,
+    pub hub: String,
+    pub project: String,
+    pub member: String,
+    pub generation: u64,
+    pub project_revision: u64,
+}
+impl CursorScope {
+    fn key(&self) -> Result<String, StoreError> {
+        Ok(format!(
+            "{:x}",
+            Sha256::digest(
+                encode(&(&self.checkout, &self.identity, &self.hub, &self.project))?.as_bytes()
+            )
+        ))
+    }
+    fn epoch(&self) -> Result<String, StoreError> {
+        encode(&(&self.member, self.generation, self.project_revision))
+    }
+}
 #[derive(Clone)]
 pub struct LocalStore(pub Arc<Store>);
 fn invalid(text: impl Into<String>) -> StoreError {
@@ -56,9 +80,36 @@ impl LocalStore {
              CREATE TABLE IF NOT EXISTS collaboration_publication(session TEXT PRIMARY KEY, hub TEXT NOT NULL, project TEXT NOT NULL, body TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS collaboration_delivery(hub TEXT NOT NULL, project TEXT NOT NULL, message TEXT NOT NULL, target TEXT NOT NULL, hash TEXT NOT NULL, inbox TEXT NOT NULL, admitted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(hub,project,message,target));
              CREATE TABLE IF NOT EXISTS collaboration_outbox(operation TEXT PRIMARY KEY, identity TEXT NOT NULL, hub TEXT NOT NULL, project TEXT NOT NULL, body TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS collaboration_cursor(binding TEXT PRIMARY KEY,epoch TEXT NOT NULL,cursor INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS collaboration_receipt(operation TEXT PRIMARY KEY, hub TEXT NOT NULL, project TEXT NOT NULL, state TEXT NOT NULL, detail TEXT, digest TEXT NOT NULL);"
         )?; Ok(()) })?;
         Ok(Self(store))
+    }
+    pub fn cursor(&self, scope: CursorScope) -> Result<u64, StoreError> {
+        let key = scope.key()?;
+        let epoch = scope.epoch()?;
+        self.0.read(move |db| {
+            let value: Option<(String, i64)> = db
+                .query_row(
+                    "SELECT epoch,cursor FROM collaboration_cursor WHERE binding=?1",
+                    [key],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            match value {
+                Some((old, cursor)) if old == epoch => {
+                    u64::try_from(cursor).map_err(|_| invalid("invalid collaboration cursor"))
+                }
+                _ => Ok(0),
+            }
+        })
+    }
+    /// Checkpoint metadata only. Event replay/snapshot contents never enter the inbox.
+    pub fn checkpoint(&self, scope: CursorScope, cursor: u64) -> Result<(), StoreError> {
+        let key = scope.key()?;
+        let epoch = scope.epoch()?;
+        let cursor = i64::try_from(cursor).map_err(|_| invalid("invalid collaboration cursor"))?;
+        self.0.transaction(move|tx|{tx.execute("INSERT INTO collaboration_cursor VALUES(?1,?2,?3) ON CONFLICT(binding) DO UPDATE SET epoch=excluded.epoch,cursor=excluded.cursor",(key,epoch,cursor))?;Ok(())})
     }
     pub fn bind(&self, binding: Binding) -> Result<(), StoreError> {
         let body = encode(&binding)?;
@@ -262,6 +313,33 @@ mod tests {
             .unwrap(),
         ))
         .unwrap()
+    }
+    #[test]
+    fn replay_cursor_is_bound_to_identity_checkout_and_current_membership_epoch() {
+        let store = store();
+        let scope = CursorScope {
+            checkout: "/checkout".into(),
+            identity: "issuer/sub".into(),
+            hub: "hub".into(),
+            project: "project".into(),
+            member: "member".into(),
+            generation: 1,
+            project_revision: 1,
+        };
+        store.checkpoint(scope.clone(), 42).unwrap();
+        assert_eq!(store.cursor(scope.clone()).unwrap(), 42);
+        let mut changed = scope.clone();
+        changed.generation += 1;
+        assert_eq!(store.cursor(changed).unwrap(), 0);
+        let mut changed = scope.clone();
+        changed.project_revision += 1;
+        assert_eq!(store.cursor(changed).unwrap(), 0);
+        let mut changed = scope.clone();
+        changed.identity = "other/sub".into();
+        assert_eq!(store.cursor(changed).unwrap(), 0);
+        let mut changed = scope;
+        changed.checkout = "/other".into();
+        assert_eq!(store.cursor(changed).unwrap(), 0);
     }
     #[test]
     fn unpublishing_preserves_project_tombstone() {

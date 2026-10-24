@@ -195,6 +195,12 @@ pub enum InvitationsCmd {
 }
 #[derive(Debug, Subcommand)]
 pub enum ApplicationsCmd {
+    /// Read your own pending application and refresh identity for owner approval.
+    Status {
+        #[arg(long)]
+        hub: String,
+        application: String,
+    },
     List {
         #[arg(long)]
         project: String,
@@ -428,6 +434,12 @@ fn prepare(cmd: CollabCmd) -> Result<(String, Value), CliError> {
         } => (
             "join".into(),
             json!({"hub_url":hub,"project":project,"invitation_token":if invite_stdin{Some(secret_stdin("invitation token")?)}else{None},"name":name}),
+        ),
+        CollabCmd::Applications {
+            cmd: ApplicationsCmd::Status { hub, application },
+        } => (
+            "applications.status".into(),
+            json!({"hub_url":hub,"application":application}),
         ),
         CollabCmd::Applications {
             cmd: ApplicationsCmd::List { project },

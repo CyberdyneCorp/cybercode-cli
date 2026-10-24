@@ -318,6 +318,7 @@ impl Collaboration {
             .ok_or_else(ApiError::unauthorized)?;
         let bindings = self.local.bindings().map_err(storage)?;
         let publications = self.local.publications().map_err(storage)?;
+        self.sync_bindings(&current, &bindings).await?;
         self.replay_human(&current, &bindings).await?;
         let presence: Vec<_> = publications
             .iter()
@@ -426,6 +427,15 @@ impl Collaboration {
     pub(super) async fn unbound(&self, operation: &str, input: Value) -> Result<Value, ApiError> {
         let client = self.client(field(&input, "hub_url")?).await?;
         let _hello: HubHello = client.get("/hello").await.map_err(hub_error)?;
+        if operation == "applications.status" {
+            return client
+                .get(&format!(
+                    "/applications/{}",
+                    identifier(&input, "application")?
+                ))
+                .await
+                .map_err(hub_error);
+        }
         let (path, payload) = match operation {
             "project.create" => (
                 "/projects".into(),
