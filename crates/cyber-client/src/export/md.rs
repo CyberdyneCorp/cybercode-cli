@@ -49,6 +49,8 @@ fn message(out: &mut String, m: &Value) {
             for part in m["parts"].as_array().into_iter().flatten() {
                 if let Some(body) = part["text"].as_str() {
                     let _ = writeln!(out, "{}\n", body.trim_end());
+                } else if let Some(placeholder) = super::placeholder(part) {
+                    let _ = writeln!(out, "{placeholder}\n");
                 }
             }
         }

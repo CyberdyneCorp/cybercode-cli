@@ -123,11 +123,9 @@ fn push_assistant(
 fn strip(parts: &[Content]) -> Vec<Content> {
     parts
         .iter()
-        .map(|p| match p {
-            Content::Image { media_type, .. } => Content::Text {
-                text: format!("[Attached {media_type}]"),
-            },
-            other => other.clone(),
+        .map(|p| match super::attachments::stripped(p) {
+            Some(text) => Content::Text { text },
+            None => p.clone(),
         })
         .collect()
 }

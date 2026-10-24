@@ -158,6 +158,22 @@ impl LocalStore {
         self.set(&format!("draft:{session}"), value);
     }
 
+    /// The chips of the saved draft (`tui` → Large paste and image input).
+    pub fn chips(&self, session: &str) -> Vec<crate::attachments::Chip> {
+        self.get(&format!("chips:{session}"))
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn save_chips(&self, session: &str, chips: &[crate::attachments::Chip]) {
+        let value = if chips.is_empty() {
+            Value::Null
+        } else {
+            json!(chips)
+        };
+        self.set(&format!("chips:{session}"), value);
+    }
+
     /// Record a model as most recent (`model.json`, at most 10).
     pub fn push_recent_model(&self, model: &str) {
         let path = self.dir.join("model.json");

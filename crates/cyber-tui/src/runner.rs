@@ -30,7 +30,7 @@ pub async fn run(opts: TuiOptions) -> Result<Summary, String> {
     let mut terminal = setup().map_err(|e| e.to_string())?;
     let result = event_loop(&mut terminal, &mut app, &client, &store, &opts, open_picker).await;
     teardown(&mut terminal);
-    store.save_draft(&app.session.id, &app.composer.text());
+    save_draft(&store, &app);
     result?;
     let s = &app.session;
     Ok(Summary {
@@ -90,8 +90,19 @@ pub(crate) async fn start(
     } else if let Some(offer) = crate::plugins::offer(store, &opts.directory, &plugins) {
         app.toast(offer);
     }
+    app.attachments.dir = Some(opts.state_dir.clone());
+    app.attachments.paste_summary = prefs.paste_summary;
     app.composer.set_text(&store.draft(&app.session.id));
+    if let Some(gone) = app.attachments.restore(store.chips(&app.session.id)) {
+        app.toast(gone);
+    }
     Ok((app, open_picker))
+}
+
+/// Keep the composer's text and chips for the next start in this Session.
+pub(crate) fn save_draft(store: &LocalStore, app: &App) {
+    store.save_draft(&app.session.id, &app.composer.text());
+    store.save_chips(&app.session.id, &app.attachments.chips);
 }
 
 /// The Session to show first, and whether to open the picker over it.
@@ -347,6 +358,7 @@ fn initial_actions(
         initial.push(Action::Prompt {
             text: prompt.clone(),
             delivery: "steer",
+            chips: Vec::new(),
         });
     }
     initial
@@ -727,6 +739,12 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
             app.toast("Review the drafted command, then press Enter to run it");
         }
         Msg::Done => {}
+        Msg::PromptRefused {
+            session_id,
+            text,
+            chips,
+            message,
+        } => app.prompt_refused(&session_id, &text, chips, message),
     }
     Vec::new()
 }

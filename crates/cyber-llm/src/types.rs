@@ -22,6 +22,17 @@ pub enum Content {
         media_type: String,
         data: String,
     },
+    /// Base64 document data (`application/pdf`).
+    Document {
+        media_type: String,
+        data: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
+    /// A stored prompt attachment (`storage-events` → Attachment storage). The runtime
+    /// resolves it to [`Content::Image`] or [`Content::Document`] before a request; an
+    /// adapter that receives one fails the request.
+    Attachment(AttachmentRef),
     /// Reasoning from an earlier Turn. `signature` is sent back only to the provider that
     /// produced it; the runtime lowers reasoning to text across providers.
     Reasoning {
@@ -40,6 +51,30 @@ pub enum Content {
         #[serde(default)]
         is_error: bool,
     },
+}
+
+/// The durable reference to a content-addressed attachment blob of one Session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AttachmentRef {
+    /// Lowercase hex SHA-256 of the stored (normalized) bytes.
+    pub sha256: String,
+    /// Sniffed from the bytes, never taken from the client.
+    pub media_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Stored size in bytes.
+    pub size: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    /// Page count of a PDF.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pages: Option<u32>,
+    /// SHA-256 of the original blob, kept beside a normalized one with
+    /// `attachments.keep_original`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -149,7 +149,7 @@ export class View {
     if (part.type === "text") return node("div", "prose", part.text);
     if (part.type === "tool_result") return code(part.output, "Tool result");
     if (part.type === "tool_call") return code({ tool: part.name, input: part.input }, "Tool call");
-    return node("p", "muted", part.type === "image" ? "Image attachment · display is outside this dashboard slice" : "Reasoning content is not expanded here.");
+    return node("p", "muted", ["image", "document", "attachment"].includes(part.type) ? "Attachment · display is outside this dashboard slice" : "Reasoning content is not expanded here.");
   }
   private composer(): HTMLElement {
     const state = this.model.state; const form = node("form", "composer");

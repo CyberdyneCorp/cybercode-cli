@@ -42,6 +42,8 @@ impl ModelResolver for Model {
             context_limit: 200_000,
             cost: None,
             prefers_apply_patch: false,
+            vision: false,
+            pdf: false,
         })
     }
 

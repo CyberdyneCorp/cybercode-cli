@@ -47,6 +47,15 @@ impl Composer {
         (self.row, self.col)
     }
 
+    /// The cursor's line before and after the cursor.
+    pub fn around_cursor(&self) -> (String, String) {
+        let line = &self.lines[self.row];
+        (
+            line[..self.col].iter().collect(),
+            line[self.col..].iter().collect(),
+        )
+    }
+
     pub fn insert(&mut self, c: char) {
         if c == '\n' {
             return self.newline();

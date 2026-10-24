@@ -124,8 +124,11 @@ impl Sanitizer {
                 }
             }
             Value::Object(map) => {
+                let media = is_media_part(map);
                 for (field, item) in map.iter_mut() {
                     let within = within.or_else(|| scope(field));
+                    // A media part's name is the file it came from.
+                    let within = within.or((media && field == "name").then_some(Kind::Path));
                     self.walk(item, Some(field), within);
                 }
             }
@@ -162,6 +165,14 @@ impl Sanitizer {
         self.markers.insert(key, marker.clone());
         marker
     }
+}
+
+/// An `attachment` or `document` part, whose `name` is a file name.
+fn is_media_part(map: &serde_json::Map<String, Value>) -> bool {
+    matches!(
+        map.get("type").and_then(Value::as_str),
+        Some("attachment" | "document")
+    )
 }
 
 /// The kind every string under `field` takes, when it is a tool or metadata key.
@@ -258,6 +269,23 @@ mod tests {
         assert_eq!(export["branches"], "all");
         assert_eq!(export["messages"][1]["parent_message_id"], "msg_1");
         assert_eq!(export["messages"][1]["text"], "[redacted:text:2]");
+    }
+
+    #[test]
+    fn media_part_names_are_redacted_as_paths_and_their_type_and_size_kept() {
+        let mut export = json!({"messages": [{"kind": "user", "parts": [
+            {"type": "attachment", "sha256": "ab12", "media_type": "image/png", "size": 1200,
+                "name": "shot.png"},
+            {"type": "document", "media_type": "application/pdf", "data": "JVBERi0=",
+                "name": "spec.pdf"}
+        ]}]});
+        Sanitizer::default().apply(&mut export);
+        let parts = &export["messages"][0]["parts"];
+        assert_eq!(parts[0]["name"], "[redacted:path:1]");
+        assert_eq!(parts[0]["media_type"], "image/png");
+        assert_eq!(parts[0]["size"], 1200);
+        assert_eq!(parts[1]["name"], "[redacted:path:2]");
+        assert!(!export.to_string().contains(".png"));
     }
 
     #[test]

@@ -588,12 +588,17 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         )
         .status(202)
         .body::<PromptBody>(g)
-        .ok::<Data<Receipt>>(g),
+        .ok::<Data<Receipt>>(g)
+        .error::<ErrorBody>(g, 400, "InvalidRequestError (an unknown part type among them)")
+        .error::<ErrorBody>(g, 413, "AttachmentTooLargeError with size and limit")
+        .error::<ErrorBody>(g, 415, "UnsupportedAttachmentError with media_type")
+        .error::<ErrorBody>(g, 422, "UnsupportedModalityError with model and modality"),
         op("post","/sessions/{sessionID}/interactive-clients","v1.session.interactiveAttach","Create a 45-second owner-authenticated browser attachment")
             .status(201).ok::<Data<super::interactive::InteractiveClientLease>>(g),
         op("put","/sessions/{sessionID}/interactive-clients/{clientID}","v1.session.interactiveRenew","Renew only a live browser attachment")
             .ok::<Data<super::interactive::InteractiveClientLease>>(g).error::<ErrorBody>(g,404,"The attachment expired or does not match this Session/Location"),
         op("delete","/sessions/{sessionID}/interactive-clients/{clientID}","v1.session.interactiveRelease","Release only this browser attachment").status(204),
+
         op(
             "post",
             "/sessions/{sessionID}/command",
@@ -1315,6 +1320,19 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .ok::<Data<super::export::SessionExport>>(g)
         .error::<ErrorBody>(g, 404, "SessionNotFoundError"),
         op(
+            "post",
+            "/sessions/import",
+            "v1.session.import",
+            "Create a Session in the Location from a JSON export, with fresh IDs; its attachment blobs are verified against their SHA-256 and `attachments.max_bytes` before anything is written. A sanitized export or one with every branch is refused",
+        )
+        .located()
+        .status(201)
+        .body::<crate::runtime::ImportDocument>(g)
+        .ok::<Data<crate::runtime::SessionInfo>>(g)
+        .error::<ErrorBody>(g, 400, "InvalidRequestError")
+        .error::<ErrorBody>(g, 413, "AttachmentTooLargeError")
+        .error::<ErrorBody>(g, 422, "ExportTooNewError"),
+        op(
             "get",
             "/sessions/{sessionID}/goals",
             "v1.session.goals",
@@ -1645,12 +1663,14 @@ pub fn peer_operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "post",
             "/peer/attach/{sessionID}/prompt",
             "v1.peer.attachPrompt",
-            "Prompt the attached Session as its user with text and image parts",
+            "Prompt the attached Session as its user with text, image and document parts",
         )
         .status(202)
         .body::<super::peer::attach::PeerPrompt>(g)
         .ok::<Data<Receipt>>(g)
-        .error::<ErrorBody>(g, 403, attached),
+        .error::<ErrorBody>(g, 403, attached)
+        .error::<ErrorBody>(g, 413, "AttachmentTooLargeError with size and limit")
+        .error::<ErrorBody>(g, 415, "UnsupportedAttachmentError with media_type"),
         peer_op(
             "post",
             "/peer/attach/{sessionID}/interrupt",

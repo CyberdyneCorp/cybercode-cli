@@ -603,6 +603,7 @@ mod tests {
             text: String::new(),
             delivery: if held { "hold" } else { "queue" }.into(),
             held,
+            media: Vec::new(),
         }
     }
 

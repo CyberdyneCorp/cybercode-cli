@@ -104,11 +104,14 @@ impl Runtime {
 
     /// What the Sessions own outside the database: the copies of the files they sent
     /// (`<data>/sent/<file_id>/`), their browser evidence artifacts
-    /// (`<data>/browser/artifacts/<session_id>/`) and their process Job logs
+    /// (`<data>/browser/artifacts/<session_id>/`), their prompt attachments
+    /// (`<data>/attachments/<session_id>/`) and their process Job logs
     /// (`<data>/jobs/<id>.log`).
     async fn owned_artifacts(&self, ids: &[String]) -> Result<Vec<PathBuf>, RuntimeError> {
         let mut artifacts = Vec::new();
+        let attachments = self.attachments()?;
         for id in ids {
+            artifacts.extend(attachments.session_dir(id).ok());
             let handle = self.inner.handle(id).await?;
             let state = handle.state.lock().await;
             artifacts.extend(state.sent_files.values().filter_map(sent_copy));

@@ -306,6 +306,22 @@ impl App {
         runtime.configure_workflow_runs(workflow_settings.max_running_runs as usize);
         // Inline scripts and return values larger than 1 MiB (`workflows` → Run results).
         runtime.configure_workflow_dir(opts.paths.state.join("workflows"));
+        // Prompt attachment blobs (`storage-events` → Attachment storage): beside the
+        // database, or in a private temporary directory for an in-memory store.
+        let attachment_settings =
+            cyber_core::config::AttachmentSettings::from_config(&global).unwrap_or_default();
+        runtime.configure_attachments(match store.durability() {
+            cyber_store::Durability::Full => {
+                cyber_server::runtime::attachments::AttachmentStore::durable(
+                    opts.paths.data.join("attachments"),
+                    attachment_settings,
+                )
+            }
+            cyber_store::Durability::Ephemeral => {
+                cyber_server::runtime::attachments::AttachmentStore::ephemeral(attachment_settings)
+                    .map_err(|e| e.to_string())?
+            }
+        });
         runtime.recover_jobs().await.map_err(|e| e.to_string())?;
         // Sender records of messages a crash left half-recorded (`cross-session-messaging`).
         runtime

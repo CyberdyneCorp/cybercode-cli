@@ -96,6 +96,26 @@ export type Attach = {
   session_id: string;
 };
 
+/** The durable reference to a content-addressed attachment blob of one Session. */
+export type AttachmentRef = {
+  /** Lowercase hex SHA-256 of the stored (normalized) bytes. */
+  sha256: string;
+  /** Sniffed from the bytes, never taken from the client. */
+  media_type: string;
+  name?: string | null;
+  /** Stored size in bytes. */
+  size: number;
+  width?: number | null;
+  height?: number | null;
+  /** Page count of a PDF. */
+  pages?: number | null;
+  /**
+   * SHA-256 of the original blob, kept beside a normalized one with
+   * `attachments.keep_original`.
+   */
+  original?: string | null;
+};
+
 export type AutoOverrideReceipt = {
   id: string;
   decision_id: string;
@@ -364,6 +384,13 @@ export type Content = {
   data: string;
   type: "image";
 } | {
+  media_type: string;
+  data: string;
+  name?: string | null;
+  type: "document";
+} | (AttachmentRef & {
+  type: "attachment";
+}) | {
   text: string;
   signature?: string | null;
   type: "reasoning";
@@ -691,6 +718,10 @@ export type Data_SessionExport = {
   data: SessionExport;
 };
 
+export type Data_SessionInfo = {
+  data: SessionInfo;
+};
+
 export type Data_ShellResult = {
   data: ShellResult;
 };
@@ -847,6 +878,17 @@ export type EventEnvelope = {
 
 /** What an evidence record is about. */
 export type EvidenceStatus = "observed" | "startup_failed";
+
+/** One blob of a JSON export: `{ sha256, media_type, size, name, data }`. */
+export type ExportedBlob = {
+  sha256: string;
+  media_type: string;
+  size: number;
+  /** The name of the first part referencing the blob. */
+  name?: string | null;
+  /** Base64 of the bytes. */
+  data: string;
+};
 
 export type FavoriteModel = {
   provider: string;
@@ -1730,6 +1772,44 @@ export type HubUpdateTask = {
   report?: HubReportInput | null;
 };
 
+/** The parts of a `cyber sessions export` document an import reads. */
+export type ImportDocument = {
+  version: number;
+  sanitized?: boolean;
+  branches?: string | null;
+  session: ImportedSession;
+  messages?: ImportedMessage[];
+  /** The blobs the messages reference. */
+  attachments?: ExportedBlob[];
+};
+
+/** One exported message: its entry and, for an answer, its tool calls. */
+export type ImportedMessage = {
+  tools?: CallState[];
+} & ({
+  id: string;
+  parts: Content[];
+  source: string;
+  /**
+   * Time of the durable promotion event (`session-runtime` → Assistant
+   * message timing); null only for entries recorded before it was kept.
+   */
+  promoted_ms?: number | null;
+  kind: "user";
+} | (AssistantEntry & {
+  kind: "assistant";
+}) | {
+  id: string;
+  text: string;
+  epoch?: number | null;
+  kind: "system";
+});
+
+export type ImportedSession = {
+  title: string;
+  model: string;
+};
+
 /**
  * A Session-level `messaging.inbound` override. It replaces only the default; explicit
  * sender patterns still win.
@@ -1743,7 +1823,8 @@ export type InboundOverride = {
 export type InboundPolicy = "deliver" | "hold" | "refuse";
 
 export type InboxEditBody = {
-  parts?: Content[] | null;
+  /** Text and media parts, stored as a prompt's are; `file` parts are refused. */
+  parts?: PromptPart[] | null;
   delivery?: Delivery | null;
 };
 
@@ -2778,11 +2859,14 @@ export type PeerOutcome = {
   target_session_id: string;
 };
 
-/** What a peer may prompt: text and images, as the Session's user. */
+/**
+ * What a peer may prompt: text, images, PDFs and the Session's stored blobs, as the
+ * Session's user.
+ */
 export type PeerPrompt = {
   id?: string | null;
-  /** Text and image parts only. */
-  parts: Content[];
+  /** Text, image, document and attachment parts only. */
+  parts: PromptPart[];
   /** Default `steer`. */
   delivery?: Delivery | null;
 };
@@ -2916,11 +3000,37 @@ export type ProjectInfo = {
 
 export type PromptBody = {
   id?: string | null;
-  parts: Content[];
+  /** Text and media parts; at most 20 media parts. */
+  parts: PromptPart[];
   delivery?: Delivery;
   resume?: boolean;
   /** `user` unless a client relays another source. */
   source?: string | null;
+};
+
+/** One prompt part. */
+export type PromptPart = {
+  text: string;
+  type: "text";
+} | {
+  /** Advisory only: the stored type is sniffed from the bytes. */
+  media_type: string;
+  data: string;
+  name?: string | null;
+  type: "image";
+} | {
+  /** Advisory only: the stored type is sniffed from the bytes. */
+  media_type: string;
+  data: string;
+  name?: string | null;
+  type: "document";
+} | {
+  path: string;
+  name?: string | null;
+  type: "file";
+} | {
+  sha256: string;
+  type: "attachment";
 };
 
 /** A single-use ticket for `GET /jobs/{id}/pty/connect`. */
@@ -3462,6 +3572,11 @@ export type SessionExport = {
   workflow_runs: WorkflowRunSummary[];
   /** Child Sessions, oldest first; present with `include_children=true`. */
   children?: SessionExport[] | null;
+  /**
+   * The blobs the messages (children's included) reference, once each; only on the
+   * top-level export, and omitted by `sanitize=true`.
+   */
+  attachments?: ExportedBlob[] | null;
 };
 
 export type SessionInfo = {
@@ -3838,8 +3953,11 @@ export type SubtaskBody = {
   prompt: string;
   /** A visible subagent-capable profile. Omit to fork the current agent/context. */
   agent?: string | null;
-  /** Additional model-visible Content, retained without text conversion. */
-  attachments?: Content[];
+  /**
+   * Text and media parts for the child, stored as the parent's prompt media are;
+   * `file` parts are refused.
+   */
+  attachments?: PromptPart[];
   /** Positive ceiling capped by the selected profile's subagent step limit. */
   max_steps?: number | null;
 };

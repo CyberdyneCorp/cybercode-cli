@@ -2480,6 +2480,8 @@ impl cyber_server::runtime::ModelResolver for NativeSamplingModels {
             context_limit: 200000,
             cost: None,
             prefers_apply_patch: false,
+            vision: false,
+            pdf: false,
         })
     }
 }

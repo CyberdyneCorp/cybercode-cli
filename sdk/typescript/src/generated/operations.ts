@@ -1081,6 +1081,12 @@ export interface Operations {
     body: undefined;
     response: S.Page_HookExecutionRecord;
   };
+  "v1.session.import": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.ImportDocument;
+    response: S.SessionInfo;
+  };
   "v1.session.inbox": {
     path: { sessionID: string };
     query: Record<string, never>;
@@ -3439,6 +3445,18 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.session.import": {
+    tag: "session",
+    name: "import",
+    method: "POST",
+    path: "/api/v1/sessions/import",
+    pathParams: [],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.inbox": {
     tag: "session",
     name: "inbox",
@@ -4673,7 +4691,7 @@ export function createGroups(caller: Caller) {
       /** The attached Session's pending permission requests, attach requests excluded (`GET /api/v1/peer/attach/{sessionID}/permissions`) */
       attachPermissions: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.peer.attachPermissions"]["response"]> =>
         caller.call("v1.peer.attachPermissions", { path: { sessionID } }, options),
-      /** Prompt the attached Session as its user with text and image parts (`POST /api/v1/peer/attach/{sessionID}/prompt`) */
+      /** Prompt the attached Session as its user with text, image and document parts (`POST /api/v1/peer/attach/{sessionID}/prompt`) */
       attachPrompt: (sessionID: string, body: Operations["v1.peer.attachPrompt"]["body"], options?: RequestOptions): Promise<Operations["v1.peer.attachPrompt"]["response"]> =>
         caller.call("v1.peer.attachPrompt", { path: { sessionID }, body }, options),
       /** Reply once or reject to a permission request the attach lists (`always` is refused); never to an attach request (`POST /api/v1/peer/attach/{sessionID}/permissions/{requestID}/reply`) */
@@ -4843,6 +4861,9 @@ export function createGroups(caller: Caller) {
       /** List durable hook executions; running receipts do not establish a live process (`GET /api/v1/sessions/{sessionID}/hook-executions`) */
       hooks: (sessionID: string, query?: Operations["v1.session.hooks"]["query"], options?: RequestOptions): Promise<Operations["v1.session.hooks"]["response"]> =>
         caller.call("v1.session.hooks", { path: { sessionID }, query }, options),
+      /** Create a Session in the Location from a JSON export, with fresh IDs; its attachment blobs are verified against their SHA-256 and `attachments.max_bytes` before anything is written. A sanitized export or one with every branch is refused (`POST /api/v1/sessions/import`) */
+      import: (body: Operations["v1.session.import"]["body"], options?: RequestOptions): Promise<Operations["v1.session.import"]["response"]> =>
+        caller.call("v1.session.import", { body }, options),
       /** List inbox rows (`GET /api/v1/sessions/{sessionID}/inbox`) */
       inbox: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.inbox"]["response"]> =>
         caller.call("v1.session.inbox", { path: { sessionID } }, options),

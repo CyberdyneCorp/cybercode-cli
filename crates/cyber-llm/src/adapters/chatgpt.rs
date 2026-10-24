@@ -70,6 +70,7 @@ impl Adapter for ChatGptAdapter {
 
     fn stream(&self, request: LlmRequest) -> BoxFuture<'_, Result<EventStream, LlmError>> {
         Box::pin(async move {
+            super::ensure_resolved(&request)?;
             let session = self
                 .endpoint
                 .login
@@ -121,5 +122,24 @@ mod tests {
             ..LlmRequest::default()
         };
         assert_eq!(build_body(&shaped(request))["instructions"], "be brief");
+    }
+
+    #[test]
+    fn documents_reach_the_backend_as_input_files() {
+        let request = LlmRequest {
+            messages: vec![crate::types::Message {
+                role: crate::types::Role::User,
+                content: vec![crate::types::Content::Document {
+                    media_type: "application/pdf".into(),
+                    data: "JVBERi0=".into(),
+                    name: Some("spec.pdf".into()),
+                }],
+            }],
+            ..LlmRequest::default()
+        };
+        assert_eq!(
+            build_body(&shaped(request))["input"][0]["content"][0],
+            json!({ "type": "input_file", "filename": "spec.pdf", "file_data": "data:application/pdf;base64,JVBERi0=" })
+        );
     }
 }

@@ -1,8 +1,8 @@
 import { CyberClientError } from "./errors.js";
 import type { Groups, RequestOptions } from "./generated/operations.js";
-import type { Content, Delivery, EventEnvelope, Receipt, Usage } from "./generated/types.js";
+import type { Delivery, EventEnvelope, PromptPart, Receipt, Usage } from "./generated/types.js";
 
-export type PromptInput = string | Content[];
+export type PromptInput = string | PromptPart[];
 
 export interface PromptOptions extends RequestOptions {
   /** `steer` (default), `queue` or `hold`. */
@@ -31,7 +31,7 @@ export interface PromptResult {
 
 type Client = Pick<Groups, "session" | "event">;
 
-export function toParts(input: PromptInput): Content[] {
+export function toParts(input: PromptInput): PromptPart[] {
   return typeof input === "string" ? [{ type: "text", text: input }] : input;
 }
 
@@ -50,7 +50,7 @@ export async function switchSession(client: Client, id: string, options: PromptO
 }
 
 /** Post a prompt with the instance stream already subscribed, then follow the Drain to idle. */
-export async function promptAndWait(client: Client, id: string, parts: Content[], options: PromptOptions): Promise<PromptResult> {
+export async function promptAndWait(client: Client, id: string, parts: PromptPart[], options: PromptOptions): Promise<PromptResult> {
   if (options.delivery === "hold") throw new TypeError("a held prompt does not run; `wait` needs `steer` or `queue` delivery");
   const controller = new AbortController();
   const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;

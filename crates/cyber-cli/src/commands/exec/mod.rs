@@ -92,7 +92,8 @@ pub struct ExecArgs {
     /// The Workflow's `args` as a JSON object.
     #[arg(long = "args", value_name = "JSON", requires = "workflow")]
     pub workflow_args: Option<String>,
-    /// Attach a file (repeatable).
+    /// Attach a file (repeatable): an image or PDF as an attachment, read by a local
+    /// server under the `read` permission (sent inline with --attach); others as text.
     #[arg(long = "file")]
     pub files: Vec<PathBuf>,
     /// With --goal: each Goal's `max_turns` budget; otherwise the Session's step ceiling.
