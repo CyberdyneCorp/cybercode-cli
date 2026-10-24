@@ -5699,6 +5699,81 @@
           "refused"
         ]
       },
+      "Data_InteractiveClient": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/InteractiveClient"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "InteractiveClient": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Expiration in milliseconds since the Unix epoch. Authority uses a monotonic clock."
+          }
+        },
+        "required": [
+          "client_id",
+          "session_id",
+          "expires_at"
+        ]
+      },
+      "ErrorBody": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "ErrorBody",
+        "description": "The JSON body of every declared failure. Some failures add `reason`, a machine-readable\nrefinement of `_tag`, and fields of their own such as `retryAfterMs` or `path`.",
+        "type": "object",
+        "properties": {
+          "_tag": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "ref": {
+            "description": "`err_<id>` for `UnknownError`, logged server-side.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "paths": {
+            "description": "Paths for rewind conflicts.",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "service": {
+            "description": "Capability group unavailable in this host or phase.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "_tag",
+          "message"
+        ],
+        "additionalProperties": true
+      },
       "CommandBody": {
         "type": "object",
         "properties": {
@@ -8666,49 +8741,6 @@
           "stable"
         ],
         "description": "How far along a feature is. `experimental` features are off by default."
-      },
-      "ErrorBody": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": "ErrorBody",
-        "description": "The JSON body of every declared failure. Some failures add `reason`, a machine-readable\nrefinement of `_tag`, and fields of their own such as `retryAfterMs` or `path`.",
-        "type": "object",
-        "properties": {
-          "_tag": {
-            "type": "string"
-          },
-          "message": {
-            "type": "string"
-          },
-          "ref": {
-            "description": "`err_<id>` for `UnknownError`, logged server-side.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "paths": {
-            "description": "Paths for rewind conflicts.",
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "type": "string"
-            }
-          },
-          "service": {
-            "description": "Capability group unavailable in this host or phase.",
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "_tag",
-          "message"
-        ],
-        "additionalProperties": true
       },
       "Located_Definitions": {
         "type": "object",
@@ -18212,6 +18244,170 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/PromptBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/interactive-clients": {
+      "post": {
+        "operationId": "v1.session.interactiveAttach",
+        "summary": "Create a 45-second owner-authenticated browser attachment",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_InteractiveClient"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/interactive-clients/{clientID}": {
+      "put": {
+        "operationId": "v1.session.interactiveRenew",
+        "summary": "Renew only a live browser attachment",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "clientID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_InteractiveClient"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The attachment expired or does not match this Session/Location",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "v1.session.interactiveRelease",
+        "summary": "Release only this browser attachment",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "clientID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "OK"
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
               }
             }
           }

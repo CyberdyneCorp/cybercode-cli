@@ -17,15 +17,16 @@ Start with the [project README](../README.md) for setup, architecture and the so
 | Run benchmarks or local-model evaluations | [Evaluation guide](../eval/README.md) |
 | Understand storage choices | [Storage architecture decision](decisions/0001-storage-architecture.md) |
 | Inspect product contracts | [OpenSpec specifications](../openspec/specs) |
+| Use the browser dashboard and remote approvals | [Dashboard guide](web-dashboard.md) (implementation in progress) |
 | Compare independent patches with tests and a judge | [Verified solve workflows](verified-workflows.md) |
 
 Specifications include future work. A specification's presence does not mean the feature is implemented or accepted; use the feature reference and acceptance audit together.
 
 ## Proposed next delivery slices
 
-These OpenSpec plans describe work that has not shipped:
+These delivery slices have ongoing implementation or operator prerequisites:
 
-- [Local web dashboard and browser approvals](../openspec/changes/implement-local-web-dashboard/proposal.md): P1 private access, live request handling and reconnect; account/Relay access stays P3.
+- [Local web dashboard and browser approvals](web-dashboard.md): P1 private access, live request handling and reconnect; implementation and acceptance in progress, account/Relay access stays P3.
 - [Cyber Account](account.md): account login, storage and deployment prerequisites.
 - [Project collaboration](collaboration.md): self-hosted hub setup, identity and membership, explicit checkout binding, published agents, receiver consent and shared tasks (experimental, off by default; live Auth provisioning remains operator work).
 

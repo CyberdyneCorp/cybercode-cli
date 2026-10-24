@@ -27,4 +27,4 @@ No new account identity, permission-grant format, peer trust model or Relay is i
 
 ## Status
 
-Proposed for review. No dashboard or remote-approval implementation is claimed.
+Implementation authorized by the owner on 2026-10-24. Work is in progress on `feat/local-web-dashboard`; acceptance and CI evidence will be recorded before delivery.

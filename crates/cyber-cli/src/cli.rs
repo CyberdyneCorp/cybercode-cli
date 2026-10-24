@@ -278,6 +278,8 @@ pub enum Command {
         #[command(subcommand)]
         cmd: crate::commands::git::GitCmd,
     },
+    /// Open the local web dashboard and remote approval inbox.
+    Web(crate::commands::web::WebArgs),
     /// Run the server in the foreground.
     Serve(ServeArgs),
     /// Manage the background server.

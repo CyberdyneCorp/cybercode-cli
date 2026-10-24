@@ -591,6 +591,10 @@ export type Data_GoalsView = {
   data: GoalsView;
 };
 
+export type Data_InteractiveClient = {
+  data: InteractiveClient;
+};
+
 export type Data_InterruptedResume = {
   data: InterruptedResume;
 };
@@ -1776,6 +1780,13 @@ export type InsightFactor = {
 
 /** A contributing factor. */
 export type InsightFactorKind = "subagent_heavy" | "long_running" | "large_context" | "workflow";
+
+export type InteractiveClient = {
+  client_id: string;
+  session_id: string;
+  /** Expiration in milliseconds since the Unix epoch. Authority uses a monotonic clock. */
+  expires_at: number;
+};
 
 /** What resuming the interrupted runs did. */
 export type InterruptedResume = {

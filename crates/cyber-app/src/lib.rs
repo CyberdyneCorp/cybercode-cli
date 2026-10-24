@@ -39,10 +39,12 @@ pub use cyber_tools::IsolationOptions;
 pub use registered_status::registered_lsp_status;
 pub use registration::{
     ClientBuild, Probe, Registration, ServerClientInfo, ServiceNotice, health, probe,
-    read_registration, registered_health, registration_path, start_service, stop_service,
+    probe_registration, read_registration, registered_health, registration_path, start_service,
+    start_web_service, stop_service,
 };
 pub use server::{
-    ServeOptions, password, replace_password, run_server, run_server_until, serve_stdio,
+    ServeOptions, owner_tls_files, password, replace_password, run_server, run_server_until,
+    serve_stdio,
 };
 
 /// What an App is built from.

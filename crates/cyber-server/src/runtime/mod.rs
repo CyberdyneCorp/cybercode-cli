@@ -80,6 +80,7 @@ pub use names::ChildExecution;
 pub use subtask::UserSubtask;
 pub use subtree_reopen::SubtreeReopenReport;
 pub use subtree_stop::{SubtreeStopReport, SubtreeStopStatus};
+mod interactive;
 mod location;
 mod mcp;
 mod mcp_depth;
@@ -2279,6 +2280,18 @@ impl Inner {
             return Err(RuntimeError::SessionNotFound(id.into()));
         }
         let state = SessionState::replay(&events).map_err(RuntimeError::Corrupt)?;
+        if events
+            .iter()
+            .any(|event| event.kind == events::INTERACTIVE_MANAGED)
+        {
+            let directory = std::fs::canonicalize(&state.info.directory).map_or_else(
+                |_| state.info.directory.clone(),
+                |path| path.display().to_string(),
+            );
+            self.presence.manage(id, &directory).map_err(|_| {
+                RuntimeError::Invalid("browser-managed Session capacity reached".into())
+            })?;
+        }
         let handle = Arc::new(Handle {
             title_requested: std::sync::atomic::AtomicBool::new(!state.info.default_title),
             state: Mutex::new(state),

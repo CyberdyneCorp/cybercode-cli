@@ -34,6 +34,7 @@ base64 = "0.22"
 getrandom = "0.3"
 http-body-util = "0.1"
 jsonschema = { version = "0.58.6", default-features = false }
+hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["server-auto", "service", "tokio"] }
 # Machine stats for `GET /system`: CPU, memory and one disk only, never processes.
 # 0.38 keeps the workspace MSRV (0.39 needs Rust 1.95).

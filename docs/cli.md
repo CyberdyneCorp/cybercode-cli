@@ -68,6 +68,7 @@ cyber [OPTIONS] [COMMAND]
 - [`review`](#cyber-review): Review uncommitted changes, a range, a commit or a pull request
 - [`pr`](#cyber-pr): Check out a pull request and resume the Session linked to it
 - [`git`](#cyber-git): Generate commit and pull request text with the small model
+- [`web`](#cyber-web): Open the local web dashboard and remote approval inbox
 - [`serve`](#cyber-serve): Run the server in the foreground
 - [`service`](#cyber-service): Manage the background server
 - [`api`](#cyber-api): Send one request to the server API
@@ -1750,6 +1751,20 @@ cyber git pr-description [OPTIONS]
 **Options:**
 
 - `--base <BASE>`: The base branch or commit (default: origin/HEAD, else main, else master)
+
+## `cyber web`
+
+Open the local web dashboard and remote approval inbox
+
+```text
+cyber web [OPTIONS]
+```
+
+**Options:**
+
+- `--hostname <HOSTNAME>`: Address to bind when starting a server (default 127.0.0.1). Off loopback requires HTTPS.
+- `--port <PORT>`: TCP port when starting a server (default 4747, falling back to a free port)
+- `--no-open`: Print the dashboard URL without opening a browser.
 
 ## `cyber serve`
 
