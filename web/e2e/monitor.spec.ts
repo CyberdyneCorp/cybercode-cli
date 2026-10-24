@@ -52,14 +52,14 @@ test('Session navigation scopes the transcript and New Session creates a real ow
   await login(page, dashboard);
   await select(page, 'First browser Session');
   await send(page, 'A transcript unique to the first Session');
-  await expect(page.getByText('Scripted browser response', { exact: true })).toBeVisible();
+  await expect(page.getByText('Scripted browser response.', { exact: true })).toBeVisible();
   await select(page, 'Second browser Session');
   await tab(page, 'Conversation');
   await expect(page.getByText('A transcript unique to the first Session', { exact: true })).toHaveCount(0);
-  const previous = await dashboard.api<{ id: string }[]>('/sessions');
+  const previous = await dashboard.api<{ data: { id: string }[] }>('/sessions');
   await page.getByRole('button', { name: 'New Session', exact: true }).click();
-  await eventually(() => dashboard.api<{ id: string }[]>('/sessions'), rows => rows.length === previous.length + 1);
+  await eventually(() => dashboard.api<{ data: { id: string }[] }>('/sessions'), rows => rows.data.length === previous.data.length + 1);
   await expect(page.getByRole('navigation', { name: 'Sessions', exact: true }).getByRole('button', { pressed: true })).toHaveCount(1);
   await send(page, 'A fresh Session conversation');
-  await expect(page.getByText('Scripted browser response', { exact: true })).toBeVisible();
+  await expect(page.getByText('Scripted browser response.', { exact: true })).toBeVisible();
 });

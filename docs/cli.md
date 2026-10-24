@@ -1776,7 +1776,7 @@ cyber serve [OPTIONS]
 
 **Options:**
 
-- `--hostname <HOSTNAME>`: Address to bind (default 127.0.0.1) Default: `127.0.0.1`.
+- `--hostname <HOSTNAME>`: Address to bind (default 127.0.0.1). Off loopback requires global server.tls. Default: `127.0.0.1`.
 - `--port <PORT>`: TCP port (default 4747, falling back to a free port)
 - `--socket <SOCKET>`: Unix socket path (default <state>/cyber.sock)
 - `--no-tcp`: Do not listen on TCP.
