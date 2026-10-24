@@ -48,8 +48,8 @@ pub use hooks::{HookCondition, HookGroup, HookHandler, HookKind, HookSettings};
 pub use intelligence::{FormatterConfig, FormatterSettings, LspServerConfig, LspSettings};
 pub use jsonc::{parse as parse_jsonc, to_json as jsonc_to_json};
 pub use load::{
-    LoadRequest, RawHookSection, ensure_global_config, load, load_global, project_root,
-    trust_report, withheld_hook_sections,
+    LoadRequest, RawHookSection, ensure_global_config, load, load_global, load_owner_server,
+    project_root, trust_report, withheld_hook_sections,
 };
 pub use managed::{
     MANAGED_POLICY_DIR_ENV, MCP_BLOCKED, ManagedPolicy, McpPattern, McpPolicy, os_managed_dir,

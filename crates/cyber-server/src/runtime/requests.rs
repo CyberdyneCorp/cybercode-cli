@@ -178,9 +178,11 @@ impl Asker {
 
     /// Whether a client can answer requests; when false every request resolves `Unattended`.
     pub fn attended(&self) -> bool {
-        self.inner
-            .upgrade()
-            .is_some_and(|inner| inner.options.interactive)
+        self.inner.upgrade().is_some_and(|inner| {
+            inner
+                .presence
+                .session_attended(&self.session_id, inner.options.interactive)
+        })
     }
 
     /// Call-local observation of actual durable client requests, shared by cloned handles.
@@ -314,9 +316,6 @@ impl Inner {
         kind: PendingKind,
         reply: Reply,
     ) -> bool {
-        if !self.options.interactive {
-            return false;
-        }
         let mut request = PendingRequest {
             id: cyber_core::ids::new_id(if matches!(kind, PendingKind::Permission(_)) {
                 "per"
@@ -374,25 +373,36 @@ impl Inner {
             asked.data["admission_bindings"] =
                 serde_json::to_value(&authority.bindings).expect("authority serializes");
         }
-        let stored = match self.record_locked(&mut state, vec![asked]) {
-            Ok(stored) => stored,
-            Err(e) => {
-                // A request that cannot be recorded is never shown; say why instead of failing silently.
-                self.bus.publish(super::LiveEvent::Error {
-                    session_id: asker.session_id.clone(),
-                    kind: "storage".into(),
-                    message: format!("could not record a {kind_name} request: {e}"),
-                });
-                return false;
-            }
-        };
-        self.waiters
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(Waiter {
-                request: request.clone(),
-                reply,
+        let scopes = interactive_scopes(&request, &info.directory);
+        let stored = self
+            .presence
+            .with_attendance(&scopes, self.options.interactive, |attended| {
+                if !attended {
+                    return None;
+                }
+                let stored = match self.record_locked(&mut state, vec![asked]) {
+                    Ok(stored) => stored,
+                    Err(e) => {
+                        self.bus.publish(super::LiveEvent::Error {
+                            session_id: asker.session_id.clone(),
+                            kind: "storage".into(),
+                            message: format!("could not record a {kind_name} request: {e}"),
+                        });
+                        return None;
+                    }
+                };
+                self.waiters
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push(Waiter {
+                        request: request.clone(),
+                        reply,
+                    });
+                Some(stored)
             });
+        let Some(stored) = stored else {
+            return false;
+        };
         // Only publish after durable storage and reply registration both succeeded.
         self.publish(&stored);
         self.route_request_event(&request, kind_name, serde_json::to_value(&request).unwrap());
@@ -436,6 +446,42 @@ impl Inner {
                 None
             }
         }
+    }
+
+    /// A disappearing browser is an unattended approver, not a user rejection.
+    /// Taking the waiter under the attendance lock makes attach/expiry/reply races
+    /// choose one outcome without cancelling unrelated executing calls.
+    pub(super) async fn settle_browser_requests(self: &Arc<Self>) -> Result<(), RuntimeError> {
+        for request in self.pending(None) {
+            let handle = self.handle(&request.session_id).await?;
+            let directory = handle.state.lock().await.info.directory.clone();
+            let scopes = interactive_scopes(&request, &directory);
+            let waiter =
+                self.presence
+                    .with_attendance(&scopes, self.options.interactive, |attended| {
+                        if attended {
+                            None
+                        } else {
+                            self.take_waiter(&request.id)
+                        }
+                    });
+            let Some(waiter) = waiter else {
+                continue;
+            };
+            match waiter.reply {
+                Reply::Permission(sender) => {
+                    let reply = PermissionReply::Unattended;
+                    self.record_reply(&request, &reply).await?;
+                    let _ = sender.send(reply);
+                }
+                Reply::Question(sender) => {
+                    self.record_question_reply(&request, &QuestionReply::Unattended)
+                        .await?;
+                    let _ = sender.send(QuestionReply::Unattended);
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(crate) async fn abandon_requests(&self, session: &str) -> Result<(), RuntimeError> {
@@ -694,6 +740,26 @@ impl Inner {
             handle.halt.store(true, std::sync::atomic::Ordering::SeqCst);
         }
     }
+}
+
+fn interactive_scopes(
+    request: &PendingRequest,
+    directory: &str,
+) -> Vec<super::presence::InteractiveScope> {
+    let mut scopes = vec![super::presence::InteractiveScope {
+        session_id: request.session_id.clone(),
+        directory: request_directory(directory),
+    }];
+    scopes.extend(
+        request
+            .routed_to
+            .iter()
+            .map(|route| super::presence::InteractiveScope {
+                session_id: route.session_id.clone(),
+                directory: request_directory(&route.directory),
+            }),
+    );
+    scopes
 }
 
 fn request_directory(directory: &str) -> String {

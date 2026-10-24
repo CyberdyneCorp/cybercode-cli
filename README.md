@@ -267,7 +267,7 @@ In the TUI, a message from another machine reads `from review@laptop`, its held 
 | Instructions | `CYBER.md`, `AGENTS.md`, `CLAUDE.md`, `CONTEXT.md`; confined `@path` imports | [Guide](docs/local-core-guide.md#project-instructions-and-cybermd) |
 | TUI | Themes, Markdown, sidebar with context bar, MCP and machine stats, palette, explorer, Settings/Usage/Stats, recaps, `/rename` | Some Settings extras pending |
 | Images and paste | Large pastes as `[Pasted text #N +L lines]` chips; screenshots and PDFs from the clipboard (Ctrl+V), dropped paths and `@` mentions as `[Image #N]`/`[PDF #N]` chips; `cyber exec --file shot.png`; read under the `read` permission, 20 MiB limit, downscaled, stored once per Session, refused for models without the input | [Guide](docs/local-core-guide.md#large-paste-and-image-input); no image rendering in the terminal |
-| Clients | TUI, `exec`, background service (an idle server from an older build is replaced automatically), HTTP/SSE/WebSocket/stdio API, TypeScript SDK | [SDK](sdk/typescript/README.md) |
+| Clients | TUI, `exec`, [local web dashboard with remote approvals](docs/web-dashboard.md), background service (an idle server from an older build is replaced automatically), HTTP/SSE/WebSocket/stdio API, TypeScript SDK | [SDK](sdk/typescript/README.md) |
 | Partial P1 | Subagents/worktrees, cancellation, budgets, memory, LSP, formatting, migration previews | [P1 status](docs/implementation/p1-status.md) |
 
 ## How it compares

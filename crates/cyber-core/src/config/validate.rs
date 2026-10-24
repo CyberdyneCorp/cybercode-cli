@@ -59,6 +59,7 @@ const KNOWN_KEYS: &[&str] = &[
     "storage",
     "compat",
     "services",
+    "server",
     "features",
     "experimental",
     "autoupdate",

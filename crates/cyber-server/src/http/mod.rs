@@ -20,6 +20,7 @@ mod guard;
 mod hooks;
 mod idempotency;
 mod intelligence;
+mod interactive;
 mod jobs;
 mod jsonrpc;
 mod loops;
@@ -43,6 +44,7 @@ mod system;
 mod teams;
 mod usage;
 pub mod vcs;
+mod web;
 mod workflows;
 pub use workflows::start_error as workflow_start_error;
 pub mod worktrees;
@@ -72,7 +74,10 @@ pub use memory::{
 };
 #[cfg(unix)]
 pub use serve::serve_unix;
-pub use serve::{EmbeddedClient, PeerAddr, PeerLimits, serve_peer, serve_peer_with, serve_tcp};
+pub use serve::{
+    EmbeddedClient, PeerAddr, PeerLimits, owner_tls, serve_peer, serve_peer_with, serve_tcp,
+    serve_tcp_tls,
+};
 pub use service::ServiceControl;
 
 /// How a request reached the server.
@@ -667,6 +672,7 @@ pub fn router(state: AppState) -> Router {
 pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router {
     let api = Router::new()
         .merge(sessions::routes())
+        .merge(interactive::routes())
         .merge(export::routes())
         .merge(branches::routes())
         .merge(children::router())
@@ -707,6 +713,11 @@ pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router 
         .layer(axum::middleware::from_fn(request_log));
     Router::new()
         .nest("/api/v1", api)
+        .merge(web::routes())
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            web::security_headers,
+        ))
         .layer(
             CompressionLayer::new()
                 .compress_when(DefaultPredicate::new().and(SizeAbove::new(1024))),

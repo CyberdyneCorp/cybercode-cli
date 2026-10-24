@@ -12,7 +12,7 @@ use crate::output;
 
 #[derive(Debug, Args)]
 pub struct ServeArgs {
-    /// Address to bind (default 127.0.0.1).
+    /// Address to bind (default 127.0.0.1). Off loopback requires global server.tls.
     #[arg(long, default_value = "127.0.0.1")]
     pub hostname: String,
     /// TCP port (default 4747, falling back to a free port).
@@ -156,7 +156,7 @@ pub fn service(cmd: ServiceCmd, ctx: &Context, global: &GlobalArgs) -> Result<()
         ServiceCmd::Status => {
             let reg = cyber_app::read_registration(&ctx.paths);
             let probe = reg.as_ref().and_then(|r| {
-                rt.block_on(cyber_app::probe(&r.url))
+                rt.block_on(cyber_app::probe_registration(r))
                     .filter(|p| p.serves(r))
             });
             let healthy = probe.as_ref().is_some_and(|p| p.version == version);

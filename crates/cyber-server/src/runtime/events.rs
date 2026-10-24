@@ -11,6 +11,8 @@ use serde_json::Value;
 use super::model::{CallState, CallStatus, Delivery, Entry, RetrySafety, SessionInfo};
 
 pub const CREATED: &str = "session.created.1";
+/// Durable compatibility policy only; live browser leases never survive restart.
+pub const INTERACTIVE_MANAGED: &str = "session.interactive.managed.1";
 pub const WORKTREE_REBOUND: &str = "session.worktree.rebound.1";
 pub const WORKTREE_SETUP_READY: &str = "session.worktree.setup_ready.1";
 pub const CHILD_CONTINUATION_SETTLED: &str = "session.child.continuation_settled.1";
@@ -57,6 +59,7 @@ pub const RECAP_GENERATED: &str = "session.recap.generated.1";
 
 const ALL: &[&str] = &[
     CREATED,
+    INTERACTIVE_MANAGED,
     ADMITTED,
     RESUMED,
     CHILD_CONTINUATION_SETTLED,
