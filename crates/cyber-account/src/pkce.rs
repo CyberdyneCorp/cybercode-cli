@@ -29,6 +29,8 @@ const PARAMETERS: &[&str] = &[
     "code_challenge_method",
     "request",
     "request_uri",
+    "prompt",
+    "max_age",
 ];
 
 #[derive(Debug, PartialEq, Eq)]
@@ -69,6 +71,7 @@ pub struct AuthorizationAttempt {
     state: Zeroizing<String>,
     nonce: Zeroizing<String>,
     started: Instant,
+    require_recent_auth: bool,
 }
 
 impl AuthorizationAttempt {
@@ -110,7 +113,17 @@ impl AuthorizationAttempt {
             state,
             nonce,
             started: Instant::now(),
+            require_recent_auth: false,
         })
+    }
+
+    /// Request a new interactive authentication and verify its authentication time.
+    pub fn require_recent_authentication(mut self) -> Self {
+        self.require_recent_auth = true;
+        self.authorization
+            .query_pairs_mut()
+            .extend_pairs([("prompt", "login"), ("max_age", "900")]);
+        self
     }
 
     /// Intended only for the interactive login UI; never send this URL to models/logs.
@@ -151,6 +164,7 @@ impl AuthorizationAttempt {
                 issuer: self.issuer,
                 token_endpoint: self.token_endpoint,
                 started: self.started,
+                require_recent_auth: self.require_recent_auth,
             }),
             _ => Err(Error::InvalidCallback),
         }
@@ -170,9 +184,14 @@ pub struct CodeGrant {
     issuer: String,
     token_endpoint: Url,
     started: Instant,
+    require_recent_auth: bool,
 }
 
 impl CodeGrant {
+    pub fn requires_recent_authentication(&self) -> bool {
+        self.require_recent_auth
+    }
+
     pub fn issuer(&self) -> &str {
         &self.issuer
     }
@@ -252,6 +271,7 @@ mod tests {
             state: Zeroizing::new("state".into()),
             nonce: Zeroizing::new("nonce".into()),
             started: Instant::now() - LIFETIME,
+            require_recent_auth: false,
         };
         assert!(matches!(
             attempt.finish("http://127.0.0.1:12345/callback?state=state&code=code"),
@@ -270,6 +290,7 @@ mod tests {
             issuer: "https://auth.test".into(),
             token_endpoint: Url::parse("https://auth.test/token").unwrap(),
             started: Instant::now() - LIFETIME,
+            require_recent_auth: false,
         };
         assert_eq!(grant.token_form().unwrap_err(), Error::LoginExpired);
     }

@@ -2,7 +2,9 @@
 //! runtime and HTTP router, plus the server lifecycle (`server-api` → One server per user,
 //! Background service management, Listener defaults, Local password authentication).
 
+pub mod account;
 pub mod backup;
+pub mod collaboration;
 pub mod git_text;
 mod host;
 pub mod peer_discovery;
@@ -324,8 +326,13 @@ impl App {
             hook_config_loader(opts.paths.clone(), opts.home.clone()),
             opts.paths.clone(),
             withheld_hook_loader(opts.paths.clone(), opts.home.clone()),
-            Arc::clone(&global_config),
-        ));
+            services::OwnerContext {
+                global: Arc::clone(&global_config),
+                store: Arc::clone(&store),
+                runtime: runtime.clone(),
+                default_directory: opts.default_directory.clone(),
+            },
+        )?);
         // Runs a previous process left executing come back paused (and are resumed with
         // `workflows.resume_after_restart`); queued runs are rebuilt as a resume would and
         // keep their place in the run queue.

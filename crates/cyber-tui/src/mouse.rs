@@ -57,6 +57,7 @@ fn wheel_moves(overlay: &Overlay) -> bool {
             | Overlay::TaskLog { .. }
             | Overlay::Messages
             | Overlay::Team
+            | Overlay::Collaboration
             | Overlay::Tree
     )
 }

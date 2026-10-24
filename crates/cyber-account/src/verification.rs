@@ -12,8 +12,9 @@ const MAX_TOKEN: usize = 64 * 1024;
 
 /// Client state is kept behind one account/service mutex. Credentials never live
 /// in discovery metadata, key caches or error values.
+#[derive(Clone)]
 pub struct OidcClient {
-    discovery: DiscoveryClient,
+    pub(crate) discovery: DiscoveryClient,
     provider: Provider,
     client_id: String,
     keys: JwkSet,
@@ -26,11 +27,23 @@ impl OidcClient {
         client_id: &str,
         transport: Transport,
     ) -> Result<Self, Error> {
+        Self::discover_with_cache(issuer, client_id, transport, None).await
+    }
+
+    pub async fn discover_with_cache(
+        issuer: &str,
+        client_id: &str,
+        transport: Transport,
+        cache: Option<&std::path::Path>,
+    ) -> Result<Self, Error> {
         if client_id.trim().is_empty() {
             return Err(Error::InvalidClient);
         }
         let discovery = DiscoveryClient::new(transport)?;
-        let provider = discovery.discover(issuer).await?;
+        let provider = match cache {
+            Some(cache) => discovery.discover_cached(issuer, cache).await?,
+            None => discovery.discover(issuer).await?,
+        };
         let response = discovery
             .client
             .get(provider.jwks_uri().clone())
@@ -44,6 +57,53 @@ impl OidcClient {
             client_id: client_id.to_owned(),
             keys,
             fetched: Instant::now(),
+        })
+    }
+
+    /// Metadata/key cache freshness only; cloning this client copies no account or
+    /// authorization lease. Keep the newest snapshot after concurrent verification.
+    pub fn keys_fetched_at(&self) -> Instant {
+        self.fetched
+    }
+
+    /// Obtain a backend-only service credential. This result is deliberately a
+    /// different type from user identity and cannot construct an IdentityLease.
+    pub async fn client_credentials(
+        &self,
+        client_id: &str,
+        secret: &Secret,
+        scope: Option<&str>,
+    ) -> Result<ServiceCredential, Error> {
+        if client_id.trim().is_empty() || secret.expose().is_empty() {
+            return Err(Error::InvalidClient);
+        }
+        if !self.provider.supports_client_credentials() {
+            return Err(Error::ServiceCredentialsUnsupported);
+        }
+        let started = Instant::now();
+        let issued = now();
+        let mut form = vec![("grant_type", "client_credentials")];
+        if let Some(scope) = scope {
+            form.push(("scope", scope));
+        }
+        let response = self
+            .discovery
+            .client
+            .post(self.provider.token_endpoint().clone())
+            .basic_auth(client_id, Some(secret.expose()))
+            .form(&form)
+            .send()
+            .await
+            .map_err(|_| Error::TokenExchange)?;
+        let response = token_response(response).await?;
+        let lifetime = response.expires_in.unwrap_or(60).min(3600);
+        if lifetime == 0 {
+            return Err(Error::InvalidToken);
+        }
+        Ok(ServiceCredential {
+            token: response.access_token,
+            expires_at: issued.saturating_add(lifetime),
+            deadline: started + Duration::from_secs(lifetime),
         })
     }
 
@@ -188,7 +248,14 @@ impl OidcClient {
         let id_account = self
             .verify_id_token(id_token.expose(), grant.expected_nonce())
             .await?;
-        let nonce = Secret::new(grant.expected_nonce().to_owned());
+        if grant.requires_recent_authentication()
+            && !id_account
+                .auth_time
+                .is_some_and(|time| time <= now() && now().saturating_sub(time) <= 900)
+        {
+            return Err(Error::StepUpRequired);
+        }
+        let nonce = Some(Secret::new(grant.expected_nonce().to_owned()));
         self.bind_tokens(
             response.access_token,
             response.refresh_token,
@@ -207,10 +274,10 @@ impl OidcClient {
         id: Secret,
         id_account: Account,
         audience: &str,
-        nonce: Secret,
+        nonce: Option<Secret>,
     ) -> Result<TokenSet, Error> {
         let claims = self.claims(access.expose(), audience, true).await?;
-        if claims.sub != id_account.sub {
+        if claims.sub != id_account.sub || claims.iss != id_account.issuer {
             return Err(Error::InvalidToken);
         }
         let mut account = claims.account(&self.client_id);
@@ -227,6 +294,63 @@ impl OidcClient {
             nonce,
             account,
         })
+    }
+
+    pub(crate) async fn accept_device_tokens(
+        &mut self,
+        response: reqwest::Response,
+        audience: &str,
+    ) -> Result<TokenSet, Error> {
+        let response = token_response(response).await?;
+        let id = response.id_token.ok_or(Error::InvalidToken)?;
+        let client_id = self.client_id.clone();
+        let claims = self.claims(id.expose(), &client_id, false).await?;
+        if claims.azp.as_ref().is_some_and(|s| s != &client_id)
+            || (claims.aud.multiple() && claims.azp.as_deref() != Some(&client_id))
+        {
+            return Err(Error::InvalidToken);
+        }
+        self.bind_tokens(
+            response.access_token,
+            response.refresh_token,
+            id,
+            claims.account(&client_id),
+            audience,
+            None,
+        )
+        .await
+    }
+
+    /// Local deletion is mandatory and happens in the caller before these best-effort
+    /// network requests. Credentials stay in POST forms, not query strings/logs.
+    pub async fn revoke_logout(&self, tokens: &TokenSet) {
+        if tokens.account.issuer != self.provider.issuer() || tokens.client_id != self.client_id {
+            return;
+        }
+        if let Some(endpoint) = self.provider.revocation_endpoint()
+            && let Some(refresh) = &tokens.refresh_token
+        {
+            let _ = self
+                .discovery
+                .client
+                .post(endpoint.clone())
+                .form(&[
+                    ("token", refresh.expose()),
+                    ("token_type_hint", "refresh_token"),
+                    ("client_id", self.client_id()),
+                ])
+                .send()
+                .await;
+        }
+        if let Some(endpoint) = self.provider.end_session_endpoint() {
+            let _ = self
+                .discovery
+                .client
+                .post(endpoint.clone())
+                .form(&[("id_token_hint", tokens.id_token.expose())])
+                .send()
+                .await;
+        }
     }
 
     pub async fn refresh(&mut self, old: &TokenSet, audience: &str) -> Result<TokenSet, Error> {
@@ -250,19 +374,21 @@ impl OidcClient {
         let claims = self
             .claims(response.access_token.expose(), audience, true)
             .await?;
-        if claims.sub != old.account.sub {
+        if claims.sub != old.account.sub || claims.iss != old.account.issuer {
             return Err(Error::InvalidToken);
         }
         if let Some(id) = &response.id_token {
             let client_id = self.client_id.clone();
             let refreshed_id = self.claims(id.expose(), &client_id, false).await?;
             if refreshed_id.sub != old.account.sub
+                || refreshed_id.iss != old.account.issuer
                 || refreshed_id.azp.as_ref().is_some_and(|s| s != &client_id)
                 || (refreshed_id.aud.multiple() && refreshed_id.azp.as_deref() != Some(&client_id))
-                || refreshed_id
-                    .nonce
-                    .as_ref()
-                    .is_some_and(|s| !bool::from(s.as_bytes().ct_eq(old.nonce.expose().as_bytes())))
+                || refreshed_id.nonce.as_ref().is_some_and(|s| {
+                    old.nonce
+                        .as_ref()
+                        .is_some_and(|n| !bool::from(s.as_bytes().ct_eq(n.expose().as_bytes())))
+                })
             {
                 return Err(Error::InvalidToken);
             }
@@ -388,6 +514,7 @@ struct TokenResponse {
     refresh_token: Option<Secret>,
     id_token: Option<Secret>,
     token_type: String,
+    expires_in: Option<u64>,
 }
 
 async fn token_response(response: reqwest::Response) -> Result<TokenResponse, Error> {
@@ -441,6 +568,20 @@ struct Introspection {
     auth_time: Option<u64>,
     #[serde(default)]
     amr: Vec<String>,
+}
+
+/// Private backend credential, never a human account and never an API response.
+#[derive(Clone, Debug)]
+pub struct ServiceCredential {
+    pub token: Secret,
+    pub expires_at: u64,
+    deadline: Instant,
+}
+impl ServiceCredential {
+    pub fn needs_refresh(&self) -> bool {
+        self.deadline.saturating_duration_since(Instant::now()) <= Duration::from_secs(30)
+            || self.expires_at <= now().saturating_add(30)
+    }
 }
 
 /// Non-serializable authorization evidence. Any derived lease must keep this exact

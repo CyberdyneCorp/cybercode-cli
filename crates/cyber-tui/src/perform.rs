@@ -32,6 +32,11 @@ pub enum Msg {
         open: bool,
         toast: Option<String>,
     },
+    Collaboration {
+        session_id: String,
+        generation: u64,
+        result: Box<Result<crate::collaboration::Snapshot, String>>,
+    },
     Snapshot {
         session: Session,
         items: Vec<Item>,
@@ -884,6 +889,7 @@ pub async fn perform_owned(
         | Action::Goal(_)
         | Action::Workflow(_)
         | Action::Team(_)
+        | Action::Collaboration(_)
         | Action::Branch(_)
         | Action::Login(_)
         | Action::Export(_) => scheduled(client, session, action).await,
@@ -906,6 +912,9 @@ async fn scheduled(client: &Client, session: &Session, action: Action) -> Result
         Action::Export(request) => crate::export::perform(client, request).await,
         Action::Loop(request) => crate::loops::perform(client, request).await,
         Action::Team(request) => crate::team::perform(client, session, request).await,
+        Action::Collaboration(request) => {
+            crate::collaboration::perform(client, session, request).await
+        }
         Action::Goal(request) => crate::goals::perform(client, request).await,
         Action::Login(request) => crate::login::perform(client, request).await,
         Action::Workflow(request) => Ok(Msg::Workflow(

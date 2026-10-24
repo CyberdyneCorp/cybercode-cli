@@ -6,14 +6,14 @@
 
 ## 2. Account foundation
 
-- [ ] 2.1 Implement the existing account contracts needed for collaboration: discovery, PKCE login, callback/state/nonce validation, headless completion, ID-token checks, whoami/logout and account-free local behavior.
-- [ ] 2.2 Add protected token storage, cross-process serialized refresh/rotation, credential filtering/redaction and collaboration scope/audience checks. Preserve independent LLM-provider login.
-- [ ] 2.3 Test real local OIDC protocol fixtures: two subjects, bad issuer/audience/signature, unknown key rotation, expired tokens, missing scope, concurrent refresh, revoked/deactivated users, missing/empty org authorization, stale JWTs after org removal, service-token impersonation, expired authorization leases, Auth outages, step-up authentication, preserved account MFA for internal users and offline local use.
+- [x] 2.1 Implement the existing account contracts needed for collaboration: discovery, PKCE login, callback/state/nonce validation, headless completion, ID-token checks, whoami/logout and account-free local behavior.
+- [x] 2.2 Add protected token storage, cross-process serialized refresh/rotation, credential filtering/redaction and collaboration scope/audience checks. Preserve independent LLM-provider login.
+- [x] 2.3 Test real local OIDC protocol fixtures: two subjects, bad issuer/audience/signature, unknown key rotation, expired tokens, missing scope, concurrent refresh, revoked/deactivated users, missing/empty org authorization, stale JWTs after org removal, service-token impersonation, expired authorization leases, Auth outages, step-up authentication, preserved account MFA for internal users and offline local use.
 - [ ] 2.4 Document/verify CyberdyneAuth client, audience, required introspection service, optional directory service and scope dependencies (A1/A4/A8). Public discovery/OpenAPI evidence and remaining provisioning gaps are recorded in [the live contract](auth-contract.md); authenticated acceptance remains pending. Do not claim live issuer acceptance from a fixture.
 
 ### Account foundation increments
 
-Task 2.1 is intentionally still open. The first increment added discovery and PKCE preparation. The second adds signed token validation/exchange, live user/org introspection, a temporary callback listener and protected storage with crash-safe refresh; see the evidence for tested boundaries. Browser/headless CLI/API integration, persistent metadata caching, device flow and live deployment acceptance remain pending. Task 2.2 is implemented at the library layer but remains open until runtime integration and credential-isolation acceptance. See [implementation evidence](../../../docs/implementation/project-collaboration.md).
+The earlier discovery/library-only checkpoint is superseded by Increment 3. Discovery/cache, PKCE and advertised device login, browser/headless CLI/API integration, signed validation, backend-authenticated live user/org introspection, protected native/file storage, crash-safe serialized refresh/logout and explicit recent-authentication flows are implemented and covered by local protocol/runtime fixtures. Account library, owner API and CLI acceptance use injected memory vaults or deliberate Linux-only file fallback; no test writes a developer's native vault. Live deployment provisioning/acceptance remains explicitly pending in task 2.4. See [implementation evidence](../../../docs/implementation/project-collaboration.md).
 
 ## 3. Hub domain, persistence and authorization
 

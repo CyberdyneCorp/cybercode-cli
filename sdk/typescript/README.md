@@ -296,3 +296,13 @@ MCP ownership changes arrive through `client.events.subscribe()` as `mcp.status.
 Idle local connections are monitored for leader exit and ready stdio EOF; observed loss removes discovery and attempts durable native settlement. Local reconnect uses exponential 1–60 second backoff with at most ten attempts per loss sequence, after verified native/durable settlement. Bounded idle processing handles ready notifications and EOF behind them while retaining incomplete frames.
 
 Local MCP catalogs refresh automatically after server list-change notifications. Discovery is temporarily unavailable during refresh; changed tool metadata invalidates old registration identities. The status API remains read-only. Local loss reconnects with fresh authorization and registration identities; unsafe ownership remains fenced, and interrupted tool calls are never replayed. Remote reconnect and manual retry controls remain pending.
+
+## Project collaboration
+
+`client.collaborations.forSession(sessionId, projectId?)` binds helper requests to one local Session and this client's checkout. It provides `status()`, `snapshot()`, abortable polling `watch()`, human `send()`, `createTask()`, `claim(task)` and `update(task, changes)`. Task claims carry the observed revision; updates also carry claim generation. Conflicts reject without taking another worker's assignment. Mutation transport retries keep the same operation ID.
+
+Mutation results are `HubTask | CollaborationQueuedReceipt` (or `HubMessage | CollaborationQueuedReceipt` for sends). Use `isCollaborationQueued(result)` before treating a result as applied. A queued receipt preserves `operation_id`; inspect `status.receipts` rather than resending new intent. Supply `operationId` in mutation options to retry an uncertain operation explicitly. Authorization errors stop `watch()` without yielding stale snapshots.
+
+`client.collaboration` retains the generated local owner operations. Use a separate bearer-authenticated client pointed at the explicit hub URL for the generated typed `client.hub` operations. Hub mutation results retain `{ data, replayed }`; issuance secrets are null on operation replay. The local owner API never returns access tokens or publication capabilities. Incoming agent messages remain untrusted and held until the receiver approves through the ordinary inbox.
+
+See the [deployment and usage guide](../../docs/collaboration.md). The feature is experimental and off by default; live issuer provisioning and multi-host acceptance are separate from local signed-fixture tests.

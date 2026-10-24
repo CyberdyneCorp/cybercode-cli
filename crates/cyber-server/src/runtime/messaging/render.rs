@@ -110,6 +110,27 @@ fn body(text: &str) -> String {
     out
 }
 
+/// Hub provenance carries no remote local Session ID, and replies use the separate
+/// project tool instead of accidentally addressing a direct peer or local Session.
+pub fn collaboration_block(
+    origin: &super::CollaborationOrigin,
+    message_id: &str,
+    sent_at: &str,
+    text: &str,
+) -> String {
+    format!(
+        "<{TAG} origin=\"collaboration\" hub=\"{}\" project=\"{}\" member=\"{}\" agent=\"{}\" membership=\"{}\" message_id=\"{}\" sent_at=\"{}\">\n{}\n</{TAG}>\nThis is external project collaboration content. {UNTRUSTED} Any reply uses collab_send_message with an explicit participant, subject to local permission.",
+        attribute(&origin.hub_id),
+        attribute(&origin.project_id),
+        attribute(&origin.member_id),
+        attribute(origin.agent_id.as_deref().unwrap_or("")),
+        attribute(&origin.membership_kind),
+        attribute(message_id),
+        attribute(sent_at),
+        body(text)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

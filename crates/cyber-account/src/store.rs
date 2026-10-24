@@ -13,6 +13,9 @@ use std::{
 };
 use zeroize::Zeroizing;
 
+mod host_secrets;
+pub use host_secrets::HostSecrets;
+
 const MAX_FILE: u64 = 1024 * 1024;
 const CHUNK: usize = 2000;
 
@@ -36,13 +39,14 @@ impl AccountKey {
             client_id: tokens.client_id.clone(),
         }
     }
-    fn vault_name(&self) -> Result<String, Error> {
+    fn vault_name(&self, directory: &Path) -> Result<String, Error> {
         url::Url::parse(&self.issuer).map_err(|_| Error::Storage("invalid issuer"))?;
-        let namespace = format!(
-            "{:x}",
-            Sha256::digest(format!("{}\0{}", self.issuer, self.client_id).as_bytes())
-        );
-        Ok(format!("account:{namespace}:{}", self.sub))
+        let directory = std::fs::canonicalize(directory)
+            .map_err(|_| Error::Storage("account directory unavailable"))?;
+        let binding = serde_json::to_vec(&(directory, &self.issuer, &self.client_id, &self.sub))
+            .map_err(|_| Error::Storage("invalid account directory"))?;
+        let namespace = format!("{:x}", Sha256::digest(binding));
+        Ok(format!("account:{namespace}"))
     }
 }
 
@@ -60,6 +64,8 @@ struct Entry {
 }
 #[derive(Default, Serialize, Deserialize)]
 struct Index {
+    #[serde(default)]
+    epoch: u64,
     active: Option<AccountKey>,
     entries: Vec<Entry>,
 }
@@ -83,6 +89,12 @@ struct Manifest {
     #[serde(default)]
     retired: Vec<Retired>,
 }
+#[derive(Serialize, Deserialize)]
+struct PendingVault {
+    key: AccountKey,
+    generation: String,
+    chunks: usize,
+}
 #[derive(Clone, Serialize, Deserialize)]
 struct Retired {
     generation: String,
@@ -99,7 +111,7 @@ impl AccountStore {
     /// Uses native Keychain/Credential Manager where compiled in, file fallback on
     /// Unix where unavailable. Never opens the keyring until an account is used.
     pub fn open(directory: PathBuf) -> Self {
-        Self::with_vault(directory, native_vault())
+        Self::with_vault(directory, credential_vault())
     }
     /// Injection point for embedders/tests. A file fallback is never allowed without
     /// Unix owner-only storage; Windows needs a functioning native vault.
@@ -115,6 +127,42 @@ impl AccountStore {
         })
         .await
     }
+    pub async fn storage_kind(&self) -> Result<Option<StorageKind>, Error> {
+        let store = self.clone();
+        blocking(move || {
+            let _guard = store.lock()?;
+            let index = store.index()?;
+            Ok(index
+                .entries
+                .iter()
+                .find(|e| Some(&e.key) == index.active.as_ref())
+                .map(|e| e.kind))
+        })
+        .await
+    }
+
+    /// Capture before opening an interactive login. Logout advances this durable
+    /// epoch so an older browser attempt cannot restore credentials afterwards.
+    pub async fn login_epoch(&self) -> Result<u64, Error> {
+        let store = self.clone();
+        blocking(move || {
+            let _guard = store.lock()?;
+            Ok(store.index()?.epoch)
+        })
+        .await
+    }
+    pub async fn save_login(&self, tokens: TokenSet, epoch: u64) -> Result<StorageKind, Error> {
+        let store = self.clone();
+        blocking(move || {
+            let _guard = store.lock()?;
+            if store.index()?.epoch != epoch {
+                return Err(Error::LoginExpired);
+            }
+            store.save_locked(&tokens)
+        })
+        .await
+    }
+
     pub async fn save(&self, tokens: TokenSet) -> Result<StorageKind, Error> {
         let store = self.clone();
         blocking(move || {
@@ -128,6 +176,11 @@ impl AccountStore {
         blocking(move || {
             let _guard = store.lock()?;
             let mut index = store.index()?;
+            index.epoch = index
+                .epoch
+                .checked_add(1)
+                .ok_or(Error::Storage("account epoch exhausted"))?;
+            store.write("account-index.json", &index, false)?;
             let entries: Vec<_> = index
                 .entries
                 .iter()
@@ -239,9 +292,25 @@ impl AccountStore {
         {
             return Err(Error::Storage("account lock is not regular"));
         }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let meta = file
+                .metadata()
+                .map_err(|_| Error::Storage("account lock unavailable"))?;
+            if meta.mode() & 0o077 != 0
+                || meta.uid() != rustix::process::geteuid().as_raw()
+                || meta.nlink() != 1
+            {
+                return Err(Error::Storage("account lock is accessible to other users"));
+            }
+        }
         for _ in 0..200 {
             match file.try_lock() {
-                Ok(()) => return Ok(file),
+                Ok(()) => {
+                    self.cleanup_pending_vault()?;
+                    return Ok(file);
+                }
                 Err(std::fs::TryLockError::WouldBlock) => {
                     std::thread::sleep(Duration::from_millis(25))
                 }
@@ -249,6 +318,61 @@ impl AccountStore {
             }
         }
         Err(Error::Busy)
+    }
+    fn cleanup_pending_vault(&self) -> Result<(), Error> {
+        let Some(bytes) = self.read("account-vault-pending.json", false)? else {
+            return Ok(());
+        };
+        let pending: PendingVault = decode(&bytes)?;
+        if pending.generation.len() != 32
+            || !pending.generation.bytes().all(|b| b.is_ascii_hexdigit())
+            || pending.chunks == 0
+            || pending.chunks > (MAX_FILE as usize * 2 / CHUNK + 1)
+        {
+            return Err(Error::Storage("invalid pending credential generation"));
+        }
+        let vault = self
+            .vault
+            .as_ref()
+            .ok_or(Error::Storage("keyring unavailable"))?;
+        let name = pending.key.vault_name(&self.directory)?;
+        let committed = match vault.get(&name)? {
+            Some(value) => {
+                let manifest: Manifest = decode(value.expose().as_bytes())?;
+                if manifest.key != pending.key {
+                    return Err(Error::Storage("credential identity mismatch"));
+                }
+                manifest.generation == pending.generation
+            }
+            None => false,
+        };
+        if committed {
+            // A manifest commit may have preceded an interrupted index write.
+            // Preserve cleanup reachability without activating an unfinished login.
+            let mut index = self.index()?;
+            if !index
+                .entries
+                .iter()
+                .any(|e| e.key == pending.key && e.kind == StorageKind::Keyring)
+            {
+                index.entries.retain(|e| e.key != pending.key);
+                index.entries.push(Entry {
+                    key: pending.key.clone(),
+                    kind: StorageKind::Keyring,
+                });
+                self.write("account-index.json", &index, false)?;
+            }
+        } else {
+            for i in 0..pending.chunks {
+                delete_verified(
+                    vault.as_ref(),
+                    &format!("{name}.{}.{i}", pending.generation),
+                )?;
+            }
+        }
+        std::fs::remove_file(self.path("account-vault-pending.json"))
+            .map_err(|_| Error::Storage("credential cleanup journal unavailable"))?;
+        Ok(())
     }
     fn index(&self) -> Result<Index, Error> {
         self.read("account-index.json", false)?
@@ -295,7 +419,7 @@ impl AccountStore {
             // A vault failure before any write may use the Unix fallback. Once
             // writes begin, errors are reported; no plaintext downgrade after a
             // partial or uncertain keyring commit.
-            match vault.get(&key.vault_name()?) {
+            match vault.get(&key.vault_name(&self.directory)?) {
                 Err(_)
                     if cfg!(unix)
                         && !index
@@ -369,7 +493,7 @@ impl AccountStore {
                     .vault
                     .as_ref()
                     .ok_or(Error::Storage("keyring unavailable"))?;
-                let name = active.vault_name()?;
+                let name = active.vault_name(&self.directory)?;
                 let mut manifest = self.manifest(&active)?;
                 manifest.pending = pending;
                 let value = serde_json::to_string(&manifest)
@@ -387,7 +511,7 @@ impl AccountStore {
             .vault
             .as_ref()
             .ok_or(Error::Storage("keyring unavailable"))?
-            .get(&key.vault_name()?)?
+            .get(&key.vault_name(&self.directory)?)?
             .ok_or(Error::Storage("account credential missing"))?;
         let manifest: Manifest = decode(value.expose().as_bytes())?;
         if manifest.version != 1
@@ -414,7 +538,7 @@ impl AccountStore {
             .vault
             .as_ref()
             .ok_or(Error::Storage("keyring unavailable"))?;
-        let name = key.vault_name()?;
+        let name = key.vault_name(&self.directory)?;
         let mut encoded = Zeroizing::new(String::new());
         for i in 0..manifest.chunks {
             let chunk = vault
@@ -437,7 +561,7 @@ impl AccountStore {
     }
     fn save_vault(&self, vault: &dyn CredentialVault, tokens: &TokenSet) -> Result<(), Error> {
         let key = AccountKey::of(tokens);
-        let name = key.vault_name()?;
+        let name = key.vault_name(&self.directory)?;
         let previous = match vault.get(&name)? {
             Some(_) => Some(self.manifest(&key)?),
             None => None,
@@ -464,6 +588,17 @@ impl AccountStore {
         let encoded = Zeroizing::new(STANDARD.encode(&bytes));
         let generation = random_generation()?;
         let parts: Vec<_> = encoded.as_bytes().chunks(CHUNK).collect();
+        // Record cleanup coordinates before native writes. A crash or partial
+        // failure can then be recovered without abandoning secret chunks.
+        self.write(
+            "account-vault-pending.json",
+            &PendingVault {
+                key: key.clone(),
+                generation: generation.clone(),
+                chunks: parts.len(),
+            },
+            false,
+        )?;
         for (i, part) in parts.iter().enumerate() {
             let part = std::str::from_utf8(part)
                 .map_err(|_| Error::Storage("credential encoding failed"))?;
@@ -488,15 +623,13 @@ impl AccountStore {
         if vault.get(&name)?.as_ref().map(Secret::expose) != Some(value.as_str()) {
             return Err(Error::Storage("keyring write verification failed"));
         }
+        self.cleanup_pending_vault()?;
         // Retired generations stay in the protected manifest until every chunk
         // is deleted. Logout can still remove them after a partial cleanup failure.
         let mut complete = true;
         for old in &manifest.retired {
             for i in 0..old.chunks {
-                if vault
-                    .delete(&format!("{name}.{}.{i}", old.generation))
-                    .is_err()
-                {
+                if delete_verified(vault, &format!("{name}.{}.{i}", old.generation)).is_err() {
                     complete = false;
                 }
             }
@@ -523,15 +656,18 @@ impl AccountStore {
                     .vault
                     .as_ref()
                     .ok_or(Error::Storage("keyring unavailable"))?;
-                let name = entry.key.vault_name()?;
+                let name = entry.key.vault_name(&self.directory)?;
                 let manifest = self.manifest(&entry.key)?;
                 for old in &manifest.retired {
                     for i in 0..old.chunks {
-                        vault.delete(&format!("{name}.{}.{i}", old.generation))?;
+                        delete_verified(vault.as_ref(), &format!("{name}.{}.{i}", old.generation))?;
                     }
                 }
                 for i in 0..manifest.chunks {
-                    vault.delete(&format!("{name}.{}.{i}", manifest.generation))?;
+                    delete_verified(
+                        vault.as_ref(),
+                        &format!("{name}.{}.{i}", manifest.generation),
+                    )?;
                 }
                 vault.delete(&name)?;
                 if vault.get(&name)?.is_some() {
@@ -608,6 +744,13 @@ impl AccountStore {
     }
 }
 
+fn delete_verified(vault: &dyn CredentialVault, name: &str) -> Result<(), Error> {
+    vault.delete(name)?;
+    if vault.get(name)?.is_some() {
+        return Err(Error::Storage("keyring delete verification failed"));
+    }
+    Ok(())
+}
 fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, Error> {
     serde_json::from_slice(bytes).map_err(|_| Error::Storage("invalid account format"))
 }
@@ -672,7 +815,8 @@ impl CredentialVault for NativeVault {
         Ok(())
     }
 }
-fn native_vault() -> Option<Arc<dyn CredentialVault>> {
+/// The native platform vault for trusted host secrets; unavailable platforms return None.
+pub fn credential_vault() -> Option<Arc<dyn CredentialVault>> {
     #[cfg(any(target_os = "macos", windows))]
     {
         Some(Arc::new(NativeVault))

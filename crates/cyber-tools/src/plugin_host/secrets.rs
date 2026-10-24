@@ -179,6 +179,20 @@ pub fn hide_credential_files(paths: &cyber_core::paths::Paths, home: &std::path:
             let _ = peers.write(&Default::default());
         }
     }
+    // Linux needs an existing object to mount over. Create empty account files
+    // without replacing a concurrent login, before starting any sandboxed child.
+    let _ = prepare_account_placeholders(&paths.data);
+    for name in [
+        "account.json",
+        "account-index.json",
+        "account.lock",
+        "account-vault-pending.json",
+        "collaboration-capabilities.json",
+        "hub-join-mac.key",
+        "hub-secrets.json",
+    ] {
+        cyber_sandbox::hide_credential_file(home, paths.data.join(name));
+    }
     cyber_sandbox::hide_credential_file(home, secret_file(paths));
     cyber_sandbox::hide_credential_file(home, paths.mcp_auth_file());
     cyber_sandbox::hide_credential_file(home, paths.peer_tokens_file());
@@ -189,6 +203,40 @@ pub fn hide_credential_files(paths: &cyber_core::paths::Paths, home: &std::path:
     // The peer listener's private key: whoever reads it can pose as this listener to every
     // paired machine and collect their tokens.
     cyber_sandbox::hide_credential_file(home, paths.state.join(cyber_server::http::peer::tls::DIR));
+}
+
+fn prepare_account_placeholders(data: &std::path::Path) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut files = vec![
+        (
+            "account-index.json",
+            b"{\"active\":null,\"entries\":[]}".as_slice(),
+        ),
+        ("account.lock", b"".as_slice()),
+        (
+            "collaboration-capabilities.json",
+            b"{\"entries\":{}}".as_slice(),
+        ),
+        ("hub-secrets.json", b"{\"entries\":{}}".as_slice()),
+    ];
+    if cfg!(unix) {
+        files.push(("account.json", b"{\"records\":[]}".as_slice()));
+    }
+    for (name, bytes) in files {
+        let target = data.join(name);
+        if target.exists() {
+            continue;
+        }
+        let mut temp = tempfile::NamedTempFile::new_in(data)?;
+        temp.write_all(bytes)?;
+        temp.as_file().sync_all()?;
+        match temp.persist_noclobber(target) {
+            Ok(_) => {}
+            Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e.error),
+        }
+    }
+    Ok(())
 }
 
 /// This platform's plugin secret store, chosen at compile time and never by
@@ -216,6 +264,47 @@ pub fn secret_file(paths: &cyber_core::paths::Paths) -> PathBuf {
 mod tests {
     use super::*;
     use crate::mcp::oauth::MemoryVault;
+
+    #[test]
+    fn account_credential_paths_are_hidden_without_overwriting_a_login() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path();
+        let paths = cyber_core::paths::Paths {
+            data: home.join("data"),
+            config: home.join("config"),
+            state: home.join("state"),
+            cache: home.join("cache"),
+            tmp: home.join("tmp"),
+        };
+        paths.ensure().unwrap();
+        hide_credential_files(&paths, home);
+        let protected = cyber_sandbox::SandboxConfig::resolve(
+            &serde_json::json!({}),
+            &Default::default(),
+            None,
+            home,
+        )
+        .unreadable(home);
+        for name in ["account.json", "account-index.json", "account.lock"] {
+            assert!(protected.contains(&paths.data.join(name)));
+        }
+        let path = paths.data.join("account-index.json");
+        std::fs::write(&path, "existing account").unwrap();
+        hide_credential_files(&paths, home);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "existing account");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(paths.data.join("account.json"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+    }
 
     #[test]
     fn vault_secrets_are_namespaced_by_data_directory() {

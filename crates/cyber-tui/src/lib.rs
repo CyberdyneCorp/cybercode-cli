@@ -5,6 +5,7 @@ mod app;
 pub mod books;
 mod branches;
 mod children;
+mod collaboration;
 mod composer;
 mod explorer;
 mod export;

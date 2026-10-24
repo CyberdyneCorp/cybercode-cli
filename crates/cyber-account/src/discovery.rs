@@ -1,6 +1,7 @@
 use crate::Error;
 use reqwest::{Client, redirect::Policy};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use std::{net::IpAddr, time::Duration};
 use url::{Host, Url};
 
@@ -32,7 +33,7 @@ impl Transport {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct Document {
     issuer: String,
     authorization_endpoint: String,
@@ -40,6 +41,7 @@ struct Document {
     jwks_uri: String,
     userinfo_endpoint: Option<String>,
     end_session_endpoint: Option<String>,
+    revocation_endpoint: Option<String>,
     introspection_endpoint: Option<String>,
     device_authorization_endpoint: Option<String>,
     scopes_supported: Option<Vec<String>>,
@@ -51,7 +53,7 @@ struct Document {
 }
 
 /// Validated metadata. Only discovery can construct it; no credentials are stored here.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Provider {
     pub(crate) issuer: String,
     pub(crate) authorization: Url,
@@ -59,6 +61,7 @@ pub struct Provider {
     jwks: Url,
     userinfo: Option<Url>,
     end_session: Option<Url>,
+    revocation: Option<Url>,
     introspection: Option<Url>,
     device: Option<Url>,
     pub(crate) scopes: Option<Vec<String>>,
@@ -69,6 +72,10 @@ pub struct Provider {
 impl Provider {
     pub fn issuer(&self) -> &str {
         &self.issuer
+    }
+
+    pub fn supports_client_credentials(&self) -> bool {
+        self.grants.iter().any(|g| g == "client_credentials")
     }
 
     pub fn token_endpoint(&self) -> &Url {
@@ -87,6 +94,10 @@ impl Provider {
         self.end_session.as_ref()
     }
 
+    pub fn revocation_endpoint(&self) -> Option<&Url> {
+        self.revocation.as_ref()
+    }
+
     pub fn introspection_endpoint(&self) -> Option<&Url> {
         self.introspection.as_ref()
     }
@@ -103,6 +114,7 @@ impl Provider {
 
 /// Explicitly invoked transport; constructing it does not contact the issuer.
 /// Redirects are refused, responses bounded and requests limited to ten seconds.
+#[derive(Clone)]
 pub struct DiscoveryClient {
     pub(crate) client: Client,
     transport: Transport,
@@ -120,6 +132,11 @@ impl DiscoveryClient {
 
     pub async fn discover(&self, issuer: &str) -> Result<Provider, Error> {
         let issuer = self.issuer(issuer)?;
+        let document = self.fetch(&issuer).await?;
+        self.validate(issuer, document)
+    }
+
+    async fn fetch(&self, issuer: &str) -> Result<Document, Error> {
         let endpoint = format!("{issuer}/.well-known/openid-configuration");
         let response = self
             .client
@@ -128,7 +145,40 @@ impl DiscoveryClient {
             .await
             .map_err(|_| Error::DiscoveryUnavailable)?;
         let document = bounded_json(response).await?;
-        self.validate(issuer, document)
+        Ok(document)
+    }
+
+    /// Cache public discovery metadata for 24 hours in an owner-only atomic file.
+    /// Invalid/expired cache entries are refetched; refresh after an unknown key ID
+    /// always uses `discover` directly, bypassing this cache.
+    pub async fn discover_cached(
+        &self,
+        issuer: &str,
+        cache: &std::path::Path,
+    ) -> Result<Provider, Error> {
+        let issuer = self.issuer(issuer)?;
+        let path = cache.join(format!(
+            "oidc-{:x}.json",
+            sha2::Sha256::digest(issuer.as_bytes())
+        ));
+        if let Some(cached) = read_cache(&path)
+            && cached.version == 1
+            && cached.checked_at <= crate::tokens::now()
+            && crate::tokens::now().saturating_sub(cached.checked_at) < 24 * 60 * 60
+            && let Ok(provider) = self.validate(issuer.clone(), cached.document)
+        {
+            return Ok(provider);
+        }
+        let document = self.fetch(&issuer).await?;
+        let provider = self.validate(issuer, document.clone())?;
+        let bytes = serde_json::to_vec(&Cached {
+            version: 1,
+            checked_at: crate::tokens::now(),
+            document,
+        })
+        .map_err(|_| Error::InvalidDiscovery)?;
+        let _ = write_cache(cache, &path, &bytes);
+        Ok(provider)
     }
 
     fn issuer(&self, issuer: &str) -> Result<String, Error> {
@@ -139,7 +189,7 @@ impl DiscoveryClient {
         Ok(url.as_str().trim_end_matches('/').to_owned())
     }
 
-    fn endpoint(&self, endpoint: String) -> Result<Url, Error> {
+    pub(crate) fn endpoint(&self, endpoint: String) -> Result<Url, Error> {
         let url = Url::parse(&endpoint).map_err(|_| Error::InvalidDiscovery)?;
         self.transport
             .permits(&url)
@@ -176,6 +226,7 @@ impl DiscoveryClient {
             jwks: self.endpoint(doc.jwks_uri)?,
             userinfo: optional(doc.userinfo_endpoint)?,
             end_session: optional(doc.end_session_endpoint)?,
+            revocation: optional(doc.revocation_endpoint)?,
             introspection: optional(doc.introspection_endpoint)?,
             device: optional(doc.device_authorization_endpoint)?,
             scopes: doc.scopes_supported,
@@ -212,4 +263,54 @@ pub(crate) async fn bounded_json<T: serde::de::DeserializeOwned>(
         bytes.extend_from_slice(&chunk);
     }
     serde_json::from_slice(&bytes).map_err(|_| Error::InvalidDiscovery)
+}
+
+#[derive(Serialize, Deserialize)]
+struct Cached {
+    version: u32,
+    checked_at: u64,
+    document: Document,
+}
+fn read_cache(path: &std::path::Path) -> Option<Cached> {
+    use std::io::Read;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options.open(path).ok()?;
+    let meta = file.metadata().ok()?;
+    if !meta.is_file() || meta.len() > MAX_DOCUMENT as u64 * 2 {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if meta.mode() & 0o077 != 0 || meta.uid() != rustix::process::geteuid().as_raw() {
+            return None;
+        }
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_DOCUMENT as u64 * 2 + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() > MAX_DOCUMENT * 2 {
+        return None;
+    }
+    serde_json::from_slice(&bytes).ok()
+}
+fn write_cache(
+    cache: &std::path::Path,
+    path: &std::path::Path,
+    bytes: &[u8],
+) -> std::io::Result<()> {
+    use std::io::Write;
+    std::fs::create_dir_all(cache)?;
+    let mut file = tempfile::NamedTempFile::new_in(cache)?;
+    file.write_all(bytes)?;
+    file.as_file().sync_all()?;
+    file.persist(path)?;
+    Ok(())
 }

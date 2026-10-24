@@ -3,6 +3,8 @@
 //! Discovery and PKCE preparation do not authenticate a user. Token exchange,
 //! signature/nonce validation and protected storage must complete before login succeeds.
 
+mod config;
+mod device;
 mod discovery;
 mod loopback;
 mod pkce;
@@ -10,12 +12,16 @@ mod store;
 mod tokens;
 mod verification;
 
+pub use config::AccountSettings;
+pub use device::DeviceAuthorization;
 pub use discovery::{DiscoveryClient, Provider, Transport};
 pub use loopback::{CallbackHandle, LoopbackLogin};
 pub use pkce::{AuthorizationAttempt, CodeGrant, ScopeSelection};
-pub use store::{AccountKey, AccountStore, CredentialVault, StorageKind};
+pub use store::{
+    AccountKey, AccountStore, CredentialVault, HostSecrets, StorageKind, credential_vault,
+};
 pub use tokens::{Account, Organization, Secret, TokenSet};
-pub use verification::{IdentityLease, OidcClient};
+pub use verification::{IdentityLease, OidcClient, ServiceCredential};
 
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
@@ -59,6 +65,8 @@ pub enum Error {
     UnknownSigningKey,
     #[error("SessionExpiredError: run cyber login again")]
     SessionExpired,
+    #[error("ServiceCredentialsUnsupportedError: issuer does not advertise client_credentials")]
+    ServiceCredentialsUnsupported,
     #[error("TokenExchangeError: token exchange failed")]
     TokenExchange,
     #[error("MissingScopeError: cyber:collaborate is required; run cyber login again")]

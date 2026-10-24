@@ -125,7 +125,7 @@ impl Op {
 }
 
 pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
-    vec![
+    let mut ops = vec![
         op(
             "post",
             "/git/commit-message",
@@ -1199,6 +1199,26 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         )
         .ok::<Data<Vec<String>>>(g)
         .error::<ErrorBody>(g, 404, "SessionNotFoundError or LoopNotFoundError"),
+        op("get","/account","v1.account.get","Current Cyber Account display claims; never returns raw tokens")
+            .ok::<Data<super::account::AccountView>>(g)
+            .error::<ErrorBody>(g,401,"SessionExpiredError")
+            .error::<ErrorBody>(g,503,"AccountStorageError"),
+        op("post","/account/login","v1.account.login","Begin public-client account login; open the returned authorization URL and poll the attempt")
+            .status(201).optional_body::<super::account::LoginOptions>(g)
+            .ok::<Data<super::account::LoginAttempt>>(g)
+            .error::<ErrorBody>(g,400,"IssuerMismatchError or InvalidDiscoveryError")
+            .error::<ErrorBody>(g,429,"AccountBusyError"),
+        op("get","/account/login/{attemptID}","v1.account.loginAttempt","Poll a local account login attempt")
+            .ok::<Data<super::account::LoginAttempt>>(g)
+            .error::<ErrorBody>(g,404,"AccountLoginNotFoundError"),
+        op("post","/account/login/{attemptID}/code","v1.account.loginCode","Submit a full headless redirect URL with state to an account attempt")
+            .body::<super::account::LoginCode>(g)
+            .ok::<Data<super::account::LoginAttempt>>(g)
+            .error::<ErrorBody>(g,400,"OAuthStateMismatchError or InvalidCallbackError")
+            .error::<ErrorBody>(g,409,"AccountLoginUnavailableError"),
+        op("delete","/account","v1.account.logout","Remove local account credentials and cancel older login attempts; keep provider credentials and Sessions")
+            .query(&["all"]).status(204)
+            .error::<ErrorBody>(g,503,"AccountStorageError"),
         op(
             "post",
             "/providers/{provider}/login",
@@ -1425,7 +1445,99 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .located()
         .query(&["path", "session_id"])
         .ok::<Located<cyber_core::files::Content>>(g),
-    ]
+    ];
+    ops.extend(collaboration_operations(g));
+    ops
+}
+
+/// The per-user owner API delegates typed hub payloads through its separate connector.
+/// Generic owner operations include enrollment/admin; model tools never use this route.
+fn collaboration_operations(g: &mut SchemaGenerator) -> Vec<Op> {
+    let mut ops = Vec::new();
+    for (path, id, summary) in [
+        (
+            "/collaboration/status",
+            "v1.collaboration.status",
+            "Local feature, account, explicit checkout binding and published agent status",
+        ),
+        (
+            "/collaboration/participants",
+            "v1.collaboration.participants",
+            "Current project members and their published agents",
+        ),
+        (
+            "/collaboration/messages",
+            "v1.collaboration.messages",
+            "Project conversation and direct messages visible to this human",
+        ),
+        (
+            "/collaboration/tasks",
+            "v1.collaboration.tasks",
+            "Shared tasks, revision fences and attributed self-reports",
+        ),
+    ] {
+        ops.push(
+            op("get", path, id, summary)
+                .located()
+                .query(&["session_id", "project"])
+                .ok::<Data<Value>>(g),
+        );
+    }
+    for (path, id, summary) in [
+        (
+            "/collaboration/messages",
+            "v1.collaboration.sendMessage",
+            "Send a human-authored project or direct message with an explicit operation_id",
+        ),
+        (
+            "/collaboration/tasks",
+            "v1.collaboration.createTask",
+            "Create a shared task with an explicit operation_id",
+        ),
+        (
+            "/collaboration/tasks/{id}/claim",
+            "v1.collaboration.claimTask",
+            "Claim a shared task at its expected revision",
+        ),
+        (
+            "/collaboration/tasks/{id}/update",
+            "v1.collaboration.updateTask",
+            "Update a shared task using its expected revision and claim generation",
+        ),
+        (
+            "/collaboration/tasks/{id}/reconcile",
+            "v1.collaboration.reconcile",
+            "Explicit owner reconciliation acknowledging unknown work",
+        ),
+        (
+            "/collaboration/owner/{operation}",
+            "v1.collaboration.owner",
+            "Explicit local human owner operation; never available to models",
+        ),
+    ] {
+        ops.push(
+            op("post", path, id, summary)
+                .located()
+                .body::<Value>(g)
+                .ok::<Data<Value>>(g)
+                .error::<ErrorBody>(
+                    g,
+                    403,
+                    "Current account or project membership is unauthorized",
+                )
+                .error::<ErrorBody>(
+                    g,
+                    409,
+                    "Stale revision, claim generation or operation conflict",
+                )
+                .error::<ErrorBody>(
+                    g,
+                    503,
+                    "Collaboration is disabled or the connector is unavailable",
+                ),
+        );
+    }
+    ops
 }
 
 /// The peer listener's operations (`server-api` → Peer listener): served only on
@@ -1592,7 +1704,7 @@ pub fn document(version: &str) -> Value {
         "ErrorBody".into(),
         serde_json::to_value(schemars::schema_for!(ErrorBody)).unwrap_or_default(),
     );
-    json!({
+    let mut document = json!({
         "openapi": "3.1.0",
         "info": { "title": "Cyber Code API", "version": version },
         "servers": [{ "url": "http://127.0.0.1:4747" }],
@@ -1605,7 +1717,29 @@ pub fn document(version: &str) -> Value {
             "schemas": schemas,
         },
         "paths": paths,
-    })
+    });
+    let hub = cyber_collab::openapi::document();
+    for key in ["paths", "components"] {
+        if key == "paths" {
+            document["paths"]
+                .as_object_mut()
+                .expect("paths")
+                .extend(hub["paths"].as_object().expect("hub paths").clone());
+        } else {
+            for section in ["schemas", "securitySchemes"] {
+                document["components"][section]
+                    .as_object_mut()
+                    .expect("components")
+                    .extend(
+                        hub["components"][section]
+                            .as_object()
+                            .expect("hub components")
+                            .clone(),
+                    );
+            }
+        }
+    }
+    document
 }
 
 fn operation(o: &Op, error: &Schema, envelope: &Schema) -> Value {

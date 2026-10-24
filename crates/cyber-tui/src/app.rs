@@ -196,6 +196,7 @@ pub enum Action {
     Loop(crate::loops::LoopRequest),
     /// `/team`, `/team start|stop|resume` (`agent-teams`).
     Team(crate::team::Request),
+    Collaboration(crate::collaboration::Request),
     /// `/goal` (`goals`).
     Goal(crate::goals::GoalRequest),
     /// `/tree` and `/label` (`tui` → Branch tree view).
@@ -343,6 +344,7 @@ pub enum Overlay {
     Messages,
     /// `/team`: the members and the task board; the team is `Sidebar::team`.
     Team,
+    Collaboration,
     /// `/tree`: the branch tree; its state is `App::branches`.
     Tree,
     /// `/login`: a provider sign-in; its state is `App::login`.
@@ -496,6 +498,7 @@ pub struct App {
     pub loops: crate::loops::Loops,
     /// The team view's selection and the way back from an opened teammate.
     pub team: crate::team::TeamState,
+    pub collaboration: crate::collaboration::PanelState,
     /// The Session's current Goal, for the footer.
     pub goals: crate::goals::Goals,
     /// The `/login` dialog.
@@ -586,6 +589,7 @@ impl App {
             branches: Default::default(),
             loops: Default::default(),
             team: Default::default(),
+            collaboration: Default::default(),
             goals: Default::default(),
             login: Default::default(),
             watch: Default::default(),
@@ -725,7 +729,8 @@ impl App {
     fn forget_session_views(&mut self) {
         self.forget_settings();
         self.messaging = Default::default();
-        if matches!(self.overlay, Overlay::Messages) {
+        self.collaboration.forget();
+        if matches!(self.overlay, Overlay::Messages | Overlay::Collaboration) {
             self.overlay = Overlay::None;
         }
         self.progress.forget_session();
@@ -966,6 +971,7 @@ impl App {
             }
             Overlay::Messages => self.messages_key(key),
             Overlay::Team => self.team_key(key),
+            Overlay::Collaboration => self.collaboration_key(key),
             Overlay::Tree => self.tree_key(key),
         }
     }
@@ -1254,7 +1260,7 @@ impl App {
     }
 
     pub fn on_paste(&mut self, text: &str) {
-        if self.rename_paste(text) || self.login_paste(text) {
+        if self.rename_paste(text) || self.login_paste(text) || self.collaboration_paste(text) {
             return;
         }
         if let Overlay::Memory = self.overlay {
@@ -1689,6 +1695,7 @@ impl App {
             "files" => self.open_explorer(),
             "workflows" => self.open_workflows(),
             "messages" => self.open_messages(),
+            "collab" => self.open_collaboration(),
             "help" => {
                 self.overlay = Overlay::Help;
                 Vec::new()

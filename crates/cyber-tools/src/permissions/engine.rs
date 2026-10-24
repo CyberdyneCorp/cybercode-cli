@@ -261,6 +261,8 @@ pub const WORKFLOW_RUN: &str = "workflow.run";
 
 /// Sending a cross-session message, with the target's canonical address and its name as
 /// resources (`cross-session-messaging` → Send message tool).
+pub const COLLAB_MESSAGE_SEND: &str = "collab.message.send";
+pub const COLLAB_TASK_WRITE: &str = "collab.task.write";
 pub const MESSAGE_SEND: &str = "message.send";
 
 /// Spawning teammates and merging their work (`agent-teams` → Permissions in teams):
@@ -313,6 +315,9 @@ pub fn defaults(allowed_dirs: &[PathBuf], primary_agent: bool) -> Vec<Rule> {
         "tool_search",
         "notify",
         "list_sessions",
+        "collab_participants",
+        "collab_messages",
+        "collab_tasks",
         "watch_session",
         TEAM_TASK,
     ] {
@@ -327,6 +332,8 @@ pub fn defaults(allowed_dirs: &[PathBuf], primary_agent: bool) -> Vec<Rule> {
     // Explicit, so inspection names its source; `auto` and `bypass` allow it.
     rules.push(Rule::new(WORKFLOW_RUN, "*", Effect::Ask, "default"));
     // Same-server targets are allowed; a cross-machine address (`name@machine`) asks.
+    rules.push(Rule::new(COLLAB_MESSAGE_SEND, "*", Effect::Ask, "default"));
+    rules.push(Rule::new(COLLAB_TASK_WRITE, "*", Effect::Ask, "default"));
     rules.push(Rule::new(MESSAGE_SEND, "*", Effect::Allow, "default"));
     rules.push(Rule::new(MESSAGE_SEND, "*@*", Effect::Ask, "default"));
     for dir in allowed_dirs {
@@ -963,6 +970,32 @@ mod tests {
         let mut denied = base;
         denied.push(Rule::new(WORKFLOW_RUN, "audit", Effect::Deny, "user"));
         assert!(matches!(decide(denied, Mode::Bypass), Decision::Deny(_)));
+    }
+
+    #[test]
+    fn collaboration_writes_ask_and_preserve_mode_and_explicit_deny_boundaries() {
+        for action in [COLLAB_MESSAGE_SEND, COLLAB_TASK_WRITE] {
+            let request = Request {
+                action: action.into(),
+                resources: vec!["chub_one:cprj_one".into()],
+                ..Default::default()
+            };
+            let rules = defaults(&[], true);
+            assert_eq!(
+                policy(rules.clone(), Mode::Default).decide(&request),
+                Decision::Ask
+            );
+            assert!(matches!(
+                policy(rules.clone(), Mode::Plan).decide(&request),
+                Decision::Deny(_)
+            ));
+            let mut denied = rules;
+            denied.push(Rule::new(action, "*", Effect::Deny, "user"));
+            assert!(matches!(
+                policy(denied, Mode::Bypass).decide(&request),
+                Decision::Deny(_)
+            ));
+        }
     }
 
     /// `permissions-modes` → Default rules: same-server messages are allowed, an `@`

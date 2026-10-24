@@ -600,3 +600,68 @@ async fn headless_paste_and_browser_callback_share_single_use_state_validation()
     ));
     assert!(matches!(failed.finish().await, Err(Error::InvalidCallback)));
 }
+
+#[tokio::test]
+async fn discovery_cache_reuses_current_metadata_and_refetches_expired_or_wrong_issuer() {
+    let f = Fixture::start().await;
+    let cache = tempfile::tempdir().unwrap();
+    let client = DiscoveryClient::new(Transport::AllowLoopbackHttp).unwrap();
+    client
+        .discover_cached(&f.issuer, cache.path())
+        .await
+        .unwrap();
+    client
+        .discover_cached(&f.issuer, cache.path())
+        .await
+        .unwrap();
+    assert_eq!(f.state.requests.load(Ordering::SeqCst), 1);
+    let path = std::fs::read_dir(cache.path())
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    record["checked_at"] = json!(0);
+    std::fs::write(&path, record.to_string()).unwrap();
+    client
+        .discover_cached(&f.issuer, cache.path())
+        .await
+        .unwrap();
+    assert_eq!(f.state.requests.load(Ordering::SeqCst), 2);
+    record = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    record["document"]["issuer"] = json!("https://attacker.example");
+    std::fs::write(&path, record.to_string()).unwrap();
+    client
+        .discover_cached(&f.issuer, cache.path())
+        .await
+        .unwrap();
+    assert_eq!(f.state.requests.load(Ordering::SeqCst), 3);
+}
+
+#[tokio::test]
+async fn corrupt_discovery_cache_never_substitutes_for_failed_network_validation() {
+    let f = Fixture::start().await;
+    let cache = tempfile::tempdir().unwrap();
+    let client = DiscoveryClient::new(Transport::AllowLoopbackHttp).unwrap();
+    client
+        .discover_cached(&f.issuer, cache.path())
+        .await
+        .unwrap();
+    let path = std::fs::read_dir(cache.path())
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    std::fs::write(path, "broken").unwrap();
+    f.state.reply.lock().unwrap().status = StatusCode::SERVICE_UNAVAILABLE;
+    assert_eq!(
+        client
+            .discover_cached(&f.issuer, cache.path())
+            .await
+            .unwrap_err(),
+        Error::DiscoveryUnavailable
+    );
+}

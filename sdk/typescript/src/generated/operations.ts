@@ -51,11 +51,115 @@ export type StreamOperationId = {
 }[OperationId];
 
 export interface Operations {
+  "v1.account.get": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.AccountView;
+  };
+  "v1.account.login": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.LoginOptions;
+    response: S.AccountLoginAttempt;
+  };
+  "v1.account.loginAttempt": {
+    path: { attemptID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.AccountLoginAttempt;
+  };
+  "v1.account.loginCode": {
+    path: { attemptID: string };
+    query: Record<string, never>;
+    body: S.AccountLoginCode;
+    response: S.AccountLoginAttempt;
+  };
+  "v1.account.logout": {
+    path: Record<string, never>;
+    query: {
+      all?: QueryValue;
+    };
+    body: undefined;
+    response: void;
+  };
   "v1.agent.list": {
     path: Record<string, never>;
     query: Record<string, never>;
     body: undefined;
     response: S.Located_Array_of_AgentInfo;
+  };
+  "v1.collaboration.claimTask": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: unknown;
+    response: unknown;
+  };
+  "v1.collaboration.createTask": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: unknown;
+    response: unknown;
+  };
+  "v1.collaboration.messages": {
+    path: Record<string, never>;
+    query: {
+      session_id?: QueryValue;
+      project?: QueryValue;
+    };
+    body: undefined;
+    response: unknown;
+  };
+  "v1.collaboration.owner": {
+    path: { operation: string };
+    query: Record<string, never>;
+    body: unknown;
+    response: unknown;
+  };
+  "v1.collaboration.participants": {
+    path: Record<string, never>;
+    query: {
+      session_id?: QueryValue;
+      project?: QueryValue;
+    };
+    body: undefined;
+    response: unknown;
+  };
+  "v1.collaboration.reconcile": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: unknown;
+    response: unknown;
+  };
+  "v1.collaboration.sendMessage": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: unknown;
+    response: unknown;
+  };
+  "v1.collaboration.status": {
+    path: Record<string, never>;
+    query: {
+      session_id?: QueryValue;
+      project?: QueryValue;
+    };
+    body: undefined;
+    response: unknown;
+  };
+  "v1.collaboration.tasks": {
+    path: Record<string, never>;
+    query: {
+      session_id?: QueryValue;
+      project?: QueryValue;
+    };
+    body: undefined;
+    response: unknown;
+  };
+  "v1.collaboration.updateTask": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: unknown;
+    response: unknown;
   };
   "v1.command.list": {
     path: Record<string, never>;
@@ -168,6 +272,234 @@ export interface Operations {
     query: Record<string, never>;
     body: S.HookTrustBody;
     response: S.Located_HookRevocation;
+  };
+  "v1.hub.acknowledge": {
+    path: { projectID: string; messageID: string; agentID: string };
+    query: Record<string, never>;
+    body: S.HubMutation12;
+    response: S.HubMutationResult10;
+  };
+  "v1.hub.agents": {
+    path: { projectID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.HubAgent[];
+  };
+  "v1.hub.application": {
+    path: { applicationID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.HubJoinOutcome;
+  };
+  "v1.hub.applications": {
+    path: { projectID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.HubApplicationView[];
+  };
+  "v1.hub.approveApplication": {
+    path: { projectID: string; applicationID: string };
+    query: Record<string, never>;
+    body: S.HubMutation4;
+    response: S.HubMutationResult5;
+  };
+  "v1.hub.authorization": {
+    path: { projectID: string; messageID: string; agentID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.HubDeliveryAuthorization;
+  };
+  "v1.hub.claimTask": {
+    path: { projectID: string; taskID: string };
+    query: Record<string, never>;
+    body: S.HubMutation14;
+    response: S.HubMutationResult11;
+  };
+  "v1.hub.createProject": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.HubMutation;
+    response: S.HubMutationResult;
+  };
+  "v1.hub.createTask": {
+    path: { projectID: string };
+    query: Record<string, never>;
+    body: S.HubMutation13;
+    response: S.HubMutationResult11;
+  };
+  "v1.hub.deliveries": {
+    path: { projectID: string };
+    query: {
+      agent?: QueryValue;
+    };
+    body: undefined;
+    response: S.HubDelivery[];
+  };
+  "v1.hub.events": {
+    path: { projectID: string };
+    query: {
+      after?: QueryValue;
+    };
+    body: undefined;
+    response: S.HubEventPage;
+  };
+  "v1.hub.heartbeat": {
+    path: { projectID: string; runtimeID: string };
+    query: Record<string, never>;
+    body: S.HubMutation9;
+    response: S.HubMutationResult7;
+  };
+  "v1.hub.hello": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.HubHubHello;
+  };
+  "v1.hub.invitations": {
+    path: { projectID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.HubInvitationView[];
+  };
+  "v1.hub.invite": {
+    path: { projectID: string };
+    query: Record<string, never>;
+    body: S.HubMutation5;
+    response: S.HubMutationResult4;
+  };
+  "v1.hub.join": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.HubMutation6;
+    response: S.HubMutationResult6;
+  };
+  "v1.hub.leave": {
+    path: { projectID: string };
+    query: Record<string, never>;
+    body: S.HubMutation4;
+    response: S.HubMutationResult3;
+  };
+  "v1.hub.memberRole": {
+    path: { projectID: string; memberID: string };
+    query: Record<string, never>;
+    body: S.HubMutation3;
+    response: S.HubMutationResult2;
+  };
+  "v1.hub.members": {
+    path: { projectID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.HubMember[];
+  };
+  "v1.hub.messages": {
+    path: { projectID: string };
+    query: {
+      after?: QueryValue;
+    };
+    body: undefined;
+    response: S.HubMessage[];
+  };
+  "v1.hub.policy": {
+    path: { projectID: string };
+    query: Record<string, never>;
+    body: S.HubMutation2;
+    response: S.HubMutationResult;
+  };
+  "v1.hub.project": {
+    path: { projectID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.HubProject;
+  };
+  "v1.hub.projects": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.HubProject[];
+  };
+  "v1.hub.publish": {
+    path: { projectID: string };
+    query: Record<string, never>;
+    body: S.HubMutation10;
+    response: S.HubMutationResult8;
+  };
+  "v1.hub.reconcileTask": {
+    path: { projectID: string; taskID: string };
+    query: Record<string, never>;
+    body: S.HubMutation16;
+    response: S.HubMutationResult11;
+  };
+  "v1.hub.redeem": {
+    path: { applicationID: string };
+    query: Record<string, never>;
+    body: S.HubMutation7;
+    response: S.HubMutationResult6;
+  };
+  "v1.hub.registerRuntime": {
+    path: { projectID: string };
+    query: Record<string, never>;
+    body: S.HubMutation8;
+    response: S.HubMutationResult7;
+  };
+  "v1.hub.rejectApplication": {
+    path: { projectID: string; applicationID: string };
+    query: Record<string, never>;
+    body: S.HubMutation4;
+    response: S.HubMutationResult3;
+  };
+  "v1.hub.removeMember": {
+    path: { projectID: string; memberID: string };
+    query: Record<string, never>;
+    body: S.HubMutation4;
+    response: S.HubMutationResult3;
+  };
+  "v1.hub.renew": {
+    path: { projectID: string; agentID: string };
+    query: Record<string, never>;
+    body: S.HubMutation4;
+    response: S.HubMutationResult8;
+  };
+  "v1.hub.revokeInvitation": {
+    path: { projectID: string; invitationID: string };
+    query: Record<string, never>;
+    body: S.HubMutation4;
+    response: S.HubMutationResult3;
+  };
+  "v1.hub.send": {
+    path: { projectID: string };
+    query: Record<string, never>;
+    body: S.HubMutation11;
+    response: S.HubMutationResult9;
+  };
+  "v1.hub.snapshot": {
+    path: { projectID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.HubSnapshot;
+  };
+  "v1.hub.tasks": {
+    path: { projectID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.HubTask[];
+  };
+  "v1.hub.unpublish": {
+    path: { projectID: string; agentID: string };
+    query: Record<string, never>;
+    body: S.HubMutation4;
+    response: S.HubMutationResult3;
+  };
+  "v1.hub.unregisterRuntime": {
+    path: { projectID: string; runtimeID: string };
+    query: Record<string, never>;
+    body: S.HubMutation4;
+    response: S.HubMutationResult3;
+  };
+  "v1.hub.updateTask": {
+    path: { projectID: string; taskID: string };
+    query: Record<string, never>;
+    body: S.HubMutation15;
+    response: S.HubMutationResult11;
   };
   "v1.job.get": {
     path: { id: string };
@@ -1216,6 +1548,66 @@ export interface Operations {
 }
 
 export const operations = {
+  "v1.account.get": {
+    tag: "account",
+    name: "get",
+    method: "GET",
+    path: "/api/v1/account",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.account.login": {
+    tag: "account",
+    name: "login",
+    method: "POST",
+    path: "/api/v1/account/login",
+    pathParams: [],
+    query: [],
+    body: "optional",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.account.loginAttempt": {
+    tag: "account",
+    name: "loginAttempt",
+    method: "GET",
+    path: "/api/v1/account/login/{attemptID}",
+    pathParams: ["attemptID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.account.loginCode": {
+    tag: "account",
+    name: "loginCode",
+    method: "POST",
+    path: "/api/v1/account/login/{attemptID}/code",
+    pathParams: ["attemptID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.account.logout": {
+    tag: "account",
+    name: "logout",
+    method: "DELETE",
+    path: "/api/v1/account",
+    pathParams: [],
+    query: ["all"],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
   "v1.agent.list": {
     tag: "agent",
     name: "list",
@@ -1226,6 +1618,126 @@ export const operations = {
     body: "none",
     located: true,
     unwrap: false,
+    stream: false,
+  },
+  "v1.collaboration.claimTask": {
+    tag: "collaboration",
+    name: "claimTask",
+    method: "POST",
+    path: "/api/v1/collaboration/tasks/{id}/claim",
+    pathParams: ["id"],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.collaboration.createTask": {
+    tag: "collaboration",
+    name: "createTask",
+    method: "POST",
+    path: "/api/v1/collaboration/tasks",
+    pathParams: [],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.collaboration.messages": {
+    tag: "collaboration",
+    name: "messages",
+    method: "GET",
+    path: "/api/v1/collaboration/messages",
+    pathParams: [],
+    query: ["session_id", "project"],
+    body: "none",
+    located: true,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.collaboration.owner": {
+    tag: "collaboration",
+    name: "owner",
+    method: "POST",
+    path: "/api/v1/collaboration/owner/{operation}",
+    pathParams: ["operation"],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.collaboration.participants": {
+    tag: "collaboration",
+    name: "participants",
+    method: "GET",
+    path: "/api/v1/collaboration/participants",
+    pathParams: [],
+    query: ["session_id", "project"],
+    body: "none",
+    located: true,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.collaboration.reconcile": {
+    tag: "collaboration",
+    name: "reconcile",
+    method: "POST",
+    path: "/api/v1/collaboration/tasks/{id}/reconcile",
+    pathParams: ["id"],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.collaboration.sendMessage": {
+    tag: "collaboration",
+    name: "sendMessage",
+    method: "POST",
+    path: "/api/v1/collaboration/messages",
+    pathParams: [],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.collaboration.status": {
+    tag: "collaboration",
+    name: "status",
+    method: "GET",
+    path: "/api/v1/collaboration/status",
+    pathParams: [],
+    query: ["session_id", "project"],
+    body: "none",
+    located: true,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.collaboration.tasks": {
+    tag: "collaboration",
+    name: "tasks",
+    method: "GET",
+    path: "/api/v1/collaboration/tasks",
+    pathParams: [],
+    query: ["session_id", "project"],
+    body: "none",
+    located: true,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.collaboration.updateTask": {
+    tag: "collaboration",
+    name: "updateTask",
+    method: "POST",
+    path: "/api/v1/collaboration/tasks/{id}/update",
+    pathParams: ["id"],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: true,
     stream: false,
   },
   "v1.command.list": {
@@ -1417,6 +1929,450 @@ export const operations = {
     query: [],
     body: "required",
     located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hub.acknowledge": {
+    tag: "hub",
+    name: "acknowledge",
+    method: "POST",
+    path: "/api/v1/hub/projects/{projectID}/deliveries/{messageID}/{agentID}/ack",
+    pathParams: ["projectID", "messageID", "agentID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hub.agents": {
+    tag: "hub",
+    name: "agents",
+    method: "GET",
+    path: "/api/v1/hub/projects/{projectID}/agents",
+    pathParams: ["projectID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.hub.application": {
+    tag: "hub",
+    name: "application",
+    method: "GET",
+    path: "/api/v1/hub/applications/{applicationID}",
+    pathParams: ["applicationID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.hub.applications": {
+    tag: "hub",
+    name: "applications",
+    method: "GET",
+    path: "/api/v1/hub/projects/{projectID}/applications",
+    pathParams: ["projectID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.hub.approveApplication": {
+    tag: "hub",
+    name: "approveApplication",
+    method: "POST",
+    path: "/api/v1/hub/projects/{projectID}/applications/{applicationID}/approve",
+    pathParams: ["projectID", "applicationID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hub.authorization": {
+    tag: "hub",
+    name: "authorization",
+    method: "GET",
+    path: "/api/v1/hub/projects/{projectID}/deliveries/{messageID}/{agentID}/authorization",
+    pathParams: ["projectID", "messageID", "agentID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.hub.claimTask": {
+    tag: "hub",
+    name: "claimTask",
+    method: "POST",
+    path: "/api/v1/hub/projects/{projectID}/tasks/{taskID}/claim",
+    pathParams: ["projectID", "taskID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hub.createProject": {
+    tag: "hub",
+    name: "createProject",
+    method: "POST",
+    path: "/api/v1/hub/projects",
+    pathParams: [],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hub.createTask": {
+    tag: "hub",
+    name: "createTask",
+    method: "POST",
+    path: "/api/v1/hub/projects/{projectID}/tasks",
+    pathParams: ["projectID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hub.deliveries": {
+    tag: "hub",
+    name: "deliveries",
+    method: "GET",
+    path: "/api/v1/hub/projects/{projectID}/deliveries",
+    pathParams: ["projectID"],
+    query: ["agent"],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.hub.events": {
+    tag: "hub",
+    name: "events",
+    method: "GET",
+    path: "/api/v1/hub/projects/{projectID}/events",
+    pathParams: ["projectID"],
+    query: ["after"],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.hub.heartbeat": {
+    tag: "hub",
+    name: "heartbeat",
+    method: "POST",
+    path: "/api/v1/hub/projects/{projectID}/runtimes/{runtimeID}/heartbeat",
+    pathParams: ["projectID", "runtimeID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hub.hello": {
+    tag: "hub",
+    name: "hello",
+    method: "GET",
+    path: "/api/v1/hub/hello",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.hub.invitations": {
+    tag: "hub",
+    name: "invitations",
+    method: "GET",
+    path: "/api/v1/hub/projects/{projectID}/invitations",
+    pathParams: ["projectID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.hub.invite": {
+    tag: "hub",
+    name: "invite",
+    method: "POST",
+    path: "/api/v1/hub/projects/{projectID}/invitations",
+    pathParams: ["projectID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hub.join": {
+    tag: "hub",
+    name: "join",
+    method: "POST",
+    path: "/api/v1/hub/join",
+    pathParams: [],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hub.leave": {
+    tag: "hub",
+    name: "leave",
+    method: "POST",
+    path: "/api/v1/hub/projects/{projectID}/leave",
+    pathParams: ["projectID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hub.memberRole": {
+    tag: "hub",
+    name: "memberRole",
+    method: "PATCH",
+    path: "/api/v1/hub/projects/{projectID}/members/{memberID}",
+    pathParams: ["projectID", "memberID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hub.members": {
+    tag: "hub",
+    name: "members",
+    method: "GET",
+    path: "/api/v1/hub/projects/{projectID}/members",
+    pathParams: ["projectID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.hub.messages": {
+    tag: "hub",
+    name: "messages",
+    method: "GET",
+    path: "/api/v1/hub/projects/{projectID}/messages",
+    pathParams: ["projectID"],
+    query: ["after"],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.hub.policy": {
+    tag: "hub",
+    name: "policy",
+    method: "PATCH",
+    path: "/api/v1/hub/projects/{projectID}/policy",
+    pathParams: ["projectID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hub.project": {
+    tag: "hub",
+    name: "project",
+    method: "GET",
+    path: "/api/v1/hub/projects/{projectID}",
+    pathParams: ["projectID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.hub.projects": {
+    tag: "hub",
+    name: "projects",
+    method: "GET",
+    path: "/api/v1/hub/projects",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.hub.publish": {
+    tag: "hub",
+    name: "publish",
+    method: "POST",
+    path: "/api/v1/hub/projects/{projectID}/agents",
+    pathParams: ["projectID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hub.reconcileTask": {
+    tag: "hub",
+    name: "reconcileTask",
+    method: "POST",
+    path: "/api/v1/hub/projects/{projectID}/tasks/{taskID}/reconcile",
+    pathParams: ["projectID", "taskID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hub.redeem": {
+    tag: "hub",
+    name: "redeem",
+    method: "POST",
+    path: "/api/v1/hub/applications/{applicationID}/redeem",
+    pathParams: ["applicationID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hub.registerRuntime": {
+    tag: "hub",
+    name: "registerRuntime",
+    method: "POST",
+    path: "/api/v1/hub/projects/{projectID}/runtimes",
+    pathParams: ["projectID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hub.rejectApplication": {
+    tag: "hub",
+    name: "rejectApplication",
+    method: "POST",
+    path: "/api/v1/hub/projects/{projectID}/applications/{applicationID}/reject",
+    pathParams: ["projectID", "applicationID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hub.removeMember": {
+    tag: "hub",
+    name: "removeMember",
+    method: "DELETE",
+    path: "/api/v1/hub/projects/{projectID}/members/{memberID}",
+    pathParams: ["projectID", "memberID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hub.renew": {
+    tag: "hub",
+    name: "renew",
+    method: "POST",
+    path: "/api/v1/hub/projects/{projectID}/agents/{agentID}/renew",
+    pathParams: ["projectID", "agentID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hub.revokeInvitation": {
+    tag: "hub",
+    name: "revokeInvitation",
+    method: "DELETE",
+    path: "/api/v1/hub/projects/{projectID}/invitations/{invitationID}",
+    pathParams: ["projectID", "invitationID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hub.send": {
+    tag: "hub",
+    name: "send",
+    method: "POST",
+    path: "/api/v1/hub/projects/{projectID}/messages",
+    pathParams: ["projectID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hub.snapshot": {
+    tag: "hub",
+    name: "snapshot",
+    method: "GET",
+    path: "/api/v1/hub/projects/{projectID}/snapshot",
+    pathParams: ["projectID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.hub.tasks": {
+    tag: "hub",
+    name: "tasks",
+    method: "GET",
+    path: "/api/v1/hub/projects/{projectID}/tasks",
+    pathParams: ["projectID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.hub.unpublish": {
+    tag: "hub",
+    name: "unpublish",
+    method: "DELETE",
+    path: "/api/v1/hub/projects/{projectID}/agents/{agentID}",
+    pathParams: ["projectID", "agentID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hub.unregisterRuntime": {
+    tag: "hub",
+    name: "unregisterRuntime",
+    method: "DELETE",
+    path: "/api/v1/hub/projects/{projectID}/runtimes/{runtimeID}",
+    pathParams: ["projectID", "runtimeID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hub.updateTask": {
+    tag: "hub",
+    name: "updateTask",
+    method: "PATCH",
+    path: "/api/v1/hub/projects/{projectID}/tasks/{taskID}",
+    pathParams: ["projectID", "taskID"],
+    query: [],
+    body: "required",
+    located: false,
     unwrap: false,
     stream: false,
   },
@@ -3309,10 +4265,59 @@ export const operations = {
 /** Typed methods grouped by OpenAPI tag, bound to a `Caller`. */
 export function createGroups(caller: Caller) {
   return {
+    account: {
+      /** Current Cyber Account display claims; never returns raw tokens (`GET /api/v1/account`) */
+      get: (options?: RequestOptions): Promise<Operations["v1.account.get"]["response"]> =>
+        caller.call("v1.account.get", {}, options),
+      /** Begin public-client account login; open the returned authorization URL and poll the attempt (`POST /api/v1/account/login`) */
+      login: (body?: Operations["v1.account.login"]["body"], options?: RequestOptions): Promise<Operations["v1.account.login"]["response"]> =>
+        caller.call("v1.account.login", { body }, options),
+      /** Poll a local account login attempt (`GET /api/v1/account/login/{attemptID}`) */
+      loginAttempt: (attemptID: string, options?: RequestOptions): Promise<Operations["v1.account.loginAttempt"]["response"]> =>
+        caller.call("v1.account.loginAttempt", { path: { attemptID } }, options),
+      /** Submit a full headless redirect URL with state to an account attempt (`POST /api/v1/account/login/{attemptID}/code`) */
+      loginCode: (attemptID: string, body: Operations["v1.account.loginCode"]["body"], options?: RequestOptions): Promise<Operations["v1.account.loginCode"]["response"]> =>
+        caller.call("v1.account.loginCode", { path: { attemptID }, body }, options),
+      /** Remove local account credentials and cancel older login attempts; keep provider credentials and Sessions (`DELETE /api/v1/account`) */
+      logout: (query?: Operations["v1.account.logout"]["query"], options?: RequestOptions): Promise<Operations["v1.account.logout"]["response"]> =>
+        caller.call("v1.account.logout", { query }, options),
+    },
     agent: {
       /** Selectable agents (`GET /api/v1/agents`) */
       list: (options?: RequestOptions): Promise<Operations["v1.agent.list"]["response"]> =>
         caller.call("v1.agent.list", {}, options),
+    },
+    collaboration: {
+      /** Claim a shared task at its expected revision (`POST /api/v1/collaboration/tasks/{id}/claim`) */
+      claimTask: (id: string, body: Operations["v1.collaboration.claimTask"]["body"], options?: RequestOptions): Promise<Operations["v1.collaboration.claimTask"]["response"]> =>
+        caller.call("v1.collaboration.claimTask", { path: { id }, body }, options),
+      /** Create a shared task with an explicit operation_id (`POST /api/v1/collaboration/tasks`) */
+      createTask: (body: Operations["v1.collaboration.createTask"]["body"], options?: RequestOptions): Promise<Operations["v1.collaboration.createTask"]["response"]> =>
+        caller.call("v1.collaboration.createTask", { body }, options),
+      /** Project conversation and direct messages visible to this human (`GET /api/v1/collaboration/messages`) */
+      messages: (query?: Operations["v1.collaboration.messages"]["query"], options?: RequestOptions): Promise<Operations["v1.collaboration.messages"]["response"]> =>
+        caller.call("v1.collaboration.messages", { query }, options),
+      /** Explicit local human owner operation; never available to models (`POST /api/v1/collaboration/owner/{operation}`) */
+      owner: (operation: string, body: Operations["v1.collaboration.owner"]["body"], options?: RequestOptions): Promise<Operations["v1.collaboration.owner"]["response"]> =>
+        caller.call("v1.collaboration.owner", { path: { operation }, body }, options),
+      /** Current project members and their published agents (`GET /api/v1/collaboration/participants`) */
+      participants: (query?: Operations["v1.collaboration.participants"]["query"], options?: RequestOptions): Promise<Operations["v1.collaboration.participants"]["response"]> =>
+        caller.call("v1.collaboration.participants", { query }, options),
+      /** Explicit owner reconciliation acknowledging unknown work (`POST /api/v1/collaboration/tasks/{id}/reconcile`) */
+      reconcile: (id: string, body: Operations["v1.collaboration.reconcile"]["body"], options?: RequestOptions): Promise<Operations["v1.collaboration.reconcile"]["response"]> =>
+        caller.call("v1.collaboration.reconcile", { path: { id }, body }, options),
+      /** Send a human-authored project or direct message with an explicit operation_id (`POST /api/v1/collaboration/messages`) */
+      sendMessage: (body: Operations["v1.collaboration.sendMessage"]["body"], options?: RequestOptions): Promise<Operations["v1.collaboration.sendMessage"]["response"]> =>
+        caller.call("v1.collaboration.sendMessage", { body }, options),
+      /** Local feature, account, explicit checkout binding and published agent status (`GET /api/v1/collaboration/status`) */
+      status: (query?: Operations["v1.collaboration.status"]["query"], options?: RequestOptions): Promise<Operations["v1.collaboration.status"]["response"]> =>
+        caller.call("v1.collaboration.status", { query }, options),
+      /** Shared tasks, revision fences and attributed self-reports (`GET /api/v1/collaboration/tasks`) */
+      tasks: (query?: Operations["v1.collaboration.tasks"]["query"], options?: RequestOptions): Promise<Operations["v1.collaboration.tasks"]["response"]> =>
+        caller.call("v1.collaboration.tasks", { query }, options),
+      /** Update a shared task using its expected revision and claim generation (`POST /api/v1/collaboration/tasks/{id}/update`) */
+      updateTask: (id: string, body: Operations["v1.collaboration.updateTask"]["body"], options?: RequestOptions): Promise<Operations["v1.collaboration.updateTask"]["response"]> =>
+        caller.call("v1.collaboration.updateTask", { path: { id }, body }, options),
     },
     command: {
       /** Commands and skills for autocomplete (`GET /api/v1/commands`) */
@@ -3377,6 +4382,119 @@ export function createGroups(caller: Caller) {
       /** Revoke a checkout hook digest without loading configuration (`POST /api/v1/hooks/untrust`) */
       untrust: (body: Operations["v1.hook.untrust"]["body"], options?: RequestOptions): Promise<Operations["v1.hook.untrust"]["response"]> =>
         caller.call("v1.hook.untrust", { body }, options),
+    },
+    hub: {
+      /** Hash-bound delivery state; no execution or tool approval authority (`POST /api/v1/hub/projects/{projectID}/deliveries/{messageID}/{agentID}/ack`) */
+      acknowledge: (projectID: string, messageID: string, agentID: string, body: Operations["v1.hub.acknowledge"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.acknowledge"]["response"]> =>
+        caller.call("v1.hub.acknowledge", { path: { projectID, messageID, agentID }, body }, options),
+      /** Published agents with verified human owners and observed presence (`GET /api/v1/hub/projects/{projectID}/agents`) */
+      agents: (projectID: string, options?: RequestOptions): Promise<Operations["v1.hub.agents"]["response"]> =>
+        caller.call("v1.hub.agents", { path: { projectID } }, options),
+      /** Only the applying verified subject can inspect their own pending enrollment and approved repository confirmation (`GET /api/v1/hub/applications/{applicationID}`) */
+      application: (applicationID: string, options?: RequestOptions): Promise<Operations["v1.hub.application"]["response"]> =>
+        caller.call("v1.hub.application", { path: { applicationID } }, options),
+      /** Owner enrollment applications (`GET /api/v1/hub/projects/{projectID}/applications`) */
+      applications: (projectID: string, options?: RequestOptions): Promise<Operations["v1.hub.applications"]["response"]> =>
+        caller.call("v1.hub.applications", { path: { projectID } }, options),
+      /** Owner approves enrollment; a separate guest/friends code appears once only (`POST /api/v1/hub/projects/{projectID}/applications/{applicationID}/approve`) */
+      approveApplication: (projectID: string, applicationID: string, body: Operations["v1.hub.approveApplication"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.approveApplication"]["response"]> =>
+        caller.call("v1.hub.approveApplication", { path: { projectID, applicationID }, body }, options),
+      /** Recheck current source and receiver authority before local release (`GET /api/v1/hub/projects/{projectID}/deliveries/{messageID}/{agentID}/authorization`) */
+      authorization: (projectID: string, messageID: string, agentID: string, options?: RequestOptions): Promise<Operations["v1.hub.authorization"]["response"]> =>
+        caller.call("v1.hub.authorization", { path: { projectID, messageID, agentID } }, options),
+      /** Atomically claim one unassigned task at its expected revision (`POST /api/v1/hub/projects/{projectID}/tasks/{taskID}/claim`) */
+      claimTask: (projectID: string, taskID: string, body: Operations["v1.hub.claimTask"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.claimTask"]["response"]> =>
+        caller.call("v1.hub.claimTask", { path: { projectID, taskID }, body }, options),
+      /** Create a repository-bound project as the configured bootstrap subject (`POST /api/v1/hub/projects`) */
+      createProject: (body: Operations["v1.hub.createProject"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.createProject"]["response"]> =>
+        caller.call("v1.hub.createProject", { body }, options),
+      /** Create a shared task without executing anything remotely (`POST /api/v1/hub/projects/{projectID}/tasks`) */
+      createTask: (projectID: string, body: Operations["v1.hub.createTask"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.createTask"]["response"]> =>
+        caller.call("v1.hub.createTask", { path: { projectID }, body }, options),
+      /** Queued and held messages for one locally owned published agent (`GET /api/v1/hub/projects/{projectID}/deliveries`) */
+      deliveries: (projectID: string, query?: Operations["v1.hub.deliveries"]["query"], options?: RequestOptions): Promise<Operations["v1.hub.deliveries"]["response"]> =>
+        caller.call("v1.hub.deliveries", { path: { projectID }, query }, options),
+      /** Authorized durable event replay; resync snapshot after cursor expiry (`GET /api/v1/hub/projects/{projectID}/events`) */
+      events: (projectID: string, query?: Operations["v1.hub.events"]["query"], options?: RequestOptions): Promise<Operations["v1.hub.events"]["response"]> =>
+        caller.call("v1.hub.events", { path: { projectID }, query }, options),
+      /** Refresh original-bounded live identity evidence and presence (`POST /api/v1/hub/projects/{projectID}/runtimes/{runtimeID}/heartbeat`) */
+      heartbeat: (projectID: string, runtimeID: string, body: Operations["v1.hub.heartbeat"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.heartbeat"]["response"]> =>
+        caller.call("v1.hub.heartbeat", { path: { projectID, runtimeID }, body }, options),
+      /** Pinned hub identity, OIDC issuer and resource audience (`GET /api/v1/hub/hello`) */
+      hello: (options?: RequestOptions): Promise<Operations["v1.hub.hello"]["response"]> =>
+        caller.call("v1.hub.hello", {}, options),
+      /** Owner invitation metadata; no invitation token (`GET /api/v1/hub/projects/{projectID}/invitations`) */
+      invitations: (projectID: string, options?: RequestOptions): Promise<Operations["v1.hub.invitations"]["response"]> =>
+        caller.call("v1.hub.invitations", { path: { projectID } }, options),
+      /** Owner issues a single-use invitation; token appears once only (`POST /api/v1/hub/projects/{projectID}/invitations`) */
+      invite: (projectID: string, body: Operations["v1.hub.invite"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.invite"]["response"]> =>
+        caller.call("v1.hub.invite", { path: { projectID }, body }, options),
+      /** Verified account requests enrollment without implicitly opening a private project (`POST /api/v1/hub/join`) */
+      join: (body: Operations["v1.hub.join"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.join"]["response"]> =>
+        caller.call("v1.hub.join", { body }, options),
+      /** Leave a project and revoke own publications (`POST /api/v1/hub/projects/{projectID}/leave`) */
+      leave: (projectID: string, body: Operations["v1.hub.leave"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.leave"]["response"]> =>
+        caller.call("v1.hub.leave", { path: { projectID }, body }, options),
+      /** Owner changes a role; invalidates old membership authority (`PATCH /api/v1/hub/projects/{projectID}/members/{memberID}`) */
+      memberRole: (projectID: string, memberID: string, body: Operations["v1.hub.memberRole"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.memberRole"]["response"]> =>
+        caller.call("v1.hub.memberRole", { path: { projectID, memberID }, body }, options),
+      /** Verified members, roles and guest attribution (`GET /api/v1/hub/projects/{projectID}/members`) */
+      members: (projectID: string, options?: RequestOptions): Promise<Operations["v1.hub.members"]["response"]> =>
+        caller.call("v1.hub.members", { path: { projectID } }, options),
+      /** Project conversation and direct messages visible to this principal (`GET /api/v1/hub/projects/{projectID}/messages`) */
+      messages: (projectID: string, query?: Operations["v1.hub.messages"]["query"], options?: RequestOptions): Promise<Operations["v1.hub.messages"]["response"]> =>
+        caller.call("v1.hub.messages", { path: { projectID }, query }, options),
+      /** Owner updates enrollment and guest policy at an expected revision (`PATCH /api/v1/hub/projects/{projectID}/policy`) */
+      policy: (projectID: string, body: Operations["v1.hub.policy"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.policy"]["response"]> =>
+        caller.call("v1.hub.policy", { path: { projectID }, body }, options),
+      /** Project descriptor after current membership authorization (`GET /api/v1/hub/projects/{projectID}`) */
+      project: (projectID: string, options?: RequestOptions): Promise<Operations["v1.hub.project"]["response"]> =>
+        caller.call("v1.hub.project", { path: { projectID } }, options),
+      /** Projects visible to this verified account (`GET /api/v1/hub/projects`) */
+      projects: (options?: RequestOptions): Promise<Operations["v1.hub.projects"]["response"]> =>
+        caller.call("v1.hub.projects", {}, options),
+      /** Human explicitly publishes an agent; capability appears once only (`POST /api/v1/hub/projects/{projectID}/agents`) */
+      publish: (projectID: string, body: Operations["v1.hub.publish"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.publish"]["response"]> =>
+        caller.call("v1.hub.publish", { path: { projectID }, body }, options),
+      /** Owner acknowledges unknown work before replacing an uncertain assignment (`POST /api/v1/hub/projects/{projectID}/tasks/{taskID}/reconcile`) */
+      reconcileTask: (projectID: string, taskID: string, body: Operations["v1.hub.reconcileTask"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.reconcileTask"]["response"]> =>
+        caller.call("v1.hub.reconcileTask", { path: { projectID, taskID }, body }, options),
+      /** Confirm repository and, when required, redeem a separate project admission code (`POST /api/v1/hub/applications/{applicationID}/redeem`) */
+      redeem: (applicationID: string, body: Operations["v1.hub.redeem"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.redeem"]["response"]> =>
+        caller.call("v1.hub.redeem", { path: { applicationID }, body }, options),
+      /** Register a local runtime owned by the current human member (`POST /api/v1/hub/projects/{projectID}/runtimes`) */
+      registerRuntime: (projectID: string, body: Operations["v1.hub.registerRuntime"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.registerRuntime"]["response"]> =>
+        caller.call("v1.hub.registerRuntime", { path: { projectID }, body }, options),
+      /** Owner rejects enrollment (`POST /api/v1/hub/projects/{projectID}/applications/{applicationID}/reject`) */
+      rejectApplication: (projectID: string, applicationID: string, body: Operations["v1.hub.rejectApplication"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.rejectApplication"]["response"]> =>
+        caller.call("v1.hub.rejectApplication", { path: { projectID, applicationID }, body }, options),
+      /** Owner revokes membership and its agent capabilities (`DELETE /api/v1/hub/projects/{projectID}/members/{memberID}`) */
+      removeMember: (projectID: string, memberID: string, body: Operations["v1.hub.removeMember"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.removeMember"]["response"]> =>
+        caller.call("v1.hub.removeMember", { path: { projectID, memberID }, body }, options),
+      /** Human renews one active publication capability; secret appears once only (`POST /api/v1/hub/projects/{projectID}/agents/{agentID}/renew`) */
+      renew: (projectID: string, agentID: string, body: Operations["v1.hub.renew"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.renew"]["response"]> =>
+        caller.call("v1.hub.renew", { path: { projectID, agentID }, body }, options),
+      /** Owner revokes an unredeemed invitation (`DELETE /api/v1/hub/projects/{projectID}/invitations/{invitationID}`) */
+      revokeInvitation: (projectID: string, invitationID: string, body: Operations["v1.hub.revokeInvitation"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.revokeInvitation"]["response"]> =>
+        caller.call("v1.hub.revokeInvitation", { path: { projectID, invitationID }, body }, options),
+      /** Send attributed untrusted content; author derives from credential (`POST /api/v1/hub/projects/{projectID}/messages`) */
+      send: (projectID: string, body: Operations["v1.hub.send"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.send"]["response"]> =>
+        caller.call("v1.hub.send", { path: { projectID }, body }, options),
+      /** Current authorized project snapshot; does not replay local execution (`GET /api/v1/hub/projects/{projectID}/snapshot`) */
+      snapshot: (projectID: string, options?: RequestOptions): Promise<Operations["v1.hub.snapshot"]["response"]> =>
+        caller.call("v1.hub.snapshot", { path: { projectID } }, options),
+      /** Shared tasks with revisions, claim fences and attributed self-reports (`GET /api/v1/hub/projects/{projectID}/tasks`) */
+      tasks: (projectID: string, options?: RequestOptions): Promise<Operations["v1.hub.tasks"]["response"]> =>
+        caller.call("v1.hub.tasks", { path: { projectID } }, options),
+      /** Human revokes a publication (`DELETE /api/v1/hub/projects/{projectID}/agents/{agentID}`) */
+      unpublish: (projectID: string, agentID: string, body: Operations["v1.hub.unpublish"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.unpublish"]["response"]> =>
+        caller.call("v1.hub.unpublish", { path: { projectID, agentID }, body }, options),
+      /** Disconnect a human-owned runtime and revoke publications (`DELETE /api/v1/hub/projects/{projectID}/runtimes/{runtimeID}`) */
+      unregisterRuntime: (projectID: string, runtimeID: string, body: Operations["v1.hub.unregisterRuntime"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.unregisterRuntime"]["response"]> =>
+        caller.call("v1.hub.unregisterRuntime", { path: { projectID, runtimeID }, body }, options),
+      /** Assignee updates a task using revision and claim generation (`PATCH /api/v1/hub/projects/{projectID}/tasks/{taskID}`) */
+      updateTask: (projectID: string, taskID: string, body: Operations["v1.hub.updateTask"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.updateTask"]["response"]> =>
+        caller.call("v1.hub.updateTask", { path: { projectID, taskID }, body }, options),
     },
     job: {
       /** Read a background task (`GET /api/v1/jobs/{id}`) */

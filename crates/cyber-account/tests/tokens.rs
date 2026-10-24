@@ -1,206 +1,13 @@
-use aws_lc_rs::{
-    rand::SystemRandom,
-    signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair},
-};
-use axum::{
-    Form, Json, Router,
-    extract::State,
-    http::{HeaderMap, StatusCode},
-    routing::{get, post},
-};
-use cyber_account::{AuthorizationAttempt, Error, OidcClient, Secret, Transport};
-use jsonwebtoken::{Algorithm, EncodingKey, Header, encode, jwk::Jwk};
+#[path = "support/oidc.rs"]
+mod support;
+use cyber_account::{Error, Secret};
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde_json::{Value, json};
 use std::{
-    collections::HashMap,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
-    },
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    sync::{Arc, atomic::Ordering},
+    time::{Duration, Instant},
 };
-use tokio::task::JoinHandle;
-
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-}
-struct Signing {
-    key: EncodingKey,
-    jwk: Value,
-    kid: String,
-}
-impl Signing {
-    fn new(kid: &str) -> Self {
-        let der =
-            EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &SystemRandom::new())
-                .unwrap();
-        let key = EncodingKey::from_ec_der(der.as_ref());
-        let mut jwk =
-            serde_json::to_value(Jwk::from_encoding_key(&key, Algorithm::ES256).unwrap()).unwrap();
-        jwk["kid"] = json!(kid);
-        jwk["use"] = json!("sig");
-        Self {
-            key,
-            jwk,
-            kid: kid.to_owned(),
-        }
-    }
-    fn sign(&self, claims: &Value) -> String {
-        let mut header = Header::new(Algorithm::ES256);
-        header.kid = Some(self.kid.clone());
-        encode(&header, claims, &self.key).unwrap()
-    }
-}
-#[derive(Clone)]
-struct ServerState {
-    issuer: String,
-    keys: Arc<Mutex<Value>>,
-    live: Arc<Mutex<Value>>,
-    exchange: Arc<Mutex<Value>>,
-    denial: Arc<Mutex<Option<String>>>,
-    checks: Arc<AtomicUsize>,
-    key_requests: Arc<AtomicUsize>,
-    forms: Arc<Mutex<Vec<HashMap<String, String>>>>,
-    delay: Arc<Mutex<Option<Arc<tokio::sync::Notify>>>>,
-}
-struct Fixture {
-    state: ServerState,
-    signing: Signing,
-    task: JoinHandle<()>,
-}
-impl Fixture {
-    async fn start() -> Self {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let issuer = format!("http://{}", listener.local_addr().unwrap());
-        let signing = Signing::new("first");
-        let state = ServerState {
-            issuer,
-            keys: Arc::new(Mutex::new(json!({"keys":[signing.jwk]}))),
-            live: Arc::new(Mutex::new(
-                json!({"active":true,"token_type":"user","sub":"alice", "aud":"hub", "exp":now()+3600,"scope":"openid cyber:collaborate", "orgs":[{"id":"org-uuid","short_name":"team","github_login":"acme"}], "auth_time":now(), "amr":["pwd","otp"]}),
-            )),
-            exchange: Arc::new(Mutex::new(json!({}))),
-            denial: Arc::new(Mutex::new(None)),
-            checks: Arc::new(AtomicUsize::new(0)),
-            key_requests: Arc::new(AtomicUsize::new(0)),
-            forms: Arc::new(Mutex::new(Vec::new())),
-            delay: Arc::new(Mutex::new(None)),
-        };
-        let app = Router::new()
-            .route("/.well-known/openid-configuration", get(metadata))
-            .route("/jwks", get(keys))
-            .route("/introspect", post(introspect))
-            .route("/token", post(token))
-            .with_state(state.clone());
-        let task = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        Self {
-            state,
-            signing,
-            task,
-        }
-    }
-    async fn client(&self) -> OidcClient {
-        OidcClient::discover(
-            &self.state.issuer,
-            "cyber-cli",
-            Transport::AllowLoopbackHttp,
-        )
-        .await
-        .unwrap()
-    }
-    fn claims(&self) -> Value {
-        json!({"iss":self.state.issuer,"sub":"alice","aud":"hub","iat":now(),"exp":now()+3600,"scope":"openid cyber:collaborate","orgs":[{"id":"stale-jwt-org"}],"auth_time":now()-3600,"roles":["other:owner","cyber-cli:reader"]})
-    }
-    fn access(&self) -> Secret {
-        Secret::new(self.signing.sign(&self.claims()))
-    }
-    fn id_claims(&self, nonce: &str) -> Value {
-        let mut claims = self.claims();
-        claims["aud"] = json!("cyber-cli");
-        claims["nonce"] = json!(nonce);
-        claims["email"] = json!("alice@example.test");
-        claims["test_padding"] = json!("padding".repeat(600));
-        claims
-    }
-    fn service(&self) -> Secret {
-        Secret::new("backend-only".into())
-    }
-    async fn bundle(&self, client: &mut OidcClient) -> cyber_account::TokenSet {
-        self.bundle_until(client, now() + 3600).await
-    }
-    async fn bundle_until(&self, client: &mut OidcClient, expires: u64) -> cyber_account::TokenSet {
-        let attempt = AuthorizationAttempt::new(
-            client.provider(),
-            "cyber-cli",
-            "http://127.0.0.1:12345/callback".parse().unwrap(),
-        )
-        .unwrap();
-        let params: HashMap<_, _> = attempt
-            .authorization_url()
-            .query_pairs()
-            .map(|(k, v)| (k.into_owned(), v.into_owned()))
-            .collect();
-        let mut access_claims = self.claims();
-        access_claims["exp"] = json!(expires);
-        *self.state.exchange.lock().unwrap() = json!({"access_token":self.signing.sign(&access_claims),"id_token":self.signing.sign(&self.id_claims(&params["nonce"])),"refresh_token":"refresh-1","token_type":"Bearer"});
-        let grant = attempt
-            .finish(&format!(
-                "http://127.0.0.1:12345/callback?state={}&code=auth-code",
-                params["state"]
-            ))
-            .unwrap();
-        client.exchange(grant, "hub").await.unwrap()
-    }
-}
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
-}
-async fn metadata(State(s): State<ServerState>) -> Json<Value> {
-    Json(
-        json!({"issuer":s.issuer,"authorization_endpoint":format!("{}/authorize",s.issuer),"token_endpoint":format!("{}/token",s.issuer),"jwks_uri":format!("{}/jwks",s.issuer),"introspection_endpoint":format!("{}/introspect",s.issuer),"scopes_supported":["openid","cyber:collaborate"],"code_challenge_methods_supported":["S256"],"grant_types_supported":["authorization_code","refresh_token"],"id_token_signing_alg_values_supported":["ES256"]}),
-    )
-}
-async fn keys(State(s): State<ServerState>) -> Json<Value> {
-    s.key_requests.fetch_add(1, Ordering::SeqCst);
-    Json(s.keys.lock().unwrap().clone())
-}
-async fn introspect(
-    State(s): State<ServerState>,
-    headers: HeaderMap,
-    Form(form): Form<HashMap<String, String>>,
-) -> (StatusCode, Json<Value>) {
-    s.checks.fetch_add(1, Ordering::SeqCst);
-    assert_eq!(headers.get("authorization").unwrap(), "Bearer backend-only");
-    assert_eq!(form["token_type_hint"], "access_token");
-    assert!(!form["token"].is_empty());
-    (StatusCode::OK, Json(s.live.lock().unwrap().clone()))
-}
-async fn token(
-    State(s): State<ServerState>,
-    headers: HeaderMap,
-    Form(form): Form<HashMap<String, String>>,
-) -> (StatusCode, Json<Value>) {
-    assert!(!headers.contains_key("authorization"));
-    assert!(!form.contains_key("client_secret"));
-    assert_eq!(form["client_id"], "cyber-cli");
-    s.forms.lock().unwrap().push(form);
-    let delay = s.delay.lock().unwrap().clone();
-    if let Some(delay) = delay {
-        delay.notified().await;
-    }
-    match s.denial.lock().unwrap().clone() {
-        Some(error) => (StatusCode::BAD_REQUEST, Json(json!({"error":error}))),
-        None => (StatusCode::OK, Json(s.exchange.lock().unwrap().clone())),
-    }
-}
-
+use support::{Fixture, MemoryVault, Signing, now};
 #[tokio::test]
 async fn verifies_id_signature_nonce_audience_and_authorized_party() {
     let f = Fixture::start().await;
@@ -547,38 +354,6 @@ async fn refresh_rejects_forged_replacement_id_and_subject_switches() {
     ));
 }
 
-#[derive(Default)]
-struct MemoryVault {
-    values: Mutex<HashMap<String, String>>,
-    fail_writes: std::sync::atomic::AtomicBool,
-}
-impl cyber_account::CredentialVault for MemoryVault {
-    fn get(&self, account: &str) -> Result<Option<Secret>, Error> {
-        Ok(self
-            .values
-            .lock()
-            .unwrap()
-            .get(account)
-            .cloned()
-            .map(Secret::new))
-    }
-    fn put(&self, account: &str, value: &str) -> Result<(), Error> {
-        if self.fail_writes.load(Ordering::SeqCst) {
-            return Err(Error::Storage("test write failure"));
-        }
-        assert!(value.len() <= 2500);
-        self.values
-            .lock()
-            .unwrap()
-            .insert(account.into(), value.into());
-        Ok(())
-    }
-    fn delete(&self, account: &str) -> Result<(), Error> {
-        self.values.lock().unwrap().remove(account);
-        Ok(())
-    }
-}
-
 #[tokio::test]
 async fn vault_storage_chunks_credentials_binds_identity_and_keeps_tokens_out_of_index() {
     let f = Fixture::start().await;
@@ -773,5 +548,364 @@ async fn cancellation_does_not_release_the_refresh_lock_before_persistence() {
             .filter(|f| f["grant_type"] == "refresh_token")
             .count(),
         1
+    );
+}
+
+#[tokio::test]
+async fn advertised_device_login_polls_pending_and_validates_signed_identity() {
+    let f = Fixture::start().await;
+    f.state.device_enabled.store(true, Ordering::SeqCst);
+    f.state
+        .device_errors
+        .lock()
+        .unwrap()
+        .push_back("authorization_pending".into());
+    let mut id = f.id_claims("");
+    id.as_object_mut().unwrap().remove("nonce");
+    *f.state.exchange.lock().unwrap() = json!({"access_token":f.access().expose(),"id_token":f.signing.sign(&id),"refresh_token":"device-refresh","token_type":"Bearer"});
+    let mut client = f.client().await;
+    let device = client.start_device_authorization().await.unwrap();
+    assert_eq!(device.user_code(), "ABCD-EFGH");
+    assert_eq!(device.verification_uri().path(), "/device-ui");
+    let account = client
+        .poll_device_authorization(device, "hub")
+        .await
+        .unwrap();
+    assert_eq!(account.account().sub, "alice");
+    assert_eq!(f.state.device_polls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn device_login_honors_slow_down_and_reports_denial_without_exposing_code() {
+    let f = Fixture::start().await;
+    f.state.device_enabled.store(true, Ordering::SeqCst);
+    f.state
+        .device_errors
+        .lock()
+        .unwrap()
+        .extend(["slow_down".into(), "access_denied".into()]);
+    let mut client = f.client().await;
+    let device = client.start_device_authorization().await.unwrap();
+    let started = Instant::now();
+    let error = client
+        .poll_device_authorization(device, "hub")
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error, Error::AuthorizationDenied);
+    assert!(started.elapsed() >= Duration::from_secs(7));
+    assert!(!format!("{error:?}").contains("private-device-code"));
+}
+
+#[tokio::test]
+async fn device_login_is_unavailable_without_advertisement_and_expires_without_replaying() {
+    let f = Fixture::start().await;
+    let client = f.client().await;
+    assert!(matches!(
+        client.start_device_authorization().await,
+        Err(Error::PkceUnsupported)
+    ));
+    f.state.device_enabled.store(true, Ordering::SeqCst);
+    f.state.device_expiry.store(2, Ordering::SeqCst);
+    f.state
+        .device_errors
+        .lock()
+        .unwrap()
+        .extend(std::iter::repeat_n("authorization_pending".into(), 4));
+    let mut client = f.client().await;
+    let device = client.start_device_authorization().await.unwrap();
+    assert!(matches!(
+        client.poll_device_authorization(device, "hub").await,
+        Err(Error::LoginExpired)
+    ));
+    assert_eq!(f.state.device_polls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn logout_invalidates_an_older_pending_login_before_any_vault_write() {
+    let f = Fixture::start().await;
+    let mut client = f.client().await;
+    let bundle = f.bundle(&mut client).await;
+    let directory = tempfile::tempdir().unwrap();
+    let vault = Arc::new(MemoryVault::default());
+    let store =
+        cyber_account::AccountStore::with_vault(directory.path().into(), Some(vault.clone()));
+    let epoch = store.login_epoch().await.unwrap();
+    store.logout(true).await.unwrap();
+    assert_eq!(
+        store.save_login(bundle, epoch).await.unwrap_err(),
+        Error::LoginExpired
+    );
+    assert!(vault.values.lock().unwrap().is_empty());
+    assert!(store.load().await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn backend_credentials_and_concurrent_live_identities_are_independent() {
+    let f = Fixture::start().await;
+    let mut client = f.client().await;
+    let backend = client
+        .client_credentials("backend", &Secret::new("service-secret".into()), None)
+        .await
+        .unwrap();
+    assert!(!backend.needs_refresh());
+    assert_eq!(f.state.service_tokens.load(Ordering::SeqCst), 1);
+    let alice = f.user("alice", json!([]));
+    let bob = f.user("bob", json!([]));
+    assert_eq!(
+        client
+            .authorize_human(&alice, &backend.token, "hub")
+            .await
+            .unwrap()
+            .account()
+            .sub,
+        "alice"
+    );
+    assert_eq!(
+        client
+            .authorize_human(&bob, &backend.token, "hub")
+            .await
+            .unwrap()
+            .account()
+            .sub,
+        "bob"
+    );
+    f.state.users.lock().unwrap().get_mut("alice").unwrap()["active"] = json!(false);
+    assert!(
+        client
+            .authorize_human(&alice, &backend.token, "hub")
+            .await
+            .is_err()
+    );
+    assert!(
+        client
+            .authorize_human(&bob, &backend.token, "hub")
+            .await
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn reauthentication_checks_auth_time_even_if_issuer_ignores_max_age() {
+    use cyber_account::AuthorizationAttempt;
+    let f = Fixture::start().await;
+    let mut client = f.client().await;
+    for age in [Some(901), None, Some(0)] {
+        let attempt = AuthorizationAttempt::new(
+            client.provider(),
+            "cyber-cli",
+            "http://127.0.0.1:12345/callback".parse().unwrap(),
+        )
+        .unwrap()
+        .require_recent_authentication();
+        let params: std::collections::HashMap<_, _> = attempt
+            .authorization_url()
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+        assert_eq!(params["prompt"], "login");
+        assert_eq!(params["max_age"], "900");
+        let mut id = f.id_claims(&params["nonce"]);
+        match age {
+            Some(age) => id["auth_time"] = json!(now() - age),
+            None => {
+                id.as_object_mut().unwrap().remove("auth_time");
+            }
+        }
+        *f.state.exchange.lock().unwrap() = json!({"access_token":f.access().expose(),"id_token":f.signing.sign(&id),"refresh_token":"refresh","token_type":"Bearer"});
+        let grant = attempt
+            .finish(&format!(
+                "http://127.0.0.1:12345/callback?state={}&code=auth-code",
+                params["state"]
+            ))
+            .unwrap();
+        let result = client.exchange(grant, "hub").await;
+        if age == Some(0) {
+            assert!(result.is_ok());
+        } else {
+            assert!(matches!(result, Err(Error::StepUpRequired)));
+        }
+    }
+}
+
+#[tokio::test]
+async fn host_secrets_and_accounts_bind_native_credentials_to_installation() {
+    use cyber_account::{AccountStore, HostSecrets, StorageKind};
+    let f = Fixture::start().await;
+    let mut client = f.client().await;
+    let vault = Arc::new(MemoryVault::default());
+    let first = tempfile::tempdir().unwrap();
+    let second = tempfile::tempdir().unwrap();
+    let a = AccountStore::with_vault(first.path().into(), Some(vault.clone()));
+    let b = AccountStore::with_vault(second.path().into(), Some(vault.clone()));
+    a.save(f.bundle(&mut client).await).await.unwrap();
+    b.save(f.bundle(&mut client).await).await.unwrap();
+    a.logout(true).await.unwrap();
+    assert!(b.load().await.unwrap().is_some());
+    let secrets = HostSecrets::new(
+        first.path().into(),
+        "capabilities.json",
+        "test",
+        Some(vault.clone()),
+    )
+    .unwrap();
+    assert_eq!(
+        secrets
+            .put("agent", Secret::new("capability-secret".into()))
+            .await
+            .unwrap(),
+        StorageKind::Keyring
+    );
+    assert!(
+        !std::fs::read_to_string(secrets.file_path())
+            .unwrap()
+            .contains("capability-secret")
+    );
+    assert_eq!(
+        secrets.get("agent").await.unwrap().unwrap().expose(),
+        "capability-secret"
+    );
+    let other = HostSecrets::new(
+        second.path().into(),
+        "capabilities.json",
+        "test",
+        Some(vault),
+    )
+    .unwrap();
+    assert!(other.get("agent").await.unwrap().is_none());
+    secrets.delete("agent").await.unwrap();
+    assert!(secrets.get("agent").await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn failed_native_chunk_commit_is_tracked_and_removed_before_next_operation() {
+    use cyber_account::{AccountStore, CredentialVault};
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
+    struct PartialVault {
+        memory: MemoryVault,
+        writes: AtomicUsize,
+        fail_once: AtomicBool,
+    }
+    impl CredentialVault for PartialVault {
+        fn get(&self, k: &str) -> Result<Option<Secret>, Error> {
+            self.memory.get(k)
+        }
+        fn put(&self, k: &str, v: &str) -> Result<(), Error> {
+            if self.writes.fetch_add(1, Ordering::SeqCst) == 1
+                && self.fail_once.swap(false, Ordering::SeqCst)
+            {
+                return Err(Error::Storage("injected partial write"));
+            }
+            self.memory.put(k, v)
+        }
+        fn delete(&self, k: &str) -> Result<(), Error> {
+            self.memory.delete(k)
+        }
+    }
+    let f = Fixture::start().await;
+    let mut client = f.client().await;
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(PartialVault {
+        memory: MemoryVault::default(),
+        writes: AtomicUsize::new(0),
+        fail_once: AtomicBool::new(true),
+    });
+    let store = AccountStore::with_vault(dir.path().into(), Some(vault.clone()));
+    assert!(store.save(f.bundle(&mut client).await).await.is_err());
+    assert!(dir.path().join("account-vault-pending.json").exists());
+    assert!(!vault.memory.values.lock().unwrap().is_empty());
+    store.logout(true).await.unwrap();
+    assert!(vault.memory.values.lock().unwrap().is_empty());
+    assert!(!dir.path().join("account-vault-pending.json").exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn host_secret_file_fallback_is_private_and_deletable() {
+    use cyber_account::{HostSecrets, StorageKind};
+    use std::os::unix::fs::MetadataExt;
+    let dir = tempfile::tempdir().unwrap();
+    let secrets = HostSecrets::new(dir.path().into(), "secrets.json", "test", None).unwrap();
+    assert_eq!(
+        secrets
+            .put("agent", Secret::new("capability".into()))
+            .await
+            .unwrap(),
+        StorageKind::File
+    );
+    assert_eq!(
+        std::fs::metadata(secrets.file_path()).unwrap().mode() & 0o077,
+        0
+    );
+    assert_eq!(
+        secrets.get("agent").await.unwrap().unwrap().expose(),
+        "capability"
+    );
+    let different_namespace =
+        HostSecrets::new(dir.path().into(), "secrets.json", "different", None).unwrap();
+    assert!(different_namespace.get("agent").await.is_err());
+    secrets.delete("agent").await.unwrap();
+    assert!(secrets.get("agent").await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn interrupted_native_index_commit_remains_reachable_for_logout() {
+    use cyber_account::AccountStore;
+    let f = Fixture::start().await;
+    let mut client = f.client().await;
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(MemoryVault::default());
+    let store = AccountStore::with_vault(dir.path().into(), Some(vault.clone()));
+    store.save(f.bundle(&mut client).await).await.unwrap();
+    let manifest: Value = vault
+        .values
+        .lock()
+        .unwrap()
+        .values()
+        .find_map(|v| {
+            serde_json::from_str::<Value>(v)
+                .ok()
+                .filter(|v| v.get("generation").is_some())
+        })
+        .unwrap();
+    std::fs::remove_file(dir.path().join("account-index.json")).unwrap();
+    let journal = dir.path().join("account-vault-pending.json");
+    std::fs::write(&journal, serde_json::to_vec(&json!({"key":manifest["key"],"generation":manifest["generation"],"chunks":manifest["chunks"]})).unwrap()).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&journal, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    // Recovery keeps unfinished login inactive while making its committed native
+    // credential discoverable to logout and later cleanup.
+    assert!(store.load().await.unwrap().is_none());
+    store.logout(true).await.unwrap();
+    assert!(vault.values.lock().unwrap().is_empty());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn uncertain_native_host_secret_write_cannot_revive_old_file_fallback() {
+    use cyber_account::HostSecrets;
+    let dir = tempfile::tempdir().unwrap();
+    let file = HostSecrets::new(dir.path().into(), "secrets.json", "test", None).unwrap();
+    file.put("key", Secret::new("old-file-secret".into()))
+        .await
+        .unwrap();
+    let vault = Arc::new(MemoryVault::default());
+    vault.fail_writes.store(true, Ordering::SeqCst);
+    let native = HostSecrets::new(dir.path().into(), "secrets.json", "test", Some(vault)).unwrap();
+    assert!(
+        native
+            .put("key", Secret::new("replacement".into()))
+            .await
+            .is_err()
+    );
+    assert!(native.get("key").await.is_err());
+    assert!(file.get("key").await.is_err());
+    assert!(
+        !std::fs::read_to_string(file.file_path())
+            .unwrap()
+            .contains("old-file-secret")
     );
 }

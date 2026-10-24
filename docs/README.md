@@ -26,6 +26,7 @@ Specifications include future work. A specification's presence does not mean the
 These OpenSpec plans describe work that has not shipped:
 
 - [Local web dashboard and browser approvals](../openspec/changes/implement-local-web-dashboard/proposal.md): P1 private access, live request handling and reconnect; account/Relay access stays P3.
-- [Project collaboration hub](../openspec/changes/add-project-collaboration-hub/proposal.md): approved P3 collaboration design (implementation in progress) for people and their locally running agents around a shared Git project, with a self-hosted hub, explicit membership, conversations and shared tasks.
+- [Cyber Account](account.md): account login, storage and deployment prerequisites.
+- [Project collaboration](collaboration.md): self-hosted hub setup, identity and membership, explicit checkout binding, published agents, receiver consent and shared tasks (experimental, off by default; live Auth provisioning remains operator work).
 
 Review each proposal, design, scenarios and tasks before runtime implementation. The [roadmap](../ROADMAP.md) records the phases and delivery order.

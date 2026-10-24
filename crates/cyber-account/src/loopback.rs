@@ -48,6 +48,13 @@ pub struct LoopbackLogin {
 }
 impl LoopbackLogin {
     pub async fn start(provider: &Provider, client_id: &str) -> Result<Self, Error> {
+        Self::start_with_reauthentication(provider, client_id, false).await
+    }
+    pub async fn start_with_reauthentication(
+        provider: &Provider,
+        client_id: &str,
+        reauthenticate: bool,
+    ) -> Result<Self, Error> {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .map_err(|_| Error::InvalidCallback)?;
@@ -58,6 +65,11 @@ impl LoopbackLogin {
         .parse()
         .map_err(|_| Error::InvalidCallback)?;
         let attempt = AuthorizationAttempt::new(provider, client_id, redirect.clone())?;
+        let attempt = if reauthenticate {
+            attempt.require_recent_authentication()
+        } else {
+            attempt
+        };
         let authorization = attempt.authorization_url().clone();
         let (sender, receive) = oneshot::channel();
         let callback = CallbackHandle {

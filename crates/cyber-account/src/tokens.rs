@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use zeroize::Zeroizing;
@@ -38,7 +39,7 @@ mod secret_string {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct Organization {
     pub id: String,
     #[serde(default)]
@@ -49,7 +50,7 @@ pub struct Organization {
 
 /// Display claims from verified tokens. Display/selection alone grants no hub rights:
 /// the hub must obtain a current `IdentityLease` from live introspection.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Account {
     pub issuer: String,
     pub sub: String,
@@ -72,7 +73,7 @@ pub struct TokenSet {
     pub(crate) refresh_token: Option<Secret>,
     pub(crate) id_token: Secret,
     pub(crate) client_id: String,
-    pub(crate) nonce: Secret,
+    pub(crate) nonce: Option<Secret>,
     pub(crate) account: Account,
 }
 
