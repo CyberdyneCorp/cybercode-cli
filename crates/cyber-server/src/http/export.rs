@@ -2,29 +2,41 @@
 //! returns the Session info and totals, its messages with their parts and tool calls, its
 //! Goals and its Workflow Run summaries, and with `include_children=true` the same for
 //! every child Session, recursively. The messages are the active path, or with
-//! `branches=all` every branch in creation order. `sanitize=true` redacts text, paths,
-//! URLs, tool inputs and outputs and metadata (see [`sanitize`]).
+//! `branches=all` every branch in creation order. The top-level `attachments` array
+//! carries the bytes of every blob the messages reference. `sanitize=true` omits it and
+//! redacts text, paths, URLs, tool inputs and outputs and metadata (see [`sanitize`]).
+//!
+//! Session import (`storage-events` → Session import): `POST /sessions/import` creates a
+//! new Session in the request's Location from a JSON export; a newer `version` is
+//! `ExportTooNewError`, and blobs that do not verify refuse the import before any write.
 
 mod sanitize;
 
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
-    routing::get,
+    extract::{DefaultBodyLimit, Path, Query, State, rejection::JsonRejection},
+    http::{StatusCode, request::Parts},
+    routing::{get, post},
 };
 use futures::future::BoxFuture;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{AppState, envelope::Data, error::ApiError, sessions::Message};
+use super::{AppState, envelope::Data, envelope::location, error::ApiError, sessions::Message};
+use crate::runtime::attachments::ExportedBlob;
 use crate::runtime::goals::Goal;
-use crate::runtime::{ListFilter, Runtime, RuntimeError, SessionInfo, Totals, WorkflowRunSummary};
+use crate::runtime::{
+    Entry, ImportDocument, ListFilter, Runtime, RuntimeError, SessionInfo, Totals,
+    WorkflowRunSummary,
+};
 
 /// The export format version; an import refuses a newer one (`ExportTooNewError`).
 pub const EXPORT_VERSION: u32 = 1;
 /// Child Sessions and Workflow Runs read per page.
 const PAGE: u32 = 200;
+/// The largest import document (its blobs are base64).
+pub(super) const IMPORT_BODY_LIMIT: usize = 256 * 1024 * 1024;
 
 /// One exported Session.
 #[derive(Debug, Serialize, JsonSchema)]
@@ -47,6 +59,10 @@ pub struct SessionExport {
     /// Child Sessions, oldest first; present with `include_children=true`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub children: Option<Vec<SessionExport>>,
+    /// The blobs the messages (children's included) reference, once each; only on the
+    /// top-level export, and omitted by `sanitize=true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<Vec<ExportedBlob>>,
 }
 
 /// `GET .../export` options.
@@ -62,7 +78,12 @@ pub struct ExportQuery {
 }
 
 pub(super) fn routes() -> Router<AppState> {
-    Router::new().route("/sessions/{session_id}/export", get(export))
+    Router::new()
+        .route("/sessions/{session_id}/export", get(export))
+        .route(
+            "/sessions/import",
+            post(import).layer(DefaultBodyLimit::max(IMPORT_BODY_LIMIT)),
+        )
 }
 
 async fn export(
@@ -71,7 +92,10 @@ async fn export(
     Query(query): Query<ExportQuery>,
 ) -> Result<Json<Data<Value>>, ApiError> {
     let all = super::sessions::all_branches(query.branches.as_deref())?;
-    let built = build(&state.runtime, id, query.include_children, all).await?;
+    let mut built = build(&state.runtime, id, query.include_children, all).await?;
+    if !query.sanitize {
+        built.attachments = Some(blobs(&state.runtime, &built)?);
+    }
     let mut value =
         serde_json::to_value(built).map_err(|e| RuntimeError::Corrupt(e.to_string()))?;
     if query.sanitize {
@@ -79,6 +103,57 @@ async fn export(
         sanitize::Sanitizer::default().apply(&mut value);
     }
     Ok(Json(Data { data: value }))
+}
+
+/// The blobs `export` and its children reference.
+fn blobs(runtime: &Runtime, export: &SessionExport) -> Result<Vec<ExportedBlob>, RuntimeError> {
+    let store = runtime.attachments()?;
+    let mut out = Vec::new();
+    let mut pending = vec![export];
+    while let Some(export) = pending.pop() {
+        let parts = export
+            .messages
+            .iter()
+            .flat_map(|message| match &message.entry {
+                Entry::User { parts, .. } => parts.as_slice(),
+                _ => &[],
+            });
+        store.exported(&export.session.id, parts, &mut out);
+        pending.extend(export.children.iter().flatten());
+    }
+    Ok(out)
+}
+
+/// `POST /sessions/import`: a new Session in the request's Location from an export.
+async fn import(
+    State(state): State<AppState>,
+    parts: Parts,
+    document: Result<Json<Value>, JsonRejection>,
+) -> Result<(StatusCode, Json<Data<SessionInfo>>), ApiError> {
+    let Json(document) = document.map_err(|rejection| match rejection.status() {
+        StatusCode::PAYLOAD_TOO_LARGE => ApiError::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "MessageTooLargeError",
+            "The import document exceeds 256 MiB",
+        ),
+        _ => ApiError::invalid(rejection.body_text()),
+    })?;
+    let directory = location(&parts, &state.options.default_directory)?;
+    let version = document["version"].as_u64().unwrap_or_default();
+    if version > u64::from(EXPORT_VERSION) {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "ExportTooNewError",
+            format!("The export is version {version}; this cyber reads up to {EXPORT_VERSION}"),
+        ));
+    }
+    let document: ImportDocument = serde_json::from_value(document)
+        .map_err(|error| ApiError::invalid(format!("not a Session export: {error}")))?;
+    let info = state
+        .runtime
+        .import_session(directory.display().to_string(), document)
+        .await?;
+    Ok((StatusCode::CREATED, Json(Data { data: info })))
 }
 
 /// Set `sanitized` on the export and every child export.
@@ -115,6 +190,7 @@ fn build(
             goals,
             workflow_runs: runs(runtime, &id)?,
             children: None,
+            attachments: None,
         };
         if children {
             let mut nested = Vec::new();

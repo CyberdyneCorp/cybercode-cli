@@ -239,6 +239,7 @@ pub const BUILTIN: &[(&str, &str)] = &[
         "Sign in to a subscription: /login openai (ChatGPT Plus/Pro)",
     ),
     ("logout", "Sign out of a subscription: /logout openai"),
+    ("collab", "Project people, conversation and shared tasks"),
     ("fork", "Fork this Session into a new one"),
     ("new", "Start a new Session"),
     ("rewind", "Rewind code and conversation to a message"),

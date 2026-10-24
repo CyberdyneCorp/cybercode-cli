@@ -8,8 +8,12 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+cyber-account = { path = "../cyber-account" }
+cyber-collab = { path = "../cyber-collab" }
+rusqlite.workspace = true
 cyber-core.workspace = true
 cyber-store.workspace = true
+cyber-install = { path = "../cyber-install" }
 cyber-llm = { path = "../cyber-llm" }
 cyber-server = { path = "../cyber-server" }
 cyber-tools = { path = "../cyber-tools" }
@@ -32,7 +36,14 @@ mdns-sd = { version = "0.21", default-features = false }
 url = "2"
 
 [dev-dependencies]
+aws-lc-rs = "1"
+jsonwebtoken = { version = "=10.3.0", default-features = false, features = ["aws_lc_rs"] }
 cyber-client = { path = "../cyber-client" }
+cyber-install = { path = "../cyber-install", features = ["test-support"] }
+flate2 = "1"
+tar = { version = "0.4.46", default-features = false }
+zip = { version = "8.6", default-features = false, features = ["deflate-flate2"] }
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
 rusqlite.workspace = true
 reqwest = { version = "0.13", features = ["json", "stream"] }
 tokio-tungstenite = "0.28"

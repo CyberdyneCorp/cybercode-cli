@@ -64,6 +64,7 @@ impl Inner {
         let mut request = resolved.template.clone();
         request.system = snapshot.system.clone();
         request.messages = snapshot.messages.clone();
+        self.project_attachments(id, &mut request.messages, &resolved, None);
         request.messages.push(Message::user_text(question));
         request.tools = defs.iter().map(|def| def.spec.clone()).collect();
         request.cache_key = None;

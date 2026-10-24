@@ -22,6 +22,7 @@ import {
   type QuestionHandler,
 } from "./requests.js";
 import { messagingGroup, type MessagingGroup } from "./messaging.js";
+import { collaborationSession, type CollaborationHandle } from "./collaboration.js";
 import { eventStream } from "./stream.js";
 import type { AppTool, ClientHookHandler, ClientHookOptions } from "./tools.js";
 import { HttpTransport, type Transport } from "./transport.js";
@@ -58,6 +59,11 @@ export interface CyberClient extends Omit<Groups, "messaging"> {
  */
 export class CyberClient implements Caller {
   readonly #transport: Transport;
+
+  readonly collaborations = {
+    /** Project collaboration for one local Session, scoped to this client's checkout. */
+    forSession: (sessionID: string, project?: string): CollaborationHandle => collaborationSession(this, sessionID, project),
+  };
 
   readonly sessions = {
     /** Admit a prompt; with `wait: true`, resolve when the Session next becomes idle. */

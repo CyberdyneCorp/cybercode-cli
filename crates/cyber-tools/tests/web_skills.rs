@@ -288,6 +288,8 @@ async fn webfetch_summary_is_billed_and_blocks_the_next_session_provider_turn() 
                 cost: None,
                 prefers_apply_patch: false,
                 family: cyber_core::prompts::ModelFamily::Default,
+                vision: false,
+                pdf: false,
             })
         }
         fn role(&self, _: ModelRole) -> Option<String> {

@@ -117,6 +117,8 @@ impl ModelResolver for Models {
             }),
             prefers_apply_patch: false,
             family: cyber_core::prompts::ModelFamily::Default,
+            vision: true,
+            pdf: true,
         })
     }
 

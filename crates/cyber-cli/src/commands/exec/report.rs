@@ -457,7 +457,7 @@ impl Out {
         session: &Value,
     ) -> Result<u8, CliError> {
         let Some(review) = self.review.take() else {
-            return Err(super::setup::api(error));
+            return Err(super::setup::refusal(error, args, session));
         };
         let (target, kind) = (review.target.normalized(), Some(review.target.kind()));
         let mut result = self.summary(run, 0);

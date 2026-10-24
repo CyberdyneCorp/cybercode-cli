@@ -32,7 +32,7 @@ use serde_json::{Value, json};
 pub use self::keyring::OsVault;
 pub use self::keyring::{
     BLOB_LIMIT, CHUNK_CAP, MemoryVault, SERVICE, SecretVault, VaultCredentialStore, backend_name,
-    index_file, open_store,
+    index_file, indexed_servers, open_store,
 };
 pub use challenge::AuthChallenge;
 pub use discovery::{AuthorizationServer, Discovery, discover};

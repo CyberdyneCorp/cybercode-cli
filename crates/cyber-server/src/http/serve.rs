@@ -37,10 +37,53 @@ pub async fn serve_tcp(
         |addr| Some(*addr),
         plain,
         None,
+        true,
         shutdown,
     )
     .await;
     Ok(())
+}
+
+/// Load an operator-provided certificate chain and matching private key. No generated
+/// certificate or disabled certificate verification is used for the owner listener.
+pub fn owner_tls(
+    cert: &std::path::Path,
+    key: &std::path::Path,
+) -> Result<Arc<rustls::ServerConfig>, String> {
+    use rustls::pki_types::pem::PemObject;
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+    let certificates = CertificateDer::pem_file_iter(cert)
+        .map_err(|e| format!("cannot read server.tls.cert: {e}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("invalid server.tls.cert: {e}"))?;
+    let key = PrivateKeyDer::from_pem_file(key)
+        .map_err(|e| format!("cannot read server.tls.key: {e}"))?;
+    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let config = rustls::ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|e| e.to_string())?
+        .with_no_client_auth()
+        .with_single_cert(certificates, key)
+        .map_err(|e| format!("invalid server.tls certificate/key: {e}"))?;
+    Ok(Arc::new(config))
+}
+
+/// Serve the owner API and dashboard using the same authenticated router over TLS.
+pub async fn serve_tcp_tls(
+    router: Router,
+    listener: tokio::net::TcpListener,
+    tls: Option<Arc<rustls::ServerConfig>>,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+) -> std::io::Result<()> {
+    serve_tls_with(
+        router.layer(Extension(Transport::Tcp)),
+        listener,
+        tls,
+        PeerLimits::default(),
+        true,
+        shutdown,
+    )
+    .await
 }
 
 /// How long a peer has to finish the TLS handshake.
@@ -88,6 +131,16 @@ pub async fn serve_peer_with(
     limits: PeerLimits,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<()> {
+    serve_tls_with(router, listener, tls, limits, false, shutdown).await
+}
+async fn serve_tls_with(
+    router: Router,
+    listener: tokio::net::TcpListener,
+    tls: Option<Arc<rustls::ServerConfig>>,
+    limits: PeerLimits,
+    upgrades: bool,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+) -> std::io::Result<()> {
     let Some(config) = tls else {
         let address = listener.local_addr()?;
         if !super::guard::loopback_peer(address.ip()) {
@@ -97,7 +150,16 @@ pub async fn serve_peer_with(
             ));
         }
         let peer = |addr: &SocketAddr| Some(*addr);
-        serve_owned(router, listener, peer, plain, Some(limits), shutdown).await;
+        serve_owned(
+            router,
+            listener,
+            peer,
+            plain,
+            Some(limits),
+            upgrades,
+            shutdown,
+        )
+        .await;
         return Ok(());
     };
     let acceptor = tokio_rustls::TlsAcceptor::from(config);
@@ -111,7 +173,16 @@ pub async fn serve_peer_with(
         }
     };
     let peer = |addr: &SocketAddr| Some(*addr);
-    serve_owned(router, listener, peer, handshake, Some(limits), shutdown).await;
+    serve_owned(
+        router,
+        listener,
+        peer,
+        handshake,
+        Some(limits),
+        upgrades,
+        shutdown,
+    )
+    .await;
     Ok(())
 }
 
@@ -130,6 +201,7 @@ async fn serve_owned<L, U, F, Io>(
     peer: fn(&L::Addr) -> Option<SocketAddr>,
     upgrade: U,
     limits: Option<PeerLimits>,
+    upgrades: bool,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) where
     L: axum::serve::Listener,
@@ -159,6 +231,7 @@ async fn serve_owned<L, U, F, Io>(
                     peer: peer(&addr),
                     closing: closing.clone(),
                     header_timeout,
+                    upgrades,
                     _slot: slot,
                 };
                 connections.spawn(serve_upgraded(connection, upgrade(io)));
@@ -189,6 +262,7 @@ struct Connection {
     /// HTTP/1.1 only, with this header (and idle) timeout; `None` serves HTTP/1.1 and
     /// HTTP/2 without one (the main API on loopback and the Unix socket).
     header_timeout: Option<Duration>,
+    upgrades: bool,
     /// The connection's place under the listener's cap, freed when it closes.
     _slot: Option<OwnedSemaphorePermit>,
 }
@@ -233,6 +307,7 @@ async fn serve_connection(
         peer,
         closing,
         header_timeout,
+        upgrades,
         _slot,
     } = connection;
     let builder = builder(header_timeout);
@@ -242,8 +317,18 @@ async fn serve_connection(
         }
         req
     });
-    let (io, service) = (TokioIo::new(io), TowerToHyperService::new(service));
-    if header_timeout.is_some() {
+    let (io, service) = (
+        TokioIo::new(ConnectionIo { inner: io, _slot }),
+        TowerToHyperService::new(service),
+    );
+    if let Some(timeout) = header_timeout.filter(|_| upgrades) {
+        // Owner HTTP/1 supports upgrades without the auto builder's protocol
+        // sniffing gap before the first header deadline starts.
+        let mut http1 = hyper::server::conn::http1::Builder::new();
+        http1.timer(TokioTimer::new()).header_read_timeout(timeout);
+        let connection = http1.serve_connection(io, service).with_upgrades();
+        drive(connection, closing, |c| c.graceful_shutdown()).await;
+    } else if header_timeout.is_some() {
         // HTTP/1.1 from the first byte, so the header timer also runs before any byte
         // arrives (the version sniffing of upgradeable connections waits without one);
         // the peer routes need no upgrades.
@@ -252,6 +337,53 @@ async fn serve_connection(
     } else {
         let connection = builder.serve_connection_with_upgrades(io, service);
         drive(connection, closing, |c| c.graceful_shutdown()).await;
+    }
+}
+
+/// A slot follows upgraded IO too, so an authenticated WebSocket cannot silently
+/// leave the listener's connection limit when its HTTP handshake completes.
+struct ConnectionIo<Io> {
+    inner: Io,
+    _slot: Option<OwnedSemaphorePermit>,
+}
+impl<Io: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for ConnectionIo<Io> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+impl<Io: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for ConnectionIo<Io> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
+    }
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write_vectored(cx, bufs)
     }
 }
 
@@ -291,6 +423,7 @@ pub async fn serve_unix(
         |_| None,
         plain,
         None,
+        true,
         shutdown,
     )
     .await;

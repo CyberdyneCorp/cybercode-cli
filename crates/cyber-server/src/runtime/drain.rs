@@ -111,6 +111,7 @@ pub(crate) async fn run(inner: Arc<Inner>, id: String, forced: bool, cancel: Can
 
 /// The Session's Drain ended with `(hops, status)` for its idle notices.
 async fn went_idle(runtime: super::Runtime, id: &str, (hops, status): (u32, Option<String>)) {
+    runtime.inner.release_attachment_cache(id).await;
     // `loops-scheduling`: the iterations this Drain ran end now.
     runtime.loops_drain_ended(id, status.as_deref()).await;
     // `cross-session-messaging` → Idle notifications: the Session went idle.
@@ -1033,6 +1034,12 @@ impl Inner {
             epoch.baseline.clone(),
         ];
         request.messages = view::messages(&state, &resolved.provider, &resolved.model);
+        self.project_attachments(
+            &state.info.id,
+            &mut request.messages,
+            resolved,
+            Some(handle),
+        );
         let settings = self
             .tools
             .deferred_tool_settings(&turn_context(&state, resolved))

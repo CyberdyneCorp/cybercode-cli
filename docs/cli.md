@@ -39,6 +39,9 @@ cyber [OPTIONS] [COMMAND]
 
 **Subcommands:**
 
+- [`login`](#cyber-login): Sign in to a Cyber Account for collaboration and other networked features
+- [`whoami`](#cyber-whoami): Show the current Cyber Account without exposing tokens
+- [`logout`](#cyber-logout): Remove Cyber Account credentials, keeping provider logins and local Sessions
 - [`import`](#cyber-import): Import Claude Code, Codex or OpenCode configuration: detect, preview or write
 - [`lsp`](#cyber-lsp): Inspect installed language servers for the current Location
 - [`fmt`](#cyber-fmt): Inspect detected formatters for the current Location
@@ -65,14 +68,55 @@ cyber [OPTIONS] [COMMAND]
 - [`review`](#cyber-review): Review uncommitted changes, a range, a commit or a pull request
 - [`pr`](#cyber-pr): Check out a pull request and resume the Session linked to it
 - [`git`](#cyber-git): Generate commit and pull request text with the small model
+- [`web`](#cyber-web): Open the local web dashboard and remote approval inbox
 - [`serve`](#cyber-serve): Run the server in the foreground
 - [`service`](#cyber-service): Manage the background server
 - [`api`](#cyber-api): Send one request to the server API
+- [`collab`](#cyber-collab): Work with people and their locally running agents through a project hub
 - [`peers`](#cyber-peers): Pair with other machines' cyber servers to message their Sessions
 - [`messages`](#cyber-messages): Send messages between Sessions and read their message history
 - [`doctor`](#cyber-doctor): Check configuration, skills, commands, credentials, catalog, database, sandbox, tools and server
 - [`stats`](#cyber-stats): Usage statistics: activity, streaks, tokens, cost and per-model totals
+- [`upgrade`](#cyber-upgrade): Upgrade cyber to the channel's latest version or to VERSION
+- [`uninstall`](#cyber-uninstall): Remove cyber: its binary (script installs), PATH lines and directories
 - [`eval`](#cyber-eval): Run evaluation manifests and write reports
+
+## `cyber login`
+
+Sign in to a Cyber Account for collaboration and other networked features
+
+```text
+cyber login [OPTIONS]
+```
+
+**Options:**
+
+- `--no-browser`: Print the login URL and accept a pasted redirect; use device login if advertised.
+- `--reauth`: Require a new authentication for a recent-authentication approval.
+
+## `cyber whoami`
+
+Show the current Cyber Account without exposing tokens
+
+```text
+cyber whoami [OPTIONS]
+```
+
+**Options:**
+
+- `--org <ORG>`: Select an authorized organization by short name or immutable ID.
+
+## `cyber logout`
+
+Remove Cyber Account credentials, keeping provider logins and local Sessions
+
+```text
+cyber logout [OPTIONS]
+```
+
+**Options:**
+
+- `--all`: Remove every stored Cyber Account, not only the active account.
 
 ## `cyber import`
 
@@ -253,6 +297,7 @@ cyber sessions [OPTIONS] <COMMAND>
 - [`checkout`](#cyber-sessions-checkout): Make another branch active; the Session must be idle
 - [`label`](#cyber-sessions-label): Set or remove a branch label
 - [`export`](#cyber-sessions-export): Write a Session as JSON (default), Markdown (--format md) or one self-contained HTML page (--format html): its info, messages, tool calls, goals and workflow runs
+- [`import`](#cyber-sessions-import): Import a JSON export (`cyber sessions export`) as a new Session in this Location, with fresh IDs and its attachments, which are verified before anything is written
 
 ## `cyber sessions list`
 
@@ -373,6 +418,18 @@ cyber sessions export [OPTIONS] <SESSION>
 - `--include-children`: Include child Sessions (subagents, workflow agents), recursively.
 - `--all-branches`: Include every branch; each message's `parent_message_id` links the tree.
 - `-o, --output <FILE>`: Write the export to this file, atomically, instead of stdout. A symlink is refused; an existing file keeps its permissions, a new one is private.
+
+## `cyber sessions import`
+
+Import a JSON export (`cyber sessions export`) as a new Session in this Location, with fresh IDs and its attachments, which are verified before anything is written
+
+```text
+cyber sessions import [OPTIONS] <FILE>
+```
+
+**Arguments:**
+
+- `<FILE>`: The export file.
 
 ## `cyber skills`
 
@@ -1614,7 +1671,7 @@ cyber exec [OPTIONS] [PROMPT]...
 - `--output-style <NAME>`: Use this output style for the Session (a name from `/output-style`); it must be listed at the Location, or the run exits 2 before any Session exists.
 - `--workflow <NAME|PATH>`: Run a Workflow (a saved name or a `.js` module path) instead of a prompt; its return value is the result.
 - `--args <JSON>`: The Workflow's `args` as a JSON object.
-- `--file <FILES>`: Attach a file (repeatable)
+- `--file <FILES>`: Attach a file (repeatable): an image or PDF as an attachment, read by a local server under the `read` permission (sent inline with --attach); others as text.
 - `--max-turns <MAX_TURNS>`: With --goal: each Goal's `max_turns` budget; otherwise the Session's step ceiling.
 - `--goal <CONDITION>`: Work until this Goal is met (repeatable: a queue, in order). The exit code is 0 met, 3 impossible, 4 budget exceeded, 1 otherwise, for the first non-met Goal.
 - `--goal-check <COMMAND>`: A command that must pass for the --goal before it to count as met.
@@ -1711,6 +1768,20 @@ cyber git pr-description [OPTIONS]
 
 - `--base <BASE>`: The base branch or commit (default: origin/HEAD, else main, else master)
 
+## `cyber web`
+
+Open the local web dashboard and remote approval inbox
+
+```text
+cyber web [OPTIONS]
+```
+
+**Options:**
+
+- `--hostname <HOSTNAME>`: Address to bind when starting a server (default 127.0.0.1). Off loopback requires HTTPS.
+- `--port <PORT>`: TCP port when starting a server (default 4747, falling back to a free port)
+- `--no-open`: Print the dashboard URL without opening a browser.
+
 ## `cyber serve`
 
 Run the server in the foreground
@@ -1721,7 +1792,7 @@ cyber serve [OPTIONS]
 
 **Options:**
 
-- `--hostname <HOSTNAME>`: Address to bind (default 127.0.0.1) Default: `127.0.0.1`.
+- `--hostname <HOSTNAME>`: Address to bind (default 127.0.0.1). Off loopback requires global server.tls. Default: `127.0.0.1`.
 - `--port <PORT>`: TCP port (default 4747, falling back to a free port)
 - `--socket <SOCKET>`: Unix socket path (default <state>/cyber.sock)
 - `--no-tcp`: Do not listen on TCP.
@@ -1808,6 +1879,529 @@ cyber api [OPTIONS] <TARGET>...
 - `-d, --data <DATA>`: Request body (JSON by default)
 - `-H, --header <HEADERS>`: Extra header as `Name: value` (repeatable, up to 100)
 - `--param <PARAMS>`: Path or query parameter as `key=value` (repeatable)
+
+## `cyber collab`
+
+Work with people and their locally running agents through a project hub
+
+```text
+cyber collab [OPTIONS] <COMMAND>
+```
+
+**Subcommands:**
+
+- [`status`](#cyber-collab-status): Read local binding and publication status
+- [`serve`](#cyber-collab-serve): Run the independent project hub (TLS termination is required outside loopback)
+- [`project`](#cyber-collab-project): Create a collaboration project
+- [`bind`](#cyber-collab-bind): Explicitly pin this checkout to one hub and project after comparing its Git remote
+- [`publish`](#cyber-collab-publish): Publish one local Session. Its context is permanently pinned to this project
+- [`unpublish`](#cyber-collab-unpublish): Revoke an agent publication, retaining its Session's project tombstone
+- [`invite`](#cyber-collab-invite): Create a single-use invitation (the secret is displayed only on issuance)
+- [`invitations`](#cyber-collab-invitations)
+- [`join`](#cyber-collab-join): Apply to join. Invitation tokens are accepted only on stdin
+- [`applications`](#cyber-collab-applications)
+- [`members`](#cyber-collab-members)
+- [`messages`](#cyber-collab-messages)
+- [`tasks`](#cyber-collab-tasks)
+- [`leave`](#cyber-collab-leave)
+
+## `cyber collab status`
+
+Read local binding and publication status
+
+```text
+cyber collab status [OPTIONS]
+```
+
+**Options:**
+
+- `--session <SESSION>`
+
+## `cyber collab serve`
+
+Run the independent project hub (TLS termination is required outside loopback)
+
+```text
+cyber collab serve [OPTIONS] --issuer <ISSUER> --audience <AUDIENCE> --bootstrap-sub <BOOTSTRAP_SUB>
+```
+
+**Options:**
+
+- `--issuer <ISSUER>`
+- `--audience <AUDIENCE>`
+- `--bootstrap-sub <BOOTSTRAP_SUB>`
+- `--listen <LISTEN>`: Default: `127.0.0.1:4749`.
+- `--database <DATABASE>`
+- `--introspection-token-env <INTROSPECTION_TOKEN_ENV>`
+- `--introspection-client-id <INTROSPECTION_CLIENT_ID>`
+- `--introspection-client-secret-env <INTROSPECTION_CLIENT_SECRET_ENV>`
+- `--introspection-scope <INTROSPECTION_SCOPE>`
+- `--tls-cert <TLS_CERT>`
+- `--tls-key <TLS_KEY>`
+- `--trusted-proxy <TRUSTED_PROXY>`
+- `--allow-loopback-http`
+- `--allow-guests`
+- `--require-mfa <REQUIRE_MFA>`: Values: `true`, `false`. Default: `true`.
+
+## `cyber collab project`
+
+Create a collaboration project
+
+```text
+cyber collab project [OPTIONS] <COMMAND>
+```
+
+**Subcommands:**
+
+- [`list`](#cyber-collab-project-list): List projects the current account is authorized to read on this hub
+- [`show`](#cyber-collab-project-show): Read one authorized project descriptor before explicitly binding a checkout
+- [`policy`](#cyber-collab-project-policy): Change explicit enrollment/guest policy with optimistic concurrency
+- [`create`](#cyber-collab-project-create)
+
+## `cyber collab project list`
+
+List projects the current account is authorized to read on this hub
+
+```text
+cyber collab project list [OPTIONS] --hub <HUB>
+```
+
+**Options:**
+
+- `--hub <HUB>`
+
+## `cyber collab project show`
+
+Read one authorized project descriptor before explicitly binding a checkout
+
+```text
+cyber collab project show [OPTIONS] --hub <HUB> <PROJECT>
+```
+
+**Arguments:**
+
+- `<PROJECT>`
+
+**Options:**
+
+- `--hub <HUB>`
+
+## `cyber collab project policy`
+
+Change explicit enrollment/guest policy with optimistic concurrency
+
+```text
+cyber collab project policy [OPTIONS] --project <PROJECT> --expected-revision <EXPECTED_REVISION>
+```
+
+**Options:**
+
+- `--project <PROJECT>`
+- `--expected-revision <EXPECTED_REVISION>`
+- `--enrollment <ENROLLMENT>`: Values: `invite-only`, `organization-members`. Default: `invite-only`.
+- `--role <ROLE>`: Values: `owner`, `member`, `viewer`. Default: `viewer`.
+- `--allow-guests <ALLOW_GUESTS>`: Values: `true`, `false`. Default: `false`.
+
+## `cyber collab project create`
+
+```text
+cyber collab project create [OPTIONS] --hub <HUB> --repo <REPO> --name <NAME>
+```
+
+**Options:**
+
+- `--hub <HUB>`
+- `--repo <REPO>`
+- `--name <NAME>`
+- `--organization <ORGANIZATION>`
+- `--friends`
+
+## `cyber collab bind`
+
+Explicitly pin this checkout to one hub and project after comparing its Git remote
+
+```text
+cyber collab bind [OPTIONS] --hub <HUB> --project <PROJECT>
+```
+
+**Options:**
+
+- `--hub <HUB>`
+- `--project <PROJECT>`
+- `--remote <REMOTE>`: Default: `origin`.
+- `--confirm`
+
+## `cyber collab publish`
+
+Publish one local Session. Its context is permanently pinned to this project
+
+```text
+cyber collab publish [OPTIONS] --project <PROJECT> --session <SESSION> --name <NAME>
+```
+
+**Options:**
+
+- `--project <PROJECT>`
+- `--session <SESSION>`
+- `--name <NAME>`
+- `--subscribe-project-messages`
+
+## `cyber collab unpublish`
+
+Revoke an agent publication, retaining its Session's project tombstone
+
+```text
+cyber collab unpublish [OPTIONS] <AGENT>
+```
+
+**Arguments:**
+
+- `<AGENT>`
+
+## `cyber collab invite`
+
+Create a single-use invitation (the secret is displayed only on issuance)
+
+```text
+cyber collab invite [OPTIONS] --project <PROJECT>
+```
+
+**Options:**
+
+- `--project <PROJECT>`
+- `--role <ROLE>`: Values: `owner`, `member`, `viewer`.
+- `--subject <SUBJECT>`
+- `--guest`
+
+## `cyber collab invitations`
+
+```text
+cyber collab invitations [OPTIONS] <COMMAND>
+```
+
+**Subcommands:**
+
+- [`list`](#cyber-collab-invitations-list)
+- [`revoke`](#cyber-collab-invitations-revoke)
+
+## `cyber collab invitations list`
+
+```text
+cyber collab invitations list [OPTIONS] --project <PROJECT>
+```
+
+**Options:**
+
+- `--project <PROJECT>`
+
+## `cyber collab invitations revoke`
+
+```text
+cyber collab invitations revoke [OPTIONS] --project <PROJECT> <INVITATION>
+```
+
+**Arguments:**
+
+- `<INVITATION>`
+
+**Options:**
+
+- `--project <PROJECT>`
+
+## `cyber collab join`
+
+Apply to join. Invitation tokens are accepted only on stdin
+
+```text
+cyber collab join [OPTIONS] --hub <HUB>
+```
+
+**Options:**
+
+- `--hub <HUB>`
+- `--project <PROJECT>`
+- `--invite-stdin`
+- `--name <NAME>`
+
+## `cyber collab applications`
+
+```text
+cyber collab applications [OPTIONS] <COMMAND>
+```
+
+**Subcommands:**
+
+- [`status`](#cyber-collab-applications-status): Read your own pending application and refresh identity for owner approval
+- [`list`](#cyber-collab-applications-list)
+- [`approve`](#cyber-collab-applications-approve)
+- [`reject`](#cyber-collab-applications-reject)
+- [`redeem`](#cyber-collab-applications-redeem): Confirm the displayed repository and optionally redeem a join code from stdin
+
+## `cyber collab applications status`
+
+Read your own pending application and refresh identity for owner approval
+
+```text
+cyber collab applications status [OPTIONS] --hub <HUB> <APPLICATION>
+```
+
+**Arguments:**
+
+- `<APPLICATION>`
+
+**Options:**
+
+- `--hub <HUB>`
+
+## `cyber collab applications list`
+
+```text
+cyber collab applications list [OPTIONS] --project <PROJECT>
+```
+
+**Options:**
+
+- `--project <PROJECT>`
+
+## `cyber collab applications approve`
+
+```text
+cyber collab applications approve [OPTIONS] --project <PROJECT> <APPLICATION>
+```
+
+**Arguments:**
+
+- `<APPLICATION>`
+
+**Options:**
+
+- `--project <PROJECT>`
+
+## `cyber collab applications reject`
+
+```text
+cyber collab applications reject [OPTIONS] --project <PROJECT> <APPLICATION>
+```
+
+**Arguments:**
+
+- `<APPLICATION>`
+
+**Options:**
+
+- `--project <PROJECT>`
+
+## `cyber collab applications redeem`
+
+Confirm the displayed repository and optionally redeem a join code from stdin
+
+```text
+cyber collab applications redeem [OPTIONS] --hub <HUB> --repo <REPO> <APPLICATION>
+```
+
+**Arguments:**
+
+- `<APPLICATION>`
+
+**Options:**
+
+- `--hub <HUB>`
+- `--repo <REPO>`
+- `--code-stdin`
+
+## `cyber collab members`
+
+```text
+cyber collab members [OPTIONS] <COMMAND>
+```
+
+**Subcommands:**
+
+- [`list`](#cyber-collab-members-list)
+- [`set-role`](#cyber-collab-members-set-role)
+- [`remove`](#cyber-collab-members-remove)
+
+## `cyber collab members list`
+
+```text
+cyber collab members list [OPTIONS] --project <PROJECT>
+```
+
+**Options:**
+
+- `--project <PROJECT>`
+
+## `cyber collab members set-role`
+
+```text
+cyber collab members set-role [OPTIONS] --project <PROJECT> --role <ROLE> <MEMBER>
+```
+
+**Arguments:**
+
+- `<MEMBER>`
+
+**Options:**
+
+- `--project <PROJECT>`
+- `--role <ROLE>`: Values: `owner`, `member`, `viewer`.
+
+## `cyber collab members remove`
+
+```text
+cyber collab members remove [OPTIONS] --project <PROJECT> <MEMBER>
+```
+
+**Arguments:**
+
+- `<MEMBER>`
+
+**Options:**
+
+- `--project <PROJECT>`
+
+## `cyber collab messages`
+
+```text
+cyber collab messages [OPTIONS] <COMMAND>
+```
+
+**Subcommands:**
+
+- [`list`](#cyber-collab-messages-list)
+- [`send`](#cyber-collab-messages-send)
+
+## `cyber collab messages list`
+
+```text
+cyber collab messages list [OPTIONS] --project <PROJECT>
+```
+
+**Options:**
+
+- `--project <PROJECT>`
+
+## `cyber collab messages send`
+
+```text
+cyber collab messages send [OPTIONS] --project <PROJECT> <TEXT>
+```
+
+**Arguments:**
+
+- `<TEXT>`
+
+**Options:**
+
+- `--project <PROJECT>`
+- `--member <MEMBER>`
+- `--agent <AGENT>`
+- `--reply-to <REPLY_TO>`
+
+## `cyber collab tasks`
+
+```text
+cyber collab tasks [OPTIONS] <COMMAND>
+```
+
+**Subcommands:**
+
+- [`list`](#cyber-collab-tasks-list)
+- [`create`](#cyber-collab-tasks-create)
+- [`claim`](#cyber-collab-tasks-claim)
+- [`update`](#cyber-collab-tasks-update)
+- [`reconcile`](#cyber-collab-tasks-reconcile)
+
+## `cyber collab tasks list`
+
+```text
+cyber collab tasks list [OPTIONS] --project <PROJECT>
+```
+
+**Options:**
+
+- `--project <PROJECT>`
+
+## `cyber collab tasks create`
+
+```text
+cyber collab tasks create [OPTIONS] --project <PROJECT> <TITLE>
+```
+
+**Arguments:**
+
+- `<TITLE>`
+
+**Options:**
+
+- `--project <PROJECT>`
+- `--description <DESCRIPTION>`: Default: ``.
+- `--dependency <DEPENDENCY>`
+
+## `cyber collab tasks claim`
+
+```text
+cyber collab tasks claim [OPTIONS] --project <PROJECT> --expected-revision <EXPECTED_REVISION> <TASK>
+```
+
+**Arguments:**
+
+- `<TASK>`
+
+**Options:**
+
+- `--project <PROJECT>`
+- `--expected-revision <EXPECTED_REVISION>`
+
+## `cyber collab tasks update`
+
+```text
+cyber collab tasks update [OPTIONS] --project <PROJECT> --expected-revision <EXPECTED_REVISION> --claim-generation <CLAIM_GENERATION> <TASK>
+```
+
+**Arguments:**
+
+- `<TASK>`
+
+**Options:**
+
+- `--project <PROJECT>`
+- `--expected-revision <EXPECTED_REVISION>`
+- `--claim-generation <CLAIM_GENERATION>`
+- `--status <STATUS>`
+- `--title <TITLE>`
+- `--description <DESCRIPTION>`
+- `--report <REPORT>`
+
+## `cyber collab tasks reconcile`
+
+```text
+cyber collab tasks reconcile [OPTIONS] --project <PROJECT> --expected-revision <EXPECTED_REVISION> --claim-generation <CLAIM_GENERATION> --reason <REASON> <TASK>
+```
+
+**Arguments:**
+
+- `<TASK>`
+
+**Options:**
+
+- `--project <PROJECT>`
+- `--expected-revision <EXPECTED_REVISION>`
+- `--claim-generation <CLAIM_GENERATION>`
+- `--acknowledge-unknown-work`
+- `--reason <REASON>`
+- `--member <MEMBER>`
+- `--agent <AGENT>`
+
+## `cyber collab leave`
+
+```text
+cyber collab leave [OPTIONS] --project <PROJECT>
+```
+
+**Options:**
+
+- `--project <PROJECT>`
 
 ## `cyber peers`
 
@@ -1994,6 +2588,39 @@ cyber stats [OPTIONS]
 - `--models`: One row per model.
 - `--tools`: Tool calls by name.
 - `--by <GROUP>`: One row per usage origin (`user`, `session`, `client`, `job`, `mcp`, ...) Values: `origin`.
+
+## `cyber upgrade`
+
+Upgrade cyber to the channel's latest version or to VERSION
+
+```text
+cyber upgrade [OPTIONS] [VERSION]
+```
+
+**Arguments:**
+
+- `[VERSION]`: Version to install (`1.4.0` or `v1.4.0`); defaults to the channel's latest.
+
+**Options:**
+
+- `--method <METHOD>`: Install method instead of the detected one: script, brew, npm, pnpm, bun, cargo, scoop, winget, aur, nix, docker or unknown.
+- `--channel <CHANNEL>`: Channel to read the latest version from; defaults to the build's (`dev` reads `stable`) Values: `stable`, `beta`, `nightly`.
+- `--dry-run`: Print what would be done (target version, method, action) and change nothing.
+
+## `cyber uninstall`
+
+Remove cyber: its binary (script installs), PATH lines and directories
+
+```text
+cyber uninstall [OPTIONS]
+```
+
+**Options:**
+
+- `--keep-config`: Keep the configuration directory.
+- `--keep-data`: Keep the data directory (sessions, memory, stored logins) and the keyring entries.
+- `--dry-run`: List what would be removed, with sizes, and change nothing.
+- `--force`: Remove without asking, and go on when the background server cannot be stopped.
 
 ## `cyber eval`
 

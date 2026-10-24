@@ -3,7 +3,9 @@
 use futures::future::BoxFuture;
 use serde_json::{Map, Value, json};
 
-use super::{Adapter, Decoder, Endpoint, EventStream, ToolCalls, decode_sse, parse_json};
+use super::{
+    Adapter, Decoder, Endpoint, EventStream, ToolCalls, decode_sse, ensure_resolved, parse_json,
+};
 use crate::error::{LlmError, classify_stream_error};
 use crate::json::{deep_merge, force_no_tools, str_at, strip_credentials, u64_at};
 use crate::sse::SseEvent;
@@ -42,6 +44,7 @@ impl Adapter for AnthropicAdapter {
 
     fn stream(&self, request: LlmRequest) -> BoxFuture<'_, Result<EventStream, LlmError>> {
         Box::pin(async move {
+            ensure_resolved(&request)?;
             let body = build_body(&request);
             let mut auth = vec![("anthropic-version".to_string(), API_VERSION.to_string())];
             auth.extend(
@@ -233,8 +236,12 @@ fn blocks(message: &Message) -> Vec<Value> {
             Content::Image { media_type, data } => rest.push(
                 json!({ "type": "image", "source": { "type": "base64", "media_type": media_type, "data": data } }),
             ),
+            Content::Document { media_type, data, .. } => rest.push(
+                json!({ "type": "document", "source": { "type": "base64", "media_type": media_type, "data": data } }),
+            ),
             Content::ToolCall { id, name, input } => rest.push(json!({ "type": "tool_use", "id": id, "name": name, "input": input })),
-            Content::Text { .. } | Content::Reasoning { signature: None, .. } => {}
+            // References are resolved before a request (`ensure_resolved`).
+            Content::Text { .. } | Content::Reasoning { signature: None, .. } | Content::Attachment(_) => {}
         }
     }
     first.extend(rest);
@@ -356,5 +363,31 @@ impl AnthropicDecoder {
             Some(other) => FinishReason::Other(other.into()),
         };
         out.push(Ok(LlmEvent::Finish { reason }));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn documents_become_base64_document_blocks() {
+        let message = Message {
+            role: Role::User,
+            content: vec![
+                Content::Text {
+                    text: "read this".into(),
+                },
+                Content::Document {
+                    media_type: "application/pdf".into(),
+                    data: "JVBERi0=".into(),
+                    name: Some("spec.pdf".into()),
+                },
+            ],
+        };
+        assert_eq!(
+            blocks(&message)[1],
+            json!({ "type": "document", "source": { "type": "base64", "media_type": "application/pdf", "data": "JVBERi0=" } })
+        );
     }
 }

@@ -1,8 +1,9 @@
 //! `cyber sessions export --format html` (`storage-events` → Session export) through the
 //! real binary and the background server it starts, with a scripted model: the
 //! self-contained page, inert injected markup, children nested under the call that
-//! started them, `--sanitize` parity between JSON and HTML, and the atomic `--output`
-//! that never writes through a symlink.
+//! started them, `--sanitize` parity between JSON and HTML, the atomic `--output`
+//! that never writes through a symlink, and attachments that round-trip through
+//! `cyber sessions import` and are dropped by `--sanitize`.
 
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -67,6 +68,8 @@ impl Env {
         std::fs::create_dir_all(&config).unwrap();
         let mut settings = model.config();
         settings["permissions"] = json!({ "agent": "allow" });
+        settings["providers"]["test"]["models"]["main"] =
+            json!({ "capabilities": { "vision": true, "pdf": true } });
         std::fs::write(config.join("cyber.jsonc"), settings.to_string()).unwrap();
         let repo = root.join("repo");
         std::fs::create_dir_all(&repo).unwrap();
@@ -123,6 +126,53 @@ impl Env {
         let done: Value =
             serde_json::from_slice(&output.stdout).unwrap_or_else(|_| panic!("{text}"));
         done["session_id"].as_str().unwrap().to_owned()
+    }
+
+    /// `cyber api` with `body`; the reply's `data`.
+    fn api(&self, method: &str, path: &str, body: Option<&Value>) -> Value {
+        let mut args = vec!["api", method, path];
+        let body = body.map(Value::to_string);
+        if let Some(body) = &body {
+            args.extend(["-d", body]);
+        }
+        let output = self.cyber(&args);
+        let text = exits(&output, 0);
+        let reply: Value =
+            serde_json::from_slice(&output.stdout).unwrap_or_else(|_| panic!("{text}"));
+        reply["data"].clone()
+    }
+
+    /// Wait until Session `id` is idle.
+    fn idle(&self, id: &str) {
+        for _ in 0..200 {
+            if self.api("GET", &format!("/sessions/{id}"), None)["status"] == "idle" {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        panic!("{id} is still running");
+    }
+
+    /// A Session whose prompt attached [`PDF`] as `spec.pdf`, once its Turn ended.
+    fn pdf_session(&self, model: &scripted_model::ScriptedModel) -> String {
+        let id = self.api("POST", "/sessions", Some(&json!({})))["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let parts = json!({ "parts": [
+            { "type": "text", "text": "READ-PDF" },
+            { "type": "document", "media_type": "application/pdf", "data": base64(PDF),
+                "name": "spec.pdf" },
+        ] });
+        self.api("POST", &format!("/sessions/{id}/prompt"), Some(&parts));
+        model_request(model, "READ-PDF");
+        self.idle(&id);
+        id
+    }
+
+    fn sessions(&self) -> usize {
+        let page = self.api("GET", "/sessions", None);
+        page.as_array().or(page["data"].as_array()).unwrap().len()
     }
 
     fn export(&self, args: &[&str]) -> String {
@@ -471,4 +521,150 @@ fn html_format_is_only_for_export() {
         2,
     );
     assert!(text.contains("writes --format json, md or html"), "{text}");
+}
+
+/// A minimal PDF.
+const PDF: &[u8] = b"%PDF-1.4\n1 0 obj << >> endobj\ntrailer << >>\n%%EOF\n";
+
+fn base64(bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// The first model request whose last message mentions `marker`.
+fn model_request(model: &scripted_model::ScriptedModel, marker: &str) -> Value {
+    for _ in 0..200 {
+        let found = model.requests().into_iter().find(|request| {
+            request["messages"]
+                .as_array()
+                .and_then(|m| m.last())
+                .is_some_and(|last| last.to_string().contains(marker))
+        });
+        if let Some(request) = found {
+            return request;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    panic!("no model request mentions {marker}");
+}
+
+/// Whether a Chat Completions request carries [`PDF`] as a `file` part.
+fn carries_pdf(request: &Value) -> bool {
+    request
+        .to_string()
+        .contains(&format!("data:application/pdf;base64,{}", base64(PDF)))
+}
+
+/// The user part of `document` of type `kind`.
+fn user_part<'a>(document: &'a Value, kind: &str) -> &'a Value {
+    document["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["kind"] == "user")
+        .flat_map(|message| message["parts"].as_array().unwrap())
+        .find(|part| part["type"] == kind)
+        .unwrap_or_else(|| panic!("no {kind} part in {document}"))
+}
+
+/// The scenarios "Export round-trip" and "Sanitized export drops attachment bytes": the
+/// JSON export carries the blob once beside the reference, an import of it sends the
+/// same PDF on its next Turn, `--sanitize` drops the bytes and the name, and the HTML
+/// page shows a placeholder.
+#[test]
+fn attachments_round_trip_and_sanitize() {
+    let model = scripted_model::ScriptedModel::start(|_| json!({ "content": "Read it." }));
+    let env = Env::new(&model);
+    let id = env.pdf_session(&model);
+    let sha256 = {
+        use sha2::Digest as _;
+        format!("{:x}", sha2::Sha256::digest(PDF))
+    };
+
+    let exported = env.export(&[&id]);
+    let document: Value = serde_json::from_str(&exported).unwrap();
+    assert_eq!(
+        document["attachments"],
+        json!([{ "sha256": sha256, "media_type": "application/pdf", "size": PDF.len(),
+            "name": "spec.pdf", "data": base64(PDF) }])
+    );
+    let reference = user_part(&document, "attachment");
+    assert_eq!(reference["sha256"], sha256.as_str());
+    assert!(reference.get("data").is_none(), "{reference}");
+
+    let file = env.root.join("export.json");
+    std::fs::write(&file, &exported).unwrap();
+    let output = env.cyber(&["sessions", "import", file.to_str().unwrap()]);
+    let text = exits(&output, 0);
+    let imported = text
+        .trim()
+        .strip_prefix("Imported session: ")
+        .unwrap_or_else(|| panic!("{text}"))
+        .to_owned();
+    assert_ne!(imported, id);
+    let output = env.cyber(&["exec", "--session", &imported, "AFTER-IMPORT"]);
+    exits(&output, 0);
+    let next = model_request(&model, "AFTER-IMPORT");
+    assert!(carries_pdf(&next), "{next}");
+    assert!(!next.to_string().contains("missing from storage"), "{next}");
+
+    let sanitized = env.export(&[&id, "--sanitize"]);
+    let document: Value = serde_json::from_str(&sanitized).unwrap();
+    assert!(document.get("attachments").is_none(), "{sanitized}");
+    let reference = user_part(&document, "attachment");
+    assert_eq!(reference["media_type"], "application/pdf");
+    assert_eq!(reference["size"], PDF.len());
+    assert!(
+        reference["name"]
+            .as_str()
+            .unwrap()
+            .starts_with("[redacted:path:"),
+        "{reference}"
+    );
+    for leaked in ["spec.pdf", base64(PDF).as_str()] {
+        assert!(!sanitized.contains(leaked), "{leaked} in {sanitized}");
+    }
+
+    let html = env.export(&[&id, "--format", "html"]);
+    let placeholder = format!("[pdf: application/pdf, {} B, spec.pdf]", PDF.len());
+    assert!(html.contains(&placeholder), "{html}");
+    assert!(!html.contains(&base64(PDF)), "{html}");
+}
+
+/// The scenario "Tampered import": a blob that does not match its SHA-256, and an
+/// export of a newer version, are refused and no Session is created.
+#[test]
+fn tampered_attachment_import_fails() {
+    let model = scripted_model::ScriptedModel::start(|_| json!({ "content": "Read it." }));
+    let env = Env::new(&model);
+    let id = env.pdf_session(&model);
+    let mut document: Value = serde_json::from_str(&env.export(&[&id])).unwrap();
+    let before = env.sessions();
+
+    let mut tampered = PDF.to_vec();
+    tampered[1] = b'Q';
+    document["attachments"][0]["data"] = base64(&tampered).into();
+    let file = env.root.join("tampered.json");
+    std::fs::write(&file, document.to_string()).unwrap();
+    let output = env.cyber(&["sessions", "import", file.to_str().unwrap()]);
+    let text = exits(&output, 2);
+    assert!(text.contains("SHA-256 does not match its data"), "{text}");
+
+    document["attachments"][0]["data"] = base64(PDF).into();
+    document["version"] = 99.into();
+    std::fs::write(&file, document.to_string()).unwrap();
+    let output = env.cyber(&["sessions", "import", file.to_str().unwrap()]);
+    assert!(!output.status.success());
+    let text = String::from_utf8_lossy(&output.stderr);
+    assert!(text.contains("The export is version 99"), "{text}");
+
+    assert_eq!(env.sessions(), before);
+    let blobs = env.root.join("cyber-home/data/attachments");
+    let dirs = std::fs::read_dir(&blobs).map_or(0, |entries| entries.count());
+    assert_eq!(
+        dirs,
+        1,
+        "only the source Session has blobs in {}",
+        blobs.display()
+    );
 }

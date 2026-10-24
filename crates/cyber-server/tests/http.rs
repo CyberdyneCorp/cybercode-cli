@@ -22,7 +22,21 @@ struct FakeServices {
     tools: Arc<support::Tools>,
 }
 
+struct Issuance;
+impl http::collaboration::CollaborationService for Issuance {
+    fn call(
+        &self,
+        _operation: String,
+        _input: Value,
+    ) -> BoxFuture<'_, Result<Value, http::ApiError>> {
+        Box::pin(async { Ok(json!({"token":"once-only-fixture-invitation"})) })
+    }
+}
 impl Services for FakeServices {
+    fn collaboration(&self) -> Option<Arc<dyn http::collaboration::CollaborationService>> {
+        Some(Arc::new(Issuance))
+    }
+
     fn models(&self, _location: &Path) -> BoxFuture<'_, Result<Vec<ModelInfo>, String>> {
         Box::pin(async {
             Ok(vec![ModelInfo {
@@ -740,7 +754,10 @@ async fn tcp_requires_the_password_except_for_health() {
         .await
         .unwrap();
     assert_eq!(stream.status(), 200);
-    assert_eq!(stream.headers()["cache-control"], "no-cache, no-transform");
+    assert_eq!(
+        stream.headers()["cache-control"],
+        "no-store, no-cache, no-transform"
+    );
 }
 
 #[tokio::test]
@@ -4104,4 +4121,174 @@ async fn client_hook_registration_drops_on_disconnect() {
         )
         .await;
     assert!(after.unwrap_err().contains("disconnected"));
+}
+
+#[tokio::test]
+async fn collaboration_issuance_secrets_are_not_cached_in_owner_database() {
+    let h = Harness::new(Setup::default());
+    let api = Api::new(&h);
+    let (status, body, headers) = api
+        .call(
+            Method::POST,
+            "/collaboration/owner/invite",
+            Some(json!({"operation_id":"cop_fixture"})),
+            &[("idempotency-key", "invitation-secret")],
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["token"], "once-only-fixture-invitation");
+    assert!(!headers.contains_key("idempotent-replayed"));
+    let cached = h
+        .store
+        .read(|db| {
+            Ok(db.query_row(
+                "SELECT COUNT(*) FROM idempotency_key WHERE key='invitation-secret'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?)
+        })
+        .unwrap();
+    assert_eq!(
+        cached, 0,
+        "one-time issuance responses must stay out of backups/events"
+    );
+}
+
+#[tokio::test]
+async fn embedded_dashboard_is_public_inert_and_never_falls_back_over_api_or_files() {
+    let h = Harness::new(Setup::default());
+    let base = tcp(&h, "dashboard-fixture-password").await;
+    let root = base.trim_end_matches("/api/v1");
+    let client = reqwest::Client::new();
+    for (path, mime) in [
+        ("/", "text/html"),
+        ("/app/app.js", "text/javascript"),
+        ("/app/app.css", "text/css"),
+    ] {
+        let response = client.get(format!("{root}{path}")).send().await.unwrap();
+        assert_eq!(response.status(), 200);
+        assert!(
+            response.headers()["content-type"]
+                .to_str()
+                .unwrap()
+                .starts_with(mime)
+        );
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        let csp = response.headers()["content-security-policy"]
+            .to_str()
+            .unwrap();
+        assert!(csp.contains("script-src 'self'"));
+        assert!(csp.contains("frame-ancestors 'none'"));
+        assert!(!csp.contains("unsafe-inline"));
+        assert_eq!(response.headers()["referrer-policy"], "no-referrer");
+        assert!(
+            !response
+                .text()
+                .await
+                .unwrap()
+                .contains("dashboard-fixture-password")
+        );
+    }
+    let response = client.head(format!("{root}/")).send().await.unwrap();
+    assert_eq!(response.status(), 200);
+    assert!(response.bytes().await.unwrap().is_empty());
+    for path in ["/app/missing.js", "/app/password", "/server.json"] {
+        assert_eq!(
+            client
+                .get(format!("{root}{path}"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            404
+        );
+    }
+    for path in ["/api/v1/sessions", "/api/v1/missing"] {
+        let response = client.get(format!("{root}{path}")).send().await.unwrap();
+        assert_eq!(
+            response.status(),
+            if path.ends_with("/missing") { 404 } else { 401 }
+        );
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert!(!response.text().await.unwrap().contains("<!doctype"));
+    }
+    for path in ["/", "/api/v1/health"] {
+        let response = client
+            .get(format!("{root}{path}"))
+            .header("Origin", "https://foreign.invalid")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 403);
+    }
+}
+
+#[tokio::test]
+async fn owner_tls_serves_same_dashboard_and_authenticated_api_with_verified_certificate() {
+    let h = Harness::new(Setup::default());
+    let dir = tempfile::tempdir().unwrap();
+    let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let cert = dir.path().join("certificate.pem");
+    let key = dir.path().join("key.pem");
+    std::fs::write(&cert, certificate.cert.pem()).unwrap();
+    let other = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    std::fs::write(&key, other.signing_key.serialize_pem()).unwrap();
+    assert!(
+        http::owner_tls(&cert, &key).is_err(),
+        "mismatched operator certificate/key must fail closed"
+    );
+    std::fs::write(&key, certificate.signing_key.serialize_pem()).unwrap();
+    let tls = http::owner_tls(&cert, &key).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(http::serve_tcp_tls(
+        http::router(state(&h, Some("tls-fixture"))),
+        listener,
+        Some(tls),
+        async {
+            let _ = stopped.await;
+        },
+    ));
+    let client = reqwest::Client::builder()
+        .add_root_certificate(
+            reqwest::Certificate::from_pem(certificate.cert.pem().as_bytes()).unwrap(),
+        )
+        .no_proxy()
+        .build()
+        .unwrap();
+    let url = format!("https://localhost:{port}");
+    assert_eq!(
+        client.get(format!("{url}/")).send().await.unwrap().status(),
+        200
+    );
+    assert_eq!(
+        client
+            .get(format!("{url}/api/v1/sessions"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    assert_eq!(
+        client
+            .get(format!("{url}/api/v1/sessions"))
+            .basic_auth("cyber", Some("tls-fixture"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    assert!(
+        client
+            .get(format!("https://127.0.0.1:{port}/"))
+            .send()
+            .await
+            .is_err(),
+        "hostname verification must remain enabled"
+    );
+    stop.send(()).unwrap();
+    task.await.unwrap().unwrap();
 }

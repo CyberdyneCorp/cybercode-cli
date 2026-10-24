@@ -43,6 +43,8 @@ impl ModelResolver for Model {
             cost: None,
             prefers_apply_patch: false,
             family: cyber_core::prompts::ModelFamily::Default,
+            vision: false,
+            pdf: false,
         })
     }
 

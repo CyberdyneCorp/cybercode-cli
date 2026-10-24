@@ -4,6 +4,23 @@ use std::process::Command;
 #[path = "build/git_watch.rs"]
 mod git_watch;
 
+/// Build variable and default of each release-source constant. The embedded name drops
+/// the `CYBER_` prefix: `CYBER_RELEASE_BASE_URL` becomes `CYBER_BUILD_RELEASE_BASE_URL`.
+const RELEASE_SOURCE: &[(&str, &str)] = &[
+    (
+        "CYBER_RELEASE_BASE_URL",
+        "https://github.com/CyberdyneCorp/cybercode-cli/releases/download",
+    ),
+    (
+        "CYBER_RELEASE_IDENTITY",
+        "https://github.com/CyberdyneCorp/cybercode-cli/.github/workflows/release.yml@refs/tags/",
+    ),
+    (
+        "CYBER_RELEASE_ISSUER",
+        "https://token.actions.githubusercontent.com",
+    ),
+];
+
 fn main() {
     let target = std::env::var("TARGET").unwrap_or_else(|_| "unknown".into());
     println!("cargo:rustc-env=CYBER_BUILD_TARGET={target}");
@@ -20,6 +37,17 @@ fn main() {
 
     let channel = std::env::var("CYBER_CHANNEL").unwrap_or_else(|_| "dev".into());
     println!("cargo:rustc-env=CYBER_BUILD_CHANNEL={channel}");
+
+    // The release source (`installation-upgrade` → Version and channel constants): only
+    // these build variables change where releases come from and whom they must be signed by.
+    for (var, default) in RELEASE_SOURCE {
+        let value = std::env::var(var)
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| (*default).into());
+        println!("cargo:rustc-env=CYBER_BUILD_{}={}", &var[6..], value.trim());
+        println!("cargo:rerun-if-env-changed={var}");
+    }
 
     // Rebuild when the commit changes: HEAD, the branch ref it points to, packed refs.
     for path in git_watch::watched(&git_paths()) {

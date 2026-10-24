@@ -10,6 +10,13 @@ use crate::model::{Choice, Item, Queued, Request, Session};
 /// Results the runner applies to the App.
 #[derive(Debug, Clone)]
 pub enum Msg {
+    /// The server refused a prompt: the draft and its chips go back to the composer.
+    PromptRefused {
+        session_id: String,
+        text: String,
+        chips: Vec<crate::attachments::Chip>,
+        message: String,
+    },
     Memory {
         request: crate::memory::Request,
         result: Result<crate::memory::Data, String>,
@@ -31,6 +38,11 @@ pub enum Msg {
         view: Box<crate::team::TeamView>,
         open: bool,
         toast: Option<String>,
+    },
+    Collaboration {
+        session_id: String,
+        generation: u64,
+        result: Box<Result<crate::collaboration::Snapshot, String>>,
     },
     Snapshot {
         session: Session,
@@ -196,6 +208,8 @@ pub enum Msg {
         question: String,
         result: Result<String, String>,
     },
+    /// `GET /service/update`, or `None` when the server has no answer.
+    Update(Option<Value>),
     Done,
 }
 
@@ -711,15 +725,43 @@ async fn hook_history(
     })
 }
 
+/// Submit a draft. Once it is accepted its clipboard files go; a refusal hands the
+/// draft back.
+async fn prompt(
+    client: &Client,
+    session: &Session,
+    text: String,
+    chips: Vec<crate::attachments::Chip>,
+    delivery: &str,
+    context: Option<&crate::admissions::Context<'_>>,
+) -> Msg {
+    match submit_prompt(client, session, &text, &chips, delivery, context).await {
+        Ok(msg) => {
+            crate::attachments::discard(&chips);
+            msg
+        }
+        Err(message) => Msg::PromptRefused {
+            session_id: session.id.clone(),
+            text,
+            chips,
+            message,
+        },
+    }
+}
+
 async fn submit_prompt(
     client: &Client,
     session: &Session,
     text: &str,
+    chips: &[crate::attachments::Chip],
     delivery: &str,
     context: Option<&crate::admissions::Context<'_>>,
 ) -> Result<Msg, String> {
     let id = session.id.as_str();
-    if let Some((agent, prompt)) = leading_agent_mention(text) {
+    let local = client.attached_session().is_none();
+    let (expanded, media) =
+        crate::attachments::submit_parts(text, chips, &session.directory, local)?;
+    if let Some((agent, prompt)) = leading_agent_mention(&expanded) {
         let agents = agent_choices(&client.get("/agents").await.map_err(err)?["data"]);
         if agents.iter().any(|profile| profile.key == agent) {
             if delivery != "steer" {
@@ -727,6 +769,9 @@ async fn submit_prompt(
             }
             if prompt.trim().is_empty() {
                 return Err(format!("Usage: @{agent} <prompt>"));
+            }
+            if !media.is_empty() {
+                return Err("Attach images and PDFs to the Session's own prompt".into());
             }
             return crate::admissions::start(
                 client,
@@ -738,13 +783,25 @@ async fn submit_prompt(
             .await;
         }
     }
-    let parts = parts(text, &session.directory);
-    post(
-        client,
-        &format!("/sessions/{id}/prompt"),
-        json!({ "parts": parts, "delivery": delivery }),
-    )
-    .await
+    let mut parts = parts(text, &session.directory);
+    parts[0]["text"] = expanded.into();
+    parts.extend(media);
+    client
+        .post(
+            &format!("/sessions/{id}/prompt"),
+            json!({ "parts": parts, "delivery": delivery }),
+        )
+        .await
+        .map_err(prompt_refusal)?;
+    Ok(Msg::Done)
+}
+
+/// A refused prompt as the server words it, without the error tag.
+fn prompt_refusal(e: cyber_client::ClientError) -> String {
+    match e {
+        cyber_client::ClientError::Api { message, .. } => message,
+        other => err(other),
+    }
 }
 
 /// Posts a command, with a client-chosen message ID when one is given.
@@ -886,9 +943,11 @@ pub async fn perform_owned(
         | Action::Goal(_)
         | Action::Workflow(_)
         | Action::Team(_)
+        | Action::Collaboration(_)
         | Action::Branch(_)
         | Action::Login(_)
         | Action::OutputStyle(_)
+        | Action::LoadUpdate
         | Action::Export(_) => scheduled(client, session, action).await,
         Action::SaveTheme(_)
         | Action::SaveProjectTheme(_)
@@ -901,14 +960,18 @@ pub async fn perform_owned(
     }
 }
 
-/// Requests their own modules run: `/loop`, `/goal`, Workflow Runs, `/team` and `/login`;
-/// and the branch tree (`/tree`, `/label`).
+/// Requests their own modules run: `/loop`, `/goal`, Workflow Runs, `/team`, `/login`
+/// and the update check; and the branch tree (`/tree`, `/label`).
 async fn scheduled(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
     match action {
         Action::Branch(request) => crate::branches::perform(client, session, request).await,
         Action::Export(request) => crate::export::perform(client, request).await,
+        Action::LoadUpdate => crate::update::perform(client).await,
         Action::Loop(request) => crate::loops::perform(client, request).await,
         Action::Team(request) => crate::team::perform(client, session, request).await,
+        Action::Collaboration(request) => {
+            crate::collaboration::perform(client, session, request).await
+        }
         Action::Goal(request) => crate::goals::perform(client, request).await,
         Action::Login(request) => crate::login::perform(client, request).await,
         Action::OutputStyle(request) => crate::output_styles::perform(client, request).await,
@@ -1024,9 +1087,11 @@ async fn converse(
 ) -> Result<Msg, String> {
     let id = session.id.as_str();
     match action {
-        Action::Prompt { text, delivery } => {
-            submit_prompt(client, session, &text, delivery, context).await
-        }
+        Action::Prompt {
+            text,
+            delivery,
+            chips,
+        } => Ok(prompt(client, session, text, chips, delivery, context).await),
         Action::Subtask(prompt) => {
             crate::admissions::start(
                 client,
@@ -1459,6 +1524,7 @@ pub fn parts(text: &str, directory: &str) -> Vec<Value> {
         .split_whitespace()
         .filter_map(|w| w.strip_prefix('@'))
         .filter(|token| !resource_mention(token))
+        .filter(|token| crate::attachments::Kind::of_path(std::path::Path::new(token)).is_none())
     {
         let (path, range) = token
             .split_once("#L")

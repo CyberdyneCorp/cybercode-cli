@@ -1,4 +1,5 @@
 //! The built-in tool host (`tool-registry`, `builtin-tools`, `permissions-modes`).
+mod attachments;
 mod command_mcp;
 mod command_skills;
 mod files;
@@ -71,6 +72,8 @@ pub struct BuiltinHost {
     reads: Mutex<HashMap<String, HashSet<PathBuf>>>,
     locks: Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
     runtime: OnceLock<WeakRuntime>,
+    pub(crate) collaboration:
+        OnceLock<Arc<dyn cyber_server::http::collaboration::CollaborationService>>,
     pub(crate) hook_config: OnceLock<crate::tool_hooks::HooksConfig>,
     /// Handler digests one invocation approved; never persisted.
     pub(crate) hook_invocation_trust: OnceLock<cyber_core::trust::HookInvocationTrust>,
@@ -100,6 +103,14 @@ pub struct BuiltinHost {
 }
 
 impl BuiltinHost {
+    pub fn attach_collaboration(
+        &self,
+        service: Arc<dyn cyber_server::http::collaboration::CollaborationService>,
+    ) -> Result<(), String> {
+        self.collaboration
+            .set(service)
+            .map_err(|_| "collaboration already attached".into())
+    }
     pub fn lsp_checkout_claim(self: &Arc<Self>) -> crate::lsp::CheckoutClaim {
         let host = Arc::downgrade(self);
         Arc::new(move |expected, owner, cancel| {
@@ -168,6 +179,7 @@ impl BuiltinHost {
             reads: Mutex::default(),
             locks: Mutex::default(),
             runtime: OnceLock::new(),
+            collaboration: OnceLock::new(),
             hook_config: OnceLock::new(),
             hook_invocation_trust: OnceLock::new(),
             hook_notices: Mutex::default(),
@@ -773,6 +785,17 @@ impl ToolHost for BuiltinHost {
         Box::pin(self.resolve_mentions(turn, parts, asker, cancel))
     }
 
+    fn read_attachment<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        path: &'a str,
+        max_bytes: u64,
+        asker: cyber_server::runtime::Asker,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<Vec<u8>, cyber_server::runtime::FileReadError>> {
+        Box::pin(self.read_file_part(turn, path, max_bytes, asker, cancel))
+    }
+
     fn expand_prompt_template<'a>(
         &'a self,
         turn: &'a TurnContext,
@@ -1147,6 +1170,13 @@ impl ToolHost for BuiltinHost {
                     .then(|| tools::memory::definition(settings.generate && mode != Mode::Plan))
             })
             .filter(|d| offered(&d.spec.name, turn.prefers_apply_patch, mode, d.retry_safety))
+            .filter(|d| {
+                !tools::collaboration::TOOLS.contains(&d.spec.name.as_str())
+                    || self
+                        .collaboration
+                        .get()
+                        .is_some_and(|service| service.agent_scope(&turn.session_id).is_some())
+            })
             .filter(|d| tools::worktree_offered(&d.spec.name, turn.worktree))
             .filter(|d| !fully_denied_scoped(&rules, tools::action_of(&d.spec.name), &d.spec.name))
             .filter(|d| {

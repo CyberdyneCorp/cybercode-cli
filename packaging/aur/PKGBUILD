@@ -1,0 +1,20 @@
+# AUR PKGBUILD for `yay -S cyber-code`. Rendered for each release by
+# scripts/release_assets.py; publishing it to the AUR is a follow-up step.
+pkgname=cyber-code
+pkgver={{ version }}
+pkgrel=1
+pkgdesc="Local-first coding agent"
+arch=('x86_64' 'aarch64')
+url="https://github.com/CyberdyneCorp/cybercode-cli"
+license=('Apache-2.0')
+depends=('git' 'ripgrep' 'bubblewrap')
+provides=('cyber')
+source_x86_64=("{{ url.x86_64-unknown-linux-musl }}")
+source_aarch64=("{{ url.aarch64-unknown-linux-musl }}")
+sha256sums_x86_64=('{{ sha256.x86_64-unknown-linux-musl }}')
+sha256sums_aarch64=('{{ sha256.aarch64-unknown-linux-musl }}')
+
+package() {
+  install -Dm755 cyber "$pkgdir/usr/bin/cyber"
+  install -Dm755 cyber-sandbox-exec "$pkgdir/usr/bin/cyber-sandbox-exec"
+}

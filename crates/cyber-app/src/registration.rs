@@ -16,6 +16,12 @@ pub struct Registration {
     pub url: String,
     pub socket: Option<String>,
     pub pid: u32,
+    /// Configured owner bind address, distinct from the reachable URL for wildcard binds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bind_host: Option<String>,
+    /// Public owner certificate chain used for verified same-user local service management.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls_cert: Option<String>,
     /// The server binary's build identity; absent in registrations of older builds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<String>,
@@ -43,6 +49,8 @@ impl Registration {
             url,
             socket,
             pid: std::process::id(),
+            bind_host: None,
+            tls_cert: None,
             build: Some(cyber_core::version::build_info().build.into()),
             binary: binary.path.clone(),
             binary_stamp: binary.stamp.clone(),
@@ -173,9 +181,29 @@ pub async fn health(url: &str, version: &str) -> bool {
 /// Whether the server `reg` names is the one answering at its URL, healthy and of
 /// `version`.
 pub async fn registered_health(reg: &Registration, version: &str) -> bool {
-    probe(&reg.url)
+    probe_registration(reg)
         .await
         .is_some_and(|p| p.version == version && p.serves(reg))
+}
+
+pub async fn probe_registration(reg: &Registration) -> Option<Probe> {
+    let (client, url) = server_client(reg).ok()?;
+    let body = client
+        .get(format!("{url}/api/v1/health"))
+        .send()
+        .await
+        .ok()?
+        .json::<serde_json::Value>()
+        .await
+        .ok()?;
+    if body["healthy"] != true {
+        return None;
+    }
+    Some(Probe {
+        version: body["version"].as_str()?.into(),
+        build: body["build"].as_str().map(str::to_string),
+        id: body["id"].as_str().map(str::to_string),
+    })
 }
 
 /// The version and build a healthy server at `url` reports within 2 seconds.
@@ -209,13 +237,38 @@ pub async fn start_service(
     exe: &Path,
     version: &str,
 ) -> Result<ServerClientInfo, String> {
+    start_service_with(paths, exe, version, None).await
+}
+
+/// Start or reuse the dashboard service without silently changing a healthy listener.
+pub async fn start_web_service(
+    paths: &Paths,
+    exe: &Path,
+    version: &str,
+    hostname: Option<&str>,
+    port: Option<u16>,
+    tls: bool,
+) -> Result<ServerClientInfo, String> {
+    start_service_with(paths, exe, version, Some((hostname, port, tls))).await
+}
+
+async fn start_service_with(
+    paths: &Paths,
+    exe: &Path,
+    version: &str,
+    web: Option<(Option<&str>, Option<u16>, bool)>,
+) -> Result<ServerClientInfo, String> {
     let password = crate::password(paths)?;
     let me = ClientBuild::current(version);
     let mut notice = None;
+    let mut launch_bind = web.map(|(host, port, _)| (host.map(str::to_owned), port));
     if let Some(reg) = read_registration(paths)
-        && let Some(probe) = probe(&reg.url).await
+        && let Some(probe) = probe_registration(&reg).await
         && probe.serves(&reg)
     {
+        if let Some((host, port, tls)) = web {
+            check_web_listener(&reg, host, port, tls)?;
+        }
         if !me.is_stale(&reg, &probe.version, probe.build.as_deref()) {
             return Ok(ServerClientInfo {
                 registration: reg,
@@ -224,11 +277,17 @@ pub async fn start_service(
             });
         }
         if !replaceable(&me, &reg, &password).await {
+            if web.is_some() {
+                return Err("the registered server runs an older build and cannot be replaced safely; finish its work, run `cyber service stop`, then `cyber web`".into());
+            }
             return Ok(ServerClientInfo {
                 registration: reg,
                 password,
                 notice: Some(ServiceNotice::StaleKept),
             });
+        }
+        if let Some(bind) = &mut launch_bind {
+            preserve_web_bind(bind, &reg);
         }
         stop_service(paths).await?;
         notice = Some(ServiceNotice::Restarted);
@@ -258,6 +317,14 @@ pub async fn start_service(
         cmd.creation_flags(0x0000_0008 | 0x0000_0200);
         windows_std::disinherit_std_handles();
     }
+    if let Some((hostname, port)) = launch_bind {
+        if let Some(hostname) = hostname {
+            cmd.args(["--hostname", &hostname]);
+        }
+        if let Some(port) = port {
+            cmd.args(["--port", &port.to_string()]);
+        }
+    }
     cmd.spawn()
         .map_err(|e| format!("cannot start the server: {e}"))?;
     if let Some(registration) = poll_ready(|| async {
@@ -278,6 +345,48 @@ pub async fn start_service(
         "the server did not become healthy; see {}",
         log_dir.join("server.log").display()
     ))
+}
+
+fn preserve_web_bind(bind: &mut (Option<String>, Option<u16>), reg: &Registration) {
+    let Ok(url) = url::Url::parse(&reg.url) else {
+        return;
+    };
+    if bind.0.is_none() {
+        bind.0 = reg.bind_host.clone().or_else(|| {
+            url.host_str()
+                .map(|h| h.trim_matches(['[', ']']).to_owned())
+        });
+    }
+    if bind.1.is_none() {
+        bind.1 = url.port_or_known_default();
+    }
+}
+
+fn check_web_listener(
+    reg: &Registration,
+    hostname: Option<&str>,
+    port: Option<u16>,
+    tls: bool,
+) -> Result<(), String> {
+    let url = url::Url::parse(&reg.url).map_err(|_| "the registered server has no dashboard TCP URL; stop it with `cyber service stop` before starting `cyber web`")?;
+    let actual_host = url.host_str().unwrap_or("").trim_matches(['[', ']']);
+    let bind_host = reg.bind_host.as_deref().unwrap_or(actual_host);
+    let host_matches =
+        hostname.is_none_or(|h| h.trim_matches(['[', ']']) == bind_host.trim_matches(['[', ']']));
+    if !host_matches
+        || port.is_some_and(|p| Some(p) != url.port_or_known_default())
+        || (url.scheme() == "https") != tls
+    {
+        return Err("a healthy server already uses different listener settings; stop it with `cyber service stop`, then run `cyber web` with the requested settings".into());
+    }
+    let local = actual_host == "localhost"
+        || actual_host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback());
+    if url.scheme() != "https" && !local {
+        return Err("the registered listener is not safe for browser credentials: use HTTPS or a loopback SSH forward".into());
+    }
+    Ok(())
 }
 
 /// Whether a stale registered server may be stopped: it runs this install's executable
@@ -320,13 +429,27 @@ fn server_client(reg: &Registration) -> Result<(reqwest::Client, String), String
     #[allow(unused_mut)]
     let mut url = reg.url.clone();
     #[cfg(unix)]
-    if url.is_empty() {
+    if reg
+        .socket
+        .as_ref()
+        .is_some_and(|path| std::path::Path::new(path).exists())
+        || url.is_empty()
+    {
         let socket = reg
             .socket
             .as_ref()
             .ok_or("registration has no server listener")?;
         builder = builder.unix_socket(socket.as_str());
         url = "http://localhost".into();
+    }
+    if url.starts_with("https://")
+        && let Some(cert) = &reg.tls_cert
+    {
+        let pem = std::fs::read(cert)
+            .map_err(|e| format!("cannot read registered owner certificate: {e}"))?;
+        for cert in reqwest::Certificate::from_pem_bundle(&pem).map_err(|e| e.to_string())? {
+            builder = builder.add_root_certificate(cert);
+        }
     }
     Ok((builder.build().map_err(|e| e.to_string())?, url))
 }
@@ -386,6 +509,40 @@ pub async fn stop_service(paths: &Paths) -> Result<Option<Registration>, String>
 mod tests {
     use super::*;
     use tokio::time::Instant;
+
+    #[test]
+    fn idle_web_upgrade_preserves_registered_hostname_and_port() {
+        let mut reg = Registration::current(
+            "fixture".into(),
+            "https://dashboard.example:8443".into(),
+            None,
+        );
+        reg.bind_host = Some("0.0.0.0".into());
+        let mut bind = (None, None);
+        preserve_web_bind(&mut bind, &reg);
+        assert_eq!(bind, (Some("0.0.0.0".into()), Some(8443)));
+        let mut explicit = (Some("dashboard.example".into()), Some(8443));
+        preserve_web_bind(&mut explicit, &reg);
+        assert_eq!(explicit, (Some("dashboard.example".into()), Some(8443)));
+    }
+
+    #[test]
+    fn web_reuse_never_silently_changes_bind_scheme_or_port() {
+        let mut reg = Registration::current("fixture".into(), "http://127.0.0.1:4747".into(), None);
+        reg.bind_host = Some("127.0.0.1".into());
+        assert!(check_web_listener(&reg, None, None, false).is_ok());
+        assert!(check_web_listener(&reg, Some("0.0.0.0"), None, false).is_err());
+        assert!(check_web_listener(&reg, None, Some(4748), false).is_err());
+        assert!(check_web_listener(&reg, None, None, true).is_err());
+        reg.url = "https://127.0.0.1:4747".into();
+        reg.bind_host = Some("0.0.0.0".into());
+        assert!(check_web_listener(&reg, Some("0.0.0.0"), Some(4747), true).is_ok());
+        assert!(check_web_listener(&reg, Some("127.0.0.1"), None, true).is_err());
+        reg.url = "http://192.0.2.1:4747".into();
+        assert!(check_web_listener(&reg, None, None, false).is_err());
+        reg.url.clear();
+        assert!(check_web_listener(&reg, None, None, false).is_err());
+    }
 
     #[tokio::test(start_paused = true)]
     async fn startup_observes_a_ready_service_without_a_fifty_ms_delay() {

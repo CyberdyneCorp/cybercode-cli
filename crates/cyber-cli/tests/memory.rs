@@ -684,6 +684,8 @@ async fn server_cli_reconciles_paired_reviews_and_retains_receipts_after_cache_l
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let registration = cyber_app::Registration {
         id: "cli-memory-server".into(),
+        bind_host: None,
+        tls_cert: None,
         version: cyber_app::version().into(),
         url: format!("http://{}", listener.local_addr().unwrap()),
         socket: None,

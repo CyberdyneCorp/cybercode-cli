@@ -18,7 +18,7 @@ use serde_json::Value;
 
 use crate::error::LlmError;
 use crate::sse::{SseEvent, SseParser};
-use crate::types::{LlmEvent, LlmRequest, ToolCall};
+use crate::types::{Content, LlmEvent, LlmRequest, ToolCall};
 
 pub use anthropic::AnthropicAdapter;
 pub use chatgpt::ChatGptAdapter;
@@ -422,6 +422,28 @@ fn to_call(p: &Pending) -> ToolCall {
         arguments: p.arguments.clone(),
         input,
     }
+}
+
+/// Fail closed on a stored attachment reference the runtime did not resolve: an adapter
+/// never sends a reference, which the provider could not read anyway.
+pub(crate) fn ensure_resolved(request: &LlmRequest) -> Result<(), LlmError> {
+    let unresolved = request
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .any(|content| matches!(content, Content::Attachment(_)));
+    if unresolved {
+        return Err(LlmError::new(
+            crate::ErrorKind::InvalidRequest,
+            "unresolved attachment",
+        ));
+    }
+    Ok(())
+}
+
+/// The file name a document part is sent under.
+pub(crate) fn document_name(name: &Option<String>) -> &str {
+    name.as_deref().unwrap_or("document.pdf")
 }
 
 pub(crate) fn data_url(media_type: &str, data: &str) -> String {

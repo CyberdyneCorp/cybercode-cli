@@ -1,6 +1,7 @@
 //! Drawing (`tui` → Message and part rendering, Permission prompt, Question prompt).
 
 mod branches;
+mod collaboration;
 mod composer;
 mod explorer;
 pub(crate) mod footer;
@@ -64,7 +65,12 @@ pub fn draw(f: &mut Frame, app: &App) {
     }
     if matches!(
         app.overlay,
-        Overlay::Settings | Overlay::Files | Overlay::Workflows | Overlay::Messages | Overlay::Team
+        Overlay::Settings
+            | Overlay::Files
+            | Overlay::Workflows
+            | Overlay::Messages
+            | Overlay::Team
+            | Overlay::Collaboration
     ) {
         // Full screen over the transcript, composer and sidebar; the footer stays.
         app.set_screen_links(Vec::new());
@@ -84,7 +90,8 @@ pub fn draw(f: &mut Frame, app: &App) {
     if plan.header.height > 0 {
         draw_header(f, app, plan.header);
     }
-    let transcript = recap(f, app, plan.transcript);
+    let below_banner = banner(f, app, plan.transcript);
+    let transcript = recap(f, app, below_banner);
     if welcome::shown(app) {
         app.set_screen_links(Vec::new());
         welcome::draw(f, app, transcript);
@@ -108,7 +115,8 @@ pub fn draw(f: &mut Frame, app: &App) {
         | Overlay::Files
         | Overlay::Workflows
         | Overlay::Messages
-        | Overlay::Team => {}
+        | Overlay::Team
+        | Overlay::Collaboration => {}
         Overlay::Tree => branches::draw(f, app, area),
         Overlay::Themes(s) => themes::draw(f, app, s, area),
         Overlay::Picker(p) => overlays::picker(f, app, p, area),
@@ -144,7 +152,40 @@ fn full_screen(f: &mut Frame, app: &App, panel: Rect) {
         Overlay::Workflows => workflows::draw(f, app, panel),
         Overlay::Messages => messaging::view(f, app, panel),
         Overlay::Team => team::view(f, app, panel),
+        Overlay::Collaboration => collaboration::view(f, app, panel),
         _ => settings::draw(f, app, panel),
+    }
+}
+
+/// The unsupported-version warning on the first row of `area`, while the rest keeps at
+/// least three rows; returns the area below it.
+fn banner(f: &mut Frame, app: &App, area: Rect) -> Rect {
+    let Some(text) = &app.update.banner else {
+        return area;
+    };
+    if area.height < 4 {
+        return area;
+    }
+    let width = area.width.saturating_sub(2);
+    let style = Style::default()
+        .fg(app.theme.warning)
+        .add_modifier(Modifier::BOLD);
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            layout::truncate_end(text, width as usize),
+            style,
+        ))),
+        Rect {
+            x: area.x + 1,
+            width,
+            height: 1,
+            ..area
+        },
+    );
+    Rect {
+        y: area.y + 1,
+        height: area.height - 1,
+        ..area
     }
 }
 

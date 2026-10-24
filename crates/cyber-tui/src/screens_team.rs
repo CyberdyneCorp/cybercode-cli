@@ -382,7 +382,8 @@ async fn team_view_board_labelled_requests_and_direct_instructions() {
         actions,
         [Action::Prompt {
             text: PAGINATION.into(),
-            delivery: "steer"
+            delivery: "steer",
+            chips: Vec::new(),
         }]
     );
     drive(&server, &mut app, actions).await;

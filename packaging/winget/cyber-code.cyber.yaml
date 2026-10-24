@@ -1,0 +1,24 @@
+# WinGet singleton manifest for `winget install cyber-code.cyber`. Rendered for each
+# release by scripts/release_assets.py; submitting it to winget-pkgs is a follow-up step.
+PackageIdentifier: cyber-code.cyber
+PackageVersion: {{ version }}
+PackageLocale: en-US
+Publisher: CyberdyneCorp
+PackageName: Cyber Code
+License: Apache-2.0
+ShortDescription: Local-first coding agent (Windows preview)
+PackageUrl: https://github.com/CyberdyneCorp/cybercode-cli
+InstallerType: zip
+NestedInstallerType: portable
+NestedInstallerFiles:
+  - RelativeFilePath: cyber.exe
+    PortableCommandAlias: cyber
+Installers:
+  - Architecture: x64
+    InstallerUrl: {{ url.x86_64-pc-windows-msvc }}
+    InstallerSha256: {{ sha256.x86_64-pc-windows-msvc }}
+  - Architecture: arm64
+    InstallerUrl: {{ url.aarch64-pc-windows-msvc }}
+    InstallerSha256: {{ sha256.aarch64-pc-windows-msvc }}
+ManifestType: singleton
+ManifestVersion: 1.6.0

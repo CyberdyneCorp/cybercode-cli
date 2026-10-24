@@ -1428,7 +1428,8 @@ fn doctor_reports_every_check_as_json() {
             "rg",
             "server",
             "peers:listener",
-            "peers:remotes"
+            "peers:remotes",
+            "account"
         ]
     );
     assert!(names.contains(&"lsp:gopls"));
@@ -4475,4 +4476,59 @@ fn pure_refuses_commands_that_run_turns_on_the_shared_server() {
         "{}",
         stderr(&o)
     );
+}
+
+/// `installation-upgrade` → Container and CI usage, "CI defaults": with `CI=true`,
+/// `cyber` with no subcommand refuses the TUI with exit 2 before touching a terminal.
+#[test]
+fn ci_true_refuses_the_tui() {
+    let env = Env::new();
+    let output = env.command(&[]).env("CI", "true").output().unwrap();
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(
+        stderr(&output).contains("interactive TUI unavailable in CI; use \"cyber exec\""),
+        "{}",
+        stderr(&output)
+    );
+    assert!(stdout(&output).is_empty(), "{}", stdout(&output));
+}
+
+/// Regression: `cyber attach` opens the TUI too, so with `CI=true` it is refused the
+/// same way, before any peer is looked up or contacted.
+#[test]
+fn ci_true_refuses_attach() {
+    let env = Env::new();
+    let output = env
+        .command(&["attach", "s1@laptop"])
+        .env("CI", "true")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(
+        stderr(&output).contains("interactive TUI unavailable in CI; use \"cyber exec\""),
+        "{}",
+        stderr(&output)
+    );
+}
+
+/// With `CI=true`, `cyber exec` keeps its default `--format text`: the scripted local
+/// model's answer is printed as plain text, not JSON.
+#[test]
+fn ci_true_exec_defaults_to_text() {
+    let model = scripted_model::ScriptedModel::start(|_| json!({"content": "ci answer"}));
+    let env = Env::new();
+    let config = env.root.join("cyber-home/config");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(config.join("cyber.jsonc"), model.config().to_string()).unwrap();
+    let catalog = env.root.join("models.json");
+    std::fs::write(&catalog, "{}").unwrap();
+    let output = env
+        .command(&["exec", "--embedded", "say hi"])
+        .env("CI", "true")
+        .env("CYBER_MODELS_PATH", &catalog)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(stdout(&output).trim(), "ci answer");
+    assert!(serde_json::from_slice::<Value>(&output.stdout).is_err());
 }

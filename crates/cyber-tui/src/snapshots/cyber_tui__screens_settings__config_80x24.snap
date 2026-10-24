@@ -17,6 +17,7 @@ expression: shown
     reasoning                     collapsed      default
     diff_style                    auto           default
     timestamps                    off            default
+    mouse                         on             default
     color                         auto           default
     accessibility.reduced_motion  off            default
     output style                  default        default

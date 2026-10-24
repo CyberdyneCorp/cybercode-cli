@@ -38,6 +38,7 @@ pub const COMMANDS: &[&str] = &[
     "whoami",
     "tokens",
     "peers",
+    "collab",
     "remote",
     "runners",
     "runner",

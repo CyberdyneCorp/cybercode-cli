@@ -147,6 +147,27 @@ pub enum Format {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Sign in to a Cyber Account for collaboration and other networked features.
+    Login {
+        /// Print the login URL and accept a pasted redirect; use device login if advertised.
+        #[arg(long)]
+        no_browser: bool,
+        /// Require a new authentication for a recent-authentication approval.
+        #[arg(long)]
+        reauth: bool,
+    },
+    /// Show the current Cyber Account without exposing tokens.
+    Whoami {
+        /// Select an authorized organization by short name or immutable ID.
+        #[arg(long)]
+        org: Option<String>,
+    },
+    /// Remove Cyber Account credentials, keeping provider logins and local Sessions.
+    Logout {
+        /// Remove every stored Cyber Account, not only the active account.
+        #[arg(long)]
+        all: bool,
+    },
     /// Import Claude Code, Codex or OpenCode configuration: detect, preview or write.
     Import(crate::commands::import::ImportArgs),
     /// Inspect installed language servers for the current Location.
@@ -257,6 +278,8 @@ pub enum Command {
         #[command(subcommand)]
         cmd: crate::commands::git::GitCmd,
     },
+    /// Open the local web dashboard and remote approval inbox.
+    Web(crate::commands::web::WebArgs),
     /// Run the server in the foreground.
     Serve(ServeArgs),
     /// Manage the background server.
@@ -266,6 +289,11 @@ pub enum Command {
     },
     /// Send one request to the server API.
     Api(ApiArgs),
+    /// Work with people and their locally running agents through a project hub.
+    Collab {
+        #[command(subcommand)]
+        cmd: crate::commands::collab::CollabCmd,
+    },
     /// Pair with other machines' cyber servers to message their Sessions.
     Peers {
         #[command(subcommand)]
@@ -280,6 +308,10 @@ pub enum Command {
     Doctor,
     /// Usage statistics: activity, streaks, tokens, cost and per-model totals.
     Stats(StatsArgs),
+    /// Upgrade cyber to the channel's latest version or to VERSION.
+    Upgrade(crate::commands::upgrade::UpgradeArgs),
+    /// Remove cyber: its binary (script installs), PATH lines and directories.
+    Uninstall(crate::commands::uninstall::UninstallArgs),
     /// Run evaluation manifests and write reports.
     Eval {
         #[command(subcommand)]

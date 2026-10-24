@@ -1,12 +1,12 @@
 //! Session routes (`server-api` → Session and prompt routes).
 
-use axum::extract::{Path, Query, State};
+use axum::extract::rejection::JsonRejection;
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::StatusCode;
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use cyber_llm::Content;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -14,6 +14,8 @@ use serde_json::Value;
 use super::AppState;
 use super::envelope::{Cursor, Data, Located, LocationInfo, Page, location};
 use super::error::ApiError;
+use super::prompt_parts;
+pub use super::prompt_parts::PromptPart;
 use crate::runtime::{
     Admission, CallState, CreateSession, Delivery, Entry, FileDiff, InboxRow, ListFilter,
     PermissionReply, QuestionReply, Receipt, RevertState, RevertTarget, RuntimeError, SessionInfo,
@@ -150,9 +152,10 @@ pub struct SubtaskBody {
     pub prompt: String,
     /// A visible subagent-capable profile. Omit to fork the current agent/context.
     pub agent: Option<String>,
-    /// Additional model-visible Content, retained without text conversion.
+    /// Text and media parts for the child, stored as the parent's prompt media are;
+    /// `file` parts are refused.
     #[serde(default)]
-    pub attachments: Vec<Content>,
+    pub attachments: Vec<PromptPart>,
     /// Positive ceiling capped by the selected profile's subagent step limit.
     pub max_steps: Option<u32>,
 }
@@ -160,7 +163,8 @@ pub struct SubtaskBody {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PromptBody {
     pub id: Option<String>,
-    pub parts: Vec<Content>,
+    /// Text and media parts; at most 20 media parts.
+    pub parts: Vec<PromptPart>,
     #[serde(default = "steer")]
     pub delivery: Delivery,
     #[serde(default = "yes")]
@@ -225,7 +229,8 @@ pub struct ShellBody {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct InboxEditBody {
-    pub parts: Option<Vec<Content>>,
+    /// Text and media parts, stored as a prompt's are; `file` parts are refused.
+    pub parts: Option<Vec<PromptPart>>,
     pub delivery: Option<Delivery>,
 }
 
@@ -289,10 +294,15 @@ pub fn routes() -> Router<AppState> {
         .route("/sessions", get(list).post(create))
         .route(s, get(show).patch(update).delete(remove))
         .route(&format!("{s}/fork"), post(fork))
-        .route(&format!("{s}/subtask"), post(subtask))
+        .route(
+            &format!("{s}/subtask"),
+            post(subtask).layer(DefaultBodyLimit::max(prompt_parts::PROMPT_BODY_LIMIT)),
+        )
         .route(
             &format!("{s}/delegations/{{request_id}}"),
-            get(delegation).post(start_delegation),
+            get(delegation)
+                .post(start_delegation)
+                .layer(DefaultBodyLimit::max(prompt_parts::PROMPT_BODY_LIMIT)),
         )
         .route(
             &format!("{s}/delegations/{{request_id}}/stop"),
@@ -302,7 +312,10 @@ pub fn routes() -> Router<AppState> {
             &format!("{s}/delegations/{{request_id}}/reconcile"),
             post(reconcile_delegation),
         )
-        .route(&format!("{s}/prompt"), post(prompt))
+        .route(
+            &format!("{s}/prompt"),
+            post(prompt).layer(DefaultBodyLimit::max(prompt_parts::PROMPT_BODY_LIMIT)),
+        )
         .route(&format!("{s}/interrupt"), post(interrupt))
         .route(&format!("{s}/stop-subtree"), post(stop_subtree))
         .route(&format!("{s}/reopen-subtree"), post(reopen_subtree))
@@ -325,7 +338,9 @@ pub fn routes() -> Router<AppState> {
         .route(&format!("{s}/inbox"), get(inbox))
         .route(
             &format!("{s}/inbox/{{message_id}}"),
-            axum::routing::patch(edit_input).delete(remove_input),
+            axum::routing::patch(edit_input)
+                .delete(remove_input)
+                .layer(DefaultBodyLimit::max(prompt_parts::PROMPT_BODY_LIMIT)),
         )
         .route(&format!("{s}/inbox/{{message_id}}/release"), post(release))
         .route(
@@ -509,35 +524,67 @@ async fn fork(
 }
 
 impl SubtaskBody {
-    fn request(self) -> crate::runtime::UserSubtask {
-        crate::runtime::UserSubtask {
+    /// The request, its media stored as the parent Session's blobs (the child adopts
+    /// them at admission); the blobs written, which a refused request removes.
+    async fn request(
+        self,
+        state: &AppState,
+        parent: &str,
+    ) -> Result<(crate::runtime::UserSubtask, Vec<String>)> {
+        let stored = if self.attachments.is_empty() {
+            Default::default()
+        } else {
+            prompt_parts::stored(&state.runtime, parent, self.attachments).await?
+        };
+        let request = crate::runtime::UserSubtask {
             skill_command: None,
             admission_id: None,
             prompt: self.prompt,
             agent: self.agent,
-            attachments: self.attachments,
+            attachments: stored.parts,
             max_steps: self.max_steps,
             hook_context: None,
-        }
+        };
+        Ok((request, stored.created))
     }
 }
+
+/// `result`, removing the blobs a refused request wrote for Session `id`.
+fn kept<T>(
+    state: &AppState,
+    id: &str,
+    created: &[String],
+    result: std::result::Result<T, RuntimeError>,
+) -> Result<T> {
+    result.map_err(|error| {
+        state.runtime.discard_attachments(id, created);
+        error.into()
+    })
+}
+
 async fn subtask(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(body): Json<SubtaskBody>,
+    body: std::result::Result<Json<SubtaskBody>, JsonRejection>,
 ) -> Result<Response> {
-    let job = state.runtime.subtask_request(&id, body.request()).await?;
+    let Json(body) = body.map_err(prompt_parts::rejected)?;
+    let (request, created) = body.request(&state, &id).await?;
+    let job = state.runtime.subtask_request(&id, request).await;
+    let job = kept(&state, &id, &created, job)?;
     Ok((StatusCode::ACCEPTED, Json(Data { data: job })).into_response())
 }
 async fn start_delegation(
     State(state): State<AppState>,
-    Path((id, request)): Path<(String, String)>,
-    Json(body): Json<SubtaskBody>,
+    Path((id, request_id)): Path<(String, String)>,
+    body: std::result::Result<Json<SubtaskBody>, JsonRejection>,
 ) -> Result<Response> {
+    let Json(body) = body.map_err(prompt_parts::rejected)?;
+    let (request, created) = body.request(&state, &id).await?;
     let data = state
         .runtime
-        .start_delegation(&id, &request, body.request())
-        .await?;
+        .start_delegation(&id, &request_id, request)
+        .await;
+    let data = kept(&state, &id, &created, data)?;
     Ok((StatusCode::ACCEPTED, Json(Data { data })).into_response())
 }
 async fn delegation(
@@ -573,24 +620,44 @@ async fn stop_delegation(
     }))
 }
 
-pub(crate) async fn prompt(
+async fn prompt(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(body): Json<PromptBody>,
+    body: std::result::Result<Json<PromptBody>, JsonRejection>,
 ) -> Result<Response> {
-    if body.parts.is_empty() {
-        return Err(ApiError::invalid("parts must not be empty"));
-    }
+    let Json(body) = body.map_err(prompt_parts::rejected)?;
+    submit_prompt(&state, &id, body).await
+}
+
+/// Store the prompt's media as references, then admit it; a refused admission removes
+/// the blobs it wrote.
+pub(crate) async fn submit_prompt(
+    state: &AppState,
+    id: &str,
+    body: PromptBody,
+) -> Result<Response> {
+    let inputs = prompt_parts::inputs(body.parts)?;
+    let stored = state.runtime.store_prompt_parts(id, inputs).await?;
     let admission = Admission {
         skill_command: None,
         template: None,
         message_id: body.id,
-        parts: body.parts,
+        parts: stored.parts,
         delivery: body.delivery,
         source: body.source.unwrap_or_else(|| "user".into()),
         resume: body.resume,
     };
-    let receipt: Receipt = state.runtime.admit_user(&id, admission).await?;
+    let receipt: Receipt = match state
+        .runtime
+        .admit_user_with_files(id, admission, stored.files)
+        .await
+    {
+        Ok(receipt) => receipt,
+        Err(error) => {
+            state.runtime.discard_attachments(id, &stored.created);
+            return Err(error.into());
+        }
+    };
     Ok((StatusCode::ACCEPTED, Json(Data { data: receipt })).into_response())
 }
 
@@ -956,12 +1023,21 @@ async fn inbox(
 async fn edit_input(
     State(state): State<AppState>,
     Path((id, message_id)): Path<(String, String)>,
-    Json(b): Json<InboxEditBody>,
+    body: std::result::Result<Json<InboxEditBody>, JsonRejection>,
 ) -> Result<StatusCode> {
-    state
+    let Json(b) = body.map_err(prompt_parts::rejected)?;
+    let (parts, created) = match b.parts {
+        Some(parts) => {
+            let stored = prompt_parts::stored(&state.runtime, &id, parts).await?;
+            (Some(stored.parts), stored.created)
+        }
+        None => (None, Vec::new()),
+    };
+    let edited = state
         .runtime
-        .edit_input(&id, &message_id, b.parts, b.delivery)
-        .await?;
+        .edit_input(&id, &message_id, parts, b.delivery)
+        .await;
+    kept(&state, &id, &created, edited)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

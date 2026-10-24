@@ -288,6 +288,40 @@ pub fn load_global(req: &LoadRequest<'_>) -> Result<Value, ConfigError> {
     }
 }
 
+/// The global owner-server section only. Unrelated configuration is neither substituted
+/// nor validated, so a disabled peer listener cannot prevent owner-server startup.
+/// Callers must validate the returned server section before using it for transport policy.
+pub fn load_owner_server(req: &LoadRequest<'_>) -> Result<Value, ConfigError> {
+    let mut layers = vec![defaults_layer(req)];
+    layers.extend(read_global_layers(req)?);
+    let mut value = json!({});
+    let mut sources = Sources::new();
+    for layer in layers {
+        if let Some(server) = layer.value.get("server") {
+            merge::merge_layer(
+                &mut value,
+                &json!({"server": server}),
+                &layer.label,
+                &mut sources,
+            );
+        }
+    }
+    let mut layer = Layer {
+        label: "global:server".into(),
+        path: None,
+        base_dir: req.paths.config.clone(),
+        value,
+        warnings: Vec::new(),
+    };
+    let mut issues = Vec::new();
+    substitute_layer(&mut layer, req, &mut issues);
+    if issues.is_empty() {
+        Ok(layer.value)
+    } else {
+        Err(ConfigError::Invalid { issues })
+    }
+}
+
 /// Trust state of the project layers without resolving the rest.
 pub fn trust_report(req: &LoadRequest<'_>) -> Result<TrustReport, ConfigError> {
     let project = read_project_layers(req)?;

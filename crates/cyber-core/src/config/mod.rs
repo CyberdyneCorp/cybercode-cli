@@ -4,7 +4,9 @@
 mod agent_profiles;
 mod agents;
 pub(crate) mod annotated;
+mod attachments;
 mod auto_mode;
+mod autoupdate;
 mod deferred_tools;
 mod edit;
 mod gate;
@@ -37,7 +39,9 @@ use serde::Serialize;
 use serde_json::Value;
 
 pub use agent_profiles::{AgentProfile, AgentTools, resolve_agents};
+pub use attachments::AttachmentSettings;
 pub use auto_mode::{AutoFallback, AutoModeSettings, AutoPattern};
+pub use autoupdate::AutoUpdate;
 pub use deferred_tools::DeferredToolSettings;
 pub use edit::{set_document_member, set_global_key};
 pub use gate::{SensitiveSplit, canonical_json, split_sensitive};
@@ -46,8 +50,8 @@ pub use hooks::{HookCondition, HookGroup, HookHandler, HookKind, HookSettings};
 pub use intelligence::{FormatterConfig, FormatterSettings, LspServerConfig, LspSettings};
 pub use jsonc::{parse as parse_jsonc, to_json as jsonc_to_json};
 pub use load::{
-    LoadRequest, RawHookSection, ensure_global_config, load, load_global, project_root,
-    trust_report, withheld_hook_sections,
+    LoadRequest, RawHookSection, ensure_global_config, load, load_global, load_owner_server,
+    project_root, trust_report, withheld_hook_sections,
 };
 pub use managed::{
     MANAGED_POLICY_DIR_ENV, MCP_BLOCKED, ManagedPolicy, McpPattern, McpPolicy, os_managed_dir,

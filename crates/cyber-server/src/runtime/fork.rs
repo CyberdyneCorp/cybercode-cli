@@ -21,42 +21,7 @@ pub(super) struct ForkHistory {
 }
 
 pub(super) fn history(state: &SessionState, cut: usize, context: &SessionState) -> ForkHistory {
-    let mut entries = Vec::new();
-    let mut calls = Vec::new();
-    let mut ids = HashMap::new();
-    for entry in &state.entries[..cut] {
-        let fresh = cyber_core::ids::new_id("msg");
-        ids.insert(entry.id().to_string(), fresh.clone());
-        let copy = match entry {
-            Entry::User {
-                parts,
-                source,
-                promoted_ms,
-                ..
-            } => Entry::User {
-                id: fresh,
-                parts: parts.clone(),
-                source: source.clone(),
-                promoted_ms: *promoted_ms,
-            },
-            Entry::System { text, epoch, .. } => Entry::System {
-                id: fresh,
-                text: text.clone(),
-                epoch: *epoch,
-            },
-            Entry::Assistant(a) => {
-                let copied = copy_calls(a, state, &fresh);
-                let references = copied.iter().map(|call| call.call_id.clone()).collect();
-                calls.extend(copied);
-                Entry::Assistant(AssistantEntry {
-                    id: fresh,
-                    calls: references,
-                    ..a.clone()
-                })
-            }
-        };
-        entries.push(copy);
-    }
+    let (entries, calls, ids) = copy_entries(&state.entries[..cut], |id| state.calls.get(id));
     let mut task = context.task.clone();
     task.objective = task.objective.and_then(|mut source| {
         source.message_id = ids.get(&source.message_id)?.clone();
@@ -94,8 +59,73 @@ pub(super) fn history(state: &SessionState, cut: usize, context: &SessionState) 
     }
 }
 
-fn copy_calls(answer: &AssistantEntry, state: &SessionState, message: &str) -> Vec<CallState> {
-    answer.calls.iter().filter_map(|id| state.calls.get(id)).map(|original| {
+/// An imported history (`storage-events` → Session import): the exported messages with
+/// fresh message and call IDs, and their calls, as copied observations.
+pub(super) fn imported(entries: &[Entry], calls: &[CallState]) -> ForkHistory {
+    let calls: HashMap<&str, &CallState> = calls
+        .iter()
+        .map(|call| (call.call_id.as_str(), call))
+        .collect();
+    let (entries, calls, _) = copy_entries(entries, |id| calls.get(id).copied());
+    ForkHistory {
+        entries,
+        calls,
+        context: ForkContext {
+            epoch: None,
+            epoch_stale: false,
+            compacted: None,
+            task: TaskState::default(),
+        },
+    }
+}
+
+/// Copies of `entries` with fresh message IDs, the calls of their answers (found by
+/// `call`) with fresh call IDs, and the map from old to new message IDs.
+fn copy_entries<'a>(
+    source: &[Entry],
+    call: impl Fn(&str) -> Option<&'a CallState>,
+) -> (Vec<Entry>, Vec<CallState>, HashMap<String, String>) {
+    let mut entries = Vec::new();
+    let mut calls = Vec::new();
+    let mut ids = HashMap::new();
+    for entry in source {
+        let fresh = cyber_core::ids::new_id("msg");
+        ids.insert(entry.id().to_string(), fresh.clone());
+        let copy = match entry {
+            Entry::User {
+                parts,
+                source,
+                promoted_ms,
+                ..
+            } => Entry::User {
+                id: fresh,
+                parts: parts.clone(),
+                source: source.clone(),
+                promoted_ms: *promoted_ms,
+            },
+            Entry::System { text, epoch, .. } => Entry::System {
+                id: fresh,
+                text: text.clone(),
+                epoch: *epoch,
+            },
+            Entry::Assistant(a) => {
+                let copied = copy_calls(a.calls.iter().filter_map(|id| call(id)), &fresh);
+                let references = copied.iter().map(|call| call.call_id.clone()).collect();
+                calls.extend(copied);
+                Entry::Assistant(AssistantEntry {
+                    id: fresh,
+                    calls: references,
+                    ..a.clone()
+                })
+            }
+        };
+        entries.push(copy);
+    }
+    (entries, calls, ids)
+}
+
+fn copy_calls<'a>(originals: impl Iterator<Item = &'a CallState>, message: &str) -> Vec<CallState> {
+    originals.map(|original| {
         let mut call = original.clone();
         call.call_id = cyber_core::ids::new_id("call");
         call.message_id = message.into();

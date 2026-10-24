@@ -40,3 +40,6 @@ export {
   type WorkflowRunHandle,
   type WorkflowRunInput,
 } from "./workflows.js";
+
+export type { CollaborationHandle, CollaborationStatus, CollaborationSnapshot, CollaborationMutationOptions, CollaborationWatchOptions, CollaborationQueuedReceipt, CollaborationMutationResult } from "./collaboration.js";
+export { isCollaborationQueued } from "./collaboration.js";

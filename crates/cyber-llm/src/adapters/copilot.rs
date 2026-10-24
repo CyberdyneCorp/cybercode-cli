@@ -81,6 +81,7 @@ impl Adapter for CopilotAdapter {
 
     fn stream(&self, request: LlmRequest) -> BoxFuture<'_, Result<EventStream, LlmError>> {
         Box::pin(async move {
+            super::ensure_resolved(&request)?;
             let route = self
                 .endpoint
                 .copilot
@@ -143,5 +144,21 @@ mod tests {
             value(&with_image, "Openai-Intent"),
             Some("conversation-edits")
         );
+    }
+
+    #[test]
+    fn the_vision_header_covers_images_only() {
+        let request = LlmRequest {
+            messages: vec![Message {
+                role: Role::User,
+                content: vec![Content::Document {
+                    media_type: "application/pdf".into(),
+                    data: "JVBERi0=".into(),
+                    name: None,
+                }],
+            }],
+            ..LlmRequest::default()
+        };
+        assert_eq!(value(&headers(&request), "Copilot-Vision-Request"), None);
     }
 }

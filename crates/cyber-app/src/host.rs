@@ -341,6 +341,18 @@ impl ToolHost for AppHost {
             .resolve_prompt_resources(turn, parts, asker, cancel)
     }
 
+    fn read_attachment<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        path: &'a str,
+        max_bytes: u64,
+        asker: cyber_server::runtime::Asker,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<Vec<u8>, cyber_server::runtime::FileReadError>> {
+        self.builtin
+            .read_attachment(turn, path, max_bytes, asker, cancel)
+    }
+
     fn expand_prompt_template<'a>(
         &'a self,
         turn: &'a TurnContext,

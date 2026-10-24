@@ -27,4 +27,4 @@ No new account identity, permission-grant format, peer trust model or Relay is i
 
 ## Status
 
-Proposed for review. No dashboard or remote-approval implementation is claimed.
+Implementation authorized by the owner on 2026-10-24 and delivered in PR #29. Automated browser acceptance and all 14 CI checks pass for implementation commit `81837568`; see `docs/implementation/web-dashboard.md`. Physical second-device certificate trust remains an operator acceptance check. Archive after implementation merge; the eventual full TUI-equivalent target remains outside this first slice.

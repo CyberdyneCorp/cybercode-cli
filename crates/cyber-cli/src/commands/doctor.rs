@@ -51,6 +51,7 @@ pub fn run(ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
     checks.push(tool("rg", &["--version"], Status::Warn));
     checks.push(rt.block_on(server(ctx)));
     checks.extend(rt.block_on(peer_checks(ctx)));
+    checks.push(rt.block_on(account_check(ctx)));
     report(global, &checks)
 }
 
@@ -470,5 +471,24 @@ fn report(global: &GlobalArgs, checks: &[Check]) -> Result<(), CliError> {
         Err(CliError::silent(1))
     } else {
         Ok(())
+    }
+}
+
+async fn account_check(ctx: &Context) -> Check {
+    match super::account::store(ctx).storage_kind().await {
+        Ok(Some(cyber_account::StorageKind::File)) => check(
+            "account",
+            Status::Warn,
+            "account tokens stored in file (no OS keyring)",
+        ),
+        Ok(Some(cyber_account::StorageKind::Keyring)) => {
+            check("account", Status::Pass, "credentials in OS keyring")
+        }
+        Ok(None) => check(
+            "account",
+            Status::Pass,
+            "not logged in; local use needs no account",
+        ),
+        Err(error) => check("account", Status::Warn, error.to_string()),
     }
 }

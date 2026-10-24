@@ -3,9 +3,11 @@
 //! The router is transport-independent. TCP, the Unix socket and the in-process embedded
 //! transport mark each request with a [`Transport`], which decides authentication.
 
+pub mod account;
 mod branches;
 mod catalog;
 mod children;
+pub mod collaboration;
 mod deliveries;
 mod envelope;
 mod error;
@@ -18,6 +20,7 @@ mod guard;
 mod hooks;
 mod idempotency;
 mod intelligence;
+mod interactive;
 mod jobs;
 mod jsonrpc;
 mod loops;
@@ -30,6 +33,7 @@ mod output_styles;
 pub mod peer;
 mod peers;
 mod plugins;
+mod prompt_parts;
 pub mod providers;
 mod pty;
 pub mod remote_tools;
@@ -41,6 +45,7 @@ mod system;
 mod teams;
 mod usage;
 pub mod vcs;
+mod web;
 mod workflows;
 pub use workflows::start_error as workflow_start_error;
 pub mod worktrees;
@@ -70,7 +75,10 @@ pub use memory::{
 };
 #[cfg(unix)]
 pub use serve::serve_unix;
-pub use serve::{EmbeddedClient, PeerAddr, PeerLimits, serve_peer, serve_peer_with, serve_tcp};
+pub use serve::{
+    EmbeddedClient, PeerAddr, PeerLimits, owner_tls, serve_peer, serve_peer_with, serve_tcp,
+    serve_tcp_tls,
+};
 pub use service::ServiceControl;
 
 /// How a request reached the server.
@@ -173,6 +181,12 @@ pub struct LocationDefaults {
 
 /// What the server needs beyond the runtime: catalogs and Location-level lookups.
 pub trait Services: Send + Sync {
+    fn collaboration(&self) -> Option<Arc<dyn collaboration::CollaborationService>> {
+        None
+    }
+    fn account(&self) -> Option<Arc<dyn account::AccountService>> {
+        None
+    }
     /// Provider sign-in (`provider-credentials` → Provider login API); `None` answers 503.
     fn provider_logins(&self) -> Option<Arc<dyn providers::ProviderLogins>> {
         None
@@ -681,6 +695,7 @@ pub fn router(state: AppState) -> Router {
 pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router {
     let api = Router::new()
         .merge(sessions::routes())
+        .merge(interactive::routes())
         .merge(export::routes())
         .merge(branches::routes())
         .merge(children::router())
@@ -697,6 +712,8 @@ pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router 
         .merge(peers::routes())
         .merge(goals::routes())
         .merge(providers::routes())
+        .merge(account::routes())
+        .merge(collaboration::routes())
         .merge(usage::routes())
         .merge(vcs::routes())
         .merge(system::routes())
@@ -720,6 +737,11 @@ pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router 
         .layer(axum::middleware::from_fn(request_log));
     Router::new()
         .nest("/api/v1", api)
+        .merge(web::routes())
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            web::security_headers,
+        ))
         .layer(
             CompressionLayer::new()
                 .compress_when(DefaultPredicate::new().and(SizeAbove::new(1024))),

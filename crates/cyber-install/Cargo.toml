@@ -1,0 +1,38 @@
+[package]
+name = "cyber-install"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Release lookup, installation-method detection, verified self-update and uninstall for Cyber Code"
+
+[features]
+# Throwaway signing material for the debug-only release trust hook; tests only.
+test-support = ["dep:rcgen", "dep:base64"]
+
+[dependencies]
+base64 = { version = "0.22", optional = true }
+cyber-core.workspace = true
+flate2 = "1"
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "aws_lc_rs"], optional = true }
+reqwest = "0.13"
+semver = "1"
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+# Pinned exactly: the verifier is part of the trust boundary, so it moves only on purpose.
+sigstore-verify = { version = "=0.14.0", default-features = false }
+tar = { version = "0.4.46", default-features = false }
+tempfile.workspace = true
+thiserror.workspace = true
+tokio = { version = "1", features = ["time"] }
+zip = { version = "8.6", default-features = false, features = ["deflate-flate2"] }
+
+[dev-dependencies]
+cyber-install = { path = ".", features = ["test-support"] }
+tokio = { version = "1", features = ["rt", "macros", "time"] }
+
+[lints]
+workspace = true
