@@ -7,7 +7,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{Action, App, Overlay};
 use crate::output_styles::{Opener, Request, SUBAGENT};
-use crate::screens::{Opts, Server, render};
+use crate::screens::{Opts, Server, buffer, render};
 
 fn press(app: &mut App, code: KeyCode) -> Vec<Action> {
     app.on_key(KeyEvent::new(code, KeyModifiers::NONE))
@@ -153,6 +153,38 @@ fn panel_text(shown: &str) -> String {
         (start < end).then(|| line[start + '│'.len_utf8()..end].trim())
     });
     rows.collect::<Vec<_>>().join(" ")
+}
+
+/// A click selects a style and a second click on it switches the Session, as Enter does.
+#[tokio::test]
+async fn a_second_click_on_a_style_switches_the_session() {
+    use crate::screens_mouse::{cell_of, click};
+    let server = Server::start().await;
+    let id = server.session().await;
+    let mut app = server.load(&id).await;
+    let actions = typed(&mut app, "/output-style");
+    run(&server, &mut app, actions).await;
+
+    let row = cell_of(&buffer(&mut app, 120, 40, &Opts::default()), "learning ");
+    assert!(click(&mut app, row).is_empty());
+    let Overlay::OutputStyles(picker) = &app.overlay else {
+        panic!("the picker stays open");
+    };
+    let listing = app.output_styles.listing.as_ref().unwrap();
+    let selected = picker.visible(listing)[picker.selected];
+    assert_eq!(listing.styles[selected].name, "learning");
+    assert_eq!(app.session.output_style, None);
+
+    let actions = click(&mut app, row);
+    assert!(
+        matches!(
+            actions.as_slice(),
+            [Action::OutputStyle(Request::Switch { style, save: false, .. })] if style == "learning"
+        ),
+        "{actions:?}"
+    );
+    run(&server, &mut app, actions).await;
+    assert_eq!(app.session.output_style.as_deref(), Some("learning"));
 }
 
 #[tokio::test]

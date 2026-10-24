@@ -9,8 +9,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph, Wrap};
 
 use super::layout::truncate_end;
-use super::overlays::{centered, frame};
+use super::overlays::{centered, frame, push_row};
 use crate::app::App;
+use crate::mouse::List;
 use crate::output_styles::{Listing, Picker, Style as OutputStyle};
 
 const KEYS: &str = "↑↓ select · type to search · enter switch · d save default · esc close";
@@ -32,6 +33,10 @@ pub fn draw(f: &mut Frame, app: &App, picker: &Picker, area: Rect) {
         ]),
         Line::default(),
     ];
+    // The rows follow the search and a blank line.
+    for pos in 0..picker.visible(listing).len() {
+        push_row(app, rect, 2 + pos, List::OutputStyles, pos);
+    }
     lines.extend(rows(app, picker, listing, width));
     if !listing.issues.is_empty() {
         lines.push(Line::default());

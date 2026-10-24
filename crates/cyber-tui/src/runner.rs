@@ -1579,7 +1579,9 @@ mod mode_tests {
 
 #[cfg(test)]
 mod mouse_tests {
-    use crossterm::event::{Event as TermEvent, KeyModifiers, MouseEvent, MouseEventKind};
+    use crossterm::event::{
+        Event as TermEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
 
     use crate::app::App;
 
@@ -1611,5 +1613,27 @@ mod mouse_tests {
         });
         super::terminal_event(&mut app, wheel);
         assert_eq!(app.scroll, crate::mouse::WHEEL_LINES);
+    }
+
+    #[test]
+    fn a_click_from_the_terminal_selects_a_palette_row() {
+        let selected = |app: &App| match &app.overlay {
+            crate::app::Overlay::Palette(p) => (p.selected, p.entries[p.filtered[2]].name.clone()),
+            other => panic!("{other:?}"),
+        };
+        let mut app = App::new(Default::default(), Vec::new(), "cyber");
+        app.open_palette();
+        let (before, third) = selected(&app);
+        assert_eq!(before, 0);
+        // The runner draws the frame the click lands on.
+        let buf = crate::screens::buffer(&mut app, 100, 30, &Default::default());
+        let click = TermEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 50,
+            row: crate::screens::row_of(&buf, &third),
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(super::terminal_event(&mut app, click).is_empty());
+        assert_eq!(selected(&app).0, 2, "selected, not run");
     }
 }

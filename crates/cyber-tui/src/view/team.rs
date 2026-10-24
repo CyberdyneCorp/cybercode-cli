@@ -14,6 +14,7 @@ use unicode_width::UnicodeWidthStr;
 use super::layout::truncate_end;
 use super::wrap::wrap;
 use crate::app::App;
+use crate::mouse::{List, Target};
 use crate::team::{COLUMNS, Member, TeamView};
 use crate::theme::Tokens;
 
@@ -85,7 +86,7 @@ pub(super) fn view(f: &mut Frame, app: &App, area: Rect) {
         ..inner
     };
     let lines = match team {
-        Some(team) => body_lines(app, team, width, body.height as usize),
+        Some(team) => body_lines(app, team, body),
         None => vec![Line::from(Span::styled(
             "  Loading the team…",
             Style::default().fg(t.text_muted),
@@ -103,9 +104,11 @@ pub(super) fn view(f: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-/// The members table, then the board in the rows left.
-fn body_lines(app: &App, team: &TeamView, width: usize, height: usize) -> Vec<Line<'static>> {
+/// The members table, then the board in the rows left; each member's row is a click
+/// target over `body`.
+fn body_lines(app: &App, team: &TeamView, body: Rect) -> Vec<Line<'static>> {
     let t = &app.theme;
+    let (width, height) = (body.width as usize, body.height as usize);
     let bold = Style::default().fg(t.text).add_modifier(Modifier::BOLD);
     let muted = Style::default().fg(t.text_muted);
     let rest = width.saturating_sub(FIXED);
@@ -125,6 +128,8 @@ fn body_lines(app: &App, team: &TeamView, width: usize, height: usize) -> Vec<Li
     }
     lines.push(Line::from(Span::styled(truncate_end(&head, width), muted)));
     for (i, member) in team.members.iter().enumerate() {
+        let line = lines.len();
+        super::push_lines(app, body, line..line + 1, 0, Target::row(List::Team, i));
         lines.push(member_line(
             app,
             member,

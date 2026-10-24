@@ -457,6 +457,8 @@ pub struct App {
     pub code_select: Option<usize>,
     /// Links the last frame drew, for the OSC 8 pass after it.
     screen_links: std::sync::Mutex<Vec<crate::osc::ScreenLink>>,
+    /// The last frame's click targets and the armed click.
+    pub(crate) mouse: crate::mouse::Mouse,
     leader: Option<Instant>,
     /// The merged keybinding table.
     pub keymap: crate::keys::Keymap,
@@ -577,6 +579,7 @@ impl App {
             hyperlinks: false,
             code_select: None,
             screen_links: Default::default(),
+            mouse: Default::default(),
             leader: None,
             keymap: Default::default(),
             server_commands: Vec::new(),
@@ -917,6 +920,7 @@ impl App {
     }
 
     pub fn on_key(&mut self, key: KeyEvent) -> Vec<Action> {
+        self.mouse.disarm();
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && key.code == KeyCode::Char('c')
             && self.composer.is_empty()

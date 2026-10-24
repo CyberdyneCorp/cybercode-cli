@@ -344,6 +344,40 @@ async fn a_rebound_key_shows_in_the_tips_and_off_shows_nothing_and_the_first_pro
     );
 }
 
+#[tokio::test]
+async fn clicking_a_header_folds_it_and_the_composer_takes_focus_back() {
+    use crate::screens_mouse::{cell_of, click};
+    use crate::sidebar::{Row, Section};
+    let server = Server::start().await;
+    let id = server.answered_session().await;
+    let mut app = server.app(&id).await;
+    let draw = |app: &mut App| buffer(app, 160, 48, &Opts::default());
+    let header = cell_of(&draw(&mut app), "▼ MCP");
+    // A header acts on the first click, and the double click's second press is ignored.
+    for _ in 0..2 {
+        assert!(click(&mut app, header).is_empty());
+        assert!(app.sidebar.collapsed.contains(&Section::Mcp));
+    }
+    assert_eq!(app.sidebar.focused(), Some(Row::Header(Section::Mcp)));
+    let buf = draw(&mut app);
+    assert!(text(&buf).contains("› ▶ MCP"), "{}", text(&buf));
+    // The wheel over the sidebar leaves the transcript where it is.
+    app.on_mouse(crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::ScrollUp,
+        column: header.0,
+        row: header.1,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert_eq!(app.scroll, 0);
+
+    let composer = cell_of(&buf, "Ask anything");
+    assert!(click(&mut app, composer).is_empty());
+    assert_eq!(app.sidebar.focus, None, "the composer has the keys again");
+    let header = cell_of(&draw(&mut app), "▶ MCP");
+    click(&mut app, header);
+    assert!(!app.sidebar.collapsed.contains(&Section::Mcp));
+}
+
 /// The end-to-end sidebar runs `/usr/bin/python3` MCP stubs, so it is Unix-only.
 #[cfg(unix)]
 mod end_to_end {

@@ -45,6 +45,9 @@ fn values(key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The line of the first preference row: below the heading and a blank line.
+pub const FIRST_ROW: usize = 2;
+
 /// The tab's rows: one per preference, the selected one marked.
 pub fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
     let t = &app.theme;

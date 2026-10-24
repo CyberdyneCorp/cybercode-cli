@@ -122,6 +122,12 @@ const DEFAULTS: &[(&str, &str, &str, &str)] = &[
     ("explorer", "explorer_collapse", "left", "fold"),
     ("explorer", "explorer_expand", "right", "unfold"),
     ("explorer", "explorer_markdown", "m", "raw/rendered"),
+    (
+        "explorer",
+        "explorer_focus",
+        "tab",
+        "move focus between the tree and the preview",
+    ),
     ("sidebar", "sidebar_close", "esc", "return to the composer"),
     ("sidebar", "sidebar_next", "down", "next row"),
     ("sidebar", "sidebar_previous", "up", "previous row"),
@@ -432,6 +438,15 @@ impl Keymap {
             Chord::Key(key) => Some(key.label()),
             Chord::Leader(key) => Some(format!("{} {}", self.leader()?.label(), key.label())),
             Chord::Disabled => None,
+        }
+    }
+
+    /// The key an action is bound to, for a click that presses it; `None` when the
+    /// action is disabled or takes the leader.
+    pub fn event(&self, context: &str, action: &str) -> Option<KeyEvent> {
+        match self.chord(context, action) {
+            Chord::Key(key) => Some(KeyEvent::new(key.code, key.modifiers)),
+            Chord::Leader(_) | Chord::Disabled => None,
         }
     }
 

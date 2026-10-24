@@ -741,7 +741,7 @@ impl crate::app::App {
     }
 
     /// Esc: focus returns to the composer and the drawer closes.
-    fn leave_sidebar(&mut self) {
+    pub(crate) fn leave_sidebar(&mut self) {
         self.sidebar.focus = None;
         self.sidebar.drawer = false;
     }
@@ -753,7 +753,9 @@ impl crate::app::App {
             (Some("sidebar_close"), _) => self.leave_sidebar(),
             (Some("sidebar_next"), _) | (None, KeyCode::Char('j')) => self.sidebar.step(true),
             (Some("sidebar_previous"), _) | (None, KeyCode::Char('k')) => self.sidebar.step(false),
-            (Some("sidebar_select"), _) | (None, KeyCode::Char(' ')) => return self.select_row(),
+            (Some("sidebar_select"), _) | (None, KeyCode::Char(' ')) => {
+                return self.open_sidebar_row();
+            }
             (Some("sidebar_reconnect"), _) => return self.reconnect_row(),
             _ => {}
         }
@@ -762,7 +764,7 @@ impl crate::app::App {
 
     /// Enter or Space: collapse or expand a section, open a file's diff, or open a
     /// run in the Workflow monitor.
-    fn select_row(&mut self) -> Vec<Action> {
+    fn open_sidebar_row(&mut self) -> Vec<Action> {
         match self.sidebar.focused() {
             Some(Row::Header(section)) => self.sidebar.toggle(section),
             Some(Row::File(index)) => {

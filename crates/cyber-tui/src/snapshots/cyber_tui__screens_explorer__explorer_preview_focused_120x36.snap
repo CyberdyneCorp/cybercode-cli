@@ -1,0 +1,56 @@
+---
+source: crates/cyber-tui/src/screens_explorer.rs
+expression: shown
+---
+ EXPLORER work:main                   3 changed │ crates › cyber-tui › src › markdown.rs   Rust · 6 lines · 102B
+ ⌕ filter files…                                │
+                                                │ 2 │
+  ▾ crates/ 1                                 M │ 3 │ pub fn render(text: &str) -> usize {
+  │ ▾ cyber-tui/ 1                            M │ 4 │     // count the lines
+  │ │ ▾ src/ 2                                M │ 5 │     text.lines().count()
+  │ │ │   app.rs                            16B │ 6 │ }
+▌ │ │ │   markdown.rs                   M  102B │
+    README.md                                7B │
+    notes.md                            ?   16B │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+ 7 shown · 4 hidden · .gitignore                │
+  ↑↓  move  ←→  fold  enter  open  tab  focus  /  filter  g  changed  .  hidden  m  raw/rendered  @  mention
+                                                           100 · —  ctrl+p commands
+row 0: 0-13 fg=#d6e4f0 bg=#171c21 bold
+row 0: 14-14 fg=#6b7a8f bg=#171c21
+row 0: 15-18 fg=#c792ea bg=#171c21 bold
+row 0: 19-37 fg=#d6e4f0 bg=#171c21
+row 0: 38-47 fg=#ffcc66 bg=#171c21
+row 0: 48-48 fg=#2b3445 bg=#0b0f14
+row 0: 49-49 fg=#d6e4f0 bg=#171c21
+row 0: 50-55 fg=#6b7a8f bg=#171c21
+row 0: 56-58 fg=#666f77 bg=#171c21
+row 0: 59-67 fg=#6b7a8f bg=#171c21
+row 0: 68-70 fg=#666f77 bg=#171c21
+row 0: 71-73 fg=#6b7a8f bg=#171c21
+row 0: 74-76 fg=#666f77 bg=#171c21
+row 0: 77-87 fg=#00e5ff bg=#171c21 bold
+row 0: 88-111 fg=#6b7a8f bg=#171c21
+row 0: 112-119 fg=#d6e4f0 bg=#171c21
