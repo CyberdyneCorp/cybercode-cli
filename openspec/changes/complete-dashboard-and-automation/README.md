@@ -7,6 +7,7 @@ Status: planning artifacts ready for user review; implementation has not started
 - [Proposal and scope](proposal.md)
 - [Design and acceptance boundaries](design.md)
 - [Implementation and verification tasks](tasks.md)
+- [Live acceptance prerequisites and evidence matrix](acceptance.md)
 - [Browser contracts](specs/web-client/spec.md)
 - [Reserved budget lifecycle](specs/observability-costs/spec.md)
 - [Transcript retention safeguards](specs/storage-events/spec.md)
