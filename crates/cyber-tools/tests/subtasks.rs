@@ -36,7 +36,7 @@ async fn durable_http_admission_replays_identity_and_scopes_lookup_and_stop() {
     ));
     let client = reqwest::Client::new();
     let url = format!("http://{address}/api/v1/sessions/{parent}/delegations/op_http");
-    let body = json!({"prompt":"inspect project","agent":"explore","max_steps":2,"attachments":[{"type":"image","media_type":"image/png","data":"aW1hZ2U="}]});
+    let body = json!({"prompt":"inspect project","agent":"explore","max_steps":2,"attachments":[{"type":"image","media_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="}]});
     assert_eq!(
         client.post(&url).json(&body).send().await.unwrap().status(),
         reqwest::StatusCode::UNAUTHORIZED
@@ -527,7 +527,7 @@ async fn authenticated_http_subtask_returns_a_job_and_replays_its_idempotency_ke
             .status(),
         reqwest::StatusCode::BAD_REQUEST
     );
-    let body = json!({"prompt":"try another approach", "agent":"explore", "max_steps":2, "attachments":[{"type":"image","media_type":"image/png","data":"aW1hZ2U="}]});
+    let body = json!({"prompt":"try another approach", "agent":"explore", "max_steps":2, "attachments":[{"type":"image","media_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="}]});
     let response = client
         .post(&url)
         .basic_auth("cyber", Some("secret"))
@@ -553,7 +553,7 @@ async fn authenticated_http_subtask_returns_a_job_and_replays_its_idempotency_ke
     assert_eq!(child.info.max_steps, Some(2));
     assert!(flow.main.requests()[0].messages.iter().any(|message| {
         message.content.iter().any(
-            |part| matches!(part, cyber_llm::Content::Image { data, .. } if data == "aW1hZ2U="),
+            |part| matches!(part, cyber_llm::Content::Image { data, .. } if data == "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="),
         )
     }));
     let mut changed = body.clone();

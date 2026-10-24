@@ -128,8 +128,7 @@ fn render_parts(parts: &[Content]) -> String {
         .iter()
         .map(|p| match p {
             Content::Text { text } => text.clone(),
-            Content::Image { media_type, .. } => format!("[Attached {media_type}]"),
-            other => format!("{other:?}"),
+            other => super::attachments::stripped(other).unwrap_or_else(|| format!("{other:?}")),
         })
         .collect::<Vec<_>>()
         .join("\n")

@@ -8,6 +8,7 @@ mod activity;
 mod admission_authority;
 pub use admission_authority::AdmissionAuthority;
 mod ancestry;
+pub mod attachments;
 pub use ancestry::AncestorAuthority;
 mod auto;
 mod auto_override;
@@ -57,6 +58,8 @@ pub use hooks::{
 };
 pub mod goals;
 mod handoff;
+mod import;
+pub use import::{ImportDocument, ImportedMessage, ImportedSession};
 mod host;
 pub mod instructions;
 mod jobs;
@@ -186,11 +189,11 @@ pub use context_meter::ContextMeter;
 pub use events::{AuxiliaryUsage, CompactionTrigger, registry as event_registry};
 pub use host::{
     AgentInference, CatalogResolver, CheckOutcome, ChildContinuation, FileDecision, FileDiff,
-    GoalWorktree, HookEffects, Invocation, LifecycleHook, LifecycleVerdict, LocationGuard,
-    LocationLease, ModelResolver, NoSnapshots, NoTools, Reconciliation, ResolvedModel,
-    RestoreError, RuleEffect, RunWorktree, SessionEnvelope, SkillSuggestion, Snapshot, Snapshots,
-    TeamWorktree, ToolDef, ToolHost, ToolOutcome, ToolScope, TurnContext, TurnWorktree,
-    WorkflowAgentOutput, WorkflowAgentRequest, WorkflowToolRequest,
+    FileReadError, GoalWorktree, HookEffects, Invocation, LifecycleHook, LifecycleVerdict,
+    LocationGuard, LocationLease, ModelResolver, NoSnapshots, NoTools, Reconciliation,
+    ResolvedModel, RestoreError, RuleEffect, RunWorktree, SessionEnvelope, SkillSuggestion,
+    Snapshot, Snapshots, TeamWorktree, ToolDef, ToolHost, ToolOutcome, ToolScope, TurnContext,
+    TurnWorktree, WorkflowAgentOutput, WorkflowAgentRequest, WorkflowToolRequest,
 };
 pub use model::{
     AssistantEntry, CallState, CallStatus, Delivery, Entry, InboxRow, InputStatus, LastStep,
@@ -252,6 +255,9 @@ pub enum RuntimeError {
     /// (`PermissionDeniedError`); nothing was done.
     #[error("PermissionDeniedError: {0}")]
     PermissionDenied(String),
+    /// A prompt attachment was refused; nothing was admitted.
+    #[error(transparent)]
+    Attachment(#[from] attachments::AttachmentError),
     /// A message text over the content limit; nothing was sent.
     #[error("MessageTooLargeError: the message is {size} bytes; the limit is {limit}")]
     MessageTooLarge { size: usize, limit: usize },
@@ -548,7 +554,22 @@ impl CommandPlan {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PromptCheck {
     Run,
+    /// [`PromptCheck::Run`] for a prompt with `file` parts, read at admission.
+    RunWithFiles(Vec<attachments::FilePart>),
     Checked(Option<String>),
+}
+
+impl PromptCheck {
+    fn runs_hooks(&self) -> bool {
+        !matches!(self, Self::Checked(_))
+    }
+
+    fn files(&self) -> &[attachments::FilePart] {
+        match self {
+            Self::RunWithFiles(files) => files,
+            _ => &[],
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -567,13 +588,15 @@ pub struct Admission {
 }
 
 impl Admission {
-    /// Exact-retry identity: computed from the parts as submitted, before expansion.
-    fn digest(&self) -> String {
+    /// Exact-retry identity: computed from the parts (and the `file` parts) as
+    /// submitted, before expansion.
+    fn digest(&self, files: &[attachments::FilePart]) -> String {
         digest(
             &self.parts,
             self.delivery,
             self.skill_command.as_ref(),
             self.template.as_ref(),
+            files,
         )
     }
 
@@ -686,6 +709,8 @@ pub(crate) struct Handle {
     /// Compactions summarizing the active path. A drop guard counts them, so a dropped
     /// compaction (an interrupt, a disconnected client) never leaves the Session fenced.
     pub compacting: std::sync::atomic::AtomicUsize,
+    /// Attachment blobs read for this Drain's Turns, cleared when the Drain ends.
+    pub attachment_cache: StdMutex<attachments::Cache>,
 }
 
 impl Handle {
@@ -796,6 +821,9 @@ pub(crate) struct Inner {
     pub(crate) presence: presence::Presence,
     /// `<state>/workflows`: inline scripts and results larger than 1 MiB.
     workflow_dir: std::sync::OnceLock<PathBuf>,
+    /// Prompt attachment blobs (`storage-events` → Attachment storage); a private
+    /// temporary directory unless configured.
+    attachments: std::sync::OnceLock<Result<Arc<attachments::AttachmentStore>, String>>,
     /// Rebuilds a run's next attempt after a restart (`workflows` → Recovery of several
     /// runs).
     workflow_relaunch: std::sync::OnceLock<Arc<dyn workflow_recovery::WorkflowRelaunch>>,
@@ -886,6 +914,7 @@ impl Runtime {
             workflow_writers: StdMutex::default(),
             presence: presence::Presence::default(),
             workflow_dir: std::sync::OnceLock::new(),
+            attachments: std::sync::OnceLock::new(),
             workflow_relaunch: std::sync::OnceLock::new(),
             workflow_progress: std::sync::OnceLock::new(),
             waiters: StdMutex::default(),
@@ -1042,7 +1071,16 @@ impl Runtime {
     /// The first root Session of a Location fires the observational `Setup` hook
     /// once creation is committed and admission released (hook runners take it again).
     pub async fn create_session(&self, req: CreateSession) -> Result<SessionInfo, RuntimeError> {
-        let (info, first) = self.create_session_admitted(req).await?;
+        self.create_session_with(req, None).await
+    }
+
+    /// [`Runtime::create_session`] starting from `imported` history.
+    async fn create_session_with(
+        &self,
+        req: CreateSession,
+        imported: Option<fork::ForkHistory>,
+    ) -> Result<SessionInfo, RuntimeError> {
+        let (info, first) = self.create_session_admitted(req, imported).await?;
         if first {
             self.inner.setup(&info.id).await;
         }
@@ -1054,6 +1092,7 @@ impl Runtime {
     async fn create_session_admitted(
         &self,
         req: CreateSession,
+        imported: Option<fork::ForkHistory>,
     ) -> Result<(SessionInfo, bool), RuntimeError> {
         let _admission = self.inner.open().await?;
         let id = req
@@ -1189,7 +1228,7 @@ impl Runtime {
                 let state = self.state(source).await?;
                 Some(fork::history(&state, state.entries.len(), &state))
             }
-            None => None,
+            None => imported,
         };
         let (history, calls, fork_context) = match copied {
             Some(copy) => (copy.entries, copy.calls, Some(copy.context)),
@@ -1312,9 +1351,14 @@ impl Runtime {
         &self,
         session_id: &str,
         admission: Admission,
+        files: Vec<attachments::FilePart>,
     ) -> Result<Receipt, RuntimeError> {
-        self.admit_attempt(session_id, admission, None, PromptCheck::Run)
-            .await
+        let check = if files.is_empty() {
+            PromptCheck::Run
+        } else {
+            PromptCheck::RunWithFiles(files)
+        };
+        self.admit_attempt(session_id, admission, None, check).await
     }
 
     /// UserPromptSubmit, then template expansion and resource mentions, for input not
@@ -1327,6 +1371,7 @@ impl Runtime {
         &self,
         session_id: &str,
         admission: &Admission,
+        files: &[attachments::FilePart],
         message_id: &str,
         digest: &str,
     ) -> Result<(PromptEffects, PromptAttachments), RuntimeError> {
@@ -1345,7 +1390,8 @@ impl Runtime {
             .user_prompt_hooks(&handle, &admission.parts, &admission.source)
             .await?
             .for_prompt(is_forked(admission.skill_command.as_ref()))?;
-        Ok((effects, self.prompt_resources(&handle, admission).await?))
+        let attachments = self.prompt_resources(&handle, admission, files).await?;
+        Ok((effects, attachments))
     }
 
     /// Expand a planned template (`skills-commands` → Shell output injection, File and
@@ -1353,13 +1399,16 @@ impl Runtime {
     /// (`mcp` → Resources), all under the Session's agent, mode and rules; a permission
     /// ask reaches the attached client. Mentions are read from the unexpanded text, so
     /// command output never triggers a read. A forked skill command hands its expanded
-    /// text to a child, so it attaches no resources here.
+    /// text to a child, so it attaches no resources here. `file` parts are read through
+    /// the `read` tool's checks and stored (`server-api` → Prompt attachment parts), and
+    /// the media the prompt carries must suit the Session's model.
     async fn prompt_resources(
         &self,
         handle: &Handle,
         admission: &Admission,
+        files: &[attachments::FilePart],
     ) -> Result<PromptAttachments, RuntimeError> {
-        let parts = match &admission.template {
+        let mut parts = match &admission.template {
             Some(template) => Some(self.expand_template(handle, template, admission).await?),
             None => None,
         };
@@ -1368,7 +1417,20 @@ impl Runtime {
         } else {
             self.mention_resources(handle, &admission.parts).await?
         };
-        Ok(PromptAttachments { resources, parts })
+        let mut blobs = attachments::NewBlobs::default();
+        if !files.is_empty() {
+            let base = parts.take().unwrap_or_else(|| admission.parts.clone());
+            parts = Some(self.attach_files(handle, base, files, &mut blobs).await?);
+        }
+        let admitted = parts.as_deref().unwrap_or(&admission.parts);
+        self.adopt_parent_blobs(handle, admitted, &mut blobs)
+            .await?;
+        self.check_modalities(handle, admitted).await?;
+        Ok(PromptAttachments {
+            resources,
+            parts,
+            blobs,
+        })
     }
 
     async fn expand_template(
@@ -1449,20 +1511,21 @@ impl Runtime {
             .message_id
             .clone()
             .unwrap_or_else(|| cyber_core::ids::new_id("msg"));
-        let digest = admission.digest();
+        let digest = admission.digest(check.files());
         // A denied prompt leaves no durable trace, including a staged revert.
-        let prompt = check == PromptCheck::Run;
-        let (effects, attachments) = match check {
-            PromptCheck::Run => {
-                self.prompt_hooks(session_id, &admission, &message_id, &digest)
+        let prompt = check.runs_hooks();
+        let (effects, attachments) = match &check {
+            PromptCheck::Run | PromptCheck::RunWithFiles(_) => {
+                self.prompt_hooks(session_id, &admission, check.files(), &message_id, &digest)
                     .await?
             }
             PromptCheck::Checked(context) => (
                 PromptEffects {
-                    context,
+                    context: context.clone(),
                     stop: None,
                 },
-                PromptAttachments::default(),
+                self.checked_attachments(session_id, &admission.parts)
+                    .await?,
             ),
         };
         let _admission = self.inner.open().await?;
@@ -1479,10 +1542,13 @@ impl Runtime {
         self.inner.commit_staged_revert(&handle).await?;
         // Public input resets the Stop count whatever source the client claims.
         let genuine = prompt || admission.source != "hook";
+        // Blobs read for `file` parts are removed unless the prompt is admitted.
+        let blobs = attachments.blobs;
         let receipt = {
             let mut state = handle.state.lock().await;
             state.ensure_worktree_ready()?;
             if let Some(receipt) = existing_receipt(&state, &message_id, &digest)? {
+                blobs.keep();
                 return Ok(receipt);
             }
             // The state lock makes accepted input visible before settlement chooses cleanup.
@@ -1512,6 +1578,7 @@ impl Runtime {
             let admitted = events.len() - 1;
             events.extend(extra);
             let stored = self.inner.commit_locked(&mut state, events)?;
+            blobs.keep();
             receipt_for(&state, &message_id, stored[admitted].seq)
         };
         if genuine {
@@ -1534,9 +1601,12 @@ impl Runtime {
         delivery: Option<Delivery>,
     ) -> Result<(), RuntimeError> {
         // Edited parts are user input: UserPromptSubmit re-checks them and their
-        // resource mentions are resolved again before commit.
+        // resource mentions are resolved again before commit. Their media must suit the
+        // Session's model, as a prompt's must.
         let (effects, resources) = match &parts {
             Some(parts) => {
+                let handle = self.inner.handle(session_id).await?;
+                self.check_modalities(&handle, parts).await?;
                 self.edited_prompt_hooks(session_id, message_id, parts)
                     .await?
             }
@@ -2119,8 +2189,13 @@ fn digest(
     delivery: Delivery,
     skill: Option<&SkillCommand>,
     template: Option<&PromptTemplate>,
+    files: &[attachments::FilePart],
 ) -> String {
+    let parts: Vec<Content> = parts.iter().map(digest_part).collect();
     let mut body = serde_json::json!({ "parts": parts, "delivery": delivery });
+    if !files.is_empty() {
+        body["files"] = serde_json::to_value(files).expect("serializable file parts");
+    }
     if let Some(skill) = skill {
         body["skill_command"] = serde_json::to_value(skill).expect("serializable skill command");
     }
@@ -2128,6 +2203,28 @@ fn digest(
         body["template"] = serde_json::to_value(template).expect("serializable template");
     }
     format!("sha256:{:x}", Sha256::digest(body.to_string()))
+}
+
+/// Inline media is hashed by the SHA-256 of its data: an exact retry of the same bytes
+/// has the same digest, and the digest never serializes megabytes of base64.
+fn digest_part(part: &Content) -> Content {
+    let hashed = |data: &str| format!("sha256:{:x}", Sha256::digest(data));
+    match part {
+        Content::Image { media_type, data } => Content::Image {
+            media_type: media_type.clone(),
+            data: hashed(data),
+        },
+        Content::Document {
+            media_type,
+            data,
+            name,
+        } => Content::Document {
+            media_type: media_type.clone(),
+            data: hashed(data),
+            name: name.clone(),
+        },
+        other => other.clone(),
+    }
 }
 
 /// A forked skill command hands its prompt to a child instead of a Turn here.
@@ -2141,6 +2238,8 @@ fn is_forked(skill: Option<&SkillCommand>) -> bool {
 pub(super) struct PromptAttachments {
     pub(super) resources: Vec<String>,
     pub(super) parts: Option<Vec<Content>>,
+    /// Blobs stored for `file` parts, removed unless the prompt is committed.
+    pub(super) blobs: attachments::NewBlobs,
 }
 
 fn existing_receipt(
@@ -2296,6 +2395,7 @@ impl Inner {
             config_digest: StdMutex::default(),
             location_lease: StdMutex::default(),
             compacting: std::sync::atomic::AtomicUsize::new(0),
+            attachment_cache: StdMutex::default(),
         });
         let mut sessions = self.sessions.lock().unwrap_or_else(PoisonError::into_inner);
         Ok(Arc::clone(sessions.entry(id.into()).or_insert(handle)))
@@ -2334,6 +2434,13 @@ impl Inner {
         }
         info.worktree_id = lease.worktree_id.clone();
         let id = info.id.clone();
+        let blobs = match self.link_fork_blobs(forked_from.as_deref(), &id, &history) {
+            Ok(blobs) => blobs,
+            Err(error) => {
+                lease.settle().map_err(RuntimeError::Invalid)?;
+                return Err(error);
+            }
+        };
         let payload = Created {
             admission_bindings: defaults.admission_bindings,
             child_worktree_setup_pending: defaults.child_worktree_setup_pending,
@@ -2351,9 +2458,13 @@ impl Inner {
             .store
             .append(&id, Expected::Seq(-1), vec![event(CREATED, &payload)])
         {
-            Ok(stored) => self.publish(&stored),
-            // Created concurrently: return the existing Session unchanged.
-            Err(StoreError::Concurrency { .. }) => {}
+            Ok(stored) => {
+                blobs.keep();
+                self.publish(&stored);
+            }
+            // Created concurrently: return the existing Session unchanged; the blobs
+            // linked for it stay, as its history may reference them.
+            Err(StoreError::Concurrency { .. }) => blobs.keep(),
             Err(e) => {
                 lease.settle().map_err(RuntimeError::Invalid)?;
                 return Err(e.into());

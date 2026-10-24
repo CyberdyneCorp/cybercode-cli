@@ -96,18 +96,17 @@ pub enum SessionsCmd {
         #[arg(short, long, value_name = "FILE")]
         output: Option<std::path::PathBuf>,
     },
+    /// Import a JSON export (`cyber sessions export`) as a new Session in this Location,
+    /// with fresh IDs and its attachments, which are verified before anything is written.
+    Import {
+        /// The export file.
+        file: std::path::PathBuf,
+    },
     #[command(external_subcommand)]
     Other(Vec<String>),
 }
 
-const LATER: &[&str] = &[
-    "import",
-    "fork",
-    "rewind",
-    "repair-context",
-    "share",
-    "unshare",
-];
+const LATER: &[&str] = &["fork", "rewind", "repair-context", "share", "unshare"];
 
 pub fn run(cmd: SessionsCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
     if let SessionsCmd::Other(args) = &cmd {
@@ -180,6 +179,7 @@ async fn dispatch(client: &Client, cmd: SessionsCmd, global: &GlobalArgs) -> Res
             let document = export::document(client, &id, options).await.map_err(api)?;
             write_export(&document, format, output.as_deref())
         }
+        SessionsCmd::Import { file } => import(client, &file, global).await,
         SessionsCmd::Other(_) => unreachable!("handled before connecting"),
         branch => dispatch_branch(client, branch, global).await,
     }
@@ -360,6 +360,31 @@ fn write_export(
             Ok(())
         }
     }
+}
+
+/// `cyber sessions import`: prints `Imported session: <id>`, or the Session as JSON.
+async fn import(
+    client: &Client,
+    file: &std::path::Path,
+    global: &GlobalArgs,
+) -> Result<(), CliError> {
+    let text = std::fs::read_to_string(file)
+        .map_err(|e| CliError::runtime(format!("cannot read {}: {e}", file.display())))?;
+    let document: Value = serde_json::from_str(&text).map_err(|e| {
+        CliError::usage(format!(
+            "{} is not a JSON Session export: {e}",
+            file.display()
+        ))
+    })?;
+    let imported = export::import(client, document).await.map_err(api)?;
+    if output::is_json(global.format) {
+        return output::json(&imported);
+    }
+    println!(
+        "Imported session: {}",
+        imported["id"].as_str().unwrap_or_default()
+    );
+    Ok(())
 }
 
 async fn session_id(client: &Client, wanted: &str) -> Result<String, CliError> {

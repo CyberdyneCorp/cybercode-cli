@@ -91,6 +91,21 @@ pub struct ResolvedModel {
     pub cost: Option<Cost>,
     /// The model edits better with `apply_patch` than with `edit`/`write`.
     pub prefers_apply_patch: bool,
+    /// The catalog's `capabilities.vision`: the model takes image input.
+    pub vision: bool,
+    /// The catalog's `capabilities.pdf`: the model takes PDF input.
+    pub pdf: bool,
+}
+
+/// Why a `file` prompt part was not read (`server-api` → Prompt attachment parts).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileReadError {
+    /// A rule, Mode, hook or sandbox denial, or a declined ask.
+    Denied(String),
+    /// The file's metadata reports more than the attachment limit; nothing was read.
+    TooLarge { size: u64 },
+    /// Missing, not a regular file, or unreadable.
+    Invalid(String),
 }
 
 pub trait ModelResolver: Send + Sync {
@@ -171,6 +186,8 @@ impl ModelResolver for CatalogResolver {
             context_limit: model.limits.context,
             cost: model.cost.clone(),
             prefers_apply_patch: model.capabilities.prefers_apply_patch,
+            vision: model.capabilities.vision,
+            pdf: model.capabilities.pdf,
         })
     }
 
@@ -1024,6 +1041,21 @@ pub trait ToolHost: Send + Sync {
         _cancel: CancellationToken,
     ) -> BoxFuture<'a, Vec<String>> {
         Box::pin(async { Vec::new() })
+    }
+
+    /// The bytes of a prompt's `file` part, read under the `read` tool's checks
+    /// (`external_directory`, the `read` rule, `PreToolUse` hooks, hidden paths and the
+    /// checkout's trust); an ask reaches the attached client. A file over `max_bytes` is
+    /// refused from its metadata. Hosts without permission rules read nothing.
+    fn read_attachment<'a>(
+        &'a self,
+        _turn: &'a TurnContext,
+        _path: &'a str,
+        _max_bytes: u64,
+        _asker: super::Asker,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<Vec<u8>, FileReadError>> {
+        Box::pin(async { Err(FileReadError::Denied("this host reads no files".into())) })
     }
 
     /// `action` (`read` or `list`) decisions for project paths under the Session's rules

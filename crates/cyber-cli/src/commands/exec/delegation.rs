@@ -106,7 +106,7 @@ pub(super) async fn execute(
     let attachments = args
         .files
         .iter()
-        .map(|path| setup::file_part(path))
+        .map(|path| setup::file_part(path, false))
         .collect::<Result<Vec<_>, _>>()?;
     negotiate(
         client,

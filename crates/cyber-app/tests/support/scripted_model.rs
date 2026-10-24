@@ -2,7 +2,7 @@
 //! answers every streamed chat request with the `delta` its reply function chooses and
 //! records each request body. A reply of `{"hold": true}` keeps the request open until
 //! [`ScriptedModel::release`], so a test can stop a server mid-Turn, and `{"fail": 400}`
-//! answers with that HTTP error status. A `"headers"` object in a reply is sent as
+//! answers with that HTTP error status (and the error `"message"`, when the reply has one). A `"headers"` object in a reply is sent as
 //! response headers (provider usage windows) instead of being part of the `delta`.
 //! A reply of `{"gate": "<label>"}` logs `(label, start time)` and waits for one
 //! [`ScriptedModel::open_gate`]; gated requests pass one per opening, oldest first, and
@@ -188,9 +188,9 @@ fn answer(
         .map(|(name, value)| format!("{name}: {}\r\n", value.as_str().unwrap_or_default()))
         .collect();
     if let Some(status) = delta.get("fail").and_then(Value::as_u64) {
+        let message = delta["message"].as_str().unwrap_or("scripted failure");
         let error =
-            json!({"error": {"message": "scripted failure", "type": "invalid_request_error"}})
-                .to_string();
+            json!({"error": {"message": message, "type": "invalid_request_error"}}).to_string();
         let _ = write!(
             stream,
             "HTTP/1.1 {status} Error\r\n{headers}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{error}",

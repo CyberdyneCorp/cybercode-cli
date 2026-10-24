@@ -3,7 +3,10 @@
 use futures::future::BoxFuture;
 use serde_json::{Map, Value, json};
 
-use super::{Adapter, Decoder, Endpoint, EventStream, ToolCalls, data_url, decode_sse, parse_json};
+use super::{
+    Adapter, Decoder, Endpoint, EventStream, ToolCalls, data_url, decode_sse, document_name,
+    ensure_resolved, parse_json,
+};
 use crate::error::{LlmError, classify_stream_error};
 use crate::json::{deep_merge, force_no_tools, str_at, strip_credentials, u64_at};
 use crate::sse::SseEvent;
@@ -39,6 +42,7 @@ impl Adapter for OpenAiResponsesAdapter {
 
     fn stream(&self, request: LlmRequest) -> BoxFuture<'_, Result<EventStream, LlmError>> {
         Box::pin(async move {
+            ensure_resolved(&request)?;
             let body = build_body(&request);
             let auth = self
                 .endpoint
@@ -138,7 +142,15 @@ fn input_items(message: &Message) -> Vec<Value> {
                     json!({ "type": "function_call_output", "call_id": call_id, "output": output }),
                 );
             }
-            Content::Reasoning { .. } => {}
+            Content::Document {
+                media_type,
+                data,
+                name,
+            } => {
+                parts.push(json!({ "type": "input_file", "filename": document_name(name), "file_data": data_url(media_type, data) }));
+            }
+            // References are resolved before a request (`ensure_resolved`).
+            Content::Reasoning { .. } | Content::Attachment(_) => {}
         }
     }
     if !parts.is_empty() {
@@ -264,5 +276,29 @@ fn usage_from(u: &Value) -> Usage {
         reasoning,
         cache_read: cached,
         cache_write: 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn documents_become_input_files_with_a_data_url() {
+        let request = LlmRequest {
+            messages: vec![Message {
+                role: Role::User,
+                content: vec![Content::Document {
+                    media_type: "application/pdf".into(),
+                    data: "JVBERi0=".into(),
+                    name: Some("spec.pdf".into()),
+                }],
+            }],
+            ..LlmRequest::default()
+        };
+        assert_eq!(
+            build_body(&request)["input"][0]["content"][0],
+            json!({ "type": "input_file", "filename": "spec.pdf", "file_data": "data:application/pdf;base64,JVBERi0=" })
+        );
     }
 }

@@ -5402,10 +5402,9 @@
           "attachments": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Content"
+              "$ref": "#/components/schemas/PromptPart"
             },
-            "description": "Additional model-visible Content, retained without text conversion.",
-            "default": []
+            "description": "Text and media parts for the child, stored as the parent's prompt media are;\n`file` parts are refused."
           },
           "max_steps": {
             "type": [
@@ -5421,7 +5420,7 @@
           "prompt"
         ]
       },
-      "Content": {
+      "PromptPart": {
         "oneOf": [
           {
             "type": "object",
@@ -5443,10 +5442,17 @@
             "type": "object",
             "properties": {
               "media_type": {
-                "type": "string"
+                "type": "string",
+                "description": "Advisory only: the stored type is sniffed from the bytes."
               },
               "data": {
                 "type": "string"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "type": {
                 "type": "string",
@@ -5458,15 +5464,19 @@
               "media_type",
               "data"
             ],
-            "description": "Base64 image data."
+            "description": "A base64 image. The stored media type is sniffed from the bytes."
           },
           {
             "type": "object",
             "properties": {
-              "text": {
+              "media_type": {
+                "type": "string",
+                "description": "Advisory only: the stored type is sniffed from the bytes."
+              },
+              "data": {
                 "type": "string"
               },
-              "signature": {
+              "name": {
                 "type": [
                   "string",
                   "null"
@@ -5474,63 +5484,58 @@
               },
               "type": {
                 "type": "string",
-                "const": "reasoning"
+                "const": "document"
               }
             },
             "required": [
               "type",
-              "text"
+              "media_type",
+              "data"
             ],
-            "description": "Reasoning from an earlier Turn. `signature` is sent back only to the provider that\nproduced it; the runtime lowers reasoning to text across providers."
+            "description": "A base64 PDF. The stored media type is sniffed from the bytes."
           },
           {
             "type": "object",
             "properties": {
-              "id": {
+              "path": {
                 "type": "string"
               },
               "name": {
-                "type": "string"
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
-              "input": true,
               "type": {
                 "type": "string",
-                "const": "tool_call"
+                "const": "file"
               }
             },
             "required": [
               "type",
-              "id",
-              "name",
-              "input"
-            ]
+              "path"
+            ],
+            "description": "A file the server reads through the `read` tool's checks; local API only."
           },
           {
             "type": "object",
             "properties": {
-              "call_id": {
+              "sha256": {
                 "type": "string"
-              },
-              "output": {
-                "type": "string"
-              },
-              "is_error": {
-                "type": "boolean",
-                "default": false
               },
               "type": {
                 "type": "string",
-                "const": "tool_result"
+                "const": "attachment"
               }
             },
             "required": [
               "type",
-              "call_id",
-              "output"
-            ]
+              "sha256"
+            ],
+            "description": "A blob this Session already stores, by its SHA-256."
           }
         ],
-        "description": "One part of a message. Tool results travel in user messages."
+        "description": "One prompt part."
       },
       "Data_Delegation": {
         "type": "object",
@@ -5608,8 +5613,9 @@
           "parts": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Content"
-            }
+              "$ref": "#/components/schemas/PromptPart"
+            },
+            "description": "Text and media parts; at most 20 media parts."
           },
           "delivery": {
             "$ref": "#/components/schemas/Delivery",
@@ -5698,6 +5704,49 @@
           "promoted",
           "refused"
         ]
+      },
+      "ErrorBody": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "ErrorBody",
+        "description": "The JSON body of every declared failure. Some failures add `reason`, a machine-readable\nrefinement of `_tag`, and fields of their own such as `retryAfterMs` or `path`.",
+        "type": "object",
+        "properties": {
+          "_tag": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "ref": {
+            "description": "`err_<id>` for `UnknownError`, logged server-side.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "paths": {
+            "description": "Paths for rewind conflicts.",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "service": {
+            "description": "Capability group unavailable in this host or phase.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "_tag",
+          "message"
+        ],
+        "additionalProperties": true
       },
       "CommandBody": {
         "type": "object",
@@ -6455,6 +6504,221 @@
           "tools"
         ]
       },
+      "Content": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "const": "text"
+              }
+            },
+            "required": [
+              "type",
+              "text"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "media_type": {
+                "type": "string"
+              },
+              "data": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "const": "image"
+              }
+            },
+            "required": [
+              "type",
+              "media_type",
+              "data"
+            ],
+            "description": "Base64 image data."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "media_type": {
+                "type": "string"
+              },
+              "data": {
+                "type": "string"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "const": "document"
+              }
+            },
+            "required": [
+              "type",
+              "media_type",
+              "data"
+            ],
+            "description": "Base64 document data (`application/pdf`)."
+          },
+          {
+            "$ref": "#/components/schemas/AttachmentRef",
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "attachment"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "description": "A stored prompt attachment (`storage-events` → Attachment storage). The runtime\nresolves it to [`Content::Image`] or [`Content::Document`] before a request; an\nadapter that receives one fails the request."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "signature": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "const": "reasoning"
+              }
+            },
+            "required": [
+              "type",
+              "text"
+            ],
+            "description": "Reasoning from an earlier Turn. `signature` is sent back only to the provider that\nproduced it; the runtime lowers reasoning to text across providers."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "input": true,
+              "type": {
+                "type": "string",
+                "const": "tool_call"
+              }
+            },
+            "required": [
+              "type",
+              "id",
+              "name",
+              "input"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "call_id": {
+                "type": "string"
+              },
+              "output": {
+                "type": "string"
+              },
+              "is_error": {
+                "type": "boolean",
+                "default": false
+              },
+              "type": {
+                "type": "string",
+                "const": "tool_result"
+              }
+            },
+            "required": [
+              "type",
+              "call_id",
+              "output"
+            ]
+          }
+        ],
+        "description": "One part of a message. Tool results travel in user messages."
+      },
+      "AttachmentRef": {
+        "type": "object",
+        "properties": {
+          "sha256": {
+            "type": "string",
+            "description": "Lowercase hex SHA-256 of the stored (normalized) bytes."
+          },
+          "media_type": {
+            "type": "string",
+            "description": "Sniffed from the bytes, never taken from the client."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "size": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Stored size in bytes."
+          },
+          "width": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0
+          },
+          "height": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0
+          },
+          "pages": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Page count of a PDF."
+          },
+          "original": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "SHA-256 of the original blob, kept beside a normalized one with\n`attachments.keep_original`."
+          }
+        },
+        "required": [
+          "sha256",
+          "media_type",
+          "size"
+        ],
+        "description": "The durable reference to a content-addressed attachment blob of one Session."
+      },
       "AssistantEntry": {
         "type": "object",
         "properties": {
@@ -6863,8 +7127,9 @@
               "null"
             ],
             "items": {
-              "$ref": "#/components/schemas/Content"
-            }
+              "$ref": "#/components/schemas/PromptPart"
+            },
+            "description": "Text and media parts, stored as a prompt's are; `file` parts are refused."
           },
           "delivery": {
             "anyOf": [
@@ -8666,49 +8931,6 @@
           "stable"
         ],
         "description": "How far along a feature is. `experimental` features are off by default."
-      },
-      "ErrorBody": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": "ErrorBody",
-        "description": "The JSON body of every declared failure. Some failures add `reason`, a machine-readable\nrefinement of `_tag`, and fields of their own such as `retryAfterMs` or `path`.",
-        "type": "object",
-        "properties": {
-          "_tag": {
-            "type": "string"
-          },
-          "message": {
-            "type": "string"
-          },
-          "ref": {
-            "description": "`err_<id>` for `UnknownError`, logged server-side.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "paths": {
-            "description": "Paths for rewind conflicts.",
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "type": "string"
-            }
-          },
-          "service": {
-            "description": "Capability group unavailable in this host or phase.",
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "_tag",
-          "message"
-        ],
-        "additionalProperties": true
       },
       "Located_Definitions": {
         "type": "object",
@@ -11489,6 +11711,16 @@
               "$ref": "#/components/schemas/SessionExport"
             },
             "description": "Child Sessions, oldest first; present with `include_children=true`."
+          },
+          "attachments": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ExportedBlob"
+            },
+            "description": "The blobs the messages (children's included) reference, once each; only on the\ntop-level export, and omitted by `sanitize=true`."
           }
         },
         "required": [
@@ -11733,6 +11965,203 @@
           "tail"
         ],
         "description": "The `check` that ran after a `met` verdict."
+      },
+      "ExportedBlob": {
+        "type": "object",
+        "properties": {
+          "sha256": {
+            "type": "string"
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The name of the first part referencing the blob.",
+            "default": null
+          },
+          "data": {
+            "type": "string",
+            "description": "Base64 of the bytes."
+          }
+        },
+        "required": [
+          "sha256",
+          "media_type",
+          "size",
+          "data"
+        ],
+        "description": "One blob of a JSON export: `{ sha256, media_type, size, name, data }`."
+      },
+      "ImportDocument": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "sanitized": {
+            "type": "boolean",
+            "default": false
+          },
+          "branches": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "session": {
+            "$ref": "#/components/schemas/ImportedSession"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportedMessage"
+            }
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportedBlob"
+            },
+            "description": "The blobs the messages reference.",
+            "default": []
+          }
+        },
+        "required": [
+          "version",
+          "session"
+        ],
+        "description": "The parts of a `cyber sessions export` document an import reads."
+      },
+      "ImportedSession": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "model"
+        ]
+      },
+      "ImportedMessage": {
+        "type": "object",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "parts": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Content"
+                }
+              },
+              "source": {
+                "type": "string"
+              },
+              "promoted_ms": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "Time of the durable promotion event (`session-runtime` → Assistant\nmessage timing); null only for entries recorded before it was kept.",
+                "default": null
+              },
+              "kind": {
+                "type": "string",
+                "const": "user"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "parts",
+              "source"
+            ]
+          },
+          {
+            "$ref": "#/components/schemas/AssistantEntry",
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "assistant"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "epoch": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "uint32",
+                "minimum": 0
+              },
+              "kind": {
+                "type": "string",
+                "const": "system"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "text"
+            ],
+            "description": "A Mid-Conversation System Message. Context updates belong to one epoch."
+          }
+        ],
+        "description": "One exported message: its entry and, for an answer, its tool calls.",
+        "properties": {
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CallState"
+            },
+            "default": []
+          }
+        }
+      },
+      "Data_SessionInfo": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SessionInfo"
+          }
+        },
+        "required": [
+          "data"
+        ]
       },
       "Data_GoalsView": {
         "type": "object",
@@ -12827,9 +13256,9 @@
           "parts": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Content"
+              "$ref": "#/components/schemas/PromptPart"
             },
-            "description": "Text and image parts only."
+            "description": "Text, image, document and attachment parts only."
           },
           "delivery": {
             "anyOf": [
@@ -12846,7 +13275,7 @@
         "required": [
           "parts"
         ],
-        "description": "What a peer may prompt: text and images, as the Session's user."
+        "description": "What a peer may prompt: text, images, PDFs and the Session's stored blobs, as the\nSession's user."
       },
       "McpToolsChanged": {
         "type": "object",
@@ -18195,6 +18624,46 @@
               }
             }
           },
+          "400": {
+            "description": "InvalidRequestError (an unknown part type among them)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "AttachmentTooLargeError with size and limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "UnsupportedAttachmentError with media_type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "UnsupportedModalityError with model and modality",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
           "default": {
             "description": "Tagged error",
             "content": {
@@ -23214,6 +23683,103 @@
         }
       }
     },
+    "/api/v1/sessions/import": {
+      "post": {
+        "operationId": "v1.session.import",
+        "summary": "Create a Session in the Location from a JSON export, with fresh IDs; its attachment blobs are verified against their SHA-256 and `attachments.max_bytes` before anything is written. A sanitized export or one with every branch is refused",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SessionInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "AttachmentTooLargeError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "ExportTooNewError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportDocument"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{sessionID}/goals": {
       "get": {
         "operationId": "v1.session.goals",
@@ -26008,7 +26574,7 @@
     "/api/v1/peer/attach/{sessionID}/prompt": {
       "post": {
         "operationId": "v1.peer.attachPrompt",
-        "summary": "Prompt the attached Session as its user with text and image parts",
+        "summary": "Prompt the attached Session as its user with text, image and document parts",
         "tags": [
           "peer"
         ],
@@ -26043,6 +26609,26 @@
           },
           "403": {
             "description": "PermissionDeniedError: no approved attach ID in X-Cyber-Attach",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "AttachmentTooLargeError with size and limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "UnsupportedAttachmentError with media_type",
             "content": {
               "application/json": {
                 "schema": {

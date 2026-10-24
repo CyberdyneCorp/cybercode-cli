@@ -274,12 +274,22 @@ pub fn parts_text(parts: &Value) -> String {
         .flatten()
         .map(|p| match p["type"].as_str() {
             Some("text") => p["text"].as_str().unwrap_or_default().to_string(),
-            Some("image") => "[Image]".to_string(),
+            Some("image" | "document" | "attachment") => crate::attachments::transcript_label(p),
             _ => String::new(),
         })
         .filter(|t| !t.is_empty())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// A queued input's text: what was typed before its first media part (the chip
+/// labels sent with it), or every part when that is empty.
+fn queued_text(parts: &Value) -> String {
+    let list = parts.as_array().map(Vec::as_slice).unwrap_or_default();
+    match list.iter().position(|part| part["type"] != "text") {
+        Some(first) if first > 0 => parts_text(&Value::Array(list[..first].to_vec())),
+        _ => parts_text(parts),
+    }
 }
 
 /// A queued or held input.
@@ -290,6 +300,8 @@ pub struct Queued {
     pub delivery: String,
     /// Recorded but not promotable until released.
     pub held: bool,
+    /// Its stored attachments, which become chips again when it is taken back.
+    pub media: Vec<crate::attachments::Stored>,
 }
 
 impl Queued {
@@ -302,9 +314,10 @@ impl Queued {
         };
         Some(Self {
             message_id: v["message_id"].as_str()?.into(),
-            text: parts_text(&v["parts"]),
+            text: queued_text(&v["parts"]),
             delivery: v["delivery"].as_str().unwrap_or_default().into(),
             held,
+            media: crate::attachments::stored(&v["parts"]),
         })
     }
 }

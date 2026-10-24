@@ -1,6 +1,7 @@
 //! Backend, Session selection and prompt assembly for `cyber exec`.
 
 use std::io::{IsTerminal, Read};
+use std::path::Path;
 
 use base64::Engine;
 use cyber_app::{App, AppOptions};
@@ -358,39 +359,103 @@ pub fn request(id: &str, args: &ExecArgs, prompt: String) -> Result<(String, Val
     }
     let mut parts = vec![json!({ "type": "text", "text": prompt })];
     for file in &args.files {
-        parts.push(file_part(file)?);
+        parts.push(file_part(file, args.attach.is_none())?);
     }
     Ok((format!("/sessions/{id}/prompt"), json!({ "parts": parts })))
 }
 
-pub(super) fn file_part(path: &std::path::Path) -> Result<Value, CliError> {
-    let bytes = std::fs::read(path)
-        .map_err(|_| CliError::usage(format!("--file {}: no such file", path.display())))?;
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let media = match ext.as_str() {
-        "png" => Some("image/png"),
-        "jpg" | "jpeg" => Some("image/jpeg"),
-        "gif" => Some("image/gif"),
-        "webp" => Some("image/webp"),
-        _ => None,
-    };
-    if let Some(media_type) = media {
-        let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
-        return Ok(json!({ "type": "image", "media_type": media_type, "data": data }));
+/// One `--file` part. An image or a PDF, judged by its first bytes, goes to a server on
+/// this machine as a `file` part that the server reads under the `read` permission and
+/// the run's mode; a remote server (`--attach`) gets the bytes inline. Anything else is
+/// attached as text.
+pub(super) fn file_part(path: &Path, local: bool) -> Result<Value, CliError> {
+    let missing = || CliError::usage(format!("--file {}: no such file", path.display()));
+    if std::fs::metadata(path).map_err(|_| missing())?.is_dir() {
+        return Err(CliError::usage(format!(
+            "--file {}: is a directory",
+            path.display()
+        )));
     }
+    let name = path.file_name().map(|name| name.to_string_lossy());
+    if let Some(media_type) = media_type(path)? {
+        if local {
+            let absolute = std::path::absolute(path)?;
+            return Ok(json!({ "type": "file", "path": absolute, "name": name }));
+        }
+        let data = base64::engine::general_purpose::STANDARD.encode(std::fs::read(path)?);
+        let kind = if media_type == "application/pdf" {
+            "document"
+        } else {
+            "image"
+        };
+        return Ok(json!({ "type": kind, "media_type": media_type, "data": data, "name": name }));
+    }
+    let bytes = std::fs::read(path).map_err(|_| missing())?;
     let text = String::from_utf8(bytes).map_err(|_| {
         CliError::usage(format!(
-            "--file {}: not a text or image file",
+            "--file {}: not a text, image or PDF file",
             path.display()
         ))
     })?;
     Ok(
         json!({ "type": "text", "text": format!("<file path=\"{}\">\n{text}\n</file>", path.display()) }),
     )
+}
+
+/// The image or PDF media type of the file, from its magic bytes.
+fn media_type(path: &Path) -> Result<Option<&'static str>, CliError> {
+    let mut head = Vec::with_capacity(16);
+    std::fs::File::open(path)?.take(16).read_to_end(&mut head)?;
+    Ok(cyber_server::runtime::attachments::sniff(&head))
+}
+
+/// The server tags of a prompt it refused before admitting it.
+const REFUSALS: [&str; 5] = [
+    "InvalidRequestError",
+    "AttachmentTooLargeError",
+    "UnsupportedAttachmentError",
+    "UnsupportedModalityError",
+    "PermissionDeniedError",
+];
+
+/// A refused prompt exits 2 with the server's message. A denied image or PDF outside the
+/// Session's Location gets a hint to add its directory.
+pub(super) fn refusal(
+    error: cyber_client::ClientError,
+    args: &ExecArgs,
+    session: &Value,
+) -> CliError {
+    if !error.tag().is_some_and(|tag| REFUSALS.contains(&tag)) {
+        return api(error);
+    }
+    let refused = CliError::usage(error.to_string());
+    if error.tag() != Some("PermissionDeniedError") {
+        return refused;
+    }
+    let location = session["directory"].as_str().map(std::fs::canonicalize);
+    let Some(Ok(location)) = location else {
+        return refused;
+    };
+    match args
+        .files
+        .iter()
+        .find_map(|file| outside_dir(file, &location))
+    {
+        Some(dir) => refused.with_hint(format!("add --add-dir {}", dir.display())),
+        None => refused,
+    }
+}
+
+/// The directory of an image or PDF `--file` that lies outside `location`.
+fn outside_dir(file: &Path, location: &Path) -> Option<std::path::PathBuf> {
+    let canonical = std::fs::canonicalize(file).ok()?;
+    if canonical.starts_with(location) || !matches!(media_type(file), Ok(Some(_))) {
+        return None;
+    }
+    std::path::absolute(file)
+        .ok()?
+        .parent()
+        .map(Path::to_path_buf)
 }
 
 pub(super) fn urlencode(s: &str) -> String {
@@ -409,5 +474,111 @@ pub(super) fn api(e: cyber_client::ClientError) -> CliError {
     match e.tag() {
         Some("InvalidRequestError") => CliError::usage(e.to_string()),
         _ => CliError::runtime(e.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
+
+    #[test]
+    fn media_files_are_sniffed_and_sent_by_path_or_inline() {
+        let dir = tempfile::tempdir().unwrap();
+        // The extension does not decide: the bytes do.
+        let shot = dir.path().join("shot.txt");
+        std::fs::write(&shot, PNG).unwrap();
+        let local = file_part(&shot, true).unwrap();
+        assert_eq!(local["type"], "file");
+        assert_eq!(local["name"], "shot.txt");
+        assert!(Path::new(local["path"].as_str().unwrap()).is_absolute());
+        let inline = file_part(&shot, false).unwrap();
+        assert_eq!(inline["type"], "image");
+        assert_eq!(inline["media_type"], "image/png");
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(inline["data"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(data, PNG);
+
+        let pdf = dir.path().join("spec.pdf");
+        std::fs::write(&pdf, b"%PDF-1.7\n").unwrap();
+        assert_eq!(file_part(&pdf, false).unwrap()["type"], "document");
+        assert_eq!(file_part(&pdf, true).unwrap()["type"], "file");
+
+        let note = dir.path().join("note.png");
+        std::fs::write(&note, "plain text").unwrap();
+        let text = file_part(&note, true).unwrap();
+        assert_eq!(text["type"], "text");
+        assert!(
+            text["text"]
+                .as_str()
+                .unwrap()
+                .ends_with("plain text\n</file>")
+        );
+    }
+
+    #[test]
+    fn directories_missing_and_binary_files_are_usage_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = file_part(dir.path(), true).unwrap_err();
+        assert_eq!(error.code, crate::error::EXIT_USAGE);
+        assert!(
+            error.message.ends_with("is a directory"),
+            "{}",
+            error.message
+        );
+        let missing = file_part(&dir.path().join("gone.png"), true).unwrap_err();
+        assert!(missing.message.ends_with("no such file"));
+        let zip = dir.path().join("a.zip");
+        std::fs::write(&zip, b"PK\x03\x04\xff\xfe").unwrap();
+        let binary = file_part(&zip, true).unwrap_err();
+        assert!(binary.message.ends_with("not a text, image or PDF file"));
+    }
+
+    #[test]
+    fn attachment_refusals_exit_2_and_a_denied_outside_file_gets_the_add_dir_hint() {
+        let root = tempfile::tempdir().unwrap();
+        let (location, outside) = (root.path().join("repo"), root.path().join("shots"));
+        std::fs::create_dir_all(&location).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let shot = outside.join("shot.png");
+        std::fs::write(&shot, PNG).unwrap();
+        let session = json!({ "directory": location });
+        let args = ExecArgs {
+            files: vec![shot],
+            ..ExecArgs::default()
+        };
+        let api_error = |tag: &str| cyber_client::ClientError::Api {
+            status: 400,
+            tag: tag.into(),
+            message: "refused".into(),
+            body: Value::Null,
+        };
+        let denied = refusal(api_error("PermissionDeniedError"), &args, &session);
+        assert_eq!(denied.code, crate::error::EXIT_USAGE);
+        assert_eq!(denied.message, "PermissionDeniedError: refused");
+        let hint = denied.hint.unwrap();
+        assert!(hint.starts_with("add --add-dir "), "{hint}");
+        assert!(hint.ends_with("shots"), "{hint}");
+        for tag in [
+            "AttachmentTooLargeError",
+            "UnsupportedAttachmentError",
+            "UnsupportedModalityError",
+        ] {
+            let refused = refusal(api_error(tag), &args, &session);
+            assert_eq!(
+                (refused.code, refused.hint),
+                (crate::error::EXIT_USAGE, None)
+            );
+        }
+        let other = refusal(api_error("ConflictError"), &args, &session);
+        assert_eq!(other.code, crate::error::EXIT_RUNTIME);
+        let inside = json!({ "directory": root.path() });
+        assert!(
+            refusal(api_error("PermissionDeniedError"), &args, &inside)
+                .hint
+                .is_none()
+        );
     }
 }

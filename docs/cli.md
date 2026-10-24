@@ -294,6 +294,7 @@ cyber sessions [OPTIONS] <COMMAND>
 - [`checkout`](#cyber-sessions-checkout): Make another branch active; the Session must be idle
 - [`label`](#cyber-sessions-label): Set or remove a branch label
 - [`export`](#cyber-sessions-export): Write a Session as JSON (default), Markdown (--format md) or one self-contained HTML page (--format html): its info, messages, tool calls, goals and workflow runs
+- [`import`](#cyber-sessions-import): Import a JSON export (`cyber sessions export`) as a new Session in this Location, with fresh IDs and its attachments, which are verified before anything is written
 
 ## `cyber sessions list`
 
@@ -414,6 +415,18 @@ cyber sessions export [OPTIONS] <SESSION>
 - `--include-children`: Include child Sessions (subagents, workflow agents), recursively.
 - `--all-branches`: Include every branch; each message's `parent_message_id` links the tree.
 - `-o, --output <FILE>`: Write the export to this file, atomically, instead of stdout. A symlink is refused; an existing file keeps its permissions, a new one is private.
+
+## `cyber sessions import`
+
+Import a JSON export (`cyber sessions export`) as a new Session in this Location, with fresh IDs and its attachments, which are verified before anything is written
+
+```text
+cyber sessions import [OPTIONS] <FILE>
+```
+
+**Arguments:**
+
+- `<FILE>`: The export file.
 
 ## `cyber skills`
 
@@ -1654,7 +1667,7 @@ cyber exec [OPTIONS] [PROMPT]...
 - `--command <COMMAND>`: Run a skill or custom command with the prompt as its arguments.
 - `--workflow <NAME|PATH>`: Run a Workflow (a saved name or a `.js` module path) instead of a prompt; its return value is the result.
 - `--args <JSON>`: The Workflow's `args` as a JSON object.
-- `--file <FILES>`: Attach a file (repeatable)
+- `--file <FILES>`: Attach a file (repeatable): an image or PDF as an attachment, read by a local server under the `read` permission (sent inline with --attach); others as text.
 - `--max-turns <MAX_TURNS>`: With --goal: each Goal's `max_turns` budget; otherwise the Session's step ceiling.
 - `--goal <CONDITION>`: Work until this Goal is met (repeatable: a queue, in order). The exit code is 0 met, 3 impossible, 4 budget exceeded, 1 otherwise, for the first non-met Goal.
 - `--goal-check <COMMAND>`: A command that must pass for the --goal before it to count as met.

@@ -753,3 +753,37 @@ async fn adapters_record_reported_usage_windows_and_nothing_else() {
     assert_eq!(readings[1].window.used_percent, 40.0);
     assert!(readings.iter().all(|r| r.observed_ms > 0));
 }
+
+#[tokio::test]
+async fn every_adapter_refuses_an_unresolved_attachment_before_sending() {
+    // A stored reference reaching an adapter is a runtime bug: it fails closed and the
+    // provider never sees the request.
+    let server = MockServer::start().await;
+    let mut req = request();
+    req.messages.push(Message {
+        role: Role::User,
+        content: vec![Content::Attachment(cyber_llm::AttachmentRef {
+            sha256: "ab".repeat(32),
+            media_type: "image/png".into(),
+            name: Some("shot.png".into()),
+            size: 10,
+            width: None,
+            height: None,
+            pages: None,
+            original: None,
+        })],
+    });
+    for kind in [
+        ApiKind::OpenaiCompatible,
+        ApiKind::OpenaiResponses,
+        ApiKind::Anthropic,
+        ApiKind::ChatgptCodex,
+        ApiKind::CopilotChat,
+    ] {
+        let a = adapter(kind, Endpoint::new(server.uri(), None));
+        let error = a.stream(req.clone()).await.err().unwrap();
+        assert_eq!(error.kind, ErrorKind::InvalidRequest, "{kind:?}");
+        assert_eq!(error.message, "unresolved attachment", "{kind:?}");
+    }
+    assert!(server.received_requests().await.unwrap().is_empty());
+}

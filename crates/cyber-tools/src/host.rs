@@ -1,4 +1,5 @@
 //! The built-in tool host (`tool-registry`, `builtin-tools`, `permissions-modes`).
+mod attachments;
 mod command_mcp;
 mod command_skills;
 mod files;
@@ -782,6 +783,17 @@ impl ToolHost for BuiltinHost {
         cancel: CancellationToken,
     ) -> BoxFuture<'a, Vec<String>> {
         Box::pin(self.resolve_mentions(turn, parts, asker, cancel))
+    }
+
+    fn read_attachment<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        path: &'a str,
+        max_bytes: u64,
+        asker: cyber_server::runtime::Asker,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<Vec<u8>, cyber_server::runtime::FileReadError>> {
+        Box::pin(self.read_file_part(turn, path, max_bytes, asker, cancel))
     }
 
     fn expand_prompt_template<'a>(
