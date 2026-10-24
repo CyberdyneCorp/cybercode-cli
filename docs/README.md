@@ -23,8 +23,10 @@ Specifications include future work. A specification's presence does not mean the
 
 ## Proposed next delivery slices
 
-This OpenSpec plan describes work that has not shipped:
+These OpenSpec plans describe work that has not shipped:
 
 - [Local web dashboard and browser approvals](../openspec/changes/implement-local-web-dashboard/proposal.md): P1 private access, live request handling and reconnect; account/Relay access stays P3.
+- [Cyber Account](account.md): account login, storage and deployment prerequisites.
+- [Project collaboration](collaboration.md): self-hosted hub setup, identity and membership, explicit checkout binding, published agents, receiver consent and shared tasks (experimental, off by default; live Auth provisioning remains operator work).
 
 Review each proposal, design, scenarios and tasks before runtime implementation. The [roadmap](../ROADMAP.md) records the phases and delivery order.

@@ -287,6 +287,8 @@ async fn webfetch_summary_is_billed_and_blocks_the_next_session_provider_turn() 
                 context_limit: 200000,
                 cost: None,
                 prefers_apply_patch: false,
+                vision: false,
+                pdf: false,
             })
         }
         fn role(&self, _: ModelRole) -> Option<String> {

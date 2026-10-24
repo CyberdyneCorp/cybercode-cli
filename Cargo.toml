@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/cyber-account",
+    "crates/cyber-collab",
     "crates/cyber-core",
     "crates/cyber-store",
     "crates/cyber-llm",
@@ -45,6 +47,19 @@ unsafe_code = "deny"
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 cognitive_complexity = "deny"
+
+# Image decoding, resizing and encoding of prompt attachments is unusably slow unoptimized
+# (a 4000x3000 screenshot takes minutes), so these crates are optimized in dev builds too.
+[profile.dev.package.image]
+opt-level = 3
+[profile.dev.package.png]
+opt-level = 3
+[profile.dev.package.zune-jpeg]
+opt-level = 3
+[profile.dev.package.fdeflate]
+opt-level = 3
+[profile.dev.package.miniz_oxide]
+opt-level = 3
 
 [profile.release]
 lto = "thin"

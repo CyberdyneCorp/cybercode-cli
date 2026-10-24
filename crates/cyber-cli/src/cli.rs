@@ -147,6 +147,27 @@ pub enum Format {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Sign in to a Cyber Account for collaboration and other networked features.
+    Login {
+        /// Print the login URL and accept a pasted redirect; use device login if advertised.
+        #[arg(long)]
+        no_browser: bool,
+        /// Require a new authentication for a recent-authentication approval.
+        #[arg(long)]
+        reauth: bool,
+    },
+    /// Show the current Cyber Account without exposing tokens.
+    Whoami {
+        /// Select an authorized organization by short name or immutable ID.
+        #[arg(long)]
+        org: Option<String>,
+    },
+    /// Remove Cyber Account credentials, keeping provider logins and local Sessions.
+    Logout {
+        /// Remove every stored Cyber Account, not only the active account.
+        #[arg(long)]
+        all: bool,
+    },
     /// Import Claude Code, Codex or OpenCode configuration: detect, preview or write.
     Import(crate::commands::import::ImportArgs),
     /// Inspect installed language servers for the current Location.
@@ -266,6 +287,11 @@ pub enum Command {
     },
     /// Send one request to the server API.
     Api(ApiArgs),
+    /// Work with people and their locally running agents through a project hub.
+    Collab {
+        #[command(subcommand)]
+        cmd: crate::commands::collab::CollabCmd,
+    },
     /// Pair with other machines' cyber servers to message their Sessions.
     Peers {
         #[command(subcommand)]

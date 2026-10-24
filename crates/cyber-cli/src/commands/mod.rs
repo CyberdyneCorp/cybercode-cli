@@ -1,8 +1,10 @@
 //! Command dispatch.
 
+pub mod account;
 pub mod api;
 pub mod attach;
 mod branches;
+pub mod collab;
 pub mod db;
 pub mod debug;
 pub mod doctor;
@@ -95,6 +97,11 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
     };
     start_logging(&ctx, &cli.global)?;
     match command {
+        Command::Login { no_browser, reauth } => {
+            account::login(&ctx, &cli.global, no_browser, reauth)
+        }
+        Command::Whoami { org } => account::whoami(&ctx, &cli.global, org.as_deref()),
+        Command::Logout { all } => account::logout(&ctx, &cli.global, all),
         Command::Lsp { cmd } => intelligence::lsp(cmd, &ctx, &cli.global),
         Command::Fmt { cmd } => intelligence::fmt(cmd, &ctx, &cli.global),
         Command::Memory(args) => memory::run(args, &ctx, &cli.global),
@@ -119,6 +126,7 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
         Command::Service { cmd } => serve::service(cmd, &ctx, &cli.global),
         Command::Api(args) => api::run(args, &ctx),
         Command::Messages { cmd } => messages::run(cmd, &ctx, &cli.global),
+        Command::Collab { cmd } => collab::run(cmd, &ctx, &cli.global),
         Command::Peers { cmd } => peers::run(cmd, &ctx, &cli.global),
         Command::Attach(args) => attach::run(&args, &ctx),
         Command::Exec(args) => exec::run(*args, &ctx, &cli.global),

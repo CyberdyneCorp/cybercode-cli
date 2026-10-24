@@ -17,11 +17,11 @@ expression: shown
     reasoning                     collapsed      default
     diff_style                    auto           default
     timestamps                    off            default
+    mouse                         on             default
     color                         auto           default
     accessibility.reduced_motion  off            default
 
   Saved to kv.json; a later edit of tui.jsonc wins.
-
   Core settings: use cyber config or edit cyber.jsonc
 
 

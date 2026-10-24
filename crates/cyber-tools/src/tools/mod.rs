@@ -3,6 +3,7 @@
 pub(crate) mod agent;
 mod background;
 pub(crate) mod bash;
+pub(crate) mod collaboration;
 mod deliver;
 mod dev_server;
 mod formatters;
@@ -79,6 +80,11 @@ pub(crate) fn all() -> Vec<Box<dyn Tool>> {
         Box::new(session::PlanExit),
         Box::new(agent::Agent),
         Box::new(workflow::Workflow),
+        Box::new(collaboration::Participants),
+        Box::new(collaboration::Messages),
+        Box::new(collaboration::Send),
+        Box::new(collaboration::Tasks),
+        Box::new(collaboration::TaskWrite),
         Box::new(messaging::ListSessions),
         Box::new(messaging::SendMessage),
         Box::new(messaging::WatchSession),
@@ -129,6 +135,8 @@ pub(crate) fn action_of(name: &str) -> &str {
         "send_file" => "read",
         "enter_worktree" | "exit_worktree" => "worktree",
         "workflow" => crate::permissions::WORKFLOW_RUN,
+        "collab_send_message" => crate::permissions::COLLAB_MESSAGE_SEND,
+        "collab_task_write" => crate::permissions::COLLAB_TASK_WRITE,
         "send_message" => crate::permissions::MESSAGE_SEND,
         goal::NAME => crate::permissions::GOAL_SET,
         team::SPAWN | team::MERGE => crate::permissions::TEAM_MANAGE,

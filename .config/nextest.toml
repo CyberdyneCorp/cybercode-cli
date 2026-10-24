@@ -21,7 +21,11 @@ failure-output = "immediate-final"
 slow-timeout = { period = "60s", terminate-after = 10 }
 # One line per test binary; add a test binary or a test name filter to run it on Windows.
 default-filter = '''
-binary_id(cyber-app) & (test(peer_tokens) | test(peer_discovery) | test(host::tests) | test(app_host_delegates_validated_agent_request_options))
+binary_id(cyber-account)
+| binary_id(cyber-account::oidc)
+| binary_id(cyber-account::tokens)
+| binary_id(cyber-app) & (test(peer_tokens) | test(peer_discovery) | test(host::tests) | test(app_host_delegates_validated_agent_request_options))
+| binary_id(cyber-app::account)
 | binary_id(cyber-app::backup)
 | binary_id(cyber-app::deliveries)
 | binary_id(cyber-app::intelligence)
@@ -37,6 +41,7 @@ binary_id(cyber-app) & (test(peer_tokens) | test(peer_discovery) | test(host::te
 | binary_id(cyber-app::workflows)
 | binary_id(cyber-cli::bin/cyber)
 | binary_id(cyber-cli::browser_cli)
+| binary_id(cyber-cli::account)
 | binary_id(cyber-cli::cli)
 | binary_id(cyber-cli::exec_delegation)
 | binary_id(cyber-cli::exec_entered_worktree)
@@ -56,6 +61,7 @@ binary_id(cyber-app) & (test(peer_tokens) | test(peer_discovery) | test(host::te
 | binary_id(cyber-cli::plugins_cli)
 | binary_id(cyber-cli::uninstall_cli)
 | binary_id(cyber-cli::upgrade_cli)
+| binary_id(cyber-collab)
 | binary_id(cyber-client) & (test(peer) | test(embedded_raw))
 | package(cyber-install)
 | binary_id(cyber-core)

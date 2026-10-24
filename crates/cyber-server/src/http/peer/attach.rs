@@ -27,7 +27,6 @@ use axum::extract::{Extension, Path, Query, State};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use cyber_llm::Content;
 use futures::StreamExt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -36,7 +35,9 @@ use tokio_util::sync::CancellationToken;
 use super::{PeerState, guard};
 use crate::http::envelope::{Data, query_value};
 use crate::http::error::ApiError;
-use crate::http::sessions::{MessagesQuery, PermissionReplyBody, PromptBody, ReplyKind};
+use crate::http::sessions::{
+    MessagesQuery, PermissionReplyBody, PromptBody, PromptPart, ReplyKind,
+};
 use crate::runtime::messaging::PeerScope;
 use crate::runtime::peers::attach::REMOTE_ATTACH;
 use crate::runtime::peers::{Grant, grants};
@@ -335,13 +336,14 @@ pub(super) async fn events(
     Ok(Response::from_parts(head, Body::from_stream(body)))
 }
 
-/// What a peer may prompt: text and images, as the Session's user.
+/// What a peer may prompt: text, images, PDFs and the Session's stored blobs, as the
+/// Session's user.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PeerPrompt {
     id: Option<String>,
-    /// Text and image parts only.
-    parts: Vec<Content>,
+    /// Text, image, document and attachment parts only.
+    parts: Vec<PromptPart>,
     /// Default `steer`.
     delivery: Option<Delivery>,
 }
@@ -356,13 +358,15 @@ pub(super) async fn prompt(
 ) -> Result<Response, ApiError> {
     admitted(&peer, &grant, &headers, &id)?;
     let Json(body) = body.map_err(|error| ApiError::invalid(error.body_text()))?;
-    let allowed = body
+    // A paired Device's path names nothing on this machine and would read its files. An
+    // `attachment` part names a blob this Session already stores, so it reads nothing else.
+    if body
         .parts
         .iter()
-        .all(|part| matches!(part, Content::Text { .. } | Content::Image { .. }));
-    if !allowed {
+        .any(|part| matches!(part, PromptPart::File { .. }))
+    {
         return Err(ApiError::invalid(
-            "an attached peer may prompt with text and image parts only",
+            "an attached peer may prompt with text, image, document and attachment parts only",
         ));
     }
     let prompt = PromptBody {
@@ -372,7 +376,7 @@ pub(super) async fn prompt(
         resume: true,
         source: None,
     };
-    crate::http::sessions::prompt(State(peer.app), Path(id), Json(prompt)).await
+    crate::http::sessions::submit_prompt(&peer.app, &id, prompt).await
 }
 
 /// `POST /attach/:id/interrupt`.

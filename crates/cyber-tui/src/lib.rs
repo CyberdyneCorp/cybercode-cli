@@ -2,9 +2,11 @@
 
 mod admissions;
 mod app;
+mod attachments;
 pub mod books;
 mod branches;
 mod children;
+mod collaboration;
 mod composer;
 mod explorer;
 mod export;
@@ -21,6 +23,7 @@ mod markdown;
 mod memory;
 mod messaging;
 mod model;
+mod mouse;
 mod osc;
 mod palette;
 mod perform;
@@ -49,6 +52,8 @@ mod workflows;
 mod screens;
 #[cfg(test)]
 mod screens_a11y;
+#[cfg(test)]
+mod screens_attachments;
 #[cfg(test)]
 mod screens_branches;
 #[cfg(test)]
@@ -147,3 +152,6 @@ pub struct Summary {
     pub output_tokens: u64,
     pub cost: f64,
 }
+
+#[cfg(test)]
+mod screens_collaboration;

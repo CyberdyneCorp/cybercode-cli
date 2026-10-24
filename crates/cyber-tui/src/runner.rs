@@ -2,6 +2,7 @@
 //! Rendering modes and terminal integration).
 
 use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crossterm::event::{Event as TermEvent, EventStream, KeyEventKind};
@@ -29,7 +30,7 @@ pub async fn run(opts: TuiOptions) -> Result<Summary, String> {
     let mut terminal = setup().map_err(|e| e.to_string())?;
     let result = event_loop(&mut terminal, &mut app, &client, &store, &opts, open_picker).await;
     teardown(&mut terminal);
-    store.save_draft(&app.session.id, &app.composer.text());
+    save_draft(&store, &app);
     result?;
     let s = &app.session;
     Ok(Summary {
@@ -85,7 +86,12 @@ pub(crate) async fn start(
     {
         app.toast(offer);
     }
+    app.attachments.dir = Some(opts.state_dir.clone());
+    app.attachments.paste_summary = prefs.paste_summary;
     app.composer.set_text(&store.draft(&app.session.id));
+    if let Some(gone) = app.attachments.restore(store.chips(&app.session.id)) {
+        app.toast(gone);
+    }
     Ok((app, open_picker))
 }
 
@@ -104,6 +110,12 @@ fn onboarding_offer(
 ) -> Option<String> {
     crate::import_offer::offer(store, std::path::Path::new(&opts.directory), home)
         .or_else(|| crate::plugins::offer(store, &opts.directory, plugins))
+}
+
+/// Keep the composer's text and chips for the next start in this Session.
+pub(crate) fn save_draft(store: &LocalStore, app: &App) {
+    store.save_draft(&app.session.id, &app.composer.text());
+    store.save_chips(&app.session.id, &app.attachments.chips);
 }
 
 /// The Session to show first, and whether to open the picker over it.
@@ -191,6 +203,9 @@ fn setup() -> std::io::Result<Term> {
         event::EnableBracketedPaste,
         event::EnableFocusChange
     )?;
+    if MOUSE_CAPTURE.load(Ordering::Relaxed) {
+        execute!(out, event::EnableMouseCapture)?;
+    }
     if terminal::supports_keyboard_enhancement().unwrap_or(false) {
         let _ = execute!(
             out,
@@ -202,6 +217,26 @@ fn setup() -> std::io::Result<Term> {
     Terminal::new(CrosstermBackend::new(out))
 }
 
+/// Whether the UI holds mouse capture: [`setup`] restores it after a suspend (the
+/// editor), and [`teardown`] always releases it.
+static MOUSE_CAPTURE: AtomicBool = AtomicBool::new(false);
+
+/// Follow `tui.mouse`: capture the mouse so the wheel scrolls the UI, not the
+/// terminal's scrollback, or release it for the terminal's own selection.
+fn sync_mouse(out: &mut impl Write, on: bool) {
+    if MOUSE_CAPTURE.swap(on, Ordering::Relaxed) != on {
+        let _ = write_mouse(out, on);
+    }
+}
+
+fn write_mouse(out: &mut impl Write, on: bool) -> std::io::Result<()> {
+    if on {
+        execute!(out, event::EnableMouseCapture)
+    } else {
+        execute!(out, event::DisableMouseCapture)
+    }
+}
+
 fn teardown(terminal: &mut Term) {
     let mut out = std::io::stdout();
     let _ = execute!(
@@ -209,6 +244,7 @@ fn teardown(terminal: &mut Term) {
         event::PopKeyboardEnhancementFlags,
         event::DisableBracketedPaste,
         event::DisableFocusChange,
+        event::DisableMouseCapture,
         terminal::LeaveAlternateScreen
     );
     let _ = terminal::disable_raw_mode();
@@ -254,6 +290,7 @@ async fn event_loop(
     let mut tick = tokio::time::interval(Duration::from_millis(250));
     query_background(app);
     while !app.quit {
+        sync_mouse(&mut std::io::stdout(), app.mouse_capture());
         set_title(app);
         app.progress_sync();
         let frame = terminal
@@ -300,6 +337,7 @@ async fn on_tick(
     app.refresh_admissions();
     actions.extend(app.machine_poll());
     actions.extend(app.login_poll());
+    actions.extend(app.collaboration_poll());
     actions
 }
 
@@ -333,6 +371,7 @@ fn initial_actions(
         initial.push(Action::Prompt {
             text: prompt.clone(),
             delivery: "steer",
+            chips: Vec::new(),
         });
     }
     initial
@@ -482,6 +521,7 @@ fn terminal_event(app: &mut App, ev: TermEvent) -> Vec<Action> {
             .probe_key(key)
             .map(|key| app.on_key(key))
             .unwrap_or_default(),
+        TermEvent::Mouse(mouse) => app.on_mouse(mouse),
         TermEvent::Paste(text) => {
             app.on_paste(&text);
             Vec::new()
@@ -688,6 +728,11 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
             open,
             toast,
         } => app.team_reply(&session_id, *view, open, toast),
+        Msg::Collaboration {
+            session_id,
+            generation,
+            result,
+        } => app.collaboration_reply(&session_id, generation, *result),
         Msg::Login(reply) => return app.login_reply(reply),
         Msg::Toast(text) => app.toast(text),
         Msg::ExportExists(request) => app.export_exists(request),
@@ -711,6 +756,12 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
         }
         Msg::Update(status) => app.update_status(status),
         Msg::Done => {}
+        Msg::PromptRefused {
+            session_id,
+            text,
+            chips,
+            message,
+        } => app.prompt_refused(&session_id, &text, chips, message),
     }
     Vec::new()
 }
@@ -1520,5 +1571,42 @@ mod mode_tests {
             app.toast.as_ref().map(|(text, _)| text.as_str()),
             Some("bypass mode is disabled by your organization")
         );
+    }
+}
+
+#[cfg(test)]
+mod mouse_tests {
+    use crossterm::event::{Event as TermEvent, KeyModifiers, MouseEvent, MouseEventKind};
+
+    use crate::app::App;
+
+    // Unix terminals get escape sequences; on Windows crossterm may use the console
+    // API instead, which writes nothing to the buffer.
+    #[cfg(unix)]
+    #[test]
+    fn capture_turns_on_the_terminal_mouse_reports_and_off_again() {
+        let mut on = Vec::new();
+        super::write_mouse(&mut on, true).unwrap();
+        let on = String::from_utf8(on).unwrap();
+        // Button and wheel reports, in SGR encoding.
+        assert!(on.contains("\x1b[?1000h"), "{on:?}");
+        assert!(on.contains("\x1b[?1006h"), "{on:?}");
+        let mut off = Vec::new();
+        super::write_mouse(&mut off, false).unwrap();
+        let off = String::from_utf8(off).unwrap();
+        assert!(off.contains("\x1b[?1000l"), "{off:?}");
+    }
+
+    #[test]
+    fn a_wheel_event_from_the_terminal_scrolls_the_transcript() {
+        let mut app = App::new(Default::default(), Vec::new(), "cyber");
+        let wheel = TermEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        super::terminal_event(&mut app, wheel);
+        assert_eq!(app.scroll, crate::mouse::WHEEL_LINES);
     }
 }

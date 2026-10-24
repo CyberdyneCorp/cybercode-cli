@@ -5,6 +5,8 @@
 //! `messaging_watch`. Both tables are rebuildable from the `messaging.*` events.
 
 pub mod address;
+pub mod collaboration;
+pub use collaboration::{CollaborationAuthorizer, CollaborationOrigin};
 pub mod history;
 pub(crate) mod hops;
 pub mod inbound;
@@ -352,6 +354,10 @@ impl Messaging {
             ])),
             // Named inside the grant's namespace, which no other machine can claim.
             Sender::Peer { .. } => Ok(SenderAddresses::trusted(sender.peer_addresses())),
+            Sender::Collaboration(origin) => Ok(SenderAddresses {
+                trusted: Vec::new(),
+                other: vec![origin.label()],
+            }),
         }
     }
 
@@ -390,7 +396,9 @@ impl Messaging {
         let directory = match sender {
             Sender::Session(id) => Some(self.session_directory(id)?),
             // A peer's message is received under this machine's process scope.
-            Sender::Client(_) | Sender::Mcp(_) | Sender::Peer { .. } => None,
+            Sender::Client(_) | Sender::Mcp(_) | Sender::Peer { .. } | Sender::Collaboration(_) => {
+                None
+            }
         };
         self.settings(directory.as_deref())
             .filter(|settings| settings.enabled)

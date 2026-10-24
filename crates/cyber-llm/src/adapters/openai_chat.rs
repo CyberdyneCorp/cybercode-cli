@@ -3,7 +3,10 @@
 use futures::future::BoxFuture;
 use serde_json::{Map, Value, json};
 
-use super::{Adapter, Decoder, Endpoint, EventStream, ToolCalls, data_url, decode_sse, parse_json};
+use super::{
+    Adapter, Decoder, Endpoint, EventStream, ToolCalls, data_url, decode_sse, document_name,
+    ensure_resolved, parse_json,
+};
 use crate::error::{LlmError, classify_stream_error};
 use crate::json::{deep_merge, force_no_tools, str_at, strip_credentials, u64_at};
 use crate::sse::SseEvent;
@@ -39,6 +42,7 @@ impl Adapter for OpenAiChatAdapter {
 
     fn stream(&self, request: LlmRequest) -> BoxFuture<'_, Result<EventStream, LlmError>> {
         Box::pin(async move {
+            ensure_resolved(&request)?;
             let body = build_body(&request);
             let auth = self
                 .endpoint
@@ -127,7 +131,15 @@ fn push_user(message: &Message, out: &mut Vec<Value>) {
             Content::Image { media_type, data } => {
                 parts.push(json!({ "type": "image_url", "image_url": { "url": data_url(media_type, data) } }));
             }
-            Content::Reasoning { .. } | Content::ToolCall { .. } => {}
+            Content::Document {
+                media_type,
+                data,
+                name,
+            } => {
+                parts.push(json!({ "type": "file", "file": { "filename": document_name(name), "file_data": data_url(media_type, data) } }));
+            }
+            // References are resolved before a request (`ensure_resolved`).
+            Content::Reasoning { .. } | Content::ToolCall { .. } | Content::Attachment(_) => {}
         }
     }
     match parts.as_slice() {
@@ -303,5 +315,34 @@ fn usage_from(u: &Value) -> Usage {
         reasoning,
         cache_read: cached,
         cache_write: 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn documents_become_file_parts_with_a_data_url() {
+        let request = LlmRequest {
+            messages: vec![Message {
+                role: Role::User,
+                content: vec![
+                    Content::Text {
+                        text: "read this".into(),
+                    },
+                    Content::Document {
+                        media_type: "application/pdf".into(),
+                        data: "JVBERi0=".into(),
+                        name: None,
+                    },
+                ],
+            }],
+            ..LlmRequest::default()
+        };
+        assert_eq!(
+            build_body(&request)["messages"][0]["content"][1],
+            json!({ "type": "file", "file": { "filename": "document.pdf", "file_data": "data:application/pdf;base64,JVBERi0=" } })
+        );
     }
 }

@@ -2,7 +2,9 @@
 //! runtime and HTTP router, plus the server lifecycle (`server-api` → One server per user,
 //! Background service management, Listener defaults, Local password authentication).
 
+pub mod account;
 pub mod backup;
+pub mod collaboration;
 pub mod git_text;
 mod host;
 pub mod peer_discovery;
@@ -286,6 +288,22 @@ impl App {
         runtime.configure_workflow_runs(workflow_settings.max_running_runs as usize);
         // Inline scripts and return values larger than 1 MiB (`workflows` → Run results).
         runtime.configure_workflow_dir(opts.paths.state.join("workflows"));
+        // Prompt attachment blobs (`storage-events` → Attachment storage): beside the
+        // database, or in a private temporary directory for an in-memory store.
+        let attachment_settings =
+            cyber_core::config::AttachmentSettings::from_config(&global).unwrap_or_default();
+        runtime.configure_attachments(match store.durability() {
+            cyber_store::Durability::Full => {
+                cyber_server::runtime::attachments::AttachmentStore::durable(
+                    opts.paths.data.join("attachments"),
+                    attachment_settings,
+                )
+            }
+            cyber_store::Durability::Ephemeral => {
+                cyber_server::runtime::attachments::AttachmentStore::ephemeral(attachment_settings)
+                    .map_err(|e| e.to_string())?
+            }
+        });
         runtime.recover_jobs().await.map_err(|e| e.to_string())?;
         // Sender records of messages a crash left half-recorded (`cross-session-messaging`).
         runtime
@@ -325,8 +343,13 @@ impl App {
             hook_config_loader(opts.paths.clone(), opts.home.clone()),
             opts.paths.clone(),
             withheld_hook_loader(opts.paths.clone(), opts.home.clone()),
-            Arc::clone(&global_config),
-        ));
+            services::OwnerContext {
+                global: Arc::clone(&global_config),
+                store: Arc::clone(&store),
+                runtime: runtime.clone(),
+                default_directory: opts.default_directory.clone(),
+            },
+        )?);
         // Runs a previous process left executing come back paused (and are resumed with
         // `workflows.resume_after_restart`); queued runs are rebuilt as a resume would and
         // keep their place in the run queue.

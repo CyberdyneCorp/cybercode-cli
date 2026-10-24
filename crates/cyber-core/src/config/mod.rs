@@ -4,6 +4,7 @@
 mod agent_profiles;
 mod agents;
 pub(crate) mod annotated;
+mod attachments;
 mod auto_mode;
 mod autoupdate;
 mod deferred_tools;
@@ -38,6 +39,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 pub use agent_profiles::{AgentProfile, AgentTools, resolve_agents};
+pub use attachments::AttachmentSettings;
 pub use auto_mode::{AutoFallback, AutoModeSettings, AutoPattern};
 pub use autoupdate::AutoUpdate;
 pub use deferred_tools::DeferredToolSettings;

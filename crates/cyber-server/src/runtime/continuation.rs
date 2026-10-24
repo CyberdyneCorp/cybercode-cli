@@ -4,6 +4,7 @@ use std::sync::{Arc, PoisonError, atomic::Ordering};
 
 use tokio_util::sync::CancellationToken;
 
+use super::attachments::FilePart;
 use super::events::{ADMITTED, Admitted, RESUMED};
 use super::{
     Admission, CallStatus, ChildContinuation, ChildExecution, Delivery, DrainEntry, Handle,
@@ -16,7 +17,18 @@ impl Runtime {
     pub async fn admit_user(
         &self,
         id: &str,
+        admission: Admission,
+    ) -> Result<Receipt, RuntimeError> {
+        self.admit_user_with_files(id, admission, Vec::new()).await
+    }
+
+    /// [`Runtime::admit_user`] for a prompt whose `file` parts are read at admission,
+    /// each at its index among `admission.parts`.
+    pub async fn admit_user_with_files(
+        &self,
+        id: &str,
         mut admission: Admission,
+        files: Vec<FilePart>,
     ) -> Result<Receipt, RuntimeError> {
         self.inner.ensure_admission_open(id)?;
         let lifecycle = self.inner.open().await?;
@@ -26,20 +38,20 @@ impl Runtime {
             .message_id
             .get_or_insert_with(|| cyber_core::ids::new_id("msg"))
             .clone();
-        let digest = admission.digest();
+        let digest = admission.digest(&files);
         if let Some(receipt) = existing_receipt(&state, &message, &digest)? {
             return Ok(receipt);
         }
         if state.info.parent_id.is_none() {
             drop(lifecycle);
-            return self.admit_prompt(id, admission).await;
+            return self.admit_prompt(id, admission, files).await;
         }
         if self.child_is_settling(id) {
             return Err(RuntimeError::Busy(id.into()));
         }
         if self.is_running(id) || !admission.resume || admission.delivery == Delivery::Hold {
             drop(lifecycle);
-            return self.admit_prompt(id, admission).await;
+            return self.admit_prompt(id, admission, files).await;
         }
         // Hook runners re-enter the lifecycle guard; holding it here would deadlock
         // behind a queued shutdown writer. Admission is rechecked once retaken.
@@ -49,7 +61,7 @@ impl Runtime {
             .user_prompt_hooks(&handle, &admission.parts, &admission.source)
             .await?
             .for_prompt(super::is_forked(admission.skill_command.as_ref()))?;
-        let attachments = self.prompt_resources(&handle, &admission).await?;
+        let attachments = self.prompt_resources(&handle, &admission, &files).await?;
         let prepared = self.prepare_user_child(&handle, &state).await?;
         let _lifecycle = self.inner.open().await?;
         self.inner.ensure_admission_open(id)?;
@@ -58,8 +70,10 @@ impl Runtime {
             prepared.check(&current)?;
         }
         self.inner.commit_staged_revert(&handle).await?;
+        let blobs = attachments.blobs;
         let mut state = handle.state.lock().await;
         if let Some(receipt) = existing_receipt(&state, &message, &digest)? {
+            blobs.keep();
             return Ok(receipt);
         }
         prepared.check(&state)?;
@@ -104,6 +118,7 @@ impl Runtime {
                 ),
             ],
         )?;
+        blobs.keep();
         let receipt = receipt_for(
             &state,
             &message,

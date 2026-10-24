@@ -1,6 +1,7 @@
 //! Drawing (`tui` → Message and part rendering, Permission prompt, Question prompt).
 
 mod branches;
+mod collaboration;
 mod composer;
 mod explorer;
 pub(crate) mod footer;
@@ -63,7 +64,12 @@ pub fn draw(f: &mut Frame, app: &App) {
     }
     if matches!(
         app.overlay,
-        Overlay::Settings | Overlay::Files | Overlay::Workflows | Overlay::Messages | Overlay::Team
+        Overlay::Settings
+            | Overlay::Files
+            | Overlay::Workflows
+            | Overlay::Messages
+            | Overlay::Team
+            | Overlay::Collaboration
     ) {
         // Full screen over the transcript, composer and sidebar; the footer stays.
         app.set_screen_links(Vec::new());
@@ -108,7 +114,8 @@ pub fn draw(f: &mut Frame, app: &App) {
         | Overlay::Files
         | Overlay::Workflows
         | Overlay::Messages
-        | Overlay::Team => {}
+        | Overlay::Team
+        | Overlay::Collaboration => {}
         Overlay::Tree => branches::draw(f, app, area),
         Overlay::Themes(s) => themes::draw(f, app, s, area),
         Overlay::Picker(p) => overlays::picker(f, app, p, area),
@@ -143,6 +150,7 @@ fn full_screen(f: &mut Frame, app: &App, panel: Rect) {
         Overlay::Workflows => workflows::draw(f, app, panel),
         Overlay::Messages => messaging::view(f, app, panel),
         Overlay::Team => team::view(f, app, panel),
+        Overlay::Collaboration => collaboration::view(f, app, panel),
         _ => settings::draw(f, app, panel),
     }
 }

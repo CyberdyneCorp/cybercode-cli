@@ -148,8 +148,10 @@ fn sessions_are_listed_renamed_and_resumed_by_title() {
     exits(&env.cyber(&["sessions", "show", "nope"]), 1);
     exits(&env.cyber(&["sessions", "rename", &older, " "]), 2);
     exits(&env.cyber(&["sessions", "delete", &newer]), 2);
-    let later = exits(&env.cyber(&["sessions", "import", "x.json"]), 2);
+    let later = exits(&env.cyber(&["sessions", "fork", &older]), 2);
     assert!(later.contains("not available in this build yet"), "{later}");
+    let missing = exits(&env.cyber(&["sessions", "import", "x.json"]), 1);
+    assert!(missing.contains("cannot read x.json"), "{missing}");
     exits(&env.cyber(&["sessions", "delete", &newer, "--yes"]), 0);
     let left = json(&env.cyber(&["sessions", "list", "--format", "json"]));
     assert_eq!(left.as_array().unwrap().len(), 1);

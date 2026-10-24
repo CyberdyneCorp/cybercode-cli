@@ -3,9 +3,11 @@
 //! The router is transport-independent. TCP, the Unix socket and the in-process embedded
 //! transport mark each request with a [`Transport`], which decides authentication.
 
+pub mod account;
 mod branches;
 mod catalog;
 mod children;
+pub mod collaboration;
 mod deliveries;
 mod envelope;
 mod error;
@@ -29,6 +31,7 @@ pub mod openapi;
 pub mod peer;
 mod peers;
 mod plugins;
+mod prompt_parts;
 pub mod providers;
 mod pty;
 pub mod remote_tools;
@@ -172,6 +175,12 @@ pub struct LocationDefaults {
 
 /// What the server needs beyond the runtime: catalogs and Location-level lookups.
 pub trait Services: Send + Sync {
+    fn collaboration(&self) -> Option<Arc<dyn collaboration::CollaborationService>> {
+        None
+    }
+    fn account(&self) -> Option<Arc<dyn account::AccountService>> {
+        None
+    }
     /// Provider sign-in (`provider-credentials` → Provider login API); `None` answers 503.
     fn provider_logins(&self) -> Option<Arc<dyn providers::ProviderLogins>> {
         None
@@ -674,6 +683,8 @@ pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router 
         .merge(peers::routes())
         .merge(goals::routes())
         .merge(providers::routes())
+        .merge(account::routes())
+        .merge(collaboration::routes())
         .merge(usage::routes())
         .merge(vcs::routes())
         .merge(system::routes())

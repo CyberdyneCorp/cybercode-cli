@@ -22,7 +22,21 @@ struct FakeServices {
     tools: Arc<support::Tools>,
 }
 
+struct Issuance;
+impl http::collaboration::CollaborationService for Issuance {
+    fn call(
+        &self,
+        _operation: String,
+        _input: Value,
+    ) -> BoxFuture<'_, Result<Value, http::ApiError>> {
+        Box::pin(async { Ok(json!({"token":"once-only-fixture-invitation"})) })
+    }
+}
 impl Services for FakeServices {
+    fn collaboration(&self) -> Option<Arc<dyn http::collaboration::CollaborationService>> {
+        Some(Arc::new(Issuance))
+    }
+
     fn models(&self, _location: &Path) -> BoxFuture<'_, Result<Vec<ModelInfo>, String>> {
         Box::pin(async {
             Ok(vec![ModelInfo {
@@ -4104,4 +4118,35 @@ async fn client_hook_registration_drops_on_disconnect() {
         )
         .await;
     assert!(after.unwrap_err().contains("disconnected"));
+}
+
+#[tokio::test]
+async fn collaboration_issuance_secrets_are_not_cached_in_owner_database() {
+    let h = Harness::new(Setup::default());
+    let api = Api::new(&h);
+    let (status, body, headers) = api
+        .call(
+            Method::POST,
+            "/collaboration/owner/invite",
+            Some(json!({"operation_id":"cop_fixture"})),
+            &[("idempotency-key", "invitation-secret")],
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["token"], "once-only-fixture-invitation");
+    assert!(!headers.contains_key("idempotent-replayed"));
+    let cached = h
+        .store
+        .read(|db| {
+            Ok(db.query_row(
+                "SELECT COUNT(*) FROM idempotency_key WHERE key='invitation-secret'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?)
+        })
+        .unwrap();
+    assert_eq!(
+        cached, 0,
+        "one-time issuance responses must stay out of backups/events"
+    );
 }

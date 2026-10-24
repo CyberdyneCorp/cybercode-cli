@@ -467,7 +467,10 @@ fn instructions_concatenate_global_first() {
 #[test]
 fn unknown_keys_warn_and_tui_keys_are_dropped() {
     let f = Fixture::new();
-    f.write("cyber.jsonc", r#"{ "colour": "red", "theme": "dracula" }"#);
+    f.write(
+        "cyber.jsonc",
+        r#"{ "colour": "red", "theme": "dracula", "paste_summary": false }"#,
+    );
     let resolved = f.load().unwrap();
     assert!(
         resolved
@@ -478,6 +481,11 @@ fn unknown_keys_warn_and_tui_keys_are_dropped() {
         resolved
             .warnings
             .contains(&"theme belongs in tui.jsonc".to_string())
+    );
+    assert!(
+        resolved
+            .warnings
+            .contains(&"paste_summary belongs in tui.jsonc".to_string())
     );
     assert!(resolved.value.get("theme").is_none());
 }
