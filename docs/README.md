@@ -1,6 +1,6 @@
 # Documentation
 
-Start with the [project README](../README.md) for setup, architecture and the sourced comparison with Claude Code, Codex and OpenCode.
+Start with the [project README](../README.md) for setup, the feature mindmap and known gaps compared with OpenCode, Claude Code, Codex and Pi.
 
 | If you want to… | Read |
 |---|---|
@@ -15,6 +15,7 @@ Start with the [project README](../README.md) for setup, architecture and the so
 | Check P0 measurements and exit gates | [P0 evidence](measurements/p0-exit-evidence.md) |
 | Use the API from another program | [TypeScript SDK](../sdk/typescript/README.md) and [OpenAPI](../sdk/openapi.json) |
 | Run benchmarks or local-model evaluations | [Evaluation guide](../eval/README.md) |
+| Understand the shared-server design | [Architecture diagrams](architecture.md) |
 | Understand storage choices | [Storage architecture decision](decisions/0001-storage-architecture.md) |
 | Inspect product contracts | [OpenSpec specifications](../openspec/specs) |
 | Use the browser dashboard and remote approvals | [Dashboard guide](web-dashboard.md) |
