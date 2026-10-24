@@ -145,6 +145,16 @@ async fn picker_switches_the_session_and_shows_next_turn() {
     assert_eq!(toast(&app), SUBAGENT);
 }
 
+/// The text inside the picker's border with its wrapped lines joined: where the held
+/// notice wraps depends on the length of the temporary checkout path.
+fn panel_text(shown: &str) -> String {
+    let rows = shown.lines().filter_map(|line| {
+        let (start, end) = (line.find('│')?, line.rfind('│')?);
+        (start < end).then(|| line[start + '│'.len_utf8()..end].trim())
+    });
+    rows.collect::<Vec<_>>().join(" ")
+}
+
 #[tokio::test]
 async fn held_project_styles_are_explained() {
     let server = Server::start().await;
@@ -166,7 +176,8 @@ async fn held_project_styles_are_explained() {
     run(&server, &mut app, actions).await;
     let shown = render(&mut app, 120, 40, &Opts::default());
     assert!(
-        shown.contains("project output styles are held until this checkout is trusted"),
+        panel_text(&shown)
+            .contains("project output styles are held until this checkout is trusted"),
         "{shown}"
     );
     assert!(!shown.contains("reviewer  "), "{shown}");
