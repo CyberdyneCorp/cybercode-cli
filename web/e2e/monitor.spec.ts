@@ -63,3 +63,39 @@ test('Session navigation scopes the transcript and New Session creates a real ow
   await send(page, 'A fresh Session conversation');
   await expect(page.getByText('Scripted browser response.', { exact: true })).toBeVisible();
 });
+
+test('older transcript pages survive live refresh and reconnect until Latest messages is selected', async ({ dashboard, page }) => {
+  const session = await dashboard.session('Paged transcript acceptance');
+  for (let index = 0; index < 35; index += 1) {
+    await dashboard.prompt(session, `Transcript entry ${String(index).padStart(3, '0')}`);
+    await eventually(
+      () => dashboard.api<{ status: string }>(`/sessions/${session}`),
+      state => state.status === 'idle',
+    );
+  }
+  await login(page, dashboard);
+  await select(page, 'Paged transcript acceptance');
+  await tab(page, 'Conversation');
+  await expect(page.getByText('Transcript entry 034', { exact: true })).toBeVisible();
+  await expect(page.getByText('Transcript entry 000', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Load older messages', exact: true }).click();
+  await expect(page.getByText('Transcript entry 000', { exact: true })).toBeVisible();
+  await expect(page.getByText('Transcript entry 034', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Viewing an older transcript page. New messages are on the latest page.', { exact: true })).toBeVisible();
+
+  const refreshedPage = page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return url.pathname === `/api/v1/sessions/${session}/messages` && url.searchParams.has('cursor') && response.ok();
+  });
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await refreshedPage;
+  await expect(page.getByText('Transcript entry 000', { exact: true })).toBeVisible();
+  await expect(page.getByText('Transcript entry 034', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Reconnect', exact: true }).click();
+  await expect(page.getByRole('status', { name: 'Connection status' })).toContainText('connected');
+  await expect(page.getByText('Transcript entry 000', { exact: true })).toBeVisible();
+  await expect(page.getByText('Transcript entry 034', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Latest messages', exact: true }).click();
+  await expect(page.getByText('Transcript entry 034', { exact: true })).toBeVisible();
+  await expect(page.getByText('Transcript entry 000', { exact: true })).toHaveCount(0);
+});

@@ -90,6 +90,7 @@ pub struct App {
     pub mcp_credentials: Arc<dyn McpCredentialStore>,
     /// The defaults and user layers only, for user-scope keys such as `peers`.
     global_config: Arc<services::GlobalConfigFn>,
+    owner_server_config: Arc<services::GlobalConfigFn>,
 }
 
 pub fn version() -> &'static str {
@@ -131,6 +132,21 @@ fn withheld_hook_loader(paths: Paths, home: PathBuf) -> Arc<services::HookReview
 fn global_config_loader(paths: Paths, home: PathBuf) -> Arc<services::GlobalConfigFn> {
     Arc::new(move || {
         config::load_global(&LoadRequest {
+            location: &home,
+            paths: &paths,
+            env: &ProcessEnv,
+            home: &home,
+            profile: None,
+            overrides: &[],
+            flags: json!({}),
+        })
+        .map_err(|error| error.to_string())
+    })
+}
+
+fn owner_server_config_loader(paths: Paths, home: PathBuf) -> Arc<services::GlobalConfigFn> {
+    Arc::new(move || {
+        config::load_owner_server(&LoadRequest {
             location: &home,
             paths: &paths,
             env: &ProcessEnv,
@@ -253,6 +269,7 @@ impl App {
         // Connected clients' hook handlers run after every configured one.
         host.attach_client_hooks(Arc::clone(&remote_tools) as _)?;
         let global_config = global_config_loader(opts.paths.clone(), opts.home.clone());
+        let owner_server_config = owner_server_config_loader(opts.paths.clone(), opts.home.clone());
         let tools = host::AppHost {
             builtin: Arc::clone(&host),
             remote: Arc::clone(&remote_tools),
@@ -382,6 +399,7 @@ impl App {
             config: Arc::clone(&config_for_app),
             mcp_credentials,
             global_config,
+            owner_server_config,
         })
     }
 

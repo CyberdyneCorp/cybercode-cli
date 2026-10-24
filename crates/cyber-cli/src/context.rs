@@ -68,6 +68,11 @@ impl Context {
         Ok(config::load_global(&self.request())?)
     }
 
+    /// Trusted global owner transport settings, isolated from unrelated peer/project settings.
+    pub fn owner_server_config(&self) -> Result<Value, CliError> {
+        Ok(config::load_owner_server(&self.request())?)
+    }
+
     pub fn hook_resolver(&self) -> std::sync::Arc<cyber_tools::HookConfigFn> {
         let paths = self.paths.clone();
         let home = self.home.clone();

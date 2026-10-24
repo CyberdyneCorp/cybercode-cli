@@ -24,6 +24,8 @@ Use fetch/ReadableStream SSE with explicit headers rather than EventSource query
 
 Preserve existing Host/Origin checks; authenticate every data route regardless of the browser shell. Configure any needed CORS origin explicitly; do not expand to wildcard origins. The peer listener remains `/api/v1/peer/*` only and never serves the dashboard or accepts the owner password. Do not treat a private-network browser as a P3 paired Device: account step-up, Device revocation and Relay scope constraints remain separate.
 
+Owner TLS reads only the merged defaults/global `server` section, then validates that owned section. Unrelated invalid optional peer settings retain their existing listener-isolation behavior; malformed owner TLS configuration fails closed. Project/profile/request settings never select the transport identity.
+
 ### 4. Interactive presence
 
 Add Session routes `POST /api/v1/sessions/:sessionID/interactive-clients`, `PUT` and `DELETE /api/v1/sessions/:sessionID/interactive-clients/:clientID` for owner-authenticated attachment leases. POST returns `{ client_id, session_id, expires_at }`; PUT renews only that live lease; DELETE is idempotent. Every write uses ordinary idempotency keys. POST retries return their original receipt; an expired receipt does not recreate presence. Unknown/expired lease renewal returns 404.

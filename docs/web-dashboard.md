@@ -44,6 +44,8 @@ For a LAN or VPN connection, configure an operator-managed certificate and priva
 }
 ```
 
+Only the merged global `server` section selects owner TLS. Invalid settings for the separate peer listener disable that listener without disabling the owner API; malformed owner TLS settings still refuse startup.
+
 On Windows, use absolute paths such as `C:/Users/you/certs/fullchain.pem`. Protect the private key with OS permissions. Use a certificate trusted by each client and valid for the hostname clients will open. A private CA must be installed on those clients. Cyber does not bypass certificate verification or provision a certificate service.
 
 ```sh
@@ -53,6 +55,8 @@ cyber web --no-open --hostname dashboard.your-private-domain.example --port 4747
 The hostname must resolve to an address on this server. You can instead bind `0.0.0.0` or `::` to listen on all interfaces, then manually open the certificate's actual hostname from the other computer. A wildcard bind registers a loopback URL for local clients; include that loopback IP in the certificate SANs as well as the remote hostname. Otherwise use the certificate hostname as `--hostname`, so the browser and local CLI/TUI use a verifiable registered URL. Off-loopback plaintext listeners are refused; there is no `--insecure-lan`. Restart the service after changing TLS settings or certificate files. Existing origin restrictions remain enforced; the dashboard does not add wildcard CORS.
 
 The separate peer listener does not serve the dashboard and does not accept the owner password. Cyber Account and project-hub membership are separate features and do not authenticate this owner dashboard.
+
+Use **Older messages** to browse transcript pages and **Latest messages** to return to live activity. Refresh and lease renewal retain the selected page. If a rewind removes that page, the view returns to the current transcript.
 
 ## Approval and disconnect behavior
 

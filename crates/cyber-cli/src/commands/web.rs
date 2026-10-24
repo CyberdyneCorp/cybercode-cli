@@ -16,7 +16,7 @@ pub struct WebArgs {
 }
 
 pub fn run(args: WebArgs, ctx: &Context) -> Result<(), CliError> {
-    let global = ctx.global_config()?;
+    let global = ctx.owner_server_config()?;
     let files = cyber_app::owner_tls_files(&global).map_err(CliError::runtime)?;
     // Fail before detaching a process, with a useful message instead of a readiness timeout.
     if let Some(hostname) = &args.hostname {

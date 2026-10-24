@@ -117,12 +117,13 @@ export class View {
   }
   private conversation(): HTMLElement {
     const state = this.model.state; const wrap = node("div", "conversation");
+    if (state.olderTranscript) wrap.append(node("p", "muted", "Viewing an older transcript page. New messages are on the latest page."), button("Latest messages", () => { void this.model.latestMessages(); }, !this.model.actionable, "button quiet"));
     if (state.messageCursor) wrap.append(button("Load older messages", () => { void this.model.olderMessages(); }, !this.model.actionable, "button quiet"));
     if (!state.messages.length) {
       const empty = node("div", "empty-state"); empty.append(node("span", "empty-glyph", "✳"), node("h2", "", state.session ? "A clear place to start" : "Choose a Session"), node("p", "", state.session ? "Send a direction or queue the next step. Requests that need your judgement appear in Approvals." : "Open an existing Session to follow its work and review requests.")); wrap.append(empty);
     }
     for (const message of state.messages) wrap.append(this.message(message));
-    if (state.liveText) { const live = node("article", "message assistant"); live.append(node("div", "message-label", "Assistant · streaming"), node("div", "prose", state.liveText)); wrap.append(live); }
+    if (state.liveText && !state.olderTranscript) { const live = node("article", "message assistant"); live.append(node("div", "message-label", "Assistant · streaming"), node("div", "prose", state.liveText)); wrap.append(live); }
     if (state.diffs.length) {
       const changes = node("section", "changes"); changes.append(heading("WORKING TREE", `${state.diffs.length} changed file${state.diffs.length === 1 ? "" : "s"}`));
       for (const diff of state.diffs) {

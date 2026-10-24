@@ -21,14 +21,14 @@
 
 ## 4. Recovery and responsive UX
 
-- [ ] 4.1 Durable event cursors, live-state refetch, 500 ms–15 s reconnect backoff, visible offline/auth states and disabled stale actions.
+- [x] 4.1 Durable event cursors, live-state refetch, 500 ms–15 s reconnect backoff, visible offline/auth states and disabled stale actions.
 - [x] 4.2 Existing run/task/goal controls and `solve` evidence when the server exposes it; no automatic candidate application or merge.
 - [x] 4.3 Accessible keyboard flows, labelled decisions, approval count, focus handling and 360/1280 CSS-pixel layouts.
-- [ ] 4.4 Browser screenshots/tests for mobile/desktop, reconnect, server restart, lease expiration and long command/diff rendering.
+- [x] 4.4 Browser screenshots/tests for mobile/desktop, reconnect, server restart, lease expiration and long command/diff rendering.
 
 ## 5. Acceptance and docs
 
 - [x] 5.1 Real `cyber web` plus scripted model: prompt → permission → browser approval → completed tool, observed by the terminal and second browser.
-- [ ] 5.2 Same flow through an SSH-style local forward and a second device on a private TLS endpoint; off-loopback plaintext refusal verified.
+- [ ] 5.2 Physical second-device certificate trust remains a manual deployment acceptance check. Automated production-browser approval through an SSH-style TCP forward and an actual TLS endpoint, plus off-loopback plaintext refusal, pass; these do not establish physical-device trust.
 - [ ] 5.3 Confirm the peer listener never serves the dashboard or accepts owner-password auth, and existing API/SDK/TUI contracts still pass.
 - [ ] 5.4 Publish setup, password authority, TLS/tunnel requirements, disconnect behavior, limitations and exact browser/platform evidence. Update feature/roadmap status only after acceptance; archive after review.

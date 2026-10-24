@@ -122,3 +122,39 @@ test("Session switches and logout release only this page's exact lease IDs", asy
   model.logout(); resolve({ data: { ...api.sessions[0], id: "ses_two" } }); await pending;
   assert.equal(model.state.authenticated, false); assert.equal(model.state.session, undefined);
 });
+
+test("older transcript pages survive snapshots, replace branches and return to latest when a rewind removes the page", async (t) => {
+  const api = new Fake();
+  let branch = "original"; let length = 160;
+  api.hook = (path) => {
+    if (!path.includes("/messages?")) return undefined;
+    const query = new URL(`https://fixture.test${path}`).searchParams;
+    const count = Number(query.get("limit") ?? 50); const start = Number(query.get("cursor") ?? 0);
+    const entries = Array.from({ length }, (_, index) => ({ id: `${branch}-${length - index}`, kind: "system", text: branch, tools: [] }));
+    return Promise.resolve({ data: entries.slice(start, start + count), cursor: { ...(start + count < entries.length && { next: String(start + count) }) } });
+  };
+  const { model } = await ready(t, api);
+  await model.olderMessages(); assert.equal(model.state.messages.length, 50);
+  assert.equal(model.state.messages[0]!.id, "original-61");
+  await model.refresh(); assert.equal(model.state.messages[0]!.id, "original-61", "lease/event snapshots retain the selected page");
+  branch = "replacement"; await model.refresh();
+  assert.equal(model.state.messages.length, 50);
+  assert.ok(model.state.messages.every((message) => message.id.startsWith("replacement-")), "abandoned branch rows are never merged back");
+  await model.latestMessages(); assert.equal(model.state.messages[0]!.id, "replacement-111"); assert.equal(model.state.olderTranscript, false);
+  await model.olderMessages(); length = 10; await model.refresh(); await until(() => model.state.messages.length === 10);
+  assert.equal(model.state.olderTranscript, false);
+});
+
+test("a late latest-page snapshot cannot overwrite a newly selected older transcript page", async (t) => {
+  const api = new Fake(); const page = (prefix: string) => ({ data: [{ id: prefix, kind: "system", text: prefix, tools: [] }], cursor: { next: "50" } });
+  let defer = false; let resolve!: (value: unknown) => void;
+  api.hook = (path) => {
+    if (!path.includes("/messages?")) return undefined;
+    if (path.includes("cursor=50")) return Promise.resolve(page("older"));
+    if (defer) return new Promise((done) => { resolve = done; });
+    return Promise.resolve(page("latest"));
+  };
+  const { model } = await ready(t, api); defer = true; const pending = model.refresh();
+  await model.olderMessages(); assert.equal(model.state.messages[0]!.id, "older");
+  resolve(page("stale-latest")); await pending; assert.equal(model.state.messages[0]!.id, "older");
+});

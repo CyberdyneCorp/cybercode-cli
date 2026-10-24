@@ -47,7 +47,13 @@ impl Default for ServeOptions {
 
 /// Owner HTTPS settings come exclusively from the global configuration, never a project.
 pub fn owner_tls_files(global: &serde_json::Value) -> Result<Option<(PathBuf, PathBuf)>, String> {
-    let Some(tls) = global.pointer("/server/tls") else {
+    let Some(server) = global.get("server") else {
+        return Ok(None);
+    };
+    if !server.is_object() {
+        return Err("server must be an object in the global configuration".into());
+    }
+    let Some(tls) = server.get("tls") else {
         return Ok(None);
     };
     if tls.is_null() {
@@ -119,7 +125,7 @@ pub async fn run_server_until(
     on_ready: impl FnOnce(&str),
     stop: Arc<Notify>,
 ) -> Result<(), String> {
-    let global = (app.global_config)()?;
+    let global = (app.owner_server_config)()?;
     let tls_files = owner_tls_files(&global)?;
     let tls = tls_files
         .as_ref()
@@ -396,6 +402,16 @@ mod dashboard_tests {
             .is_err()
         );
         assert!(owner_tls_files(&json!({"server":{"tls":{"cert":"only"}}})).is_err());
+        for server in [json!(false), json!("invalid"), json!([]), json!(null)] {
+            assert!(owner_tls_files(&json!({"server":server})).is_err());
+        }
+        for tls in [json!(false), json!("invalid"), json!([])] {
+            assert!(owner_tls_files(&json!({"server":{"tls":tls}})).is_err());
+        }
+        assert!(
+            owner_tls_files(&json!({"server":{"tls":{"cert":"","key":"/operator/key.pem"}}}))
+                .is_err()
+        );
         let dir = std::env::temp_dir();
         let config =
             json!({"server":{"tls":{"cert":dir.join("cert.pem"),"key":dir.join("key.pem")}}});

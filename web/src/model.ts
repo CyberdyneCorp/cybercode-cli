@@ -15,12 +15,12 @@ export interface State {
   session?: Session | undefined; messages: Message[]; messageCursor?: string | undefined; diffs: FileDiff[];
   cards: Card[]; runs: WorkflowRunSummary[]; details: Map<string, RunDetail>; jobs: Job[];
   goals?: GoalsView | undefined; unavailable: Set<string>; lease?: Lease | undefined; notice: string;
-  loading: boolean; tab: Tab; draft: string; delivery: "steer" | "queue";
+  loading: boolean; olderTranscript: boolean; tab: Tab; draft: string; delivery: "steer" | "queue";
   review?: Card | undefined; reviewed: boolean; feedback?: Card | undefined; answers: Map<string, string[][]>;
   customs: Map<string, string[]>; command?: Command | undefined; liveText: string;
   feedbackDraft: string; creation?: { key: string; directory: string; status: "submitting" | "uncertain" } | undefined;
 }
-const initial = (): State => ({ authenticated: false, authBusy: false, retryAt: 0, connection: "authentication required", directory: "", sessions: [], messages: [], diffs: [], cards: [], runs: [], details: new Map(), jobs: [], unavailable: new Set(), notice: "", loading: false, tab: "conversation", draft: "", delivery: "steer", reviewed: false, answers: new Map(), customs: new Map(), liveText: "", feedbackDraft: "" });
+const initial = (): State => ({ authenticated: false, authBusy: false, retryAt: 0, connection: "authentication required", directory: "", sessions: [], messages: [], diffs: [], cards: [], runs: [], details: new Map(), jobs: [], unavailable: new Set(), notice: "", loading: false, olderTranscript: false, tab: "conversation", draft: "", delivery: "steer", reviewed: false, answers: new Map(), customs: new Map(), liveText: "", feedbackDraft: "" });
 const data = <T>(value: { data: T }): T => value.data;
 export const requestKey = (request: PendingRequest) => `${request.session_id}/${request.id}`;
 export function fingerprint(value: unknown): string {
@@ -53,6 +53,8 @@ export class Dashboard {
   #decisions = new Map<string, Decision>();
   #commands = new Map<string, Command>();
   #networkRecovery: Promise<void> | undefined;
+  #pageCursor: string | undefined;
+  #pageVersion = 0;
   constructor(readonly api: Port, readonly now = Date.now) {}
   emit(): void { this.changed(); }
   get actionable(): boolean { return this.state.connection === "connected" && !!this.state.lease && this.state.lease.expires_at > this.now(); }
@@ -150,15 +152,27 @@ export class Dashboard {
   setTab(tab: Tab): void { this.state.tab = tab; this.emit(); }
   setDraft(value: string): void { this.state.draft = value; }
   async olderMessages(): Promise<void> {
-    const session = this.state.session; const cursor = this.state.messageCursor; const generation = this.#generation;
-    if (!session || !cursor || !this.actionable) return;
+    if (this.state.messageCursor) await this.transcriptPage(this.state.messageCursor);
+  }
+  async latestMessages(): Promise<void> { await this.transcriptPage(); }
+  private transcriptPath(session: string, cursor?: string): string {
+    return `/sessions/${encoded(session)}/messages?limit=50&order=desc${cursor ? `&cursor=${encoded(cursor)}` : ""}`;
+  }
+  private async transcriptPage(cursor?: string): Promise<void> {
+    const session = this.state.session; const generation = this.#generation;
+    if (!session || !this.state.authenticated) return;
+    this.#pageCursor = cursor; const version = ++this.#pageVersion;
+    this.state.messages = []; this.state.messageCursor = undefined; this.state.olderTranscript = !!cursor; this.emit();
     try {
-      const result = await this.api.request<Page<Message>>(`/sessions/${encoded(session.id)}/messages?limit=50&order=desc&cursor=${encoded(cursor)}`, this.options());
-      if (generation !== this.#generation) return;
-      const seen = new Set(this.state.messages.map((message) => message.id));
-      this.state.messages = [...result.data.reverse().filter((message) => !seen.has(message.id)), ...this.state.messages];
-      this.state.messageCursor = result.cursor.next ?? undefined; this.emit();
-    } catch (error) { if (generation === this.#generation) this.showError(error); }
+      const page = await this.api.request<Page<Message>>(this.transcriptPath(session.id, cursor), this.options());
+      this.applyTranscript(page, generation, version, cursor);
+    } catch (error) { if (generation === this.#generation && version === this.#pageVersion) this.showError(error); }
+  }
+  private applyTranscript(page: Page<Message>, generation: number, version: number, cursor?: string): void {
+    if (generation !== this.#generation || version !== this.#pageVersion) return;
+    if (cursor && !page.data.length) { void this.latestMessages(); return; }
+    this.state.messages = page.data.reverse(); this.state.messageCursor = page.cursor.next ?? undefined;
+    this.state.olderTranscript = !!cursor; this.emit();
   }
   refresh(): Promise<void> {
     if (this.#refreshing) return this.#refreshing;
@@ -169,9 +183,10 @@ export class Dashboard {
     const session = this.state.session; const generation = this.#generation;
     if (!session || !this.state.authenticated) return;
     const base = `/sessions/${encoded(session.id)}`; const options = this.options();
+    const pageCursor = this.#pageCursor; const pageVersion = this.#pageVersion;
     const [current, messages, permissions, questions, diffs, runs, jobs, goals] = await Promise.all([
       this.api.request<{ data: Session }>(base, options),
-      this.api.request<Page<Message>>(`${base}/messages?limit=50&order=desc`, options),
+      this.api.request<Page<Message>>(this.transcriptPath(session.id, pageCursor), options),
       this.api.request<{ data: PendingRequest[] }>(`/permissions/requests?session_id=${encoded(session.id)}`, options),
       this.api.request<{ data: PendingRequest[] }>(`/questions/requests?session_id=${encoded(session.id)}`, options),
       this.optional<{ data: FileDiff[] }>(`${base}/diff`, "Diffs", options),
@@ -182,7 +197,7 @@ export class Dashboard {
     if (generation !== this.#generation) return;
     if (current.data.directory !== session.directory) { void this.selectSession(session.id); return; }
     this.state.session = current.data;
-    this.state.messages = messages.data.reverse(); this.state.messageCursor = messages.cursor.next ?? undefined;
+    this.applyTranscript(messages, generation, pageVersion, pageCursor);
     this.state.diffs = diffs?.data ?? []; this.state.runs = runs?.data ?? []; this.state.jobs = jobs?.data ?? []; this.state.goals = goals?.data;
     this.reconcileCards([...permissions.data, ...questions.data], generation);
     if (current.data.status !== "running") this.state.liveText = "";
@@ -351,6 +366,7 @@ export class Dashboard {
     this.state.lease = undefined;
   }
   private stopAttachment(): void {
+    this.#pageCursor = undefined; this.#pageVersion++; this.state.olderTranscript = false; this.state.messageCursor = undefined;
     this.#generation++; this.#attachment.abort(); this.#attachment = new AbortController();
     clearTimeout(this.#renewal); clearTimeout(this.#refreshTimer); this.#refreshing = undefined; this.#recovery = undefined; this.#networkRecovery = undefined; this.#opened.clear(); this.#leaseKey = undefined;
   }
