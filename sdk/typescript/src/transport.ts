@@ -48,9 +48,11 @@ export class HttpTransport implements Transport {
 
   async call(id: OperationId, params: CallParams, options: RequestOptions = {}): Promise<unknown> {
     const op: OperationSpec = operations[id];
-    const url = buildUrl(await this.connection.baseUrl(), op, params);
+    const base = await this.connection.baseUrl();
+    if (op.tag === "hub") checkHubBaseUrl(base);
+    const url = buildUrl(base, op, params);
     const headers = await this.headers(op, options.headers);
-    const init: RequestInit = { method: op.method, headers };
+    const init: RequestInit = { method: op.method, headers, ...(op.tag === "hub" && { redirect: "error" }) };
     if (op.method !== "GET") headers.set("idempotency-key", options.idempotencyKey ?? uuidv7());
     if (params.body !== undefined) {
       headers.set("content-type", "application/json");
@@ -64,12 +66,14 @@ export class HttpTransport implements Transport {
 
   async open(id: OperationId, params: CallParams, signal: AbortSignal): Promise<AsyncIterable<EventEnvelope>> {
     const op: OperationSpec = operations[id];
-    const url = buildUrl(await this.connection.baseUrl(), op, params);
+    const base = await this.connection.baseUrl();
+    if (op.tag === "hub") checkHubBaseUrl(base);
+    const url = buildUrl(base, op, params);
     const headers = await this.headers(op);
     headers.set("accept", "text/event-stream");
     let response: Response;
     try {
-      response = await this.connection.fetch(url, { method: "GET", headers, signal });
+      response = await this.connection.fetch(url, { method: "GET", headers, signal, ...(op.tag === "hub" && { redirect: "error" }) });
     } catch (err) {
       if (signal.aborted) throw signal.reason;
       throw new CyberClientError("Transport", `event stream failed: ${describe(err)}`, { cause: err });
@@ -82,7 +86,12 @@ export class HttpTransport implements Transport {
   private async headers(op: OperationSpec, extra: Record<string, string> = {}): Promise<Headers> {
     const headers = new Headers({ ...this.connection.headers, ...extra });
     const authorization = await this.connection.authorization();
-    if (authorization) headers.set("authorization", authorization);
+    if (op.tag === "hub" && !authorization?.startsWith("Bearer ")) {
+      // Hub metadata is public. A local owner password must never leave its
+      // execution boundary when a client is pointed at a project hub.
+      headers.delete("authorization");
+      if (op.name !== "hello") throw new CyberClientError("Transport", "hub operations require a separate bearer-authenticated client", { permanent: true });
+    } else if (authorization) headers.set("authorization", authorization);
     if (op.located && this.directory !== undefined) {
       headers.set("x-cyber-directory", encodeURIComponent(this.directory));
     }
@@ -116,6 +125,18 @@ export class HttpTransport implements Transport {
       }
     }
   }
+}
+
+/** Hub credentials follow the same explicit transport boundary as Rust HubClient. */
+function checkHubBaseUrl(base: string): void {
+  const reject = () => new CyberClientError("Transport", "hub URL requires HTTPS outside literal loopback and cannot contain user information, a query or a fragment", { permanent: true });
+  let url: URL;
+  try { url = new URL(base); } catch { throw reject(); }
+  const authority = /^[a-z][a-z\d+.-]*:\/\/([^/?#]*)/i.exec(base.trim())?.[1] ?? "";
+  if (url.username || url.password || authority.includes("@") || base.includes("?") || base.includes("#")) throw reject();
+  const ipv4 = /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(url.hostname) && url.hostname.split(".").every((octet) => Number(octet) <= 255);
+  const loopback = ipv4 || url.hostname === "[::1]";
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) throw reject();
 }
 
 function isTransportFailure(err: unknown): boolean {

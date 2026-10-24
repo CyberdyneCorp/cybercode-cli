@@ -8,6 +8,9 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+cyber-account = { path = "../cyber-account" }
+cyber-collab = { path = "../cyber-collab" }
+rusqlite.workspace = true
 cyber-core.workspace = true
 cyber-store.workspace = true
 cyber-llm = { path = "../cyber-llm" }
@@ -32,6 +35,8 @@ mdns-sd = { version = "0.21", default-features = false }
 url = "2"
 
 [dev-dependencies]
+aws-lc-rs = "1"
+jsonwebtoken = { version = "=10.3.0", default-features = false, features = ["aws_lc_rs"] }
 cyber-client = { path = "../cyber-client" }
 image = { version = "=0.25.10", default-features = false, features = ["png"] }
 rusqlite.workspace = true

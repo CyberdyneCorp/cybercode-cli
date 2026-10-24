@@ -8,6 +8,8 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+cyber-account = { path = "../cyber-account" }
+cyber-collab = { path = "../cyber-collab" }
 cyber-core.workspace = true
 cyber-store.workspace = true
 cyber-llm = { path = "../cyber-llm" }

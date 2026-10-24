@@ -14,7 +14,7 @@ pub use instructions::instruction_read_gate;
 pub use removals::{RemovalRisk, RemovalScope, bash_removal, powershell_analysis};
 
 pub use engine::{
-    Decision, Effect, GOAL_SET, MESSAGE_SEND, Mode, Policy, Request, Rule, TEAM_MANAGE, TEAM_TASK,
-    WORKFLOW_RUN, boundary_evaluate, defaults, evaluate, evaluate_all, evaluate_scoped,
-    is_protected, parse_rules, slash, workflow_resource,
+    COLLAB_MESSAGE_SEND, COLLAB_TASK_WRITE, Decision, Effect, GOAL_SET, MESSAGE_SEND, Mode, Policy,
+    Request, Rule, TEAM_MANAGE, TEAM_TASK, WORKFLOW_RUN, boundary_evaluate, defaults, evaluate,
+    evaluate_all, evaluate_scoped, is_protected, parse_rules, slash, workflow_resource,
 };

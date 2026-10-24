@@ -2,7 +2,7 @@
 
 Repository-scoped collaboration for people and their local agents through a self-hosted project hub
 
-Status: proposed, awaiting artifact review. The user selected a self-hosted hub; runtime implementation has not started.
+Status: approved for implementation after PR #26 merged on 2026-10-23. The user selected a self-hosted hub. Implementation is incremental; consult the tasks and evidence before treating any capability as available.
 
 - [Proposal and scope](proposal.md)
 - [Design and trust boundaries](design.md)

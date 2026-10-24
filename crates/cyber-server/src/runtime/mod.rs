@@ -800,6 +800,7 @@ pub(crate) struct Inner {
     /// One send lock per message target (`cross-session-messaging` → Rate limits):
     /// concurrent senders to one Session pass the checks and admission one at a time.
     message_locks: StdMutex<HashMap<String, Arc<Mutex<()>>>>,
+    collaboration_authorizer: StdMutex<Option<Arc<messaging::CollaborationAuthorizer>>>,
     /// Team creation and spawns (`agent-teams` → Team composition): the size check and
     /// the spawn it admits run under this lock, so concurrent spawns cannot exceed
     /// `teams.max_teammates`.
@@ -906,6 +907,7 @@ impl Runtime {
             workflow_closing: std::sync::atomic::AtomicBool::new(false),
             workflow_locks: StdMutex::default(),
             message_locks: StdMutex::default(),
+            collaboration_authorizer: StdMutex::default(),
             team_spawn: Mutex::default(),
             team_status: Mutex::default(),
             peer_listings: StdMutex::default(),
@@ -1684,6 +1686,8 @@ impl Runtime {
                 "release a held input as steer or queue".into(),
             ));
         }
+        self.authorize_collaboration_release(session_id, message_id)
+            .await?;
         if self
             .continue_child_input(session_id, Some((message_id, delivery)), false)
             .await?

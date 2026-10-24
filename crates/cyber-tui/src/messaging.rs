@@ -30,6 +30,8 @@ pub struct Record {
     pub peer_session_id: Option<String>,
     /// `session`, `client` or `peer` (another machine).
     pub origin_kind: String,
+    /// Verified project provenance, never an address of a Session on another machine.
+    pub collaboration: Option<Value>,
     /// The other machine of a message between direct peers: the remote's name for a sent
     /// message, the grant's name for a received one.
     pub remote_peer: Option<String>,
@@ -61,6 +63,7 @@ impl Record {
             to: s("to"),
             peer_session_id: v["peer_session_id"].as_str().map(str::to_owned),
             origin_kind: s("origin_kind"),
+            collaboration: v.get("collaboration").filter(|v| v.is_object()).cloned(),
             remote_peer: v["remote_peer"].as_str().map(clean),
             remote_session_id: v["remote_session_id"].as_str().map(clean),
             outcome: s("outcome"),
@@ -90,6 +93,27 @@ impl Record {
     /// The other side's address with its machine: `review@laptop`. The receiving server
     /// names peer senders after the grant, so the address normally carries it already.
     pub fn peer_label(&self) -> String {
+        if self.origin_kind == "collaboration" {
+            if let Some(origin) = &self.collaboration {
+                let value = |key: &str| clean(origin[key].as_str().unwrap_or_default());
+                let member = value("member_id");
+                let agent = value("agent_id");
+                let who = if agent.is_empty() {
+                    format!("human {member}")
+                } else {
+                    format!("agent {agent} · owner {member}")
+                };
+                return format!(
+                    "{who} · project {} [{}]",
+                    value("project_id"),
+                    value("membership_kind")
+                );
+            }
+            return format!(
+                "{} [collaboration: provenance unavailable]",
+                clean(self.peer())
+            );
+        }
         let peer = clean(self.peer());
         match self.machine() {
             Some(machine) if !peer.ends_with(&format!("@{machine}")) => {
@@ -101,6 +125,9 @@ impl Record {
 
     /// The other side's Session: the local one, or the one on the other machine.
     pub fn other_session(&self) -> Option<&str> {
+        if self.origin_kind == "collaboration" {
+            return None;
+        }
         self.peer_session_id
             .as_deref()
             .or(self.remote_session_id.as_deref())
@@ -220,7 +247,7 @@ fn unescape(value: &str) -> String {
 pub fn clean(line: &str) -> String {
     line.chars()
         .map(|c| if c == '\t' { ' ' } else { c })
-        .filter(|c| !c.is_control())
+        .filter(|c| !c.is_control() && !matches!(c, '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'))
         .collect()
 }
 
@@ -534,6 +561,29 @@ impl App {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn untrusted_labels_cannot_inject_terminal_or_bidi_controls() {
+        assert_eq!(
+            clean("Alice\u{001b}[31m\t\u{202e}guest\u{2069}\n"),
+            "Alice[31m guest"
+        );
+    }
+
+    #[test]
+    fn collaboration_attribution_is_not_a_peer_or_navigable_remote_session() {
+        let record = Record::parse(&json!({
+            "message_id":"msgx_hub", "direction":"in", "from":"spoofed@example", "origin_kind":"collaboration",
+            "remote_peer":"spoofed", "peer_session_id":"ses_wrong", "remote_session_id":"ses_remote",
+            "collaboration":{"project_id":"cprj_one", "member_id":"cmem_alice", "agent_id":"cagt_builder", "membership_kind":"guest"}
+        })).unwrap();
+        assert_eq!(record.machine(), None);
+        assert_eq!(record.other_session(), None);
+        assert_eq!(
+            record.peer_label(),
+            "agent cagt_builder · owner cmem_alice · project cprj_one [guest]"
+        );
+    }
 
     fn record(id: &str, incoming: bool, outcome: &str, ms: i64) -> Record {
         Record {

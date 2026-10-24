@@ -6,6 +6,7 @@ mod attachments;
 pub mod books;
 mod branches;
 mod children;
+mod collaboration;
 mod composer;
 mod explorer;
 mod export;
@@ -148,3 +149,6 @@ pub struct Summary {
     pub output_tokens: u64,
     pub cost: f64,
 }
+
+#[cfg(test)]
+mod screens_collaboration;

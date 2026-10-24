@@ -65,6 +65,8 @@ pub struct MessageRecord {
     pub peer_session_id: Option<String>,
     /// `session`, `client` or `peer`; an open set.
     pub origin_kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collaboration: Option<super::CollaborationOrigin>,
     /// `delivered`, `held`, `refused`, `released` or `dropped`; a send to a peer that
     /// failed on the network is `failed`, and one the peer still held after 7 days is
     /// `expired`.
@@ -108,6 +110,11 @@ impl From<MessageRow> for MessageRecord {
             from,
             to,
             peer_session_id: row.peer_session_id,
+            collaboration: if row.origin_kind == "collaboration" {
+                super::CollaborationOrigin::from_key(&row.sender_key)
+            } else {
+                None
+            },
             origin_kind: row.origin_kind,
             outcome: row.outcome,
             reason: row.reason,
