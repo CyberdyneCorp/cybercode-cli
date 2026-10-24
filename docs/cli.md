@@ -1922,8 +1922,38 @@ cyber collab project [OPTIONS] <COMMAND>
 
 **Subcommands:**
 
+- [`list`](#cyber-collab-project-list): List projects the current account is authorized to read on this hub
+- [`show`](#cyber-collab-project-show): Read one authorized project descriptor before explicitly binding a checkout
 - [`policy`](#cyber-collab-project-policy): Change explicit enrollment/guest policy with optimistic concurrency
 - [`create`](#cyber-collab-project-create)
+
+## `cyber collab project list`
+
+List projects the current account is authorized to read on this hub
+
+```text
+cyber collab project list [OPTIONS] --hub <HUB>
+```
+
+**Options:**
+
+- `--hub <HUB>`
+
+## `cyber collab project show`
+
+Read one authorized project descriptor before explicitly binding a checkout
+
+```text
+cyber collab project show [OPTIONS] --hub <HUB> <PROJECT>
+```
+
+**Arguments:**
+
+- `<PROJECT>`
+
+**Options:**
+
+- `--hub <HUB>`
 
 ## `cyber collab project policy`
 

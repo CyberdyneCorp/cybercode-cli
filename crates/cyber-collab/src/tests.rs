@@ -1206,3 +1206,116 @@ async fn historical_receipts_cannot_authorize_content_or_block_after_source_with
         "DeliveryTerminalConflictError"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn human_replies_derive_chain_counters_but_agent_replies_cannot_reset_them() {
+    let h = TestHub::new().await;
+    let p = h.project().await;
+    let bob = h.add(&p, "bob");
+    let members: Vec<Member> = h
+        .alice
+        .get(&format!("/projects/{}/members", p.id))
+        .await
+        .unwrap();
+    let alice = members.into_iter().find(|m| m.subject == "alice").unwrap();
+    let route = format!("/projects/{}/messages", p.id);
+    let parent: Message = h
+        .alice
+        .mutate(
+            Method::POST,
+            &route,
+            &Mutation::new(SendMessage {
+                target: MessageTarget::Direct(Participant::Human(bob.id.clone())),
+                text: "thread".into(),
+                reply_to: None,
+                depth: 0,
+                hops: 31,
+            }),
+        )
+        .await
+        .unwrap()
+        .data;
+    let reply: Message = h
+        .bob
+        .mutate(
+            Method::POST,
+            &route,
+            &Mutation::new(SendMessage {
+                target: MessageTarget::Direct(Participant::Human(alice.id)),
+                text: "reply without counter configuration".into(),
+                reply_to: Some(parent.id),
+                depth: 0,
+                hops: 1,
+            }),
+        )
+        .await
+        .unwrap()
+        .data;
+    assert_eq!(reply.hops, 32);
+    assert!(
+        h.alice
+            .mutate::<_, Message>(
+                Method::POST,
+                &route,
+                &Mutation::new(SendMessage {
+                    target: MessageTarget::Direct(Participant::Human(bob.id.clone())),
+                    text: "bound".into(),
+                    reply_to: Some(reply.id),
+                    depth: 0,
+                    hops: 1
+                })
+            )
+            .await
+            .is_err()
+    );
+    let publication = h.agent(&h.alice, &p, "agent").await;
+    let agent = HubClient::new(&h.url, Secret::new(publication.capability.unwrap())).unwrap();
+    let parent: Message = agent
+        .mutate(
+            Method::POST,
+            &route,
+            &Mutation::new(SendMessage {
+                target: MessageTarget::Direct(Participant::Human(bob.id.clone())),
+                text: "agent thread".into(),
+                reply_to: None,
+                depth: 0,
+                hops: 5,
+            }),
+        )
+        .await
+        .unwrap()
+        .data;
+    let reply: Message = h
+        .bob
+        .mutate(
+            Method::POST,
+            &route,
+            &Mutation::new(SendMessage {
+                target: MessageTarget::Direct(Participant::Agent(publication.agent.id)),
+                text: "human response".into(),
+                reply_to: Some(parent.id),
+                depth: 0,
+                hops: 1,
+            }),
+        )
+        .await
+        .unwrap()
+        .data;
+    assert_eq!(reply.hops, 6);
+    assert!(
+        agent
+            .mutate::<_, Message>(
+                Method::POST,
+                &route,
+                &Mutation::new(SendMessage {
+                    target: MessageTarget::Direct(Participant::Human(bob.id)),
+                    text: "cannot reset chain".into(),
+                    reply_to: Some(reply.id),
+                    depth: 0,
+                    hops: 1
+                })
+            )
+            .await
+            .is_err()
+    );
+}

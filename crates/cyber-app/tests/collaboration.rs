@@ -167,6 +167,52 @@ async fn real_hub_publication_delivers_once_held_and_logout_blocks_release() {
         secrets,
     )
     .unwrap();
+    let listed = connector
+        .call("project.list".into(), json!({"hub_url":url}))
+        .await
+        .unwrap();
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+    assert_eq!(listed[0]["id"], project.to_string());
+    let shown = connector
+        .call(
+            "project.show".into(),
+            json!({"hub_url":url,"project":project}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(shown["id"], project.to_string());
+    assert!(
+        connector.local.bindings().unwrap().is_empty(),
+        "project discovery must not implicitly bind a checkout"
+    );
+    assert!(
+        connector.local.publications().unwrap().is_empty(),
+        "read-only discovery must not publish agents"
+    );
+    // A mismatched public issuer is rejected before a user token or project read
+    // is sent to that host, even when an explicit URL was supplied for discovery.
+    let wrong_token = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let wrong_projects = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed_token = wrong_token.clone();
+    let observed_projects = wrong_projects.clone();
+    let wrong_hub_id = cyber_collab::ids::HubId::new();
+    let wrong_router=axum::Router::new().route("/api/v1/hub/hello",axum::routing::get(move|headers:axum::http::HeaderMap|{
+        let token=observed_token.clone();let hub=wrong_hub_id.clone();
+        async move {if headers.get("authorization").is_some_and(|value|value.to_str().unwrap_or_default().trim()!="Bearer"){token.store(true,std::sync::atomic::Ordering::SeqCst);}axum::Json(json!({"data":{"hub_id":hub,"issuer":"https://unrelated.example","audience":"hub"}}))}
+    })).route("/api/v1/hub/projects",axum::routing::get(move||{let count=observed_projects.clone();async move{count.fetch_add(1,std::sync::atomic::Ordering::SeqCst);axum::Json(json!({"data":[]}))}}));
+    let wrong_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let wrong_url = format!("http://{}", wrong_listener.local_addr().unwrap());
+    let wrong_server = tokio::spawn(async move {
+        axum::serve(wrong_listener, wrong_router).await.unwrap();
+    });
+    let rejected = connector
+        .call("project.list".into(), json!({"hub_url":wrong_url}))
+        .await
+        .unwrap_err();
+    assert_eq!(rejected.body.tag, "IssuerMismatchError");
+    assert!(!wrong_token.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(wrong_projects.load(std::sync::atomic::Ordering::SeqCst), 0);
+    wrong_server.abort();
     connector.call("bind".into(),json!({"operation_id":"cop_fixture_bind","directory":app.repo,"hub_url":url,"project":project,"confirm":true})).await.unwrap();
     let (_, created) = app.create("default").await;
     let session = created["data"]["id"].as_str().unwrap().to_owned();

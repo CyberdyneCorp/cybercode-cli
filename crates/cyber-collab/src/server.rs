@@ -1108,7 +1108,7 @@ fn send(
     db: &Connection,
     actor: &Actor,
     project: &str,
-    request: SendMessage,
+    mut request: SendMessage,
 ) -> Result<Value, Error> {
     if request.text.is_empty()
         || request.text.len() > 16384
@@ -1124,11 +1124,16 @@ fn send(
     let author = actor.participant()?;
     if let Some(id) = &request.reply_to {
         let parent: Message = get(db, "message", id.as_str())?;
-        if parent.project.as_str() != project
-            || !visible(db, actor, &parent)?
-            || request.hops <= parent.hops
-        {
+        if parent.project.as_str() != project || !visible(db, actor, &parent)? {
             return Err(Error::forbidden());
+        }
+        // A human reply is an explicit new user action; clients need not expose
+        // internal counters. Agent replies must retain their runtime's chain.
+        if actor.agent.is_none() {
+            request.hops = parent.hops.saturating_add(1);
+        }
+        if request.hops <= parent.hops || request.hops > 32 {
+            return Err(Error::invalid("message chain bound exceeded"));
         }
         let conversation = match (&parent.target, &request.target) {
             (MessageTarget::Project, MessageTarget::Project) => true,

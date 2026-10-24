@@ -257,6 +257,25 @@ impl Collaboration {
     async fn client(&self, url: &str) -> Result<HubClient, ApiError> {
         HubClient::new(url, self.accounts.access_token().await?).map_err(hub_error)
     }
+    async fn issuer_checked_client(&self, url: &str) -> Result<HubClient, ApiError> {
+        let token = self.accounts.access_token().await?;
+        let account = self
+            .accounts
+            .current()
+            .await?
+            .account
+            .ok_or_else(ApiError::unauthorized)?;
+        // Inspect public metadata without sending a user token to an unrelated issuer.
+        let public =
+            HubClient::new(url, cyber_account::Secret::new(String::new())).map_err(hub_error)?;
+        let hello: HubHello = public.get("/hello").await.map_err(hub_error)?;
+        if account.issuer.trim_end_matches('/') != hello.issuer.trim_end_matches('/') {
+            return Err(error(
+                "IssuerMismatchError: hub and selected account use different issuers",
+            ));
+        }
+        HubClient::new(url, token).map_err(hub_error)
+    }
     pub(super) async fn pinned(&self, binding: &Binding) -> Result<HubClient, ApiError> {
         let client = self.client(&binding.hub_url).await?;
         let hello: HubHello = client.get("/hello").await.map_err(hub_error)?;
@@ -547,9 +566,12 @@ impl CollaborationService for Collaboration {
                 "bind" => self.bind(input).await,
                 "publish" => self.publish(input).await,
                 "unpublish" => self.unpublish(input).await,
-                "project.create" | "join" | "applications.redeem" | "applications.status" => {
-                    self.unbound(&operation, input).await
-                }
+                "project.create"
+                | "project.list"
+                | "project.show"
+                | "join"
+                | "applications.redeem"
+                | "applications.status" => self.unbound(&operation, input).await,
                 _ => self.project_call(&operation, input).await,
             }
         })

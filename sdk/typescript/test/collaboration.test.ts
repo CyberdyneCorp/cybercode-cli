@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CyberApiError, CyberClientError, isCollaborationQueued } from "../src/index.js";
+import { createServer } from "node:http";
+import { Cyber, CyberApiError, CyberClientError, isCollaborationQueued } from "../src/index.js";
 import { json, mockClient } from "./support.js";
 
 test("local helper preserves checkout and fences; an unknown transport outcome retries one operation", async () => {
@@ -49,7 +50,7 @@ test("task claim conflict is surfaced without a hidden reread or takeover", asyn
 });
 
 test("generated hub operations use a separate bearer client and retain mutation replay evidence", async () => {
-  const { client, calls } = mockClient(() => json(200, { data: { id: "ctask_one", revision: 1 }, replayed: true }), { auth: { type: "account", token: "fixture-only-access" } });
+  const { client, calls } = mockClient(() => json(200, { data: { id: "ctask_one", revision: 1 }, replayed: true }), { baseUrl: "https://hub.test", auth: { type: "account", token: "fixture-only-access" } });
   const response = await client.hub.createTask("cprj_one", { operation_id: "cop_same", payload: { title: "Verify", description: "" } });
   assert.equal(response.replayed, true);
   assert.equal(response.data.id, "ctask_one");
@@ -72,9 +73,60 @@ test("queued guard rejects incomplete receipts and nonfinite watch delays cannot
 });
 
 test("hub metadata never leaks a local Basic password and protected hub calls fail before fetch", async () => {
-  const { client, calls } = mockClient(() => json(200, { data: { hub_id: "chub_fixture", issuer: "https://auth.test", audience: "hub" } }));
+  const { client, calls } = mockClient(() => json(200, { data: { hub_id: "chub_fixture", issuer: "https://auth.test", audience: "hub" } }), { baseUrl: "https://hub.test" });
   await client.hub.hello();
   assert.equal(calls[0]!.headers.get("authorization"), null);
   await assert.rejects(client.hub.tasks("cprj_one"), (error) => error instanceof CyberClientError && error.permanent);
   assert.equal(calls.length, 1, "the local owner password was not sent to a protected hub route");
+});
+
+test("hub targets reject non-TLS, DNS loopback, user information and URL metadata before auth or fetch", async () => {
+  for (const baseUrl of ["http://hub.example", "http://localhost", "http://127.0.0.1.example", "http://[::ffff:127.0.0.1]", "https://user:password@hub.example", "https://@hub.example", "https://hub.example?", "https://hub.example#", "https://hub.example?query=1", "https://hub.example#fragment"]) {
+    let authRequests = 0;
+    const { client, calls } = mockClient(() => json(200, { data: [] }), { baseUrl, auth: { type: "account", tokenProvider: () => { authRequests++; return "fixture-only"; } } });
+    await assert.rejects(client.hub.tasks("cprj_one"), (error) => error instanceof CyberClientError && error.permanent, baseUrl);
+    await assert.rejects(client.hub.hello(), (error) => error instanceof CyberClientError && error.permanent, `metadata: ${baseUrl}`);
+    assert.equal(calls.length, 0, baseUrl);
+    assert.equal(authRequests, 0, "invalid destinations must not even fetch a bearer token");
+  }
+});
+
+test("hub transport permits literal IPv4/IPv6 loopback and external HTTPS including operation query parameters", async () => {
+  for (const baseUrl of ["http://127.0.0.1:4749", "http://127.42.10.2:4749", "http://[::1]:4749", "https://hub.example/deployment"]) {
+    const { client, calls } = mockClient(() => json(200, { data: [] }), { baseUrl, auth: { type: "account", token: "fixture-only" } });
+    await client.hub.deliveries("cprj_one", { agent: "cagt_one", after: "cmsg_one" });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]!.url.searchParams.get("after"), "cmsg_one");
+    assert.equal(calls[0]!.headers.get("authorization"), "Bearer fixture-only");
+  }
+});
+
+test("hub URL policy leaves ordinary local owner and peer HTTP transports unchanged", async () => {
+  const { client, calls } = mockClient(() => json(200, { data: [] }), { baseUrl: "http://owner.example" });
+  await client.session.list();
+  await client.peer.hello();
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every((call) => call.headers.get("authorization")?.startsWith("Basic ")));
+});
+
+test("a real hub redirect cannot forward credentials or content to another endpoint", async (t) => {
+  let redirectedRequests = 0;
+  const server = createServer((request, response) => {
+    if (request.url === "/api/v1/hub/hello" || request.url === "/api/v1/hub/projects/cprj_one/tasks") {
+      response.writeHead(request.method === "POST" ? 307 : 302, { location: "/redirected" });
+      response.end();
+    } else {
+      redirectedRequests++;
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ data: {} }));
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise<void>((resolve, reject) => { server.close((error) => error ? reject(error) : resolve()); server.closeAllConnections(); }));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const client = Cyber.connect({ baseUrl: `http://127.0.0.1:${address.port}`, auth: { type: "account", token: "fixture-only" }, retry: { retries: 0 } });
+  await assert.rejects(client.hub.hello(), CyberClientError);
+  await assert.rejects(client.hub.createTask("cprj_one", { operation_id: "cop_redirect", payload: { title: "private fixture content", description: "" } }), CyberClientError);
+  assert.equal(redirectedRequests, 0);
 });

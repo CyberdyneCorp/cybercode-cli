@@ -125,7 +125,7 @@ upstream are separate from the per-user owner listener.
 
 `CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=line-tables-only
 CARGO_PROFILE_TEST_DEBUG=line-tables-only cargo test -p cyber-collab --lib`
-passes 37 tests on macOS after the pending-application and history/cursor fixes.
+passes 38 tests on macOS after the pending-application and history/cursor fixes.
 These include real HTTP with independently signed human and agent credentials,
 bootstrap refusal, current organization checks, direct-message privacy through
 history/events/snapshots, one-winner concurrent claims, stale updates, capability
@@ -196,3 +196,19 @@ is an observation; only the separate fresh authorization path permits local rele
 
 The SDK CI job for `630615c6` passed 116 tests with zero skips, including the real
 hub/CLI/SDK acceptance test ([job evidence](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40066295903/job/120790181476)).
+
+CI exposed two CLI consistency failures: the doctor JSON check list omitted the
+intentional account row, and the command catalog omitted implemented account
+commands while the reserved catalog lacked `collab`. These expectations/catalogs
+are synchronized; all 59 CLI unit/catalog/generated-doc tests and the targeted
+doctor integration test pass locally. Project list/show discovery is also
+implemented before binding, with issuer verification before forwarding a user
+credential. The two actual owner/hub regressions pass with those discovery cases.
+
+The real-hub TUI test passed on Linux CI at `630615c6` (4.225 seconds). The SDK
+transport followup validates HTTPS/literal-loopback targets before invoking a
+token provider and refuses hub redirects; real local redirect tests observe zero
+requests at the redirect destination. SDK local results are 112 passed and eight
+explicit platform/fixture skips; the full positive Linux matrix remains the
+merge gate for the final candidate. Human thread replies derive their chain
+counter at the hub, while agent replies still cannot reset their runtime chain.

@@ -426,8 +426,18 @@ impl Collaboration {
         Ok(())
     }
     pub(super) async fn unbound(&self, operation: &str, input: Value) -> Result<Value, ApiError> {
-        let client = self.client(field(&input, "hub_url")?).await?;
-        let _hello: HubHello = client.get("/hello").await.map_err(hub_error)?;
+        let client = self
+            .issuer_checked_client(field(&input, "hub_url")?)
+            .await?;
+        if operation == "project.list" {
+            return client.get("/projects").await.map_err(hub_error);
+        }
+        if operation == "project.show" {
+            return client
+                .get(&format!("/projects/{}", identifier(&input, "project")?))
+                .await
+                .map_err(hub_error);
+        }
         if operation == "applications.status" {
             return client
                 .get(&format!(

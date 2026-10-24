@@ -155,6 +155,17 @@ pub enum EnrollmentArg {
 }
 #[derive(Debug, Subcommand)]
 pub enum ProjectCmd {
+    /// List projects the current account is authorized to read on this hub.
+    List {
+        #[arg(long)]
+        hub: String,
+    },
+    /// Read one authorized project descriptor before explicitly binding a checkout.
+    Show {
+        #[arg(long)]
+        hub: String,
+        project: String,
+    },
     /// Change explicit enrollment/guest policy with optimistic concurrency.
     Policy {
         #[arg(long)]
@@ -404,6 +415,15 @@ fn prepare(cmd: CollabCmd) -> Result<(String, Value), CliError> {
                 json!({"project":project,"expected_revision":expected_revision,"enrollment":enrollment,"guests_enabled":allow_guests}),
             )
         }
+        CollabCmd::Project {
+            cmd: ProjectCmd::List { hub },
+        } => ("project.list".into(), json!({"hub_url":hub})),
+        CollabCmd::Project {
+            cmd: ProjectCmd::Show { hub, project },
+        } => (
+            "project.show".into(),
+            json!({"hub_url":hub,"project":project}),
+        ),
         CollabCmd::Invite {
             project,
             role,
@@ -715,6 +735,32 @@ fn serve(args: CollabServeArgs, ctx: &Context) -> Result<(), CliError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn project_discovery_parses_explicit_hub_without_checkout_binding() {
+        use clap::Parser;
+        for arguments in [
+            vec![
+                "cyber",
+                "collab",
+                "project",
+                "list",
+                "--hub",
+                "https://hub.example",
+            ],
+            vec![
+                "cyber",
+                "collab",
+                "project",
+                "show",
+                "--hub",
+                "https://hub.example",
+                "cprj_fixture",
+            ],
+        ] {
+            assert!(crate::cli::Cli::try_parse_from(arguments).is_ok());
+        }
+        assert!(crate::cli::Cli::try_parse_from(["cyber", "collab", "project", "list"]).is_err());
+    }
     #[test]
     fn guest_invitations_default_to_viewer_unless_explicitly_elevated() {
         let invitation = |role| {
