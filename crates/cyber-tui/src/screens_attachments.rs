@@ -188,7 +188,6 @@ async fn large_paste_becomes_a_chip_and_submits_in_full() {
     assert!(sent.contains("see fourth log line 1\\n"), "{sent}");
 }
 
-#[cfg(unix)]
 /// `tui` → Composer appearance: pending chips render in `accent` on `selection` (reverse
 /// video under `NO_COLOR`), and the text typed around them keeps the composer's style.
 #[tokio::test]
@@ -229,6 +228,7 @@ async fn chips_render_in_accent_on_selection() {
     assert!(!buf[(x - 2, y)].modifier.contains(Modifier::REVERSED));
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn dropped_paths_and_mentions_become_chips() {
     let server = server().await;
