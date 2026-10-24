@@ -129,6 +129,11 @@ fn success_json(output: &Output) -> Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
+/// `path` with links and Windows path forms resolved, for comparing listed paths.
+fn resolved(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
 fn kinds(plan: &Value) -> Vec<(String, PathBuf)> {
     plan["entries"]
         .as_array()
@@ -157,8 +162,15 @@ fn dry_run_lists_paths_with_sizes_and_deletes_nothing() {
         ("state", env.dir("state")),
         ("cache", env.dir("cache")),
     ] {
-        let expected = (expected.0.to_string(), expected.1);
-        assert!(listed.contains(&expected), "{expected:?} in {listed:?}");
+        // Compared resolved: on Windows the binary is listed as `current_exe` reports
+        // it, without the `\\?\` prefix the test's canonical root has.
+        let expected = (expected.0, resolved(&expected.1));
+        assert!(
+            listed
+                .iter()
+                .any(|(kind, path)| *kind == expected.0 && resolved(path) == expected.1),
+            "{expected:?} in {listed:?}"
+        );
     }
     for entry in plan["entries"].as_array().unwrap() {
         assert_eq!(entry["removed"], false);
