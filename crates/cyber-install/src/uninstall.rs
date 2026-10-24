@@ -415,8 +415,11 @@ mod tests {
         let l = layout();
         let home = &l.home;
         assert!(reason(Path::new("relative/cyber"), home).contains("resolved"));
-        assert!(reason(&home.join(".config/../cyber"), home).contains("resolved"));
-        assert!(reason(&home.join("./.config/cyber"), home).contains("resolved"));
+        // Built as text: on Windows `join` onto a `\\?\` path drops `.` and `..`.
+        let sep = std::path::MAIN_SEPARATOR;
+        let dotted = |rel: &str| PathBuf::from(format!("{}{sep}{rel}", home.display()));
+        assert!(reason(&dotted(&format!(".config{sep}..{sep}cyber")), home).contains("resolved"));
+        assert!(reason(&dotted(&format!(".{sep}.config{sep}cyber")), home).contains("resolved"));
         let root = l.root.ancestors().last().unwrap();
         assert!(reason(root, home).contains("root"));
         assert!(reason(home, home).contains("home"));

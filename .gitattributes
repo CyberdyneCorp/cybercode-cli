@@ -1,1 +1,3 @@
 crates/cyber-tools/tests/goldens/*.txt text eol=lf
+# Signed test blobs: a CRLF checkout on Windows breaks the signature.
+crates/cyber-install/tests/fixtures/* -text

@@ -52,7 +52,9 @@ valid_version() {
     case "$1" in
         *[!0-9A-Za-z.-]*) return 1 ;;
     esac
-    expr "$1" : '[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\(-[0-9A-Za-z.][0-9A-Za-z.]*\)\{0,1\}$' >/dev/null
+    # Not `expr`: with a group that matches nothing (no prerelease) GNU expr prints an
+    # empty string and exits 1, so `1.4.0` was refused on Linux.
+    printf '%s\n' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
 }
 
 # The PATH line quotes the directory, so characters a shell expands are refused.

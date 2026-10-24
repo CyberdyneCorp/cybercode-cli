@@ -195,10 +195,21 @@ fn is_script(probe: &Probe) -> bool {
     let default = probe.home.join(".cyber").join("bin");
     std::iter::once(default)
         .chain(probe.install_dir.clone())
-        .any(|dir| probe.exe.starts_with(dir))
+        .any(|dir| is_under(&probe.exe, &dir))
         || receipt_path(&probe.exe).is_some_and(|receipt| {
             std::fs::symlink_metadata(receipt).is_ok_and(|meta| meta.is_file())
         })
+}
+
+/// `path` is inside `dir`, comparing the paths as given and then resolved: a
+/// directory named through a symlink, or on Windows through its short 8.3 form
+/// (`C:\\Users\\RUNNER~1`), still contains the executable under its long name.
+fn is_under(path: &Path, dir: &Path) -> bool {
+    path.starts_with(dir)
+        || match (std::fs::canonicalize(path), std::fs::canonicalize(dir)) {
+            (Ok(path), Ok(dir)) => path.starts_with(dir),
+            _ => false,
+        }
 }
 
 /// Where the install script's receipt for `exe` would be.
@@ -457,6 +468,24 @@ mod tests {
         assert_eq!(from_path(&probe), None, "a directory is not a receipt");
         std::fs::remove_dir(&receipt).unwrap();
         std::fs::write(&receipt, "cyber install script 1.4.0\n").unwrap();
+        assert_eq!(from_path(&probe), Some(InstallMethod::Script));
+    }
+
+    /// `CYBER_INSTALL_DIR` named through another path to the same directory (a
+    /// symlink here; on Windows a short 8.3 name such as `RUNNER~1`) still marks the
+    /// binary inside it as a script install.
+    #[cfg(unix)]
+    #[test]
+    fn script_detection_resolves_the_install_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let real = root.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        let exe = real.join("cyber");
+        std::fs::write(&exe, b"").unwrap();
+        let alias = root.path().join("alias");
+        std::os::unix::fs::symlink(&real, &alias).unwrap();
+        let mut probe = probe(exe.to_str().unwrap());
+        probe.install_dir = Some(alias);
         assert_eq!(from_path(&probe), Some(InstallMethod::Script));
     }
 
