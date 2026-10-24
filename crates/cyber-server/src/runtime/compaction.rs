@@ -201,7 +201,7 @@ impl Inner {
             .as_ref()
             .map(|e| e.baseline.clone())
             .unwrap_or_default();
-        let system = [super::context::base_prompt(&resolved.provider), baseline];
+        let system = [super::context::base_prompt(resolved.family), baseline];
         let tools: Vec<_> = self
             .tools
             .definitions(&super::drain::turn_context(&state, resolved))

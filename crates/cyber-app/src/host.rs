@@ -72,6 +72,14 @@ impl ToolHost for AppHost {
         self.builtin.claude_compat(directory)
     }
 
+    fn output_style(
+        &self,
+        directory: &str,
+        selection: Option<&str>,
+    ) -> cyber_server::runtime::ContextObservation {
+        self.builtin.output_style(directory, selection)
+    }
+
     fn instruction_read_gate(
         &self,
         directory: &str,

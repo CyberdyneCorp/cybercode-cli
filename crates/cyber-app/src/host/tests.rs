@@ -785,3 +785,119 @@ fn method_scan_handles_crlf_sources() {
     let names: Vec<_> = methods(source, "trait T").into_iter().collect();
     assert_eq!(names, ["a", "b"]);
 }
+
+/// A local OpenAI-compatible provider that answers every request with `ok` and keeps the
+/// request bodies.
+async fn recording_provider() -> (String, Arc<std::sync::Mutex<Vec<serde_json::Value>>>) {
+    type Bodies = Arc<std::sync::Mutex<Vec<serde_json::Value>>>;
+    async fn complete(
+        axum::extract::State(bodies): axum::extract::State<Bodies>,
+        axum::Json(body): axum::Json<serde_json::Value>,
+    ) -> axum::response::Response {
+        bodies.lock().unwrap().push(body);
+        let chunk = json!({"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}],
+            "usage":{"prompt_tokens":10,"completion_tokens":1}});
+        axum::response::Response::builder()
+            .header("content-type", "text/event-stream")
+            .body(axum::body::Body::from(format!(
+                "data: {chunk}\n\ndata: [DONE]\n\n"
+            )))
+            .unwrap()
+    }
+    let bodies = Bodies::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/v1", listener.local_addr().unwrap());
+    let router = axum::Router::new()
+        .route("/v1/chat/completions", axum::routing::post(complete))
+        .with_state(bodies.clone());
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    (url, bodies)
+}
+
+/// The system text of each Turn request (title requests left out), in order.
+fn turn_systems(bodies: &std::sync::Mutex<Vec<serde_json::Value>>) -> Vec<String> {
+    bodies
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|body| !body["messages"].to_string().contains("Write a short title"))
+        .map(|body| body["messages"][0]["content"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn base_prompt_follows_the_model_family() {
+    use cyber_core::prompts::{ModelFamily, base_prompt};
+    use cyber_server::runtime::{Admission, Delivery};
+    let (url, bodies) = recording_provider().await;
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().canonicalize().unwrap();
+    std::fs::create_dir_all(directory.join("config")).unwrap();
+    let config = json!({"permissions":"allow","providers":{"lab":{
+        "api":{"type":"openai-compatible","url":url,"settings":{"auth":"none"}},
+        "models":{"claude-sonnet":{},"qwen3":{}}}}});
+    std::fs::write(directory.join("config/cyber.json"), config.to_string()).unwrap();
+    let app = application(&directory).await;
+    let create = |model: &str| cyber_server::runtime::CreateSession {
+        directory: directory.display().to_string(),
+        model: model.into(),
+        ..Default::default()
+    };
+    let turn = async |id: &str, text: &str| {
+        let admission = Admission::text(text, Delivery::Queue);
+        app.runtime.admit(id, admission).await.unwrap();
+        let idle = app.runtime.wait_idle(id);
+        tokio::time::timeout(std::time::Duration::from_secs(20), idle)
+            .await
+            .expect("the session never settled");
+    };
+    let session = app
+        .runtime
+        .create_session(create("lab/claude-sonnet"))
+        .await
+        .unwrap();
+    turn(&session.id, "one").await;
+    app.runtime
+        .switch_model(&session.id, "lab/qwen3")
+        .await
+        .unwrap();
+    turn(&session.id, "two").await;
+    let systems = turn_systems(&bodies);
+    let anthropic = format!("{}\n\n", base_prompt(ModelFamily::Anthropic));
+    let local = format!("{}\n\n", base_prompt(ModelFamily::Local));
+    assert!(systems[0].starts_with(&anthropic), "{}", systems[0]);
+    assert!(systems[1].starts_with(&local), "{}", systems[1]);
+    let page = app.store.read_events(&session.id, -1, 500).unwrap();
+    let epochs: Vec<_> = page
+        .events
+        .iter()
+        .filter(|event| event.kind == "session.context.epoch_started.1")
+        .map(|event| (event.data["epoch"].clone(), event.data["family"].clone()))
+        .collect();
+    assert_eq!(
+        epochs,
+        [(json!(1), json!("anthropic")), (json!(2), json!("local"))]
+    );
+
+    // An agent's system text replaces the base prompt, whatever the family.
+    std::fs::write(
+        directory.join("config/cyber.json"),
+        json!({"permissions":"allow","providers":config["providers"],
+            "agents":{"build":{"system":"Agent instructions."}}})
+        .to_string(),
+    )
+    .unwrap();
+    let agent = app
+        .runtime
+        .create_session(create("lab/claude-sonnet"))
+        .await
+        .unwrap();
+    turn(&agent.id, "three").await;
+    let systems = turn_systems(&bodies);
+    let last = systems.last().unwrap();
+    assert!(last.starts_with("Agent instructions.\n\n"), "{last}");
+    assert!(!last.contains("You are Cyber Code"), "{last}");
+    app.runtime.shutdown().await;
+}

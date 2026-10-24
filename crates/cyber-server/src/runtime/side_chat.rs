@@ -222,10 +222,10 @@ fn snapshot(state: &super::model::SessionState, resolved: &super::ResolvedModel)
             epoch
                 .system_prefix
                 .clone()
-                .unwrap_or_else(|| super::context::base_prompt(&resolved.provider)),
+                .unwrap_or_else(|| super::context::base_prompt(resolved.family)),
             epoch.baseline.clone(),
         ],
-        None => vec![super::context::base_prompt(&resolved.provider)],
+        None => vec![super::context::base_prompt(resolved.family)],
     };
     system.push(SYSTEM.into());
     Snapshot {

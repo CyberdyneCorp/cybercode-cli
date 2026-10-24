@@ -204,6 +204,8 @@ pub enum Action {
     Login(crate::login::LoginRequest),
     /// `/export` (`tui` → Export command).
     Export(crate::export::Request),
+    /// `/output-style` (`tui` → Output style picker).
+    OutputStyle(crate::output_styles::Request),
     /// Open a file in `$VISUAL`/`$EDITOR` (`s` on a Workflow Run: its script).
     EditFile(String),
     Quit,
@@ -349,6 +351,8 @@ pub enum Overlay {
     Login,
     /// `/export`: replace the existing file?
     ConfirmExport(crate::export::Request),
+    /// `/output-style`: the listing is `App::output_styles`.
+    OutputStyles(crate::output_styles::Picker),
 }
 
 /// Text the small model drafts for the user (`vcs-integration` → Commit and PR text
@@ -500,6 +504,8 @@ pub struct App {
     pub goals: crate::goals::Goals,
     /// The `/login` dialog.
     pub login: crate::login::LoginDialog,
+    /// The output style listing of the Location, for the picker and the Config tab.
+    pub output_styles: crate::output_styles::OutputStyles,
     /// The runs the indicators show and the notices of their ends.
     pub watch: crate::workflow_watch::Watch,
     /// `tui.notifications`.
@@ -588,6 +594,7 @@ impl App {
             team: Default::default(),
             goals: Default::default(),
             login: Default::default(),
+            output_styles: Default::default(),
             watch: Default::default(),
             notifications: Default::default(),
             #[cfg(test)]
@@ -952,6 +959,7 @@ impl App {
             Overlay::Rename(_) => self.rename_key(key),
             Overlay::Login => self.login_key(key),
             Overlay::ConfirmExport(_) => self.confirm_export_key(key),
+            Overlay::OutputStyles(_) => self.output_styles_key(key),
             Overlay::FileDiff { .. } => {
                 self.file_diff_key(key);
                 Vec::new()
@@ -1040,6 +1048,7 @@ impl App {
             Ui::SessionTree => return self.tree_command(),
             Ui::LabelBranch => self.composer.set_text("/label "),
             Ui::ExportSession => return self.export_command(""),
+            Ui::OutputStyle => return self.output_style_command(""),
         }
         Vec::new()
     }
@@ -1645,6 +1654,7 @@ impl App {
             "resume" | "sessions" => vec![Action::LoadSessions],
             "rename" => self.rename_command(args),
             "export" => self.export_command(args),
+            "output-style" => self.output_style_command(args),
             "tree" => self.tree_command(),
             "label" => self.label_command(args),
             "btw" | "side" => self.side_command(args),
@@ -2084,6 +2094,7 @@ impl App {
                 actions.extend(crate::sidebar::Part::ALL.map(Action::LoadSidebar));
                 actions.extend(self.workflows_connected());
                 actions.extend(self.watch_reload());
+                actions.extend(self.output_style_check());
                 actions
             }
             "session.diff.1" => {

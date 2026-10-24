@@ -215,6 +215,11 @@ async fn create(
     if let Some(mode) = mode {
         state.runtime.admit_mode(&path, agent, &mode)?;
     }
+    if let Some(style) = &body.session.output_style
+        && body.session.parent_id.is_none()
+    {
+        super::output_styles::check_defined(&state, &directory, style)?;
+    }
     let model_is_default = body.session.model.is_none();
     let model = body
         .session
@@ -232,6 +237,7 @@ async fn create(
         rules: body.session.rules,
         max_steps: body.session.max_steps,
         messaging: body.session.messaging,
+        output_style: body.session.output_style,
         ..Default::default()
     };
     let started = state

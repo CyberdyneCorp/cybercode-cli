@@ -22,6 +22,7 @@ mod memory;
 mod messaging;
 mod model;
 mod osc;
+mod output_styles;
 mod palette;
 mod perform;
 mod plugins;
@@ -70,6 +71,8 @@ mod screens_markdown;
 mod screens_mcp;
 #[cfg(test)]
 mod screens_messages;
+#[cfg(test)]
+mod screens_output_styles;
 #[cfg(test)]
 mod screens_parallel;
 #[cfg(test)]

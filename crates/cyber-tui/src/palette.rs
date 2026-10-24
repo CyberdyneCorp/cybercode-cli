@@ -40,6 +40,7 @@ pub enum Ui {
     SessionTree,
     LabelBranch,
     ExportSession,
+    OutputStyle,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -115,6 +116,12 @@ const BUILTINS: &[(&str, &str, Option<&str>, bool)] = &[
     ("team", "open the team view (experimental)", None, false),
     ("mode", "choose the permission mode", None, false),
     ("theme", "switch theme", Some("theme_list"), false),
+    (
+        "output-style",
+        "choose how replies are written; /output-style <name> switches",
+        None,
+        false,
+    ),
     ("compact", "summarize older history", None, false),
     (
         "cost",
@@ -290,6 +297,12 @@ const LATER_ACTIONS: &[(&str, &str, Option<&str>, Ui)] = &[
         "write this session to an HTML page in the Location",
         None,
         Ui::ExportSession,
+    ),
+    (
+        "Output style…",
+        "choose how replies are written, from the next turn",
+        None,
+        Ui::OutputStyle,
     ),
     (
         "Label branch",

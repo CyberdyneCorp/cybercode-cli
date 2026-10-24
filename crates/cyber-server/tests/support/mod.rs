@@ -116,6 +116,7 @@ impl ModelResolver for Models {
                 ..Cost::default()
             }),
             prefers_apply_patch: false,
+            family: cyber_core::prompts::ModelFamily::Default,
         })
     }
 

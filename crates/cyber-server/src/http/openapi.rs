@@ -659,6 +659,15 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .ok::<Data<Session>>(g),
         op(
             "post",
+            "/sessions/{sessionID}/output-style",
+            "v1.session.outputStyle",
+            "Switch the Session's own output style from the next Turn; null follows the configured style",
+        )
+        .body::<super::output_styles::StyleBody>(g)
+        .ok::<Data<Session>>(g)
+        .error::<ErrorBody>(g, 400, "InvalidRequestError: an invalid, unknown or held style, or a Session with a parent"),
+        op(
+            "post",
             "/sessions/{sessionID}/wake",
             "v1.session.wake",
             "Wake existing promotable Session input without admitting a new prompt",
@@ -1000,6 +1009,25 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .located()
         .ok::<Located<Vec<cyber_core::features::FeatureStatus>>>(g)
         .error::<ErrorBody>(g, 400, "InvalidRequestError, such as `ConfigInvalidError: unknown feature \"telepathy\"`"),
+        op(
+            "get",
+            "/config/output-styles",
+            "v1.config.outputStyles",
+            "Output styles of the Location (project ones only from a trusted checkout), the files that failed to load or are held for trust, and the configured and effective style",
+        )
+        .located()
+        .ok::<Located<cyber_core::output_styles::StyleListing>>(g)
+        .error::<ErrorBody>(g, 400, "InvalidRequestError: the Location's configuration is invalid"),
+        op(
+            "put",
+            "/config/output-style",
+            "v1.config.setOutputStyle",
+            "Set the global default output style (a built-in or user style; null sets default), keeping every other byte of the document",
+        )
+        .located()
+        .body::<super::output_styles::StyleBody>(g)
+        .ok::<Located<cyber_core::output_styles::StyleListing>>(g)
+        .error::<ErrorBody>(g, 400, "InvalidRequestError: an invalid or unknown style, or one defined only by a project"),
         op(
             "get",
             "/team-definitions",

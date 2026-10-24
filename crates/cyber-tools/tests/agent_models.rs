@@ -38,6 +38,7 @@ impl ModelResolver for Models {
             context_limit: 200_000,
             cost: None,
             prefers_apply_patch: false,
+            family: cyber_core::prompts::ModelFamily::Default,
         })
     }
 

@@ -819,6 +819,40 @@ impl ToolHost for BuiltinHost {
         Some(compat)
     }
 
+    /// Project styles only from a trusted checkout (the full resolver's trust). Without
+    /// a resolver there is no style; a configuration that fails to resolve is
+    /// unavailable, so the epoch keeps its style rather than dropping it.
+    fn output_style(
+        &self,
+        directory: &str,
+        selection: Option<&str>,
+    ) -> cyber_server::runtime::ContextObservation {
+        use cyber_server::runtime::ContextObservation;
+        let location = Path::new(directory);
+        let Some(config) = self.hook_config.get() else {
+            return ContextObservation::Absent;
+        };
+        let resolved = match (config.resolve)(location) {
+            Ok(resolved) => resolved,
+            Err(e) => return ContextObservation::Unavailable(format!("configuration: {e}")),
+        };
+        let configured = resolved.value.get("output_style").and_then(Value::as_str);
+        let name = selection
+            .or(configured)
+            .unwrap_or(cyber_core::output_styles::DEFAULT);
+        let styles = cyber_core::output_styles::styles(
+            location,
+            &self.opts.global_config_dir,
+            &resolved,
+            &*self.opts.env,
+        );
+        match styles.prompt(name) {
+            Ok(Some(text)) => ContextObservation::Value(text),
+            Ok(None) => ContextObservation::Absent,
+            Err(reason) => ContextObservation::Unavailable(reason),
+        }
+    }
+
     fn instruction_read_gate(
         &self,
         directory: &str,

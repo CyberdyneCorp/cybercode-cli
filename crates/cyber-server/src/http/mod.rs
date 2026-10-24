@@ -26,6 +26,7 @@ mod mcp_serve;
 mod memory;
 mod messaging;
 pub mod openapi;
+mod output_styles;
 pub mod peer;
 mod peers;
 mod plugins;
@@ -475,6 +476,28 @@ pub trait Services: Send + Sync {
             "Team definitions are unavailable in this host",
         ))
     }
+    /// The output styles of a Location (`system-context` → Output style definitions).
+    fn output_styles(
+        &self,
+        _location: &Path,
+    ) -> Result<cyber_core::output_styles::StyleListing, ApiError> {
+        Err(ApiError::service_unavailable(
+            "output_styles",
+            "Output styles are unavailable in this host",
+        ))
+    }
+    /// Set `output_style` in the user's global configuration to a built-in or user
+    /// style, and return the Location's listing after the edit.
+    fn set_output_style(
+        &self,
+        _location: &Path,
+        _style: &str,
+    ) -> Result<cyber_core::output_styles::StyleListing, ApiError> {
+        Err(ApiError::service_unavailable(
+            "output_styles",
+            "Output styles are unavailable in this host",
+        ))
+    }
     /// The configured `mode` and `default_agent` of a Location; hosts without
     /// configuration have none.
     fn location_defaults(&self, _location: &Path) -> Result<LocationDefaults, ApiError> {
@@ -678,6 +701,7 @@ pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router 
         .merge(vcs::routes())
         .merge(system::routes())
         .merge(teams::routes())
+        .merge(output_styles::routes())
         .merge(files::routes())
         .merge(worktrees::routes())
         .merge(workflows::routes())

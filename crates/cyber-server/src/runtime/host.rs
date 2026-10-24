@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use cyber_core::prompts::ModelFamily;
 use cyber_llm::catalog::{BuildInputs, Catalog, Cost, ModelRef, ModelRole, role_ref};
 use cyber_llm::{Adapter, LlmRequest, ToolSpec};
 use futures::future::BoxFuture;
@@ -91,6 +92,8 @@ pub struct ResolvedModel {
     pub cost: Option<Cost>,
     /// The model edits better with `apply_patch` than with `edit`/`write`.
     pub prefers_apply_patch: bool,
+    /// Which base prompt the model gets (`system-context` → Provider base prompts).
+    pub family: ModelFamily,
 }
 
 pub trait ModelResolver: Send + Sync {
@@ -162,7 +165,7 @@ impl ModelResolver for CatalogResolver {
         let catalog = self.catalog();
         let mut target = catalog.resolve(&r, None).map_err(|e| e.to_string())?;
         target.endpoint.limits = Some(self.limits.sink(&r.provider));
-        let (_, model) = catalog.find(&r).map_err(|e| e.to_string())?;
+        let (provider, model) = catalog.find(&r).map_err(|e| e.to_string())?;
         Ok(ResolvedModel {
             adapter: Arc::from(target.adapter()),
             template: target.request,
@@ -171,6 +174,7 @@ impl ModelResolver for CatalogResolver {
             context_limit: model.limits.context,
             cost: model.cost.clone(),
             prefers_apply_patch: model.capabilities.prefers_apply_patch,
+            family: cyber_llm::catalog::model_family(provider, model),
         })
     }
 
@@ -633,6 +637,15 @@ pub trait ToolHost: Send + Sync {
     /// Boundary to fire `ConfigChange`; `None` (no configuration resolver) never fires.
     fn config_digest(&self, _directory: &str) -> Option<String> {
         None
+    }
+
+    /// The `core/output-style` source of a primary Session at `directory`: its own
+    /// `selection`, else the Location's configured style, else `default`
+    /// (`system-context` → Output style selection). A name that is invalid, unknown or
+    /// held is `Absent`, so `default` applies; an unreadable style file is
+    /// `Unavailable`. Hosts without output styles have none.
+    fn output_style(&self, _directory: &str, _selection: Option<&str>) -> super::context::Observed {
+        super::context::Observed::Absent
     }
 
     /// `compat.claude` of the Location's resolved config (`CLAUDE.md` loads in place);

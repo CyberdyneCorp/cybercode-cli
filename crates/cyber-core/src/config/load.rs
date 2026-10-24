@@ -581,9 +581,13 @@ fn assess_trust(req: &LoadRequest<'_>, project: &[Layer]) -> Result<TrustReport,
         subset.insert(relative, split.sensitive);
     }
     // Project team definitions choose agents, models and budgets for Sessions the lead
-    // starts, so they take effect only once the checkout approves them.
+    // starts, and project output styles are prompt text, so both take effect only once
+    // the checkout approves them.
     if !req.env.flag("CYBER_DISABLE_PROJECT_CONFIG") {
-        for (relative, path, text) in crate::teams::trust_subset(req.location) {
+        let files = crate::teams::trust_subset(req.location)
+            .into_iter()
+            .chain(crate::output_styles::trust_subset(req.location));
+        for (relative, path, text) in files {
             definitions.push(path.display().to_string());
             subset.insert(relative, Value::String(text));
         }

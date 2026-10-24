@@ -115,6 +115,8 @@ pub enum Msg {
     },
     /// `/login` and `/logout` answers.
     Login(crate::login::LoginReply),
+    /// `/output-style` answers.
+    OutputStyle(crate::output_styles::Reply),
     /// `/loop list` rows of `session_id`.
     Loops {
         session_id: String,
@@ -886,6 +888,7 @@ pub async fn perform_owned(
         | Action::Team(_)
         | Action::Branch(_)
         | Action::Login(_)
+        | Action::OutputStyle(_)
         | Action::Export(_) => scheduled(client, session, action).await,
         Action::SaveTheme(_)
         | Action::SaveProjectTheme(_)
@@ -908,6 +911,7 @@ async fn scheduled(client: &Client, session: &Session, action: Action) -> Result
         Action::Team(request) => crate::team::perform(client, session, request).await,
         Action::Goal(request) => crate::goals::perform(client, request).await,
         Action::Login(request) => crate::login::perform(client, request).await,
+        Action::OutputStyle(request) => crate::output_styles::perform(client, request).await,
         Action::Workflow(request) => Ok(Msg::Workflow(
             crate::workflows::perform(client, request).await,
         )),

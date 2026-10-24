@@ -62,6 +62,7 @@ pub mod instructions;
 mod jobs;
 pub mod loops;
 mod names;
+mod output_style;
 pub mod teams;
 pub use handoff::Handoff;
 mod process_jobs;
@@ -183,6 +184,7 @@ pub use bus::LiveEvent;
 pub use compaction::CompactionConfig;
 pub use context::{ContextInputs, Observed as ContextObservation, base_prompt};
 pub use context_meter::ContextMeter;
+pub use cyber_core::prompts::ModelFamily;
 pub use events::{AuxiliaryUsage, CompactionTrigger, registry as event_registry};
 pub use host::{
     AgentInference, CatalogResolver, CheckOutcome, ChildContinuation, FileDecision, FileDiff,
@@ -386,6 +388,9 @@ pub struct CreateSession {
     pub messaging: Option<messaging::InboundOverride>,
     /// The team tag of a team member Session (`agent-teams`); only for root Sessions.
     pub team: Option<teams::TeamTag>,
+    /// The Session's own output style; only for root Sessions. The caller checks that
+    /// it is defined at the Location.
+    pub output_style: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -1151,7 +1156,9 @@ impl Runtime {
             budget: req.budget,
             messaging: req.messaging,
             team: req.team,
+            output_style: req.output_style,
         };
+        output_style::check(&info, info.output_style.as_deref())?;
         if info.budget.is_none() {
             info.budget = self
                 .inner
@@ -2020,7 +2027,7 @@ impl Runtime {
         let model = handle.state.lock().await.info.model.clone();
         let resolved = self.inner.resolve(&model)?;
         self.inner
-            .with_idle_location(&handle, self.inner.start_epoch(&handle, &resolved.provider))
+            .with_idle_location(&handle, self.inner.start_epoch(&handle, &resolved))
             .await
     }
 

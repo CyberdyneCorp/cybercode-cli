@@ -600,6 +600,36 @@ impl Services for AppServices {
         ))
     }
 
+    /// Project styles only from a trusted checkout.
+    fn output_styles(
+        &self,
+        location: &Path,
+    ) -> Result<cyber_core::output_styles::StyleListing, cyber_server::http::ApiError> {
+        let resolved = (self.resolved)(location).map_err(cyber_server::http::ApiError::invalid)?;
+        Ok(cyber_core::output_styles::listing(
+            location,
+            &self.global_config_dir,
+            &resolved,
+            &cyber_core::env::ProcessEnv,
+        ))
+    }
+
+    /// A global default applies in every checkout, so it never names a project style.
+    fn set_output_style(
+        &self,
+        location: &Path,
+        style: &str,
+    ) -> Result<cyber_core::output_styles::StyleListing, cyber_server::http::ApiError> {
+        use cyber_server::http::ApiError;
+        cyber_core::output_styles::global_default(&self.global_config_dir, location, style)
+            .map_err(ApiError::invalid)?;
+        cyber_core::config::set_global_key(&self.global_config_dir, "output_style", |_| {
+            serde_json::Value::from(style)
+        })
+        .map_err(ApiError::invalid)?;
+        self.output_styles(location)
+    }
+
     /// Read from the Location's resolved (trust-gated) configuration; an invalid
     /// configuration fails closed.
     fn location_defaults(

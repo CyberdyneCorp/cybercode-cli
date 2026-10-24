@@ -30,6 +30,8 @@ pub struct Session {
     pub inbound_reason: Option<String>,
     /// The team a teammate Session belongs to (`agent-teams`); a lead has none.
     pub team: Option<TeamTag>,
+    /// The Session's own output style selection; `None` follows the configuration.
+    pub output_style: Option<String>,
 }
 
 /// A teammate's team and member name, as `SessionInfo.team` carries it.
@@ -136,6 +138,7 @@ impl Session {
             context: ContextMeter::parse(&v["context"]),
             inbound_reason: v["messaging"]["reason"].as_str().map(str::to_string),
             team: TeamTag::parse(&v["team"]),
+            output_style: v["output_style"].as_str().map(str::to_string),
         }
     }
 }

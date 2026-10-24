@@ -45,6 +45,8 @@ pub const MESSAGING_UPDATED: &str = "session.messaging.updated.1";
 pub const AGENT_SWITCHED: &str = "session.agent.switched.1";
 pub const MODEL_SWITCHED: &str = "session.model.switched.1";
 pub const MODE_SWITCHED: &str = "session.mode.switched.1";
+/// The Session's own output style changed; it applies from the next Turn's new epoch.
+pub const OUTPUT_STYLE_SWITCHED: &str = "session.output_style.switched.1";
 pub const AUTO_DECIDED: &str = "permission.auto_decided.1";
 pub const PERMISSION_ASKED: &str = "permission.asked.1";
 pub const PERMISSION_REPLIED: &str = "permission.replied.1";
@@ -97,6 +99,7 @@ const ALL: &[&str] = &[
     AGENT_SWITCHED,
     MODEL_SWITCHED,
     MODE_SWITCHED,
+    OUTPUT_STYLE_SWITCHED,
     AUTO_DECIDED,
     super::auto_override::CHANGED,
     PERMISSION_ASKED,
@@ -208,6 +211,9 @@ pub struct EpochStarted {
     pub provider: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prefix: Option<String>,
+    /// The model family of `system_prefix`; absent on epochs from before families.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -461,6 +467,13 @@ pub struct Switched {
     pub automatic: bool,
     pub from: String,
     pub to: String,
+}
+
+/// `session.output_style.switched.1`: `None` follows the Location's configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StyleSwitched {
+    pub from: Option<String>,
+    pub to: Option<String>,
 }
 
 pub fn event<T: Serialize>(kind: &str, payload: &T) -> NewEvent {

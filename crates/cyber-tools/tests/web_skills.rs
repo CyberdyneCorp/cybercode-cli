@@ -287,6 +287,7 @@ async fn webfetch_summary_is_billed_and_blocks_the_next_session_provider_turn() 
                 context_limit: 200000,
                 cost: None,
                 prefers_apply_patch: false,
+                family: cyber_core::prompts::ModelFamily::Default,
             })
         }
         fn role(&self, _: ModelRole) -> Option<String> {

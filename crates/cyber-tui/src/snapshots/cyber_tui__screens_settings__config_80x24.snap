@@ -19,9 +19,9 @@ expression: shown
     timestamps                    off            default
     color                         auto           default
     accessibility.reduced_motion  off            default
+    output style                  default        default
 
   Saved to kv.json; a later edit of tui.jsonc wins.
-
   Core settings: use cyber config or edit cyber.jsonc
 
   ↑↓ select · enter change · tab next tab · 1-4 jump · esc close

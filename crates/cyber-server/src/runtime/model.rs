@@ -94,6 +94,10 @@ pub struct SessionInfo {
     /// changed. Teammates are root Sessions, so they outlive the lead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team: Option<super::teams::TeamTag>,
+    /// The Session's own output style (`system-context` → Output style selection);
+    /// `None` follows the Location's configuration. Only primary Sessions have one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_style: Option<String>,
 }
 
 /// One entry of model-visible history.
@@ -216,6 +220,9 @@ pub struct Epoch {
     pub provider: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prefix: Option<String>,
+    /// See [`EpochStarted::family`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -1001,6 +1008,9 @@ impl SessionState {
                 self.info.mode = decode::<Switched>(e)?.to;
                 self.mode_default_pending = false;
             }
+            "session.output_style.switched" => {
+                self.info.output_style = decode::<super::events::StyleSwitched>(e)?.to;
+            }
             // Started/failed compaction and other markers carry no state.
             _ => self.apply_snapshots(kind, e)?,
         }
@@ -1152,6 +1162,7 @@ impl SessionState {
             snapshot: e.snapshot,
             provider: e.provider,
             system_prefix: e.system_prefix,
+            family: e.family,
         });
         self.epoch_stale = false;
     }

@@ -38,6 +38,8 @@ The first release prioritizes reliable editing, recovery and measurable coding q
 4. **M0.4 Tools & safety:** read/write/edit/apply_patch/bash/glob/grep/webfetch/websearch/todo/question/skill; output budget; permission engine; checkout trust; macOS/Linux sandbox; conflict-aware git snapshots + revert; unknown-outcome recovery. **Status: implemented** (change `implement-m0-4-tools-safety`); live-verified against OpenAI, sandbox verified on macOS and in a Linux container. Native provider web search, media parts, background bash and a Landlock fallback for Linux hosts without bubblewrap are deferred; the HTTP routes for permissions, questions, diffs and revert arrive with M0.5.
 5. **M0.5 Surfaces:** OpenAPI server + SSE replay, TS SDK, TUI (prompt, rendering, permission/question prompts, session picker), `cyber exec` with JSON stream and exit codes. **Status: implemented** (change `implement-m0-5-surfaces`); `cyber exec`, the background service and the TUI live-verified against OpenAI. PTY routes, mDNS, the generated Rust SDK and parts of the TUI (inline mode, mouse, OSC 52, setup wizard, update prompt, split diffs, syntax highlighting, keybinding config) are deferred; live OpenAI and Anthropic baselines (including 50 turns), full backup/verify/restore, retention and logs are complete. Tool goldens and storage/startup probes are available; default service cold startup meets the 150 ms target on the M2 Max reference machine; the embedded probe retains one outlier. All six macOS/Linux platform builds pass CI. The local-model coding and long-task baseline remains. See [P0 exit evidence](docs/measurements/p0-exit-evidence.md).
 
+**Provider base prompts and output styles (`system-context`): Status: implemented** (change `add-output-styles`). Base prompts follow the catalog model's family rather than the provider id; built-in, user and trust-gated project output styles are selected per primary Session (`/output-style`, `cyber exec --output-style`, `output_style`) and apply through a new Context Epoch. Plugin-distributed styles and `cyber import` of `.claude/output-styles` are deferred.
+
 **Exit criteria**
 - Runs a 50-turn coding task end-to-end with OpenAI, Anthropic and a local model through the compatible adapter. Each P0 adapter also passes the published live coding baseline in `harness-evaluation`; turn count alone is insufficient.
 - `kill -9` during a Turn loses no acknowledged prompt; unknown external outcomes reconcile without blind mutation retries. Storage fault cases distinguish process crashes from power-loss simulation.
@@ -146,7 +148,7 @@ Local use never depends on CyberdyneAuth. Self-hosters can point `account.issuer
 
 | Risk | Mitigation |
 |---|---|
-| Quality gap vs vendor-tuned harnesses (Claude Code, Codex) on their own models | Per-provider base prompts, tool variants (`apply_patch` vs `edit`), and a public eval suite run on every release |
+| Quality gap vs vendor-tuned harnesses (Claude Code, Codex) on their own models | Per-model-family base prompts (implemented), tool variants (`apply_patch` vs `edit`), and a public eval suite run on every release |
 | Sandbox portability (Landlock kernel versions, Windows) | Tiered enforcement with an explicit `cyber sandbox explain`; refuse `bypass` mode without a sandbox or container |
 | Workflow token blow-up | Mandatory per-run budgets, prefix-warming of fan-outs, model tiers |
 | Relay trust | E2E encryption, self-hostable relay, device revocation, step-up auth (`auth_time` ≤ 15 min) for destructive remote approvals |

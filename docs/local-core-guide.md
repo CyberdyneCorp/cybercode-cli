@@ -383,7 +383,7 @@ An empty Session shows a welcome screen in the transcript area: the `CYBER CODE`
 
 **Status** reads `/health`, the Session, `/vcs`, `/mcp` and `/lsp`: the client and server versions (both in the warning color with `restart the service` when they differ), the Session title and ID, the Location, the branch (with `uncommitted changes`, or `not a git repository`), the agent, the model with its provider and variant, the Mode, the context meter as a 30-column bar with tokens and percent, the auto-compaction threshold, and the MCP (`2 of 3 connected · failed: docs`) and language-server summaries. A source that answers 404 or 503 is left out; sandbox and account rows appear only when `/health` reports them.
 
-**Config** edits the TUI preferences `theme`, `theme_mode`, `sidebar`, `machine_stats`, `recap`, `spinner`, `workflow_notifications`, `reasoning`, `diff_style`, `timestamps`, `color` and `accessibility.reduced_motion` in place: Up/Down select a row and Enter or Space moves it to its next value, which applies at once and is saved to `kv.json` in the state directory (`prefs.<key>` with the time it was saved; `theme` also keeps its old `theme` key). Each row shows its source: `default`, `global` (the global `tui.jsonc`), `project` (a `.cyber/tui.jsonc`), `saved` (`kv.json`) or `session` (a toggle such as Ctrl+T or `/timestamps` made in this run only). A `tui.jsonc` written after a saved value wins over it. Enter on `theme` opens the theme switcher instead of cycling. `diff_style` is stored for split diffs, which will read it. Core settings stay read-only: until the server has a `config` route the tab says `Core settings: use cyber config or edit cyber.jsonc`.
+**Config** edits the TUI preferences `theme`, `theme_mode`, `sidebar`, `machine_stats`, `recap`, `spinner`, `workflow_notifications`, `reasoning`, `diff_style`, `timestamps`, `color` and `accessibility.reduced_motion` in place: Up/Down select a row and Enter or Space moves it to its next value, which applies at once and is saved to `kv.json` in the state directory (`prefs.<key>` with the time it was saved; `theme` also keeps its old `theme` key). Each row shows its source: `default`, `global` (the global `tui.jsonc`), `project` (a `.cyber/tui.jsonc`), `saved` (`kv.json`) or `session` (a toggle such as Ctrl+T or `/timestamps` made in this run only). A `tui.jsonc` written after a saved value wins over it. Enter on `theme` opens the theme switcher instead of cycling. `diff_style` is stored for split diffs, which will read it. The `output style` row after them shows the Session's style and its source, and Enter opens the [output style picker](#choosing-a-style); a configured `output_style` is listed with its file under the core settings. Other core settings stay read-only: until the server has a `config` route the tab says `Core settings: use cyber config or edit cyber.jsonc`.
 
 **Usage** (`/usage`, or `/cost` at the Session section) reads the session usage breakdown: `Total cost` (`—` when every call was unpriced, `≥ $x · N unpriced calls` when some were or attribution is incomplete), `Total duration (API)` and `(wall)` (`3h 21m 0s`, `5d 23h 31m`), `Total code changes`, and `Usage by model`, one row per model with compact counts (`5.3k`, `352.7k`, `1.2m`) and its cost, the highest cost first. Below are the validated token table (own, descendants and total per class) and the cache hit rate that the old `/cost` overlay showed; a report for another Session or with inconsistent totals is refused, and a failed refresh keeps the last amounts with the error. Each configured Budget limit of the Session (`budgets.session`) and `budgets.daily` then gets a 40-column meter, `Session budget ($5.00)` or `Daily budget ($20.00)` with `N% used`, in the warning color from 80% and the error color from 100%; the daily one adds `Resets 12:00am (<zone>)`. Each window a provider reported (`GET /api/v1/usage/limits`) follows as a meter labelled `<provider> · <label>` (`anthropic · 5-hour limit`) with the same colors, then `Resets <time> (<zone>)` in local time, with the date when the reset is a day or more away, and `Reading from <age> ago` once the reading is older than 5 minutes. When a provider reports both daily and weekly windows, `d` shows the daily ones and `w` the weekly ones. Without a Budget and without a provider report there is no limits section. Last comes `What's contributing to your usage?` from `GET /api/v1/usage/insights` over every Session the server stored: the window (`Last 24h`, or `Last 7 days` after `w`; `d` returns), whether shares are `% of cost` or `% of tokens`, one bold `N% of your usage came from …` line with an advice line per factor of at least 5%, and a `Subagents` table of at most 8 groups; an empty window reads `No usage in the last 24h`. `r` refreshes (`R`, the old overlay's key, still works for one release).
 
@@ -580,6 +580,54 @@ These are read from the server's environment (a value of `1`, `true`, `yes` or `
 No migration is needed: `CLAUDE.md` keeps loading in place. `cyber import` does not copy `CLAUDE.md` into `CYBER.md`, because both would then load and duplicate the content. To move Cyber-specific parts, put them in `CYBER.md` and, if the remaining guidance is shared, rename `CLAUDE.md` to `AGENTS.md`.
 
 Not implemented yet: `.cyber/rules/*.md` and `.claude/rules/*.md`, `.claude/CLAUDE.md`, the `~/.claude/CLAUDE.md` global fallback, a configurable `instructions.max_bytes`, per-source token sizes in `/context`, and `/init` (which is specified to generate `AGENTS.md`, not `CYBER.md`).
+
+## Base prompts and output styles
+
+The system prompt starts with the agent's `system` text when the agent sets one. Otherwise it starts with a short base prompt chosen by the model's family, followed by the Session's output style. The base prompts and the built-in styles are embedded in the binary (`crates/cyber-core/prompts/`).
+
+### Base prompts by model family
+
+Every base prompt is one shared core text plus a family addendum: `openai`, `anthropic`, `gemini`, `local` (open-weights models) or `default` (the core text alone). The family comes from the catalog model, not the provider id, so `openrouter/anthropic/claude-sonnet` gets the Anthropic prompt and `groq/gpt-oss-120b` the local one. The order is:
+
+1. Open-weights names (`gpt-oss`, `llama`, `qwen`, `mistral`, `deepseek`, `gemma`, `phi`, `glm`, `kimi`, …) select `local`.
+2. `claude` selects `anthropic`; `gpt`, `o1`, `o3`, `o4`, `codex` and `chatgpt` select `openai`; `gemini` selects `gemini`. The catalog family name is checked first, then the last `/` segment of the model id.
+3. Otherwise the protocol decides: Anthropic Messages is `anthropic`, OpenAI Responses and the ChatGPT plan are `openai`.
+4. Otherwise a provider without authentication or with a loopback URL is `local`, and anything else is `default`.
+
+A model switch that changes the family starts a new Context Epoch on the next Turn. Epochs recorded before families existed compare by provider only, so a restart never rebuilds their prefix.
+
+### Output styles
+
+The built-in styles are `default` (adds nothing), `concise`, `explanatory` and `learning`. Custom styles are Markdown files directly inside `~/.config/cyber/output-styles/` (user) and `.cyber/output-styles/` at the project root (project):
+
+```markdown
+---
+name: reviewer
+description: Reviews like a senior engineer
+---
+Point out risks first, then style. Quote the exact lines you mean.
+```
+
+- The name is the file stem and must match `^[a-z0-9][a-z0-9_-]{0,63}$`; `name` in the frontmatter, if present, must equal it.
+- The frontmatter may set only `name`, `description` and `keep-coding-instructions` (accepted for Claude Code files and ignored). Any other key, such as `permissions`, makes the file invalid. The trimmed body is the style text and must not be empty.
+- Only regular files of at most 32 KiB are read (128 files at most); links are refused.
+- A custom style cannot reuse a built-in name; the file is skipped and reported. A project style replaces a user style of the same name.
+- Project styles are repository content: they are part of the checkout's trust digest and load only while the checkout is trusted (`cyber trust inspect`, `cyber trust approve`). Until then they are held, and the listing says `project output styles are held until this checkout is trusted (cyber trust inspect)`. `CYBER_DISABLE_PROJECT_CONFIG=1` skips them.
+- An invalid or held file is reported with its path and reason and never stops the other styles from loading.
+
+A style only adds text. It never changes permissions, the Mode or its ceiling, the sandbox, the tools offered or the model.
+
+### Choosing a style
+
+A primary Session uses, in order: its own selection (made at creation or by a switch), the `output_style` key of the resolved configuration at its Location (`"output_style": "concise"` in `cyber.jsonc`), then `default`. Subagents, workflow agents and teammates have no style, because their output goes to another agent.
+
+- **TUI:** `/output-style` (or the palette's **Output style…**) opens a picker showing each style's origin and the `current` and `default` labels, with the listing's issues below; typing filters. Enter switches the Session, `d` also saves the style as your global default, and Esc closes without changes. `/output-style <name>` switches directly. Settings › Config has an `output style` row with its source (`session`, `config` or `default`); Enter opens the picker.
+- **Exec:** `cyber exec --output-style <name>` checks the name against the Location's listing before any Session exists and exits 2 with the reason (invalid, held or unknown) and the available names.
+- **HTTP:** `GET /api/v1/config/output-styles?directory=` lists the styles, the issues, the configured and effective style and why a configured style does not apply. `POST /api/v1/sessions` accepts `output_style`, `POST /api/v1/sessions/{id}/output-style` takes `{"style": "<name>" | null}`, and `PUT /api/v1/config/output-style` saves the global default (built-in and user styles only; `null` writes `default`). `GET /api/v1/sessions/{id}` reports the Session's `output_style`; the `GET /api/v1/sessions` list summary does not include it yet.
+
+An explicit selection naming an invalid, unknown or held style is refused. A configured style that is unavailable falls back to `default`, with a warning in the TUI (once per Session) and on `cyber exec`'s stderr (`warning: <reason>; the default output style applies`). A switch takes effect at the next Turn through a new Context Epoch: a running Turn keeps its prefix, and no mid-conversation message is sent. The switch is recorded as `session.output_style.switched.1` and survives a restart.
+
+Not implemented yet: output styles from plugins, importing `.claude/output-styles/` with `cyber import` (copy the files; the format is compatible), and a per-agent `output_style`.
 
 ## Hook configuration and trust review
 
