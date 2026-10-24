@@ -784,17 +784,24 @@ dependencies = [
 name = "cyber-account"
 version = "0.1.0"
 dependencies = [
+ "aws-lc-rs",
  "axum",
  "base64 0.22.1",
  "futures",
  "getrandom 0.3.4",
+ "jsonwebtoken",
+ "keyring",
+ "libc",
  "reqwest",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",
  "subtle",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-util",
  "url",
  "zeroize",
 ]
@@ -2277,6 +2284,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "jsonwebtoken"
+version = "10.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0529410abe238729a60b108898784df8984c87f6054c9c4fcacc47e4803c1ce1"
+dependencies = [
+ "aws-lc-rs",
+ "base64 0.22.1",
+ "getrandom 0.2.17",
+ "js-sys",
+ "serde",
+ "serde_json",
+ "signature",
+]
+
+[[package]]
 name = "kasuari"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3198,6 +3220,9 @@ name = "rand_core"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
+dependencies = [
+ "getrandom 0.2.17",
+]
 
 [[package]]
 name = "rand_core"
@@ -3922,6 +3947,15 @@ checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
 dependencies = [
  "errno",
  "libc",
+]
+
+[[package]]
+name = "signature"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
+dependencies = [
+ "rand_core 0.6.4",
 ]
 
 [[package]]

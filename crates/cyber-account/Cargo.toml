@@ -9,20 +9,33 @@ publish.workspace = true
 
 [dependencies]
 base64 = "0.22"
+axum = "0.8"
+tokio-util = "0.7"
+jsonwebtoken = { version = "=10.3.0", default-features = false, features = ["aws_lc_rs"] }
+tokio = { version = "1", features = ["sync", "time", "rt", "macros", "net"] }
 getrandom = "0.3"
-reqwest = { version = "0.13", features = ["json"] }
+reqwest = { version = "0.13", features = ["json", "form"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 subtle = "2"
+tempfile.workspace = true
+libc.workspace = true
 zeroize = "1"
 thiserror.workspace = true
 url = "2"
 
 [dev-dependencies]
+aws-lc-rs = "1"
 futures = "0.3"
 axum = "0.8"
 tokio = { version = "1", features = ["macros", "rt", "net", "sync"] }
 
 [lints]
 workspace = true
+
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+keyring = { version = "=3.6.3", default-features = false, features = ["apple-native", "windows-native"] }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "=1.1.5", features = ["process"] }

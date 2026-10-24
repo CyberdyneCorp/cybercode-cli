@@ -30,3 +30,19 @@
 #### Scenario: Device flow when available
 - **WHEN** discovery advertises `device_authorization_endpoint`
 - **THEN** `cyber login --no-browser` prints `Go to <verification_uri> and enter code ABCD-EFGH` and polls the token endpoint, honoring `interval` and `slow_down`
+
+
+### Requirement: Token storage
+(P3) Tokens (access, refresh, ID token, expiry, issuer, subject) SHALL be stored in the OS keyring under service `cyber-code`. Account entries SHALL use a dedicated `account:` namespace bound to the exact issuer, client ID and subject, separate from peer, MCP and plugin credentials; metadata SHALL bind those identities before reading a credential. Bounded generation-based chunks MAY accommodate native keyring entry limits without storing raw tokens in the account index. When no keyring is available, tokens SHALL fall back to `<data>/account.json` with file mode 0600 and a warning on platforms with owner-only storage; otherwise storing credentials SHALL fail. Refresh, login and logout SHALL share a cross-process lock. A durable pending marker SHALL precede rotating refresh requests; uncertain outcomes or crashes SHALL require fresh login instead of reusing a possibly consumed token. Tokens SHALL never be written to logs, exports, telemetry or tool outputs.
+
+#### Scenario: Keyring fallback
+- **WHEN** login runs in a container without a supported OS keyring
+- **THEN** tokens are written to `~/.local/share/cyber/account.json` with mode 0600, and `cyber doctor` warns `account tokens stored in file (no OS keyring)`
+
+#### Scenario: Identity and credential namespaces stay separate
+- **WHEN** two issuers share a hostname and subject, or an account resembles a peer credential name
+- **THEN** their credential entries remain distinct and metadata cannot redirect tokens to another issuer or client
+
+#### Scenario: Refresh outcome is unknown after a crash
+- **WHEN** the process exits after recording a pending refresh but before saving its rotated result
+- **THEN** subsequent account use requires fresh login and never presents the previous refresh token again

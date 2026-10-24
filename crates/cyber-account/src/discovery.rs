@@ -4,7 +4,7 @@ use serde::Deserialize;
 use std::{net::IpAddr, time::Duration};
 use url::{Host, Url};
 
-const MAX_DOCUMENT: usize = 256 * 1024;
+pub(crate) const MAX_DOCUMENT: usize = 256 * 1024;
 
 /// Plain HTTP is only allowed for literal loopback development fixtures, by opt-in.
 #[derive(Clone, Copy, Debug, Default)]
@@ -46,6 +46,8 @@ struct Document {
     #[serde(default)]
     code_challenge_methods_supported: Vec<String>,
     grant_types_supported: Option<Vec<String>>,
+    #[serde(default)]
+    id_token_signing_alg_values_supported: Vec<String>,
 }
 
 /// Validated metadata. Only discovery can construct it; no credentials are stored here.
@@ -61,6 +63,7 @@ pub struct Provider {
     device: Option<Url>,
     pub(crate) scopes: Option<Vec<String>>,
     grants: Vec<String>,
+    pub(crate) signing_algorithms: Vec<String>,
 }
 
 impl Provider {
@@ -101,7 +104,7 @@ impl Provider {
 /// Explicitly invoked transport; constructing it does not contact the issuer.
 /// Redirects are refused, responses bounded and requests limited to ten seconds.
 pub struct DiscoveryClient {
-    client: Client,
+    pub(crate) client: Client,
     transport: Transport,
 }
 
@@ -118,33 +121,13 @@ impl DiscoveryClient {
     pub async fn discover(&self, issuer: &str) -> Result<Provider, Error> {
         let issuer = self.issuer(issuer)?;
         let endpoint = format!("{issuer}/.well-known/openid-configuration");
-        let mut response = self
+        let response = self
             .client
             .get(endpoint)
             .send()
             .await
             .map_err(|_| Error::DiscoveryUnavailable)?;
-        if !response.status().is_success() {
-            return Err(Error::DiscoveryUnavailable);
-        }
-        if response
-            .content_length()
-            .is_some_and(|n| n > MAX_DOCUMENT as u64)
-        {
-            return Err(Error::DiscoveryTooLarge);
-        }
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| Error::DiscoveryUnavailable)?
-        {
-            if chunk.len() > MAX_DOCUMENT.saturating_sub(bytes.len()) {
-                return Err(Error::DiscoveryTooLarge);
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        let document = serde_json::from_slice(&bytes).map_err(|_| Error::InvalidDiscovery)?;
+        let document = bounded_json(response).await?;
         self.validate(issuer, document)
     }
 
@@ -185,7 +168,9 @@ impl DiscoveryClient {
         }
         let optional = |s: Option<String>| s.map(|s| self.endpoint(s)).transpose();
         Ok(Provider {
-            issuer,
+            // Token issuer checks use the exact discovery issuer. Only the
+            // configured/discovered URL comparison normalizes a trailing slash.
+            issuer: doc.issuer,
             authorization: self.endpoint(doc.authorization_endpoint)?,
             token: self.endpoint(doc.token_endpoint)?,
             jwks: self.endpoint(doc.jwks_uri)?,
@@ -194,9 +179,37 @@ impl DiscoveryClient {
             introspection: optional(doc.introspection_endpoint)?,
             device: optional(doc.device_authorization_endpoint)?,
             scopes: doc.scopes_supported,
+            signing_algorithms: doc.id_token_signing_alg_values_supported,
             grants: doc
                 .grant_types_supported
                 .unwrap_or_else(|| vec!["authorization_code".into()]),
         })
     }
+}
+
+/// Bounded JSON without reflecting bodies or credential-bearing URLs in errors.
+pub(crate) async fn bounded_json<T: serde::de::DeserializeOwned>(
+    mut response: reqwest::Response,
+) -> Result<T, Error> {
+    if !response.status().is_success() {
+        return Err(Error::DiscoveryUnavailable);
+    }
+    if response
+        .content_length()
+        .is_some_and(|n| n > MAX_DOCUMENT as u64)
+    {
+        return Err(Error::DiscoveryTooLarge);
+    }
+    let mut bytes = zeroize::Zeroizing::new(Vec::new());
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| Error::DiscoveryUnavailable)?
+    {
+        if chunk.len() > MAX_DOCUMENT.saturating_sub(bytes.len()) {
+            return Err(Error::DiscoveryTooLarge);
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(|_| Error::InvalidDiscovery)
 }

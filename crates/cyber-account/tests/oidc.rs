@@ -534,3 +534,69 @@ async fn provider_query_cannot_override_oauth_security_parameters() {
             .any(|(k, v)| k == "tenant" && v == "acme")
     );
 }
+
+#[tokio::test]
+async fn loopback_listener_accepts_a_real_callback_without_reflecting_secrets() {
+    let f = Fixture::start().await;
+    let provider = f.discover().await.unwrap();
+    let flow = cyber_account::LoopbackLogin::start(&provider, "cyber-cli")
+        .await
+        .unwrap();
+    let params: HashMap<_, _> = flow
+        .authorization_url()
+        .query_pairs()
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    let callback = format!(
+        "{}?state={}&code=private-code",
+        params["redirect_uri"], params["state"]
+    );
+    let client = reqwest::Client::new();
+    let (response, grant) = tokio::join!(client.get(callback).send(), flow.finish());
+    let body = response.unwrap().text().await.unwrap();
+    assert!(!body.contains("private-code"));
+    assert!(!body.contains(&params["state"]));
+    assert_eq!(
+        grant
+            .unwrap()
+            .token_form()
+            .unwrap()
+            .into_iter()
+            .find(|(k, _)| *k == "code")
+            .unwrap()
+            .1,
+        "private-code"
+    );
+}
+
+#[tokio::test]
+async fn headless_paste_and_browser_callback_share_single_use_state_validation() {
+    let f = Fixture::start().await;
+    let provider = f.discover().await.unwrap();
+    let flow = cyber_account::LoopbackLogin::start(&provider, "cyber-cli")
+        .await
+        .unwrap();
+    let params: HashMap<_, _> = flow
+        .authorization_url()
+        .query_pairs()
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    let callback = format!(
+        "{}?state={}&code=pasted",
+        params["redirect_uri"], params["state"]
+    );
+    let handle = flow.callback_handle();
+    handle.submit(&callback).unwrap();
+    assert_eq!(handle.submit(&callback), Err(Error::LoginExpired));
+    assert!(flow.finish().await.is_ok());
+    let failed = cyber_account::LoopbackLogin::start(&provider, "cyber-cli")
+        .await
+        .unwrap();
+    assert!(matches!(
+        failed
+            .callback_handle()
+            .submit("http://127.0.0.1/callback?code=injected"),
+        Err(Error::InvalidCallback)
+    ));
+    assert!(matches!(failed.finish().await, Err(Error::InvalidCallback)));
+}

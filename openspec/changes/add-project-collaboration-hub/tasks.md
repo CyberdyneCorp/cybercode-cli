@@ -13,7 +13,7 @@
 
 ### Account foundation increments
 
-Task 2.1 is intentionally still open. The first increment adds the `cyber-account` library's bounded, redirect-refusing discovery transport and in-memory PKCE preparation/full-callback validation, with protocol fixture tests. It does not yet bind the callback listener, open a browser, exchange/validate tokens, cache metadata, store credentials or wire account CLI/API commands. Task 2.2 and live deployment acceptance remain pending. See [implementation evidence](../../../docs/implementation/project-collaboration.md).
+Task 2.1 is intentionally still open. The first increment added discovery and PKCE preparation. The second adds signed token validation/exchange, live user/org introspection, a temporary callback listener and protected storage with crash-safe refresh; see the evidence for tested boundaries. Browser/headless CLI/API integration, persistent metadata caching, device flow and live deployment acceptance remain pending. Task 2.2 is implemented at the library layer but remains open until runtime integration and credential-isolation acceptance. See [implementation evidence](../../../docs/implementation/project-collaboration.md).
 
 ## 3. Hub domain, persistence and authorization
 
@@ -50,7 +50,7 @@ Task 2.1 is intentionally still open. The first increment adds the `cyber-accoun
 - [ ] 7.2 Fault/authorization matrix: dropped acknowledgements, competing claims, hub/client restarts, offline replay/expiry/resync, hub membership/agent revocation, upstream user/org removal with a maximum 60-second window, no stacked cache extension, pending-message release, cross-project access, spoofed authorship and unchanged local permissions/checkout state.
 - [ ] 7.3 Run platform-appropriate integration suites, all-target Clippy, formatting, SDK/type generation and strict OpenSpec checks; perform code review using the code-review skill and fix findings.
 - [ ] 7.4 Retain exact commands/results, test environments and remaining live-issuer/multi-host evidence. Do not call unsupported acceptance types passed.
-- [ ] 7.5 Deliver descriptive, reviewable incremental PRs with green CI. After implementation merge and evidence review, archive the change into living specs and verify the resulting main CI.
+- [ ] 7.5 Complete the approved usable collaboration implementation in PR #27, resolve conflicts/review findings and achieve green CI so it is ready to merge; do not merge automatically. After implementation merge and evidence review, archive the change into living specs and verify the resulting main CI.
 
 ## Proposal validation (2026-10-23)
 
