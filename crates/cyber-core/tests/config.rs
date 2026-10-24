@@ -2133,3 +2133,41 @@ fn project_team_definitions_need_workspace_trust() {
     );
     assert!(!f.load().unwrap().trust.trusted);
 }
+
+#[test]
+fn owner_server_load_is_global_section_only_and_preserves_tls_errors() {
+    let mut f = Fixture::new();
+    f.env
+        .insert("OWNER_CERT".into(), "/operator/cert.pem".into());
+    f.write(
+        "global:cyber.json",
+        r#"{
+        "server":{"tls":{"cert":"{env:OWNER_CERT}","key":"/operator/old.key"}},
+        "peers":{"listen":{"address":"0.0.0.0:0","tls":false}},
+        "model":"{env:UNDEFINED_UNRELATED_CONFIG}"
+    }"#,
+    );
+    f.write(
+        "global:cyber.jsonc",
+        r#"{"server":{"tls":{"key":"/operator/key.pem"}}}"#,
+    );
+    f.write("cyber.json", r#"{"server":{"tls":null}}"#);
+    let request = f.request(&f.repo, &[]);
+    assert_eq!(
+        config::load_owner_server(&request).unwrap(),
+        json!({
+            "server":{"tls":{"cert":"/operator/cert.pem","key":"/operator/key.pem"}}
+        })
+    );
+    assert!(
+        config::load_global(&request).is_err(),
+        "strict loader remains strict"
+    );
+    f.write(
+        "global:cyber.jsonc",
+        r#"{"server":{"tls":{"key":"{file:missing-owner-key-path}"}}}"#,
+    );
+    assert!(config::load_owner_server(&f.request(&f.repo, &[])).is_err());
+    f.write("global:cyber.jsonc", "malformed global configuration");
+    assert!(config::load_owner_server(&f.request(&f.repo, &[])).is_err());
+}

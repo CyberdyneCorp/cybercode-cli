@@ -532,6 +532,47 @@ async fn a_plain_peer_listener_opens_only_on_loopback() {
     served.stop().await;
 }
 
+/// An invalid independent peer section cannot disable configured owner HTTPS.
+#[tokio::test]
+async fn owner_https_starts_with_invalid_peer_settings() {
+    use cyber_server::http::peer::tls::{PeerIdentity, SubjectNames};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let tls = root.join("operator-tls");
+    PeerIdentity::load_or_create(
+        &tls,
+        &SubjectNames {
+            machine: "owner-test".into(),
+            address: "127.0.0.1:0".parse().unwrap(),
+        },
+    )
+    .unwrap();
+    let model = scripted_model::ScriptedModel::start(support::prompted_call);
+    let served = Served::start_with(
+        &root,
+        &model,
+        json!({
+            "server":{"tls":{"cert":tls.join("cert.pem"),"key":tls.join("key.pem")}},
+            "peers":{"listen":{"address":"0.0.0.0:0","tls":false}}
+        }),
+    )
+    .await;
+    assert!(served.registration.url.starts_with("https://"));
+    assert_eq!(served.registration.peer_url, None);
+    let response = reqwest::Client::builder()
+        .no_proxy()
+        .tls_danger_accept_invalid_certs(true)
+        .build()
+        .unwrap()
+        .get(format!("{}/api/v1/health", served.registration.url))
+        .basic_auth("cyber", Some(support::PASSWORD))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    served.stop().await;
+}
+
 /// Without `peers.listen` nothing listens for peers.
 #[tokio::test]
 async fn no_peer_listener_without_listen() {

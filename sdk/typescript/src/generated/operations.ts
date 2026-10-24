@@ -1123,6 +1123,24 @@ export interface Operations {
     body: undefined;
     response: void;
   };
+  "v1.session.interactiveAttach": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.InteractiveClient;
+  };
+  "v1.session.interactiveRelease": {
+    path: { sessionID: string; clientID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: void;
+  };
+  "v1.session.interactiveRenew": {
+    path: { sessionID: string; clientID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.InteractiveClient;
+  };
   "v1.session.interrupt": {
     path: { sessionID: string };
     query: Record<string, never>;
@@ -3517,6 +3535,42 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.session.interactiveAttach": {
+    tag: "session",
+    name: "interactiveAttach",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/interactive-clients",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.interactiveRelease": {
+    tag: "session",
+    name: "interactiveRelease",
+    method: "DELETE",
+    path: "/api/v1/sessions/{sessionID}/interactive-clients/{clientID}",
+    pathParams: ["sessionID", "clientID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.session.interactiveRenew": {
+    tag: "session",
+    name: "interactiveRenew",
+    method: "PUT",
+    path: "/api/v1/sessions/{sessionID}/interactive-clients/{clientID}",
+    pathParams: ["sessionID", "clientID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.interrupt": {
     tag: "session",
     name: "interrupt",
@@ -4846,6 +4900,15 @@ export function createGroups(caller: Caller) {
       /** Remove an unpromoted input (`DELETE /api/v1/sessions/{sessionID}/inbox/{messageID}`) */
       inboxRemove: (sessionID: string, messageID: string, options?: RequestOptions): Promise<Operations["v1.session.inboxRemove"]["response"]> =>
         caller.call("v1.session.inboxRemove", { path: { sessionID, messageID } }, options),
+      /** Create a 45-second owner-authenticated browser attachment (`POST /api/v1/sessions/{sessionID}/interactive-clients`) */
+      interactiveAttach: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.interactiveAttach"]["response"]> =>
+        caller.call("v1.session.interactiveAttach", { path: { sessionID } }, options),
+      /** Release only this browser attachment (`DELETE /api/v1/sessions/{sessionID}/interactive-clients/{clientID}`) */
+      interactiveRelease: (sessionID: string, clientID: string, options?: RequestOptions): Promise<Operations["v1.session.interactiveRelease"]["response"]> =>
+        caller.call("v1.session.interactiveRelease", { path: { sessionID, clientID } }, options),
+      /** Renew only a live browser attachment (`PUT /api/v1/sessions/{sessionID}/interactive-clients/{clientID}`) */
+      interactiveRenew: (sessionID: string, clientID: string, options?: RequestOptions): Promise<Operations["v1.session.interactiveRenew"]["response"]> =>
+        caller.call("v1.session.interactiveRenew", { path: { sessionID, clientID } }, options),
       /** Interrupt the running Drain (`POST /api/v1/sessions/{sessionID}/interrupt`) */
       interrupt: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.interrupt"]["response"]> =>
         caller.call("v1.session.interrupt", { path: { sessionID } }, options),

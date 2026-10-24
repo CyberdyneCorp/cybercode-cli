@@ -49,6 +49,39 @@ impl Default for ServeOptions {
     }
 }
 
+/// Owner HTTPS settings come exclusively from the global configuration, never a project.
+pub fn owner_tls_files(global: &serde_json::Value) -> Result<Option<(PathBuf, PathBuf)>, String> {
+    let Some(server) = global.get("server") else {
+        return Ok(None);
+    };
+    if !server.is_object() {
+        return Err("server must be an object in the global configuration".into());
+    }
+    let Some(tls) = server.get("tls") else {
+        return Ok(None);
+    };
+    if tls.is_null() {
+        return Ok(None);
+    }
+    let pair = tls
+        .get("cert")
+        .and_then(|v| v.as_str())
+        .zip(tls.get("key").and_then(|v| v.as_str()));
+    let Some((cert, key)) = pair else {
+        return Err("server.tls requires both cert and key file paths".into());
+    };
+    if cert.is_empty() || key.is_empty() {
+        return Err("server.tls paths cannot be empty".into());
+    }
+    let (cert, key) = (PathBuf::from(cert), PathBuf::from(key));
+    if !cert.is_absolute() || !key.is_absolute() {
+        return Err(
+            "server.tls cert and key must be absolute paths in the global configuration".into(),
+        );
+    }
+    Ok(Some((cert, key)))
+}
+
 /// The local server password, generated on first use (32 random bytes, base64url).
 pub fn password(paths: &Paths) -> Result<String, String> {
     let file = paths.state.join("password");
@@ -96,6 +129,12 @@ pub async fn run_server_until(
     on_ready: impl FnOnce(&str),
     stop: Arc<Notify>,
 ) -> Result<(), String> {
+    let global = (app.owner_server_config)()?;
+    let tls_files = owner_tls_files(&global)?;
+    let tls = tls_files
+        .as_ref()
+        .map(|(cert, key)| http::owner_tls(cert, key))
+        .transpose()?;
     let socket = local_socket(&opts, &app.paths)?;
     let _lock = cyber_store::OwnershipLock::acquire(&app.paths.server_lock())
         .map_err(|e| format!("another cyber server is already running for this user ({e})"))?;
@@ -109,23 +148,53 @@ pub async fn run_server_until(
             .map(|(v, _)| v)
             .unwrap_or_default(),
     );
-    let sweeper = crate::retention::spawn(app.runtime.clone(), app.paths.data.clone(), retention);
-    let updates = crate::update_check::spawn(&app, opts.update.clone());
     let tcp = if opts.no_tcp {
         None
     } else {
         Some(bind(&opts.hostname, opts.port).await?)
     };
+    if let Some(listener) = &tcp
+        && !listener
+            .local_addr()
+            .map_err(|e| e.to_string())?
+            .ip()
+            .is_loopback()
+        && tls.is_none()
+    {
+        return Err("non-loopback owner listeners require global server.tls.cert and server.tls.key; use loopback with an SSH forward or configure HTTPS".into());
+    }
+    let sweeper = crate::retention::spawn(app.runtime.clone(), app.paths.data.clone(), retention);
+    let updates = crate::update_check::spawn(&app, opts.update.clone());
+    let scheme = if tls.is_some() { "https" } else { "http" };
     let url = tcp
         .as_ref()
         .and_then(|l| l.local_addr().ok())
-        .map(|a: SocketAddr| format!("http://{a}"));
+        .map(|a: SocketAddr| {
+            // Preserve DNS names for certificate verification. Wildcard listeners are
+            // reached locally through loopback; remote clients use their certificate hostname.
+            let host = if a.ip().is_unspecified() {
+                if a.is_ipv6() {
+                    "[::1]".to_string()
+                } else {
+                    "127.0.0.1".to_string()
+                }
+            } else if opts.hostname.contains(':') {
+                format!("[{}]", opts.hostname.trim_matches(['[', ']']))
+            } else {
+                opts.hostname.clone()
+            };
+            format!("{scheme}://{host}:{}", a.port())
+        });
     let peer = crate::peer_listener::bind(&app, opts.peer_attach_wait).await;
     let mut registration = Registration::current(
         server_id,
         url.clone().unwrap_or_default(),
         socket.as_ref().map(|p| p.display().to_string()),
     );
+    registration.bind_host = (!opts.no_tcp).then(|| opts.hostname.clone());
+    registration.tls_cert = tls_files
+        .as_ref()
+        .map(|(cert, _)| cert.display().to_string());
     let peer_handle = peer.as_ref().map(|peer| Arc::clone(&peer.handle));
     registration.peer_url = peer_handle.as_ref().map(|handle| handle.url());
     registration.peer_fingerprint = peer_handle.as_ref().map(|handle| handle.info().fingerprint);
@@ -169,7 +238,7 @@ pub async fn run_server_until(
     let closing = CancellationToken::new();
     let tcp_task = tcp.map(|listener| {
         let closing = closing.clone().cancelled_owned();
-        tokio::spawn(http::serve_tcp(router.clone(), listener, closing))
+        tokio::spawn(http::serve_tcp_tls(router.clone(), listener, tls, closing))
     });
     let publication =
         crate::peer_discovery::start(&app, peer.as_ref().map(|peer| &peer.handle), opts.mdns);
@@ -324,4 +393,35 @@ pub async fn serve_stdio(app: App) -> Result<(), String> {
     drop(session);
     let _ = writer.await;
     Ok(())
+}
+
+#[cfg(test)]
+mod dashboard_tests {
+    use super::*;
+    #[test]
+    fn owner_tls_requires_complete_absolute_operator_paths() {
+        use serde_json::json;
+        assert!(owner_tls_files(&json!({})).unwrap().is_none());
+        assert!(
+            owner_tls_files(
+                &json!({"server":{"tls":{"cert":"relative.pem","key":"relative.key"}}})
+            )
+            .is_err()
+        );
+        assert!(owner_tls_files(&json!({"server":{"tls":{"cert":"only"}}})).is_err());
+        for server in [json!(false), json!("invalid"), json!([]), json!(null)] {
+            assert!(owner_tls_files(&json!({"server":server})).is_err());
+        }
+        for tls in [json!(false), json!("invalid"), json!([])] {
+            assert!(owner_tls_files(&json!({"server":{"tls":tls}})).is_err());
+        }
+        assert!(
+            owner_tls_files(&json!({"server":{"tls":{"cert":"","key":"/operator/key.pem"}}}))
+                .is_err()
+        );
+        let dir = std::env::temp_dir();
+        let config =
+            json!({"server":{"tls":{"cert":dir.join("cert.pem"),"key":dir.join("key.pem")}}});
+        assert!(owner_tls_files(&config).unwrap().is_some());
+    }
 }

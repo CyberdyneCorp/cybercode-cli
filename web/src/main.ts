@@ -1,0 +1,15 @@
+import { HttpApi } from "./transport.js";
+import { Dashboard } from "./model.js";
+import { View } from "./view.js";
+const root = document.getElementById("app");
+if (!root) throw new Error("Dashboard root is unavailable");
+let model: Dashboard;
+const api = new HttpApi(window.location.origin, () => { if (model?.state.authenticated) model.authenticationRequired(); });
+model = new Dashboard(api);
+const view = new View(root, model);
+model.changed = () => view.render();
+window.addEventListener("online", () => model.wake());
+window.addEventListener("offline", () => { model.state.connection = "offline"; model.emit(); });
+window.addEventListener("pagehide", () => model.logout());
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") model.wake(); });
+view.render();

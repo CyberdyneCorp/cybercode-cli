@@ -618,6 +618,10 @@ export type Data_GoalsView = {
   data: GoalsView;
 };
 
+export type Data_InteractiveClient = {
+  data: InteractiveClient;
+};
+
 export type Data_InterruptedResume = {
   data: InterruptedResume;
 };
@@ -1865,6 +1869,13 @@ export type InstallationNotice = {
   /** `major`, `minor` or `patch`. */
   kind: string;
   notes_url?: string | null;
+};
+
+export type InteractiveClient = {
+  client_id: string;
+  session_id: string;
+  /** Expiration in milliseconds since the Unix epoch. Authority uses a monotonic clock. */
+  expires_at: number;
 };
 
 /** What resuming the interrupted runs did. */
