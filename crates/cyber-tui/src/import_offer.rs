@@ -60,6 +60,10 @@ mod tests {
     use crate::screens::Server;
 
     async fn started(server: &Server, home: &std::path::Path) -> crate::app::App {
+        started_with(server, home, false).await
+    }
+
+    async fn started_with(server: &Server, home: &std::path::Path, ci: bool) -> crate::app::App {
         let root = server.root();
         let opts = crate::TuiOptions {
             client: server.client.clone(),
@@ -75,7 +79,11 @@ mod tests {
         };
         let store = crate::store::LocalStore::new(&opts.state_dir);
         let home = home.display().to_string();
-        let env = move |name: &str| (name == "HOME").then(|| home.clone());
+        let env = move |name: &str| match name {
+            "HOME" => Some(home.clone()),
+            "CI" if ci => Some("true".into()),
+            _ => None,
+        };
         crate::runner::start(&server.client, &store, &opts, &env)
             .await
             .unwrap()
@@ -116,5 +124,21 @@ mod tests {
             app.toast
         );
         assert!(!root.join("cyber.jsonc").exists());
+    }
+
+    /// `installation-upgrade` → Container and CI usage: with `CI=true` the offer is not
+    /// shown and not recorded, so a later interactive run still gets it.
+    #[tokio::test]
+    async fn ci_suppresses_the_import_offer() {
+        let server = Server::start().await;
+        let root = server.root();
+        let home = root.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(root.join(".claude")).unwrap();
+        std::fs::write(root.join(".claude/settings.json"), "{}").unwrap();
+        let app = started_with(&server, &home, true).await;
+        assert!(app.toast.is_none(), "{:?}", app.toast);
+        let app = started(&server, &home).await;
+        assert!(app.toast.is_some(), "offered outside CI");
     }
 }

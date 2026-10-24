@@ -1,6 +1,8 @@
-//! Authenticated, registration-bound listener shutdown.
+//! Authenticated, registration-bound listener shutdown, and the last background update
+//! check (`installation-upgrade` → Background update policy).
 
 use super::{ApiError, AppState};
+use crate::runtime::UpdateStatus;
 use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -49,6 +51,17 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/service", get(info))
         .route("/service/stop", post(stop))
+        .route("/service/update", get(update))
+}
+
+/// The last update check, or the running build with `latest: null` before the first.
+async fn update(State(state): State<AppState>) -> Json<UpdateStatus> {
+    Json(state.runtime.update_status().unwrap_or_else(|| {
+        UpdateStatus::initial(
+            &state.options.version,
+            cyber_core::version::build_info().channel.as_str(),
+        )
+    }))
 }
 
 async fn info(State(state): State<AppState>) -> Result<Json<ServiceInfo>, ApiError> {

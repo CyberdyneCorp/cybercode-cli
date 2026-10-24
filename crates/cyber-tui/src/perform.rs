@@ -194,6 +194,8 @@ pub enum Msg {
         question: String,
         result: Result<String, String>,
     },
+    /// `GET /service/update`, or `None` when the server has no answer.
+    Update(Option<Value>),
     Done,
 }
 
@@ -886,6 +888,7 @@ pub async fn perform_owned(
         | Action::Team(_)
         | Action::Branch(_)
         | Action::Login(_)
+        | Action::LoadUpdate
         | Action::Export(_) => scheduled(client, session, action).await,
         Action::SaveTheme(_)
         | Action::SaveProjectTheme(_)
@@ -898,12 +901,13 @@ pub async fn perform_owned(
     }
 }
 
-/// Requests their own modules run: `/loop`, `/goal`, Workflow Runs, `/team` and `/login`;
-/// and the branch tree (`/tree`, `/label`).
+/// Requests their own modules run: `/loop`, `/goal`, Workflow Runs, `/team`, `/login`
+/// and the update check; and the branch tree (`/tree`, `/label`).
 async fn scheduled(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
     match action {
         Action::Branch(request) => crate::branches::perform(client, session, request).await,
         Action::Export(request) => crate::export::perform(client, request).await,
+        Action::LoadUpdate => crate::update::perform(client).await,
         Action::Loop(request) => crate::loops::perform(client, request).await,
         Action::Team(request) => crate::team::perform(client, session, request).await,
         Action::Goal(request) => crate::goals::perform(client, request).await,

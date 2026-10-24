@@ -51,6 +51,19 @@ export OPENAI_API_KEY="your-key"                  # or use your ChatGPT or Copil
 ./target/debug/cyber doctor                       # check your setup
 ```
 
+### Install a release
+
+Tagged releases publish signed archives for macOS, Linux (glibc and musl) and Windows (preview) to [GitHub Releases](https://github.com/CyberdyneCorp/cybercode-cli/releases). The install script checks each archive's SHA-256 (and its Sigstore signature when `cosign` is installed) and installs to `~/.cyber/bin`:
+
+```bash
+curl -fsSL https://github.com/CyberdyneCorp/cybercode-cli/releases/latest/download/install.sh | sh
+sh install.sh --version 0.1.0 --dir ~/bin --no-modify-path   # or --channel beta|nightly
+cyber upgrade                                                  # verified in-place upgrade
+cyber uninstall --dry-run                                      # what uninstall would remove
+```
+
+Homebrew, npm, Scoop, WinGet, AUR and Nix manifests are rendered for each release but not published yet. Container and CI use: [Install, upgrade and uninstall](docs/local-core-guide.md#install-upgrade-and-uninstall).
+
 ### Use your ChatGPT subscription
 
 A ChatGPT Plus or Pro plan can pay for OpenAI models instead of an API key, in the same way as Codex, OpenCode or Pi:
@@ -267,6 +280,7 @@ In the TUI, a message from another machine reads `from review@laptop`, its held 
 | Instructions | `CYBER.md`, `AGENTS.md`, `CLAUDE.md`, `CONTEXT.md`; confined `@path` imports | [Guide](docs/local-core-guide.md#project-instructions-and-cybermd) |
 | TUI | Themes, Markdown, sidebar with context bar, MCP and machine stats, palette, explorer, Settings/Usage/Stats, recaps, `/rename` | Some Settings extras pending |
 | Clients | TUI, `exec`, background service (an idle server from an older build is replaced automatically), HTTP/SSE/WebSocket/stdio API, TypeScript SDK | [SDK](sdk/typescript/README.md) |
+| Install & upgrade | Signed GitHub Releases for 8 targets, `install.sh`, `cyber upgrade` (SHA-256 + Sigstore, atomic replace), `cyber uninstall`, update notices, `Dockerfile` | Package registries not published; [guide](docs/local-core-guide.md#install-upgrade-and-uninstall) |
 | Partial P1 | Subagents/worktrees, cancellation, budgets, memory, LSP, formatting, migration previews | [P1 status](docs/implementation/p1-status.md) |
 
 ## How it compares

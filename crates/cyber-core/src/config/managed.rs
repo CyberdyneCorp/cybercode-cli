@@ -334,6 +334,7 @@ fn malformed(sources: Vec<String>, error: String) -> ManagedRead {
             serde_json::json!({
                 "modes": {"disable": MALFORMED_DISABLED_MODES},
                 "messaging": {"enabled": false},
+                "autoupdate": false,
                 "features": malformed_feature_lock(),
             }),
         )],
@@ -427,7 +428,14 @@ fn absorb_policy(read: &mut ManagedPolicy, policy: &Value) -> Result<(), String>
     if let Some(key) = policy.keys().find(|key| {
         !matches!(
             key.as_str(),
-            "features" | "hooks" | "messaging" | "mcp" | "modes" | "plugins" | "sandbox"
+            "autoupdate"
+                | "features"
+                | "hooks"
+                | "messaging"
+                | "mcp"
+                | "modes"
+                | "plugins"
+                | "sandbox"
         )
     }) {
         return Err(format!("policy.{key}: unsupported managed policy key"));
@@ -472,6 +480,13 @@ fn disabled_plugins(plugins: &Value) -> Result<Vec<String>, String> {
 /// name) and `policy.messaging.enabled`, validated strictly so a typo fails closed.
 fn policy_settings(policy: &Value) -> Result<Map<String, Value>, String> {
     let mut out = Map::new();
+    // `installation-upgrade` → Background update policy: org policy can turn the
+    // background check off (or on) over every user and project layer.
+    if let Some(autoupdate) = policy.get("autoupdate") {
+        super::AutoUpdate::from_config(&serde_json::json!({ "autoupdate": autoupdate }))
+            .map_err(|e| format!("policy.{e}"))?;
+        out.insert("autoupdate".into(), autoupdate.clone());
+    }
     if let Some(messaging) = policy.get("messaging") {
         out.insert("messaging".into(), messaging_policy(messaging)?);
     }

@@ -24,16 +24,22 @@ pub struct Context {
 
 impl Context {
     pub fn new(global: &GlobalArgs) -> Result<Self, CliError> {
+        let ctx = Self::existing(global)?;
+        ctx.paths.ensure()?;
+        // Before any command can start a sandboxed process (`sandbox run`, hooks, MCP
+        // servers, LSP), not only when an App is built.
+        cyber_tools::plugin_host::hide_credential_files(&ctx.paths, &ctx.home);
+        config::ensure_global_config(&ctx.paths)?;
+        Ok(ctx)
+    }
+
+    /// The context without creating any directory or file (`cyber uninstall`).
+    pub fn existing(global: &GlobalArgs) -> Result<Self, CliError> {
         let env = ProcessEnv;
         let home = paths::home_dir(&env).ok_or_else(|| {
             CliError::runtime("cannot determine the home directory").with_hint("set HOME")
         })?;
         let paths = Paths::resolve(&env, &home);
-        paths.ensure()?;
-        // Before any command can start a sandboxed process (`sandbox run`, hooks, MCP
-        // servers, LSP), not only when an App is built.
-        cyber_tools::plugin_host::hide_credential_files(&paths, &home);
-        config::ensure_global_config(&paths)?;
         Ok(Self {
             location: location(global)?,
             env,

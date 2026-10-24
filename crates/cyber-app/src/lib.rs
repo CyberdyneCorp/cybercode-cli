@@ -14,6 +14,7 @@ mod registration;
 pub mod retention;
 mod server;
 mod services;
+pub mod update_check;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -364,6 +365,13 @@ impl App {
                 .to_vec(),
             }),
         };
+        // The minimum supported version is known from the cached manifest before any
+        // check, also for embedded runs that never check.
+        runtime.set_update_status(update_check::initial_status(
+            &opts.paths.cache,
+            version(),
+            cyber_core::version::build_info().channel,
+        ));
         Ok(App {
             runtime,
             store,

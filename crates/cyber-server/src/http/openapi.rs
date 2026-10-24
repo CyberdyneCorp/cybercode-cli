@@ -292,6 +292,13 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .ok::<ServiceInfo>(g),
         op(
             "get",
+            "/service/update",
+            "v1.service.update",
+            "The last background update check: current and latest version, bump kind, method and minimum supported version",
+        )
+        .ok::<crate::runtime::UpdateStatus>(g),
+        op(
+            "get",
             "/jobs",
             "v1.job.list",
             "List durable background tasks",
@@ -1578,6 +1585,7 @@ pub fn document(version: &str) -> Value {
     let envelope = g.subschema_for::<EventEnvelope>();
     let _ = g.subschema_for::<crate::runtime::McpStatusUpdate>();
     let _ = g.subschema_for::<crate::runtime::McpToolsChanged>();
+    let _ = g.subschema_for::<crate::runtime::InstallationNotice>();
     let _ = g.subschema_for::<crate::runtime::MemoryChange>();
     let _ = g.subschema_for::<crate::runtime::WorkflowRunProgress>();
     let mut paths = Map::new();

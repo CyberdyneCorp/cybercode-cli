@@ -1,0 +1,11 @@
+{
+  "name": "@cyber-code/cli-{{ npm.key }}",
+  "version": "{{ version }}",
+  "description": "The cyber binary for {{ npm.key }}; installed by @cyber-code/cli",
+  "homepage": "https://github.com/CyberdyneCorp/cybercode-cli",
+  "license": "Apache-2.0",
+  "os": ["{{ npm.os }}"],
+  "cpu": ["{{ npm.cpu }}"],
+  "files": ["bin"],
+  "preferUnplugged": true
+}

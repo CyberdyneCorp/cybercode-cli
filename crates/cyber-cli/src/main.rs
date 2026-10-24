@@ -16,6 +16,11 @@ fn main() -> ExitCode {
     // Stamp the executable before anything can replace it, so a later rebuild in place
     // is told apart from this process (`server-api` → Background service management).
     let _ = cyber_core::version::binary();
+    // The binary a finished `cyber upgrade` renamed aside (`installation-upgrade` →
+    // Upgrade command); best-effort and silent.
+    if let Ok(exe) = std::env::current_exe() {
+        cyber_install::replace::cleanup_old(&exe);
+    }
     // `cyber -p ...` is `cyber exec ...`.
     let mut args: Vec<std::ffi::OsString> = std::env::args_os().collect();
     if args.get(1).is_some_and(|a| a == "-p" || a == "--print") {

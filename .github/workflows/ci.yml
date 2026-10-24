@@ -201,6 +201,10 @@ jobs:
       - run: python3 scripts/spec_lint.py
       - name: Evaluation graders fail the fixtures and pass the reference solutions
         run: python3 scripts/check_eval_graders.py --jobs 4
+      - name: Release assets, workflow, Dockerfile and npm launcher
+        run: python3 -m unittest discover -s scripts/tests -v
+      - name: Install script is POSIX sh
+        run: sh -n scripts/install.sh && dash -n scripts/install.sh && shellcheck -s sh scripts/install.sh
       - name: Requirement inventory is current
         run: python3 scripts/spec_inventory.py && git diff --exit-code ROADMAP.md
 
@@ -224,7 +228,18 @@ jobs:
             target: x86_64-unknown-linux-musl
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
+          # Every release target builds on pull requests, so a tag never finds the
+          # first failure (`installation-upgrade` → Release targets).
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+            exe: .exe
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            exe: .exe
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -245,11 +260,11 @@ jobs:
       - name: Build workspace executables
         run: cargo build --locked --release --workspace --bins --target ${{ matrix.target }}
       - name: Smoke test CLI
-        run: target/${{ matrix.target }}/release/cyber --version
+        run: target/${{ matrix.target }}/release/cyber${{ matrix.exe }} --version
       - uses: actions/upload-artifact@v4
         with:
           name: cyber-${{ matrix.target }}
           path: |
-            target/${{ matrix.target }}/release/cyber
-            target/${{ matrix.target }}/release/cyber-sandbox-exec
+            target/${{ matrix.target }}/release/cyber${{ matrix.exe }}
+            target/${{ matrix.target }}/release/cyber-sandbox-exec${{ matrix.exe }}
           if-no-files-found: error

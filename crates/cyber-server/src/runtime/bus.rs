@@ -123,6 +123,16 @@ pub enum LiveEvent {
         directory: String,
         progress: super::WorkflowRunProgress,
     },
+    /// `installation.update_available.1`: the background check found a newer release;
+    /// never durable, on every instance stream.
+    InstallationUpdateAvailable {
+        notice: super::InstallationNotice,
+    },
+    /// `installation.updated.1`: a silent patch upgrade replaced the binary; never
+    /// durable, on every instance stream.
+    InstallationUpdated {
+        notice: super::InstallationNotice,
+    },
     /// `worktree.created.1`, `worktree.removed.1` or `worktree.kept.1`; never durable,
     /// on the instance stream of `directory`, the Location that asked.
     Worktree {

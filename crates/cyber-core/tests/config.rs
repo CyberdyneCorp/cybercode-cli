@@ -87,6 +87,47 @@ fn parse_error_names_file_line_and_column() {
 }
 
 #[test]
+fn autoupdate_rejects_values_other_than_true_false_or_notify() {
+    let f = Fixture::new();
+    f.write("global:cyber.json", r#"{"autoupdate": "yes"}"#);
+    let error = f.load().unwrap_err().to_string();
+    assert!(
+        error.contains(r#"autoupdate: expected true, false or "notify", got "yes""#),
+        "{error}"
+    );
+    f.write("global:cyber.json", r#"{"autoupdate": false}"#);
+    f.load().unwrap();
+}
+
+/// `installation-upgrade` → Background update policy: org policy's `policy.autoupdate`
+/// wins over the user's `autoupdate`, a user-written `policy.autoupdate` is not org
+/// policy, and an invalid value fails closed (off).
+#[test]
+fn managed_autoupdate_is_org_policy_only() {
+    let mut f = Fixture::new();
+    f.write(
+        "global:cyber.json",
+        r#"{"autoupdate": true, "policy": {"autoupdate": false}}"#,
+    );
+    let managed = |f: &Fixture| {
+        let resolved = f.load().unwrap();
+        config::AutoUpdate::managed(&resolved.value, &resolved.sources)
+    };
+    assert_eq!(managed(&f), None, "a user layer is not org policy");
+    f.managed(&json!({"policy": {"autoupdate": false}}).to_string());
+    assert_eq!(managed(&f), Some(config::AutoUpdate::Off));
+    f.managed(&json!({"policy": {"autoupdate": "notify"}}).to_string());
+    assert_eq!(managed(&f), Some(config::AutoUpdate::Notify));
+    f.managed(&json!({"policy": {"autoupdate": "yes"}}).to_string());
+    let malformed = f.load().unwrap();
+    assert!(malformed.managed.error.is_some());
+    assert_eq!(
+        config::AutoUpdate::managed(&malformed.value, &malformed.sources),
+        Some(config::AutoUpdate::Off)
+    );
+}
+
+#[test]
 fn unknown_agent_fields_name_the_agent_and_field() {
     let f = Fixture::new();
     f.write(

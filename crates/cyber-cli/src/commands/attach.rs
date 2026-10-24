@@ -24,6 +24,7 @@ pub struct AttachArgs {
 }
 
 pub fn run(args: &AttachArgs, ctx: &Context) -> Result<(), CliError> {
+    super::tui::refuse_in_ci(ctx)?;
     let (session, peer) = peer_session(&args.target)?;
     let settings = super::peers::settings(ctx)?;
     let remote = settings

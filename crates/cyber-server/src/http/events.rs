@@ -120,6 +120,9 @@ pub fn envelope(event: &LiveEvent, counter: u64) -> EventEnvelope {
             durable: None,
         };
     }
+    if let Some(e) = installation(event, counter) {
+        return e;
+    }
     if let LiveEvent::Durable {
         session_id,
         seq,
@@ -208,9 +211,30 @@ pub fn envelope(event: &LiveEvent, counter: u64) -> EventEnvelope {
     }
 }
 
+/// `installation.update_available.1` and `installation.updated.1`: about the server
+/// itself, so on every instance stream whatever its Location.
+fn installation(event: &LiveEvent, counter: u64) -> Option<EventEnvelope> {
+    let (kind, notice) = match event {
+        LiveEvent::InstallationUpdateAvailable { notice } => {
+            ("installation.update_available.1", notice)
+        }
+        LiveEvent::InstallationUpdated { notice } => ("installation.updated.1", notice),
+        _ => return None,
+    };
+    Some(EventEnvelope {
+        id: format!("live:{counter}"),
+        kind: kind.into(),
+        data: serde_json::to_value(notice).unwrap_or_default(),
+        location: None,
+        durable: None,
+    })
+}
+
 fn session_of(event: &LiveEvent) -> Option<&str> {
     match event {
-        LiveEvent::McpStatusChanged { .. }
+        LiveEvent::InstallationUpdateAvailable { .. }
+        | LiveEvent::InstallationUpdated { .. }
+        | LiveEvent::McpStatusChanged { .. }
         | LiveEvent::McpToolsChanged { .. }
         | LiveEvent::MemoryUpdated { .. }
         | LiveEvent::WorkflowProgress { .. }
@@ -324,6 +348,12 @@ async fn instance(State(state): State<AppState>, parts: Parts) -> Result<Respons
                 Err(broadcast::error::RecvError::Closed) => return,
             };
             counter += 1;
+            if let Some(e) = installation(&event, counter) {
+                if tx.send(sse_event(&e)).await.is_err() {
+                    return;
+                }
+                continue;
+            }
             let dir = match &event {
                 LiveEvent::MemoryUpdated { update, .. } => update.directory.display().to_string(),
                 LiveEvent::McpStatusChanged { update, .. } => {

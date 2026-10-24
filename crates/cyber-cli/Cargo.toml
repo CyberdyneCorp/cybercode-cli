@@ -21,6 +21,8 @@ cyber-client = { path = "../cyber-client" }
 cyber-tui = { path = "../cyber-tui" }
 cyber-tools = { path = "../cyber-tools" }
 cyber-workflow = { path = "../cyber-workflow" }
+cyber-install = { path = "../cyber-install" }
+semver = "1"
 tokio-util = "0.7"
 cyber-sandbox = { path = "../cyber-sandbox" }
 rusqlite.workspace = true
@@ -44,6 +46,10 @@ tempfile.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 [dev-dependencies]
+cyber-install = { path = "../cyber-install", features = ["test-support"] }
+flate2 = "1"
+tar = { version = "0.4.46", default-features = false }
+zip = { version = "8.6", default-features = false, features = ["deflate-flate2"] }
 url = "2"
 mdns-sd = { version = "0.21", default-features = false }
 axum = "0.8"

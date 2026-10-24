@@ -5,6 +5,7 @@ mod agent_profiles;
 mod agents;
 pub(crate) mod annotated;
 mod auto_mode;
+mod autoupdate;
 mod deferred_tools;
 mod edit;
 mod gate;
@@ -38,6 +39,7 @@ use serde_json::Value;
 
 pub use agent_profiles::{AgentProfile, AgentTools, resolve_agents};
 pub use auto_mode::{AutoFallback, AutoModeSettings, AutoPattern};
+pub use autoupdate::AutoUpdate;
 pub use deferred_tools::DeferredToolSettings;
 pub use edit::{set_document_member, set_global_key};
 pub use gate::{SensitiveSplit, canonical_json, split_sensitive};

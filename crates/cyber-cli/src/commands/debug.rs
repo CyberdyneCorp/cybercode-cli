@@ -85,8 +85,11 @@ fn info(ctx: &Context) -> Result<(), CliError> {
     if resolved.pure {
         eprintln!("external extensions disabled (--pure)");
     }
+    let release = cyber_core::version::ReleaseSource::resolve(&ctx.env)
+        .map_or_else(|error| json!({ "error": error }), |source| json!(source));
     output::json(&json!({
         "build": ctx.build,
+        "release": release,
         "paths": ctx.paths,
         "location": ctx.location,
         "database": { "location": database, "durability": durability },

@@ -39,6 +39,7 @@ mod switcher;
 mod team;
 mod theme;
 mod turns;
+mod update;
 mod view;
 mod workflow_library;
 mod workflow_watch;
@@ -94,6 +95,8 @@ mod screens_tasks;
 mod screens_team;
 #[cfg(test)]
 mod screens_themes;
+#[cfg(test)]
+mod screens_update;
 #[cfg(test)]
 mod screens_usage;
 #[cfg(test)]

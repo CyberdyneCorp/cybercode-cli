@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 cyber-core.workspace = true
 cyber-store.workspace = true
+cyber-install = { path = "../cyber-install" }
 cyber-llm = { path = "../cyber-llm" }
 cyber-server = { path = "../cyber-server" }
 cyber-tools = { path = "../cyber-tools" }
@@ -33,6 +34,10 @@ url = "2"
 
 [dev-dependencies]
 cyber-client = { path = "../cyber-client" }
+cyber-install = { path = "../cyber-install", features = ["test-support"] }
+flate2 = "1"
+tar = { version = "0.4.46", default-features = false }
+zip = { version = "8.6", default-features = false, features = ["deflate-flate2"] }
 rusqlite.workspace = true
 reqwest = { version = "0.13", features = ["json", "stream"] }
 tokio-tungstenite = "0.28"
