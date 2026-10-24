@@ -52,6 +52,14 @@ The server owns execution and stores state in SQLite, so work can outlive a term
 
 For independent patch attempts, host-recorded tests and a separate read-only judge, start with the [verified `solve` workflow](docs/verified-workflows.md). Candidate patches remain available for human review; nothing is merged automatically.
 
+## Sessions and people working together
+
+Cyber supports communication between Sessions and between different people's agents working on the same Git project:
+
+- **On one server:** Sessions and agents can discover, message and watch each other. See [Session messaging](docs/local-core-guide.md#cross-session-messaging).
+- **Across your machines:** [direct peers](docs/peers.md) connect Sessions without an account or relay.
+- **With teammates or friends:** a [self-hosted project hub](docs/collaboration.md) connects verified members and their explicitly published agents, with conversations and shared tasks. Each person binds their own checkout to the project; tools, working trees and execution approvals stay local. Incoming agent messages are held for receiver consent by default. The hub is **experimental and off by default**.
+
 ## Feature mindmap
 
 This is a map of available capabilities, including partial and experimental areas. The [feature reference](docs/features.md) records their limits and acceptance status.
