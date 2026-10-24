@@ -9,7 +9,7 @@
 
 - [x] 2.1 Login with explicit Basic headers, page-memory credentials, credentials-omit fetch/SSE; logout/reload/auth failure clears state and no credential storage/query tokens.
 - [x] 2.2 Implement `cyber web` startup, registered URL, `--no-open`, requested bind checks, TLS refusal and actionable mismatch errors without widening a running listener.
-- [ ] 2.3 Session/Location navigation, paginated transcript/diffs, existing workflow/Job/Goal status, feature probes and unavailable-state handling.
+- [x] 2.3 Session/Location navigation, paginated transcript/diffs, existing workflow/Job/Goal status, feature probes and unavailable-state handling.
 - [x] 2.4 Production-path/browser tests: unauthenticated data refused, login accepted, no secrets in URLs/storage/logs, hostile Markdown inert, no static `/api` fallback and denied Origin rejected.
 
 ## 3. Human presence and requests
@@ -30,5 +30,7 @@
 
 - [x] 5.1 Real `cyber web` plus scripted model: prompt → permission → browser approval → completed tool, observed by the terminal and second browser.
 - [ ] 5.2 Physical second-device certificate trust remains a manual deployment acceptance check. Automated production-browser approval through an SSH-style TCP forward and an actual TLS endpoint, plus off-loopback plaintext refusal, pass; these do not establish physical-device trust.
-- [ ] 5.3 Confirm the peer listener never serves the dashboard or accepts owner-password auth, and existing API/SDK/TUI contracts still pass.
-- [ ] 5.4 Publish setup, password authority, TLS/tunnel requirements, disconnect behavior, limitations and exact browser/platform evidence. Update feature/roadmap status only after acceptance; archive after review.
+- [x] 5.3 Confirm the peer listener never serves the dashboard or accepts owner-password auth, and existing API/SDK/TUI contracts still pass.
+- [x] 5.4 Publish setup, password authority, TLS/tunnel requirements, disconnect behavior, limitations and exact browser/platform evidence. Update first-slice feature/roadmap status after automated acceptance, keeping physical-device and broader TUI-equivalence limits explicit.
+
+- [ ] 5.5 Archive the change after implementation review and merge; do not merge automatically.
