@@ -47,6 +47,8 @@ mod fork;
 mod forked_skills;
 mod hook_tests;
 mod hooks;
+mod installation;
+pub use installation::{InstallationNotice, UpdateStatus};
 mod lifecycle;
 mod lifecycle_events;
 pub use hook_tests::{
@@ -831,6 +833,8 @@ pub(crate) struct Inner {
     /// Set once the `workflow.run.progress` publisher runs.
     workflow_progress: std::sync::OnceLock<()>,
     pub(crate) waiters: StdMutex<Vec<requests::Waiter>>,
+    /// The last background update check (`installation-upgrade`).
+    update_status: StdMutex<Option<UpdateStatus>>,
     pub(crate) me: std::sync::Weak<Inner>,
 }
 
@@ -912,6 +916,7 @@ impl Runtime {
             team_spawn: Mutex::default(),
             team_status: Mutex::default(),
             peer_listings: StdMutex::default(),
+            update_status: StdMutex::default(),
             workflow_writers: StdMutex::default(),
             presence: presence::Presence::default(),
             workflow_dir: std::sync::OnceLock::new(),

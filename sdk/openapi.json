@@ -1968,6 +1968,76 @@
         ],
         "description": "The listening server and its running work, so a client of another build can decide\nwhether restarting it interrupts anything."
       },
+      "UpdateStatus": {
+        "type": "object",
+        "properties": {
+          "current": {
+            "type": "string",
+            "description": "The running server's version."
+          },
+          "channel": {
+            "type": "string",
+            "description": "The channel looked up (`dev` builds look up `stable`)."
+          },
+          "method": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "How the server binary was installed, once a check detected it."
+          },
+          "latest": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The channel's latest version; `null` before the first check."
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`major`, `minor` or `patch` when `latest` is newer than `current`."
+          },
+          "notes_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "min_supported": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The oldest supported version, from the cached or fetched manifest."
+          },
+          "unsupported": {
+            "type": "boolean",
+            "description": "`current` is older than `min_supported`."
+          },
+          "updated": {
+            "type": "boolean",
+            "description": "A silent patch upgrade installed `latest`; clients restart to use it."
+          },
+          "checked_at_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "current",
+          "channel",
+          "unsupported",
+          "updated"
+        ],
+        "description": "The last update check, or the running build before the first one."
+      },
       "Page_Job": {
         "type": "object",
         "properties": {
@@ -13345,6 +13415,33 @@
         ],
         "description": "`mcp.tools.changed.1`: a server's tools and prompts were published on (re)connect or\nre-listed after its `list_changed` notification. A live observation of the published names, never durable;\ninvoking them still requires ordinary authorization."
       },
+      "InstallationNotice": {
+        "type": "object",
+        "properties": {
+          "current": {
+            "type": "string"
+          },
+          "latest": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`major`, `minor` or `patch`."
+          },
+          "notes_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "current",
+          "latest",
+          "kind"
+        ],
+        "description": "The data of `installation.update_available.1` and `installation.updated.1`."
+      },
       "WorkflowRunProgress": {
         "type": "object",
         "properties": {
@@ -16458,6 +16555,38 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ServiceInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/service/update": {
+      "get": {
+        "operationId": "v1.service.update",
+        "summary": "The last background update check: current and latest version, bump kind, method and minimum supported version",
+        "tags": [
+          "service"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateStatus"
                 }
               }
             }

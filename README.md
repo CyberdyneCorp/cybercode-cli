@@ -18,6 +18,18 @@ OpenAI, Anthropic, GitHub Copilot and OpenAI-compatible endpoints are supported,
 
 Examples below use the built binary. If you installed it on your PATH, use `cyber` instead of `./target/debug/cyber`.
 
+## Install a release
+
+Tagged releases publish signed archives for macOS, Linux (glibc and musl) and Windows (preview) to [GitHub Releases](https://github.com/CyberdyneCorp/cybercode-cli/releases). The install script checks each archive's SHA-256 (and its Sigstore signature when `cosign` is installed); `cyber upgrade` always verifies both before replacing the binary.
+
+```bash
+curl -fsSL https://github.com/CyberdyneCorp/cybercode-cli/releases/latest/download/install.sh | sh
+cyber upgrade                # verified in-place upgrade
+cyber uninstall --dry-run    # what uninstall would remove
+```
+
+Package-manager manifests (Homebrew, npm, Scoop, WinGet, AUR, Nix) are rendered for each release but not published yet. See [install, upgrade and uninstall](docs/local-core-guide.md#install-upgrade-and-uninstall).
+
 ## Run the web dashboard
 
 ```bash
@@ -46,6 +58,7 @@ The password grants **owner access** and stays in page memory. Off-loopback acce
 ./target/debug/cyber workflows run audit --wait    # run a bundled audit
 ./target/debug/cyber service status                # inspect the shared server
 ./target/debug/cyber doctor                        # check your setup
+./target/debug/cyber upgrade                       # verified upgrade of an installed release
 ```
 
 The server owns execution and stores state in SQLite, so work can outlive a terminal window. After a crash, Sessions recover interrupted state and Workflows can replay; see [server lifecycle and recovery](docs/local-core-guide.md#background-server-and-rebuilds).
@@ -72,6 +85,7 @@ mindmap
       Exec and public API
       Local web dashboard
       TypeScript SDK
+      Signed releases and cyber upgrade
     Agents and automation
       Subagents and worktrees partial
       Workflows and verified solve

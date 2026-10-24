@@ -77,6 +77,8 @@ cyber [OPTIONS] [COMMAND]
 - [`messages`](#cyber-messages): Send messages between Sessions and read their message history
 - [`doctor`](#cyber-doctor): Check configuration, skills, commands, credentials, catalog, database, sandbox, tools and server
 - [`stats`](#cyber-stats): Usage statistics: activity, streaks, tokens, cost and per-model totals
+- [`upgrade`](#cyber-upgrade): Upgrade cyber to the channel's latest version or to VERSION
+- [`uninstall`](#cyber-uninstall): Remove cyber: its binary (script installs), PATH lines and directories
 - [`eval`](#cyber-eval): Run evaluation manifests and write reports
 
 ## `cyber login`
@@ -2585,6 +2587,39 @@ cyber stats [OPTIONS]
 - `--models`: One row per model.
 - `--tools`: Tool calls by name.
 - `--by <GROUP>`: One row per usage origin (`user`, `session`, `client`, `job`, `mcp`, ...) Values: `origin`.
+
+## `cyber upgrade`
+
+Upgrade cyber to the channel's latest version or to VERSION
+
+```text
+cyber upgrade [OPTIONS] [VERSION]
+```
+
+**Arguments:**
+
+- `[VERSION]`: Version to install (`1.4.0` or `v1.4.0`); defaults to the channel's latest.
+
+**Options:**
+
+- `--method <METHOD>`: Install method instead of the detected one: script, brew, npm, pnpm, bun, cargo, scoop, winget, aur, nix, docker or unknown.
+- `--channel <CHANNEL>`: Channel to read the latest version from; defaults to the build's (`dev` reads `stable`) Values: `stable`, `beta`, `nightly`.
+- `--dry-run`: Print what would be done (target version, method, action) and change nothing.
+
+## `cyber uninstall`
+
+Remove cyber: its binary (script installs), PATH lines and directories
+
+```text
+cyber uninstall [OPTIONS]
+```
+
+**Options:**
+
+- `--keep-config`: Keep the configuration directory.
+- `--keep-data`: Keep the data directory (sessions, memory, stored logins) and the keyring entries.
+- `--dry-run`: List what would be removed, with sizes, and change nothing.
+- `--force`: Remove without asking, and go on when the background server cannot be stopped.
 
 ## `cyber eval`
 

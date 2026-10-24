@@ -204,6 +204,9 @@ fn launch(
             "exec supports --format text, json or stream-json",
         ));
     }
+    if let Some(warning) = super::upgrade::unsupported_warning(ctx) {
+        eprintln!("{warning}");
+    }
     let code = super::serve::runtime()?.block_on(async {
         let backend = setup::backend(&args, ctx).await?;
         let client = backend.client.at(&ctx.location.display().to_string());

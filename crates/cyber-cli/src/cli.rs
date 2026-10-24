@@ -308,6 +308,10 @@ pub enum Command {
     Doctor,
     /// Usage statistics: activity, streaks, tokens, cost and per-model totals.
     Stats(StatsArgs),
+    /// Upgrade cyber to the channel's latest version or to VERSION.
+    Upgrade(crate::commands::upgrade::UpgradeArgs),
+    /// Remove cyber: its binary (script installs), PATH lines and directories.
+    Uninstall(crate::commands::uninstall::UninstallArgs),
     /// Run evaluation manifests and write reports.
     Eval {
         #[command(subcommand)]

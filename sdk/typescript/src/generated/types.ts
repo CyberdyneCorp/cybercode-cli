@@ -1862,6 +1862,15 @@ export type InsightFactor = {
 /** A contributing factor. */
 export type InsightFactorKind = "subagent_heavy" | "long_running" | "large_context" | "workflow";
 
+/** The data of `installation.update_available.1` and `installation.updated.1`. */
+export type InstallationNotice = {
+  current: string;
+  latest: string;
+  /** `major`, `minor` or `patch`. */
+  kind: string;
+  notes_url?: string | null;
+};
+
 export type InteractiveClient = {
   client_id: string;
   session_id: string;
@@ -4134,6 +4143,28 @@ export type UpdateBody = {
   archived?: boolean | null;
   /** Set the Session's `messaging.inbound` override; `{ "inbound": null }` clears it. */
   messaging?: MessagingPatch | null;
+};
+
+/** The last update check, or the running build before the first one. */
+export type UpdateStatus = {
+  /** The running server's version. */
+  current: string;
+  /** The channel looked up (`dev` builds look up `stable`). */
+  channel: string;
+  /** How the server binary was installed, once a check detected it. */
+  method?: string | null;
+  /** The channel's latest version; `null` before the first check. */
+  latest?: string | null;
+  /** `major`, `minor` or `patch` when `latest` is newer than `current`. */
+  kind?: string | null;
+  notes_url?: string | null;
+  /** The oldest supported version, from the cached or fetched manifest. */
+  min_supported?: string | null;
+  /** `current` is older than `min_supported`. */
+  unsupported: boolean;
+  /** A silent patch upgrade installed `latest`; clients restart to use it. */
+  updated: boolean;
+  checked_at_ms?: number | null;
 };
 
 /**

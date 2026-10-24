@@ -29,6 +29,9 @@ pub struct ServeOptions {
     pub mdns: bool,
     /// How long a peer attach waits for `remote.attach`: 2 minutes; tests shorten it.
     pub peer_attach_wait: std::time::Duration,
+    /// The background update check (`installation-upgrade`): the running build's
+    /// version and channel; tests pin them and the cadence.
+    pub update: crate::update_check::UpdateCheckOptions,
 }
 
 impl Default for ServeOptions {
@@ -41,6 +44,7 @@ impl Default for ServeOptions {
             register: false,
             mdns: false,
             peer_attach_wait: cyber_server::http::peer::ATTACH_WAIT,
+            update: crate::update_check::UpdateCheckOptions::default(),
         }
     }
 }
@@ -118,6 +122,14 @@ pub async fn run_server(
     run_server_until(app, opts, on_ready, stop).await
 }
 
+/// Stop background loops (retention, update checks) and wait for them to end.
+async fn abort_all<const N: usize>(tasks: [tokio::task::JoinHandle<()>; N]) {
+    for task in tasks {
+        task.abort();
+        let _ = task.await;
+    }
+}
+
 /// Serve until `stop` is notified.
 pub async fn run_server_until(
     app: App,
@@ -160,6 +172,7 @@ pub async fn run_server_until(
         return Err("non-loopback owner listeners require global server.tls.cert and server.tls.key; use loopback with an SSH forward or configure HTTPS".into());
     }
     let sweeper = crate::retention::spawn(app.runtime.clone(), app.paths.data.clone(), retention);
+    let updates = crate::update_check::spawn(&app, opts.update.clone());
     let scheme = if tls.is_some() { "https" } else { "http" };
     let url = tcp
         .as_ref()
@@ -245,8 +258,7 @@ pub async fn run_server_until(
     closing.cancel();
     stop.notify_waiters();
     crate::peer_discovery::unpublish(publication).await;
-    sweeper.abort();
-    let _ = sweeper.await;
+    abort_all([sweeper, updates]).await;
     app.runtime.shutdown().await;
     for task in [tcp_task, peer_task, unix_task].into_iter().flatten() {
         let _ = task.await;

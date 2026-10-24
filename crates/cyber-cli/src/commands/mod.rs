@@ -37,6 +37,8 @@ pub mod stats;
 pub mod teams;
 pub mod trust;
 pub mod tui;
+pub mod uninstall;
+pub mod upgrade;
 pub mod web;
 pub mod workflows;
 
@@ -80,6 +82,10 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
     if let Command::HelpMarkdown = &command {
         print!("{}", crate::cli_docs::markdown());
         return Ok(());
+    }
+    // Before the context creates directories and opens a log in them.
+    if let Command::Uninstall(args) = &command {
+        return uninstall::run(args, &cli.global);
     }
     let ctx = Context::new(&cli.global)?;
     // The MCP serve bridge logs to its own file and never loads the project configuration
@@ -132,7 +138,11 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
         Command::Doctor => doctor::run(&ctx, &cli.global),
         Command::Stats(args) => stats::run(args, &ctx, &cli.global),
         Command::Eval { cmd } => eval::run(cmd, &ctx),
-        Command::External(_) | Command::Import(_) | Command::HelpMarkdown => {
+        Command::Upgrade(args) => upgrade::run(args, &ctx, &cli.global),
+        Command::External(_)
+        | Command::Import(_)
+        | Command::HelpMarkdown
+        | Command::Uninstall(_) => {
             unreachable!("handled above")
         }
     }

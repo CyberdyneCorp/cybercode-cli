@@ -902,6 +902,12 @@ export interface Operations {
     body: S.StopService;
     response: S.StopAccepted;
   };
+  "v1.service.update": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.UpdateStatus;
+  };
   "v1.session.agent": {
     path: { sessionID: string };
     query: Record<string, never>;
@@ -3121,6 +3127,18 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.service.update": {
+    tag: "service",
+    name: "update",
+    method: "GET",
+    path: "/api/v1/service/update",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
   "v1.session.agent": {
     tag: "session",
     name: "agent",
@@ -4778,6 +4796,9 @@ export function createGroups(caller: Caller) {
       /** Stop the server matching this registration identity (`POST /api/v1/service/stop`) */
       stop: (body: Operations["v1.service.stop"]["body"], options?: RequestOptions): Promise<Operations["v1.service.stop"]["response"]> =>
         caller.call("v1.service.stop", { body }, options),
+      /** The last background update check: current and latest version, bump kind, method and minimum supported version (`GET /api/v1/service/update`) */
+      update: (options?: RequestOptions): Promise<Operations["v1.service.update"]["response"]> =>
+        caller.call("v1.service.update", {}, options),
     },
     session: {
       /** Switch the agent (`POST /api/v1/sessions/{sessionID}/agent`) */

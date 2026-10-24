@@ -81,13 +81,9 @@ pub(crate) async fn start(
     app.set_theme(&prefs.theme);
     if let Some(first) = warnings.first() {
         app.toast(first.clone());
-    } else if let Some(offer) = crate::import_offer::offer(
-        store,
-        std::path::Path::new(&opts.directory),
-        app.home.as_deref(),
-    ) {
-        app.toast(offer);
-    } else if let Some(offer) = crate::plugins::offer(store, &opts.directory, &plugins) {
+    } else if !in_ci(env)
+        && let Some(offer) = onboarding_offer(store, opts, app.home.as_deref(), &plugins)
+    {
         app.toast(offer);
     }
     app.attachments.dir = Some(opts.state_dir.clone());
@@ -97,6 +93,23 @@ pub(crate) async fn start(
         app.toast(gone);
     }
     Ok((app, open_picker))
+}
+
+/// `CI` is true (`installation-upgrade` → Container and CI usage): no onboarding offers.
+fn in_ci(env: &dyn Fn(&str) -> Option<String>) -> bool {
+    env("CI")
+        .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+}
+
+/// The first-run import offer, else a plugin offer, each recorded as shown.
+fn onboarding_offer(
+    store: &LocalStore,
+    opts: &TuiOptions,
+    home: Option<&str>,
+    plugins: &Value,
+) -> Option<String> {
+    crate::import_offer::offer(store, std::path::Path::new(&opts.directory), home)
+        .or_else(|| crate::plugins::offer(store, &opts.directory, plugins))
 }
 
 /// Keep the composer's text and chips for the next start in this Session.
@@ -444,6 +457,9 @@ pub(crate) fn server_event(app: &mut App, event: &cyber_client::Event) -> Vec<Ac
     if event.kind.starts_with("workflow.") {
         return app.workflow_event(event);
     }
+    if event.kind.starts_with("installation.") {
+        return app.installation_event(event);
+    }
     if commands_changed(event) {
         return vec![
             Action::LoadCommands,
@@ -738,6 +754,7 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
             app.composer.set_text(&text);
             app.toast("Review the drafted command, then press Enter to run it");
         }
+        Msg::Update(status) => app.update_status(status),
         Msg::Done => {}
         Msg::PromptRefused {
             session_id,

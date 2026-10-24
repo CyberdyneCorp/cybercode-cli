@@ -45,6 +45,8 @@ pub enum Action {
         stop: bool,
     },
     Refresh,
+    /// `GET /service/update`: the server's last update check, read on attach.
+    LoadUpdate,
     /// Read one sidebar source (`sidebar::Part`).
     LoadSidebar(crate::sidebar::Part),
     /// `r` on a failed MCP server in the sidebar.
@@ -422,6 +424,8 @@ pub struct App {
     pub scroll: u16,
     pub permission_scroll: u16,
     pub toast: Option<(String, Instant)>,
+    /// Update toasts already shown and the unsupported-version banner.
+    pub update: crate::update::Notices,
     /// The resolved tokens of the current theme.
     pub theme: Tokens,
     pub themes: Catalog,
@@ -550,6 +554,7 @@ impl App {
             scroll: 0,
             permission_scroll: 0,
             toast: None,
+            update: Default::default(),
             theme,
             themes,
             appearance,
@@ -2172,7 +2177,7 @@ impl App {
         match kind {
             "server.connected" => {
                 self.sidebar.connection = crate::sidebar::Connection::Connected;
-                let mut actions = vec![Action::Refresh];
+                let mut actions = vec![Action::Refresh, Action::LoadUpdate];
                 actions.extend(crate::sidebar::Part::ALL.map(Action::LoadSidebar));
                 actions.extend(self.workflows_connected());
                 actions.extend(self.watch_reload());
