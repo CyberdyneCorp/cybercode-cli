@@ -97,6 +97,8 @@ The [current inventory](docs/implementation/spec-doc-reconciliation.md) contains
 - A queue of 3 goals runs to completion with `check: cargo test`, and the queue advances automatically.
 - Mixed-model workflow: the fan-out runs on a local/cheap model and verification on a frontier model, with cost reported per tier.
 
+**Proposed additions (2026-10-24; awaiting artifact review):** [verified integration queue](openspec/changes/add-verified-integration-queue/proposal.md) for host-verified combinations of teammate patches, independent review and explicit PR publication; [native computer use](openspec/changes/add-native-computer-use/proposal.md) for permission-gated screenshots and mouse/keyboard editing, initially macOS 14+ with explicit unsupported-platform results elsewhere. Neither addition is implemented yet. They are separate from completing the existing dashboard/automation goal; local implementation can continue while live CyberdyneAuth acceptance is held during the user-reported outage.
+
 ## P3: Connectivity
 
 **Capabilities:** `cyber-account` (including automation tokens), `remote-control`, `web-client` (Relay bundle), `cross-session-messaging` (cross-machine), `project-collaboration` (experimental self-hosted human/agent project hub, off by default), `runners-cloud` (including `cyber apply`, best-of-N attempts), `workflows` and `agents-subagents` (remote agents), `agent-teams` (distributed teammates), `routines`, `channels`, `session-sharing`, `org-policy`, `vcs-integration` (GitHub App/Action, auto-fix PRs), `server-api` (Bearer account tokens, remote rate limits), `client-sdk` (Python), `editor-integration` (ACP, VS Code extension, IDE context and detection, deep links).

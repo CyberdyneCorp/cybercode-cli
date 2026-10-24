@@ -2,7 +2,7 @@
 
 Complete collaboration acceptance, browser collaboration/settings/media/terminal and durable automation controls.
 
-Status: planning artifacts ready for user review; implementation has not started.
+Status: the user requested continuation on 2026-10-24 after artifact review was requested in PR #32. Local implementation may proceed; authenticated live acceptance remains pending while CyberdyneAuth is unavailable. Integration queue and computer-use additions are separate proposals requiring review.
 
 - [Proposal and scope](proposal.md)
 - [Design and acceptance boundaries](design.md)

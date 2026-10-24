@@ -2,7 +2,7 @@
 
 - [x] 1.1 Pull latest main, inspect existing dashboard/collaboration/budget/retention/scheduling contracts, and recheck public live Auth metadata without credentials.
 - [x] 1.2 Draft proposal, design, capability deltas and this implementation/acceptance checklist.
-- [ ] 1.3 Review these artifacts with the user before implementation; record approval and any scope adjustments.
+- [x] 1.3 Review these artifacts with the user before implementation. On 2026-10-24, after PR #32 and its proposal/design/tasks were presented, the user requested that implementation continue while CyberdyneAuth is unavailable due to payment issues. Continue local implementation; live Auth acceptance remains open. The additional integration queue and native computer-use proposals require their own review.
 - [x] 1.4 Record baseline checks and review current main CI: base `78c60566` CI run `40104736761` succeeded; planning validation passes 90 OpenSpec items with 0 failures; canonical lint reports 0 errors/23 warnings. No new implementation tests run at this planning stage; keep unrelated changes out of implementation commits.
 
 ## 2. Live CyberdyneAuth acceptance

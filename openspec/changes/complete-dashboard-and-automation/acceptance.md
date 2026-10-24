@@ -4,6 +4,7 @@ This is the execution checklist for the live portions of the goal, not a complet
 
 ## Observations on 2026-10-24
 
+- The user subsequently confirmed CyberdyneAuth is unavailable due to payment issues and authorized continuing local implementation. Further live Auth probes and authenticated acceptance are on hold until service restoration; this is a user-reported outage, not a diagnosis of the observed TLS alert.
 - The initial read-only public Auth metadata check succeeded. Discovery/OpenAPI hashes matched [the earlier contract](../add-project-collaboration-hub/auth-contract.md); `cyber:collaborate` was absent from advertised scopes and device authorization was not advertised.
 - A follow-up near **16:02 UTC** failed before HTTP on both discovery and OpenAPI: Python reported `TLSV1_UNRECOGNIZED_NAME`; curl independently reported TLS alert `unrecognized name` (exit 35). This establishes a TLS/SNI failure from this environment at that time, not its cause or permanent deployment state. TLS verification was not disabled.
 - No Coolify API URL/token pair or `CYBER_ACCOUNT_*` / `CYBER_COLLAB_*` variables were configured in the current process environment. This does not establish that no credentials exist in another operator session or a native vault. No credential vault was enumerated or printed.
