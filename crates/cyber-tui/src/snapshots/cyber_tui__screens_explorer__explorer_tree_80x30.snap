@@ -30,5 +30,5 @@ expression: "render(&mut app, 80, 30, &Opts::default())"
 
 
  7 shown · 4 hidden · .gitignore
-  ↑↓  move  ←→  fold  enter  open  /  filter  g  changed  .  hidden
+  ↑↓  move  ←→  fold  enter  open  tab  focus  /  filter  g  changed  .  hidden
                                                        100 · —  ctrl+p commands

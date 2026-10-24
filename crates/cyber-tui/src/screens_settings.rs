@@ -316,3 +316,50 @@ async fn a_permission_request_closes_the_panel_and_shows_its_prompt() {
     row_of(&buf, "Allow once");
     assert!(!row(&buf, 1).contains("Settings"));
 }
+
+#[tokio::test]
+async fn clicks_switch_tabs_and_cycle_a_config_row() {
+    use crate::screens_mouse::{cell_of, click};
+    let server = Server::start().await;
+    let id = server.answered_session().await;
+    let store = crate::store::LocalStore::new(&server.root().join("state"));
+    let mut app = started(&server, &id).await;
+    let draw = |app: &mut App| buffer(app, 120, 30, &Opts::default());
+    typed(&mut app, "/config");
+    assert_eq!(app.settings.tab, Tab::Config);
+
+    // A tab acts on the first click, as its number key does.
+    let usage = cell_of(&draw(&mut app), " Usage ");
+    let actions = click(&mut app, usage);
+    assert_eq!(app.settings.tab, Tab::Usage);
+    assert!(!actions.is_empty(), "the tab loads its data");
+    let config = cell_of(&draw(&mut app), " Config ");
+    click(&mut app, config);
+    assert_eq!(app.settings.tab, Tab::Config);
+
+    // A Config row: the first click selects, the second cycles and saves the value.
+    assert_eq!(origin(&app, "timestamps").0, "off");
+    let row = cell_of(&draw(&mut app), "timestamps");
+    assert!(click(&mut app, row).is_empty());
+    let index = crate::prefs::EDITABLE
+        .iter()
+        .position(|(k, _)| *k == "timestamps");
+    assert_eq!(Some(app.settings.config_row), index);
+    assert_eq!(origin(&app, "timestamps").0, "off");
+    let saved = click(&mut app, row);
+    assert_eq!(
+        saved,
+        [Action::SavePreference {
+            key: "timestamps",
+            value: json!(true),
+        }]
+    );
+    for action in saved {
+        crate::runner::persist(&store, action);
+    }
+    let restarted = started(&server, &id).await;
+    assert_eq!(
+        origin(&restarted, "timestamps"),
+        ("on".into(), crate::prefs::Origin::Saved)
+    );
+}

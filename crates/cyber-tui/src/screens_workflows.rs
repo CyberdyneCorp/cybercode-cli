@@ -911,3 +911,52 @@ async fn the_library_tab_lists_the_library_and_starts_a_workflow_from_its_form()
     press(&mut app, KeyCode::Esc);
     assert!(app.workflows.library.source.is_none() && app.workflows.library_tab);
 }
+
+#[tokio::test]
+async fn a_second_click_opens_the_run_view() {
+    use crate::screens_mouse::{cell_of, click};
+    let f = Fixture::new(json!({})).await;
+    for name in ["plan", "docs"] {
+        let run = f
+            .start(
+                &script(name, &["Draft"], &fan("Draft", "draft", &plain("draft", 2))),
+                json!({}),
+            )
+            .await;
+        f.wait_run("the run completes", &run, |r| r["status"] == "completed")
+            .await;
+    }
+    let mut app = f.monitor().await;
+    let selected = app.workflows.selected;
+    let other = 1 - selected;
+    let name = app.workflows.summaries()[other].name.clone();
+    let at = cell_of(&f.show(&mut app, 120, 40), &format!(" {name} "));
+    assert!(click(&mut app, at).is_empty(), "the first click selects");
+    assert_eq!(app.workflows.selected, other);
+    assert!(app.workflows.run.is_none());
+    let actions = click(&mut app, at);
+    assert!(!actions.is_empty());
+    f.drive(&mut app, actions).await;
+    let view = app.workflows.run.as_ref().expect("the run view");
+    assert_eq!(
+        view.detail.data.as_ref().unwrap().summary.name,
+        name,
+        "the clicked run"
+    );
+
+    // An agent row: the second click opens its transcript.
+    let at = cell_of(&f.show(&mut app, 120, 40), "draft 2");
+    assert!(click(&mut app, at).is_empty());
+    let view = app.workflows.run.as_ref().unwrap();
+    let detail = view.detail.data.as_ref().unwrap();
+    let agent = detail.agents[detail.order()[view.selected]].clone();
+    assert_eq!(agent.label.as_deref(), Some("draft 2"));
+    let actions = click(&mut app, at);
+    f.drive(&mut app, actions).await;
+    assert!(
+        matches!(app.overlay, Overlay::None),
+        "{:?}",
+        app.workflows.refusals
+    );
+    assert_eq!(app.session.parent_id.as_deref(), Some(f.owner.as_str()));
+}

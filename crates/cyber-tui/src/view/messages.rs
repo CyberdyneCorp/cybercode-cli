@@ -1,6 +1,7 @@
 //! The message list: Markdown text with highlighted code, collapsible reasoning and tool
 //! cards.
 
+use std::ops::Range;
 use std::sync::Arc;
 
 use ratatui::Frame;
@@ -13,6 +14,7 @@ use super::wrap::{wrap, wrap_hanging};
 use crate::app::App;
 use crate::markdown::{Ctx, Rendered};
 use crate::model::{Item, Tool};
+use crate::mouse::Target;
 use crate::osc::ScreenLink;
 use crate::theme::Tokens;
 
@@ -21,7 +23,7 @@ const COLLAPSED_TAIL: usize = 10;
 
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let width = area.width.saturating_sub(1) as usize;
-    let mut out = transcript(app, width);
+    let (mut out, toggles) = rows(app, width);
     let selected = select(app, &mut out);
     let height = area.height as usize;
     let max_scroll = out.lines.len().saturating_sub(height);
@@ -44,6 +46,11 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
     app.set_screen_links(links);
+    for (lines, action) in toggles {
+        if let Some(key) = app.keymap.event("global", action) {
+            super::push_lines(app, area, lines, start, Target::Key(key));
+        }
+    }
     let visible: Vec<Line> = out.lines.into_iter().skip(start).take(height).collect();
     f.render_widget(Paragraph::new(visible), area);
 }
@@ -66,11 +73,24 @@ fn select(app: &App, out: &mut Rendered) -> Option<usize> {
 struct Out<'a> {
     ctx: Ctx<'a>,
     rendered: Rendered,
+    /// Collapsed rows and the global action that expands them, for clicks.
+    toggles: Vec<Toggle>,
 }
+
+/// The rows of a collapsed line and the action that toggles it.
+type Toggle = (Range<usize>, &'static str);
 
 impl Out<'_> {
     fn push(&mut self, line: Line<'static>) {
         self.rendered.lines.extend(wrap(line, self.ctx.width));
+    }
+
+    /// [`Out::push`] for a collapsed line that `action` expands.
+    fn push_toggle(&mut self, line: Line<'static>, action: &'static str) {
+        let start = self.rendered.lines.len();
+        self.push(line);
+        self.toggles
+            .push((start..self.rendered.lines.len(), action));
     }
 
     /// [`Out::push`], with the wrapped rows continuing after `hang`.
@@ -85,11 +105,18 @@ impl Out<'_> {
 }
 
 /// Every row of the conversation at `width`.
+#[cfg(test)]
 pub fn transcript(app: &App, width: usize) -> Rendered {
+    rows(app, width).0
+}
+
+/// [`transcript`], and the collapsed rows a click expands.
+fn rows(app: &App, width: usize) -> (Rendered, Vec<Toggle>) {
     let t = &app.theme;
     let mut out = Out {
         ctx: Ctx::new(t, width, app.hyperlinks),
         rendered: Rendered::default(),
+        toggles: Vec::new(),
     };
     if app.items.is_empty() && app.streaming.is_empty() {
         out.push(Line::from(Span::styled(
@@ -125,7 +152,7 @@ pub fn transcript(app: &App, width: usize) -> Rendered {
         out.markdown(&rendered);
         out.push(Line::default());
     }
-    out.rendered
+    (out.rendered, out.toggles)
 }
 
 /// The Session's workflow run notices that came after the item `after` (`None`: before
@@ -319,12 +346,13 @@ fn assistant(
                 )));
             }
         } else {
-            out.push(Line::from(Span::styled(
+            let line = Line::from(Span::styled(
                 "  ∴ thinking (Ctrl+T to show)",
                 Style::default()
                     .fg(t.text_muted)
                     .add_modifier(Modifier::ITALIC),
-            )));
+            ));
+            out.push_toggle(line, "reasoning_toggle");
         }
     }
     let rendered = match app.streaming.get(id) {
@@ -381,13 +409,14 @@ fn tool_card(app: &App, tool: &Tool, out: &mut Out) {
         &rows.lines[..]
     };
     if collapsed {
-        out.push(Line::from(Span::styled(
+        let line = Line::from(Span::styled(
             format!(
                 "    … {} lines hidden (Ctrl+O to expand)",
                 rows.lines.len() - COLLAPSED_TAIL
             ),
             Style::default().fg(t.text_muted),
-        )));
+        ));
+        out.push_toggle(line, "tool_details");
     }
     let gutter = Span::styled("    │ ", Style::default().fg(t.border));
     for line in shown {

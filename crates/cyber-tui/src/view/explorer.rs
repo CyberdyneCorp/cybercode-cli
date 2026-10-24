@@ -2,8 +2,9 @@
 //! branch and change state, the filter line, the tree with indent guides, fold markers,
 //! kind colors and sizes, and a summary), a divider, the preview pane beside it (or
 //! instead of it below 100 columns) with its own header bar, and the key chips from the
-//! binding table.
+//! binding table. Rows, panes and chips register their click targets as they are drawn.
 
+use crossterm::event::KeyEvent;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -14,6 +15,7 @@ use unicode_width::UnicodeWidthStr;
 use super::layout::truncate_end;
 use crate::app::App;
 use crate::explorer::{Kind, Node, Preview, Read, Row, SIDE_BY_SIDE};
+use crate::mouse::{Act, List, Pane, Target};
 use crate::theme::Tokens;
 
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {
@@ -27,20 +29,20 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
     let e = &app.explorer;
-    f.render_widget(
-        Paragraph::new(keys(app, area.width)),
-        Rect {
-            y: area.y + area.height - 1,
-            height: 1,
-            ..area
-        },
-    );
+    let footer = Rect {
+        y: area.y + area.height - 1,
+        height: 1,
+        ..area
+    };
+    f.render_widget(Paragraph::new(keys(app, footer)), footer);
     let body = Rect {
         height: area.height - 1,
         ..area
     };
     match &e.preview {
-        Some(preview) if e.preview_focused => draw_preview(f, app, preview, body),
+        Some(preview) if e.preview_focused && area.width < SIDE_BY_SIDE => {
+            draw_preview(f, app, preview, body)
+        }
         Some(preview) if area.width >= SIDE_BY_SIDE => {
             let tree_width = (body.width * 2 / 5).max(30);
             draw_tree_pane(
@@ -98,6 +100,7 @@ fn bar(
 
 fn draw_tree_pane(f: &mut Frame, app: &App, area: Rect) {
     let t = &app.theme;
+    app.mouse.push(area, Target::Pane(Pane::ExplorerTree));
     f.render_widget(
         Block::default().style(Style::default().fg(t.text).bg(t.surface_alt)),
         area,
@@ -137,7 +140,9 @@ fn header(app: &App, width: usize) -> Line<'static> {
     let mut left = vec![
         Span::styled(
             " EXPLORER ",
-            Style::default().fg(t.accent).add_modifier(bold),
+            Style::default()
+                .fg(title_color(t, !app.explorer.preview_focused))
+                .add_modifier(bold),
         ),
         Span::styled(project, Style::default().fg(t.text).add_modifier(bold)),
     ];
@@ -222,8 +227,17 @@ fn glyph(label: &str) -> String {
     }
 }
 
-/// `(keys, label)` chips from the binding table: paired arrows, then single actions.
-fn chips(app: &App) -> Vec<(String, &'static str)> {
+/// A pane header's title: `accent` while the pane has focus.
+fn title_color(t: &Tokens, focused: bool) -> Color {
+    if focused { t.accent } else { t.text }
+}
+
+/// A footer chip: its keys, its label, and the key a click on it presses (none for a
+/// pair of arrows).
+type Chip = (String, &'static str, Option<KeyEvent>);
+
+/// Chips from the binding table: paired arrows, then single actions.
+fn chips(app: &App) -> Vec<Chip> {
     let label = |action: &str| app.keymap.label("explorer", action).map(|l| glyph(&l));
     let mut out = Vec::new();
     for (first, second, what) in [
@@ -231,11 +245,12 @@ fn chips(app: &App) -> Vec<(String, &'static str)> {
         ("explorer_collapse", "explorer_expand", "fold"),
     ] {
         if let (Some(a), Some(b)) = (label(first), label(second)) {
-            out.push((format!("{a}{b}"), what));
+            out.push((format!("{a}{b}"), what, None));
         }
     }
     for (action, what) in [
         ("explorer_open", "open"),
+        ("explorer_focus", "focus"),
         ("explorer_filter", "filter"),
         ("explorer_changed", "changed"),
         ("explorer_hidden", "hidden"),
@@ -246,14 +261,15 @@ fn chips(app: &App) -> Vec<(String, &'static str)> {
         ("explorer_close", "close"),
     ] {
         if let Some(key) = label(action) {
-            out.push((key, what));
+            out.push((key, what, app.keymap.event("explorer", action)));
         }
     }
     out
 }
 
-/// The explorer keys as chips that fit `width`.
-fn keys(app: &App, width: u16) -> Line<'static> {
+/// The explorer keys as chips that fit the footer row `area`; a click on a chip
+/// presses its key.
+fn keys(app: &App, area: Rect) -> Line<'static> {
     let t = &app.theme;
     let chip = if t.monochrome {
         Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
@@ -265,10 +281,15 @@ fn keys(app: &App, width: u16) -> Line<'static> {
     };
     let mut spans = vec![Span::raw(" ")];
     let mut used = 1;
-    for (key, what) in chips(app) {
+    for (key, what, event) in chips(app) {
         let size = key.width() + what.width() + 4;
-        if used + size > width as usize {
+        if used + size > area.width as usize {
             break;
+        }
+        if let Some(event) = event {
+            let x = area.x + used as u16;
+            app.mouse
+                .push(Rect::new(x, area.y, size as u16, 1), Target::Key(event));
         }
         used += size;
         spans.push(Span::styled(format!(" {key} "), chip));
@@ -307,7 +328,18 @@ fn draw_tree(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
     let height = area.height as usize;
-    let top = e.selected.saturating_sub(height.saturating_sub(1));
+    let selected = e.selected..e.selected + 1;
+    let top = app
+        .mouse
+        .window(List::Explorer, selected, height, rows.len());
+    for (y, index) in (top..rows.len().min(top + height)).enumerate() {
+        let target = Target::Row {
+            list: List::Explorer,
+            index,
+            act: Act::First,
+        };
+        app.mouse.push(one_row(area, y as u16), target);
+    }
     let lines: Vec<Line> = rows
         .iter()
         .enumerate()
@@ -533,9 +565,10 @@ fn preview_header(app: &App, preview: &Preview, width: usize) -> Line<'static> {
             ));
             left.push(Span::styled(" › ", Style::default().fg(t.text_subtle)));
         } else {
+            let title = title_color(t, app.explorer.preview_focused);
             left.push(Span::styled(
                 part.to_owned(),
-                Style::default().fg(t.text).add_modifier(Modifier::BOLD),
+                Style::default().fg(title).add_modifier(Modifier::BOLD),
             ));
         }
     }
@@ -607,10 +640,23 @@ fn mode_chip(app: &App, preview: &Preview) -> Vec<Span<'static>> {
 
 fn draw_preview(f: &mut Frame, app: &App, preview: &Preview, area: Rect) {
     let t = &app.theme;
+    app.mouse.push(area, Target::Pane(Pane::ExplorerPreview));
     f.render_widget(
         Paragraph::new(preview_header(app, preview, area.width as usize)),
         one_row(area, 0),
     );
+    // The `rendered`/`raw` chip at the header's right presses `explorer_markdown`.
+    let chip: u16 = mode_chip(app, preview)
+        .iter()
+        .map(|s| s.width() as u16)
+        .sum();
+    if let Some(key) = app.keymap.event("explorer", "explorer_markdown") {
+        let x = area.x + area.width.saturating_sub(chip);
+        app.mouse.push(
+            Rect::new(x, area.y, chip.min(area.width), 1),
+            Target::Key(key),
+        );
+    }
     if preview.lines.is_none() || area.height < 3 || area.width < 8 {
         return;
     }

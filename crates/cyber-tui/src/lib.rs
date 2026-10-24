@@ -76,6 +76,8 @@ mod screens_mcp;
 #[cfg(test)]
 mod screens_messages;
 #[cfg(test)]
+mod screens_mouse;
+#[cfg(test)]
 mod screens_parallel;
 #[cfg(test)]
 mod screens_peers;

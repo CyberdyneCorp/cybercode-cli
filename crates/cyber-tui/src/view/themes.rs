@@ -8,6 +8,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::app::App;
+use crate::mouse::{List, Target};
 use crate::switcher::{Filter, Row, Switcher, level};
 use crate::theme::{Depth, color};
 
@@ -31,7 +32,7 @@ pub fn draw(f: &mut Frame, app: &App, s: &Switcher, area: Rect) {
     let [list, preview] =
         Layout::horizontal([Constraint::Length(LIST), Constraint::Min(1)]).areas(body);
     f.render_widget(
-        Paragraph::new(list_lines(app, s, list.height as usize)).block(
+        Paragraph::new(list_lines(app, s, list)).block(
             Block::default()
                 .borders(Borders::RIGHT)
                 .padding(ratatui::widgets::Padding::left(1))
@@ -57,10 +58,12 @@ pub fn draw(f: &mut Frame, app: &App, s: &Switcher, area: Rect) {
 }
 
 /// `All · Dark · Light`, the search, then the `DARK` and `LIGHT` groups, scrolled so the
-/// selected row is visible.
-fn list_lines(app: &App, s: &Switcher, height: usize) -> Vec<Line<'static>> {
+/// selected row is visible. Each theme row is a click target over `list`.
+fn list_lines(app: &App, s: &Switcher, list: Rect) -> Vec<Line<'static>> {
     let t = &app.theme;
+    let height = list.height as usize;
     let mut head = vec![filters(app), search(app, s), Line::default()];
+    let mut starts = Vec::new();
     let visible = s.visible(app.theme_filter);
     let mut rows: Vec<Line<'static>> = Vec::new();
     let mut selected_line = 0;
@@ -83,6 +86,7 @@ fn list_lines(app: &App, s: &Switcher, height: usize) -> Vec<Line<'static>> {
         if pos == s.selected {
             selected_line = rows.len();
         }
+        starts.push(rows.len());
         rows.push(row_line(app, s, row, pos == s.selected));
     }
     if visible.is_empty() {
@@ -92,7 +96,19 @@ fn list_lines(app: &App, s: &Switcher, height: usize) -> Vec<Line<'static>> {
         )));
     }
     let room = height.saturating_sub(head.len()).max(1);
-    let first = selected_line.saturating_sub(room - 1);
+    let selected = selected_line..selected_line + 1;
+    let first = app.mouse.window(List::Themes, selected, room, rows.len());
+    let body = Rect {
+        y: list.y + head.len() as u16,
+        height: list.height.saturating_sub(head.len() as u16),
+        // Not the border on the right.
+        width: list.width.saturating_sub(1),
+        ..list
+    };
+    for (pos, start) in starts.into_iter().enumerate() {
+        let target = Target::row(List::Themes, pos);
+        super::push_lines(app, body, start..start + 1, first, target);
+    }
     head.extend(rows.into_iter().skip(first).take(room));
     head
 }
