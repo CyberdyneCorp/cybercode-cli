@@ -74,7 +74,7 @@ pub fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
         ]));
     }
     out.push(output_style_row(app, key_width, width));
-    out.push(Line::default());
+    // No blank line here: at 80x24 the core-settings pointer must stay on screen.
     out.push(Line::from(Span::styled(
         "Saved to kv.json; a later edit of tui.jsonc wins.",
         Style::default().fg(t.text_subtle),
