@@ -22,6 +22,7 @@ mod markdown;
 mod memory;
 mod messaging;
 mod model;
+mod mouse;
 mod osc;
 mod palette;
 mod perform;

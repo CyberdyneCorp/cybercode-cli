@@ -76,7 +76,6 @@ pub fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
         "Saved to kv.json; a later edit of tui.jsonc wins.",
         Style::default().fg(t.text_subtle),
     )));
-    out.push(Line::default());
     out.push(Line::from(Span::styled(
         CORE_POINTER,
         Style::default().fg(t.text_muted),
