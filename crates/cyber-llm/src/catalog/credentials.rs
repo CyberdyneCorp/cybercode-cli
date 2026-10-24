@@ -101,7 +101,7 @@ fn auth_content(env: &dyn EnvSource) -> Value {
     })
 }
 
-fn is_loopback(url: &str) -> bool {
+pub(super) fn is_loopback(url: &str) -> bool {
     let rest = url.split_once("://").map_or(url, |(_, r)| r);
     let authority = rest.split('/').next().unwrap_or_default();
     let host = match authority.strip_prefix('[') {

@@ -9,6 +9,7 @@ pub mod layout;
 mod login;
 mod messages;
 mod messaging;
+mod output_styles;
 mod overlays;
 pub(crate) mod progress;
 mod rename;
@@ -138,6 +139,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Overlay::SideChat(chat) => overlays::side_chat(f, app, chat, area),
         Overlay::ConfirmStopTasks => overlays::confirm_stop_tasks(f, app, area),
         Overlay::ConfirmExport(request) => overlays::confirm_export(f, app, request, area),
+        Overlay::OutputStyles(picker) => output_styles::draw(f, app, picker, area),
         Overlay::ConfirmBypass => overlays::confirm_bypass(f, app, area),
     }
 }

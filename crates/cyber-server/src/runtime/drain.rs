@@ -509,7 +509,7 @@ async fn boundary(
             revision: state.selection_revision,
         }
     };
-    inner.ensure_epoch(handle, &prepared.model.provider).await?;
+    inner.ensure_epoch(handle, &prepared.model).await?;
     let promoted = promote(inner, handle, continue_tools).await?;
     {
         let state = handle.state.lock().await;
@@ -523,9 +523,11 @@ async fn boundary(
         prepared.model = selected.model;
         prepared.steps = selected.steps;
     }
-    inner.ensure_epoch(handle, &prepared.model.provider).await?;
+    inner.ensure_epoch(handle, &prepared.model).await?;
     let resolved = &prepared.model;
-    inner.reconcile_context(handle).await?;
+    inner
+        .reconcile_context(handle, resolved, continue_tools)
+        .await?;
     let requested = handle
         .pending_compaction
         .lock()
@@ -535,7 +537,7 @@ async fn boundary(
         // Boxed: the summary call's state would otherwise sit inline in every Drain future
         // and overflow the stack of nested foreground subagents.
         Box::pin(inner.compact(handle, CompactionTrigger::Manual, instructions)).await?;
-        inner.ensure_epoch(handle, &resolved.provider).await?;
+        inner.ensure_epoch(handle, resolved).await?;
     }
     Ok((prepared, promoted))
 }
@@ -674,48 +676,54 @@ struct Accum {
 }
 
 impl Inner {
+    /// Start a Context Epoch when there is none, it is stale, or the provider or model
+    /// family changed. An epoch without a family (from before families) compares by
+    /// provider only, so a restart never rebuilds its prefix.
     pub(crate) async fn ensure_epoch(
         &self,
         handle: &Handle,
-        provider: &str,
+        resolved: &ResolvedModel,
     ) -> Result<(), RuntimeError> {
         {
             let state = handle.state.lock().await;
             if let Some(epoch) = &state.epoch
                 && !state.epoch_stale
-                && epoch.provider == provider
+                && epoch.provider == resolved.provider
+                && epoch
+                    .family
+                    .as_deref()
+                    .is_none_or(|family| family == resolved.family.as_str())
             {
                 return Ok(());
             }
         }
-        self.start_epoch(handle, provider).await
+        self.start_epoch(handle, resolved).await
     }
 
     /// Render a fresh baseline from all current sources and start a new Context Epoch.
     pub(crate) async fn start_epoch(
         &self,
         handle: &Handle,
-        provider: &str,
+        resolved: &ResolvedModel,
     ) -> Result<(), RuntimeError> {
         let mut state = handle.state.lock().await;
         let observed = self.observe(&state).await;
-        let snapshot =
-            context::snapshot(&observed.sources).map_err(RuntimeError::ContextBlocked)?;
+        let previous = state.epoch.as_ref().map(|epoch| &epoch.snapshot);
+        let snapshot = context::epoch_snapshot(previous, &observed.sources)
+            .map_err(RuntimeError::ContextBlocked)?;
         let (previous, reason) = match &state.epoch {
             Some(epoch) => (epoch.snapshot.clone(), "changed"),
             None => (Default::default(), "session_start"),
         };
         let loaded = context::loaded_instructions(&previous, &snapshot, &observed.files);
-        let system_prefix = snapshot
-            .get("core/agent")
-            .cloned()
-            .unwrap_or_else(|| context::base_prompt(provider));
+        let system_prefix = context::system_prefix(&snapshot, resolved.family);
         let payload = EpochStarted {
             epoch: state.epoch.as_ref().map_or(1, |e| e.number + 1),
             baseline: context::render_baseline(&snapshot),
             snapshot,
-            provider: provider.into(),
+            provider: resolved.provider.clone(),
             system_prefix: Some(system_prefix),
+            family: Some(resolved.family.as_str().into()),
         };
         self.commit_locked(&mut state, vec![event(EPOCH_STARTED, &payload)])?;
         drop(state);
@@ -723,13 +731,36 @@ impl Inner {
         Ok(())
     }
 
-    /// Compare sources with the epoch snapshot; changes become one system message.
-    async fn reconcile_context(&self, handle: &Handle) -> Result<(), RuntimeError> {
+    /// Compare sources with the epoch snapshot; changes become one system message. A
+    /// changed output style starts a new epoch instead, except within a running Turn
+    /// (`within_turn`), which keeps the prefix it started with.
+    async fn reconcile_context(
+        &self,
+        handle: &Handle,
+        resolved: &ResolvedModel,
+        within_turn: bool,
+    ) -> Result<(), RuntimeError> {
         let mut state = handle.state.lock().await;
         let Some(epoch) = state.epoch.as_ref().filter(|_| !state.epoch_stale) else {
             return Ok(());
         };
-        let observed = self.observe(&state).await;
+        let mut observed = self.observe(&state).await;
+        let style = observed.sources.get(super::output_style::CONTEXT_KEY);
+        if super::output_style::changed(&epoch.snapshot, style) {
+            if !within_turn {
+                drop(state);
+                return self.start_epoch(handle, resolved).await;
+            }
+            let kept = epoch
+                .snapshot
+                .get(super::output_style::CONTEXT_KEY)
+                .map_or(context::Observed::Absent, |text| {
+                    context::Observed::Value(text.clone())
+                });
+            observed
+                .sources
+                .insert(super::output_style::CONTEXT_KEY.into(), kept);
+        }
         let (snapshot, mut text) = context::reconcile(&epoch.snapshot, &observed.sources);
         let loaded = context::loaded_instructions(&epoch.snapshot, &snapshot, &observed.files);
         if epoch.snapshot.contains_key("core/agent")
@@ -740,7 +771,7 @@ impl Inner {
             && let Some(text) = &mut text
         {
             text.push_str("\n\nThe default agent instructions now apply:\n");
-            text.push_str(&context::base_prompt(&epoch.provider));
+            text.push_str(&context::base_prompt(resolved.family));
         }
         if let Some(text) = text {
             let payload = ContextUpdated {
@@ -768,6 +799,10 @@ impl Inner {
         observed
             .sources
             .insert(super::goals::CONTEXT_KEY.into(), goal);
+        let style = super::output_style::observe(&*self.options.tools, state);
+        observed
+            .sources
+            .insert(super::output_style::CONTEXT_KEY.into(), style);
         observed
     }
 
@@ -814,7 +849,7 @@ impl Inner {
         };
         self.commit(handle, vec![event(SYSTEM_ADDED, &payload)])
             .await?;
-        self.ensure_epoch(handle, &resolved.provider).await
+        self.ensure_epoch(handle, resolved).await
     }
 
     /// One provider request plus settlement of its tool calls.
@@ -995,7 +1030,7 @@ impl Inner {
             epoch
                 .system_prefix
                 .clone()
-                .unwrap_or_else(|| context::base_prompt(&resolved.provider)),
+                .unwrap_or_else(|| context::base_prompt(resolved.family)),
             epoch.baseline.clone(),
         ];
         request.messages = view::messages(&state, &resolved.provider, &resolved.model);

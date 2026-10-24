@@ -375,6 +375,12 @@ export type CompactBody = {
   instructions?: string | null;
 };
 
+/** The configured `output_style` of a Location and the layer that set it. */
+export type Configured = {
+  name: string;
+  source: string;
+};
+
 /** One part of a message. Tool results travel in user messages. */
 export type Content = {
   text: string;
@@ -455,6 +461,11 @@ export type CreateBody = {
    * `{ "inbound": "refuse", "reason": "non_interactive" }`).
    */
   messaging?: InboundOverride | null;
+  /**
+   * The Session's own output style; refused when it is invalid, unknown or held at
+   * the Location, or for a child Session.
+   */
+  output_style?: string | null;
 };
 
 /**
@@ -2270,6 +2281,12 @@ export type Located_SkillCatalog = {
 };
 
 /** A Location-scoped response. */
+export type Located_StyleListing = {
+  location: LocationInfo;
+  data: StyleListing;
+};
+
+/** A Location-scoped response. */
 export type Located_Vcs = {
   location: LocationInfo;
   data: Vcs;
@@ -2755,6 +2772,17 @@ export type Organization = {
 
 /** How an iteration ended. */
 export type Outcome = "completed" | "interrupted" | "failed" | "skipped_overlap" | "skipped_missed";
+
+/** An available output style. */
+export type OutputStyle = {
+  name: string;
+  description: string;
+  origin: StyleOrigin;
+  /** The file of a user or project style. */
+  path?: string | null;
+  /** Styles of the same name this one replaced (a user one under a project one). */
+  shadows: string[];
+};
 
 /** What to do with a tick that arrives while the previous iteration still runs. */
 export type Overlap = "skip" | "coalesce";
@@ -3526,6 +3554,11 @@ export type Session = {
    * changed. Teammates are root Sessions, so they outlive the lead.
    */
   team?: TeamTag | null;
+  /**
+   * The Session's own output style (`system-context` → Output style selection);
+   * `None` follows the Location's configuration. Only primary Sessions have one.
+   */
+  output_style?: string | null;
   /** `idle` or `running`. */
   status: string;
   /** Mode of the running Turn, or the selected mode while idle. */
@@ -3631,6 +3664,11 @@ export type SessionInfo = {
    * changed. Teammates are root Sessions, so they outlive the lead.
    */
   team?: TeamTag | null;
+  /**
+   * The Session's own output style (`system-context` → Output style selection);
+   * `None` follows the Location's configuration. Only primary Sessions have one.
+   */
+  output_style?: string | null;
 };
 
 /** Where a Session runs. */
@@ -3944,6 +3982,37 @@ export type StopReason = "user" | "budget" | "lead_deleted";
 export type StopService = {
   id: string;
 };
+
+/**
+ * `{ style: string | null }`: `null` returns a Session to its configured style, and
+ * sets the global default to `default`.
+ */
+export type StyleBody = {
+  style?: string | null;
+};
+
+/** A style file that did not load, and why. */
+export type StyleIssue = {
+  path: string;
+  message: string;
+};
+
+/**
+ * The styles of a Location with its configured and effective style (`GET
+ * /api/v1/config/output-styles`).
+ */
+export type StyleListing = {
+  styles: OutputStyle[];
+  issues: StyleIssue[];
+  configured?: Configured | null;
+  /** The style a new Session there uses. */
+  effective: string;
+  /** Why the configured style does not apply, when it does not. */
+  unavailable?: string | null;
+};
+
+/** Where a style came from. */
+export type StyleOrigin = "builtin" | "user" | "project";
 
 /** How a subagent group is named. */
 export type SubagentGroupKind = "agent" | "workflow" | "fork";

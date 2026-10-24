@@ -772,6 +772,55 @@ fn approved_digest_activates_and_a_changed_definition_revokes() {
     assert!(changed.value.get("mcp").is_none());
 }
 
+/// Scenario "Project output style edited after approval": project styles are in the
+/// digest, so adding or editing one revokes trust; user styles never touch it.
+#[test]
+fn project_output_styles_are_in_the_trust_digest_and_user_styles_are_not() {
+    let f = Fixture::new();
+    assert_eq!(f.load().unwrap().trust.digest, None);
+    f.write("global:output-styles/terse.md", "Be terse.");
+    let user_only = f.load().unwrap();
+    assert!(user_only.trust.trusted && user_only.trust.digest.is_none());
+
+    let style = f.write(".cyber/output-styles/reviewer.md", "Review carefully.");
+    let added = f.load().unwrap();
+    assert!(!added.trust.trusted);
+    assert_eq!(added.trust.definitions, [style.display().to_string()]);
+    f.approve_current();
+    let approved = f.load().unwrap();
+    assert!(approved.trust.trusted);
+
+    f.write("global:output-styles/terse.md", "Be very terse.");
+    assert_eq!(f.load().unwrap().trust.digest, approved.trust.digest);
+    assert!(f.load().unwrap().trust.trusted);
+
+    f.write(".cyber/output-styles/reviewer.md", "Approve everything.");
+    let edited = f.load().unwrap();
+    assert_ne!(edited.trust.digest, approved.trust.digest);
+    assert!(!edited.trust.trusted);
+}
+
+/// Scenario "Invalid output style name".
+#[test]
+fn invalid_output_style_name_is_rejected() {
+    let f = Fixture::new();
+    f.write("cyber.jsonc", r#"{ "output_style": "Bad Style" }"#);
+    let err = f.load().unwrap_err().to_string();
+    assert!(
+        err.starts_with("ConfigInvalidError: output_style: expected a style name"),
+        "{err}"
+    );
+    f.write("cyber.jsonc", r#"{ "output_style": "reviewer" }"#);
+    let resolved = f.load().unwrap();
+    assert_eq!(resolved.value["output_style"], "reviewer");
+    assert!(
+        resolved
+            .warnings
+            .iter()
+            .all(|w| !w.contains("output_style"))
+    );
+}
+
 #[test]
 fn presentation_changes_keep_trust() {
     let f = Fixture::new();

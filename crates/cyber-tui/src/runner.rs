@@ -709,7 +709,9 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
             app.set_session(session);
             app.items.clear();
             app.streaming.clear();
-            return vec![Action::Refresh];
+            let mut actions = vec![Action::Refresh];
+            actions.extend(app.output_style_check());
+            return actions;
         }
         Msg::Sidebar {
             session_id,
@@ -734,6 +736,7 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
             result,
         } => app.collaboration_reply(&session_id, generation, *result),
         Msg::Login(reply) => return app.login_reply(reply),
+        Msg::OutputStyle(reply) => return app.output_style_reply(reply),
         Msg::Toast(text) => app.toast(text),
         Msg::ExportExists(request) => app.export_exists(request),
         Msg::TaskLog {

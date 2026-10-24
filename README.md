@@ -101,6 +101,7 @@ mindmap
       MCP client and server
       Hooks and skills
       Image and PDF input
+      Output styles and model-family prompts
     Collaboration
       Local Session messages
       Direct peers

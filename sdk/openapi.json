@@ -4299,6 +4299,13 @@
               }
             ],
             "description": "The team this Session is a member of (`agent-teams`), set at creation and never\nchanged. Teammates are root Sessions, so they outlive the lead."
+          },
+          "output_style": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Session's own output style (`system-context` → Output style selection);\n`None` follows the Location's configuration. Only primary Sessions have one."
           }
         },
         "required": [
@@ -4524,6 +4531,13 @@
               }
             ],
             "description": "Session-level `messaging.inbound` override (`cyber exec` refuses messages with\n`{ \"inbound\": \"refuse\", \"reason\": \"non_interactive\" }`)."
+          },
+          "output_style": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Session's own output style; refused when it is invalid, unknown or held at\nthe Location, or for a child Session."
           }
         }
       },
@@ -4707,6 +4721,13 @@
               }
             ],
             "description": "The team this Session is a member of (`agent-teams`), set at creation and never\nchanged. Teammates are root Sessions, so they outlive the lead."
+          },
+          "output_style": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Session's own output style (`system-context` → Output style selection);\n`None` follows the Location's configuration. Only primary Sessions have one."
           },
           "status": {
             "type": "string",
@@ -6087,6 +6108,20 @@
         "required": [
           "mode"
         ]
+      },
+      "StyleBody": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "style": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "description": "`{ style: string | null }`: `null` returns a Session to its configured style, and\nsets the global default to `default`."
       },
       "CompactBody": {
         "type": "object",
@@ -9033,6 +9068,142 @@
           "stable"
         ],
         "description": "How far along a feature is. `experimental` features are off by default."
+      },
+      "Located_StyleListing": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/StyleListing"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "StyleListing": {
+        "type": "object",
+        "properties": {
+          "styles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OutputStyle"
+            }
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StyleIssue"
+            }
+          },
+          "configured": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Configured"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "effective": {
+            "type": "string",
+            "description": "The style a new Session there uses."
+          },
+          "unavailable": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the configured style does not apply, when it does not."
+          }
+        },
+        "required": [
+          "styles",
+          "issues",
+          "effective"
+        ],
+        "description": "The styles of a Location with its configured and effective style (`GET\n/api/v1/config/output-styles`)."
+      },
+      "OutputStyle": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/StyleOrigin"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The file of a user or project style."
+          },
+          "shadows": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Styles of the same name this one replaced (a user one under a project one)."
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "origin",
+          "shadows"
+        ],
+        "description": "An available output style."
+      },
+      "StyleOrigin": {
+        "type": "string",
+        "enum": [
+          "builtin",
+          "user",
+          "project"
+        ],
+        "description": "Where a style came from."
+      },
+      "StyleIssue": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "message"
+        ],
+        "description": "A style file that did not load, and why."
+      },
+      "Configured": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "source"
+        ],
+        "description": "The configured `output_style` of a Location and the layer that set it."
       },
       "Located_Definitions": {
         "type": "object",
@@ -19457,6 +19628,75 @@
         }
       }
     },
+    "/api/v1/sessions/{sessionID}/output-style": {
+      "post": {
+        "operationId": "v1.session.outputStyle",
+        "summary": "Switch the Session's own output style from the next Turn; null follows the configured style",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Session"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError: an invalid, unknown or held style, or a Session with a parent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StyleBody"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{sessionID}/wake": {
       "post": {
         "operationId": "v1.session.wake",
@@ -21811,6 +22051,142 @@
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/output-styles": {
+      "get": {
+        "operationId": "v1.config.outputStyles",
+        "summary": "Output styles of the Location (project ones only from a trusted checkout), the files that failed to load or are held for trust, and the configured and effective style",
+        "tags": [
+          "config"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_StyleListing"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError: the Location's configuration is invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/output-style": {
+      "put": {
+        "operationId": "v1.config.setOutputStyle",
+        "summary": "Set the global default output style (a built-in or user style; null sets default), keeping every other byte of the document",
+        "tags": [
+          "config"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_StyleListing"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError: an invalid or unknown style, or one defined only by a project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StyleBody"
               }
             }
           }

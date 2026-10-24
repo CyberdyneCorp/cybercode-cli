@@ -112,8 +112,13 @@ async fn status_and_config_tabs_at_80_and_120_columns_and_without_color() {
     };
     insta::assert_snapshot!("status_no_color_80x24", render(&mut app, 80, 24, &plain));
 
-    // `2` jumps to Config; it loads nothing from the server.
-    assert!(press(&mut app, KeyCode::Char('2')).is_empty());
+    // `2` jumps to Config; it loads only the output styles, for the `output style` row.
+    let actions = press(&mut app, KeyCode::Char('2'));
+    assert!(
+        matches!(actions.as_slice(), [Action::OutputStyle(_)]),
+        "{actions:?}"
+    );
+    load(&server, &mut app, actions).await;
     assert_eq!(app.settings.tab, Tab::Config);
     let opts = Opts {
         legend: &["Settings", "› theme"],
@@ -162,7 +167,12 @@ async fn status_and_config_tabs_at_80_and_120_columns_and_without_color() {
     assert_eq!(app.settings.tab, Tab::Config);
     press(&mut app, KeyCode::Esc);
     assert!(matches!(app.overlay, Overlay::None));
-    assert!(typed(&mut app, "/settings").is_empty());
+    // It reopens on Config, which only reloads the output styles.
+    let actions = typed(&mut app, "/settings");
+    assert!(
+        matches!(actions.as_slice(), [Action::OutputStyle(_)]),
+        "{actions:?}"
+    );
     assert_eq!(app.settings.tab, Tab::Config);
 }
 
@@ -315,4 +325,52 @@ async fn a_permission_request_closes_the_panel_and_shows_its_prompt() {
     let buf = buffer(&mut app, 100, 30, &Opts::default());
     row_of(&buf, "Allow once");
     assert!(!row(&buf, 1).contains("Settings"));
+}
+
+/// `tui` → Settings Config tab, scenario "Output style from Config": the `output style`
+/// row shows the Session's effective style and its source, and Enter opens the picker.
+#[tokio::test]
+async fn output_style_row_opens_the_picker() {
+    let server = Server::start().await;
+    let id = server.session().await;
+    let mut app = server.load(&id).await;
+
+    let actions = typed(&mut app, "/config");
+    assert!(
+        matches!(actions.as_slice(), [Action::OutputStyle(_)]),
+        "{actions:?}"
+    );
+    load(&server, &mut app, actions).await;
+    press(&mut app, KeyCode::End);
+    let shown = render(&mut app, 120, 40, &Opts::default());
+    let row = shown
+        .lines()
+        .find(|line| line.contains("› output style"))
+        .unwrap_or_else(|| panic!("{shown}"));
+    assert!(
+        row.contains("default") && row.trim_end().ends_with("default"),
+        "{row}"
+    );
+
+    let actions = press(&mut app, KeyCode::Enter);
+    load(&server, &mut app, actions).await;
+    assert!(matches!(app.overlay, Overlay::OutputStyles(_)));
+    let actions = typed(&mut app, "conc");
+    assert!(
+        matches!(app.overlay, Overlay::Settings),
+        "Enter returns to Settings"
+    );
+    let mut follow = Vec::new();
+    for action in actions {
+        let msg = crate::perform::perform(&server.client, &app.session, action).await;
+        follow.extend(crate::runner::apply(&mut app, msg, &mut Default::default()));
+    }
+    load(&server, &mut app, follow).await;
+    let shown = render(&mut app, 120, 40, &Opts::default());
+    let row = shown
+        .lines()
+        .find(|line| line.contains("› output style"))
+        .unwrap_or_else(|| panic!("{shown}"));
+    assert!(row.contains("concise"), "{row}");
+    assert!(row.trim_end().ends_with("session"), "{row}");
 }

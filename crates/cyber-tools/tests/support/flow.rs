@@ -66,6 +66,7 @@ impl ModelResolver for Models {
             context_limit: 200_000,
             cost: None,
             prefers_apply_patch: model == "patch",
+            family: cyber_core::prompts::ModelFamily::Default,
             // Scripted stand-ins take images, so delegated screenshots reach them.
             vision: true,
             pdf: false,

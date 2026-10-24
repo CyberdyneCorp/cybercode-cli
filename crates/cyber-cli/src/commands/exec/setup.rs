@@ -40,6 +40,7 @@ pub fn prompt(words: &[String]) -> Result<String, CliError> {
 }
 
 pub fn validate(args: &ExecArgs, global: &GlobalArgs) -> Result<(), CliError> {
+    super::style::validate(args)?;
     if args.worktree.is_some()
         && (args.ephemeral || args.resume_last || args.session.is_some() || args.fork)
     {
@@ -238,7 +239,7 @@ pub async fn session(
         let body = json!({
             "model": global.model, "agent": args.agent, "mode": mode(args, global),
             "title": args.name, "rules": cyber_core::config::never_ask_rules(), "max_steps": args.max_turns.filter(|_| args.goals.is_empty()),
-            "messaging": inbound(args),
+            "messaging": inbound(args), "output_style": args.output_style,
         });
         if let Some(name) = &args.worktree {
             return crate::commands::worktrees::start(client, name, body, args.quiet).await;
@@ -253,9 +254,36 @@ pub async fn session(
     if args.non_interactive_rules {
         eprintln!("warning: --non-interactive-rules cannot change a reused Session in this build");
     }
+    reselect(client, &id, args, global).await?;
+    let s = client.get(&format!("/sessions/{id}")).await.map_err(api)?;
+    if let Some(warning) = reused_inbound_warning(&s["data"], args.accept_messages)
+        && !args.fork
+        && !args.quiet
+    {
+        eprintln!("warning: {warning}");
+    }
+    Ok(s["data"].clone())
+}
+
+/// Apply this run's model, output style and mode to a reused Session.
+async fn reselect(
+    client: &Client,
+    id: &str,
+    args: &ExecArgs,
+    global: &GlobalArgs,
+) -> Result<(), CliError> {
     if let Some(model) = &global.model {
         client
             .post(&format!("/sessions/{id}/model"), json!({ "model": model }))
+            .await
+            .map_err(api)?;
+    }
+    if let Some(style) = &args.output_style {
+        client
+            .post(
+                &format!("/sessions/{id}/output-style"),
+                json!({ "style": style }),
+            )
             .await
             .map_err(api)?;
     }
@@ -268,14 +296,7 @@ pub async fn session(
             .await
             .map_err(api)?;
     }
-    let s = client.get(&format!("/sessions/{id}")).await.map_err(api)?;
-    if let Some(warning) = reused_inbound_warning(&s["data"], args.accept_messages)
-        && !args.fork
-        && !args.quiet
-    {
-        eprintln!("warning: {warning}");
-    }
-    Ok(s["data"].clone())
+    Ok(())
 }
 
 /// Fork `source`: the fork is a Session exec creates, so it takes this run's messaging

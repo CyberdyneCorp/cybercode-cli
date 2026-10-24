@@ -173,6 +173,18 @@ export interface Operations {
     body: S.CommandBody;
     response: S.Receipt;
   };
+  "v1.config.outputStyles": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_StyleListing;
+  };
+  "v1.config.setOutputStyle": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.StyleBody;
+    response: S.Located_StyleListing;
+  };
   "v1.event.subscribe": {
     path: Record<string, never>;
     query: {
@@ -1195,6 +1207,12 @@ export interface Operations {
     body: S.ModelBody;
     response: S.Session;
   };
+  "v1.session.outputStyle": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: S.StyleBody;
+    response: S.Session;
+  };
   "v1.session.pauseGoal": {
     path: { sessionID: string };
     query: Record<string, never>;
@@ -1793,6 +1811,30 @@ export const operations = {
     body: "required",
     located: false,
     unwrap: true,
+    stream: false,
+  },
+  "v1.config.outputStyles": {
+    tag: "config",
+    name: "outputStyles",
+    method: "GET",
+    path: "/api/v1/config/output-styles",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.config.setOutputStyle": {
+    tag: "config",
+    name: "setOutputStyle",
+    method: "PUT",
+    path: "/api/v1/config/output-style",
+    pathParams: [],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: false,
     stream: false,
   },
   "v1.event.subscribe": {
@@ -3655,6 +3697,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.session.outputStyle": {
+    tag: "session",
+    name: "outputStyle",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/output-style",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.pauseGoal": {
     tag: "session",
     name: "pauseGoal",
@@ -4418,6 +4472,14 @@ export function createGroups(caller: Caller) {
       run: (sessionID: string, body: Operations["v1.command.run"]["body"], options?: RequestOptions): Promise<Operations["v1.command.run"]["response"]> =>
         caller.call("v1.command.run", { path: { sessionID }, body }, options),
     },
+    config: {
+      /** Output styles of the Location (project ones only from a trusted checkout), the files that failed to load or are held for trust, and the configured and effective style (`GET /api/v1/config/output-styles`) */
+      outputStyles: (options?: RequestOptions): Promise<Operations["v1.config.outputStyles"]["response"]> =>
+        caller.call("v1.config.outputStyles", {}, options),
+      /** Set the global default output style (a built-in or user style; null sets default), keeping every other byte of the document (`PUT /api/v1/config/output-style`) */
+      setOutputStyle: (body: Operations["v1.config.setOutputStyle"]["body"], options?: RequestOptions): Promise<Operations["v1.config.setOutputStyle"]["response"]> =>
+        caller.call("v1.config.setOutputStyle", { body }, options),
+    },
     event: {
       /** Live events for a Location (scope=all for every Location) (`GET /api/v1/event`) */
       subscribe: (query?: Operations["v1.event.subscribe"]["query"], options?: StreamOptions): AsyncIterableIterator<S.EventEnvelope> =>
@@ -4930,6 +4992,9 @@ export function createGroups(caller: Caller) {
       /** Switch the model (`POST /api/v1/sessions/{sessionID}/model`) */
       model: (sessionID: string, body: Operations["v1.session.model"]["body"], options?: RequestOptions): Promise<Operations["v1.session.model"]["response"]> =>
         caller.call("v1.session.model", { path: { sessionID }, body }, options),
+      /** Switch the Session's own output style from the next Turn; null follows the configured style (`POST /api/v1/sessions/{sessionID}/output-style`) */
+      outputStyle: (sessionID: string, body: Operations["v1.session.outputStyle"]["body"], options?: RequestOptions): Promise<Operations["v1.session.outputStyle"]["response"]> =>
+        caller.call("v1.session.outputStyle", { path: { sessionID }, body }, options),
       /** Pause the active Goal: no evaluation or continuation until resumed (`POST /api/v1/sessions/{sessionID}/goals/pause`) */
       pauseGoal: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.pauseGoal"]["response"]> =>
         caller.call("v1.session.pauseGoal", { path: { sessionID } }, options),
