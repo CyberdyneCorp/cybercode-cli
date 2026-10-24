@@ -71,7 +71,7 @@ The local API determines the human author from the signed-in account. Agent tool
 
 Incoming agent messages are untrusted external content and are held by default. Inspect and release or refuse them using the existing `/messages` receiver inbox. Release rechecks current membership, publication and local policy before admission. A remote teammate cannot grant permission for local tools, approve local requests or execute a prompt by sending a message. A valid held message is still untrusted content after release.
 
-Conversation views and resynchronization snapshots contain the most recent 500 visible messages; the hub message endpoint supports forward history pages with `after`. Offline delivery and reconnect replay do not imply execution. Delivery state distinguishes queued, held, released, refused, dropped and expired. Reconnect deduplicates durable incoming records; it does not replay a tool approval or release previously refused content.
+Conversation views and resynchronization snapshots contain the most recent 500 visible messages; the hub message endpoint supports forward history pages with `after`. Offline delivery and reconnect replay do not imply execution. Delivery state distinguishes queued, held, released, refused, dropped and expired. Acknowledgements report durable local observations; they grant no permission to admit or execute a prompt. Reconnect deduplicates durable incoming records; it does not replay a tool approval or release previously refused content.
 
 ## Shared tasks and evidence
 

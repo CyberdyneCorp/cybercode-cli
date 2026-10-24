@@ -1,5 +1,6 @@
 //! Dedicated hub database. Every accepted mutation is committed by the bounded
 //! FULL/WAL writer before its response is visible to a client.
+pub(crate) mod visibility;
 use crate::{error::Error, ids::*, model::*};
 use cyber_account::IdentityLease;
 use cyber_core::paths::DatabaseLocation;
@@ -51,10 +52,11 @@ impl Database {
         options.queue_capacity = 128;
         let store = Store::open(options)?;
         let hub_id = store.transaction(|tx| {
-            tx.execute_batch("CREATE TABLE IF NOT EXISTS ch_objects(kind TEXT NOT NULL,id TEXT NOT NULL,project TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(kind,id)); CREATE INDEX IF NOT EXISTS ch_scope ON ch_objects(kind,project); CREATE TABLE IF NOT EXISTS ch_operations(actor TEXT NOT NULL,operation TEXT NOT NULL,digest TEXT NOT NULL,result TEXT NOT NULL,created INTEGER NOT NULL,PRIMARY KEY(actor,operation)); CREATE TABLE IF NOT EXISTS ch_events(cursor INTEGER PRIMARY KEY AUTOINCREMENT,project TEXT NOT NULL,kind TEXT NOT NULL,body TEXT NOT NULL,created INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS ch_event_project ON ch_events(project,cursor); CREATE TABLE IF NOT EXISTS ch_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);")?;
+            tx.execute_batch("CREATE TABLE IF NOT EXISTS ch_objects(kind TEXT NOT NULL,id TEXT NOT NULL,project TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(kind,id)); CREATE INDEX IF NOT EXISTS ch_scope ON ch_objects(kind,project); CREATE TABLE IF NOT EXISTS ch_operations(actor TEXT NOT NULL,operation TEXT NOT NULL,digest TEXT NOT NULL,result TEXT NOT NULL,created INTEGER NOT NULL,PRIMARY KEY(actor,operation)); CREATE TABLE IF NOT EXISTS ch_events(cursor INTEGER PRIMARY KEY AUTOINCREMENT,project TEXT NOT NULL,kind TEXT NOT NULL,body TEXT NOT NULL,created INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS ch_event_project ON ch_events(project,cursor); CREATE TABLE IF NOT EXISTS ch_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE INDEX IF NOT EXISTS ch_delivery_pending ON ch_objects(project,json_extract(body,'$.target'),json_extract(body,'$.state'),id) WHERE kind='delivery'; CREATE INDEX IF NOT EXISTS ch_delivery_expiry ON ch_objects(project,json_extract(body,'$.state'),json_extract(body,'$.message.expires_at')) WHERE kind='delivery';")?;
             let version:Option<String>=tx.query_row("SELECT value FROM ch_meta WHERE key='schema_version'",[],|r|r.get(0)).optional()?;
-            if version.as_ref().is_some_and(|v|v!="1"){return Err(StoreError::TooNew(vec!["collaboration schema".into()]));}
-            tx.execute("INSERT OR IGNORE INTO ch_meta VALUES('schema_version','1')",[])?;
+            if version.as_ref().is_some_and(|v|v!="1"&&v!="2"){return Err(StoreError::TooNew(vec!["collaboration schema".into()]));}
+            if version.as_deref()!=Some("2") { visibility::backfill(tx)?; }
+            tx.execute("INSERT INTO ch_meta VALUES('schema_version','2') ON CONFLICT(key) DO UPDATE SET value='2'",[])?;
             let id: Option<String> = tx.query_row("SELECT value FROM ch_meta WHERE key='hub_id'", [], |r|r.get(0)).optional()?;
             match id { Some(id) => Ok(id), None => { let id = HubId::new().to_string();tx.execute("INSERT INTO ch_meta VALUES('hub_id',?1)",[&id])?;Ok(id) } }
         })?;
@@ -178,7 +180,20 @@ pub fn put<T: Serialize>(
     project: &str,
     value: &T,
 ) -> Result<(), Error> {
-    db.execute("INSERT INTO ch_objects(kind,id,project,body) VALUES(?1,?2,?3,?4) ON CONFLICT(kind,id) DO UPDATE SET body=excluded.body",params![kind,id,project,encode(value)?])?;
+    let body = encode(value)?;
+    let message = if kind == "message" {
+        let message: Message = decode(&body)?;
+        if message.id.as_str() != id || message.project.as_str() != project {
+            return Err(Error::invalid("message identity binding mismatch"));
+        }
+        Some(message)
+    } else {
+        None
+    };
+    db.execute("INSERT INTO ch_objects(kind,id,project,body) VALUES(?1,?2,?3,?4) ON CONFLICT(kind,id) DO UPDATE SET body=excluded.body",params![kind,id,project,body])?;
+    if let Some(message) = message {
+        visibility::index(db, &message)?;
+    }
     Ok(())
 }
 pub fn event<T: Serialize>(

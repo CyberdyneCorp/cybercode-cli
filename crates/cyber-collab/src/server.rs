@@ -207,7 +207,9 @@ impl IntoResponse for Error {
                 StatusCode::FORBIDDEN
             }
             "ProjectNotFoundError" => StatusCode::NOT_FOUND,
-            "RevisionConflictError" | "OperationConflictError" => StatusCode::CONFLICT,
+            "RevisionConflictError"
+            | "OperationConflictError"
+            | "DeliveryTerminalConflictError" => StatusCode::CONFLICT,
             "RateLimitError" => StatusCode::TOO_MANY_REQUESTS,
             "StorageUnavailableError" | "StorageBusyError" | "LiveValidationUnavailableError" => {
                 StatusCode::SERVICE_UNAVAILABLE
@@ -254,7 +256,10 @@ async fn handle(
         let copy = actor.clone();
         hub.db.write(move|db|{copy.scope(db,&project,false)?;db.execute("UPDATE ch_objects SET body=json_set(body,'$.state','expired') WHERE kind='delivery' AND project=?1 AND json_extract(body,'$.message.expires_at')<=?2 AND json_extract(body,'$.state') IN ('queued','held')",params![project,now() as i64])?;Ok(())})?;
     }
-    if parts.get(2).is_some_and(|p| p == "deliveries") && parts.len() >= 5 {
+    if parts.get(2).is_some_and(|p| p == "deliveries")
+        && parts.last().is_some_and(|p| p == "authorization")
+        && parts.len() >= 5
+    {
         let recipient = actor.proof.account();
         actor.proof = hub
             .auth
@@ -457,11 +462,14 @@ fn delivery_allowed(
         .generation;
     let receiving = publication.expires_at > now()
         && publication.generation == recipient_generation
-        && !matches!(
-            delivery.state,
-            DeliveryState::Refused | DeliveryState::Dropped | DeliveryState::Expired
-        )
-        && (message.target != MessageTarget::Project || publication.subscribed);
+        && recipient.active
+        && hub.runtime_live(&recipient.runtime);
+    let current_delivery = !matches!(
+        delivery.state,
+        DeliveryState::Refused | DeliveryState::Dropped | DeliveryState::Expired
+    ) && (message.target != MessageTarget::Project
+        || publication.subscribed)
+        && now() < message.expires_at;
     let author: Member = get(db, "member", message.owner.as_str())?;
     let proof = hub.auth_cached_source(db, &author)?;
     let source_active = author.active && author.generation == message.member_generation && proof;
@@ -472,15 +480,18 @@ fn delivery_allowed(
         }
         _ => true,
     };
-    let allowed = receiving
-        && recipient.active
-        && hub.runtime_live(&recipient.runtime)
-        && source_active
-        && published
-        && now() < message.expires_at;
+    let reason = if !receiving {
+        Some("recipient_not_current")
+    } else if !current_delivery {
+        Some("delivery_not_current")
+    } else if !source_active || !published {
+        Some("source_not_current")
+    } else {
+        None
+    };
     Ok(DeliveryAuthorization {
-        allowed,
-        reason: (!allowed).then(|| "source or recipient authorization is no longer current".into()),
+        allowed: reason.is_none(),
+        reason: reason.map(str::to_owned),
     })
 }
 impl Hub {
@@ -585,16 +596,23 @@ fn read(
                 .map(|(_, v)| v.into_owned())
                 .ok_or_else(|| Error::invalid("agent is required"))?;
             agent_owner(db, &actor, &target)?;
-            let mut rows = list::<Delivery>(db, "delivery", project)?
-                .into_iter()
-                .filter(|d| {
-                    d.target.as_str() == target
-                        && matches!(d.state, DeliveryState::Queued | DeliveryState::Held)
-                        && d.message.expires_at > now()
+            let after = url::form_urlencoded::parse(query.as_bytes())
+                .find(|(k, _)| k == "after")
+                .map(|(_, v)| {
+                    v.parse::<MessageId>()
+                        .map_err(|_| Error::invalid("invalid delivery cursor"))
                 })
-                .collect::<Vec<_>>();
-            rows.sort_by_key(|d| (d.state != DeliveryState::Queued, d.message.created_at));
-            rows.truncate(100);
+                .transpose()?;
+            let after = after.map(|id| format!("{id}:{target}")).unwrap_or_default();
+            // Each indexed state range contributes at most100 candidates. Old
+            // released/expired work cannot consume the receiver's page limit.
+            let mut statement=db.prepare("SELECT body FROM (SELECT body,id FROM (SELECT body,id FROM ch_objects WHERE kind='delivery' AND project=?1 AND json_extract(body,'$.target')=?2 AND json_extract(body,'$.state')='queued' AND id>?3 AND json_extract(body,'$.message.expires_at')>?4 ORDER BY id LIMIT 100) UNION ALL SELECT body,id FROM (SELECT body,id FROM ch_objects WHERE kind='delivery' AND project=?1 AND json_extract(body,'$.target')=?2 AND json_extract(body,'$.state')='held' AND id>?3 AND json_extract(body,'$.message.expires_at')>?4 ORDER BY id LIMIT 100)) ORDER BY id LIMIT 100")?;
+            let rows = statement
+                .query_map(params![project, target, after, now() as i64], |r| {
+                    r.get::<_, String>(0)
+                })?
+                .map(|row| decode::<Delivery>(&row?))
+                .collect::<Result<Vec<_>, _>>()?;
             value(rows)
         }
         ["projects", _, "deliveries", msg, target, "authorization"] => {
@@ -624,33 +642,37 @@ fn read(
         _ => Err(Error::missing()),
     }
 }
-fn message_page(
+pub(crate) fn message_page(
     db: &Connection,
     actor: &Actor,
     project: &str,
     after: Option<&str>,
 ) -> Result<Vec<Message>, Error> {
-    if let Some(id) = after {
-        id.parse::<MessageId>()
-            .map_err(|_| Error::invalid("invalid message cursor"))?;
-    }
-    let sql = if after.is_some() {
-        "SELECT body FROM ch_objects WHERE kind='message' AND project=?1 AND id>?2 ORDER BY id ASC"
-    } else {
-        "SELECT body FROM ch_objects WHERE kind='message' AND project=?1 AND id>?2 ORDER BY id DESC"
-    };
-    let mut statement = db.prepare(sql)?;
-    let rows = statement.query_map(params![project, after.unwrap_or("")], |r| {
-        r.get::<_, String>(0)
-    })?;
+    let cursor = after
+        .map(|id| {
+            id.parse::<MessageId>()
+                .map(|id| id.to_string())
+                .map_err(|_| Error::invalid("invalid message cursor"))
+        })
+        .transpose()?;
+    let direction = if after.is_some() { "ASC" } else { "DESC" };
+    // Each ordered primary-key lookup contributes at most 500 IDs. UNION and the
+    // final sort therefore handle at most 1,000 authorized candidates, regardless
+    // of other members' private traffic.
+    let sql = format!(
+        "WITH project_visible AS (SELECT message FROM ch_visibility WHERE project=?1 AND participant='project' AND message>?3 ORDER BY message {direction} LIMIT 500), own_visible AS (SELECT message FROM ch_visibility WHERE project=?1 AND participant=?2 AND message>?3 ORDER BY message {direction} LIMIT 500), candidates AS (SELECT message FROM project_visible UNION SELECT message FROM own_visible) SELECT m.body FROM candidates c JOIN ch_objects m ON m.kind='message' AND m.id=c.message AND m.project=?1 ORDER BY m.id {direction} LIMIT 500"
+    );
+    let participant = crate::storage::visibility::participant_key(&actor.participant()?);
+    let mut statement = db.prepare(&sql)?;
+    let rows = statement.query_map(
+        params![project, participant, cursor.as_deref().unwrap_or("")],
+        |r| r.get::<_, String>(0),
+    )?;
     let mut messages = Vec::new();
     for row in rows {
         let message: Message = decode(&row?)?;
         if visible(db, actor, &message)? {
             messages.push(message);
-            if messages.len() == 500 {
-                break;
-            }
         }
     }
     if after.is_none() {
@@ -658,6 +680,7 @@ fn message_page(
     }
     Ok(messages)
 }
+
 fn task_views(db: &Connection, hub: &Hub, project: &str) -> Result<Vec<Task>, Error> {
     let mut tasks = list::<Task>(db, "task", project)?;
     for task in &mut tasks {
@@ -955,11 +978,9 @@ fn mutate(
             {
                 return Err(Error::forbidden());
             }
-            if request.state == DeliveryState::Released
-                && !delivery_allowed(db, hub, &actor, &delivery.message, target)?.allowed
-            {
-                return Err(Error::forbidden());
-            }
+            // This is the receiver's observation of a durable local outcome,
+            // not permission to admit or execute a prompt. Fresh source checks
+            // belong to the separate authorization endpoint before local release.
             if matches!(
                 delivery.state,
                 DeliveryState::Released
@@ -968,7 +989,10 @@ fn mutate(
                     | DeliveryState::Expired
             ) && delivery.state != request.state
             {
-                return Err(Error::conflict(0));
+                return Err(Error::new(
+                    "DeliveryTerminalConflictError",
+                    "delivery already has a different terminal observation",
+                ));
             }
             delivery.state = request.state;
             put(db, "delivery", &id, project, &delivery)?;

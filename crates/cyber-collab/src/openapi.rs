@@ -239,7 +239,7 @@ pub fn document() -> Value {
         "/projects/{projectID}/deliveries",
         "deliveries",
         "Queued and held messages for one locally owned published agent",
-        &["agent"],
+        &["agent", "after"],
     );
     c.read::<DeliveryAuthorization>(
         "/projects/{projectID}/deliveries/{messageID}/{agentID}/authorization",

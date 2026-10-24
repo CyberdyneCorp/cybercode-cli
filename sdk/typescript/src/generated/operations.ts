@@ -331,6 +331,7 @@ export interface Operations {
     path: { projectID: string };
     query: {
       agent?: QueryValue;
+      after?: QueryValue;
     };
     body: undefined;
     response: S.HubDelivery[];
@@ -2046,7 +2047,7 @@ export const operations = {
     method: "GET",
     path: "/api/v1/hub/projects/{projectID}/deliveries",
     pathParams: ["projectID"],
-    query: ["agent"],
+    query: ["agent", "after"],
     body: "none",
     located: false,
     unwrap: true,

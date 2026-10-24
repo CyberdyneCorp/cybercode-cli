@@ -35,6 +35,12 @@ pub struct Publication {
     #[serde(default)]
     pub expires_at: u64,
 }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum DeliveryAckReceipt {
+    Acknowledged,
+    Reconciled { reason: String },
+}
 /// A fresh membership/policy proof determines whether an old replay checkpoint is reusable.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CursorScope {
@@ -80,6 +86,7 @@ impl LocalStore {
              CREATE TABLE IF NOT EXISTS collaboration_publication(session TEXT PRIMARY KEY, hub TEXT NOT NULL, project TEXT NOT NULL, body TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS collaboration_delivery(hub TEXT NOT NULL, project TEXT NOT NULL, message TEXT NOT NULL, target TEXT NOT NULL, hash TEXT NOT NULL, inbox TEXT NOT NULL, admitted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(hub,project,message,target));
              CREATE TABLE IF NOT EXISTS collaboration_outbox(operation TEXT PRIMARY KEY, identity TEXT NOT NULL, hub TEXT NOT NULL, project TEXT NOT NULL, body TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS collaboration_delivery_ack(inbox TEXT NOT NULL,outcome TEXT NOT NULL,receipt TEXT NOT NULL,PRIMARY KEY(inbox,outcome));
              CREATE TABLE IF NOT EXISTS collaboration_cursor(binding TEXT PRIMARY KEY,epoch TEXT NOT NULL,cursor INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS collaboration_receipt(operation TEXT PRIMARY KEY, hub TEXT NOT NULL, project TEXT NOT NULL, state TEXT NOT NULL, detail TEXT, digest TEXT NOT NULL);"
         )?; Ok(()) })?;
@@ -253,6 +260,8 @@ impl LocalStore {
             statement.query_map([identity],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?)))?.map(|row|{let (op,hub,project,body)=row?;Ok((op,hub,project,decode(body)?))}).collect()
         })
     }
+    /// Limit historical reporting to 20 rows per heartbeat so old observations
+    /// leave request capacity for newly queued deliveries.
     pub fn delivery_outcomes(
         &self,
         hub: String,
@@ -260,8 +269,23 @@ impl LocalStore {
         target: String,
     ) -> Result<Vec<(String, String, String, String)>, StoreError> {
         self.0.read(move |db| {
-            let mut statement=db.prepare("SELECT d.message,d.hash,m.outcome,d.inbox FROM collaboration_delivery d JOIN xsession_message m ON m.message_id=d.inbox AND m.direction='in' WHERE d.hub=?1 AND d.project=?2 AND d.target=?3 AND m.outcome IN ('released','dropped','refused','delivered')")?;
+            let mut statement=db.prepare("SELECT d.message,d.hash,m.outcome,d.inbox FROM collaboration_delivery d JOIN xsession_message m ON m.message_id=d.inbox AND m.direction='in' WHERE d.hub=?1 AND d.project=?2 AND d.target=?3 AND m.outcome IN ('released','dropped','refused','delivered') AND NOT EXISTS (SELECT 1 FROM collaboration_delivery_ack a WHERE a.inbox=d.inbox AND a.outcome=m.outcome) ORDER BY d.rowid LIMIT 20")?;
             statement.query_map((hub,project,target),|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?.map(|row|Ok(row?)).collect()
+        })
+    }
+    pub fn acknowledge_delivery(
+        &self,
+        inbox: String,
+        outcome: String,
+        receipt: DeliveryAckReceipt,
+    ) -> Result<(), StoreError> {
+        let receipt = encode(&receipt)?;
+        self.0.transaction(move |tx| {
+            tx.execute(
+                "INSERT OR IGNORE INTO collaboration_delivery_ack VALUES(?1,?2,?3)",
+                (inbox, outcome, receipt),
+            )?;
+            Ok(())
         })
     }
     pub fn receipts(

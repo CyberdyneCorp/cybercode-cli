@@ -318,6 +318,7 @@ impl Collaboration {
             .ok_or_else(ApiError::unauthorized)?;
         let bindings = self.local.bindings().map_err(storage)?;
         let publications = self.local.publications().map_err(storage)?;
+        self.prune_delivery_scans(&publications)?;
         self.sync_bindings(&current, &bindings).await?;
         self.replay_human(&current, &bindings).await?;
         let presence: Vec<_> = publications

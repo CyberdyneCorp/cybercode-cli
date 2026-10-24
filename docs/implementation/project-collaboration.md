@@ -12,7 +12,7 @@ Implemented:
 - HTTPS issuer/endpoint validation; plain HTTP requires explicit literal-loopback development opt-in. Reject issuer mismatch, credentials in URLs and URL fragments. Endpoints come from discovery.
 - Scope selection including `cyber:collaborate`; unavailable advertised scopes are returned for caller warnings. If `scopes_supported` is omitted, request the normal scope set and leave feature authorization to later validated-token checks. An explicitly advertised set without `openid` cannot begin OIDC login.
 - Device-flow readiness only when both its endpoint and grant are advertised.
-- Public-client login preparation using a 64-byte random verifier, S256, independent 32-byte state and nonce, and a five-minute monotonic deadline. Secrets have no Debug/Serialize/Clone implementation and use zeroizing storage. Authorization URLs are sensitive interactive UI data.
+- Public-client login preparation using a 64-byte random verifier, S256, independent 32-byte state and nonce, and a five-minute monotonic deadline. Login-attempt and code-grant containers do not serialize their secrets; owned secret buffers use zeroizing storage and redacted debug output. Authorization URLs are sensitive interactive UI data.
 - Full loopback callback validation with exact redirect matching, constant-time state comparison, duplicate/ambiguous parameter rejection, safe provider-denial errors and single-use attempt ownership. The low-level API requires the full callback URL; bare-code completion remains pending at the CLI layer and cannot bypass state validation.
 - Sensitive exchange parameters retain the original verifier, redirect and nonce for later token exchange/ID-token validation. A `CodeGrant` is not an authenticated identity.
 
@@ -125,7 +125,7 @@ upstream are separate from the per-user owner listener.
 
 `CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=line-tables-only
 CARGO_PROFILE_TEST_DEBUG=line-tables-only cargo test -p cyber-collab --lib`
-passes 32 tests on macOS after the pending-application and history/cursor fixes.
+passes 37 tests on macOS after the pending-application and history/cursor fixes.
 These include real HTTP with independently signed human and agent credentials,
 bootstrap refusal, current organization checks, direct-message privacy through
 history/events/snapshots, one-winner concurrent claims, stale updates, capability
@@ -174,3 +174,25 @@ hello omits them and protected hub calls require explicit account Bearer auth
 before network I/O. The new real-hub terminal acceptance test compiles on macOS
 but is explicitly ignored outside Linux to avoid native-vault side effects.
 Its positive Linux result and final platform CI are tracked on PR #27.
+
+The visibility projection now migrates hub schema 1 to 2 atomically and indexes
+public messages, direct participants and the human owners of participating agents.
+Each message update refreshes those entries in the same write transaction.
+History/snapshot pages merge two indexed windows of at most 500 IDs each before
+reading at most 500 authorized message bodies; unrelated private traffic does not
+create an unbounded application scan. Three regressions cover migration/backfill,
+projection replacement and rollback, and a visible page behind 10,001 newer private
+messages. The full hub suite passes 35 tests, and hub all-target Clippy passes with
+`-D warnings` after this change. Deployment acceptance remains a separate boundary.
+
+The reviewed pagination/receipt suite passes 37 hub tests. Delivery pages filter
+receiver, pending state and expiry before the limit, and use a bounded scan cursor.
+The local connector advances past source-specific denials without admitting those
+messages. Two real-owner/hub regressions pass with 105 stale held deliveries ahead
+of valid work, a historical released receipt after source withdrawal, one successful
+ACK across repeated heartbeats, and durable reconciliation of an expired outcome.
+Successful terminal acknowledgements are not reposted on every reconnect. An ACK
+is an observation; only the separate fresh authorization path permits local release.
+
+The SDK CI job for `630615c6` passed 116 tests with zero skips, including the real
+hub/CLI/SDK acceptance test ([job evidence](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40066295903/job/120790181476)).

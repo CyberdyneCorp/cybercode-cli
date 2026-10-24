@@ -1049,3 +1049,160 @@ async fn republishing_cannot_revive_a_revoked_agents_pending_prompts() {
             .is_err()
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn delivery_pages_filter_historical_outcomes_before_the_page_limit() {
+    let h = TestHub::new().await;
+    let p = h.project().await;
+    h.add(&p, "bob");
+    let target = h.agent(&h.bob, &p, "receiver").await;
+    let client = HubClient::new(&h.url, Secret::new(target.capability.unwrap())).unwrap();
+    let queued: Message = h
+        .alice
+        .mutate(
+            Method::POST,
+            &format!("/projects/{}/messages", p.id),
+            &Mutation::new(SendMessage {
+                target: MessageTarget::Direct(Participant::Agent(target.agent.id.clone())),
+                text: "new work after long history".into(),
+                reply_to: None,
+                depth: 0,
+                hops: 1,
+            }),
+        )
+        .await
+        .unwrap()
+        .data;
+    let template = queued.clone();
+    let agent = target.agent.id.clone();
+    h.hub
+        .db
+        .write(move |db| {
+            for index in 1u128..=10102 {
+                let mut message = template.clone();
+                message.id = format!("cmsg_{}", ulid::Ulid::from(index)).parse().unwrap();
+                put(
+                    db,
+                    "message",
+                    message.id.as_str(),
+                    message.project.as_str(),
+                    &message,
+                )?;
+                let delivery = Delivery {
+                    content_hash: hash(encode(&message)?.as_bytes()),
+                    state: if index <= 10001 {
+                        DeliveryState::Released
+                    } else {
+                        DeliveryState::Held
+                    },
+                    message,
+                    target: agent.clone(),
+                };
+                put(
+                    db,
+                    "delivery",
+                    &format!("{}:{agent}", delivery.message.id),
+                    delivery.message.project.as_str(),
+                    &delivery,
+                )?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    let route = format!("/projects/{}/deliveries?agent={}", p.id, target.agent.id);
+    let first: Vec<Delivery> = client.get(&route).await.unwrap();
+    assert_eq!(first.len(), 100);
+    assert!(first.iter().all(|d| d.state == DeliveryState::Held));
+    let next: Vec<Delivery> = client
+        .get(&format!(
+            "{route}&after={}",
+            first
+                .last()
+                .unwrap()
+                .message
+                .id
+                .to_string()
+                .to_ascii_lowercase()
+        ))
+        .await
+        .unwrap();
+    assert_eq!(next.len(), 2);
+    assert_eq!(next.last().unwrap().message.id, queued.id);
+    assert_eq!(next.last().unwrap().state, DeliveryState::Queued);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn historical_receipts_cannot_authorize_content_or_block_after_source_withdrawal() {
+    let h = TestHub::new().await;
+    let p = h.project().await;
+    h.add(&p, "bob");
+    let target = h.agent(&h.bob, &p, "receiver").await;
+    let client = HubClient::new(&h.url, Secret::new(target.capability.unwrap())).unwrap();
+    let message: Message = h
+        .alice
+        .mutate(
+            Method::POST,
+            &format!("/projects/{}/messages", p.id),
+            &Mutation::new(SendMessage {
+                target: MessageTarget::Direct(Participant::Agent(target.agent.id.clone())),
+                text: "local outcome awaiting acknowledgement".into(),
+                reply_to: None,
+                depth: 0,
+                hops: 1,
+            }),
+        )
+        .await
+        .unwrap()
+        .data;
+    let deliveries: Vec<Delivery> = client
+        .get(&format!(
+            "/projects/{}/deliveries?agent={}",
+            p.id, target.agent.id
+        ))
+        .await
+        .unwrap();
+    h.fixture
+        .state
+        .users
+        .lock()
+        .unwrap()
+        .get_mut("alice")
+        .unwrap()["active"] = json!(false);
+    let base = format!(
+        "/projects/{}/deliveries/{}/{}",
+        p.id, message.id, target.agent.id
+    );
+    let denied: DeliveryAuthorization = client.get(&format!("{base}/authorization")).await.unwrap();
+    assert!(!denied.allowed);
+    assert_eq!(denied.reason.as_deref(), Some("source_not_current"));
+    let receipt: Delivery = client
+        .mutate(
+            Method::POST,
+            &format!("{base}/ack"),
+            &Mutation::new(Acknowledge {
+                state: DeliveryState::Released,
+                content_hash: deliveries[0].content_hash.clone(),
+            }),
+        )
+        .await
+        .unwrap()
+        .data;
+    assert_eq!(receipt.state, DeliveryState::Released);
+    let denied: DeliveryAuthorization = client.get(&format!("{base}/authorization")).await.unwrap();
+    assert!(!denied.allowed);
+    assert_eq!(
+        client
+            .mutate::<_, Delivery>(
+                Method::POST,
+                &format!("{base}/ack"),
+                &Mutation::new(Acknowledge {
+                    state: DeliveryState::Held,
+                    content_hash: deliveries[0].content_hash.clone()
+                })
+            )
+            .await
+            .unwrap_err()
+            .tag,
+        "DeliveryTerminalConflictError"
+    );
+}

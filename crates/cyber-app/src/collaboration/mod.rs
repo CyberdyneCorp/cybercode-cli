@@ -38,6 +38,7 @@ pub struct Collaboration {
     connected: AtomicBool,
     last_error: std::sync::Mutex<Option<String>>,
     worker_cancel: std::sync::Mutex<tokio_util::sync::CancellationToken>,
+    delivery_scans: std::sync::Mutex<std::collections::BTreeMap<String, String>>,
 }
 fn error(text: impl Into<String>) -> ApiError {
     let text = text.into();
@@ -155,6 +156,7 @@ impl Collaboration {
             connected: AtomicBool::new(false),
             last_error: std::sync::Mutex::new(None),
             worker_cancel: std::sync::Mutex::new(tokio_util::sync::CancellationToken::new()),
+            delivery_scans: std::sync::Mutex::new(Default::default()),
         });
         let weak = Arc::downgrade(&connector);
         runtime.set_collaboration_authorizer(Arc::new(move |session, origin| {
