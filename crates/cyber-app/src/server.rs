@@ -122,6 +122,14 @@ pub async fn run_server(
     run_server_until(app, opts, on_ready, stop).await
 }
 
+/// Stop background loops (retention, update checks) and wait for them to end.
+async fn abort_all<const N: usize>(tasks: [tokio::task::JoinHandle<()>; N]) {
+    for task in tasks {
+        task.abort();
+        let _ = task.await;
+    }
+}
+
 /// Serve until `stop` is notified.
 pub async fn run_server_until(
     app: App,
@@ -250,10 +258,7 @@ pub async fn run_server_until(
     closing.cancel();
     stop.notify_waiters();
     crate::peer_discovery::unpublish(publication).await;
-    for task in [sweeper, updates] {
-        task.abort();
-        let _ = task.await;
-    }
+    abort_all([sweeper, updates]).await;
     app.runtime.shutdown().await;
     for task in [tcp_task, peer_task, unix_task].into_iter().flatten() {
         let _ = task.await;

@@ -614,19 +614,17 @@ fn split_args(line: &str) -> Vec<String> {
         .collect()
 }
 
-/// Regression guard for `README.md` and `docs/local-core-guide.md`: every documented
-/// Copilot command runs as written against the fake GitHub (exec kept in-process and
-/// ephemeral), the walkthrough ends signed out, and the README links the guide's section.
+/// Regression guard for `docs/local-core-guide.md`: every documented Copilot command runs
+/// as written against the fake GitHub (exec kept in-process and ephemeral), the
+/// walkthrough ends signed out, and the README (which no longer carries its own
+/// walkthrough) links the guide's section.
 #[cfg(unix)]
 #[test]
 fn the_documented_copilot_walkthroughs_run_as_written() {
-    for (doc, heading) in [
-        ("README.md", "### Use your GitHub Copilot subscription"),
-        (
-            "docs/local-core-guide.md",
-            "## Signing in with a GitHub Copilot subscription",
-        ),
-    ] {
+    for (doc, heading) in [(
+        "docs/local-core-guide.md",
+        "## Signing in with a GitHub Copilot subscription",
+    )] {
         let (env, github) = (Env::new(), GitHub::start(200));
         let commands = documented_commands(doc, heading);
         assert!(commands.len() >= 5, "{doc}: {commands:?}");
