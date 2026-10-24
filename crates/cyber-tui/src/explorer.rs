@@ -377,7 +377,8 @@ pub struct Explorer {
     /// Server search hits for the filter.
     pub hits: Vec<Node>,
     pub preview: Option<Preview>,
-    /// Below [`SIDE_BY_SIDE`] columns the preview replaces the tree.
+    /// Keys go to the open preview (`explorer_focus`); below [`SIDE_BY_SIDE`] columns
+    /// it then replaces the tree.
     pub preview_focused: bool,
     /// The path whose content is being fetched (perhaps waiting for an approval).
     pub awaiting: Option<String>,
@@ -566,6 +567,7 @@ impl App {
             "explorer_next" => self.move_key(KeyCode::Down),
             "explorer_previous" => self.move_key(KeyCode::Up),
             "explorer_markdown" => e.raw = !e.raw,
+            "explorer_focus" => e.preview_focused = e.preview.is_some(),
             "explorer_collapse" => self.collapse_row(),
             "explorer_expand" => return self.expand_row(),
             _ => {}
@@ -601,7 +603,7 @@ impl App {
         }
     }
 
-    fn move_key(&mut self, code: KeyCode) {
+    pub(crate) fn move_key(&mut self, code: KeyCode) {
         let e = &mut self.explorer;
         let last = e.rows().len().saturating_sub(1);
         match code {
@@ -614,7 +616,7 @@ impl App {
         }
     }
 
-    fn scroll_preview(&mut self, code: KeyCode) {
+    pub(crate) fn scroll_preview(&mut self, code: KeyCode) {
         let Some(preview) = self.explorer.preview.as_mut() else {
             return;
         };
@@ -630,10 +632,10 @@ impl App {
         .min(max);
     }
 
-    /// Keys while the preview fills a narrow terminal: scroll, Esc back to the tree.
+    /// Keys while the preview has focus: scroll, Esc or `explorer_focus` back to the tree.
     fn preview_key(&mut self, key: KeyEvent) -> Vec<Action> {
         match self.keymap.action("explorer", &key, false) {
-            Some("explorer_close") => self.explorer.preview_focused = false,
+            Some("explorer_close" | "explorer_focus") => self.explorer.preview_focused = false,
             Some("explorer_markdown") => self.explorer.raw = !self.explorer.raw,
             Some("explorer_mention") => self.mention_row(),
             Some("explorer_copy") => return self.copy_row(),

@@ -11,6 +11,7 @@ use super::layout::truncate_end;
 use super::overlays::{centered, frame};
 use crate::app::App;
 use crate::branches::{Row, Tree};
+use crate::mouse::List;
 
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let tree = &app.branches;
@@ -18,7 +19,8 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let width = rect.width.saturating_sub(2) as usize;
     let rows = tree.rows();
     let room = rect.height.saturating_sub(4) as usize;
-    let first = tree.selected.saturating_sub(room.saturating_sub(1));
+    let selected = tree.selected..tree.selected + 1;
+    let first = app.mouse.window(List::Tree, selected, room, rows.len());
     let mut lines: Vec<Line> = rows
         .iter()
         .enumerate()
@@ -26,6 +28,12 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         .take(room)
         .map(|(pos, row)| row_line(app, tree, row, pos == tree.selected, width))
         .collect();
+    // A label being typed takes the keys.
+    if tree.label.is_none() {
+        for (line, pos) in (first..rows.len()).take(room).enumerate() {
+            super::overlays::push_row(app, rect, line, List::Tree, pos);
+        }
+    }
     if rows.is_empty() {
         lines.push(Line::from(Span::styled(
             "  no messages yet",

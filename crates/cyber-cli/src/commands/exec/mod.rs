@@ -6,6 +6,7 @@ pub(crate) mod goals;
 pub(crate) mod report;
 mod review_run;
 pub(crate) mod setup;
+mod style;
 mod workflow;
 
 use std::path::PathBuf;
@@ -85,6 +86,10 @@ pub struct ExecArgs {
     /// Run a skill or custom command with the prompt as its arguments.
     #[arg(long)]
     pub command: Option<String>,
+    /// Use this output style for the Session (a name from `/output-style`); it must be
+    /// listed at the Location, or the run exits 2 before any Session exists.
+    #[arg(long, value_name = "NAME")]
+    pub output_style: Option<String>,
     /// Run a Workflow (a saved name or a `.js` module path) instead of a prompt; its return
     /// value is the result.
     #[arg(long, value_name = "NAME|PATH", conflicts_with_all = ["command", "prompt"])]
@@ -210,6 +215,7 @@ fn launch(
     let code = super::serve::runtime()?.block_on(async {
         let backend = setup::backend(&args, ctx).await?;
         let client = backend.client.at(&ctx.location.display().to_string());
+        style::check(&client, &args).await?;
         let session = setup::session(&client, &args, global).await?;
         let client = if args.worktree.is_some() {
             client.at(session["directory"]

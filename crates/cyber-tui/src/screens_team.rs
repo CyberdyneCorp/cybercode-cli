@@ -17,7 +17,7 @@ use cyber_server::runtime::teams::{TaskCreate, TaskStatus, TaskUpdate};
 
 const COMPOSE: &str = "Bring the stack up for the end-to-end tests.";
 const PAGINATION: &str = "use pagination tokens";
-const DEFINITION: &str = "---\ndescription: Ship the feature\nteammates:\n  - name: api\n    \
+pub(crate) const DEFINITION: &str = "---\ndescription: Ship the feature\nteammates:\n  - name: api\n    \
      agent: build\n  - name: ui\n    agent: build\n  - name: tests\n    agent: build\n---\n\
      Split the feature between api, ui and tests.\n";
 

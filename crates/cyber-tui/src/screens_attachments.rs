@@ -188,6 +188,46 @@ async fn large_paste_becomes_a_chip_and_submits_in_full() {
     assert!(sent.contains("see fourth log line 1\\n"), "{sent}");
 }
 
+/// `tui` → Composer appearance: pending chips render in `accent` on `selection` (reverse
+/// video under `NO_COLOR`), and the text typed around them keeps the composer's style.
+#[tokio::test]
+async fn chips_render_in_accent_on_selection() {
+    use crate::screens::buffer;
+    use crate::screens_mouse::cell_of;
+    use ratatui::style::Modifier;
+    let server = server().await;
+    let id = server.session().await;
+    let state = tempfile::tempdir().unwrap();
+    let mut app = app(&server, &id, state.path()).await;
+    typed(&mut app, "see ");
+    app.on_paste(&log(30, "chip"));
+    typed(&mut app, " and [Pasted text #9 +1 lines]");
+
+    let buf = buffer(&mut app, 120, 30, &Opts::default());
+    let (x, y) = cell_of(&buf, "[Pasted text #1 +30 lines]");
+    let label = "[Pasted text #1 +30 lines]".len() as u16;
+    let (accent, selection) = (app.theme.accent, app.theme.selection);
+    for dx in [0, label - 1] {
+        let cell = &buf[(x + dx, y)];
+        assert_eq!((cell.fg, cell.bg), (accent, selection), "{dx}");
+    }
+    // Typed text, including a label no chip stands for, is not a chip.
+    let typed_text = [x - 2, x + label + 1, cell_of(&buf, "[Pasted text #9").0];
+    for column in typed_text {
+        assert_eq!(buf[(column, y)].fg, app.theme.text, "{column}");
+        assert_eq!(buf[(column, y)].bg, app.theme.surface, "{column}");
+    }
+
+    let no_color = Opts {
+        no_color: true,
+        ..Opts::default()
+    };
+    let buf = buffer(&mut app, 120, 30, &no_color);
+    let (x, y) = cell_of(&buf, "[Pasted text #1 +30 lines]");
+    assert!(buf[(x, y)].modifier.contains(Modifier::REVERSED));
+    assert!(!buf[(x - 2, y)].modifier.contains(Modifier::REVERSED));
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn dropped_paths_and_mentions_become_chips() {

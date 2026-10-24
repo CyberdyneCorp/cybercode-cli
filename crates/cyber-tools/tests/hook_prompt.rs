@@ -42,6 +42,7 @@ impl ModelResolver for Models {
             },
             context_limit: 200000,
             prefers_apply_patch: false,
+            family: cyber_core::prompts::ModelFamily::Default,
             vision: false,
             pdf: false,
             cost: Some(Cost {

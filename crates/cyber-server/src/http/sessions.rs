@@ -98,6 +98,9 @@ pub struct CreateBody {
     /// Session-level `messaging.inbound` override (`cyber exec` refuses messages with
     /// `{ "inbound": "refuse", "reason": "non_interactive" }`).
     pub messaging: Option<InboundOverride>,
+    /// The Session's own output style; refused when it is invalid, unknown or held at
+    /// the Location, or for a child Session.
+    pub output_style: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -427,6 +430,11 @@ async fn create(
 ) -> Result<Response> {
     let directory = location(&parts, &state.options.default_directory)?;
     let body = body.map(|Json(b)| b).unwrap_or_default();
+    if let Some(style) = &body.output_style
+        && body.parent_id.is_none()
+    {
+        super::output_styles::check_defined(&state, &directory, style)?;
+    }
     let model_is_default = body.model.is_none();
     let model = body
         .model
@@ -456,6 +464,7 @@ async fn create(
         messaging: body.messaging,
         // Only the team runtime makes team members; a client cannot claim membership.
         team: None,
+        output_style: body.output_style,
     };
     let info = state.runtime.create_session(req).await?;
     let data = session(&state, state.runtime.state(&info.id).await?);

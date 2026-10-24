@@ -82,7 +82,7 @@ async fn rewind(server: &Server, id: &str, message: &str, target: &str) {
 
 /// User messages one, two, three; a conversation rewind to two; then two-b. Returns
 /// the Session and the user message IDs in that order.
-async fn two_branches(server: &Server) -> (String, Vec<String>) {
+pub(crate) async fn two_branches(server: &Server) -> (String, Vec<String>) {
     let id = server.session().await;
     for text in ["one", "two", "three"] {
         turn(server, &id, text).await;

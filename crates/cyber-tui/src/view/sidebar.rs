@@ -11,6 +11,7 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 use super::layout::{shorten_path, truncate_end};
 use super::wrap::wrap;
 use crate::app::App;
+use crate::mouse::{Act, List, Target};
 use crate::sidebar::{Connection, FILE_ROWS, MCP_ROWS, McpServer, Row, Section};
 use crate::theme::Tokens;
 
@@ -37,7 +38,19 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let bottom = bottom(app, width);
     let bottom_height = (bottom.len() as u16).min(inner.height);
     let top_height = inner.height - bottom_height;
-    let top: Vec<Line> = top(app, width)
+    let sections = sections(app, width);
+    push_rows(
+        app,
+        Rect {
+            x: area.x,
+            width: area.width,
+            height: top_height,
+            ..inner
+        },
+        &sections.rows,
+    );
+    let top: Vec<Line> = sections
+        .lines
         .into_iter()
         .take(top_height as usize)
         .collect();
@@ -58,9 +71,64 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     );
 }
 
+/// Section headers act on one click, as `<leader>e` and Enter on them; other rows
+/// take a second click.
+fn push_rows(app: &App, area: Rect, rows: &[(usize, Row)]) {
+    let order = app.sidebar.rows();
+    for &(line, row) in rows {
+        let Some(index) = order.iter().position(|r| *r == row) else {
+            continue;
+        };
+        let act = match row {
+            Row::Header(_) => Act::First,
+            Row::Workflow(_) | Row::Mcp(_) | Row::File(_) => Act::Second,
+        };
+        let target = Target::Row {
+            list: List::Sidebar,
+            index,
+            act,
+        };
+        super::push_lines(app, area, line..line + 1, 0, target);
+    }
+}
+
+/// The sections' lines, and the line each focusable row is drawn on.
+#[derive(Default)]
+struct Out {
+    lines: Vec<Line<'static>>,
+    rows: Vec<(usize, Row)>,
+}
+
+impl Out {
+    /// A row focus can rest on.
+    fn row(&mut self, row: Row, line: Line<'static>) {
+        self.rows.push((self.lines.len(), row));
+        self.lines.push(line);
+    }
+}
+
+impl std::ops::Deref for Out {
+    type Target = Vec<Line<'static>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.lines
+    }
+}
+
+impl std::ops::DerefMut for Out {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.lines
+    }
+}
+
 /// The sections, top to bottom, wrapped to `width`.
+#[cfg(test)]
 pub fn top(app: &App, width: usize) -> Vec<Line<'static>> {
-    let mut out = Vec::new();
+    sections(app, width).lines
+}
+
+fn sections(app: &App, width: usize) -> Out {
+    let mut out = Out::default();
     let bold = Style::default()
         .fg(app.theme.text)
         .add_modifier(Modifier::BOLD);
@@ -288,7 +356,7 @@ fn goal(app: &App, width: usize, out: &mut Vec<Line<'static>>) {
     }
 }
 
-fn workflows(app: &App, width: usize, out: &mut Vec<Line<'static>>) {
+fn workflows(app: &App, width: usize, out: &mut Out) {
     let rows = &app.sidebar.workflows;
     if rows.is_empty() {
         return;
@@ -305,7 +373,10 @@ fn workflows(app: &App, width: usize, out: &mut Vec<Line<'static>>) {
             Style::default().fg(t.text),
         )];
         spans.extend(tail);
-        out.push(focusable(app, Some(Row::Workflow(i)), spans));
+        out.row(
+            Row::Workflow(i),
+            focusable(app, Some(Row::Workflow(i)), spans),
+        );
     }
     if app.sidebar.workflows_more > 0 {
         out.push(muted_line(
@@ -341,7 +412,7 @@ fn mcp_color(t: &Tokens, server: &McpServer) -> Color {
     }
 }
 
-fn mcp(app: &App, width: usize, out: &mut Vec<Line<'static>>) {
+fn mcp(app: &App, width: usize, out: &mut Out) {
     let t = &app.theme;
     if app.sidebar.mcp.ready().is_none() {
         return;
@@ -350,11 +421,8 @@ fn mcp(app: &App, width: usize, out: &mut Vec<Line<'static>>) {
     let collapsed = app.sidebar.collapsed.contains(&Section::Mcp);
     out.push(Line::default());
     let arrow = if collapsed { "▶" } else { "▼" };
-    out.push(header(
-        app,
-        Some(Row::Header(Section::Mcp)),
-        format!("{arrow} MCP"),
-    ));
+    let row = Row::Header(Section::Mcp);
+    out.row(row, header(app, Some(row), format!("{arrow} MCP")));
     if collapsed {
         return;
     }
@@ -370,7 +438,10 @@ fn mcp(app: &App, width: usize, out: &mut Vec<Line<'static>>) {
         return;
     }
     for (i, server) in servers.iter().take(MCP_ROWS).enumerate() {
-        out.push(focusable(app, Some(Row::Mcp(i)), mcp_row(t, server, width)));
+        out.row(
+            Row::Mcp(i),
+            focusable(app, Some(Row::Mcp(i)), mcp_row(t, server, width)),
+        );
         if let Some(note) = mcp_note(server) {
             let color = if server.status == "failed" && !server.blocked() {
                 t.error
@@ -517,7 +588,7 @@ pub fn machine_color(t: &Tokens, percent: f64) -> Color {
 
 /// `▼ Machine  macOS 15.0`, then CPU, Mem and Disk bars with their details and the load
 /// line; `—` when `GET /system` failed before any sample.
-fn machine(app: &App, width: usize, out: &mut Vec<Line<'static>>) {
+fn machine(app: &App, width: usize, out: &mut Out) {
     if !app.machine_stats() || !app.sidebar.machine_shown() {
         return;
     }
@@ -542,7 +613,7 @@ fn machine(app: &App, width: usize, out: &mut Vec<Line<'static>>) {
             Style::default().fg(t.text_muted),
         ));
     }
-    out.push(line);
+    out.row(Row::Header(Section::Machine), line);
     if collapsed {
         return;
     }
@@ -631,7 +702,7 @@ fn machine_row(
     ));
 }
 
-fn files(app: &App, width: usize, out: &mut Vec<Line<'static>>) {
+fn files(app: &App, width: usize, out: &mut Out) {
     let t = &app.theme;
     let changes = app.sidebar.changes();
     if changes.is_empty() {
@@ -640,11 +711,11 @@ fn files(app: &App, width: usize, out: &mut Vec<Line<'static>>) {
     let collapsed = app.sidebar.collapsed.contains(&Section::Files);
     out.push(Line::default());
     let arrow = if collapsed { "▶" } else { "▼" };
-    out.push(header(
-        app,
-        Some(Row::Header(Section::Files)),
-        format!("{arrow} Modified files"),
-    ));
+    let row = Row::Header(Section::Files);
+    out.row(
+        row,
+        header(app, Some(row), format!("{arrow} Modified files")),
+    );
     if collapsed {
         return;
     }
@@ -652,18 +723,15 @@ fn files(app: &App, width: usize, out: &mut Vec<Line<'static>>) {
         let added = format!("+{}", change.additions);
         let removed = format!("-{}", change.deletions);
         let room = width.saturating_sub(added.len() + removed.len() + 2);
-        out.push(focusable(
-            app,
-            Some(Row::File(i)),
-            vec![
-                Span::styled(
-                    format!("{:<room$}", shorten_path(&change.file, room)),
-                    Style::default().fg(t.text),
-                ),
-                Span::styled(format!(" {added}"), Style::default().fg(t.diff_added)),
-                Span::styled(format!(" {removed}"), Style::default().fg(t.diff_removed)),
-            ],
-        ));
+        let spans = vec![
+            Span::styled(
+                format!("{:<room$}", shorten_path(&change.file, room)),
+                Style::default().fg(t.text),
+            ),
+            Span::styled(format!(" {added}"), Style::default().fg(t.diff_added)),
+            Span::styled(format!(" {removed}"), Style::default().fg(t.diff_removed)),
+        ];
+        out.row(Row::File(i), focusable(app, Some(Row::File(i)), spans));
     }
     if changes.len() > FILE_ROWS {
         out.push(muted_line(

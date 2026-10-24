@@ -19,7 +19,8 @@ cyber-server = { path = "../cyber-server" }
 crossterm = { version = "0.29", features = ["event-stream"] }
 futures = "0.3"
 pulldown-cmark = { version = "=0.13.4", default-features = false }
-ratatui = "0.30"
+# `line_count` places the click targets of wrapped prompt rows.
+ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 serde.workspace = true
 serde_json.workspace = true
 jsonschema = { version = "0.58.6", default-features = false }

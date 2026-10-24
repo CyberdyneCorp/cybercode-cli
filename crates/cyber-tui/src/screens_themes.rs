@@ -331,3 +331,44 @@ async fn a_permission_request_closes_the_switcher_and_restores_the_theme() {
     assert!(matches!(app.overlay, Overlay::Permission(_)));
     assert_eq!(app.theme.name, "cyber");
 }
+
+#[tokio::test]
+async fn a_click_previews_and_a_second_keeps_the_theme() {
+    use crate::screens_mouse::{cell_of, click};
+    let server = Server::start().await;
+    let id = server.answered_session().await;
+    let store = crate::store::LocalStore::new(&server.root().join("state"));
+    let mut app = started(&server, &id).await;
+    typed(&mut app, "/theme");
+    let name = {
+        let Overlay::Themes(s) = &app.overlay else {
+            panic!("the switcher is not open")
+        };
+        s.rows[s.visible(app.theme_filter)[2]].name.clone()
+    };
+    assert_ne!(name, "cyber");
+    // Every frame of a screen test is drawn in `cyber`, so the preview is read before
+    // the next one.
+    let draw = |app: &mut App| buffer(app, 140, 40, &Opts::default());
+    let at = cell_of(&draw(&mut app), &format!("  {name}"));
+    assert!(click(&mut app, at).is_empty());
+    assert_eq!(highlighted(&app), name);
+    assert_eq!(app.theme.name, name, "the first click previews");
+    // A click outside the switcher neither closes nor reverts it.
+    assert!(click(&mut app, (0, 0)).is_empty());
+    assert!(matches!(app.overlay, Overlay::Themes(_)));
+    assert_eq!(app.theme.name, name);
+    assert!(store.get("prefs").is_none_or(|p| p.get("theme").is_none()));
+
+    // It disarmed the row: the next click selects again, the one after keeps it.
+    draw(&mut app);
+    assert!(click(&mut app, at).is_empty());
+    let actions = click(&mut app, at);
+    assert_eq!(actions, [Action::SaveTheme(name.clone())]);
+    assert!(matches!(app.overlay, Overlay::None));
+    assert_eq!(app.theme.name, name);
+    for action in actions {
+        crate::runner::persist(&store, action);
+    }
+    assert_eq!(started(&server, &id).await.theme.name, name);
+}

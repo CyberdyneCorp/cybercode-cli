@@ -1,10 +1,11 @@
 //! The composer (`tui` → Composer appearance): a `surface` block with a left accent
 //! bar in the input mode's color, 1–8 text rows, and an info line with the agent,
-//! model, provider and Mode, plus the running state.
+//! model, provider and Mode, plus the running state. Pending paste, image and PDF
+//! chips are drawn in `accent` on `selection`.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
@@ -67,9 +68,12 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
             Span::styled(PLACEHOLDER, Style::default().fg(t.text_subtle)),
         ]));
     } else {
+        let labels: Vec<String> = app.attachments.chips.iter().map(|c| c.label()).collect();
         let text = app.composer.lines();
         for line in text.iter().skip(skip as usize).take(rows as usize) {
-            lines.push(Line::from(vec![bar.clone(), Span::raw(line.clone())]));
+            let mut spans = vec![bar.clone()];
+            spans.extend(chip_spans(line, &labels, chip_style(app)));
+            lines.push(Line::from(spans));
         }
     }
     while lines.len() < rows as usize + 2 {
@@ -87,6 +91,38 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
             area.y + 1 + row as u16 - skip,
         ));
     }
+}
+
+/// Chips stand out from typed text; under `NO_COLOR` in reverse video.
+fn chip_style(app: &App) -> Style {
+    let t = &app.theme;
+    if t.monochrome {
+        Style::default().add_modifier(Modifier::REVERSED)
+    } else {
+        Style::default().fg(t.accent).bg(t.selection)
+    }
+}
+
+/// `line` split into plain text and the chip `labels` it contains, styled `chip`.
+fn chip_spans(line: &str, labels: &[String], chip: Style) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut rest = line;
+    // The earliest label in what is left, then the text before it.
+    while let Some((at, label)) = labels
+        .iter()
+        .filter_map(|label| Some((rest.find(label.as_str())?, label)))
+        .min_by_key(|&(at, _)| at)
+    {
+        if at > 0 {
+            spans.push(Span::raw(rest[..at].to_owned()));
+        }
+        spans.push(Span::styled(label.clone(), chip));
+        rest = &rest[at + label.len()..];
+    }
+    if !rest.is_empty() {
+        spans.push(Span::raw(rest.to_owned()));
+    }
+    spans
 }
 
 /// `<Agent> · <model> <provider> · <Mode>`, or the input mode for `!` and `/`; while a

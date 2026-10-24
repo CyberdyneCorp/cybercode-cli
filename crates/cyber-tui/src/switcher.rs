@@ -167,7 +167,7 @@ impl App {
     }
 
     /// Show the highlighted theme across the whole TUI.
-    fn preview_selected(&mut self) {
+    pub(crate) fn preview_selected(&mut self) {
         let Overlay::Themes(s) = &self.overlay else {
             return;
         };

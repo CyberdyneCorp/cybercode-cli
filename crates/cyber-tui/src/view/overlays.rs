@@ -1,13 +1,14 @@
 //! Pickers, the permission and question prompts, help and autocomplete.
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::app::{App, Completion, PermStep, Picker, QuestionForm};
 use crate::model::Request;
+use crate::mouse::{List, Target};
 
 pub(super) fn centered(area: Rect, width: u16, height: u16) -> Rect {
     let w = width.min(area.width.saturating_sub(4));
@@ -45,6 +46,46 @@ fn selectable(app: &App, text: String, selected: bool) -> Line<'static> {
     }
 }
 
+/// Register the one-row list entry drawn `offset` rows into the bordered `rect`.
+pub(super) fn push_row(app: &App, rect: Rect, offset: usize, list: List, index: usize) {
+    let inner = rect.inner(Margin::new(1, 1));
+    let row = Rect {
+        y: inner.y.saturating_add(offset as u16),
+        height: 1,
+        ..inner
+    };
+    app.mouse
+        .push(row.intersection(inner), Target::row(list, index));
+}
+
+/// Register `count` rows of `list`, `lines[first..]`, of a paragraph wrapped in `inner`.
+fn push_wrapped_rows(
+    app: &App,
+    lines: &[Line<'_>],
+    inner: Rect,
+    first: usize,
+    count: usize,
+    list: List,
+) {
+    let height = |lines: &[Line<'_>]| {
+        Paragraph::new(lines.to_vec())
+            .wrap(Wrap { trim: false })
+            .line_count(inner.width) as u16
+    };
+    let mut top = height(&lines[..first]);
+    for (index, line) in lines[first..].iter().take(count).enumerate() {
+        let rows = height(std::slice::from_ref(line));
+        let rect = Rect {
+            y: inner.y.saturating_add(top),
+            height: rows,
+            ..inner
+        };
+        app.mouse
+            .push(rect.intersection(inner), Target::row(list, index));
+        top = top.saturating_add(rows);
+    }
+}
+
 fn picker_prompt(app: &App, p: &Picker) -> Line<'static> {
     let t = &app.theme;
     let search = vec![
@@ -76,7 +117,10 @@ pub fn picker(f: &mut Frame, app: &App, p: &Picker, area: Rect) {
     let rect = centered(area, 80, 20);
     let mut lines = vec![picker_prompt(app, p), Line::default()];
     let room = rect.height.saturating_sub(5) as usize;
-    let first = p.selected.saturating_sub(room.saturating_sub(1));
+    let selected = p.selected..p.selected + 1;
+    let first = app
+        .mouse
+        .window(List::Picker, selected, room, p.filtered.len());
     for (pos, &i) in p.filtered.iter().enumerate().skip(first).take(room) {
         let c = &p.items[i];
         let text = if c.detail.is_empty() {
@@ -85,6 +129,10 @@ pub fn picker(f: &mut Frame, app: &App, p: &Picker, area: Rect) {
             format!("{}  {}", c.label, c.detail)
         };
         lines.push(selectable(app, text, pos == p.selected));
+        // A pending rename or delete takes its keys only.
+        if p.pending.is_none() {
+            push_row(app, rect, lines.len() - 1, List::Picker, pos);
+        }
     }
     if p.filtered.is_empty() {
         lines.push(Line::from(Span::styled(
@@ -109,9 +157,13 @@ pub fn palette(f: &mut Frame, app: &App, p: &crate::palette::Palette, area: Rect
         Line::default(),
     ];
     let room = rect.height.saturating_sub(5) as usize;
-    let first = p.selected.saturating_sub(room.saturating_sub(1));
+    let selected = p.selected..p.selected + 1;
+    let first = app
+        .mouse
+        .window(List::Palette, selected, room, p.filtered.len());
     for (pos, &i) in p.filtered.iter().enumerate().skip(first).take(room) {
         lines.push(palette_row(app, &p.entries[i], inner, pos == p.selected));
+        push_row(app, rect, lines.len() - 1, List::Palette, pos);
     }
     if p.filtered.is_empty() {
         lines.push(Line::from(Span::styled(
@@ -235,6 +287,7 @@ pub fn permission(f: &mut Frame, app: &App, step: &PermStep, area: Rect) {
         }
     }
     lines.push(Line::default());
+    let options = lines.len();
     match step {
         PermStep::Choose(i) => {
             for (n, label) in ["Allow once (y)", "Allow always… (a)", "Reject (n)"]
@@ -264,6 +317,11 @@ pub fn permission(f: &mut Frame, app: &App, step: &PermStep, area: Rect) {
             )));
             lines.push(Line::from(format!("› {text}")));
         }
+    }
+    // Only the choice step takes clicks: saving approvals and the feedback take keys.
+    if let PermStep::Choose(_) = step {
+        let inner = rect.inner(Margin::new(1, 1));
+        push_wrapped_rows(app, &lines, inner, options, 3, List::Permission);
     }
     f.render_widget(Clear, rect);
     f.render_widget(
@@ -319,12 +377,14 @@ pub fn question(f: &mut Frame, app: &App, form: &QuestionForm, area: Rect) {
             )),
         );
     }
+    let mut options = None;
     match questions.get(form.tab) {
         Some(q) => {
             lines.push(Line::from(Span::styled(
                 q.question.clone(),
                 Style::default().fg(t.text).add_modifier(Modifier::BOLD),
             )));
+            options = Some((lines.len(), q.options.len() + usize::from(q.custom)));
             for (i, (label, detail)) in q.options.iter().enumerate() {
                 let mark = if form.chosen[form.tab].contains(&i) {
                     "[x] "
@@ -366,6 +426,11 @@ pub fn question(f: &mut Frame, app: &App, form: &QuestionForm, area: Rect) {
         "Enter select · Space toggle · Tab next · Esc dismiss",
         Style::default().fg(t.text_muted),
     )));
+    // While an answer is typed, the keys go to it.
+    if let Some((first, count)) = options.filter(|_| !form.typing) {
+        let inner = rect.inner(Margin::new(1, 1));
+        push_wrapped_rows(app, &lines, inner, first, count, List::Question);
+    }
     f.render_widget(Clear, rect);
     f.render_widget(
         Paragraph::new(lines)
@@ -504,6 +569,10 @@ pub fn help(f: &mut Frame, app: &App, area: Rect) {
         (
             "/export [html|md|json] [path]",
             "write this session to a file in the Location",
+        ),
+        (
+            "/output-style [name]",
+            "how replies are written, from the next turn; d in the picker saves the default",
         ),
         (
             "/tree · /label <name>",

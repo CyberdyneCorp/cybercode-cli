@@ -14,6 +14,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
 use super::layout::truncate_end;
 use crate::app::App;
+use crate::mouse::{List, Target};
 use crate::workflows::{Agent, Confirm, Group, LogView, RunDetail, RunView, Summary};
 
 /// Inner widths from which the list shows every column, or one row per run.
@@ -334,7 +335,7 @@ fn draw_list(f: &mut Frame, app: &App, area: Rect) {
         }
         None => vec![muted(app, " Loading…")],
         Some(runs) if runs.is_empty() => vec![muted(app, empty(app))],
-        Some(_) => list_lines(app, inner, body.height as usize),
+        Some(_) => list_lines(app, body),
     };
     f.render_widget(Paragraph::new(lines), body);
     f.render_widget(Paragraph::new(key_line(app, inner, list_keys(app))), keys);
@@ -348,30 +349,48 @@ fn empty(app: &App) -> &'static str {
     }
 }
 
-/// The header and every run's rows, scrolled so the selected run shows.
-fn list_lines(app: &App, inner: usize, height: usize) -> Vec<Line<'static>> {
+/// The header and every run's rows, scrolled so the selected run shows. Each run's
+/// rows are a click target over `body`.
+fn list_lines(app: &App, body: Rect) -> Vec<Line<'static>> {
     let w = &app.workflows;
     let since = w.since(app.now());
+    let (inner, height) = (body.width as usize, body.height as usize);
     let layout = width_of(inner);
     let mut lines = Vec::new();
     if !app.screen_reader {
         lines.push(header(app, layout, inner));
     }
-    let mut selected_end = 0;
+    // The selected run's lines, and the row above them that the header takes back.
+    let mut selected_lines = 0..0;
+    let mut runs = Vec::new();
     for (i, run) in w.summaries().iter().enumerate() {
         let selected = i == w.selected;
+        let start = lines.len();
         lines.extend(run_lines(app, run, selected, layout, inner, since));
+        runs.push(start..lines.len());
         if let Some(refusal) = w.refusals.get(&run.id) {
             lines.push(refusal_line(app, refusal, inner));
         }
         if selected {
-            selected_end = lines.len();
+            let header = usize::from(!app.screen_reader);
+            selected_lines = start.saturating_sub(header)..lines.len();
         }
     }
-    let skip = selected_end.saturating_sub(height);
+    let skip = app
+        .mouse
+        .window(List::Runs, selected_lines, height, lines.len());
     let mut shown: Vec<Line> = lines.into_iter().skip(skip).collect();
-    if skip > 0 && !app.screen_reader {
+    // The header takes the first row back when the list is scrolled.
+    let header_row = skip > 0 && !app.screen_reader;
+    if header_row {
         shown[0] = header(app, layout, inner);
+    }
+    if w.confirm.is_none() {
+        let top = skip + usize::from(header_row);
+        for (i, rows) in runs.into_iter().enumerate() {
+            let target = Target::row(List::Runs, i);
+            super::push_lines(app, body, rows.start.max(top)..rows.end, skip, target);
+        }
     }
     shown
 }
@@ -655,7 +674,12 @@ fn draw_run(f: &mut Frame, app: &App, view: &RunView, area: Rect) {
             .map(|line| muted(app, truncate_end(line, inner))),
     );
     let available = (body.height as usize).saturating_sub(lines.len());
-    lines.extend(tree_lines(app, detail, view.selected, inner, available));
+    let tree = Rect {
+        y: body.y + lines.len() as u16,
+        height: available as u16,
+        ..body
+    };
+    lines.extend(tree_lines(app, detail, view.selected, tree));
     if let Some(refusal) = app.workflows.refusals.get(&run.id) {
         lines.push(refusal_line(app, refusal, inner));
     }
@@ -679,24 +703,22 @@ fn run_progress(app: &App, run: &Summary, inner: usize) -> Line<'static> {
     Line::from(spans)
 }
 
-/// Phases with their agents, scrolled so the selected agent shows.
-fn tree_lines(
-    app: &App,
-    detail: &RunDetail,
-    selected: usize,
-    inner: usize,
-    height: usize,
-) -> Vec<Line<'static>> {
+/// Phases with their agents, scrolled so the selected agent shows. Each agent's row is
+/// a click target over `tree`.
+fn tree_lines(app: &App, detail: &RunDetail, selected: usize, tree: Rect) -> Vec<Line<'static>> {
+    let inner = tree.width as usize;
     let mut lines = Vec::new();
     let mut row = 0;
-    let mut selected_end = 0;
+    let mut selected_lines = 0..0;
+    let mut agents = Vec::new();
     for group in detail.groups() {
         lines.push(group_line(app, &group, inner));
         for &index in &group.agents {
             let agent = &detail.agents[index];
+            agents.push(lines.len());
             lines.push(agent_line(app, agent, row == selected, inner));
             if row == selected {
-                selected_end = lines.len();
+                selected_lines = lines.len() - 1..lines.len();
             }
             row += 1;
         }
@@ -704,7 +726,16 @@ fn tree_lines(
             lines.push(muted(app, format!("     ◌ {} queued", group.queued)));
         }
     }
-    let skip = selected_end.saturating_sub(height);
+    let height = tree.height as usize;
+    let skip = app
+        .mouse
+        .window(List::Agents, selected_lines, height, lines.len());
+    if app.workflows.confirm.is_none() {
+        for (row, line) in agents.into_iter().enumerate() {
+            let target = Target::row(List::Agents, row);
+            super::push_lines(app, tree, line..line + 1, skip, target);
+        }
+    }
     lines.into_iter().skip(skip).collect()
 }
 

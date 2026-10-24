@@ -9,6 +9,7 @@ pub mod layout;
 mod login;
 mod messages;
 mod messaging;
+mod output_styles;
 mod overlays;
 pub(crate) mod progress;
 mod rename;
@@ -32,6 +33,8 @@ pub(crate) fn messaging_card_height() -> u16 {
     messaging::CARD_HEIGHT
 }
 
+use std::ops::Range;
+
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -39,10 +42,12 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
 use crate::app::{App, Overlay};
+use crate::mouse::{Pane, Target};
 
 pub fn draw(f: &mut Frame, app: &App) {
     let area = f.area();
     f.render_widget(Block::default().style(base(app)), area);
+    app.mouse.clear();
     let plan = layout::plan(
         area,
         &layout::Inputs {
@@ -91,6 +96,9 @@ pub fn draw(f: &mut Frame, app: &App) {
     }
     let below_banner = banner(f, app, plan.transcript);
     let transcript = recap(f, app, below_banner);
+    // Panes first: the rows drawn on them are targets over them.
+    app.mouse.push(transcript, Target::Pane(Pane::Transcript));
+    app.mouse.push(plan.composer, Target::Pane(Pane::Composer));
     if welcome::shown(app) {
         app.set_screen_links(Vec::new());
         welcome::draw(f, app, transcript);
@@ -103,10 +111,15 @@ pub fn draw(f: &mut Frame, app: &App) {
     composer::draw(f, app, plan.composer);
     footer::draw(f, app, plan.footer, plan.compact_footer);
     if let Some(rect) = plan.sidebar {
+        app.mouse.push(rect, Target::Pane(Pane::Sidebar));
         sidebar::draw(f, app, rect);
     }
     if let Some(c) = &app.completion {
         overlays::completion(f, app, c, plan.composer);
+    }
+    if !matches!(app.overlay, Overlay::None) {
+        // Every panel over the main screen is modal: a click beside it does nothing.
+        app.mouse.modal(area);
     }
     match &app.overlay {
         Overlay::None
@@ -138,8 +151,25 @@ pub fn draw(f: &mut Frame, app: &App) {
         Overlay::SideChat(chat) => overlays::side_chat(f, app, chat, area),
         Overlay::ConfirmStopTasks => overlays::confirm_stop_tasks(f, app, area),
         Overlay::ConfirmExport(request) => overlays::confirm_export(f, app, request, area),
+        Overlay::OutputStyles(picker) => output_styles::draw(f, app, picker, area),
         Overlay::ConfirmBypass => overlays::confirm_bypass(f, app, area),
     }
+}
+
+/// Register `target` over the lines `lines` of a paragraph drawn in `body` from its
+/// line `skip` on; the part scrolled away or cut off below takes no clicks.
+pub(super) fn push_lines(app: &App, body: Rect, lines: Range<usize>, skip: usize, target: Target) {
+    let start = lines.start.max(skip) - skip;
+    let end = lines.end.saturating_sub(skip);
+    if start >= end || start >= body.height as usize {
+        return;
+    }
+    let rect = Rect {
+        y: body.y + start as u16,
+        height: (end - start).min(body.height as usize) as u16,
+        ..body
+    };
+    app.mouse.push(rect.intersection(body), target);
 }
 
 /// The full-screen view the overlay opens: the explorer, the Workflow monitor,

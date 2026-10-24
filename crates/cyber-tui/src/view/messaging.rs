@@ -14,6 +14,7 @@ use super::layout::truncate_end;
 use crate::app::App;
 use crate::messaging::{Filter, Notice, Record, Row, clean, outcome_label};
 use crate::model::Tool;
+use crate::mouse::{List, Target};
 
 /// Rows of the held card: its frame, the sender line, the text and the keys.
 pub const CARD_HEIGHT: u16 = 5;
@@ -306,12 +307,20 @@ pub(super) fn view(f: &mut Frame, app: &App, area: Rect) {
         ..inner
     };
     let rows = app.messaging.rows(&app.items, &app.queued);
-    let lines = body_lines(app, &rows, inner.width as usize);
-    let (lines, selected_row) = lines;
+    let (lines, starts) = body_lines(app, &rows, inner.width as usize);
+    let selected_row = app
+        .messaging
+        .selected_index(&rows)
+        .and_then(|i| starts.get(i).copied());
     let height = body.height as usize;
-    let start = selected_row
-        .map_or(0, |row| row.saturating_sub(height.saturating_sub(1)))
-        .min(lines.len().saturating_sub(height));
+    let selected = selected_row.map_or(0..0, |row| row..row + 1);
+    let start = app
+        .mouse
+        .window(List::Messages, selected, height, lines.len());
+    for (i, line) in starts.into_iter().enumerate() {
+        let target = Target::row(List::Messages, i);
+        super::push_lines(app, body, line..line + 1, start, target);
+    }
     let shown: Vec<Line> = lines.into_iter().skip(start).take(height).collect();
     f.render_widget(Paragraph::new(shown), body);
     let keys = Rect {
@@ -345,8 +354,8 @@ fn filters(app: &App) -> Vec<Span<'static>> {
     spans
 }
 
-/// The rows, the expansion under the selected one, and the selected row's line.
-fn body_lines(app: &App, rows: &[Row], width: usize) -> (Vec<Line<'static>>, Option<usize>) {
+/// The rows, the expansion under the selected one, and each row's line.
+fn body_lines(app: &App, rows: &[Row], width: usize) -> (Vec<Line<'static>>, Vec<usize>) {
     let t = &app.theme;
     if rows.is_empty() {
         let text = "  No messages yet. Other Sessions reach this one with send_message.";
@@ -355,16 +364,16 @@ fn body_lines(app: &App, rows: &[Row], width: usize) -> (Vec<Line<'static>>, Opt
                 text,
                 Style::default().fg(t.text_muted),
             ))],
-            None,
+            Vec::new(),
         );
     }
     let selected = app.messaging.selected_index(rows);
     let mut lines = Vec::new();
-    let mut selected_row = None;
+    let mut starts = Vec::new();
     for (i, row) in rows.iter().enumerate() {
         let text = truncate_end(&row_text(app, row), width);
+        starts.push(lines.len());
         if Some(i) == selected {
-            selected_row = Some(lines.len());
             let pad = width.saturating_sub(text.width());
             lines.push(Line::from(Span::styled(
                 format!("{text}{}", " ".repeat(pad)),
@@ -377,7 +386,7 @@ fn body_lines(app: &App, rows: &[Row], width: usize) -> (Vec<Line<'static>>, Opt
             lines.push(Line::from(Span::styled(text, row_style(app, row))));
         }
     }
-    (lines, selected_row)
+    (lines, starts)
 }
 
 fn row_style(app: &App, row: &Row) -> Style {

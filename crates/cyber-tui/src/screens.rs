@@ -165,7 +165,7 @@ fn write_tool(body: &Value) -> Value {
 }
 
 /// The answer for a prompt, chosen by a keyword in it.
-fn reply(body: &Value) -> Value {
+pub(crate) fn reply(body: &Value) -> Value {
     let text = body.to_string();
     if text.contains("Write a short title") {
         return json!({ "content": TITLE });
