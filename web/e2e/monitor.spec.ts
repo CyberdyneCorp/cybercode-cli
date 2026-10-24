@@ -56,11 +56,20 @@ test('Session navigation scopes the transcript and New Session creates a real ow
   await select(page, 'Second browser Session');
   await tab(page, 'Conversation');
   await expect(page.getByText('A transcript unique to the first Session', { exact: true })).toHaveCount(0);
-  const previous = await dashboard.api<{ data: { id: string }[] }>('/sessions');
+  const previous = await dashboard.api<{ data: { id: string; title: string }[] }>('/sessions');
   await page.getByRole('button', { name: 'New Session', exact: true }).click();
-  await eventually(() => dashboard.api<{ data: { id: string }[] }>('/sessions'), rows => rows.data.length === previous.data.length + 1);
-  await expect(page.getByRole('navigation', { name: 'Sessions', exact: true }).getByRole('button', { pressed: true })).toHaveCount(1);
+  const updated = await eventually(
+    () => dashboard.api<{ data: { id: string; title: string }[] }>('/sessions'),
+    rows => rows.data.length === previous.data.length + 1,
+  );
+  const created = updated.data.find(row => !previous.data.some(old => old.id === row.id))!;
+  // Persistence precedes the asynchronous list reload and selection. Wait for the
+  // newly created Session itself, rather than any pre-existing selected row.
+  await expect(page.getByRole('navigation', { name: 'Sessions', exact: true }).getByRole('button', { name: created.title, exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('heading', { name: created.title, exact: true })).toBeVisible();
+  const prompted = page.waitForRequest(request => request.method() === 'POST' && new URL(request.url()).pathname === `/api/v1/sessions/${created.id}/prompt`);
   await send(page, 'A fresh Session conversation');
+  await prompted;
   await expect(page.getByText('Scripted browser response.', { exact: true })).toBeVisible();
 });
 
