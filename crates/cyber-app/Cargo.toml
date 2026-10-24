@@ -33,6 +33,7 @@ url = "2"
 
 [dev-dependencies]
 cyber-client = { path = "../cyber-client" }
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
 rusqlite.workspace = true
 reqwest = { version = "0.13", features = ["json", "stream"] }
 tokio-tungstenite = "0.28"

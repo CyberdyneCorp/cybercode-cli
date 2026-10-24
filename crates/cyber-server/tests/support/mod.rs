@@ -116,6 +116,8 @@ impl ModelResolver for Models {
                 ..Cost::default()
             }),
             prefers_apply_patch: false,
+            vision: true,
+            pdf: true,
         })
     }
 

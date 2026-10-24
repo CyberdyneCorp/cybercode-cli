@@ -23,7 +23,9 @@ pub struct MemoryHttpIdentity {
 
 /// How long a stored response replays.
 pub(super) const RETENTION_MS: i64 = 24 * 3600 * 1000;
-const MAX_BODY: usize = 32 * 1024 * 1024;
+/// The largest body any route takes (a Session import), so a keyed request reaches the
+/// route, whose own limit and error then apply.
+const MAX_BODY: usize = super::export::IMPORT_BODY_LIMIT;
 /// Single-user server: every authenticated caller is the same principal.
 pub(super) const PRINCIPAL: &str = "cyber";
 

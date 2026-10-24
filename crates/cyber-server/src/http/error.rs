@@ -6,6 +6,7 @@ use axum::response::{IntoResponse, Response};
 use schemars::JsonSchema;
 use serde::Serialize;
 
+use crate::runtime::attachments::AttachmentError;
 use crate::runtime::messaging::{AddressError, PeerAuthReason, PeerError, PeerErrorTag, PeerScope};
 use crate::runtime::{CommandPlanError, RuntimeError};
 
@@ -208,6 +209,7 @@ impl From<RuntimeError> for ApiError {
             )
             .with_field("size", size)
             .with_field("limit", limit),
+            RuntimeError::Attachment(e) => Self::attachment(e),
             RuntimeError::Disabled(service) => Self::service_unavailable(service, message),
             RuntimeError::GoalNotFound(_) => Self::not_found("GoalNotFoundError", message),
             RuntimeError::GoalTemplateNotFound(_) => {
@@ -254,6 +256,35 @@ impl From<RuntimeError> for ApiError {
 }
 
 impl ApiError {
+    /// A refused prompt attachment; nothing was admitted.
+    fn attachment(e: AttachmentError) -> Self {
+        let message = e.to_string();
+        match e {
+            AttachmentError::TooLarge { size, limit } => Self::new(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "AttachmentTooLargeError",
+                message,
+            )
+            .with_field("size", size)
+            .with_field("limit", limit),
+            AttachmentError::Unsupported { media_type, .. } => Self::new(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "UnsupportedAttachmentError",
+                message,
+            )
+            .with_field("media_type", media_type),
+            AttachmentError::Modality { model, modality } => Self::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "UnsupportedModalityError",
+                message,
+            )
+            .with_field("model", model)
+            .with_field("modality", modality),
+            AttachmentError::Invalid(m) => Self::invalid(m),
+            AttachmentError::Storage(detail) => Self::unknown(detail),
+        }
+    }
+
     /// A message address that resolves to no target; nothing was recorded.
     fn address(e: AddressError) -> Self {
         let message = e.to_string();

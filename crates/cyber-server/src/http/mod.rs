@@ -29,6 +29,7 @@ pub mod openapi;
 pub mod peer;
 mod peers;
 mod plugins;
+mod prompt_parts;
 pub mod providers;
 mod pty;
 pub mod remote_tools;

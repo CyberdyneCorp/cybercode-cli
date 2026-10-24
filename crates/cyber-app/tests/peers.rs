@@ -2682,3 +2682,82 @@ async fn a_wildcard_pairing_code_names_the_hosts_lan_name() {
     assert!(!code.contains(&format!("{machine}.local")), "{code}");
     served.stop().await;
 }
+
+/// `server-api` → Prompt attachment parts: a paired Device's path names nothing on this
+/// machine, so an attached peer's `file` part is refused before anything is read, while
+/// its inline `document` part passes the peer filter and reaches the normal admission
+/// checks (here the text-only model's modality check).
+#[tokio::test]
+async fn peer_prompt_refuses_file_parts() {
+    use cyber_server::runtime::messaging::PeerScope;
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let model = scripted_model::ScriptedModel::start(|_| json!({"content": "ok"}));
+    let allow = json!({"permissions": {"remote.attach": {"peer:laptop": "allow"}}});
+    let desk = attach_desk(&root, &model, allow, Duration::from_secs(3)).await;
+    let peer = desk.registration.peer_url.clone().unwrap();
+    let laptop = grant_token(&desk, "laptop", vec![PeerScope::Attach]);
+    let session = desk.session("shots").await;
+    let attach = open_attach(&peer, &session, &laptop).await;
+    std::fs::write(root.join("repo/secret.png"), b"\x89PNG\r\n\x1a\nsecret").unwrap();
+    let prompt = |parts: Value| {
+        peer_client()
+            .post(format!("{peer}/api/v1/peer/attach/{session}/prompt"))
+            .bearer_auth(&laptop)
+            .header("x-cyber-attach", attach.as_str())
+            .json(&json!({ "parts": parts }))
+            .send()
+    };
+
+    let refused = prompt(json!([
+        {"type": "text", "text": "look"},
+        {"type": "file", "path": root.join("repo/secret.png").display().to_string()},
+    ]))
+    .await
+    .unwrap();
+    assert_eq!(refused.status().as_u16(), 400);
+    let body: Value = refused.json().await.unwrap();
+    assert_eq!(body["_tag"], "InvalidRequestError", "{body}");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("attachment parts only"),
+        "{body}"
+    );
+    assert!(requests(&desk, &session, "read").await.is_empty());
+    assert!(!transcript(&desk, &session).await.contains("look"));
+    assert!(!root.join("data/attachments").join(&session).exists());
+
+    let pdf = base64::engine::general_purpose::STANDARD.encode(b"%PDF-1.4\n%%EOF\n");
+    let document = prompt(json!([
+        {"type": "document", "media_type": "application/pdf", "data": pdf, "name": "spec.pdf"},
+    ]))
+    .await
+    .unwrap();
+    assert_eq!(document.status().as_u16(), 422);
+    let body: Value = document.json().await.unwrap();
+    assert_eq!(body["_tag"], "UnsupportedModalityError", "{body}");
+    assert_eq!(body["modality"], "pdf", "{body}");
+
+    // A blob the Session stores (a queued input taken back in `cyber attach`) passes
+    // the peer filter and reaches the Session's own checks: its type comes from its
+    // bytes, and this model has no image input.
+    let png = base64::engine::general_purpose::STANDARD
+        .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+        .unwrap();
+    let store = desk.runtime.attachments().unwrap();
+    let sha256 = store.write(&session, &png).unwrap().sha256;
+    let stored = prompt(json!([
+        {"type": "text", "text": "again"},
+        {"type": "attachment", "sha256": sha256},
+    ]))
+    .await
+    .unwrap();
+    let status = stored.status().as_u16();
+    let body: Value = stored.json().await.unwrap();
+    assert_eq!(status, 422, "{body}");
+    assert_eq!(body["_tag"], "UnsupportedModalityError", "{body}");
+    assert_eq!(body["modality"], "image", "{body}");
+    desk.stop().await;
+}

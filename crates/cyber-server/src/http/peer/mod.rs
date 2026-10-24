@@ -105,7 +105,12 @@ fn shared_router(
         .route(&format!("{one}/session"), get(attach::session))
         .route(&format!("{one}/messages"), get(attach::messages))
         .route(&format!("{one}/events"), get(attach::events))
-        .route(&format!("{one}/prompt"), post(attach::prompt))
+        .route(
+            &format!("{one}/prompt"),
+            post(attach::prompt).layer(axum::extract::DefaultBodyLimit::max(
+                crate::http::prompt_parts::PROMPT_BODY_LIMIT,
+            )),
+        )
         .route(&format!("{one}/interrupt"), post(attach::interrupt))
         .route(&format!("{one}/permissions"), get(attach::permissions))
         .route(

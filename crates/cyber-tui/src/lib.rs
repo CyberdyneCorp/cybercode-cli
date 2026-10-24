@@ -2,6 +2,7 @@
 
 mod admissions;
 mod app;
+mod attachments;
 pub mod books;
 mod branches;
 mod children;
@@ -48,6 +49,8 @@ mod workflows;
 mod screens;
 #[cfg(test)]
 mod screens_a11y;
+#[cfg(test)]
+mod screens_attachments;
 #[cfg(test)]
 mod screens_branches;
 #[cfg(test)]

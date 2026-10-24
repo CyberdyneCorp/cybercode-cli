@@ -94,6 +94,13 @@ const DEFAULTS: &[(&str, &str, &str, &str)] = &[
     ),
     ("composer", "newline", "ctrl+j", "insert a newline"),
     ("composer", "editor", "ctrl+g", "edit in $EDITOR"),
+    (
+        "composer",
+        "paste_image",
+        // Windows Terminal takes Ctrl+V for its own text paste.
+        if cfg!(windows) { "alt+v" } else { "ctrl+v" },
+        "attach the clipboard image",
+    ),
     ("palette", "palette_close", "esc", "close the palette"),
     ("palette", "palette_run", "enter", "run the selected entry"),
     ("palette", "palette_next", "down", "next entry"),

@@ -59,7 +59,8 @@ fn enter_steers_while_running_and_tab_queues() {
         idle.on_key(key(KeyCode::Enter)),
         vec![Action::Prompt {
             text: "hello".into(),
-            delivery: "steer"
+            delivery: "steer",
+            chips: Vec::new(),
         }]
     );
     let mut busy = App::new(session(true), Vec::new(), "cyber");
@@ -68,7 +69,8 @@ fn enter_steers_while_running_and_tab_queues() {
         busy.on_key(key(KeyCode::Tab)),
         vec![Action::Prompt {
             text: "also this".into(),
-            delivery: "queue"
+            delivery: "queue",
+            chips: Vec::new(),
         }]
     );
     assert_eq!(busy.on_key(key(KeyCode::Esc)), vec![Action::Interrupt]);
@@ -343,6 +345,7 @@ fn queued_messages_are_listed_and_can_be_taken_back() {
         text: "then update docs".into(),
         delivery: "queue".into(),
         held: false,
+        media: Vec::new(),
     }];
     assert!(screen(&app).contains("then update docs"));
     let actions = app.on_key(with(KeyCode::Up, KeyModifiers::ALT));
@@ -361,6 +364,7 @@ fn taking_back_skips_received_messages() {
         text: text.into(),
         delivery: "queue".into(),
         held: false,
+        media: Vec::new(),
     };
     app.queued = vec![
         row("m5", "then update docs"),
@@ -987,12 +991,17 @@ async fn leading_mentions_use_named_subtasks_while_file_and_embedded_text_use_pr
             Action::Prompt {
                 text: text.into(),
                 delivery,
+                chips: Vec::new(),
             },
         )
         .await;
         let requests = server.join().unwrap();
         if delivery == "queue" {
-            assert!(result.unwrap_err().contains("Enter"));
+            // A refused prompt comes back to the composer with the message.
+            let Ok(Msg::PromptRefused { message, .. }) = result else {
+                panic!("{result:?}")
+            };
+            assert!(message.contains("Enter"), "{message}");
             assert_eq!(requests.len(), 1);
             assert!(requests[0].0.starts_with("GET /api/v1/agents "));
             continue;
@@ -1372,7 +1381,8 @@ fn child_thread_commands_open_existing_threads_and_preserve_steer_delivery() {
         app.on_key(key(KeyCode::Enter)),
         vec![Action::Prompt {
             text: "inspect this too".into(),
-            delivery: "steer"
+            delivery: "steer",
+            chips: Vec::new(),
         }]
     );
     assert_eq!(app.session.id, "ses_child");
@@ -3575,7 +3585,7 @@ async fn the_tui_opens_a_peer_session_through_an_attach() {
     paths.ensure().unwrap();
     std::fs::write(
         paths.config.join("cyber.json"),
-        json!({"providers":{"test":{"api":{"type":"openai-compatible","url":"http://127.0.0.1:9/v1","settings":{"auth":"none"}},"models":{"main":{}}}},
+        json!({"providers":{"test":{"api":{"type":"openai-compatible","url":"http://127.0.0.1:9/v1","settings":{"auth":"none"}},"models":{"main":{"capabilities":{"vision":true}}}}},
             "permissions":{"remote.attach":{"peer:laptop":"allow"}}})
             .to_string(),
     )
@@ -3668,6 +3678,7 @@ async fn the_tui_opens_a_peer_session_through_an_attach() {
     let action = Action::Prompt {
         text: "from the laptop".into(),
         delivery: "steer",
+        chips: Vec::new(),
     };
     crate::perform::perform(&client, &app.session, action)
         .await
@@ -3684,6 +3695,33 @@ async fn the_tui_opens_a_peer_session_through_an_attach() {
         .iter()
         .any(|item| format!("{item:?}").contains("from the laptop"));
     assert!(prompted, "{items:?}");
+
+    // Regression: a queued input taken back holds `Payload::Stored` chips, sent as
+    // `attachment` parts; the peer filter refused them, so resubmitting failed.
+    let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x01\0\0\0\x01\x08\x06\0\0\0\x1f\x15\xc4\x89";
+    let sha256 = desk
+        .runtime
+        .attachments()
+        .unwrap()
+        .write(&id, png)
+        .unwrap()
+        .sha256;
+    let action = Action::Prompt {
+        text: "[Image #1] again".into(),
+        delivery: "steer",
+        chips: vec![crate::attachments::Chip {
+            kind: crate::attachments::Kind::Image,
+            number: 1,
+            payload: crate::attachments::Payload::Stored { sha256 },
+        }],
+    };
+    let resubmitted = crate::perform::perform(&client, &app.session, action)
+        .await
+        .unwrap();
+    assert!(
+        matches!(resubmitted, crate::perform::Msg::Done),
+        "{resubmitted:?}"
+    );
     client.detach().await.unwrap();
     let _ = stop.send(());
     server.await.unwrap().unwrap();

@@ -351,6 +351,8 @@ pub struct Loaded {
     pub explorer_icons: crate::explorer::Icons,
     /// `tui.notifications`.
     pub notifications: crate::osc::Notifications,
+    /// `tui.paste_summary`: large pastes become chips.
+    pub paste_summary: bool,
     /// The Config tab's preferences with their sources.
     pub preferences: Preferences,
 }
@@ -370,6 +372,18 @@ fn choice<T: Default>(
         warnings.push(format!("tui.{key}: unknown value {value}"));
         T::default()
     })
+}
+
+/// `tui.paste_summary`, on unless set to `false`.
+fn paste_summary(settings: &serde_json::Map<String, Value>, warnings: &mut Vec<String>) -> bool {
+    match settings.get("paste_summary") {
+        None | Some(Value::Bool(true)) => true,
+        Some(Value::Bool(false)) => false,
+        Some(other) => {
+            warnings.push(format!("tui.paste_summary: unknown value {other}"));
+            true
+        }
+    }
 }
 
 /// `tui.statusline.fields`: the known field names it lists, in order.
@@ -475,6 +489,7 @@ pub fn load_with_plugins(
         crate::osc::Notifications::parse,
         &mut themes.warnings,
     );
+    let paste_summary = paste_summary(&settings, &mut themes.warnings);
     Loaded {
         theme: preferences.get("theme").to_owned(),
         themes,
@@ -488,6 +503,7 @@ pub fn load_with_plugins(
         welcome,
         explorer_icons,
         notifications,
+        paste_summary,
         preferences,
     }
 }
@@ -530,6 +546,7 @@ mod tests {
         assert_eq!(loaded.sidebar, crate::sidebar::Preference::Hide);
         assert_eq!(loaded.welcome, crate::view::welcome::Welcome::Off);
         assert_eq!(loaded.explorer_icons, crate::explorer::Icons::Nerd);
+        assert!(loaded.paste_summary, "on by default");
 
         store.set("theme", Value::String("dracula".into()));
         let no_color = |name: &str| (name == "NO_COLOR").then(|| "1".to_owned());
@@ -591,6 +608,22 @@ mod tests {
         assert_eq!(loaded.theme, "cyber");
         assert_eq!(loaded.appearance.depth, crate::theme::Depth::Ansi16);
         assert_eq!(loaded.themes.warnings.len(), 1);
+    }
+
+    #[test]
+    fn paste_summary_turns_off_and_a_non_boolean_is_reported() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalStore::new(&root.path().join("state"));
+        let dirs = [root.path().to_path_buf()];
+        std::fs::write(root.path().join("tui.jsonc"), "{\"paste_summary\": false}").unwrap();
+        assert!(!load(&store, &dirs, &|_: &str| None).paste_summary);
+        std::fs::write(root.path().join("tui.jsonc"), "{\"paste_summary\": \"no\"}").unwrap();
+        let loaded = load(&store, &dirs, &|_: &str| None);
+        assert!(loaded.paste_summary);
+        assert_eq!(
+            loaded.themes.warnings,
+            ["tui.paste_summary: unknown value \"no\""]
+        );
     }
 
     /// Regression: a project `tui.jsonc` (from an untrusted repository) was read whole,

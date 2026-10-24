@@ -164,7 +164,12 @@ fn part(part: &Value) -> String {
             )
         }
         Some("reasoning") => reasoning(text(&part["text"]).unwrap_or_default()),
-        _ => format!("<pre>{}</pre>\n", escape(&pretty(part))),
+        _ => match super::placeholder(part) {
+            Some(placeholder) => {
+                format!("<p class=\"placeholder\">{}</p>\n", escape(&placeholder))
+            }
+            None => format!("<pre>{}</pre>\n", escape(&pretty(part))),
+        },
     }
 }
 

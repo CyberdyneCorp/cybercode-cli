@@ -81,7 +81,7 @@ impl Tool for Read {
 
 /// The `path` input, once `external_directory`, the `read` permission and the hidden
 /// paths allow reading it.
-async fn readable(ctx: &Ctx<'_>) -> Result<PathBuf, ToolError> {
+pub(crate) async fn readable(ctx: &Ctx<'_>) -> Result<PathBuf, ToolError> {
     let path = ctx.resolve(text(&ctx.inv.input, "path"));
     ctx.check_external(std::slice::from_ref(&path)).await?;
     let resource = ctx.resource(&path);

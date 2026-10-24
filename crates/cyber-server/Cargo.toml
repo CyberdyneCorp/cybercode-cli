@@ -45,6 +45,11 @@ webpki = { package = "rustls-webpki", version = "0.103", default-features = fals
 # The peer client: requests to other servers' peer listeners over the pinned-key TLS above.
 reqwest = { version = "0.13", features = ["json"] }
 url = "2"
+# Prompt attachments (`session-runtime` → Attachment normalization): pure-Rust decoders for
+# the accepted image formats only, and a PDF parser for the page count.
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+lopdf = { version = "=0.46.0", default-features = false }
+tempfile.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 # `statvfs` of the Location itself for `GET /system`'s disk (already in the tree).

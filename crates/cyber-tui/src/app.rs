@@ -95,6 +95,8 @@ pub enum Action {
     Prompt {
         text: String,
         delivery: &'static str,
+        /// The draft's chips whose labels are in `text`, in label order.
+        chips: Vec<crate::attachments::Chip>,
     },
     Shell(String),
     /// `& cmd`: start a user shell command as a background Job of the Session.
@@ -404,6 +406,8 @@ pub struct App {
     pub requests: Vec<Request>,
     shown_request: Option<String>,
     pub composer: Composer,
+    /// The composer's chips and the clipboard (`tui` → Large paste and image input).
+    pub attachments: crate::attachments::Attachments,
     pub overlay: Overlay,
     pub completion: Option<Completion>,
     pub commands: Vec<Choice>,
@@ -531,6 +535,7 @@ impl App {
             requests: Vec::new(),
             shown_request: None,
             composer: Composer::new(history),
+            attachments: Default::default(),
             overlay: Overlay::None,
             completion: None,
             commands: Vec::new(),
@@ -1262,8 +1267,49 @@ impl App {
             return;
         }
         if let Overlay::None = self.overlay {
-            self.composer.insert_str(text);
+            self.paste_into_composer(text);
         }
+    }
+
+    /// Dropped image or PDF paths and large texts become chips; other text is typed.
+    fn paste_into_composer(&mut self, text: &str) {
+        match self.attachments.paste(text) {
+            crate::attachments::Pasted::Chips(labels, toast) => {
+                self.composer.insert_str(&labels);
+                if let Some(toast) = toast {
+                    self.toast(toast);
+                }
+            }
+            crate::attachments::Pasted::Text(text) => self.composer.insert_str(&text),
+        }
+    }
+
+    /// `composer.paste_image`: attach the clipboard image.
+    fn paste_image(&mut self) {
+        match self.attachments.paste_image() {
+            Ok(label) => self.composer.insert_str(&format!("{label} ")),
+            Err(message) => self.toast(message),
+        }
+    }
+
+    /// A prompt the server refused: the draft comes back with its chips, unless a new
+    /// one was started.
+    pub(crate) fn prompt_refused(
+        &mut self,
+        session_id: &str,
+        text: &str,
+        chips: Vec<crate::attachments::Chip>,
+        message: String,
+    ) {
+        if session_id == self.session.id && self.composer.is_empty() {
+            self.composer.set_text(text);
+            if let Some(gone) = self.attachments.restore(chips) {
+                self.toast(gone);
+            }
+        } else {
+            crate::attachments::discard(&chips);
+        }
+        self.toast(message);
     }
 
     fn leader_key(&mut self, key: KeyEvent) -> Option<Vec<Action>> {
@@ -1352,6 +1398,7 @@ impl App {
             Some("history_next") => self.composer.down(),
             Some("newline") => self.composer.newline(),
             Some("editor") => return vec![Action::Editor(self.composer.text())],
+            Some("paste_image") => self.paste_image(),
             _ => return self.edit_unbound(key, ctrl),
         }
         Vec::new()
@@ -1362,11 +1409,15 @@ impl App {
     fn edit_unbound(&mut self, key: KeyEvent, ctrl: bool) -> Vec<Action> {
         match key.code {
             KeyCode::Char('w') if ctrl => self.composer.delete_word(),
-            KeyCode::Char('u') if ctrl => self.composer.clear(),
-            KeyCode::Char('c') if ctrl => self.composer.clear(),
+            KeyCode::Char('u' | 'c') if ctrl => {
+                self.composer.clear();
+                self.attachments.clear();
+            }
             KeyCode::Char('d') if ctrl && self.composer.is_empty() => return vec![Action::Quit],
             KeyCode::Char(c) if !ctrl => self.composer.insert(c),
+            KeyCode::Backspace if self.attachments.backspace(&mut self.composer) => {}
             KeyCode::Backspace => self.composer.backspace(),
+            KeyCode::Delete if self.attachments.delete(&mut self.composer) => {}
             KeyCode::Delete => self.composer.delete(),
             KeyCode::Left => self.composer.left(),
             KeyCode::Right => self.composer.right(),
@@ -1396,7 +1447,11 @@ impl App {
             return Vec::new();
         };
         let last = self.queued.remove(at);
-        self.composer.set_text(&last.text);
+        // The draft is replaced, so its chips go too: a draft `[Image #1]` would
+        // otherwise stay beside the taken-back input's own `[Image #1]`.
+        self.attachments.clear();
+        let text = self.attachments.take_back(&last.text, &last.media);
+        self.composer.set_text(&text);
         vec![Action::RemoveQueued(last.message_id)]
     }
 
@@ -1523,6 +1578,9 @@ impl App {
                 let choice = completion.items[completion.selected].clone();
                 let (trigger, start) = (completion.trigger, completion.start);
                 self.completion = None;
+                if trigger == '@' && self.complete_media(start, &choice.key) {
+                    return Some(Vec::new());
+                }
                 let name = if trigger == '@'
                     && !choice.detail.is_empty()
                     && choice
@@ -1543,13 +1601,36 @@ impl App {
         Some(Vec::new())
     }
 
+    /// An `@` pick of an image or PDF becomes a chip in place of the mention; false for
+    /// any other pick.
+    fn complete_media(&mut self, start: usize, key: &str) -> bool {
+        match self.attachments.mention(key, &self.session.directory) {
+            Some(Ok(label)) => self.composer.complete(start, &format!("{label} ")),
+            Some(Err(message)) => self.toast(message),
+            None => return false,
+        }
+        true
+    }
+
     fn submit(&mut self, delivery: &'static str) -> Vec<Action> {
         if self.composer.is_empty() {
             return Vec::new();
         }
-        let text = self.composer.take();
+        let draft = self.composer.text();
+        let command = draft.starts_with(['&', '!', '/']);
+        if command && crate::attachments::names_media(&draft, &self.attachments.chips) {
+            // Commands and shells take text only: keep the draft so nothing is lost.
+            self.toast("Images and PDFs cannot be sent to a command or shell");
+            return Vec::new();
+        }
+        let mut text = self.composer.take();
+        let chips = self.attachments.take(&text);
         self.completion = None;
         self.scroll = 0;
+        if command {
+            text = crate::attachments::expand_text(&text, &chips);
+            crate::attachments::discard(&chips);
+        }
         if let Some(command) = text.strip_prefix('&') {
             return vec![Action::BackgroundShell(command.trim().to_string())];
         }
@@ -1565,7 +1646,11 @@ impl App {
             "steer"
         };
         self.hide_recap();
-        vec![Action::Prompt { text, delivery }]
+        vec![Action::Prompt {
+            text,
+            delivery,
+            chips,
+        }]
     }
 
     /// `/memory [global]` opens the review panel; `/memory on|off|readonly` saves the
