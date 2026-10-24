@@ -41,6 +41,11 @@ fn in_flight() -> &'static Mutex<HashSet<String>> {
 }
 
 pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    // Hub owner issuance may return one-time invitations or join codes. The hub's
+    // operation_id handles retries; never persist those response bodies locally.
+    if req.uri().path().contains("/collaboration/owner/") {
+        return next.run(req).await;
+    }
     if matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS) {
         return next.run(req).await;
     }

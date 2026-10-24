@@ -781,14 +781,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "cyber-account"
+version = "0.1.0"
+dependencies = [
+ "aws-lc-rs",
+ "axum",
+ "base64 0.22.1",
+ "futures",
+ "getrandom 0.3.4",
+ "jsonwebtoken",
+ "keyring",
+ "libc",
+ "reqwest",
+ "rustix",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "subtle",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "url",
+ "zeroize",
+]
+
+[[package]]
 name = "cyber-app"
 version = "0.1.0"
 dependencies = [
+ "aws-lc-rs",
  "axum",
  "base64 0.22.1",
  "cap-std",
  "chrono",
+ "cyber-account",
  "cyber-client",
+ "cyber-collab",
  "cyber-core",
  "cyber-llm",
  "cyber-sandbox",
@@ -799,6 +829,7 @@ dependencies = [
  "cyber-workflow",
  "futures",
  "getrandom 0.3.4",
+ "jsonwebtoken",
  "mdns-sd",
  "reqwest",
  "rusqlite",
@@ -818,6 +849,7 @@ dependencies = [
 name = "cyber-cli"
 version = "0.1.0"
 dependencies = [
+ "aws-lc-rs",
  "axum",
  "base64 0.22.1",
  "cap-fs-ext",
@@ -825,8 +857,10 @@ dependencies = [
  "chrono",
  "clap",
  "crossterm",
+ "cyber-account",
  "cyber-app",
  "cyber-client",
+ "cyber-collab",
  "cyber-core",
  "cyber-llm",
  "cyber-sandbox",
@@ -836,6 +870,7 @@ dependencies = [
  "cyber-tui",
  "cyber-workflow",
  "futures",
+ "jsonwebtoken",
  "libc",
  "mdns-sd",
  "reqwest",
@@ -870,6 +905,43 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "ulid",
+]
+
+[[package]]
+name = "cyber-collab"
+version = "0.1.0"
+dependencies = [
+ "aws-lc-rs",
+ "axum",
+ "base64 0.22.1",
+ "crossbeam-channel",
+ "cyber-account",
+ "cyber-core",
+ "cyber-store",
+ "futures",
+ "getrandom 0.3.4",
+ "hmac",
+ "http-body-util",
+ "hyper-util",
+ "jsonwebtoken",
+ "rcgen",
+ "reqwest",
+ "rusqlite",
+ "rustix",
+ "rustls",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "subtle",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-rustls",
+ "tokio-util",
+ "ulid",
+ "url",
+ "zeroize",
 ]
 
 [[package]]
@@ -949,6 +1021,8 @@ dependencies = [
  "base64 0.22.1",
  "cap-std",
  "chrono",
+ "cyber-account",
+ "cyber-collab",
  "cyber-core",
  "cyber-llm",
  "cyber-store",
@@ -1061,10 +1135,14 @@ dependencies = [
 name = "cyber-tui"
 version = "0.1.0"
 dependencies = [
+ "aws-lc-rs",
+ "axum",
  "chrono",
  "crossterm",
+ "cyber-account",
  "cyber-app",
  "cyber-client",
+ "cyber-collab",
  "cyber-core",
  "cyber-server",
  "cyber-store",
@@ -1072,8 +1150,10 @@ dependencies = [
  "insta",
  "jiff",
  "jsonschema",
+ "jsonwebtoken",
  "pulldown-cmark",
  "ratatui",
+ "reqwest",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1212,6 +1292,7 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer",
  "crypto-common",
+ "subtle",
 ]
 
 [[package]]
@@ -1689,6 +1770,15 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
+name = "hmac"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
+dependencies = [
+ "digest",
+]
 
 [[package]]
 name = "htmd"
@@ -2255,6 +2345,21 @@ dependencies = [
  "num-traits",
  "serde_json",
  "zmij",
+]
+
+[[package]]
+name = "jsonwebtoken"
+version = "10.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0529410abe238729a60b108898784df8984c87f6054c9c4fcacc47e4803c1ce1"
+dependencies = [
+ "aws-lc-rs",
+ "base64 0.22.1",
+ "getrandom 0.2.17",
+ "js-sys",
+ "serde",
+ "serde_json",
+ "signature",
 ]
 
 [[package]]
@@ -3179,6 +3284,9 @@ name = "rand_core"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
+dependencies = [
+ "getrandom 0.2.17",
+]
 
 [[package]]
 name = "rand_core"
@@ -3569,6 +3677,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "aws-lc-rs",
+ "log",
  "once_cell",
  "rustls-pki-types",
  "rustls-webpki",
@@ -3903,6 +4012,15 @@ checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
 dependencies = [
  "errno",
  "libc",
+]
+
+[[package]]
+name = "signature"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
+dependencies = [
+ "rand_core 0.6.4",
 ]
 
 [[package]]

@@ -12,6 +12,9 @@ name = "cyber"
 path = "src/main.rs"
 
 [dependencies]
+cyber-collab = { path = "../cyber-collab" }
+url = "2"
+cyber-account = { path = "../cyber-account" }
 cyber-core.workspace = true
 cyber-store.workspace = true
 cyber-llm = { path = "../cyber-llm" }
@@ -44,12 +47,14 @@ tempfile.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 [dev-dependencies]
+aws-lc-rs = "1"
+jsonwebtoken = { version = "=10.3.0", default-features = false, features = ["aws_lc_rs"] }
 url = "2"
 mdns-sd = { version = "0.21", default-features = false }
 axum = "0.8"
 rusqlite.workspace = true
 tempfile.workspace = true
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "time", "macros", "sync"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "time", "macros", "sync", "process", "io-util"] }
 
 [lints]
 workspace = true

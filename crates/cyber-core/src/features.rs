@@ -48,14 +48,24 @@ pub struct Entry {
 
 /// Agent teams (`agent-teams`).
 pub const TEAMS: &str = "teams";
+/// Shared project hub and explicitly published local agents.
+pub const COLLABORATION: &str = "collaboration";
 
 /// Every feature this binary knows.
-pub const REGISTRY: &[Entry] = &[Entry {
-    name: TEAMS,
-    maturity: Maturity::Experimental,
-    default: false,
-    description: "Agent teams: a lead Session and named teammates sharing a task list",
-}];
+pub const REGISTRY: &[Entry] = &[
+    Entry {
+        name: TEAMS,
+        maturity: Maturity::Experimental,
+        default: false,
+        description: "Agent teams: a lead Session and named teammates sharing a task list",
+    },
+    Entry {
+        name: COLLABORATION,
+        maturity: Maturity::Experimental,
+        default: false,
+        description: "Project collaboration: people and explicitly published local agents through a self-hosted hub",
+    },
+];
 
 /// The environment variable that toggles features: `a,b,-c`.
 pub const ENV: &str = "CYBER_FEATURES";
@@ -361,6 +371,21 @@ mod tests {
         assert!(!status.default && !status.enabled && !status.locked);
         assert_eq!(status.source, "default");
         assert_eq!(Features::default(), resolved.0);
+    }
+
+    #[test]
+    fn collaboration_requires_opt_in_and_respects_policy_lock() {
+        let resolved = run(json!({}), &[], Overrides::default()).unwrap();
+        assert!(!resolved.0.enabled(COLLABORATION));
+        let enabled = run(
+            json!({"features":{"collaboration":true}}),
+            &[],
+            Overrides::default(),
+        )
+        .unwrap();
+        assert!(enabled.0.enabled(COLLABORATION));
+        let locked=run(json!({"features":{"collaboration":true},"policy":{"features":{"lock":{"collaboration":false}}}}),&[],Overrides::default()).unwrap();
+        assert!(!locked.0.enabled(COLLABORATION));
     }
 
     #[test]

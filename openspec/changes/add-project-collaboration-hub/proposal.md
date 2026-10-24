@@ -15,7 +15,7 @@ The user selected a **self-hosted project hub**: one reachable server coordinate
 
 ## Scope and Delivery
 
-This change owns the complete usable self-hosted collaboration slice, including the account foundation it needs. It is **proposed, not implemented**. Runtime implementation starts only after review of this proposal, design, scenarios and tasks.
+This change owns the complete usable self-hosted collaboration slice, including the account foundation it needs. It is **approved for implementation, not yet available**. The user approved implementation after PR #26 merged on 2026-10-23; progress and acceptance remain tracked in the tasks.
 
 1. Account foundation: discovery-based CyberdyneAuth/generic OIDC login, secure storage and serialized refresh, validated access-token identity and collaboration scope. Preserve account-free local use.
 2. Hub foundation: isolated storage/listener, repository identities, memberships, invitations, revocation, participant registration and project authorization.
@@ -48,6 +48,6 @@ The local web dashboard may later consume these APIs, but is not a prerequisite.
 
 ## Status
 
-2026-10-23: pulled `main` at `8e7085a02dec908713ccdbaf96542e5d7826dbf3`; GitHub had no open PRs. The new implementation goal is active. Self-hosted hub topology was selected by the user. This proposal is awaiting artifact review; it is not implementation approval.
+2026-10-23: pulled `main` at `8e7085a02dec908713ccdbaf96542e5d7826dbf3`; GitHub had no open PRs. The implementation goal includes the complete collaboration slice. Self-hosted hub topology was selected by the user. At that point the proposal was awaiting artifact review. After PR #26 merged at `d5ff6de1`, the user instructed implementation; approval is recorded in task 1.3.
 
 Security review clarification: use CyberdyneAuth live token introspection to distinguish active user accounts from service credentials and refresh the authorized organization set. Organization/project authorization is separate from Git hosting access. The [live Auth public contract](auth-contract.md) has been checked; authenticated flows, required provisioning and collaboration implementation remain unverified.

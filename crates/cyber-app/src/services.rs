@@ -33,8 +33,17 @@ pub struct AppServices {
     /// The full resolved configuration (trust and warnings included) of a Location.
     resolved: Arc<cyber_tools::HookConfigFn>,
     logins: Arc<crate::provider_login::ProviderLoginService>,
+    accounts: Arc<crate::account::Accounts>,
+    collaboration: Arc<crate::collaboration::Collaboration>,
 }
 
+/// Trusted owner process resources, shared by account and collaboration adapters.
+pub struct OwnerContext {
+    pub global: Arc<GlobalConfigFn>,
+    pub store: Arc<cyber_store::Store>,
+    pub runtime: cyber_server::runtime::Runtime,
+    pub default_directory: PathBuf,
+}
 impl AppServices {
     pub fn new(
         resolver: Arc<CatalogResolver>,
@@ -43,13 +52,44 @@ impl AppServices {
         resolved: Arc<cyber_tools::HookConfigFn>,
         paths: cyber_core::paths::Paths,
         hook_review: Arc<HookReviewFn>,
-        global: Arc<GlobalConfigFn>,
-    ) -> Self {
+        owner: OwnerContext,
+    ) -> Result<Self, String> {
+        let OwnerContext {
+            global,
+            store,
+            runtime,
+            default_directory,
+        } = owner;
         let loader = Arc::clone(&resolved);
         let config: Arc<ConfigFn> = Arc::new(move |location| {
             loader(location).map(|resolved| (resolved.value, resolved.sources))
         });
-        Self {
+        let account_global = Arc::clone(&global);
+        let accounts = Arc::new(crate::account::Accounts::new(
+            cyber_account::AccountStore::open(paths.data.clone()),
+            paths.cache.clone(),
+            Arc::new(move || {
+                let config = account_global().map_err(|_| {
+                    cyber_account::Error::Storage("global account settings unavailable")
+                })?;
+                cyber_account::AccountSettings::from_global(
+                    &config,
+                    std::env::var("CYBER_ACCOUNT_ISSUER").ok(),
+                )
+            }),
+        ));
+        let collaboration = crate::collaboration::Collaboration::new(
+            store,
+            Arc::clone(&accounts),
+            runtime,
+            default_directory,
+            Arc::clone(&global),
+            paths.data.clone(),
+        )?;
+        host.attach_collaboration(Arc::clone(&collaboration) as _)?;
+        Ok(Self {
+            accounts,
+            collaboration,
             global,
             resolved,
             logins: Arc::new(crate::provider_login::ProviderLoginService::new(
@@ -65,7 +105,7 @@ impl AppServices {
             data: paths.data,
             cache: paths.cache,
             hook_review,
-        }
+        })
     }
 }
 
@@ -73,6 +113,14 @@ impl AppServices {
 use cyber_core::commands::BUILTIN as BUILTIN_COMMANDS;
 
 impl Services for AppServices {
+    fn collaboration(
+        &self,
+    ) -> Option<Arc<dyn cyber_server::http::collaboration::CollaborationService>> {
+        Some(Arc::clone(&self.collaboration) as _)
+    }
+    fn account(&self) -> Option<Arc<dyn cyber_server::http::account::AccountService>> {
+        Some(Arc::clone(&self.accounts) as _)
+    }
     fn provider_logins(&self) -> Option<Arc<dyn cyber_server::http::providers::ProviderLogins>> {
         Some(Arc::clone(&self.logins) as _)
     }

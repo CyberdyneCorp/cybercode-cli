@@ -113,6 +113,12 @@ const BUILTINS: &[(&str, &str, Option<&str>, bool)] = &[
         true,
     ),
     ("team", "open the team view (experimental)", None, false),
+    (
+        "collab",
+        "project people, conversation and shared tasks",
+        None,
+        false,
+    ),
     ("mode", "choose the permission mode", None, false),
     ("theme", "switch theme", Some("theme_list"), false),
     ("compact", "summarize older history", None, false),

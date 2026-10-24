@@ -39,6 +39,8 @@ pub(super) const BUSY_RETRY: Duration = Duration::from_millis(250);
 /// Who sends a message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Sender {
+    /// A project hub principal; only the authenticated connector creates this origin.
+    Collaboration(super::CollaborationOrigin),
     /// A Session of this server (an agent's `send_message`, or a client sending as it).
     Session(String),
     /// A Messaging API client with its label (`X-Cyber-Client`, else `api`).
@@ -61,7 +63,7 @@ impl Sender {
     pub fn session_id(&self) -> Option<&str> {
         match self {
             Self::Session(id) => Some(id),
-            Self::Client(_) | Self::Mcp(_) | Self::Peer { .. } => None,
+            Self::Client(_) | Self::Mcp(_) | Self::Peer { .. } | Self::Collaboration(_) => None,
         }
     }
 
@@ -71,6 +73,7 @@ impl Sender {
     pub(super) fn key(&self) -> String {
         match self {
             Self::Session(id) => id.clone(),
+            Self::Collaboration(origin) => origin.key(),
             Self::Client(label) => format!("client:{label}"),
             Self::Mcp(label) => format!("mcp:{label}"),
             Self::Peer {
@@ -85,6 +88,7 @@ impl Sender {
     pub(super) fn limit_key(&self) -> LimitKey {
         match self {
             Self::Peer { grant, .. } => LimitKey::Prefix(format!("peer:{grant}:")),
+            Self::Collaboration(origin) => LimitKey::Prefix(origin.prefix()),
             _ => LimitKey::Exact(self.key()),
         }
     }
@@ -96,13 +100,14 @@ impl Sender {
             Self::Session(_) => "session",
             Self::Client(_) | Self::Mcp(_) => "client",
             Self::Peer { .. } => "peer",
+            Self::Collaboration(_) => "collaboration",
         }
     }
 
     /// Where the sender runs, for the inbound default.
     pub(super) fn reach(&self) -> Reach {
         match self {
-            Self::Peer { .. } => Reach::CrossMachine,
+            Self::Peer { .. } | Self::Collaboration(_) => Reach::CrossMachine,
             _ => Reach::SameMachine,
         }
     }
@@ -371,7 +376,12 @@ impl Outgoing {
             template: None,
             message_id: Some(self.id.clone()),
             parts: vec![Content::Text {
-                text: render::message_block(&origin, &self.id, &sent_at, &self.text),
+                text: match &self.sender {
+                    Sender::Collaboration(provenance) => {
+                        render::collaboration_block(provenance, &self.id, &sent_at, &self.text)
+                    }
+                    _ => render::message_block(&origin, &self.id, &sent_at, &self.text),
+                },
             }],
             delivery,
             source: "session".into(),
@@ -561,7 +571,7 @@ impl Messaging {
                 from
             }
             Sender::Client(_) | Sender::Mcp(_) => request.from.key(),
-            Sender::Peer { .. } => {
+            Sender::Peer { .. } | Sender::Collaboration(_) => {
                 return Err(RuntimeError::Invalid(
                     "a peer's message is received through the peer listener".into(),
                 ));
@@ -629,12 +639,16 @@ impl Messaging {
     fn decide(&self, outgoing: &Outgoing) -> Verdict {
         let target = &outgoing.target;
         let settings = self.settings(Some(&target.candidate.location.directory));
-        super::inbound_verdict(
+        let verdict = super::inbound_verdict(
             target,
             settings.as_ref(),
             &outgoing.addresses,
             outgoing.reach,
-        )
+        );
+        match (&outgoing.sender, verdict) {
+            (Sender::Collaboration(_), Verdict::Deliver | Verdict::Hold) => Verdict::Hold,
+            _ => verdict,
+        }
     }
 
     /// A refusal the target records too, unless this sender already had

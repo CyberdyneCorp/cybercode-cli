@@ -274,6 +274,19 @@ fn validate_accepted(data: &Value) -> Result<(), String> {
     if accepted.sha256 != text_sha256(&accepted.text) {
         return Err("sha256 differs from the text".into());
     }
+    if accepted.origin_kind == "collaboration" {
+        let origin = super::CollaborationOrigin::from_key(&accepted.sender_key)
+            .ok_or("collaboration provenance is invalid")?;
+        if accepted.delivery != Delivery::Hold
+            || accepted.peer_session_id.is_some()
+            || accepted.remote_peer.is_some()
+            || accepted.remote_session_id.is_some()
+            || accepted.depth != origin.depth
+            || accepted.hops != origin.hops
+        {
+            return Err("collaboration admission must be held with matching provenance and no remote Session".into());
+        }
+    }
     if accepted.delivery == Delivery::Queue {
         return Err("a message is delivered with steer or hold".into());
     }
@@ -287,6 +300,14 @@ fn validate_refused(data: &Value) -> Result<(), String> {
     let refused: MessageRefused = decode(data)?;
     message_id(&refused.message_id)?;
     digest(&refused.sha256)?;
+    if refused.origin_kind == "collaboration"
+        && (super::CollaborationOrigin::from_key(&refused.sender_key).is_none()
+            || refused.peer_session_id.is_some()
+            || refused.remote_peer.is_some()
+            || refused.remote_session_id.is_some())
+    {
+        return Err("collaboration refusal has invalid provenance".into());
+    }
     if refused.reason.is_empty() || refused.sender_key.is_empty() {
         return Err("reason and sender_key are required".into());
     }
