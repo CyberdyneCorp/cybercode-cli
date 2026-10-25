@@ -8,6 +8,7 @@ struct Fake {
     captures: AtomicUsize,
     fail: AtomicBool,
     wrong_capture: AtomicBool,
+    block_resolve: Mutex<Option<(Arc<std::sync::Barrier>, Arc<std::sync::Barrier>)>>,
 }
 impl Default for Fake {
     fn default() -> Self {
@@ -31,6 +32,7 @@ impl Default for Fake {
             captures: AtomicUsize::new(0),
             fail: AtomicBool::new(false),
             wrong_capture: AtomicBool::new(false),
+            block_resolve: Mutex::new(None),
         }
     }
 }
@@ -46,6 +48,11 @@ impl Backend for Fake {
         })
     }
     fn resolve(&self, _: &Selector) -> std::result::Result<NativeTarget, Error> {
+        let block = self.block_resolve.lock().unwrap().take();
+        if let Some((ready, release)) = block {
+            ready.wait();
+            release.wait();
+        }
         Ok(self.target.lock().unwrap().clone())
     }
     fn capture(&self, target: &NativeTarget) -> std::result::Result<Capture, Error> {
@@ -366,4 +373,30 @@ fn stopping_invalidates_pending_review_and_private_frames_expire() {
             .unwrap()
             .exists()
     );
+}
+
+#[test]
+fn stop_fences_an_owner_allow_already_resolving_its_target() {
+    let fixture = Fixture::new();
+    let preview = fixture
+        .computer
+        .preview(
+            "owner",
+            Selector {
+                app: Some("test.fixture".into()),
+                display: None,
+            },
+        )
+        .unwrap();
+    let computer = Arc::new(fixture.computer);
+    let ready = Arc::new(std::sync::Barrier::new(2));
+    let release = Arc::new(std::sync::Barrier::new(2));
+    *fixture.backend.block_resolve.lock().unwrap() = Some((ready.clone(), release.clone()));
+    let worker = Arc::clone(&computer);
+    let task = std::thread::spawn(move || worker.allow("owner", &preview.id, None, false));
+    ready.wait();
+    computer.stop_all();
+    release.wait();
+    assert!(task.join().unwrap().is_err());
+    assert!(computer.status("owner").unwrap().grant.is_none());
 }

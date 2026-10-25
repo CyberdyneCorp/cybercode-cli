@@ -213,6 +213,13 @@ static int type_text(NSDictionary *expected, NSString *text, Cancel cancel, cons
 static int key(NSDictionary *expected, NSDictionary *chord, Cancel cancel, const void *context, uint64_t deadline) {
     static NSDictionary *codes; static dispatch_once_t once;
     dispatch_once(&once, ^{ codes = @{ @"a":@0,@"s":@1,@"d":@2,@"f":@3,@"h":@4,@"g":@5,@"z":@6,@"x":@7,@"c":@8,@"v":@9,@"b":@11,@"q":@12,@"w":@13,@"e":@14,@"r":@15,@"y":@16,@"t":@17,@"1":@18,@"2":@19,@"3":@20,@"4":@21,@"6":@22,@"5":@23,@"9":@25,@"7":@26,@"8":@28,@"0":@29,@"o":@31,@"u":@32,@"i":@34,@"p":@35,@"enter":@36,@"l":@37,@"j":@38,@"k":@40,@"n":@45,@"m":@46,@"tab":@48,@"space":@49,@"backspace":@51,@"escape":@53,@"home":@115,@"page_up":@116,@"delete":@117,@"end":@119,@"page_down":@121,@"left":@123,@"right":@124,@"down":@125,@"up":@126 }; });
+    CGEventFlags flags = 0;
+    for (NSString *modifier in chord[@"modifiers"]) {
+        if ([modifier isEqual:@"shift"]) flags |= kCGEventFlagMaskShift;
+        else if ([modifier isEqual:@"control"]) flags |= kCGEventFlagMaskControl;
+        else if ([modifier isEqual:@"alt"]) flags |= kCGEventFlagMaskAlternate;
+        else if ([modifier isEqual:@"command"]) flags |= kCGEventFlagMaskCommand;
+    }
     NSString *name = [chord[@"key"] lowercaseString]; NSNumber *code = codes[name];
     if (name.length == 1 && [@"abcdefghijklmnopqrstuvwxyz0123456789" containsString:name]) {
         // A US physical key map can turn Cmd+A into Cmd+Q on other layouts.
@@ -225,22 +232,16 @@ static int key(NSDictionary *expected, NSDictionary *chord, Cancel cancel, const
             const UCKeyboardLayout *layout = (const UCKeyboardLayout *)CFDataGetBytePtr(data);
             for (UInt16 candidate = 0; candidate < 128; candidate++) {
                 UInt32 dead = 0; UniChar chars[4]; UniCharCount count = 0;
-                OSStatus result = UCKeyTranslate(layout, candidate, kUCKeyActionDown, 0,
+                UInt32 modifiers = ((flags & kCGEventFlagMaskCommand) ? cmdKey : 0) | ((flags & kCGEventFlagMaskShift) ? shiftKey : 0) | ((flags & kCGEventFlagMaskAlternate) ? optionKey : 0) | ((flags & kCGEventFlagMaskControl) ? controlKey : 0);
+                OSStatus result = UCKeyTranslate(layout, candidate, kUCKeyActionDown, modifiers >> 8,
                     LMGetKbdType(), kUCKeyTranslateNoDeadKeysBit, &dead, 4, &count, chars);
-                if (result == noErr && count == 1 && chars[0] == [name characterAtIndex:0]) { code = @(candidate); break; }
+                if (result == noErr && count == 1 && [[[NSString alloc] initWithCharacters:chars length:1].lowercaseString isEqualToString:name]) { code = @(candidate); break; }
             }
         }
         if (source) CFRelease(source);
     }
     if (!code) return 6;
 
-    CGEventFlags flags = 0;
-    for (NSString *modifier in chord[@"modifiers"]) {
-        if ([modifier isEqual:@"shift"]) flags |= kCGEventFlagMaskShift;
-        else if ([modifier isEqual:@"control"]) flags |= kCGEventFlagMaskControl;
-        else if ([modifier isEqual:@"alt"]) flags |= kCGEventFlagMaskAlternate;
-        else if ([modifier isEqual:@"command"]) flags |= kCGEventFlagMaskCommand;
-    }
     // An app grant cannot switch applications or invoke host-wide shortcuts.
     if ([expected[@"app"] isKindOfClass:NSString.class] && (flags & kCGEventFlagMaskControl)) return 3;
     if ([expected[@"app"] isKindOfClass:NSString.class] && flags && ![@[@"a",@"z",@"y",@"s",@"left",@"right",@"up",@"down",@"home",@"end",@"backspace",@"delete"] containsObject:name]) return 3;

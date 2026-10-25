@@ -35,31 +35,47 @@ impl Computer {
             created_ms: wall_ms(),
         };
         let path = self.artifact_path(&info.session_id, &info.id)?;
-        let directory = path.parent().ok_or(ComputerError::Storage)?;
-        std::fs::create_dir_all(directory)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&self.artifacts, std::fs::Permissions::from_mode(0o700))?;
-            std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700))?;
-        }
-        let mut options = std::fs::OpenOptions::new();
-        options.create_new(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&path)?;
-        file.write_all(&capture.png)?;
-        file.sync_all()?;
         let days = (self.policy)().retention_days;
         let expiry = (days != 0).then(|| {
             info.created_ms
                 .saturating_add(days.saturating_mul(86_400_000).min(i64::MAX as u64) as i64)
         });
-        if let Err(error) = self.journal.frame(&info, &info.target, expiry) {
-            let _ = std::fs::remove_file(path);
+        // Reserve metadata before writing: a crash cannot leave an untracked
+        // screenshot outside retention/accounting. A missing file is never an
+        // input frame or a readable image receipt.
+        self.journal.frame(&info, &info.target, expiry)?;
+        let mut created = false;
+        let written = (|| -> Result<()> {
+            let directory = path.parent().ok_or(ComputerError::Storage)?;
+            std::fs::create_dir_all(directory)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&self.artifacts, std::fs::Permissions::from_mode(0o700))?;
+                std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700))?;
+            }
+            let mut options = std::fs::OpenOptions::new();
+            options.create_new(true).write(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options.open(&path)?;
+            created = true;
+            file.write_all(&capture.png)?;
+            file.sync_all()?;
+            Ok(())
+        })();
+        if let Err(error) = written {
+            let id = info.id.clone();
+            let _ = self.journal.0.transaction(move |tx| {
+                tx.execute("UPDATE computer_frame SET expired=1 WHERE id=?1", [id])?;
+                Ok(())
+            });
+            if created {
+                let _ = std::fs::remove_file(path);
+            }
             return Err(error);
         }
         Ok(info)

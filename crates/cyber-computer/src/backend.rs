@@ -160,3 +160,43 @@ impl Backend for Native {
 #[cfg(target_os = "macos")]
 #[path = "macos.rs"]
 mod macos;
+
+#[cfg(all(test, not(target_os = "macos")))]
+mod unsupported_tests {
+    use super::*;
+    #[test]
+    fn unsupported_adapter_has_no_native_fallback_or_consent_prompt() {
+        for prompt in [false, true] {
+            let health = Native.health(prompt).unwrap();
+            assert!(!health.supported);
+            assert!(!health.screen_capture);
+            assert!(!health.accessibility);
+        }
+        assert!(matches!(
+            Native.resolve(&Selector {
+                app: Some("fixture.app".into()),
+                display: None
+            }),
+            Err(Error::UnsupportedPlatform)
+        ));
+        let target = NativeTarget {
+            identity: "fixture".into(),
+            app: None,
+            pid: 0,
+            window: 0,
+            display: 0,
+            launch_ms: 0,
+            x: 0.0,
+            y: 0.0,
+            width: 1.0,
+            height: 1.0,
+            image_width: 1,
+            image_height: 1,
+            rotation: 0,
+        };
+        assert!(matches!(
+            Native.capture(&target),
+            Err(Error::UnsupportedPlatform)
+        ));
+    }
+}
