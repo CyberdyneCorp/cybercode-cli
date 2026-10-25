@@ -12,6 +12,20 @@ export const test = base.extend<{ dashboard: DashboardFixture }>({
   },
 });
 export { expect };
+export type Lease = { client_id: string; expires_at: number };
+/** Record each browser lease grant. The body is read on the Node side: a page
+ * 'response' listener can find it already evicted and throw "No data found". */
+export async function recordLeases(page: Page): Promise<Lease[]> {
+  const leases: Lease[] = [];
+  await page.route('**/interactive-clients', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    const response = await route.fetch().catch(() => undefined);
+    if (!response) return route.abort('connectionrefused');
+    if (response.ok()) leases.push((await response.json() as { data: Lease }).data);
+    await route.fulfill({ response });
+  });
+  return leases;
+}
 export async function login(page: Page, dashboard: DashboardFixture, origin = dashboard.url): Promise<void> {
   await page.goto(origin);
   await expect(page.getByLabel('Password', { exact: true })).toBeVisible();

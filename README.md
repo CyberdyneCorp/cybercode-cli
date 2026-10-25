@@ -14,7 +14,15 @@ export OPENAI_API_KEY="your-key"
 ./target/debug/cyber
 ```
 
-OpenAI, Anthropic, GitHub Copilot and OpenAI-compatible endpoints are supported, including local model servers. Instead of an API key, you can use `cyber providers login chatgpt` or `cyber providers login copilot` with a supported subscription. See [provider setup](docs/local-core-guide.md#signing-in-with-a-chatgpt-subscription) and [Copilot limits](docs/local-core-guide.md#signing-in-with-a-github-copilot-subscription).
+OpenAI, Anthropic, GitHub Copilot and OpenAI-compatible endpoints are supported, including local model servers. Instead of an API key, you can sign in with a subscription:
+
+| Subscription | Sign in | Guide |
+|---|---|---|
+| ChatGPT Plus/Pro | `cyber providers login chatgpt`, or `/login` in the TUI | [ChatGPT sign-in](docs/local-core-guide.md#signing-in-with-a-chatgpt-subscription) |
+| GitHub Copilot | `cyber providers login copilot` (CLI only) | [Copilot sign-in and limits](docs/local-core-guide.md#signing-in-with-a-github-copilot-subscription) |
+| Google Gemini | Not supported: third-party use of Gemini subscriptions has led to account suspensions, so `/login google` is refused | — |
+
+There is no native Gemini adapter yet (planned), so `GEMINI_API_KEY` alone does not enable Gemini models. Use them through a Copilot plan that serves them, or through an OpenAI-compatible gateway.
 
 Examples below use the built binary. If you installed it on your PATH, use `cyber` instead of `./target/debug/cyber`.
 
@@ -72,6 +80,24 @@ Cyber supports communication between Sessions and between different people's age
 - **On one server:** Sessions and agents can discover, message and watch each other. See [Session messaging](docs/local-core-guide.md#cross-session-messaging).
 - **Across your machines:** [direct peers](docs/peers.md) connect Sessions without an account or relay.
 - **With teammates or friends:** a [self-hosted project hub](docs/collaboration.md) connects verified members and their explicitly published agents, with conversations and shared tasks. Each person binds their own checkout to the project; tools, working trees and execution approvals stay local. Incoming agent messages are held for receiver consent by default. The hub is **experimental and off by default**.
+
+```bash
+# One server: message another Session by title or ses_ ID (agents use the send_message tool)
+./target/debug/cyber messages list --reachable
+./target/debug/cyber messages send "API refactor" "main changed; rebase and rerun the tests"
+
+# Two of your machines: pair once, then address Sessions as <session>@<machine>
+desk$   cyber peers invite laptop               # prints a one-time cyberpeer:// code
+laptop$ cyber peers add desk '<code>'
+laptop$ cyber messages send --from reviewer "API refactor@desk" "review is ready"   # held on desk until released
+
+# Different people and accounts: bind each checkout to a hub project, then publish an agent
+cyber features enable collaboration && cyber login
+cyber collab bind --hub https://hub.example.com --project cprj_PROJECT --confirm
+cyber collab publish --project cprj_PROJECT --session ses_SESSION --name reviewer   # then /collab in the TUI
+```
+
+Messages always arrive as untrusted text, never as instructions or approvals.
 
 Experimental [native computer use](docs/computer-use.md) adds macOS 14+ application/display screenshots and input with expiring owner grants, private evidence and emergency Stop. Off by default; live desktop acceptance is pending.
 
