@@ -227,6 +227,46 @@ fn autoupdate_rejects_unknown_values() {
     assert_eq!(value["autoupdate"], false);
 }
 
+// Windows sharing locks apply to the file object, including its hard links.
+// Parallel CLI tests can keep the build binary mapped or open without delete
+// sharing, so an installation fixture needs an independent file before renaming.
+fn stage_upgrade_fixture(source: &Path, target: &Path) {
+    #[cfg(windows)]
+    std::fs::copy(source, target).unwrap();
+    #[cfg(not(windows))]
+    if std::fs::hard_link(source, target).is_err() {
+        std::fs::copy(source, target).unwrap();
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn upgrade_fixture_can_be_renamed_while_the_build_file_denies_delete_sharing() {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
+
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("build.exe");
+    let installed = dir.path().join("cyber.exe");
+    let old = dir.path().join("cyber.old.exe");
+    std::fs::write(&source, b"shared build image").unwrap();
+    stage_upgrade_fixture(&source, &installed);
+    // A deterministic analogue of another test/process retaining the build's
+    // image file: readers are allowed, renames of the same file object are not.
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&source)
+        .unwrap();
+    std::fs::rename(&installed, &old)
+        .expect("the fixture must not inherit sharing locks on the build file");
+    std::fs::write(&installed, b"verified replacement").unwrap();
+    assert_eq!(std::fs::read(&source).unwrap(), b"shared build image");
+    assert_eq!(std::fs::read(&old).unwrap(), b"shared build image");
+    assert_eq!(std::fs::read(&installed).unwrap(), b"verified replacement");
+    drop(held);
+}
+
 // ---- Verified self-update -------------------------------------------------------------
 
 /// A signed release on the stub: the throwaway signer, its trust directory, and an
@@ -251,11 +291,7 @@ impl Release {
         let install_dir = env.root.join("install");
         std::fs::create_dir_all(&install_dir).unwrap();
         let exe = install_dir.join(exe_name("cyber"));
-        // A hard link where the filesystem allows it: the upgrade renames it aside and
-        // never writes into it, so the build's own binary is untouched.
-        if std::fs::hard_link(env!("CARGO_BIN_EXE_cyber"), &exe).is_err() {
-            std::fs::copy(env!("CARGO_BIN_EXE_cyber"), &exe).unwrap();
-        }
+        stage_upgrade_fixture(Path::new(env!("CARGO_BIN_EXE_cyber")), &exe);
         Self {
             env,
             signer,
