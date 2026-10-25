@@ -353,7 +353,7 @@ fn rewrite_fingerprint(
 }
 
 #[cfg(unix)]
-fn local_socket(opts: &ServeOptions, paths: &Paths) -> Result<Option<PathBuf>, String> {
+pub(crate) fn local_socket(opts: &ServeOptions, paths: &Paths) -> Result<Option<PathBuf>, String> {
     let root = std::fs::canonicalize(&paths.state).map_err(|error| error.to_string())?;
     use std::os::unix::fs::FileTypeExt;
     let socket = opts
