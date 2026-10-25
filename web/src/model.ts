@@ -1,8 +1,9 @@
+import { Integrations } from "./integrations.js";
 import type { EventEnvelope, FileDiff, GoalsView, Job, LocationInfo, Message, PendingRequest, RunDetail, Session, SessionRow, WorkflowRunSummary } from "../../sdk/typescript/src/generated/types.js";
 import { ApiFault, operationKey, type Port, type RequestOptions } from "./transport.js";
 
 export type Connection = "authentication required" | "connecting" | "connected" | "reconnecting" | "offline";
-export type Tab = "conversation" | "approvals" | "runs";
+export type Tab = "conversation" | "approvals" | "runs" | "integrations";
 export interface Lease { client_id: string; session_id: string; expires_at: number }
 interface Page<T> { data: T[]; cursor: { next?: string | null } }
 interface Located<T> { location: LocationInfo; data: T }
@@ -55,7 +56,8 @@ export class Dashboard {
   #networkRecovery: Promise<void> | undefined;
   #pageCursor: string | undefined;
   #pageVersion = 0;
-  constructor(readonly api: Port, readonly now = Date.now) {}
+  readonly integrations: Integrations;
+  constructor(readonly api: Port, readonly now = Date.now) { this.integrations = new Integrations(api, () => ({directory:this.state.directory,session:this.state.session?.id,enabled:this.actionable}), () => this.emit()); }
   emit(): void { this.changed(); }
   get actionable(): boolean { return this.state.connection === "connected" && !!this.state.lease && this.state.lease.expires_at > this.now(); }
   async login(password: string): Promise<void> {
@@ -79,7 +81,7 @@ export class Dashboard {
     } finally { this.state.authBusy = false; this.emit(); }
   }
   authenticationRequired(message = "Your connection needs authentication. Sign in again."): void {
-    this.stopAttachment(); this.api.clear(); this.#identity = undefined; this.#decisions.clear(); this.#commands.clear(); this.#cursors.clear(); this.jobLog = undefined;
+    this.integrations.reset(); this.stopAttachment(); this.api.clear(); this.#identity = undefined; this.#decisions.clear(); this.#commands.clear(); this.#cursors.clear(); this.jobLog = undefined;
     this.state = initial(); this.state.notice = message; this.emit();
   }
   logout(): void {
@@ -87,7 +89,7 @@ export class Dashboard {
   }
   async switchLocation(directory: string): Promise<void> {
     if (!this.state.authenticated || this.state.loading) return;
-    this.releaseLease(); this.stopAttachment();
+    this.integrations.reset(); this.releaseLease(); this.stopAttachment();
     const generation = this.#generation; this.jobLog = undefined;
     this.state.session = undefined; this.state.cards = []; this.state.messages = []; this.state.diffs = []; this.state.runs = []; this.state.jobs = []; this.state.goals = undefined; this.state.directory = directory; this.state.loading = true; this.state.connection = "connecting"; this.emit();
     try {
@@ -115,7 +117,7 @@ export class Dashboard {
   }
   async selectSession(id: string): Promise<void> {
     if (!this.state.authenticated) return;
-    this.releaseLease(); this.stopAttachment();
+    this.integrations.reset(); this.releaseLease(); this.stopAttachment();
     const generation = this.#generation;
     this.jobLog = undefined;
     this.state.loading = true; this.state.connection = "connecting"; this.state.session = undefined; this.state.diffs = []; this.state.runs = []; this.state.jobs = []; this.state.goals = undefined; this.state.cards = []; this.state.messages = []; this.state.liveText = ""; this.state.draft = ""; this.state.command = this.#commands.get(id); this.state.review = undefined; this.state.feedback = undefined; this.state.details.clear(); this.emit();
@@ -149,7 +151,7 @@ export class Dashboard {
       catch (error) { this.showError(error); backoff = Math.min(15_000, backoff * 2); }
     }
   }
-  setTab(tab: Tab): void { this.state.tab = tab; this.emit(); }
+  setTab(tab: Tab): void { this.state.tab = tab; if (tab === "integrations") void this.integrations.load(); this.emit(); }
   setDraft(value: string): void { this.state.draft = value; }
   async olderMessages(): Promise<void> {
     if (this.state.messageCursor) await this.transcriptPage(this.state.messageCursor);

@@ -53,7 +53,9 @@ pub const RUN_NOTIFIED: &str = "workflow.run.notified.1";
 pub const RUN_WAITING: &str = "workflow.run.waiting.1";
 /// The answer arrived: the run is `running` again.
 pub const RUN_ANSWERED: &str = "workflow.run.answered.1";
-const KINDS: [&str; 18] = [
+const KINDS: [&str; 20] = [
+    "workflow.integration.evidence.1",
+    "workflow.integration.batch.1",
     "workflow.solve.evidence.1",
     "workflow.solve.submitted.1",
     RUN_STARTED,
@@ -349,6 +351,7 @@ pub(super) fn register(registry: &mut EventRegistry) {
 pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> rusqlite::Result<()> {
     let kind = event.kind.as_str();
     match kind {
+        super::integrations::EVENT => super::integrations::project(tx, event),
         RUN_STARTED => project_started(tx, event),
         PHASE => {
             // `phases` is present only when the change added a title.

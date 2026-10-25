@@ -697,6 +697,20 @@ impl Services for AppServices {
         })
     }
 
+    fn integration_operation<'a>(
+        &'a self,
+        owner: &'a TurnContext,
+        run: &'a str,
+        operation: &'a str,
+        input: serde_json::Value,
+    ) -> BoxFuture<'a, Result<serde_json::Value, cyber_server::http::ApiError>> {
+        Box::pin(async move {
+            self.host
+                .integration_owner_operation(owner, run, operation, input)
+                .await
+                .map_err(cyber_server::http::ApiError::invalid)
+        })
+    }
     fn workflow_location(
         &self,
         location: &Path,

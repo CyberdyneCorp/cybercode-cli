@@ -420,24 +420,44 @@ fn commit_ids(stdout: &[u8]) -> Option<(String, String)> {
 
 /// The host's absolute `PATH` entries outside the project, so a repository
 /// cannot plant a program (`gh`, or the `git` it runs) on the search path.
-fn trusted_path(ctx: &Ctx<'_>) -> Vec<PathBuf> {
-    let project = super::canonical(&cyber_core::config::project_root(&ctx.location));
+pub(crate) fn trusted_path(ctx: &Ctx<'_>) -> Vec<PathBuf> {
     let path = ctx.host.opts.env.get("PATH").unwrap_or_default();
     std::env::split_paths(&path)
-        .filter(|directory| {
-            directory.is_absolute() && !super::canonical(directory).starts_with(&project)
-        })
+        .filter(|directory| directory.is_absolute() && outside_sources(ctx, directory))
         .collect()
 }
-
-/// `gh` from `search`, skipping candidates that resolve into the project.
+fn outside_sources(ctx: &Ctx<'_>, path: &Path) -> bool {
+    let path = super::canonical(path);
+    let roots = [
+        Some(cyber_core::config::project_root(&ctx.location)),
+        Some(cyber_core::config::project_root(Path::new(
+            &ctx.inv.directory,
+        ))),
+        ctx.host
+            .opts
+            .tool_output_dir
+            .parent()
+            .map(|data| data.join("worktrees")),
+    ];
+    roots
+        .into_iter()
+        .flatten()
+        .all(|root| !path.starts_with(super::canonical(&root)))
+}
 fn find_gh(ctx: &Ctx<'_>, search: &[PathBuf]) -> Option<PathBuf> {
-    let name = if cfg!(windows) { "gh.exe" } else { "gh" };
-    let project = super::canonical(&cyber_core::config::project_root(&ctx.location));
+    trusted_program(ctx, "gh", search)
+}
+/// Native Git/GitHub authority never resolves programs from contributed source.
+pub(crate) fn trusted_program(ctx: &Ctx<'_>, name: &str, search: &[PathBuf]) -> Option<PathBuf> {
+    let name = if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    };
     search
         .iter()
-        .map(|directory| super::canonical(&directory.join(name)))
-        .find(|candidate| !candidate.starts_with(&project) && executable(candidate))
+        .map(|directory| super::canonical(&directory.join(&name)))
+        .find(|candidate| outside_sources(ctx, candidate) && executable(candidate))
 }
 
 fn executable(path: &Path) -> bool {

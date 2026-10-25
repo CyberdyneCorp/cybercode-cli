@@ -15,6 +15,19 @@ use crate::host::Ctx;
 use crate::permissions::Request;
 use crate::tools::{ToolError, failed};
 
+fn configuration(
+    ctx: &Ctx<'_>,
+) -> Result<
+    (
+        serde_json::Value,
+        std::collections::BTreeMap<String, String>,
+    ),
+    String,
+> {
+    crate::host::workflow_integration::configuration(ctx)
+        .unwrap_or_else(|| (ctx.host.opts.config)(&ctx.location))
+}
+
 /// A domain the proxy needs a decision for.
 pub(crate) type NetworkAsk = (String, oneshot::Sender<bool>);
 
@@ -57,7 +70,7 @@ struct Scope<'a> {
 
 /// The effective sandbox of the call: config, `--sandbox` and the agent's profile.
 pub(crate) fn effective(ctx: &Ctx<'_>) -> SandboxConfig {
-    let (config, sources) = (ctx.host.opts.config)(&ctx.location).unwrap_or_default();
+    let (config, sources) = configuration(ctx).unwrap_or_default();
     resolve(ctx, &config, &sources)
 }
 
@@ -159,6 +172,7 @@ pub(crate) fn credential_env_names(config: &serde_json::Value) -> Vec<String> {
 /// `read_only` paths inside them stay read-only.
 pub(crate) async fn prepare_worktree_git(
     ctx: &Ctx<'_>,
+    program: &str,
     args: &[String],
     writable: &[PathBuf],
     read_only: &[PathBuf],
@@ -168,7 +182,7 @@ pub(crate) async fn prepare_worktree_git(
         git_read_only: read_only,
         ..Scope::default()
     };
-    prepare_scoped_command(ctx, "git", args, scope).await
+    prepare_scoped_command(ctx, program, args, scope).await
 }
 
 async fn prepare_scoped_command(
@@ -177,7 +191,7 @@ async fn prepare_scoped_command(
     args: &[String],
     scope: Scope<'_>,
 ) -> Result<Prepared, ToolError> {
-    let (config, _) = (ctx.host.opts.config)(&ctx.location).unwrap_or_default();
+    let (config, _) = configuration(ctx).unwrap_or_default();
     let home = &ctx.host.opts.home;
     let mut sandbox = effective(ctx);
     if scope.unsandboxed {
@@ -187,6 +201,7 @@ async fn prepare_scoped_command(
         .host
         .solve_isolation(&ctx.inv.session_id)
         .map_err(failed)?;
+    let isolated_solve = isolated_solve || crate::host::workflow_integration::isolated(ctx);
     if isolated_solve {
         if sandbox.policy == Policy::FullAccess {
             sandbox.policy = Policy::WorkspaceWrite;
@@ -538,7 +553,7 @@ pub(crate) async fn hidden_read(ctx: &Ctx<'_>, path: &Path) -> String {
 /// a diff, a match count or a move would otherwise disclose or copy it.
 pub(crate) async fn refuse_hidden(ctx: &Ctx<'_>, paths: &[&Path]) -> Result<(), ToolError> {
     // Without the configuration the `deny_read` globs are unknown: refuse.
-    let (config, sources) = (ctx.host.opts.config)(&ctx.location).map_err(|error| {
+    let (config, sources) = configuration(ctx).map_err(|error| {
         failed(format!(
             "Sandbox denied: read (the sandbox configuration could not be read: {error})"
         ))
@@ -563,9 +578,29 @@ fn roots(ctx: &Ctx<'_>, sandbox: &SandboxConfig, tmp: &Path, ambient_temp: bool)
 }
 
 pub(crate) fn session_tmp(ctx: &Ctx<'_>) -> Result<PathBuf, ToolError> {
+    if let Some(dir) = crate::host::workflow_integration::temporary(ctx) {
+        let base = &ctx.host.opts.temp_dir;
+        std::fs::create_dir_all(base).map_err(|error| failed(error.to_string()))?;
+        match std::fs::symlink_metadata(&dir) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+            Ok(_) => return Err(failed("integration temporary root was replaced")),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::create_dir(&dir).map_err(|error| failed(error.to_string()))?
+            }
+            Err(error) => return Err(failed(error.to_string())),
+        }
+        let canonical = std::fs::canonicalize(&dir).map_err(|error| failed(error.to_string()))?;
+        let parent = std::fs::canonicalize(base).map_err(|error| failed(error.to_string()))?;
+        if canonical.parent() != Some(parent.as_path()) {
+            return Err(failed(
+                "integration temporary root left its owned directory",
+            ));
+        }
+        return Ok(dir);
+    }
     let dir = ctx.host.opts.temp_dir.join(&ctx.inv.session_id);
     std::fs::create_dir_all(&dir)
-        .map_err(|e| failed(format!("Could not create {}: {e}", dir.display())))?;
+        .map_err(|error| failed(format!("Could not create {}: {error}", dir.display())))?;
     Ok(dir)
 }
 

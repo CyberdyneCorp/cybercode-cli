@@ -68,6 +68,7 @@ impl BuiltinHost {
         workflow_start::validate_args(module, &args).map_err(PrepareError::Start)?;
         match module.meta.raw.get("prepare").and_then(Value::as_str) {
             Some("solve") => self.prepare_solve(owner, args).await,
+            Some("integration") => self.prepare_integration(owner, args).await,
             Some("review_target") => self.prepare_review(owner, args).await,
             Some("migrate_permissions") if !interactive => {
                 self.check_migrate(owner, &args).await?;

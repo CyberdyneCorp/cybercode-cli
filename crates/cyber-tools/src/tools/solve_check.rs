@@ -14,6 +14,14 @@ const CAP: usize = 1024 * 1024;
 /// Permission and hook admission precede native launch. The command text is a quoted
 /// representation for policy inspection only; execution always uses the original argv.
 pub(crate) async fn run(ctx: &Ctx<'_>, check: &Check) -> Result<Value, ToolError> {
+    execute(ctx, check, false).await
+}
+
+pub(crate) async fn publish(ctx: &Ctx<'_>, check: &Check) -> Result<Value, ToolError> {
+    execute(ctx, check, true).await
+}
+
+async fn execute(ctx: &Ctx<'_>, check: &Check, publication: bool) -> Result<Value, ToolError> {
     let started = std::time::Instant::now();
     let command = check
         .argv
@@ -29,9 +37,59 @@ pub(crate) async fn run(ctx: &Ctx<'_>, check: &Check) -> Result<Value, ToolError
     {
         return Err(failed("verification command blocked or rewritten by hook"));
     }
-    bash::authorize_injection(ctx, &command).await?;
-    let mut prepared =
-        crate::sandboxing::prepare_command(ctx, &check.argv[0], &check.argv[1..]).await?;
+    bash::authorize_injection(ctx, &command)
+        .await
+        .map_err(|error| match error {
+            ToolError::Failed(message) => {
+                failed(format!("verification command authorization: {message}"))
+            }
+            other => other,
+        })?;
+    let authority = publication
+        .then(|| {
+            let search = crate::host::review::trusted_path(ctx);
+            let program = crate::host::review::trusted_program(ctx, &check.argv[0], &search)
+                .ok_or_else(|| {
+                    failed("trusted publication executable is unavailable outside project sources")
+                })?;
+            let program = program
+                .to_str()
+                .ok_or_else(|| failed("publication executable path is not Unicode"))?
+                .to_string();
+            Ok::<_, ToolError>((program, search))
+        })
+        .transpose()?;
+    let program = authority
+        .as_ref()
+        .map_or(check.argv[0].as_str(), |(program, _)| program.as_str());
+    let mut prepared = crate::sandboxing::prepare_command(ctx, program, &check.argv[1..]).await?;
+    if let Some((_, search)) = authority {
+        prepared
+            .env
+            .retain(|(key, _)| !key.eq_ignore_ascii_case("PATH"));
+        prepared.env.push((
+            "PATH".into(),
+            std::env::join_paths(search)
+                .map_err(|error| failed(error.to_string()))?
+                .to_string_lossy()
+                .into_owned(),
+        ));
+    }
+    if publication {
+        crate::worktrees::isolate_git_config(&mut prepared);
+        prepared
+            .env
+            .retain(|(key, _)| !matches!(key.as_str(), "GH_DEBUG" | "GH_HOST" | "DEBUG"));
+        prepared.env.push(("GH_HOST".into(), "github.com".into()));
+        prepared.env.push(("GH_PROMPT_DISABLED".into(), "1".into()));
+        prepared
+            .env
+            .push(("GIT_TERMINAL_PROMPT".into(), "0".into()));
+    }
+    let environment_sha256 = {
+        use sha2::{Digest, Sha256};
+        format!("{:x}",Sha256::digest(serde_json::to_vec(&serde_json::json!({"program":prepared.program,"args":prepared.args,"env":prepared.env,"cwd":ctx.location})).map_err(|error|failed(error.to_string()))?))
+    };
     let timeout_ms = check_timeout(ctx, check);
     if timeout_ms == 0 {
         return Ok(
@@ -53,7 +111,7 @@ pub(crate) async fn run(ctx: &Ctx<'_>, check: &Check) -> Result<Value, ToolError
     let settled = settled && drained;
     let (log, encoding_truncated) = text_log(&log);
     let mut result = json!({"outcome":if settled {outcome} else {"unknown"}, "exit_code":exit_code,
-        "settled":settled,"log":log,"log_truncated":truncated || encoding_truncated,"log_order":"stdout_then_stderr"});
+        "settled":settled,"log":log,"log_truncated":truncated || encoding_truncated,"log_order":"stdout_then_stderr","environment_sha256":environment_sha256});
     let mut probe = ctx.inv.clone();
     probe.input = json!({"command":command});
     let outcome = if result["outcome"] == "passed" {

@@ -32,6 +32,7 @@ use crate::runtime::{
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .merge(super::integrations::routes())
         .route("/workflows/runs", get(list).post(start))
         .route(
             "/workflows/runs/resume_interrupted",
@@ -131,7 +132,7 @@ fn diagnostic(error: Diagnostic) -> ApiError {
 }
 
 /// The owner Session as permission rules see it.
-fn owner_context(owner: &SessionInfo) -> TurnContext {
+pub(super) fn owner_context(owner: &SessionInfo) -> TurnContext {
     TurnContext {
         session_id: owner.id.clone(),
         directory: owner.directory.clone(),

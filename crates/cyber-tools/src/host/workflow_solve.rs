@@ -87,7 +87,7 @@ impl BuiltinHost {
         Ok(prepared)
     }
 
-    async fn solve_base(&self, owner: &TurnContext) -> Result<Value, PrepareError> {
+    pub(super) async fn solve_base(&self, owner: &TurnContext) -> Result<Value, PrepareError> {
         let inv =
             super::command_skills::command_invocation(owner, "workflow", json!({"name":"solve"}));
         let policy = self.policy(&inv).await.map_err(PrepareError::Unavailable)?;
@@ -154,7 +154,7 @@ impl BuiltinHost {
     }
 }
 
-fn check_read(ctx: &Ctx<'_>, root: &Path) -> Result<(), PrepareError> {
+pub(super) fn check_read(ctx: &Ctx<'_>, root: &Path) -> Result<(), PrepareError> {
     let action = if root.starts_with(&ctx.location) {
         "read"
     } else {
@@ -197,7 +197,7 @@ async fn git_text(
         .map_err(|_| invalid("solve Git inspection returned non-Unicode metadata"))
 }
 
-fn resolved_model(
+pub(super) fn resolved_model(
     models: &dyn ModelResolver,
     tiers: &BTreeMap<String, Option<String>>,
     owner: &str,

@@ -76,6 +76,12 @@ The approval inbox displays the original Session, request, Location and command,
 
 [View the 360-pixel mobile approval inbox](screenshots/web-dashboard-mobile.png). Long commands scroll within the card.
 
+## Complementary integration queue
+
+Open **Integrations** after selecting a Location and owner Session. Submit a manifest of pinned local commits/dependencies and literal check argv, run the batch, then refresh its host evidence. Reports include the combined diff, conflicts, checks, independent review and cost uncertainty. Contributor text remains inert.
+
+Publication requires reviewing the exact selected attempt and destination, checking the explicit review control, and acknowledging unavailable independent review when applicable. Lost acknowledgements retain the original operation and revision for retry. See the [integration queue guide](verified-integrations.md) for CLI equivalents, limits and recovery.
+
 ## Development and acceptance
 
 The TypeScript package lives in `web/`. Its committed `dist/` files are embedded in the Rust binary. After changing browser sources, regenerate them with `npm run build`; CI checks reproducibility, types, unit tests and real-browser acceptance against the actual CLI and a scripted provider.

@@ -327,6 +327,15 @@ export interface Operations {
     body: S.HubMutation14;
     response: S.HubMutationResult11;
   };
+  "v1.hub.contributionAuthorization": {
+    path: { projectID: string };
+    query: {
+      task?: QueryValue;
+      agent?: QueryValue;
+    };
+    body: undefined;
+    response: S.HubContributionAuthorization;
+  };
   "v1.hub.createProject": {
     path: Record<string, never>;
     query: Record<string, never>;
@@ -1491,6 +1500,48 @@ export interface Operations {
     body: undefined;
     response: S.RunDetail;
   };
+  "v1.workflow.integrationCancel": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: S.IntegrationRevision;
+    response: S.IntegrationBatch;
+  };
+  "v1.workflow.integrationList": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.IntegrationBatch[];
+  };
+  "v1.workflow.integrationPublish": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: S.IntegrationPublish;
+    response: S.IntegrationBatch;
+  };
+  "v1.workflow.integrationReport": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.IntegrationBatch;
+  };
+  "v1.workflow.integrationRun": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: S.IntegrationRevision;
+    response: S.IntegrationBatch;
+  };
+  "v1.workflow.integrationShow": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.IntegrationBatch;
+  };
+  "v1.workflow.integrationSubmit": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.IntegrationSubmit;
+    response: S.IntegrationBatch;
+  };
   "v1.workflow.library": {
     path: Record<string, never>;
     query: {
@@ -2087,6 +2138,18 @@ export const operations = {
     body: "required",
     located: false,
     unwrap: false,
+    stream: false,
+  },
+  "v1.hub.contributionAuthorization": {
+    tag: "hub",
+    name: "contributionAuthorization",
+    method: "GET",
+    path: "/api/v1/hub/projects/{projectID}/contributions/authorization",
+    pathParams: ["projectID"],
+    query: ["task", "agent"],
+    body: "none",
+    located: false,
+    unwrap: true,
     stream: false,
   },
   "v1.hub.createProject": {
@@ -4225,6 +4288,90 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.workflow.integrationCancel": {
+    tag: "workflow",
+    name: "integrationCancel",
+    method: "POST",
+    path: "/api/v1/workflows/integrations/{id}/cancel",
+    pathParams: ["id"],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.workflow.integrationList": {
+    tag: "workflow",
+    name: "integrationList",
+    method: "GET",
+    path: "/api/v1/workflows/integrations",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.workflow.integrationPublish": {
+    tag: "workflow",
+    name: "integrationPublish",
+    method: "POST",
+    path: "/api/v1/workflows/integrations/{id}/publish",
+    pathParams: ["id"],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.workflow.integrationReport": {
+    tag: "workflow",
+    name: "integrationReport",
+    method: "GET",
+    path: "/api/v1/workflows/integrations/{id}/report",
+    pathParams: ["id"],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.workflow.integrationRun": {
+    tag: "workflow",
+    name: "integrationRun",
+    method: "POST",
+    path: "/api/v1/workflows/integrations/{id}/run",
+    pathParams: ["id"],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.workflow.integrationShow": {
+    tag: "workflow",
+    name: "integrationShow",
+    method: "GET",
+    path: "/api/v1/workflows/integrations/{id}",
+    pathParams: ["id"],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.workflow.integrationSubmit": {
+    tag: "workflow",
+    name: "integrationSubmit",
+    method: "POST",
+    path: "/api/v1/workflows/integrations",
+    pathParams: [],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: true,
+    stream: false,
+  },
   "v1.workflow.library": {
     tag: "workflow",
     name: "library",
@@ -4558,6 +4705,9 @@ export function createGroups(caller: Caller) {
       /** Atomically claim one unassigned task at its expected revision (`POST /api/v1/hub/projects/{projectID}/tasks/{taskID}/claim`) */
       claimTask: (projectID: string, taskID: string, body: Operations["v1.hub.claimTask"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.claimTask"]["response"]> =>
         caller.call("v1.hub.claimTask", { path: { projectID, taskID }, body }, options),
+      /** Fresh human authorization for repository-bound contribution references (`GET /api/v1/hub/projects/{projectID}/contributions/authorization`) */
+      contributionAuthorization: (projectID: string, query?: Operations["v1.hub.contributionAuthorization"]["query"], options?: RequestOptions): Promise<Operations["v1.hub.contributionAuthorization"]["response"]> =>
+        caller.call("v1.hub.contributionAuthorization", { path: { projectID }, query }, options),
       /** Create a repository-bound project as the configured bootstrap subject (`POST /api/v1/hub/projects`) */
       createProject: (body: Operations["v1.hub.createProject"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.createProject"]["response"]> =>
         caller.call("v1.hub.createProject", { body }, options),
@@ -5138,6 +5288,27 @@ export function createGroups(caller: Caller) {
       /** Read a Workflow Run's summary with its agents (agents_detail) (`GET /api/v1/workflows/runs/{id}`) */
       get: (id: string, options?: RequestOptions): Promise<Operations["v1.workflow.get"]["response"]> =>
         caller.call("v1.workflow.get", { path: { id } }, options),
+      /** Cancel this exact integration revision (`POST /api/v1/workflows/integrations/{id}/cancel`) */
+      integrationCancel: (id: string, body: Operations["v1.workflow.integrationCancel"]["body"], options?: RequestOptions): Promise<Operations["v1.workflow.integrationCancel"]["response"]> =>
+        caller.call("v1.workflow.integrationCancel", { path: { id }, body }, options),
+      /** List integration batches in this Location (`GET /api/v1/workflows/integrations`) */
+      integrationList: (options?: RequestOptions): Promise<Operations["v1.workflow.integrationList"]["response"]> =>
+        caller.call("v1.workflow.integrationList", {}, options),
+      /** Explicitly publish or reconcile the reviewed integration branch and PR (`POST /api/v1/workflows/integrations/{id}/publish`) */
+      integrationPublish: (id: string, body: Operations["v1.workflow.integrationPublish"]["body"], options?: RequestOptions): Promise<Operations["v1.workflow.integrationPublish"]["response"]> =>
+        caller.call("v1.workflow.integrationPublish", { path: { id }, body }, options),
+      /** Inspect integration verification, review and cost evidence (`GET /api/v1/workflows/integrations/{id}/report`) */
+      integrationReport: (id: string, options?: RequestOptions): Promise<Operations["v1.workflow.integrationReport"]["response"]> =>
+        caller.call("v1.workflow.integrationReport", { path: { id } }, options),
+      /** Claim and start a fresh immutable integration attempt (`POST /api/v1/workflows/integrations/{id}/run`) */
+      integrationRun: (id: string, body: Operations["v1.workflow.integrationRun"]["body"], options?: RequestOptions): Promise<Operations["v1.workflow.integrationRun"]["response"]> =>
+        caller.call("v1.workflow.integrationRun", { path: { id }, body }, options),
+      /** Inspect current integration state and revalidated host evidence (`GET /api/v1/workflows/integrations/{id}`) */
+      integrationShow: (id: string, options?: RequestOptions): Promise<Operations["v1.workflow.integrationShow"]["response"]> =>
+        caller.call("v1.workflow.integrationShow", { path: { id } }, options),
+      /** Pin an owner-selected contribution manifest without executing checks (`POST /api/v1/workflows/integrations`) */
+      integrationSubmit: (body: Operations["v1.workflow.integrationSubmit"]["body"], options?: RequestOptions): Promise<Operations["v1.workflow.integrationSubmit"]["response"]> =>
+        caller.call("v1.workflow.integrationSubmit", { body }, options),
       /** List the Workflow library of the Location: bundled and saved Workflows by precedence, with their origin, and the modules that failed to load; source=true includes each module's source (`GET /api/v1/workflows`) */
       library: (query?: Operations["v1.workflow.library"]["query"], options?: RequestOptions): Promise<Operations["v1.workflow.library"]["response"]> =>
         caller.call("v1.workflow.library", { query }, options),

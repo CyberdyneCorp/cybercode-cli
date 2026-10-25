@@ -100,6 +100,14 @@ pub trait WorkflowHost {
             ))
         })
     }
+    fn integration(&self, _input: Value) -> HostFuture<'_> {
+        Box::pin(async {
+            Err(Diagnostic::new(
+                DiagnosticKind::PermissionDenied,
+                "integration host protocol unavailable",
+            ))
+        })
+    }
     fn ask(&self, _question: Value) -> HostFuture<'_> {
         Box::pin(async {
             Err(Diagnostic::new(
@@ -525,6 +533,7 @@ impl Engine {
             }
             "ask" => Ok(host.ask(payload["question"].clone())),
             "solve" => Ok(host.solve(payload.clone())),
+            "integration" => Ok(host.integration(payload.clone())),
             "tool" => tool_call(&payload, &self.tools).map(|(name, input)| host.tool(name, input)),
             other => Err(Diagnostic::execution(format!("unknown host call {other}"))),
         };
