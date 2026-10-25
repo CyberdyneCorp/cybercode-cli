@@ -10,7 +10,9 @@ pub(crate) mod review;
 mod skill_catalog;
 mod template_expand;
 mod workflow_agents;
+pub(crate) mod workflow_integration;
 mod workflow_prepare;
+mod workflow_publication;
 mod workflow_solve;
 
 use std::collections::{BTreeMap, HashMap, HashSet};

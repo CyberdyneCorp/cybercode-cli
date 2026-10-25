@@ -5,7 +5,7 @@
 
 #### Scenario: Branch moves after submission
 - **WHEN** a contribution branch changes after its full commit was pinned
-- **THEN** the attempt continues using the pinned commit and reports the branch change without silently replacing the contribution
+- **THEN** the attempt continues using the pinned commit without silently resolving or replacing it from the moving branch
 
 #### Scenario: Invalid dependency graph
 - **WHEN** a batch contains a dependency cycle or a contribution from an unrelated repository history
@@ -27,7 +27,7 @@
 
 #### Scenario: Fabricated green report
 - **WHEN** a contributor submits JSON claiming successful checks without matching host records
-- **THEN** the report retains that claim as unverified attribution and does not grant verified status
+- **THEN** admission rejects unsupported verification claims and does not grant verified status
 
 ### Requirement: Integration recovery and explicit publication
 (P2) Integration queue actions SHALL be durable, revision-fenced and idempotent. Target advancement SHALL mark a verified attempt stale; uncertain native operations SHALL remain unknown until reconciled. Publishing a prepared branch/PR SHALL require explicit owner review of destination and exact attempt, persist remote effect identity and reconcile uncertain acknowledgements before retry. The queue SHALL NOT force-push, automatically merge or repeat an uncertain check/publication.

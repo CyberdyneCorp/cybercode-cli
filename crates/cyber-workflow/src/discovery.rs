@@ -382,6 +382,7 @@ mod tests {
             origins,
             [
                 ("audit", "project".to_owned()),
+                ("integrate", "bundled".to_owned()),
                 ("migrate", "bundled".to_owned()),
                 ("plan", "global".to_owned()),
                 ("research", "bundled".to_owned()),
@@ -398,7 +399,12 @@ mod tests {
             ]
         );
         assert_eq!(
-            listing.workflows[2].shadowed,
+            listing
+                .workflows
+                .iter()
+                .find(|entry| entry.module.meta.name == "plan")
+                .unwrap()
+                .shadowed,
             [PathBuf::from("bundled:plan")]
         );
 

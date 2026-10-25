@@ -2816,6 +2816,277 @@
           "reserved"
         ]
       },
+      "IntegrationSubmit": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/Manifest"
+          },
+          "budget": true
+        },
+        "required": [
+          "session_id",
+          "manifest"
+        ]
+      },
+      "Manifest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "target_branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "contributions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Contribution"
+            }
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Check"
+            }
+          },
+          "reviewer_model": {
+            "type": "string",
+            "default": "verify"
+          }
+        },
+        "required": [
+          "contributions",
+          "checks"
+        ]
+      },
+      "Contribution": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "commit": {
+            "type": "string"
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "hub": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HubReference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "label",
+          "commit"
+        ]
+      },
+      "HubReference": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project": {
+            "type": "string"
+          },
+          "task": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "agent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "project"
+        ]
+      },
+      "Check": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "argv": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 300
+          }
+        },
+        "required": [
+          "argv"
+        ]
+      },
+      "Data_IntegrationBatch": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/IntegrationBatch"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "IntegrationBatch": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "attempt": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/Manifest"
+          },
+          "args": true,
+          "budget": true,
+          "run_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "previous_runs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "updated_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "report": true,
+          "publication": true
+        },
+        "required": [
+          "id",
+          "session_id",
+          "directory",
+          "revision",
+          "attempt",
+          "status",
+          "manifest",
+          "args",
+          "previous_runs",
+          "created_ms",
+          "updated_ms"
+        ]
+      },
+      "Data_Array_of_IntegrationBatch": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IntegrationBatch"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "IntegrationRevision": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "expected_revision"
+        ]
+      },
+      "IntegrationPublish": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "operation_id": {
+            "type": "string"
+          },
+          "remote": {
+            "type": "string"
+          },
+          "repository": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "acknowledge_review_unavailable": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "expected_revision",
+          "operation_id",
+          "remote",
+          "repository",
+          "title",
+          "body"
+        ]
+      },
       "Page_WorkflowRunSummary": {
         "type": "object",
         "properties": {
@@ -14282,6 +14553,61 @@
         "type": "object",
         "properties": {
           "data": {
+            "$ref": "#/components/schemas/HubContributionAuthorization"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "HubContributionAuthorization": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string"
+          },
+          "repository": {
+            "$ref": "#/components/schemas/HubRepository"
+          },
+          "member": {
+            "type": "string"
+          },
+          "member_generation": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "project_revision": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "task": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "agent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "project",
+          "repository",
+          "member",
+          "member_generation",
+          "project_revision"
+        ],
+        "description": "Fresh human/project authorization for an owner-selected integration reference.\nThis attests identity and binding, never a patch's verification result."
+      },
+      "HubData5": {
+        "type": "object",
+        "properties": {
+          "data": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/HubMember"
@@ -14421,7 +14747,7 @@
         "type": "object",
         "additionalProperties": false
       },
-      "HubData5": {
+      "HubData6": {
         "type": "object",
         "properties": {
           "data": {
@@ -14548,7 +14874,7 @@
           "role"
         ]
       },
-      "HubData6": {
+      "HubData7": {
         "type": "object",
         "properties": {
           "data": {
@@ -14747,7 +15073,7 @@
           }
         }
       },
-      "HubData7": {
+      "HubData8": {
         "type": "object",
         "properties": {
           "data": {
@@ -14899,7 +15225,7 @@
           "state"
         ]
       },
-      "HubData8": {
+      "HubData9": {
         "type": "object",
         "properties": {
           "data": {
@@ -15034,7 +15360,7 @@
           "repository"
         ]
       },
-      "HubData9": {
+      "HubData10": {
         "type": "object",
         "properties": {
           "data": {
@@ -15252,7 +15578,7 @@
           "text"
         ]
       },
-      "HubData10": {
+      "HubData11": {
         "type": "object",
         "properties": {
           "data": {
@@ -15300,7 +15626,7 @@
           "expired"
         ]
       },
-      "HubData11": {
+      "HubData12": {
         "type": "object",
         "properties": {
           "data": {
@@ -15375,7 +15701,7 @@
           "content_hash"
         ]
       },
-      "HubData12": {
+      "HubData13": {
         "type": "object",
         "properties": {
           "data": {
@@ -15770,7 +16096,7 @@
           "reason"
         ]
       },
-      "HubData13": {
+      "HubData14": {
         "type": "object",
         "properties": {
           "data": {
@@ -15826,7 +16152,7 @@
           "cursor"
         ]
       },
-      "HubData14": {
+      "HubData15": {
         "type": "object",
         "properties": {
           "data": {
@@ -17563,6 +17889,459 @@
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflows/integrations": {
+      "post": {
+        "operationId": "v1.workflow.integrationSubmit",
+        "summary": "Pin an owner-selected contribution manifest without executing checks",
+        "tags": [
+          "workflow"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_IntegrationBatch"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntegrationSubmit"
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "v1.workflow.integrationList",
+        "summary": "List integration batches in this Location",
+        "tags": [
+          "workflow"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_IntegrationBatch"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflows/integrations/{id}": {
+      "get": {
+        "operationId": "v1.workflow.integrationShow",
+        "summary": "Inspect current integration state and revalidated host evidence",
+        "tags": [
+          "workflow"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_IntegrationBatch"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflows/integrations/{id}/report": {
+      "get": {
+        "operationId": "v1.workflow.integrationReport",
+        "summary": "Inspect integration verification, review and cost evidence",
+        "tags": [
+          "workflow"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_IntegrationBatch"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflows/integrations/{id}/run": {
+      "post": {
+        "operationId": "v1.workflow.integrationRun",
+        "summary": "Claim and start a fresh immutable integration attempt",
+        "tags": [
+          "workflow"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_IntegrationBatch"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntegrationRevision"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflows/integrations/{id}/cancel": {
+      "post": {
+        "operationId": "v1.workflow.integrationCancel",
+        "summary": "Cancel this exact integration revision",
+        "tags": [
+          "workflow"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_IntegrationBatch"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntegrationRevision"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflows/integrations/{id}/publish": {
+      "post": {
+        "operationId": "v1.workflow.integrationPublish",
+        "summary": "Explicitly publish or reconcile the reviewed integration branch and PR",
+        "tags": [
+          "workflow"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_IntegrationBatch"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntegrationPublish"
               }
             }
           }
@@ -28462,6 +29241,129 @@
         }
       }
     },
+    "/api/v1/hub/projects/{projectID}/contributions/authorization": {
+      "get": {
+        "operationId": "v1.hub.contributionAuthorization",
+        "tags": [
+          "hub"
+        ],
+        "summary": "Fresh human authorization for repository-bound contribution references",
+        "parameters": [
+          {
+            "name": "projectID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "agent",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Durable hub result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubData4"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid payload or repository",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bearer authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current identity, membership, role or step-up denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project/resource not visible",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Revision, claim or operation conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Storage or live authorization unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hubBearer": []
+          }
+        ],
+        "x-cyber-listener": "hub"
+      }
+    },
     "/api/v1/hub/projects/{projectID}/members": {
       "get": {
         "operationId": "v1.hub.members",
@@ -28485,7 +29387,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HubData4"
+                  "$ref": "#/components/schemas/HubData5"
                 }
               }
             }
@@ -28957,7 +29859,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HubData5"
+                  "$ref": "#/components/schemas/HubData6"
                 }
               }
             }
@@ -29304,7 +30206,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HubData6"
+                  "$ref": "#/components/schemas/HubData7"
                 }
               }
             }
@@ -29769,7 +30671,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HubData7"
+                  "$ref": "#/components/schemas/HubData8"
                 }
               }
             }
@@ -30360,7 +31262,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HubData8"
+                  "$ref": "#/components/schemas/HubData9"
                 }
               }
             }
@@ -30840,7 +31742,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HubData9"
+                  "$ref": "#/components/schemas/HubData10"
                 }
               }
             }
@@ -31078,7 +31980,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HubData10"
+                  "$ref": "#/components/schemas/HubData11"
                 }
               }
             }
@@ -31201,7 +32103,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HubData11"
+                  "$ref": "#/components/schemas/HubData12"
                 }
               }
             }
@@ -31441,7 +32343,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HubData12"
+                  "$ref": "#/components/schemas/HubData13"
                 }
               }
             }
@@ -32038,7 +32940,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HubData13"
+                  "$ref": "#/components/schemas/HubData14"
                 }
               }
             }
@@ -32153,7 +33055,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HubData14"
+                  "$ref": "#/components/schemas/HubData15"
                 }
               }
             }

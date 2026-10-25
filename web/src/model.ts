@@ -1,9 +1,10 @@
+import { Integrations } from "./integrations.js";
 import type { EventEnvelope, FileDiff, GoalsView, Job, LocationInfo, Message, PendingRequest, RunDetail, Session, SessionRow, WorkflowRunSummary } from "../../sdk/typescript/src/generated/types.js";
 import { ApiFault, operationKey, type Port, type RequestOptions } from "./transport.js";
 import { MessageInbox } from "./inbox.js";
 
 export type Connection = "authentication required" | "connecting" | "connected" | "reconnecting" | "offline";
-export type Tab = "conversation" | "approvals" | "runs" | "inbox";
+export type Tab = "conversation" | "approvals" | "runs" | "inbox" | "integrations";
 export interface Lease { client_id: string; session_id: string; expires_at: number }
 interface Page<T> { data: T[]; cursor: { next?: string | null } }
 interface Located<T> { location: LocationInfo; data: T }
@@ -56,8 +57,10 @@ export class Dashboard {
   #networkRecovery: Promise<void> | undefined;
   #pageCursor: string | undefined;
   #pageVersion = 0;
+  readonly integrations: Integrations;
   readonly inbox: MessageInbox;
   constructor(readonly api: Port, readonly now = Date.now) {
+    this.integrations = new Integrations(api, () => ({directory:this.state.directory,session:this.state.session?.id,enabled:this.actionable}), () => this.emit());
     this.inbox = new MessageInbox(api, () => this.state.authenticated && this.state.session ? { session: this.state.session.id, directory: this.state.session.directory, actionable: this.actionable, signal: this.#attachment.signal } : undefined, () => this.emit());
   }
   emit(): void { this.changed(); }
@@ -83,7 +86,7 @@ export class Dashboard {
     } finally { this.state.authBusy = false; this.emit(); }
   }
   authenticationRequired(message = "Your connection needs authentication. Sign in again."): void {
-    this.inbox.reset();
+    this.inbox.reset(); this.integrations.reset();
     this.stopAttachment(); this.api.clear(); this.#identity = undefined; this.#decisions.clear(); this.#commands.clear(); this.#cursors.clear(); this.jobLog = undefined;
     this.state = initial(); this.state.notice = message; this.emit();
   }
@@ -92,7 +95,7 @@ export class Dashboard {
   }
   async switchLocation(directory: string): Promise<void> {
     if (!this.state.authenticated || this.state.loading) return;
-    this.inbox.reset();
+    this.inbox.reset(); this.integrations.reset();
     this.state.liveText = ""; this.state.liveMessage = undefined;
     this.releaseLease(); this.stopAttachment();
     const generation = this.#generation; this.jobLog = undefined;
@@ -122,7 +125,7 @@ export class Dashboard {
   }
   async selectSession(id: string): Promise<void> {
     if (!this.state.authenticated) return;
-    this.inbox.reset();
+    this.inbox.reset(); this.integrations.reset();
     this.releaseLease(); this.stopAttachment();
     const generation = this.#generation;
     this.jobLog = undefined;
@@ -157,7 +160,7 @@ export class Dashboard {
       catch (error) { this.showError(error); backoff = Math.min(15_000, backoff * 2); }
     }
   }
-  setTab(tab: Tab): void { this.state.tab = tab; this.emit(); }
+  setTab(tab: Tab): void { this.state.tab = tab; if (tab === "integrations") void this.integrations.load(); this.emit(); }
   setDraft(value: string): void { this.state.draft = value; }
   async olderMessages(): Promise<void> {
     if (this.state.messageCursor) await this.transcriptPage(this.state.messageCursor);

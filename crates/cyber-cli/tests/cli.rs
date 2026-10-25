@@ -210,7 +210,15 @@ fn assert_list_json(listing: &Value) {
     let names: Vec<String> = listed_names(listing).into_iter().map(|(n, _)| n).collect();
     assert_eq!(
         names,
-        ["audit", "migrate", "plan", "research", "review", "solve"]
+        [
+            "audit",
+            "integrate",
+            "migrate",
+            "plan",
+            "research",
+            "review",
+            "solve"
+        ]
     );
     let audit = &listing["workflows"][0];
     assert_eq!(audit["origin"], "project");
@@ -236,11 +244,18 @@ fn bundled_workflows_are_listed_and_shown() {
     let o = run(&["workflows", "list", "--format", "json"]);
     assert!(o.status.success(), "{}", stderr(&o));
     let entries = listed_names(&json(&o));
-    let expected: Vec<(String, String)> =
-        ["audit", "migrate", "plan", "research", "review", "solve"]
-            .iter()
-            .map(|name| ((*name).to_owned(), "bundled".to_owned()))
-            .collect();
+    let expected: Vec<(String, String)> = [
+        "audit",
+        "integrate",
+        "migrate",
+        "plan",
+        "research",
+        "review",
+        "solve",
+    ]
+    .iter()
+    .map(|name| ((*name).to_owned(), "bundled".to_owned()))
+    .collect();
     assert_eq!(entries, expected);
 
     let o = run(&["workflows", "show", "review"]);
@@ -319,7 +334,7 @@ fn bundled_workflows_can_be_turned_off() {
     assert_eq!(count(&mut disabled), 0);
     assert_eq!(
         count(&mut env.command(&["workflows", "list", "--format", "json"])),
-        6
+        cyber_workflow::bundled::modules().len()
     );
 }
 

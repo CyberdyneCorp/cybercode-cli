@@ -15,6 +15,19 @@ use crate::host::Ctx;
 use crate::permissions::Request;
 use crate::tools::{ToolError, failed};
 
+fn configuration(
+    ctx: &Ctx<'_>,
+) -> Result<
+    (
+        serde_json::Value,
+        std::collections::BTreeMap<String, String>,
+    ),
+    String,
+> {
+    crate::host::workflow_integration::configuration(ctx)
+        .unwrap_or_else(|| (ctx.host.opts.config)(&ctx.location))
+}
+
 /// A domain the proxy needs a decision for.
 pub(crate) type NetworkAsk = (String, oneshot::Sender<bool>);
 
@@ -47,6 +60,7 @@ pub(crate) struct Boundary {
 #[derive(Default)]
 struct Scope<'a> {
     ambient_temp: bool,
+    native_authority: bool,
     git_roots: Option<&'a [PathBuf]>,
     /// Kept read-only inside `git_roots`.
     git_read_only: &'a [PathBuf],
@@ -57,7 +71,7 @@ struct Scope<'a> {
 
 /// The effective sandbox of the call: config, `--sandbox` and the agent's profile.
 pub(crate) fn effective(ctx: &Ctx<'_>) -> SandboxConfig {
-    let (config, sources) = (ctx.host.opts.config)(&ctx.location).unwrap_or_default();
+    let (config, sources) = configuration(ctx).unwrap_or_default();
     resolve(ctx, &config, &sources)
 }
 
@@ -121,6 +135,25 @@ pub(crate) async fn prepare_command(
     prepare_scoped_command(ctx, program, args, scope).await
 }
 
+/// Host integration Git/GitHub authority uses the host environment and existing
+/// credential grants, never project-selected environment overlays.
+pub(crate) async fn prepare_authoritative_command(
+    ctx: &Ctx<'_>,
+    program: &str,
+    args: &[String],
+) -> Result<Prepared, ToolError> {
+    prepare_scoped_command(
+        ctx,
+        program,
+        args,
+        Scope {
+            native_authority: true,
+            ..Scope::default()
+        },
+    )
+    .await
+}
+
 /// Automatic formatters use owned temporary roots rather than the ambient OS temp tree.
 pub(crate) async fn prepare_formatter_command(
     ctx: &Ctx<'_>,
@@ -139,6 +172,7 @@ pub(crate) async fn prepare_worktree_command(
 ) -> Result<Prepared, ToolError> {
     let scope = Scope {
         extra_credentials: credentials,
+        native_authority: crate::host::workflow_integration::native_git_authority(ctx),
         ..Scope::default()
     };
     prepare_scoped_command(ctx, program, args, scope).await
@@ -159,6 +193,7 @@ pub(crate) fn credential_env_names(config: &serde_json::Value) -> Vec<String> {
 /// `read_only` paths inside them stay read-only.
 pub(crate) async fn prepare_worktree_git(
     ctx: &Ctx<'_>,
+    program: &str,
     args: &[String],
     writable: &[PathBuf],
     read_only: &[PathBuf],
@@ -166,9 +201,10 @@ pub(crate) async fn prepare_worktree_git(
     let scope = Scope {
         git_roots: Some(writable),
         git_read_only: read_only,
+        native_authority: crate::host::workflow_integration::native_git_authority(ctx),
         ..Scope::default()
     };
-    prepare_scoped_command(ctx, "git", args, scope).await
+    prepare_scoped_command(ctx, program, args, scope).await
 }
 
 async fn prepare_scoped_command(
@@ -177,7 +213,7 @@ async fn prepare_scoped_command(
     args: &[String],
     scope: Scope<'_>,
 ) -> Result<Prepared, ToolError> {
-    let (config, _) = (ctx.host.opts.config)(&ctx.location).unwrap_or_default();
+    let (config, _) = configuration(ctx).unwrap_or_default();
     let home = &ctx.host.opts.home;
     let mut sandbox = effective(ctx);
     if scope.unsandboxed {
@@ -187,6 +223,7 @@ async fn prepare_scoped_command(
         .host
         .solve_isolation(&ctx.inv.session_id)
         .map_err(failed)?;
+    let isolated_solve = isolated_solve || crate::host::workflow_integration::isolated(ctx);
     if isolated_solve {
         if sandbox.policy == Policy::FullAccess {
             sandbox.policy = Policy::WorkspaceWrite;
@@ -238,13 +275,23 @@ async fn prepare_scoped_command(
         config: sandbox.clone(),
     };
     let wrapped = cyber_sandbox::wrap(&launch, program, args).map_err(|e| failed(e.to_string()))?;
-    let base = command_environment(
-        std::env::vars(),
-        &sandbox,
-        &config,
-        ctx.host.opts.models.as_deref(),
-        scope.extra_credentials,
-    );
+    let base = if scope.native_authority {
+        authority_environment(
+            std::env::vars(),
+            &sandbox,
+            &config,
+            ctx.host.opts.models.as_deref(),
+            scope.extra_credentials,
+        )
+    } else {
+        command_environment(
+            std::env::vars(),
+            &sandbox,
+            &config,
+            ctx.host.opts.models.as_deref(),
+            scope.extra_credentials,
+        )
+    };
     let mut env: Vec<(String, String)> = base
         .into_iter()
         .filter(|(k, _)| !wrapped.env.contains_key(k) && k != "TMPDIR")
@@ -291,6 +338,44 @@ fn command_environment(
     credentials.extend(credential_env_names(config));
     credentials.extend_from_slice(extra_credentials);
     cyber_sandbox::policy_env(vars, sandbox, &credentials)
+}
+
+fn authority_environment(
+    vars: impl Iterator<Item = (String, String)>,
+    sandbox: &SandboxConfig,
+    config: &serde_json::Value,
+    models: Option<&dyn cyber_server::runtime::ModelResolver>,
+    credentials: &[String],
+) -> Vec<(String, String)> {
+    let mut trusted = sandbox.clone();
+    trusted.env.set.clear();
+    let mut env = command_environment(vars, &trusted, config, models, credentials);
+    env.retain(|(key, _)| {
+        let key = key.to_ascii_uppercase();
+        !key.starts_with("LD_")
+            && !key.starts_with("DYLD_")
+            && !matches!(
+                key.as_str(),
+                "GH_CONFIG_DIR"
+                    | "BASH_ENV"
+                    | "ENV"
+                    | "GCONV_PATH"
+                    | "LOCPATH"
+                    | "LIBPATH"
+                    | "SHLIB_PATH"
+                    | "PYTHONPATH"
+                    | "PYTHONHOME"
+                    | "PERL5LIB"
+                    | "PERL5OPT"
+                    | "RUBYOPT"
+                    | "RUBYLIB"
+                    | "NODE_OPTIONS"
+                    | "NODE_PATH"
+                    | "OPENSSL_CONF"
+                    | "OPENSSL_MODULES"
+            )
+    });
+    env
 }
 
 async fn start_proxy(decide: Decide, _tmp: &Path) -> std::io::Result<Proxy> {
@@ -538,7 +623,7 @@ pub(crate) async fn hidden_read(ctx: &Ctx<'_>, path: &Path) -> String {
 /// a diff, a match count or a move would otherwise disclose or copy it.
 pub(crate) async fn refuse_hidden(ctx: &Ctx<'_>, paths: &[&Path]) -> Result<(), ToolError> {
     // Without the configuration the `deny_read` globs are unknown: refuse.
-    let (config, sources) = (ctx.host.opts.config)(&ctx.location).map_err(|error| {
+    let (config, sources) = configuration(ctx).map_err(|error| {
         failed(format!(
             "Sandbox denied: read (the sandbox configuration could not be read: {error})"
         ))
@@ -563,9 +648,29 @@ fn roots(ctx: &Ctx<'_>, sandbox: &SandboxConfig, tmp: &Path, ambient_temp: bool)
 }
 
 pub(crate) fn session_tmp(ctx: &Ctx<'_>) -> Result<PathBuf, ToolError> {
+    if let Some(dir) = crate::host::workflow_integration::temporary(ctx) {
+        let base = &ctx.host.opts.temp_dir;
+        std::fs::create_dir_all(base).map_err(|error| failed(error.to_string()))?;
+        match std::fs::symlink_metadata(&dir) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+            Ok(_) => return Err(failed("integration temporary root was replaced")),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::create_dir(&dir).map_err(|error| failed(error.to_string()))?
+            }
+            Err(error) => return Err(failed(error.to_string())),
+        }
+        let canonical = std::fs::canonicalize(&dir).map_err(|error| failed(error.to_string()))?;
+        let parent = std::fs::canonicalize(base).map_err(|error| failed(error.to_string()))?;
+        if canonical.parent() != Some(parent.as_path()) {
+            return Err(failed(
+                "integration temporary root left its owned directory",
+            ));
+        }
+        return Ok(dir);
+    }
     let dir = ctx.host.opts.temp_dir.join(&ctx.inv.session_id);
     std::fs::create_dir_all(&dir)
-        .map_err(|e| failed(format!("Could not create {}: {e}", dir.display())))?;
+        .map_err(|error| failed(format!("Could not create {}: {error}", dir.display())))?;
     Ok(dir)
 }
 
@@ -607,6 +712,58 @@ mod tests {
             .into_iter()
             .map(|(name, _)| name)
             .collect()
+    }
+
+    #[test]
+    fn native_authority_rejects_project_overlays_and_runtime_loaders_without_changing_checks() {
+        let mut sandbox = cyber_sandbox::SandboxConfig::resolve(
+            &serde_json::json!({}),
+            &Default::default(),
+            Some("workspace-write"),
+            std::path::Path::new("/trusted/home"),
+        );
+        sandbox.env.set = std::collections::BTreeMap::from([
+            ("LD_PRELOAD".into(), "./contributed.so".into()),
+            ("DYLD_INSERT_LIBRARIES".into(), "./contributed.dylib".into()),
+            ("GH_CONFIG_DIR".into(), "./contributed-gh".into()),
+            ("HOME".into(), "./contributed-home".into()),
+            ("XDG_CONFIG_HOME".into(), "./contributed-config".into()),
+            ("CHECK_OVERLAY".into(), "owner-check-value".into()),
+        ]);
+        let vars = vec![
+            ("HOME".into(), "/trusted/home".into()),
+            ("LD_PRELOAD".into(), "./ambient-loader.so".into()),
+            ("GH_CONFIG_DIR".into(), "./ambient-gh".into()),
+        ];
+        let native = super::authority_environment(
+            vars.clone().into_iter(),
+            &sandbox,
+            &serde_json::json!({}),
+            None,
+            &[],
+        );
+        assert!(!native.iter().any(|(key, value)| key.starts_with("LD_")
+            || key.starts_with("DYLD_")
+            || key == "GH_CONFIG_DIR"
+            || value.starts_with("./contributed")
+            || key == "CHECK_OVERLAY"));
+        let check = super::command_environment(
+            vars.into_iter(),
+            &sandbox,
+            &serde_json::json!({}),
+            None,
+            &[],
+        );
+        assert!(
+            check
+                .iter()
+                .any(|(key, value)| key == "CHECK_OVERLAY" && value == "owner-check-value")
+        );
+        assert!(
+            check
+                .iter()
+                .any(|(key, value)| key == "LD_PRELOAD" && value == "./contributed.so")
+        );
     }
 
     #[test]

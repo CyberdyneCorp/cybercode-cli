@@ -6,7 +6,7 @@ import { createServer as createHttpServer, type Server as HttpServer } from 'nod
 import { createServer as createTcpServer, connect, type Server as TcpServer, type Socket } from 'node:net';
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { resolve, join } from 'node:path';
+import { resolve, join, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
@@ -110,7 +110,7 @@ export class DashboardFixture {
     }));
     this.env = { PATH: process.env.PATH, HOME: join(this.root, 'home'), CYBER_HOME: this.home, CYBER_MODELS_PATH: join(this.root, 'models.json'), CYBER_OFFLINE: '1', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: join(this.root, 'empty-git-config'), ...process.platform === 'win32' ? { SystemRoot: process.env.SystemRoot } : {} };
     await writeFile(join(this.root, 'empty-git-config'), '');
-    for (const args of [['init', '--quiet', '-b', 'main'], ['-c', 'user.name=Browser fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '--quiet', '-m', 'fixture']]) {
+    for (const args of [['init', '--quiet', '-b', 'main'], ['config', 'user.name', 'Browser fixture'], ['config', 'user.email', 'fixture@example.invalid'], ['-c', 'user.name=Browser fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '--quiet', '-m', 'fixture']]) {
       const result = spawnSync('git', args, { cwd: this.repo, env: this.env, encoding: 'utf8' });
       if (result.status !== 0) throw new Error('Could not initialize isolated fixture checkout');
     }
@@ -140,6 +140,14 @@ export class DashboardFixture {
     await Promise.race([new Promise<void>((accept) => child.once('exit', () => accept())), new Promise<void>((accept) => setTimeout(accept, 5_000))]);
     if (child.exitCode === null) child.kill('SIGKILL');
     this.server = undefined;
+  }
+  async restartWithTrustedPath(directory: string): Promise<void> {
+    await this.stop();this.env.PATH=`${directory}${delimiter}${this.env.PATH ?? ''}`;await this.start();
+  }
+  async crash(): Promise<void> {
+    const child=this.server;if(!child)return;
+    const ended=new Promise<void>(accept=>child.once('exit',()=>accept()));
+    child.kill('SIGKILL');await ended;this.server=undefined;
   }
   async restart(): Promise<void> { await this.stop(); await this.start(); }
   async terminal(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {

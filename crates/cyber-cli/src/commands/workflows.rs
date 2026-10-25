@@ -17,6 +17,7 @@ use crate::context::Context;
 use crate::error::CliError;
 use crate::output;
 
+mod integrations;
 mod library;
 mod runs;
 
@@ -28,6 +29,11 @@ const POLL: Duration = Duration::from_millis(200);
 
 #[derive(Debug, Subcommand)]
 pub enum WorkflowsCmd {
+    /// Compose, verify and review complementary agent contributions in isolation.
+    Integrations {
+        #[command(subcommand)]
+        command: integrations::IntegrationCmd,
+    },
     /// List the Workflow library (project overrides global, both override bundled) and
     /// modules that fail to load.
     List,
@@ -145,6 +151,9 @@ async fn remote(
     global: &GlobalArgs,
 ) -> Result<(), CliError> {
     match cmd {
+        WorkflowsCmd::Integrations { command } => {
+            integrations::run(command, client, ctx, global).await
+        }
         WorkflowsCmd::List | WorkflowsCmd::Eject(_) => unreachable!("answered locally"),
         WorkflowsCmd::Run(args) => start(client, ctx, global, args).await,
         WorkflowsCmd::Runs { all, status, watch } => {

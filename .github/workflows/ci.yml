@@ -165,17 +165,16 @@ jobs:
       - name: Build the cyber binary
         working-directory: .
         run: cargo build --locked -p cyber-cli --bin cyber
-      - run: npm test
-        env:
-          CYBER_BIN: ${{ github.workspace }}/target/debug/cyber
-      # The plugin kit's end-to-end test runs a plugin host, which is always sandboxed:
-      # bubblewrap, and the helper that bridges its network proxy.
-      - name: Plugin host sandbox prerequisites
+      # Integration verification and plugin hosts require the real OS sandbox.
+      - name: Sandbox prerequisites
         working-directory: .
         run: |
           sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update && sudo apt-get install -y bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec
+      - run: npm test
+        env:
+          CYBER_BIN: ${{ github.workspace }}/target/debug/cyber
       - name: TypeScript plugin kit
         working-directory: sdk/plugin
         run: |
@@ -291,6 +290,11 @@ jobs:
         working-directory: web
       - run: npm run typecheck && npm run typecheck:e2e && npm run check:build && npm test
         working-directory: web
+      - name: Integration sandbox prerequisites
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update && sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec
       - run: cargo build -p cyber-cli
       - run: npx playwright install --with-deps chromium
         working-directory: web

@@ -3,6 +3,19 @@ use crate::{ids::*, model::*, repository::Repository};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+/// Fresh human/project authorization for an owner-selected integration reference.
+/// This attests identity and binding, never a patch's verification result.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ContributionAuthorization {
+    pub project: crate::ids::ProjectId,
+    pub repository: crate::repository::Repository,
+    pub member: crate::ids::MemberId,
+    pub member_generation: u64,
+    pub project_revision: u64,
+    pub task: Option<String>,
+    pub agent: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Data<T> {
     pub data: T,

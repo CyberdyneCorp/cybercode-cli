@@ -1587,7 +1587,9 @@ export default async function () {
 
 The library also includes [`solve`](verified-workflows.md): independent candidate worktrees, host-owned checks, a read-only judge and server-derived evidence. Its default soft budget is $5, five agents and 30 minutes; each solver has at most 20 steps. Checks use literal argv and need command permissions. The owner checkout stays unchanged.
 
-Six Workflows ship inside the `cyber` binary. They have the lowest precedence: a global (`~/.config/cyber/workflows`) or project (`.cyber/workflows`) module with the same name replaces one, and the listing names what it shadows (`bundled:audit`).
+For complementary changes, use the [integration queue](verified-integrations.md) and its owner CLI/API/dashboard controls. Its native checks are restricted to the embedded source digest; ejecting or overriding its script does not grant host verification authority.
+
+Seven Workflows ship inside the `cyber` binary. They have the lowest precedence: a global (`~/.config/cyber/workflows`) or project (`.cyber/workflows`) module with the same name replaces one, and the listing names what it shadows (`bundled:audit`).
 
 | Workflow | What it does | Args (defaults) | Default budget |
 |---|---|---|---|
@@ -1597,6 +1599,7 @@ Six Workflows ship inside the `cyber` binary. They have the lowest precedence: a
 | `research` | Searchers per source and angle, readers extracting claims with locations, an independent cross-check per claim, then an answer citing verified claims only | `question`, `sources` (`repo`, `docs`; `web` when the web tools are allowed), `angles` (3, ≤ 6), `max_sources` (12) | 40 agents, $5, 1 h |
 | `plan` | Read-only planners per angle, judges scoring every draft on correctness, completeness, risk, effort and testability, then a merge of the best draft with named grafts | `task`, `angles` (`mvp-first`, `risk-first`, `user-first`), `judges` (3), `context` | 14 agents, $3, 30 min |
 | `solve` | Independent patches in managed worktrees, host-owned checks, a separate read-only judge and an evidence report; no automatic merge | `task`, `candidates` (2–4; defaults `fast`, `smart`, `verify`), `checks` (1–8 literal argv arrays), `judge_model` (`verify`) | 5 agents, $5 soft ceiling, 30 min; 20 steps per solver |
+| `integrate` | Combine complementary local commits, run host checks on the combined source and request separate read-only review; publication requires an explicit owner action | `contributions` (1–20 pinned commits/dependencies), `checks` (1–8 literal argv arrays), `reviewer_model` (`verify`) | 1 reviewer, $5 soft ceiling, 30 min |
 
 ```bash
 cyber workflows list                                   # NAME, ORIGIN (bundled/global/project), DESCRIPTION

@@ -355,6 +355,20 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .status(201)
         .body::<super::workflows::StartBody>(g)
         .ok::<Data<crate::runtime::WorkflowRun>>(g),
+        op("post", "/workflows/integrations", "v1.workflow.integrationSubmit", "Pin an owner-selected contribution manifest without executing checks")
+            .located().status(201).body::<super::integrations::IntegrationSubmit>(g).ok::<Data<crate::runtime::integrations::IntegrationBatch>>(g),
+        op("get", "/workflows/integrations", "v1.workflow.integrationList", "List integration batches in this Location")
+            .located().ok::<Data<Vec<crate::runtime::integrations::IntegrationBatch>>>(g),
+        op("get", "/workflows/integrations/{id}", "v1.workflow.integrationShow", "Inspect current integration state and revalidated host evidence")
+            .located().ok::<Data<crate::runtime::integrations::IntegrationBatch>>(g),
+        op("get", "/workflows/integrations/{id}/report", "v1.workflow.integrationReport", "Inspect integration verification, review and cost evidence")
+            .located().ok::<Data<crate::runtime::integrations::IntegrationBatch>>(g),
+        op("post", "/workflows/integrations/{id}/run", "v1.workflow.integrationRun", "Claim and start a fresh immutable integration attempt")
+            .located().body::<super::integrations::IntegrationRevision>(g).ok::<Data<crate::runtime::integrations::IntegrationBatch>>(g),
+        op("post", "/workflows/integrations/{id}/cancel", "v1.workflow.integrationCancel", "Cancel this exact integration revision")
+            .located().body::<super::integrations::IntegrationRevision>(g).ok::<Data<crate::runtime::integrations::IntegrationBatch>>(g),
+        op("post", "/workflows/integrations/{id}/publish", "v1.workflow.integrationPublish", "Explicitly publish or reconcile the reviewed integration branch and PR")
+            .located().body::<super::integrations::IntegrationPublish>(g).ok::<Data<crate::runtime::integrations::IntegrationBatch>>(g),
         op(
             "get",
             "/workflows/runs",

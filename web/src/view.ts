@@ -1,3 +1,4 @@
+import { integrationsView } from "./integrations-view.js";
 import type { Content, Message, PendingRequest, RunDetail } from "../../sdk/typescript/src/generated/types.js";
 import { Dashboard, type Card, type Tab } from "./model.js";
 import { messageInbox } from "./inbox-view.js";
@@ -99,7 +100,7 @@ export class View {
     title.append(left, meta); main.append(title);
     const count = state.cards.length;
     const tabs = node("nav", "tabs"); tabs.setAttribute("aria-label", "Session views");
-    for (const [tab, label] of [["conversation", "Conversation"], ["approvals", "Approvals"], ["runs", "Runs"], ["inbox", "Message inbox"]] as const) {
+    for (const [tab, label] of [["conversation", "Conversation"], ["approvals", "Approvals"], ["runs", "Runs"], ["inbox", "Message inbox"], ["integrations", "Integrations"]] as const) {
       const item = button(label, () => this.model.setTab(tab), false, `tab ${state.tab === tab ? "active" : ""}`); item.setAttribute("aria-current", state.tab === tab ? "page" : "false"); if (tab === "approvals") item.append(node("span", "count", String(count))); tabs.append(item);
     }
     main.append(tabs);
@@ -112,6 +113,7 @@ export class View {
     const content = node("section", "content");
     if (state.loading && !state.session) content.append(node("p", "empty", "Loading authenticated Session state…"));
     else if (state.tab === "approvals") content.append(this.approvals());
+    else if (state.tab === "integrations") content.append(integrationsView(this.model.integrations, this.model.actionable));
     else if (state.tab === "runs") content.append(this.runs());
     else if (state.tab === "inbox") content.append(messageInbox(this.model.inbox, this.model.actionable, (part) => this.part(part)));
     else content.append(this.conversation());

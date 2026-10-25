@@ -861,6 +861,7 @@ cyber workflows [OPTIONS] <COMMAND>
 
 **Subcommands:**
 
+- [`integrations`](#cyber-workflows-integrations): Compose, verify and review complementary agent contributions in isolation
 - [`list`](#cyber-workflows-list): List the Workflow library (project overrides global, both override bundled) and modules that fail to load
 - [`eject`](#cyber-workflows-eject): Copy a bundled Workflow's source into `.cyber/workflows/` (or the global directory) to customize it; the copy then overrides the bundled one
 - [`run`](#cyber-workflows-run): Start a Workflow Run from a saved name or a script file
@@ -870,6 +871,120 @@ cyber workflows [OPTIONS] <COMMAND>
 - [`resume`](#cyber-workflows-resume): Resume a paused, failed or stopped Workflow Run, or with `--interrupted` every run a server restart interrupted
 - [`stop`](#cyber-workflows-stop): Stop a Workflow Run and cancel its in-flight agents
 - [`logs`](#cyber-workflows-logs): Print a Workflow Run's log
+
+## `cyber workflows integrations`
+
+Compose, verify and review complementary agent contributions in isolation
+
+```text
+cyber workflows integrations [OPTIONS] <COMMAND>
+```
+
+**Subcommands:**
+
+- [`submit`](#cyber-workflows-integrations-submit): Pin a JSON manifest from a file (or - for stdin); does not run checks yet
+- [`list`](#cyber-workflows-integrations-list)
+- [`show`](#cyber-workflows-integrations-show)
+- [`report`](#cyber-workflows-integrations-report)
+- [`run`](#cyber-workflows-integrations-run): Start a fresh immutable attempt; --wait reports final host evidence
+- [`cancel`](#cyber-workflows-integrations-cancel)
+- [`publish`](#cyber-workflows-integrations-publish): Explicitly push the integration branch and create/reconcile its GitHub PR
+
+## `cyber workflows integrations submit`
+
+Pin a JSON manifest from a file (or - for stdin); does not run checks yet
+
+```text
+cyber workflows integrations submit [OPTIONS] <FILE>
+```
+
+**Arguments:**
+
+- `<FILE>`
+
+**Options:**
+
+- `--session <SESSION>`
+- `--budget <BUDGET>`
+
+## `cyber workflows integrations list`
+
+```text
+cyber workflows integrations list [OPTIONS]
+```
+
+## `cyber workflows integrations show`
+
+```text
+cyber workflows integrations show [OPTIONS] <ID>
+```
+
+**Arguments:**
+
+- `<ID>`
+
+## `cyber workflows integrations report`
+
+```text
+cyber workflows integrations report [OPTIONS] <ID>
+```
+
+**Arguments:**
+
+- `<ID>`
+
+## `cyber workflows integrations run`
+
+Start a fresh immutable attempt; --wait reports final host evidence
+
+```text
+cyber workflows integrations run [OPTIONS] <ID>
+```
+
+**Arguments:**
+
+- `<ID>`
+
+**Options:**
+
+- `--wait`
+- `--expected-revision <EXPECTED_REVISION>`
+
+## `cyber workflows integrations cancel`
+
+```text
+cyber workflows integrations cancel [OPTIONS] <ID>
+```
+
+**Arguments:**
+
+- `<ID>`
+
+**Options:**
+
+- `--expected-revision <EXPECTED_REVISION>`
+
+## `cyber workflows integrations publish`
+
+Explicitly push the integration branch and create/reconcile its GitHub PR
+
+```text
+cyber workflows integrations publish [OPTIONS] --repository <REPOSITORY> --title <TITLE> --body-file <BODY_FILE> <ID>
+```
+
+**Arguments:**
+
+- `<ID>`
+
+**Options:**
+
+- `--remote <REMOTE>`: Default: `origin`.
+- `--repository <REPOSITORY>`
+- `--title <TITLE>`
+- `--body-file <BODY_FILE>`
+- `--operation-id <OPERATION_ID>`
+- `--acknowledge-review-unavailable`
+- `--expected-revision <EXPECTED_REVISION>`
 
 ## `cyber workflows list`
 

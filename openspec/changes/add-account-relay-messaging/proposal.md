@@ -15,7 +15,7 @@ The specs already describe the intended answer: the Cyber Account (M3.1), an out
   - an org admin sets `policy.messaging.org_members: true`;
   - each member opts in with `messaging.relay.share_with_org: true`;
   - both sides approve the machine pair.
-  
+
   A teammate's Sessions are addressed as `<session>@<member>/<machine>`. Messages from other accounts are always held; no rule can deliver them without the receiver releasing them.
 - **Same message pipeline.** A message over the Relay keeps the existing limits on size, rate and chain length, the receiver's inbound rules, its untrusted rendering, its durable records and its asynchronous outcomes. Same-account machines are held by default as with direct peers. A `deliver` pattern naming the machine (`*@laptop`) delivers without holding. There is no store-and-forward: an offline machine fails the send with `MachineUnreachableError`.
 - **A self-hostable messaging Relay.** `cyber relay serve` gains the roster and message routing described here, so a team can run its own Relay. The hosted Relay requires the `cyber-code` entitlement; a self-hosted Relay may skip that check.
