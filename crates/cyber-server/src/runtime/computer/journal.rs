@@ -113,7 +113,26 @@ impl Journal {
     ) -> Result<()> {
         let info = info.clone();
         let target = serde_json::to_string(target).map_err(|_| ComputerError::Storage)?;
-        self.0.transaction(move |tx| { tx.execute("INSERT INTO computer_frame(id,session_id,sha256,metadata,native_target,bytes,created_ms,expires_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",rusqlite::params![info.id,info.session_id,info.sha256,serde_json::to_string(&info).map_err(|_|cyber_store::StoreError::Unavailable("computer frame serialization failed".into()))?,target,info.bytes as i64,info.created_ms,expiry])?; Ok(()) })?;
+        let inserted=self.0.transaction(move |tx| {
+            let deleted:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM computer_deleted_session WHERE session_id=?1)",[&info.session_id],|row|row.get(0))?;
+            if deleted{return Ok(false);}
+            tx.execute("INSERT INTO computer_frame(id,session_id,sha256,metadata,native_target,bytes,created_ms,expires_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",rusqlite::params![info.id,info.session_id,info.sha256,serde_json::to_string(&info).map_err(|_|cyber_store::StoreError::Unavailable("computer frame serialization failed".into()))?,target,info.bytes as i64,info.created_ms,expiry])?; Ok(true) })?;
+        if !inserted {
+            return Err(ComputerError::FrameExpired);
+        }
+        Ok(())
+    }
+    pub fn ready_frame(&self, id: &str) -> Result<()> {
+        let id = id.to_owned();
+        let ready = self.0.transaction(move |tx| {
+            Ok(tx.execute(
+                "UPDATE computer_frame SET ready=1 WHERE id=?1 AND expired=0",
+                [id],
+            )? == 1)
+        })?;
+        if !ready {
+            return Err(ComputerError::FrameExpired);
+        }
         Ok(())
     }
     pub fn read_frame(

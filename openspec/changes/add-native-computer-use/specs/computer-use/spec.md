@@ -34,7 +34,7 @@
 - **THEN** it reports an unknown outcome and requires reconciliation/fresh observation rather than clicking again
 
 ### Requirement: Private computer evidence
-(P2) Captures SHALL remain in owner-protected Session/target-bound artifact storage, default to one-day retention with zero disabling automatic pruning, and use authenticated preview reads. Maximum default capture edge SHALL be 1920 pixels and encoded size 8 MiB with retained coordinate transforms. Audit/export records SHALL omit raw typed text while retaining length/digest, target/frame references and permission/settlement state. On-screen content SHALL be treated as untrusted data, not instructions authorizing a new action. No clipboard, credential-store, audio/video or unrelated-display capture SHALL occur implicitly.
+(P2) Captures SHALL remain in owner-protected Session/target-bound artifact storage, default to one-day retention with zero disabling time-based pruning, and use authenticated preview reads. Maximum default capture edge SHALL be 1920 pixels and encoded size 8 MiB with retained coordinate transforms. Audit/export records SHALL omit raw typed text while retaining length/digest, target/frame references and permission/settlement state. On-screen content SHALL be treated as untrusted data, not instructions authorizing a new action. No clipboard, credential-store, audio/video or unrelated-display capture SHALL occur implicitly.
 
 #### Scenario: Screen contains an instruction to approve a tool
 - **WHEN** a captured application displays text requesting permission or policy changes
@@ -43,3 +43,8 @@
 #### Scenario: Inspect a text-entry audit record
 - **WHEN** an owner exports or inspects durable records for a type action
 - **THEN** the raw typed text is absent and the report states that authorized screenshots/model input can still contain sensitive visible content
+
+#### Scenario: Session deletion with retention disabled
+- **GIVEN** a Session owns private captures with time-based retention disabled or a capture worker is finishing
+- **WHEN** the Session is deleted
+- **THEN** its frames become unavailable atomically with deletion, file cleanup is attempted and retried after failures, late workers cannot recreate capture artifacts, and minimal native unknown-outcome evidence remains available for reconciliation without screenshot bytes

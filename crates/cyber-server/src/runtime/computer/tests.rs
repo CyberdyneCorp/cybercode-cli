@@ -696,3 +696,77 @@ fn undeletable_cleanup_batch_does_not_starve_later_expired_files() {
     assert!(!directory.join(format!("cuf_{:026}.png", 500)).exists());
     assert_eq!(fixture.computer.journal.stored_bytes().unwrap(), 3500);
 }
+
+#[test]
+fn deleting_capture_owner_expires_pixels_even_without_retention_and_keeps_unknown_safety_evidence()
+{
+    let mut fixture = Fixture::new();
+    fixture.computer.policy = Arc::new(|| ComputerPolicy {
+        enabled: true,
+        retention_days: 0,
+    });
+    fixture.arm();
+    let frame = fixture
+        .computer
+        .screenshot("owner", "delete-frame")
+        .unwrap()
+        .frame
+        .unwrap();
+    let path = fixture.computer.artifact_path("owner", &frame.id).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    fixture
+        .computer
+        .journal
+        .begin(
+            "owner",
+            "unsettled-delete",
+            "type",
+            "hash",
+            json!({"action":"type","sha256":"hash"}),
+            wall_ms(),
+        )
+        .unwrap();
+    fixture
+        .store
+        .transaction(|tx| {
+            mark_session_deleted(tx, "owner")?;
+            Ok(())
+        })
+        .unwrap();
+    assert!(fixture.computer.frame_bytes("owner", &frame.id).is_err());
+    fixture.computer.prune().unwrap();
+    assert!(
+        fixture.computer.journal.stored_bytes().unwrap() > 0,
+        "failed cleanup stays accounted"
+    );
+    let mut late = frame.clone();
+    late.id = cyber_core::ids::new_id("cuf");
+    assert!(
+        fixture
+            .computer
+            .journal
+            .frame(&late, &late.target, None)
+            .is_err(),
+        "a late writer cannot reserve an artifact for a deleted Session"
+    );
+    assert!(
+        fixture.computer.journal.ready_frame(&frame.id).is_err(),
+        "late readiness cannot resurrect expired pixels"
+    );
+    fixture
+        .store
+        .transaction(|tx| {
+            tx.execute(
+                "INSERT INTO computer_deleted_session(session_id,deleted_ms) VALUES('unrelated',0)",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    std::fs::remove_dir(&path).unwrap();
+    fixture.computer.prune().unwrap();
+    assert_eq!(fixture.computer.journal.stored_bytes().unwrap(), 0);
+    let preserved=fixture.store.read(|db|db.query_row("SELECT COUNT(*) FROM computer_operation WHERE operation_key='unsettled-delete' AND status='intent'",[],|row|row.get::<_,i64>(0)).map_err(Into::into)).unwrap();
+    assert_eq!(preserved, 1);
+}

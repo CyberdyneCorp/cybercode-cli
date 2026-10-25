@@ -116,6 +116,7 @@ pub struct Computer {
     backend: Arc<dyn Backend>,
     journal: journal::Journal,
     artifacts: PathBuf,
+    artifact_io: Mutex<()>,
     policy: Arc<Policy>,
     attendance: Arc<Attendance>,
     presence_epoch: Arc<dyn Fn(&str) -> u64 + Send + Sync>,
@@ -123,6 +124,23 @@ pub struct Computer {
     clock: Instant,
     previews: Mutex<BTreeMap<String, Reviewed>>,
     preview_generation: std::sync::atomic::AtomicU64,
+}
+
+/// Runs in the authoritative Session-deletion transaction. Minimal native
+/// outcome/unknown-action ledger rows remain for reconciliation, never pixels.
+pub(super) fn mark_session_deleted(
+    tx: &rusqlite::Transaction<'_>,
+    session: &str,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT OR IGNORE INTO computer_deleted_session(session_id,deleted_ms) VALUES(?1,?2)",
+        rusqlite::params![session, wall_ms()],
+    )?;
+    tx.execute(
+        "UPDATE computer_frame SET expired=1 WHERE session_id=?1",
+        [session],
+    )?;
+    Ok(())
 }
 
 impl Computer {
@@ -198,6 +216,7 @@ impl Computer {
             backend,
             journal,
             artifacts,
+            artifact_io: Mutex::new(()),
             policy,
             attendance,
             presence_epoch: Arc::new(|_| 0),

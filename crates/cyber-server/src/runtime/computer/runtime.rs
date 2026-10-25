@@ -106,6 +106,13 @@ impl Runtime {
     ) -> std::result::Result<(), crate::runtime::RuntimeError> {
         self.inner.require_computer_stopped()
     }
+    pub(in crate::runtime) async fn prune_computer_captures(&self) {
+        if let Some(computer) = self.inner.computer.get().cloned() {
+            // Cleanup waits for late private writes; failed removals stay expired
+            // and accounted for retry, including with time-based retention off.
+            let _ = tokio::task::spawn_blocking(move || computer.prune()).await;
+        }
+    }
     pub fn computer_stop(&self, session: &str) {
         if let Some(computer) = self.inner.computer.get() {
             computer.stop(session);

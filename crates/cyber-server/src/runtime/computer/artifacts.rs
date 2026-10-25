@@ -24,6 +24,10 @@ impl Computer {
         grant: String,
         capture: Capture,
     ) -> Result<FrameInfo> {
+        let _guard = self
+            .artifact_io
+            .lock()
+            .map_err(|_| ComputerError::Storage)?;
         let info = FrameInfo {
             id: frame.id,
             session_id: frame.session_id,
@@ -65,14 +69,7 @@ impl Computer {
             created = true;
             file.write_all(&capture.png)?;
             file.sync_all()?;
-            let id = info.id.clone();
-            self.journal.0.transaction(move |tx| {
-                tx.execute(
-                    "UPDATE computer_frame SET ready=1 WHERE id=?1 AND expired=0",
-                    [id],
-                )?;
-                Ok(())
-            })?;
+            self.journal.ready_frame(&info.id)?;
             Ok(())
         })();
         if let Err(error) = written {
@@ -106,13 +103,17 @@ impl Computer {
         }
         Ok(bytes)
     }
-    pub(super) fn prune(&self) -> Result<()> {
+    pub(in crate::runtime) fn prune(&self) -> Result<()> {
+        let _guard = self
+            .artifact_io
+            .lock()
+            .map_err(|_| ComputerError::Storage)?;
         let days = (self.policy)().retention_days;
-        if days == 0 {
-            return Ok(());
-        }
-        let cutoff =
-            wall_ms().saturating_sub(days.saturating_mul(86_400_000).min(i64::MAX as u64) as i64);
+        let cutoff = if days == 0 {
+            i64::MIN
+        } else {
+            wall_ms().saturating_sub(days.saturating_mul(86_400_000).min(i64::MAX as u64) as i64)
+        };
         let mut cursor = String::new();
         loop {
             let after = cursor.clone();

@@ -63,6 +63,7 @@ impl Runtime {
                 usage_ledger::project_unreached(tx, id)?;
             }
             for id in &doomed {
+                super::computer::mark_session_deleted(tx, id)?;
                 // A lead's `team.*` records stay: the team outlives its lead, and a
                 // rebuild re-projects it from them.
                 tx.execute(
@@ -94,6 +95,7 @@ impl Runtime {
         }
         self.lift_deletion_fence(&ids);
         remove_artifacts(&artifacts);
+        self.prune_computer_captures().await;
         // Watches of surviving Sessions on the deleted ones fire with `exited`; the send
         // locks are still held.
         self.targets_deleted(&ids).await;

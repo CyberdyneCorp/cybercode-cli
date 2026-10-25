@@ -23,7 +23,7 @@ cyber computer status
 }
 ```
 
-`retention_days` accepts 0–365; 0 disables automatic screenshot expiry. The default is one day. Private screenshot storage is capped at 256 MiB; individual PNGs are at most 8 MiB with a maximum 1920-pixel edge. Expired images become unavailable immediately on read; a periodic worker removes expired files. Operation receipts retain metadata after image expiry.
+`retention_days` accepts 0–365; 0 disables time-based screenshot expiry. Deleting a Session immediately expires its private captures and attempts removal regardless of retention; failed removal remains unavailable, accounted and queued for cleanup. A durable deletion fence prevents late capture workers from recreating its pixels. Native outcome metadata stays available for unknown-action reconciliation. The default is one day. Private screenshot storage is capped at 256 MiB; individual PNGs are at most 8 MiB with a maximum 1920-pixel edge. Expired images become unavailable immediately on read; a periodic worker removes expired files. Operation receipts retain metadata after image expiry.
 
 ## Grant OS consent deliberately
 

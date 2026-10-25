@@ -82,6 +82,7 @@ fn state(h: &Harness, runtime: Runtime) -> AppState {
 #[derive(Default)]
 struct Fake {
     prompts: AtomicUsize,
+    capture_allowed: bool,
 }
 impl Backend for Fake {
     fn health(&self, prompt: bool) -> Result<Health, Error> {
@@ -114,8 +115,18 @@ impl Backend for Fake {
             rotation: 0,
         })
     }
-    fn capture(&self, _: &NativeTarget) -> Result<Capture, Error> {
-        panic!("owner control route must never capture")
+    fn capture(&self, target: &NativeTarget) -> Result<Capture, Error> {
+        assert!(
+            self.capture_allowed,
+            "owner control route must never capture"
+        );
+        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        png.extend(100u32.to_be_bytes());
+        png.extend(100u32.to_be_bytes());
+        Ok(Capture {
+            target: target.clone(),
+            png,
+        })
     }
     fn input(&self, _: &NativeTarget, _: &InputPermit) -> Result<(), Error> {
         panic!("owner control route must never inject input")
@@ -392,4 +403,57 @@ async fn native_tool_arguments_and_doom_loop_metadata_never_persist_typed_conten
             .any(|inv| inv.input.to_string().contains(secret)),
         "actual native invocation remains ephemeral until dispatch"
     );
+}
+
+#[tokio::test]
+async fn deleting_session_removes_private_captures_with_retention_disabled() {
+    use sha2::{Digest, Sha256};
+    let h = Harness::new(Setup::default());
+    let id = h.session().await;
+    let artifacts = h.dir.path().join("computer-delete");
+    h.runtime
+        .configure_computer_backend(
+            artifacts.clone(),
+            Arc::new(|| ComputerPolicy {
+                enabled: true,
+                retention_days: 0,
+            }),
+            Arc::new(Fake {
+                capture_allowed: true,
+                ..Fake::default()
+            }),
+        )
+        .unwrap();
+    let _presence = h.runtime.attach_client(Watching::Session(id.clone()));
+    let computer = h.runtime.computer().unwrap();
+    let preview = computer
+        .preview(
+            &id,
+            Selector {
+                app: Some("test.fixture".into()),
+                display: None,
+            },
+        )
+        .unwrap();
+    computer.allow(&id, &preview.id, None, false).unwrap();
+    let frame = computer
+        .screenshot(&id, "delete-private-frame")
+        .unwrap()
+        .frame
+        .unwrap();
+    let path = artifacts
+        .join(format!("{:x}", Sha256::digest(id.as_bytes())))
+        .join(format!("{}.png", frame.id));
+    assert!(path.is_file());
+    let owner = id.clone();
+    h.store.transaction(move|tx|{tx.execute("INSERT INTO computer_operation(operation_key,session_id,action,fingerprint,audit,status,started_ms) VALUES('unknown-on-delete',?1,'type','hash','{}','unknown',0)",[owner])?;Ok(())}).unwrap();
+    h.runtime.delete(&id).await.unwrap();
+    assert!(!path.exists());
+    assert!(computer.frame_bytes(&id, &frame.id).is_err());
+    let owner = id.clone();
+    let (tombstone,unknown)=h.store.read(move|db|Ok((db.query_row("SELECT COUNT(*) FROM computer_deleted_session WHERE session_id=?1",[owner],|row|row.get::<_,i64>(0))?,db.query_row("SELECT COUNT(*) FROM computer_operation WHERE operation_key='unknown-on-delete'",[],|row|row.get::<_,i64>(0))?))).unwrap();
+    assert_eq!((tombstone, unknown), (1, 1));
+    assert!(computer.screenshot(&id, "late-after-delete").is_err());
+    let unrelated = h.session().await;
+    assert!(h.runtime.session_info(&unrelated).await.is_ok());
 }
