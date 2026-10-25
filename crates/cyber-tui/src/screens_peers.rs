@@ -24,11 +24,12 @@ fn reply(body: &Value) -> Value {
 }
 
 /// A machine: a production App with `peers` (and anything else) in its user config.
-async fn machine(config: Value) -> Server {
+pub(crate) async fn machine(config: Value) -> Server {
     Server::start_reply(reply, json!({ "main": {} }), config, false).await
 }
 
-async fn session(server: &Server, title: &str) -> String {
+/// A root Session titled `title`, made through `POST /sessions`.
+pub(crate) async fn session(server: &Server, title: &str) -> String {
     let body = json!({ "model": "test/main", "mode": "default", "title": title });
     let created = server.client.post("/sessions", body).await.unwrap();
     created["data"]["id"].as_str().unwrap().to_owned()
@@ -36,7 +37,7 @@ async fn session(server: &Server, title: &str) -> String {
 
 /// desk's peer listener with TLS on a loopback port, as `peers.listen` opens it; its URL
 /// and fingerprint.
-async fn listen(desk: &Server) -> (String, String) {
+pub(crate) async fn listen(desk: &Server) -> (String, String) {
     use cyber_server::http::peer::{self, PeerInfo, tls};
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -64,7 +65,7 @@ async fn listen(desk: &Server) -> (String, String) {
     )
 }
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()

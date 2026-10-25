@@ -3,11 +3,11 @@
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crossterm::event::{KeyCode, KeyEvent};
-use cyber_client::Client;
+use cyber_client::{Client, ClientError};
 use serde_json::{Value, json};
 
 use crate::app::{Action, App, Overlay};
-use crate::messaging::clean;
+use crate::messaging::{MESSAGE_LIMIT, clean, clean_line, push_within};
 use crate::model::Session;
 use crate::perform::{Msg, err};
 use crate::workflows::encode;
@@ -42,6 +42,21 @@ impl Snapshot {
             .or_else(|| self.status["binding"]["project"]["id"].as_str())
     }
 
+    /// The bound project, when collaboration is enabled: where the roster is read.
+    pub(crate) fn bound(&self) -> Option<&str> {
+        self.project().filter(|_| self.status["enabled"] == true)
+    }
+
+    /// A guest member, or an agent (`agent`) a guest member owns.
+    pub(crate) fn guest(&self, who: &Value, agent: bool) -> bool {
+        who["kind"] == "guest"
+            || (agent
+                && self
+                    .members
+                    .iter()
+                    .any(|m| m["id"] == who["owner"] && m["kind"] == "guest"))
+    }
+
     pub fn participant(&self, who: &Value) -> String {
         let id = who["id"].as_str().unwrap_or_default();
         let agent = who["kind"] == "agent";
@@ -49,14 +64,7 @@ impl Snapshot {
         let found = list.iter().find(|v| v["id"] == id);
         let label = found.map_or_else(|| clean(id), |v| text(v, "name"));
         let kind = if agent { "agent" } else { "human" };
-        let guest = found.is_some_and(|v| {
-            v["kind"] == "guest"
-                || (agent
-                    && self
-                        .members
-                        .iter()
-                        .any(|m| m["id"] == v["owner"] && m["kind"] == "guest"))
-        });
+        let guest = found.is_some_and(|v| self.guest(v, agent));
         format!("{label} [{kind}{}]", if guest { ", guest" } else { "" })
     }
 }
@@ -80,7 +88,7 @@ impl Editor {
         if matches!(&self.kind, Edit::Task) {
             300
         } else {
-            16 * 1024
+            MESSAGE_LIMIT
         }
     }
 }
@@ -113,7 +121,8 @@ impl PanelState {
     }
 }
 
-fn rows(value: &Value, key: &str) -> Vec<Value> {
+/// A roster list: a bare array, or one wrapped as `{key: [..]}`.
+pub(crate) fn rows(value: &Value, key: &str) -> Vec<Value> {
     value
         .as_array()
         .or_else(|| value[key].as_array())
@@ -123,6 +132,69 @@ fn rows(value: &Value, key: &str) -> Vec<Value> {
 
 pub fn text(value: &Value, key: &str) -> String {
     clean(value[key].as_str().unwrap_or_default())
+}
+
+/// `body` with the Session, the project and a fresh `operation_id` (`<prefix>-<nonce>`)
+/// that hub mutations carry. Created once per user action, so any transport retry keeps
+/// the same key.
+pub(crate) fn stamp(mut body: Value, session: &str, project: Option<&str>, prefix: &str) -> Value {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    body["session_id"] = json!(session);
+    body["project"] = json!(project);
+    body["operation_id"] = json!(format!("{prefix}-{nonce}"));
+    body
+}
+
+fn query(session: &Session, project: Option<&str>) -> String {
+    let query = format!("session_id={}", encode(&session.id));
+    match project {
+        Some(project) => format!("{query}&project={}", encode(project)),
+        None => query,
+    }
+}
+
+/// `/collaboration/status` for `session`, as a Snapshot with no roster yet.
+pub(crate) async fn status(
+    client: &Client,
+    session: &Session,
+) -> Result<Snapshot, Box<ClientError>> {
+    let path = format!("/collaboration/status?{}", query(session, None));
+    let status = client
+        .at(&session.directory)
+        .get(&path)
+        .await
+        .map_err(Box::new)?;
+    Ok(Snapshot {
+        status: status["data"].clone(),
+        ..Default::default()
+    })
+}
+
+/// Fill `snapshot`'s members and agents from `/collaboration/participants`; nothing when
+/// it is not [`Snapshot::bound`].
+pub(crate) async fn roster(
+    client: &Client,
+    session: &Session,
+    snapshot: &mut Snapshot,
+) -> Result<(), Box<ClientError>> {
+    let Some(project) = snapshot.bound() else {
+        return Ok(());
+    };
+    let path = format!(
+        "/collaboration/participants?{}",
+        query(session, Some(project))
+    );
+    let roster = client
+        .at(&session.directory)
+        .get(&path)
+        .await
+        .map_err(Box::new)?;
+    snapshot.members = rows(&roster["data"]["members"], "members");
+    snapshot.agents = rows(&roster["data"]["agents"], "agents");
+    Ok(())
 }
 
 /// Network errors clear the previous snapshot, including all stale authorization.
@@ -173,27 +245,15 @@ fn queued_notice(result: &Value) -> Option<String> {
 
 async fn read(client: &Client, session: &Session) -> Result<Snapshot, String> {
     let at = client.at(&session.directory);
-    let query = format!("session_id={}", encode(&session.id));
-    let status = at
-        .get(&format!("/collaboration/status?{query}"))
-        .await
-        .map_err(err)?;
-    let mut snapshot = Snapshot {
-        status: status["data"].clone(),
-        ..Default::default()
-    };
-    if snapshot.status["enabled"] != true || snapshot.project().is_none() {
+    let mut snapshot = status(client, session).await.map_err(|e| err(*e))?;
+    let Some(project) = snapshot.bound() else {
         return Ok(snapshot);
-    }
-    let query = format!(
-        "{query}&project={}",
-        encode(snapshot.project().unwrap_or_default())
-    );
+    };
+    let query = query(session, Some(project));
     // A failed source must not leave an old roster or task board on screen.
-    let roster = at
-        .get(&format!("/collaboration/participants?{query}"))
+    roster(client, session, &mut snapshot)
         .await
-        .map_err(err)?;
+        .map_err(|e| err(*e))?;
     let messages = at
         .get(&format!("/collaboration/messages?{query}"))
         .await
@@ -202,8 +262,6 @@ async fn read(client: &Client, session: &Session) -> Result<Snapshot, String> {
         .get(&format!("/collaboration/tasks?{query}"))
         .await
         .map_err(err)?;
-    snapshot.members = rows(&roster["data"]["members"], "members");
-    snapshot.agents = rows(&roster["data"]["agents"], "agents");
     snapshot.messages = rows(&messages["data"], "messages");
     snapshot.tasks = rows(&tasks["data"], "tasks");
     Ok(snapshot)
@@ -369,12 +427,11 @@ impl App {
             return false;
         }
         if let Some(editor) = &mut self.collaboration.editor {
-            let text = clean(&text.replace(['\r', '\n'], " "));
-            for c in text.chars() {
-                if editor.input.len() + c.len_utf8() > editor.limit() {
+            let limit = editor.limit();
+            for c in clean_line(text).chars() {
+                if !push_within(&mut editor.input, c, limit) {
                     break;
                 }
-                editor.input.push(c);
             }
         }
         true
@@ -389,10 +446,9 @@ impl App {
             KeyCode::Backspace => {
                 editor.input.pop();
             }
-            KeyCode::Char(c)
-                if !c.is_control() && editor.input.len() + c.len_utf8() <= editor.limit() =>
-            {
-                editor.input.push(c)
+            KeyCode::Char(c) if !c.is_control() => {
+                let limit = editor.limit();
+                push_within(&mut editor.input, c, limit);
             }
             KeyCode::Enter if !editor.input.trim().is_empty() => {
                 let editor = self.collaboration.editor.take().unwrap();
@@ -413,18 +469,12 @@ impl App {
         Vec::new()
     }
 
-    fn collaboration_mutate(&mut self, path: String, mut body: Value) -> Vec<Action> {
+    fn collaboration_mutate(&mut self, path: String, body: Value) -> Vec<Action> {
         let Some(snapshot) = &self.collaboration.snapshot else {
             return Vec::new();
         };
-        body["session_id"] = json!(self.session.id);
-        body["project"] = json!(snapshot.project());
-        // Created once per user action, so any transport retry keeps the same key.
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        body["operation_id"] = json!(format!("tui-{}-{nonce}", self.collaboration.generation));
+        let prefix = format!("tui-{}", self.collaboration.generation);
+        let body = stamp(body, &self.session.id, snapshot.project(), &prefix);
         self.collaboration_request(Some((path, body)))
     }
 }

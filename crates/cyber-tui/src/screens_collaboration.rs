@@ -43,67 +43,8 @@ async fn git(directory: &std::path::Path, args: &[&str]) {
     );
 }
 
-#[tokio::test]
-#[cfg_attr(
-    not(target_os = "linux"),
-    ignore = "uses Linux temporary protected files; avoids native vault writes"
-)]
-async fn collab_panel_reads_and_mutates_real_hub_state_then_clears_after_logout() {
-    let fixture = oidc::Fixture::start().await;
-    let access = fixture.user("alice", json!([{"id":"org-fixture"}]));
-    let directory = tempfile::tempdir().unwrap();
-    let mut config = ServeConfig::new(
-        &fixture.state.issuer,
-        "hub",
-        "alice",
-        directory.path().join("hub.db"),
-    );
-    config.enabled = true;
-    config.allow_loopback_http = true;
-    config.introspection = Some(BackendCredentials::Token(fixture.service()));
-    let hub = Hub::with_vault(&config, None).await.unwrap();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let task = tokio::spawn(cyber_server::http::serve_tcp(
-        router(hub.clone()),
-        listener,
-        std::future::pending::<()>(),
-    ));
-    struct Stop(tokio::task::JoinHandle<std::io::Result<()>>);
-    impl Drop for Stop {
-        fn drop(&mut self) {
-            self.0.abort();
-        }
-    }
-    let _stop = Stop(task);
-    let client = HubClient::new(&url, access.clone()).unwrap();
-    let project: Project = client
-        .mutate(
-            reqwest::Method::POST,
-            "/projects",
-            &Mutation::new(CreateProject {
-                name: "TUI project".into(),
-                repository: "https://github.com/fixture/project.git".into(),
-                mode: ProjectMode::Organization {
-                    organization_id: "org-fixture".into(),
-                },
-            }),
-        )
-        .await
-        .unwrap()
-        .data;
-    let server=Server::start_config(json!({}),json!({"features":{"collaboration":true},"account":{"issuer":fixture.state.issuer,"client_id":"cyber-cli","audience":"hub","allow_loopback_http":true}}),false).await;
-    git(&server.root(), &["init", "-q"]).await;
-    git(
-        &server.root(),
-        &[
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/fixture/project.git",
-        ],
-    )
-    .await;
+/// Sign the App in through the fixture's authorization code flow.
+async fn sign_in(server: &Server, fixture: &oidc::Fixture, access: &cyber_account::Secret) {
     let attempt = server
         .client
         .post("/account/login", json!({}))
@@ -135,13 +76,108 @@ async fn collab_panel_reads_and_mutates_real_hub_state_then_clears_after_logout(
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     assert!(complete, "verified fixture login completed");
-    let session = server.session().await;
-    server.client.post("/collaboration/owner/bind",json!({"operation_id":"tui_bind_fixture","session_id":session,"project":project.id,"hub_url":url,"confirm":true})).await.unwrap();
+}
+
+/// Stops the hub's listener when the fixture goes.
+struct Stop(tokio::task::JoinHandle<std::io::Result<()>>);
+impl Drop for Stop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// A production App signed in through a signed OIDC fixture, with a Session bound to a
+/// project on a separate authenticated hub.
+pub(crate) struct Bound {
+    pub server: Server,
+    pub session: String,
+    pub project: String,
+    pub client: HubClient,
+    _fixture: oidc::Fixture,
+    _stop: Stop,
+    _directory: tempfile::TempDir,
+}
+
+impl Bound {
+    pub(crate) async fn start() -> Self {
+        let fixture = oidc::Fixture::start().await;
+        let access = fixture.user("alice", json!([{"id":"org-fixture"}]));
+        let directory = tempfile::tempdir().unwrap();
+        let mut config = ServeConfig::new(
+            &fixture.state.issuer,
+            "hub",
+            "alice",
+            directory.path().join("hub.db"),
+        );
+        config.enabled = true;
+        config.allow_loopback_http = true;
+        config.introspection = Some(BackendCredentials::Token(fixture.service()));
+        let hub = Hub::with_vault(&config, None).await.unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(cyber_server::http::serve_tcp(
+            router(hub.clone()),
+            listener,
+            std::future::pending::<()>(),
+        ));
+        let stop = Stop(task);
+        let client = HubClient::new(&url, access.clone()).unwrap();
+        let project: Project = client
+            .mutate(
+                reqwest::Method::POST,
+                "/projects",
+                &Mutation::new(CreateProject {
+                    name: "TUI project".into(),
+                    repository: "https://github.com/fixture/project.git".into(),
+                    mode: ProjectMode::Organization {
+                        organization_id: "org-fixture".into(),
+                    },
+                }),
+            )
+            .await
+            .unwrap()
+            .data;
+        let server=Server::start_config(json!({}),json!({"features":{"collaboration":true},"account":{"issuer":fixture.state.issuer,"client_id":"cyber-cli","audience":"hub","allow_loopback_http":true}}),false).await;
+        git(&server.root(), &["init", "-q"]).await;
+        git(
+            &server.root(),
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/fixture/project.git",
+            ],
+        )
+        .await;
+        sign_in(&server, &fixture, &access).await;
+        let session = server.session().await;
+        server.client.post("/collaboration/owner/bind",json!({"operation_id":"tui_bind_fixture","session_id":session,"project":project.id,"hub_url":url,"confirm":true})).await.unwrap();
+        Self {
+            server,
+            session,
+            project: project.id.to_string(),
+            client,
+            _fixture: fixture,
+            _stop: stop,
+            _directory: directory,
+        }
+    }
+}
+
+#[tokio::test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "uses Linux temporary protected files; avoids native vault writes"
+)]
+async fn collab_panel_reads_and_mutates_real_hub_state_then_clears_after_logout() {
+    let bound = Bound::start().await;
+    let (server, session, client) = (&bound.server, bound.session.clone(), &bound.client);
+    let project_id = bound.project.clone();
     let mut app = server.load(&session).await;
     app.composer.set_text("/collab");
     app.completion = None;
     let actions = press(&mut app, KeyCode::Enter);
-    drive(&server, &mut app, actions).await;
+    drive(server, &mut app, actions).await;
     let screen = render(&mut app, 140, 32, &Opts::default());
     assert!(screen.contains("[human, internal]"), "{screen}");
     assert!(screen.contains("owner"));
@@ -151,20 +187,20 @@ async fn collab_panel_reads_and_mutates_real_hub_state_then_clears_after_logout(
     press(&mut app, KeyCode::Char('n'));
     app.on_paste("Run shared checks");
     let actions = press(&mut app, KeyCode::Enter);
-    drive(&server, &mut app, actions).await;
+    drive(server, &mut app, actions).await;
     assert_eq!(
         app.collaboration.snapshot.as_ref().unwrap().tasks[0]["title"],
         "Run shared checks"
     );
     let actions = press(&mut app, KeyCode::Char('c'));
-    drive(&server, &mut app, actions).await;
+    drive(server, &mut app, actions).await;
     let task = &app.collaboration.snapshot.as_ref().unwrap().tasks[0];
     assert_eq!(task["claim_generation"], 1);
     assert_eq!(task["status"], "in_progress");
     let actions = press(&mut app, KeyCode::Char('d'));
-    drive(&server, &mut app, actions).await;
+    drive(server, &mut app, actions).await;
     let tasks: Vec<cyber_collab::model::Task> = client
-        .get(&format!("/projects/{}/tasks", project.id))
+        .get(&format!("/projects/{project_id}/tasks"))
         .await
         .unwrap();
     assert_eq!(tasks[0].status, cyber_collab::model::TaskStatus::Done);
@@ -175,13 +211,13 @@ async fn collab_panel_reads_and_mutates_real_hub_state_then_clears_after_logout(
     press(&mut app, KeyCode::Char('n'));
     app.on_paste("TUI human conversation");
     let actions = press(&mut app, KeyCode::Enter);
-    drive(&server, &mut app, actions).await;
+    drive(server, &mut app, actions).await;
     let screen = render(&mut app, 140, 32, &Opts::default());
     assert!(screen.contains("TUI human conversation"), "{screen}");
     assert!(!server.host.runtime.is_running(&session));
     server.client.delete("/account?all=true").await.unwrap();
     let actions = press(&mut app, KeyCode::Char('r'));
-    drive(&server, &mut app, actions).await;
+    drive(server, &mut app, actions).await;
     assert!(app.collaboration.snapshot.is_none());
     let screen = render(&mut app, 140, 32, &Opts::default());
     assert!(screen.contains("Unavailable"));

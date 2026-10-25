@@ -81,6 +81,7 @@ pub fn offline(peer: &str) -> ReachableSession {
             workspace: None,
         },
         can_receive: false,
+        workflow_run_id: None,
     }
 }
 
@@ -95,6 +96,7 @@ fn remote_entry(peer: &str, entry: Value) -> Option<ReachableSession> {
         address: format!("{}@{peer}", entry.address),
         session_id: format!("{}@{peer}", entry.session_id),
         kind: AddressKind::Peer,
+        workflow_run_id: None,
         ..entry
     })
 }

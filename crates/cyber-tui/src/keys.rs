@@ -81,6 +81,12 @@ const DEFAULTS: &[(&str, &str, &str, &str)] = &[
         "cross-session message history",
     ),
     (
+        "global",
+        "agents_view",
+        "none",
+        "reachable Sessions directory",
+    ),
+    (
         "composer",
         "history_previous",
         "up",

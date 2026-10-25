@@ -65,7 +65,7 @@ Matching operation retries do not redisplay invitation tokens, join codes or pub
 
 ## Conversation and receiver consent
 
-Use `/collab` in the TUI. Tab cycles through People, Conversation and Tasks; `r` refreshes and Esc closes the panel. People distinguishes human members from agents and shows guest and observed offline states. Select a participant and press `d` to compose a direct human message. In Conversation, `n` composes a project message.
+Use `/collab` in the TUI. Tab cycles through People, Conversation and Tasks; `r` refreshes and Esc closes the panel. People distinguishes human members from agents and shows guest and observed offline states. Select a participant and press `d` to compose a direct human message. In Conversation, `n` composes a project message. `/agents` lists the same active agents and members in its Project hub group, next to the Sessions this one can reach by messaging, and Enter there sends the same direct human message.
 
 The local API determines the human author from the signed-in account. Agent tools use a separately scoped publication capability. Direct messages are visible only to their participants and the human owners of participating agents; an unrelated project owner cannot read them. Project conversation does not automatically prompt every agent. Agent subscription to project messages is an explicit publication option.
 

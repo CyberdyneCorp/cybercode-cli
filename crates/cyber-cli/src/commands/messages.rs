@@ -259,7 +259,7 @@ async fn reachable(client: &Client, args: &ListArgs, global: &GlobalArgs) -> Res
     for s in &sessions {
         let field = |key: &str| clean(s[key].as_str().unwrap_or_default());
         println!(
-            "{:<28}  {}  {:<5}  {:<13}  {:<7}  {}",
+            "{:<28}  {}  {:<8}  {:<13}  {:<7}  {}",
             field("address"),
             field("session_id"),
             field("kind"),
