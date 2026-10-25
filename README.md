@@ -124,6 +124,7 @@ mindmap
       macOS and Linux sandbox
       Git snapshots
       Durable Sessions and replay
+      OpenTelemetry export
     Tools and integrations
       Providers and local endpoints
       MCP client and server
@@ -164,6 +165,7 @@ The TUI, web dashboard, CLI, SDK and MCP clients call one server. That server en
 | I want to… | Read |
 |---|---|
 | Configure providers, permissions, MCP or Sessions | [Local core guide](docs/local-core-guide.md) |
+| Send traces, metrics and logs to my OpenTelemetry collector | [OpenTelemetry export](docs/local-core-guide.md#opentelemetry-export) · `cyber telemetry show` |
 | Use the browser dashboard and remote approvals | [Dashboard guide](docs/web-dashboard.md) |
 | Run agents across machines or a group project | [Direct peers](docs/peers.md) · [Project hub](docs/collaboration.md) |
 | Build or customize a workflow | [Workflow guide](docs/local-core-guide.md#workflows-p2-m21) · [Verified solve](docs/verified-workflows.md) · [Integration queue](docs/verified-integrations.md) |

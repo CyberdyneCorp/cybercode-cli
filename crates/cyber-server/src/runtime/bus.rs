@@ -29,6 +29,13 @@ pub enum LiveEvent {
         hook_id: String,
         message: String,
     },
+    /// A hook receipt was admitted or settled: an internal summary for the telemetry
+    /// exporter, with no IO. Every client stream drops it, and no API schema has it.
+    #[schemars(skip)]
+    HookReceipt {
+        session_id: String,
+        receipt: super::HookReceipt,
+    },
     /// A child request notification on an ancestor's live stream, never its history.
     RequestRouted {
         session_id: String,

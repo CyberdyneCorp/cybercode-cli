@@ -53,6 +53,7 @@ impl Services for NoServices {
 fn state(h: &Harness, password: Option<&str>) -> AppState {
     AppState {
         service: None,
+        telemetry: None,
         runtime: h.runtime.clone(),
         remote_tools: Arc::default(),
         store: Arc::clone(&h.store),

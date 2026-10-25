@@ -1,6 +1,6 @@
 # Verified integration queue acceptance
 
-Validated locally on macOS on 2026-10-24. The queue composes complementary local commits and checks the **combined** source. A passing individual contribution, model response, or reviewer recommendation cannot create host verification evidence.
+Validated locally on macOS on 2026-10-24 at implementation commit `69b4faed` before merging telemetry main `8ef37de7`. The subsequent main merge had one generated SDK type conflict, resolved by regeneration from the combined schema; combined SDK/dashboard type and build checks passed. Platform CI remains pending. The queue composes complementary local commits and checks the **combined** source. A passing individual contribution, model response, or reviewer recommendation cannot create host verification evidence.
 
 ## Local checks
 

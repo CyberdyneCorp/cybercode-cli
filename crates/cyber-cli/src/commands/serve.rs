@@ -69,7 +69,7 @@ pub fn serve(args: ServeArgs, ctx: &Context) -> Result<(), CliError> {
     }
     let password = cyber_app::password(&ctx.paths).map_err(CliError::runtime)?;
     runtime()?.block_on(async {
-        let app = App::build(AppOptions {
+        let app = App::build_served(AppOptions {
             paths: ctx.paths.clone(),
             home: ctx.home.clone(),
             database: ctx.database(),

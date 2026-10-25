@@ -13,6 +13,7 @@ async fn durable_http_admission_replays_identity_and_scopes_lookup_and_stop() {
     let parent = flow.session("default").await;
     let state = AppState {
         service: None,
+        telemetry: None,
         runtime: flow.runtime.clone(),
         remote_tools: Arc::default(),
         store: flow.f.store.clone(),
@@ -483,6 +484,7 @@ async fn authenticated_http_subtask_returns_a_job_and_replays_its_idempotency_ke
     let parent = flow.session("default").await;
     let state = AppState {
         service: None,
+        telemetry: None,
         runtime: flow.runtime.clone(),
         remote_tools: Arc::default(),
         store: flow.f.store.clone(),

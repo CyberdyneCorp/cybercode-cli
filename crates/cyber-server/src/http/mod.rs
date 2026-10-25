@@ -44,6 +44,7 @@ mod service;
 mod sessions;
 mod system;
 mod teams;
+pub mod telemetry;
 mod usage;
 pub mod vcs;
 mod web;
@@ -674,6 +675,8 @@ pub struct AppState {
     pub store: Arc<Store>,
     pub services: Arc<dyn Services>,
     pub options: Arc<HttpOptions>,
+    /// The OpenTelemetry export status; set by the host that owns the server listeners.
+    pub telemetry: Option<telemetry::TelemetryHandle>,
 }
 
 /// Log each request with a request ID, also returned as `x-request-id`.
@@ -733,6 +736,7 @@ pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router 
         .merge(usage::routes())
         .merge(vcs::routes())
         .merge(system::routes())
+        .merge(telemetry::routes())
         .merge(teams::routes())
         .merge(output_styles::routes())
         .merge(files::routes())

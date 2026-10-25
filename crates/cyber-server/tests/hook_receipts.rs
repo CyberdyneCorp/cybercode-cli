@@ -881,3 +881,54 @@ async fn async_owner_disposed_during_shutdown_is_recorded_unknown() {
     assert_eq!(record.status, HookExecutionStatus::Completed);
     assert_eq!(record.outcome, Some(HookOutcome::Skipped));
 }
+
+/// The telemetry exporter's receipt summary: published when a receipt is admitted and
+/// when it settles (skipped receipts too), and it never carries IO, even with
+/// `log_hook_io` on.
+#[tokio::test]
+async fn hook_receipts_reach_the_bus_without_io() {
+    use cyber_server::runtime::LiveEvent;
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let mut live = h.runtime.subscribe();
+    let hook = definition(&h);
+    let owner = h
+        .runtime
+        .start_hook_execution(&event(&h, &session).await, &hook, true)
+        .await
+        .unwrap();
+    let id = owner.record().id.clone();
+    let settled = owner.finish(result()).unwrap();
+    assert!(settled.io.is_some(), "the receipt itself keeps opted-in IO");
+    h.runtime
+        .record_skipped_hook(&event(&h, &session).await, &hook, "untrusted")
+        .await
+        .unwrap();
+
+    let mut receipts = Vec::new();
+    while let Ok(event) = live.try_recv() {
+        if let LiveEvent::HookReceipt {
+            session_id,
+            receipt,
+        } = event
+        {
+            assert_eq!(session_id, session);
+            receipts.push(receipt);
+        }
+    }
+    assert_eq!(receipts.len(), 4, "{receipts:?}");
+    assert_eq!(receipts[0].id, id);
+    assert!(!receipts[0].settled() && receipts[0].duration_ms.is_none());
+    assert_eq!(receipts[1].id, id);
+    assert_eq!(receipts[1].outcome, Some(HookOutcome::Blocked));
+    assert_eq!(receipts[1].decision, Some(HookAction::Deny));
+    assert_eq!(receipts[1].hook_id, "guard");
+    assert!(!receipts[2].settled());
+    assert_eq!(receipts[3].outcome, Some(HookOutcome::Skipped));
+    assert_eq!(receipts[3].duration_ms, Some(0));
+    let encoded = serde_json::to_string(&receipts).unwrap();
+    for text in ["private", "stdin", "stdout", "io"] {
+        assert!(!encoded.contains(&format!("\"{text}")), "{encoded}");
+    }
+    assert!(!encoded.contains("private"), "{encoded}");
+}

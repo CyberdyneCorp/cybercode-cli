@@ -56,7 +56,7 @@ pub use hook_tests::{
 };
 pub use hooks::{
     HookExecution, HookExecutionIo, HookExecutionRecord, HookExecutionResult, HookExecutionStatus,
-    hook_execution_page, hook_last_run,
+    HookReceipt, hook_execution_page, hook_last_run,
 };
 pub mod goals;
 mod handoff;
@@ -1903,6 +1903,14 @@ impl Runtime {
     }
 
     /// A copy of the Session's current state.
+    /// The Session's info alone, without its history: the telemetry exporter reads it
+    /// for a Session first seen after a restart.
+    pub async fn session_info(&self, session_id: &str) -> Result<SessionInfo, RuntimeError> {
+        let handle = self.inner.handle(session_id).await?;
+        let info = handle.state.lock().await.info.clone();
+        Ok(info)
+    }
+
     pub async fn state(&self, session_id: &str) -> Result<SessionState, RuntimeError> {
         let mut state = self
             .inner

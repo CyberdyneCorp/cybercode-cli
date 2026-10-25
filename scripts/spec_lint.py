@@ -38,7 +38,7 @@ CMD_IGNORE = {"v", "sesions", "__complete", "server"}  # "cyber server listening
 # Route segments that are singletons/streams and legitimately not plural.
 ROUTE_SINGLETONS = {"health", "config", "account", "policy", "vcs", "usage", "memory",
                     "lsp", "formatters", "ide", "event", "fs", "messaging", "ws",
-                    "openapi"}
+                    "openapi", "telemetry"}
 # Map route first-segments to their group name in server-api.
 ROUTE_TO_GROUP = {
     "sessions": "session", "messages": "message", "permissions": "permission",
@@ -53,6 +53,7 @@ ROUTE_TO_GROUP = {
     "openapi": "health", "ws": "event", "orgs": "account",
     "service": "service", "system": "system", "files": "fs",
     "peer": "peer", "peers": "peers", "teams": "teams", "team-definitions": "teams",
+    "telemetry": "telemetry",
 }
 
 

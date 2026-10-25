@@ -910,6 +910,13 @@ export type EventEnvelope = {
 /** What an evidence record is about. */
 export type EvidenceStatus = "observed" | "startup_failed";
 
+export type ExportError = {
+  /** The error, with header values redacted. */
+  message: string;
+  /** Unix milliseconds. */
+  at_ms: number;
+};
+
 /** One blob of a JSON export: `{ sha256, media_type, size, name, data }`. */
 export type ExportedBlob = {
   sha256: string;
@@ -1827,6 +1834,13 @@ export type HubUpdateTask = {
   report?: HubReportInput | null;
 };
 
+export type IgnoredTelemetry = {
+  /** JSON pointer, such as `/telemetry/otel/endpoint`. */
+  pointer: string;
+  /** The project layer, such as `project:/repo/.cyber/cyber.jsonc`. */
+  source: string;
+};
+
 /** The parts of a `cyber sessions export` document an import reads. */
 export type ImportDocument = {
   version: number;
@@ -2369,6 +2383,12 @@ export type Located_StyleListing = {
 };
 
 /** A Location-scoped response. */
+export type Located_TelemetryStatus = {
+  location: LocationInfo;
+  data: TelemetryStatus;
+};
+
+/** A Location-scoped response. */
 export type Located_Vcs = {
   location: LocationInfo;
   data: Vcs;
@@ -2541,6 +2561,12 @@ export type Manifest = {
   contributions: Contribution[];
   checks: Check[];
   reviewer_model?: string;
+};
+
+export type MaskedHeader = {
+  name: string;
+  /** Always `***`. */
+  value: string;
 };
 
 /** How far along a feature is. `experimental` features are off by default. */
@@ -3117,6 +3143,11 @@ export type PrDescription = {
 export type PrDescriptionRequest = {
   /** The base branch or commit (default: `origin/HEAD`, else `main`, else `master`). */
   base?: string | null;
+};
+
+/** Product telemetry is not implemented and always off. */
+export type ProductTelemetry = {
+  enabled: boolean;
 };
 
 export type ProjectInfo = {
@@ -3880,6 +3911,35 @@ export type SideBody = {
   question: string;
 };
 
+/** The source of each signal value, labelled as [`SourcedFlag::source`]. */
+export type SignalSources = {
+  endpoint: string;
+  protocol: string;
+  headers: string;
+  timeout: string;
+};
+
+export type SignalStatus = {
+  /** Whether this signal is exported. */
+  enabled: boolean;
+  /** Why this signal is off while export is on, such as `OTEL_TRACES_EXPORTER=none`. */
+  reason?: string | null;
+  /** The effective endpoint, without userinfo or query. */
+  endpoint: string;
+  /** `http/protobuf`, `http/json` or `grpc`. */
+  protocol: string;
+  timeout_ms: number;
+  /** Every header with its value as `***`. */
+  headers: MaskedHeader[];
+  sources: SignalSources;
+  /** Items the endpoint acknowledged. */
+  exported: number;
+  /** Items in batches the endpoint rejected or could not receive. */
+  failed: number;
+  dropped: number;
+  last_error?: ExportError | null;
+};
+
 /**
  * Skills for an agent plus command discovery diagnostics, for `/skills`, `cyber skills`,
  * `cyber commands list` and `cyber doctor`.
@@ -3960,6 +4020,12 @@ export type Source = {
 export type Sourced = {
   message_id: string;
   text: string;
+};
+
+export type SourcedFlag = {
+  value: boolean;
+  /** `config (<layer>)`, `env (<VARIABLE>)`, `policy (<managed source>)` or `default`. */
+  source: string;
 };
 
 /** A spawned teammate. */
@@ -4275,6 +4341,38 @@ export type TeammateSpec = {
   isolation?: Isolation | null;
   /** Globs, relative to the team directory, only this teammate may edit. */
   owns: string[];
+};
+
+export type TelemetryResource = {
+  "service.name": string;
+  "service.version": string;
+  "os.type": string;
+  /** Whether the resource carries a Cyber Account; its identifiers are never shown. */
+  account_signed_in: boolean;
+};
+
+export type TelemetrySignals = {
+  traces: SignalStatus;
+  metrics: SignalStatus;
+  logs: SignalStatus;
+};
+
+export type TelemetryStatus = {
+  /** Whether OpenTelemetry export is on. */
+  enabled: boolean;
+  /** Why export is off. */
+  reason?: string | null;
+  /** `telemetry.log_prompts`. */
+  log_prompts: SourcedFlag;
+  signals: TelemetrySignals;
+  /** Runtime events the exporter could not keep up with. */
+  dropped_events: number;
+  resource: TelemetryResource;
+  /** Project values of `telemetry.otel` and `telemetry.log_prompts`, never read. */
+  ignored: IgnoredTelemetry[];
+  /** The configuration on disk differs from the running settings; they apply on restart. */
+  restart_required: boolean;
+  product: ProductTelemetry;
 };
 
 export type ThreadStatus = "running" | "waiting" | "completed" | "failed";

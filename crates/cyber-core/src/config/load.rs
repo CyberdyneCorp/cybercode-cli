@@ -30,11 +30,11 @@ pub struct LoadRequest<'a> {
     pub flags: Value,
 }
 
-struct Layer {
-    label: String,
+pub(super) struct Layer {
+    pub(super) label: String,
     path: Option<PathBuf>,
     base_dir: PathBuf,
-    value: Value,
+    pub(super) value: Value,
     /// Notes from reading the layer, such as skipped `.mcp.json` servers.
     warnings: Vec<String>,
 }
@@ -418,13 +418,13 @@ fn defaults_layer(req: &LoadRequest<'_>) -> Layer {
     }
 }
 
-fn read_global_layers(req: &LoadRequest<'_>) -> Result<Vec<Layer>, ConfigError> {
+pub(super) fn read_global_layers(req: &LoadRequest<'_>) -> Result<Vec<Layer>, ConfigError> {
     let dir = &req.paths.config;
     let files = global_layer_paths(dir);
     read_layers(&files, "global")
 }
 
-fn read_project_layers(req: &LoadRequest<'_>) -> Result<Vec<Layer>, ConfigError> {
+pub(super) fn read_project_layers(req: &LoadRequest<'_>) -> Result<Vec<Layer>, ConfigError> {
     if req.env.flag("CYBER_DISABLE_PROJECT_CONFIG") {
         return Ok(Vec::new());
     }
@@ -510,7 +510,7 @@ pub(crate) fn project_layer_paths(location: &Path, root: &Path) -> Vec<PathBuf> 
     files
 }
 
-fn read_env_layers(req: &LoadRequest<'_>) -> Result<Vec<Layer>, ConfigError> {
+pub(super) fn read_env_layers(req: &LoadRequest<'_>) -> Result<Vec<Layer>, ConfigError> {
     let mut layers = Vec::new();
     if let Some(file) = req.env.get("CYBER_CONFIG") {
         let path = PathBuf::from(&file);
@@ -665,7 +665,7 @@ fn gate_project(layers: Vec<Layer>, trusted: bool) -> Vec<Layer> {
         .collect()
 }
 
-fn substitute_layer(layer: &mut Layer, req: &LoadRequest<'_>, issues: &mut Vec<String>) {
+pub(super) fn substitute_layer(layer: &mut Layer, req: &LoadRequest<'_>, issues: &mut Vec<String>) {
     let ctx = SubstContext {
         env: req.env,
         base_dir: &layer.base_dir,

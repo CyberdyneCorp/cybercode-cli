@@ -20,6 +20,7 @@ cyber-tools = { path = "../cyber-tools" }
 cyber-workflow = { path = "../cyber-workflow" }
 cyber-sandbox = { path = "../cyber-sandbox" }
 cyber-snapshot = { path = "../cyber-snapshot" }
+cyber-telemetry = { path = "../cyber-telemetry" }
 axum = "0.8"
 base64 = "0.22"
 futures = "0.3"
@@ -47,6 +48,8 @@ image = { version = "=0.25.10", default-features = false, features = ["png"] }
 rusqlite.workspace = true
 reqwest = { version = "0.13", features = ["json", "stream"] }
 tokio-tungstenite = "0.28"
+opentelemetry-proto = { version = "=0.33.1", default-features = false, features = ["gen-tonic-messages", "trace", "metrics", "logs"] }
+prost = "0.14"
 tempfile.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "signal", "sync", "macros", "process", "fs", "test-util"] }
 
