@@ -11,6 +11,7 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <sys/sysctl.h>
 
 // A per-user host lease survives caller cancellation while a native worker still
 // owns the descriptor. CLOEXEC prevents agents/subprocesses inheriting authority.
@@ -49,7 +50,7 @@ static BOOL protected_app(NSString *bundle) {
 static BOOL secure_focus(void) {
     AXUIElementRef system = AXUIElementCreateSystemWide(); AXUIElementSetMessagingTimeout(system,0.25f); CFTypeRef focused = NULL;
     AXError error = AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute, &focused); CFRelease(system);
-    if (error != kAXErrorSuccess || !focused) return error != kAXErrorNoValue && error != kAXErrorAttributeUnsupported;
+    if (error != kAXErrorSuccess || !focused || CFGetTypeID(focused)!=AXUIElementGetTypeID()) { if(focused)CFRelease(focused); return error != kAXErrorNoValue && error != kAXErrorAttributeUnsupported; }
     AXUIElementSetMessagingTimeout((AXUIElementRef)focused,0.25f);
     CFTypeRef role = NULL; CFTypeRef subrole = NULL;
     AXError roleError=AXUIElementCopyAttributeValue((AXUIElementRef)focused, kAXRoleAttribute, &role);
@@ -71,29 +72,38 @@ int cyber_computer_health(bool prompt, char **output) {
     }
 }
 
-static NSDictionary *window_for_pid(pid_t pid) {
-    NSArray *windows = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID));
-    for (NSDictionary *window in windows) {
-        if ([window[(__bridge NSString *)kCGWindowOwnerPID] intValue] == pid && [window[(__bridge NSString *)kCGWindowLayer] intValue] == 0) return window;
-    }
-    return nil;
-}
 static BOOL protected_window(NSDictionary *window) {
     NSString *title = [window[(__bridge NSString *)kCGWindowName] lowercaseString];
     return [title hasPrefix:@"cyber ·"] || [title hasPrefix:@"cyber code"];
 }
+// Poll live WindowServer/AX snapshots: the daemon does not run a Cocoa UI loop.
+static pid_t focused_pid(void) {
+    AXUIElementRef system=AXUIElementCreateSystemWide(); AXUIElementSetMessagingTimeout(system,0.25f);
+    CFTypeRef application=NULL;pid_t pid=0;
+    AXError result=AXUIElementCopyAttributeValue(system,kAXFocusedApplicationAttribute,&application);CFRelease(system);
+    if(result==kAXErrorSuccess && application && CFGetTypeID(application)==AXUIElementGetTypeID()) AXUIElementGetPid((AXUIElementRef)application,&pid);
+    if(application)CFRelease(application);return pid;
+}
+static uint64_t process_birth(pid_t pid) {
+    struct kinfo_proc info={0};size_t size=sizeof(info);int name[]={CTL_KERN,KERN_PROC,KERN_PROC_PID,pid};
+    if(sysctl(name,4,&info,&size,NULL,0)!=0 || size!=sizeof(info))return 0;
+    return (uint64_t)info.kp_proc.p_starttime.tv_sec*1000+(uint64_t)info.kp_proc.p_starttime.tv_usec/1000;
+}
 static NSDictionary *target_with_focus(NSDictionary *selector, BOOL requireFocus) {
-    NSRunningApplication *front = NSWorkspace.sharedWorkspace.frontmostApplication;
-    if (!front || protected_app(front.bundleIdentifier)) return nil;
-    id app = selector[@"app"]; BOOL scoped = [app isKindOfClass:NSString.class];
-    if (scoped && ![front.bundleIdentifier isEqualToString:app]) {
-        if (requireFocus) return nil;
-        NSArray<NSRunningApplication *> *matches = [NSRunningApplication runningApplicationsWithBundleIdentifier:app];
-        if (matches.count != 1) return nil;
-        front = matches.firstObject;
-        if (protected_app(front.bundleIdentifier)) return nil;
+    id app=selector[@"app"];BOOL scoped=[app isKindOfClass:NSString.class];
+    NSArray *windows=CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly|kCGWindowListExcludeDesktopElements,kCGNullWindowID));
+    pid_t focused=requireFocus?focused_pid():0;NSRunningApplication *front=nil;NSDictionary *window=nil;
+    for(NSDictionary *candidate in windows) {
+        if([candidate[(__bridge NSString *)kCGWindowLayer] intValue]!=0)continue;
+        pid_t pid=[candidate[(__bridge NSString *)kCGWindowOwnerPID] intValue];
+        if(requireFocus && pid!=focused)continue;
+        NSRunningApplication *running=[NSRunningApplication runningApplicationWithProcessIdentifier:pid];
+        if(!running || protected_app(running.bundleIdentifier))continue;
+        if(scoped && ![running.bundleIdentifier isEqualToString:app])continue;
+        if(requireFocus && protected_window(candidate))return nil;
+        front=running;window=candidate;break;
     }
-    NSDictionary *window = window_for_pid(front.processIdentifier); if (!window || (requireFocus && protected_window(window))) return nil;
+    if(!front || !window)return nil;
     CGRect bounds; CGDirectDisplayID display; uint32_t windowID = [window[(__bridge NSString *)kCGWindowNumber] unsignedIntValue];
     if (scoped) {
         if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)window[(__bridge NSString *)kCGWindowBounds], &bounds)) return nil;
@@ -106,14 +116,17 @@ static NSDictionary *target_with_focus(NSDictionary *selector, BOOL requireFocus
         if (!CGDisplayIsActive(display)) return nil; bounds = CGDisplayBounds(display);
     }
     if (bounds.size.width <= 0 || bounds.size.height <= 0) return nil;
-    CGFloat scale = 1;
-    for (NSScreen *screen in NSScreen.screens) {
-        if ([screen.deviceDescription[@"NSScreenNumber"] unsignedIntValue] == display) { scale = screen.backingScaleFactor; break; }
+    CGFloat scale=1;CGDisplayModeRef mode=CGDisplayCopyDisplayMode(display);
+    if(mode) {
+        CGFloat physical=CGDisplayModeGetPixelWidth(mode);int rotation=(int)CGDisplayRotation(display);
+        if(rotation==90 || rotation==270)physical=CGDisplayModeGetPixelHeight(mode);
+        CGFloat logical=CGDisplayBounds(display).size.width;
+        if(logical>0 && physical>0)scale=physical/logical;CGDisplayModeRelease(mode);
     }
     CGFloat imageWidth = bounds.size.width * scale, imageHeight = bounds.size.height * scale;
     CGFloat ratio = MIN(1.0, 1920.0 / MAX(imageWidth, imageHeight));
     uint32_t width = MAX(1, (uint32_t)floor(imageWidth * ratio)); uint32_t height = MAX(1, (uint32_t)floor(imageHeight * ratio));
-    uint64_t launch = (uint64_t)(front.launchDate.timeIntervalSince1970 * 1000.0);
+    uint64_t launch = process_birth(front.processIdentifier); if(!launch)return nil;
     NSString *identity = scoped ? [NSString stringWithFormat:@"app:%@:%d:%llu:window:%u", app, front.processIdentifier, launch, windowID] : [NSString stringWithFormat:@"display:%u", display];
     return @{ @"identity": identity, @"app": scoped ? app : NSNull.null, @"pid": @(front.processIdentifier), @"window": @(windowID), @"display": @(display), @"launch_ms": @(launch), @"x": @(bounds.origin.x), @"y": @(bounds.origin.y), @"width": @(bounds.size.width), @"height": @(bounds.size.height), @"image_width": @(width), @"image_height": @(height), @"rotation": @((uint16_t)CGDisplayRotation(display)) };
 }
@@ -152,7 +165,7 @@ int cyber_computer_capture(const char *request, char **metadata, uint8_t **bytes
     @autoreleasepool {
         if (@available(macOS 14.0, *)) {
             if (!CGPreflightScreenCaptureAccess()) return 2;
-            NSDictionary *expected = decode(request); NSDictionary *actual = target(selector_for(expected));
+            NSDictionary *expected = decode(request); NSDictionary *actual = target_with_focus(selector_for(expected), NO);
             if (!same_target(expected, actual)) return 3;
             if (!screenkit()) return 6;
             SCShareableContent *shareable = content(); if (!shareable) return 6;
@@ -174,7 +187,7 @@ int cyber_computer_capture(const char *request, char **metadata, uint8_t **bytes
             }];
             if (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC)) != 0 || !png) return 6;
             if (!CGPreflightScreenCaptureAccess()) return 2;
-            if (!same_target(actual, target(selector_for(actual)))) return 3;
+            if (!same_target(actual, target_with_focus(selector_for(actual), NO))) return 3;
             if (png.length > 8 * 1024 * 1024) return 5;
             uint8_t *copy = malloc(png.length); if (!copy) return 6; memcpy(copy, png.bytes, png.length);
             int status = encode(actual, metadata); if (status) { free(copy); return status; }
@@ -246,6 +259,7 @@ static int drag(NSDictionary *expected, NSDictionary *action, Cancel cancel, con
         if (!visible_point(next)) { status=3; break; } current=next;
         if (!mouse(kCGEventLeftMouseDragged, current, kCGMouseButtonLeft, 0)) { status = 6; break; } usleep(10000);
     }
+    if (!status) status = checkpoint(expected, cancel, context, deadline);
     if (!status) { current = to; if (!mouse(kCGEventLeftMouseDragged, to, kCGMouseButtonLeft, 0)) status = 6; }
     // Release is cleanup, even after cancellation; no button remains deliberately held.
     if (!mouse(kCGEventLeftMouseUp, current, kCGMouseButtonLeft, 1)) return 6; return status;

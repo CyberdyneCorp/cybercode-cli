@@ -12,6 +12,7 @@ use serde::Serialize;
 use std::time::{Duration, Instant};
 
 type Attendance = dyn Fn(&str) -> bool + Send + Sync;
+type PresenceEpoch = dyn Fn(&str) -> u64 + Send + Sync;
 type Supervisor = dyn Fn() -> bool + Send + Sync;
 
 use crate::{Action, Error, Geometry};
@@ -223,6 +224,32 @@ mod tests {
         assert!(permit.cancelled());
     }
     #[test]
+    fn reconnect_cannot_restore_a_grant_or_previously_admitted_worker() {
+        let epoch = Arc::new(AtomicU64::new(0));
+        let observed = epoch.clone();
+        let mut controller = Controller::new(true);
+        controller.set_presence_epoch(Arc::new(move |_| observed.load(Ordering::Acquire)));
+        let target = target();
+        controller.arm(admission(&target, 100), None).unwrap();
+        let old = frame(&controller, &target, 100);
+        let permit = controller.capture(admission(&target, 101)).unwrap();
+        epoch.fetch_add(1, Ordering::AcqRel); // last attachment lost and immediately replaced
+        assert!(permit.cancelled());
+        drop(permit);
+        assert!(
+            controller
+                .input(admission(&target, 102), &old.id, action(), &geometry())
+                .is_err()
+        );
+        assert!(controller.current(102).is_none());
+        controller.arm(admission(&target, 103), None).unwrap();
+        assert!(
+            controller
+                .input(admission(&target, 104), &old.id, action(), &geometry())
+                .is_err()
+        );
+    }
+    #[test]
     fn pending_human_requests_fence_admission_and_already_admitted_native_input() {
         let safe = Arc::new(AtomicBool::new(true));
         let observed = Arc::clone(&safe);
@@ -297,6 +324,7 @@ pub struct Grant {
     pub expires_at: u64,
     generation: u64,
     created_at: u64,
+    presence_epoch: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
@@ -325,6 +353,7 @@ pub struct Controller {
     state: Mutex<State>,
     attendance: Arc<Attendance>,
     supervisor: Arc<Supervisor>,
+    presence_epoch: Arc<PresenceEpoch>,
 }
 
 /// Kept by the native worker until it really exits, including after a caller
@@ -336,6 +365,7 @@ pub struct CapturePermit {
     grant: Grant,
     deadline: Instant,
     attendance: Arc<Attendance>,
+    presence_epoch: Arc<PresenceEpoch>,
 }
 
 impl CapturePermit {
@@ -343,7 +373,17 @@ impl CapturePermit {
         self.generation.load(Ordering::Acquire) != self.expected || Instant::now() >= self.deadline
     }
     pub fn cancelled(&self) -> bool {
-        self.revoked() || !(self.attendance)(&self.grant.session_id) || self.revoked()
+        if !(self.attendance)(&self.grant.session_id)
+            || (self.presence_epoch)(&self.grant.session_id) != self.grant.presence_epoch
+        {
+            let _ = self.generation.compare_exchange(
+                self.expected,
+                self.expected.wrapping_add(1),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            );
+        }
+        self.revoked()
     }
     pub fn target(&self) -> &Target {
         &self.grant.target
@@ -412,7 +452,13 @@ impl Controller {
             state: Mutex::new(State::default()),
             attendance,
             supervisor,
+            presence_epoch: Arc::new(|_| 0),
         }
+    }
+
+    /// Configure before sharing this controller; each last-presence loss advances the host epoch.
+    pub fn set_presence_epoch(&mut self, epoch: Arc<PresenceEpoch>) {
+        self.presence_epoch = epoch;
     }
 
     pub fn set_enabled(&self, enabled: bool) {
@@ -424,7 +470,19 @@ impl Controller {
 
     /// Only the authenticated owner path may call this; model tools cannot arm.
     pub fn arm(&self, admission: Admission<'_>, ttl_ms: Option<u64>) -> Result<Grant, Error> {
+        let epoch = (self.presence_epoch)(admission.session);
+        self.arm_at_epoch(admission, ttl_ms, epoch)
+    }
+    pub fn arm_at_epoch(
+        &self,
+        admission: Admission<'_>,
+        ttl_ms: Option<u64>,
+        epoch: u64,
+    ) -> Result<Grant, Error> {
         self.ready(&admission)?;
+        if epoch != (self.presence_epoch)(admission.session) {
+            return Err(Error::NotArmed);
+        }
         let ttl = ttl_ms.unwrap_or(300_000);
         if ttl == 0
             || ttl > MAX_GRANT_MS
@@ -454,6 +512,7 @@ impl Controller {
             expires_at,
             generation,
             created_at: admission.now,
+            presence_epoch: epoch,
         };
         *state = State {
             grant: Some(grant.clone()),
@@ -592,22 +651,35 @@ impl Controller {
             return Err(Error::Disabled);
         }
         if !admission.human_present || !(self.attendance)(admission.session) {
+            self.stop_session(admission.session);
             return Err(Error::Consent("an attached human is required"));
         }
         if !admission.permitted {
+            self.stop_session(admission.session);
             return Err(Error::Consent(
                 "current Mode or permission rules deny this action",
             ));
         }
         if !admission.os_consent {
+            self.stop();
             return Err(Error::Consent("native OS consent is required"));
         }
         Ok(())
     }
 
     fn live(&self, grant: &Grant, now: u64) -> bool {
+        let attended = (self.attendance)(&grant.session_id)
+            && (self.presence_epoch)(&grant.session_id) == grant.presence_epoch;
+        if !attended {
+            let _ = self.generation.compare_exchange(
+                grant.generation,
+                grant.generation.wrapping_add(1),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            );
+        }
         self.enabled.load(Ordering::Acquire)
-            && (self.attendance)(&grant.session_id)
+            && attended
             && grant.generation == self.generation.load(Ordering::Acquire)
             && now >= grant.created_at
             && now < grant.expires_at
@@ -636,6 +708,7 @@ impl Controller {
             active: self.active.clone(),
             deadline: Instant::now() + Duration::from_millis(grant.expires_at.saturating_sub(now)),
             attendance: self.attendance.clone(),
+            presence_epoch: self.presence_epoch.clone(),
             grant,
         }
     }

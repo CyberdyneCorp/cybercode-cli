@@ -189,6 +189,12 @@ async fn owner_routes_bind_auth_location_exact_review_and_global_stop() {
         h.runtime.switch_mode(&id, "bypass").await.is_err(),
         "native input cannot change its own Mode while armed"
     );
+    let original = h.runtime.session_info(&id).await.unwrap();
+    assert!(h.runtime.switch_agent(&id, "reviewer").await.is_err());
+    assert!(h.runtime.switch_model(&id, "other/model").await.is_err());
+    let unchanged = h.runtime.session_info(&id).await.unwrap();
+    assert_eq!(unchanged.agent, original.agent);
+    assert_eq!(unchanged.model, original.model);
     let asker = h.runtime.operation_asker(&id).await.unwrap();
     let asking = tokio::spawn(async move {
         asker

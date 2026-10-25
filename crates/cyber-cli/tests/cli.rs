@@ -1429,7 +1429,8 @@ fn doctor_reports_every_check_as_json() {
             "server",
             "peers:listener",
             "peers:remotes",
-            "account"
+            "account",
+            "computer"
         ]
     );
     assert!(names.contains(&"lsp:gopls"));

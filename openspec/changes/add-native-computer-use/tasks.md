@@ -22,7 +22,7 @@
 ## 4. Client surfaces
 
 - [x] 4.1 Register `cyber computer status|setup|allow|stop`, owner-only typed API and generated SDK operations with explicit unsupported-platform/version messages.
-- [ ] 4.2 Add model tool and guidance, TUI/dashboard active-control banners, target/expiry review, native result evidence and immediate Stop.
+- [x] 4.2 Add model tool and guidance, TUI/dashboard active-control banners, target/expiry review, native result evidence and immediate Stop.
 - [x] 4.3 Update permissions/config/doctor/setup guides, README mindmap/roadmap and platform/signing documentation.
 
 ## 5. Verification
@@ -38,5 +38,5 @@
 - Compiled native Objective-C adapter uses public Apple SDK APIs, links into the server, and dynamically loads ScreenCaptureKit for explicit unsupported-version behavior. Native syntax/build checks passed; signed/notarized distribution and physical-device behavior remain unaccepted (1.4/5.4).
 - Deterministic local checks: computer domain14, global-only configuration2, runtime11, real TCP owner/privacy2, model schema1, TUI1, CLI/doctor2 and owned Session-presence stream1 passed. A separate core settings unit test passed. Strict Clippy passed across cyber-computer/core/server/tools/app/client/cli/tui with all targets and warnings denied.
 - Browser modules/transport26 tests and typecheck passed; SDK115 tests passed with8 existing process tests skipped because CYBER_BIN was not supplied. OpenAPI export and SDK generation/typecheck passed. Only aarch64-apple-darwin is installed locally; unsupported-platform execution and the wider workspace suites await CI (5.3/5.5).
-- General dashboard constructor/view/logout wiring and CSP/blob preview integration are coordinated in the parallel dashboard change; keep4.2 and the browser logout part of2.4 open until the combined interface is verified. The computer-specific modules already include exact-target review, global server banner/Stop and authenticated private PNG preview.
+- Dashboard constructor/view/logout and CSP/blob preview are integrated. Browser module/transport checks and a real Chromium test with mocked native HTTP responses verify global cross-Session authority, explicit review/arming, private PNG preview and logout Stop without invoking the OS adapter.
 - No real desktop capture, input injection, OS permission prompt or native device acceptance has been performed. Task5.4 remains blocked on explicit controlled-test participation and OS grants; fixtures must not be described as physical acceptance.

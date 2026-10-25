@@ -113,22 +113,30 @@ impl Computer {
         }
         let cutoff =
             wall_ms().saturating_sub(days.saturating_mul(86_400_000).min(i64::MAX as u64) as i64);
-        let stale=self.journal.0.transaction(move|tx| {
-            let mut query=tx.prepare("SELECT id,session_id FROM computer_frame WHERE expired=1 OR created_ms<=?1 LIMIT 500")?;
-            let rows=query.query_map([cutoff],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
+        let mut cursor = String::new();
+        loop {
+            let after = cursor.clone();
+            let stale=self.journal.0.transaction(move|tx| {
+            let mut query=tx.prepare("SELECT id,session_id FROM computer_frame WHERE (expired=1 OR created_ms<=?1) AND id>?2 ORDER BY id LIMIT 500")?;
+            let rows=query.query_map(rusqlite::params![cutoff,after],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
             for (id,_) in &rows {tx.execute("UPDATE computer_frame SET expired=1 WHERE id=?1",[id])?;}Ok(rows)
         })?;
-        for (id, session) in stale {
-            if let Ok(path) = self.artifact_path(&session, &id) {
-                match std::fs::remove_file(path) {
-                    Ok(()) => {}
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(_) => continue,
-                };
-                let _ = self.journal.0.transaction(move |tx| {
-                    tx.execute("DELETE FROM computer_frame WHERE id=?1 AND expired=1", [id])?;
-                    Ok(())
-                });
+            let Some(last) = stale.last() else {
+                break;
+            };
+            cursor = last.0.clone();
+            for (id, session) in stale {
+                if let Ok(path) = self.artifact_path(&session, &id) {
+                    match std::fs::remove_file(path) {
+                        Ok(()) => {}
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(_) => continue,
+                    };
+                    let _ = self.journal.0.transaction(move |tx| {
+                        tx.execute("DELETE FROM computer_frame WHERE id=?1 AND expired=1", [id])?;
+                        Ok(())
+                    });
+                }
             }
         }
         Ok(())

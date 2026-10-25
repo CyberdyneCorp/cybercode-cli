@@ -1,5 +1,5 @@
 import type { Backoff, Connection } from "./connection.js";
-import { CyberClientError, errorFromResponse } from "./errors.js";
+import { CyberApiError, CyberClientError, errorFromResponse } from "./errors.js";
 import type { CallParams, OperationId, OperationSpec, RequestOptions } from "./generated/operations.js";
 import { operations } from "./generated/operations.js";
 import type { EventEnvelope } from "./generated/types.js";
@@ -105,13 +105,13 @@ export class HttpTransport implements Transport {
     try {
       const request: RequestInit & { cache: "no-store" } = { ...init, redirect: "error", cache: "no-store", signal: signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal };
       const response = await this.connection.fetch(url, request);
-      if (!response.ok) throw errorFromResponse(response.status, await response.text());
-      if (response.headers.get("content-type")?.split(";")[0] !== "image/png" || !response.body || Number(response.headers.get("content-length")) > 8 * 1024 * 1024) throw new CyberClientError("MalformedResponse", "expected private PNG");
-      const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let length = 0;
-      try { for (;;) { const part = await reader.read(); if (part.done) break; length += part.value.length; if (length > 8 * 1024 * 1024) throw new CyberClientError("MalformedResponse", "private PNG exceeds 8 MiB"); chunks.push(part.value); } } finally { await reader.cancel().catch(() => {}); }
-      const bytes = new Uint8Array(length); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; } return bytes;
+      const effectiveSignal = request.signal as AbortSignal;
+      const bytes = await boundedBinaryBody(response, response.ok ? 8 * 1024 * 1024 : 64 * 1024, effectiveSignal);
+      if (!response.ok) throw errorFromResponse(response.status, new TextDecoder().decode(bytes));
+      if (response.headers.get("content-type")?.split(";")[0] !== "image/png" || bytes.length < 8 || ![137,80,78,71,13,10,26,10].every((byte,index) => bytes[index] === byte)) throw new CyberClientError("MalformedResponse", "expected private PNG");
+      return bytes;
     } catch (error) {
-      if (error instanceof CyberClientError) throw error;
+      if (error instanceof CyberClientError || error instanceof CyberApiError) throw error;
       if (signal?.aborted) throw signal.reason;
       if (timeout.signal.aborted) throw new CyberClientError("Timeout", "private PNG request timed out", { cause: error });
       throw new CyberClientError("Transport", "private PNG request failed", { cause: error });
@@ -163,7 +163,18 @@ function isTransportFailure(err: unknown): boolean {
   return err instanceof CyberClientError && (err.reason === "Transport" || err.reason === "Timeout");
 }
 
-export function buildUrl(base: string, op: OperationSpec, params: CallParams): string {
+export /** Stream both success and error bodies under a fixed byte limit and cancellation. */
+async function boundedBinaryBody(response: Response, limit: number, signal: AbortSignal): Promise<Uint8Array> {
+  if (Number(response.headers.get("content-length")) > limit || !response.body) { await response.body?.cancel(); throw new CyberClientError("MalformedResponse", "private response exceeds its limit or has no body"); }
+  const reader=response.body.getReader();const chunks:Uint8Array[]=[];let length=0;
+  const cancel=()=>{void reader.cancel().catch(()=>{});};signal.addEventListener("abort",cancel,{once:true});
+  try {
+    for (;;) { signal.throwIfAborted();const part=await reader.read();signal.throwIfAborted();if(part.done)break;length+=part.value.length;if(length>limit)throw new CyberClientError("MalformedResponse","private response exceeds its limit");chunks.push(part.value); }
+    const bytes=new Uint8Array(length);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}return bytes;
+  } finally {signal.removeEventListener("abort",cancel);await reader.cancel().catch(()=>{});}
+}
+
+function buildUrl(base: string, op: OperationSpec, params: CallParams): string {
   const path = op.path.replace(/\{(\w+)\}/g, (_, name: string) => {
     const value = params.path?.[name];
     if (value === undefined) throw new TypeError(`missing path parameter "${name}"`);

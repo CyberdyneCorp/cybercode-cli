@@ -55,14 +55,17 @@ impl Runtime {
                     .is_empty()
             })
         });
-        let computer = Arc::new(Computer::with_supervisor(
+        let mut computer = Computer::with_supervisor(
             Arc::clone(&self.inner.store),
             path,
             policy,
             attendance,
             backend,
             supervisor,
-        )?);
+        )?;
+        let presence = self.inner.presence.clone();
+        computer.set_presence_epoch(Arc::new(move |session| presence.native_epoch(session)));
+        let computer = Arc::new(computer);
         self.inner
             .computer
             .set(Arc::clone(&computer))

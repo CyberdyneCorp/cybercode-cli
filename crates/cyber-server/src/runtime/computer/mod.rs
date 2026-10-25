@@ -107,6 +107,7 @@ struct Reviewed {
     selector: Selector,
     generation: u64,
     deadline: Instant,
+    presence_epoch: u64,
 }
 
 pub struct Computer {
@@ -117,6 +118,8 @@ pub struct Computer {
     artifacts: PathBuf,
     policy: Arc<Policy>,
     attendance: Arc<Attendance>,
+    presence_epoch: Arc<dyn Fn(&str) -> u64 + Send + Sync>,
+    last_accessibility: std::sync::atomic::AtomicBool,
     clock: Instant,
     previews: Mutex<BTreeMap<String, Reviewed>>,
     preview_generation: std::sync::atomic::AtomicU64,
@@ -134,10 +137,11 @@ impl Computer {
         if prompt {
             self.require_enabled()?;
         }
+        let health = self.checked_health(prompt)?;
         Ok(HealthReport {
             enabled: self.enabled(),
             grant: self.global_grant(),
-            health: self.backend.health(prompt)?,
+            health,
         })
     }
     pub fn require_stopped(&self) -> Result<()> {
@@ -196,10 +200,28 @@ impl Computer {
             artifacts,
             policy,
             attendance,
+            presence_epoch: Arc::new(|_| 0),
+            last_accessibility: std::sync::atomic::AtomicBool::new(false),
             clock: Instant::now(),
             previews: Mutex::new(BTreeMap::new()),
             preview_generation: std::sync::atomic::AtomicU64::new(0),
         })
+    }
+    fn set_presence_epoch(&mut self, epoch: Arc<dyn Fn(&str) -> u64 + Send + Sync>) {
+        Arc::get_mut(&mut self.controller)
+            .expect("unshared computer controller")
+            .set_presence_epoch(epoch.clone());
+        self.presence_epoch = epoch;
+    }
+    fn checked_health(&self, prompt: bool) -> Result<Health> {
+        let health = self.backend.health(prompt)?;
+        let had_access = self
+            .last_accessibility
+            .swap(health.accessibility, std::sync::atomic::Ordering::AcqRel);
+        if !health.screen_capture || (had_access && !health.accessibility) {
+            self.stop_all();
+        }
+        Ok(health)
     }
     fn now(&self) -> u64 {
         self.clock.elapsed().as_millis().min(u64::MAX as u128) as u64
@@ -226,7 +248,7 @@ impl Computer {
         capture: bool,
     ) -> Result<Admission<'a>> {
         self.require_enabled()?;
-        let health = self.backend.health(false)?;
+        let health = self.checked_health(false)?;
         if !health.supported {
             return Err(cyber_computer::Error::UnsupportedPlatform.into());
         }
@@ -242,7 +264,7 @@ impl Computer {
     pub fn status(&self, session: &str) -> Result<Status> {
         Ok(Status {
             enabled: self.enabled(),
-            health: self.backend.health(false)?,
+            health: self.checked_health(false)?,
             latest_frame: self
                 .journal
                 .latest_frame(session, (self.policy)().retention_days)?,
@@ -271,7 +293,7 @@ impl Computer {
     }
     pub fn setup(&self) -> Result<Health> {
         self.require_enabled()?;
-        self.backend.health(true).map_err(Into::into)
+        self.checked_health(true)
     }
     pub fn preview(&self, session: &str, selector: Selector) -> Result<Preview> {
         self.require_enabled()?;
@@ -305,6 +327,7 @@ impl Computer {
                     .preview_generation
                     .load(std::sync::atomic::Ordering::Acquire),
                 deadline: Instant::now() + std::time::Duration::from_secs(30),
+                presence_epoch: (self.presence_epoch)(session),
             },
         );
         Ok(preview)
@@ -323,7 +346,8 @@ impl Computer {
             .map_err(|_| ComputerError::Storage)?
             .remove(preview)
             .ok_or(ComputerError::Conflict)?;
-        if reviewed.preview.session_id != session
+        if reviewed.presence_epoch != (self.presence_epoch)(session)
+            || reviewed.preview.session_id != session
             || reviewed.deadline <= Instant::now()
             || reviewed.generation
                 != self
@@ -359,7 +383,12 @@ impl Computer {
         let lease = self.backend.acquire_lease()?;
         self.journal
             .acknowledge(&reviewed.preview.unknown_operations)?;
-        let grant = self.controller.arm(facts, ttl)?;
+        if reviewed.presence_epoch != (self.presence_epoch)(session) {
+            return Err(ComputerError::Conflict);
+        }
+        let grant = self
+            .controller
+            .arm_at_epoch(facts, ttl, reviewed.presence_epoch)?;
         *self.host_lease.lock().map_err(|_| ComputerError::Storage)? =
             Some((grant.id.clone(), session.into(), lease));
         self.expire_host_lease(
@@ -369,10 +398,11 @@ impl Computer {
         // Stop increments the review epoch before revoking the controller. A
         // Stop racing between review validation and arm must also fence the new
         // grant; checking again closes the check/arm gap without blocking Stop.
-        if reviewed.generation
-            != self
-                .preview_generation
-                .load(std::sync::atomic::Ordering::Acquire)
+        if reviewed.presence_epoch != (self.presence_epoch)(session)
+            || reviewed.generation
+                != self
+                    .preview_generation
+                    .load(std::sync::atomic::Ordering::Acquire)
         {
             self.controller.stop_session(session);
             self.release_host_lease(Some(session));
@@ -427,7 +457,10 @@ impl Computer {
             if permit.cancelled() {
                 return Err(cyber_computer::Error::NotArmed.into());
             }
-            let capture = self.backend.capture(&target)?;
+            let capture = self
+                .backend
+                .capture(&target)
+                .inspect_err(|_| self.stop(session))?;
             capture.validate()?;
             if capture.target != target {
                 return Err(cyber_computer::Error::StaleFrame.into());

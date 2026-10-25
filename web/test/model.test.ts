@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Dashboard, type Lease } from "../src/model.js";
 import { ApiFault, type Port, type RequestOptions, type StreamOptions } from "../src/transport.js";
-import type { EventEnvelope, PendingRequest, Session } from "../../sdk/typescript/src/generated/types.js";
+import type { EventEnvelope, Message, PendingRequest, Session } from "../../sdk/typescript/src/generated/types.js";
 
 const session = (id: string, directory = "/project") => ({ id, directory, title: id, agent: "build", model: "fixture", mode: "default", status: "idle", seq: 0 }) as Session;
 const permission = (id = "req_one", owner = "ses_child") => ({ id, session_id: owner, call_id: "call_one", message_id: "msg_one", kind: "permission", action: "bash", resources: ["echo fixture"], always_patterns: ["echo fixture"], metadata: { command: "echo fixture" }, routed_to: [{ session_id: "ses_one", directory: "/project" }] }) as PendingRequest;
@@ -46,6 +46,29 @@ class Fake implements Port {
 }
 async function ready(t: { after: (callback: () => void) => void }, api = new Fake()) { const model = new Dashboard(api, () => api.now); t.after(() => model.logout()); await model.login("fixture-only"); await until(() => model.actionable); return { model, api }; }
 const replies = (api: Fake) => api.calls.filter((call) => call.path.endsWith("/reply"));
+
+test("a slow optional message inbox cannot block Session attachment or permission controls", async (t) => {
+  const api = new Fake(); let finish: ((value: unknown) => void) | undefined;
+  api.hook = (path) => path.endsWith("/inbox") ? new Promise((resolve) => { finish = resolve; }) : undefined;
+  const model = new Dashboard(api, () => api.now); t.after(() => model.logout());
+  const login = model.login("fixture-only");
+  try { await until(() => model.actionable); assert.equal(model.state.cards.length, 1); }
+  finally { finish?.({ data: [] }); await login; }
+});
+
+test("durable completed messages retire matching live text even before the Session becomes idle", async (t) => {
+  const { model, api } = await ready(t);
+  const completed = { id: "msg_complete", kind: "assistant", text: "Completed scripted action.", finished: true, tools: [] } as unknown as Message;
+  api.sessions[0]!.status = "running";
+  api.hook = (path) => path.includes("/messages?") ? Promise.resolve({ data: [completed], cursor: {} }) : undefined;
+  model.state.liveMessage = completed.id; model.state.liveText = "Completed scripted action.";
+  await model.refresh(); assert.equal(model.state.session!.status, "running"); assert.equal(model.state.liveText, "");
+  const deliver = (id: string, text: string) => (model as unknown as { event(event: EventEnvelope, session: string): void }).event({ id: "delta", type: "session.text.delta", data: { session_id: "ses_one", message_id: id, text } } as EventEnvelope, "ses_one");
+  deliver("msg_complete", "Completed scripted action."); assert.equal(model.state.liveText, "");
+  deliver("msg_next", "Next answer"); assert.equal(model.state.liveText, "Next answer");
+  deliver("msg_complete", "late"); assert.equal(model.state.liveText, "Next answer", "late old deltas cannot replace the next message");
+  deliver("msg_other", "Separate answer"); assert.equal(model.state.liveText, "Separate answer", "different message IDs do not concatenate");
+});
 
 test("lost reply retries the exact owner/request/key/payload, never the selected parent or a fresh decision", async (t) => {
   const { model, api } = await ready(t); const card = model.state.cards[0]!;
@@ -158,4 +181,12 @@ test("a late latest-page snapshot cannot overwrite a newly selected older transc
   const { model } = await ready(t, api); defer = true; const pending = model.refresh();
   await model.olderMessages(); assert.equal(model.state.messages[0]!.id, "older");
   resolve(page("stale-latest")); await pending; assert.equal(model.state.messages[0]!.id, "older");
+});
+
+test("dashboard wires global native authority without Sessions and sends Stop before logout clears owner auth", async () => {
+  const api=new Fake();api.sessions=[];
+  api.hook=(path)=>path==="/tools/computer/health"?Promise.resolve({data:{enabled:true,health:{supported:true,platform:"fixture",minimum_version:"fixture",screen_capture:true,accessibility:true,binary:"fixture"},grant:{id:"cug_other",session_id:"ses_other",target:{identity:"fixture"},expires_at:200000}}}):undefined;
+  const model=new Dashboard(api,()=>api.now);await model.login("fixture-only");
+  await until(()=>!!model.computer.active);assert.equal(model.computer.active?.session_id,"ses_other");
+  model.logout();const stop=api.calls.find(call=>call.path==="/tools/computer/stop");assert.equal(stop?.options.finishOnLogout,true);assert.equal(api.cleared,1);assert.equal(model.computer.report,undefined);
 });

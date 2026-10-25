@@ -1973,6 +1973,7 @@ impl Runtime {
     }
 
     pub async fn switch_model(&self, session_id: &str, model: &str) -> Result<(), RuntimeError> {
+        self.require_computer_stopped()?;
         cyber_llm::catalog::ModelRef::parse(model)
             .map_err(|e| RuntimeError::Invalid(e.to_string()))?;
         let handle = self.inner.handle(session_id).await?;
@@ -1980,6 +1981,7 @@ impl Runtime {
     }
 
     pub async fn switch_agent(&self, session_id: &str, agent: &str) -> Result<(), RuntimeError> {
+        self.require_computer_stopped()?;
         self.switch(session_id, AGENT_SWITCHED, agent, |i| &i.agent)
             .await
     }

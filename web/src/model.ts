@@ -1,8 +1,10 @@
 import type { EventEnvelope, FileDiff, GoalsView, Job, LocationInfo, Message, PendingRequest, RunDetail, Session, SessionRow, WorkflowRunSummary } from "../../sdk/typescript/src/generated/types.js";
 import { ApiFault, operationKey, type Port, type RequestOptions } from "./transport.js";
+import { ComputerControls } from "./computer.js";
+import { MessageInbox } from "./inbox.js";
 
 export type Connection = "authentication required" | "connecting" | "connected" | "reconnecting" | "offline";
-export type Tab = "conversation" | "approvals" | "runs";
+export type Tab = "conversation" | "approvals" | "runs" | "inbox";
 export interface Lease { client_id: string; session_id: string; expires_at: number }
 interface Page<T> { data: T[]; cursor: { next?: string | null } }
 interface Located<T> { location: LocationInfo; data: T }
@@ -17,7 +19,7 @@ export interface State {
   goals?: GoalsView | undefined; unavailable: Set<string>; lease?: Lease | undefined; notice: string;
   loading: boolean; olderTranscript: boolean; tab: Tab; draft: string; delivery: "steer" | "queue";
   review?: Card | undefined; reviewed: boolean; feedback?: Card | undefined; answers: Map<string, string[][]>;
-  customs: Map<string, string[]>; command?: Command | undefined; liveText: string;
+  customs: Map<string, string[]>; command?: Command | undefined; liveText: string; liveMessage?: string | undefined;
   feedbackDraft: string; creation?: { key: string; directory: string; status: "submitting" | "uncertain" } | undefined;
 }
 const initial = (): State => ({ authenticated: false, authBusy: false, retryAt: 0, connection: "authentication required", directory: "", sessions: [], messages: [], diffs: [], cards: [], runs: [], details: new Map(), jobs: [], unavailable: new Set(), notice: "", loading: false, olderTranscript: false, tab: "conversation", draft: "", delivery: "steer", reviewed: false, answers: new Map(), customs: new Map(), liveText: "", feedbackDraft: "" });
@@ -55,7 +57,12 @@ export class Dashboard {
   #networkRecovery: Promise<void> | undefined;
   #pageCursor: string | undefined;
   #pageVersion = 0;
-  constructor(readonly api: Port, readonly now = Date.now) {}
+  readonly inbox: MessageInbox;
+  readonly computer: ComputerControls;
+  constructor(readonly api: Port, readonly now = Date.now) {
+    this.computer = new ComputerControls(api, () => this.state.authenticated ? { session: this.state.session?.id ?? "", directory: this.state.directory, actionable: this.actionable, signal: this.#attachment.signal } : undefined, () => this.emit(), now);
+    this.inbox = new MessageInbox(api, () => this.state.authenticated && this.state.session ? { session: this.state.session.id, directory: this.state.session.directory, actionable: this.actionable, signal: this.#attachment.signal } : undefined, () => this.emit());
+  }
   emit(): void { this.changed(); }
   get actionable(): boolean { return this.state.connection === "connected" && !!this.state.lease && this.state.lease.expires_at > this.now(); }
   async login(password: string): Promise<void> {
@@ -72,6 +79,7 @@ export class Dashboard {
       this.#failures = 0;
       if (this.state.sessions[0]) await this.selectSession(this.state.sessions[0].id);
       else this.state.connection = "connected";
+      void this.computer.refresh();
     } catch (error) {
       if (generation === this.#generation) this.authenticationRequired(error instanceof ApiFault && error.kind === "network" ? "Server unavailable. Sign in again when it is reachable." : "Sign-in was not accepted. Check the local server password.");
       this.#failures++;
@@ -79,14 +87,17 @@ export class Dashboard {
     } finally { this.state.authBusy = false; this.emit(); }
   }
   authenticationRequired(message = "Your connection needs authentication. Sign in again."): void {
-    this.stopAttachment(); this.api.clear(); this.#identity = undefined; this.#decisions.clear(); this.#commands.clear(); this.#cursors.clear(); this.jobLog = undefined;
+    this.computer.reset(); this.inbox.reset();
+    this.computer.clear(); this.stopAttachment(); this.api.clear(); this.#identity = undefined; this.#decisions.clear(); this.#commands.clear(); this.#cursors.clear(); this.jobLog = undefined;
     this.state = initial(); this.state.notice = message; this.emit();
   }
   logout(): void {
-    this.releaseLease(); this.authenticationRequired("Signed out. The server and its running work continue.");
+    void this.computer.stop(); this.releaseLease(); this.authenticationRequired("Signed out. The server and its running work continue.");
   }
   async switchLocation(directory: string): Promise<void> {
     if (!this.state.authenticated || this.state.loading) return;
+    this.computer.reset(); this.inbox.reset();
+    this.state.liveText = ""; this.state.liveMessage = undefined;
     this.releaseLease(); this.stopAttachment();
     const generation = this.#generation; this.jobLog = undefined;
     this.state.session = undefined; this.state.cards = []; this.state.messages = []; this.state.diffs = []; this.state.runs = []; this.state.jobs = []; this.state.goals = undefined; this.state.directory = directory; this.state.loading = true; this.state.connection = "connecting"; this.emit();
@@ -98,6 +109,7 @@ export class Dashboard {
       if (generation !== this.#generation) return;
       if (this.state.sessions[0]) await this.selectSession(this.state.sessions[0].id);
       else this.state.connection = "connected";
+      void this.computer.refresh();
     } catch (error) { if (generation === this.#generation) this.showError(error); } finally { if (generation === this.#generation) { this.state.loading = false; this.emit(); } }
   }
   async loadSessions(cursor?: string): Promise<void> {
@@ -115,10 +127,11 @@ export class Dashboard {
   }
   async selectSession(id: string): Promise<void> {
     if (!this.state.authenticated) return;
+    this.computer.reset(); this.inbox.reset();
     this.releaseLease(); this.stopAttachment();
     const generation = this.#generation;
     this.jobLog = undefined;
-    this.state.loading = true; this.state.connection = "connecting"; this.state.session = undefined; this.state.diffs = []; this.state.runs = []; this.state.jobs = []; this.state.goals = undefined; this.state.cards = []; this.state.messages = []; this.state.liveText = ""; this.state.draft = ""; this.state.command = this.#commands.get(id); this.state.review = undefined; this.state.feedback = undefined; this.state.details.clear(); this.emit();
+    this.state.loading = true; this.state.connection = "connecting"; this.state.session = undefined; this.state.diffs = []; this.state.runs = []; this.state.jobs = []; this.state.goals = undefined; this.state.cards = []; this.state.messages = []; this.state.liveText = ""; this.state.liveMessage = undefined; this.state.draft = ""; this.state.command = this.#commands.get(id); this.state.review = undefined; this.state.feedback = undefined; this.state.details.clear(); this.emit();
     try {
       const session = data(await this.api.request<{ data: Session }>(`/sessions/${encoded(id)}`, this.options()));
       if (generation !== this.#generation) return;
@@ -200,7 +213,9 @@ export class Dashboard {
     this.applyTranscript(messages, generation, pageVersion, pageCursor);
     this.state.diffs = diffs?.data ?? []; this.state.runs = runs?.data ?? []; this.state.jobs = jobs?.data ?? []; this.state.goals = goals?.data;
     this.reconcileCards([...permissions.data, ...questions.data], generation);
-    if (current.data.status !== "running") this.state.liveText = "";
+    if (current.data.status !== "running" || this.finishedMessage(this.state.liveMessage)) { this.state.liveText = ""; this.state.liveMessage = undefined; }
+    // Optional inbox reads must not delay Session attachment or permission updates.
+    void this.inbox.refresh(); void this.computer.refresh();
     this.emit();
   }
   private async optional<T>(path: string, label: string, options: RequestOptions): Promise<T | undefined> {
@@ -411,9 +426,16 @@ export class Dashboard {
   private event(event: EventEnvelope, session: string): void {
     if (event.durable?.aggregateID === session) this.#cursors.set(session, Math.max(this.#cursors.get(session) ?? -1, event.durable.seq));
     const payload = event.data as Record<string, unknown> | null;
-    if (event.type === "session.text.delta" && payload?.session_id === session && typeof payload.text === "string") { this.state.liveText += payload.text; this.emit(); return; }
+    if (event.type === "session.text.delta" && payload?.session_id === session && typeof payload.text === "string" && typeof payload.message_id === "string") { this.textDelta(payload.message_id, payload.text); return; }
     clearTimeout(this.#refreshTimer);
     this.#refreshTimer = setTimeout(() => { void this.refresh().catch((error) => this.showError(error)); }, 100);
+  }
+  private finishedMessage(id: string | undefined): boolean { return !!id && this.state.messages.some((message) => message.id === id && message.kind === "assistant" && !!message.finished); }
+  private textDelta(id: string, text: string): void {
+    // A durable projection may arrive before this ephemeral stream's final delta.
+    if (this.finishedMessage(id)) return;
+    if (this.state.liveMessage !== id) { this.state.liveMessage = id; this.state.liveText = ""; }
+    this.state.liveText += text; this.emit();
   }
   private showError(error: unknown): void {
     if (error instanceof ApiFault && error.kind === "auth") { if (this.state.authenticated) this.authenticationRequired(); return; }

@@ -444,6 +444,37 @@ fn stop_fences_an_owner_allow_already_resolving_its_target() {
 }
 
 #[test]
+fn presence_loss_fences_an_owner_allow_already_resolving_its_target() {
+    let mut fixture = Fixture::new();
+    let epoch = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let observed = epoch.clone();
+    fixture
+        .computer
+        .set_presence_epoch(Arc::new(move |_| observed.load(Ordering::Acquire)));
+    let preview = fixture
+        .computer
+        .preview(
+            "owner",
+            Selector {
+                app: Some("test.fixture".into()),
+                display: None,
+            },
+        )
+        .unwrap();
+    let computer = Arc::new(fixture.computer);
+    let ready = Arc::new(std::sync::Barrier::new(2));
+    let release = Arc::new(std::sync::Barrier::new(2));
+    *fixture.backend.block_resolve.lock().unwrap() = Some((ready.clone(), release.clone()));
+    let worker = Arc::clone(&computer);
+    let task = std::thread::spawn(move || worker.allow("owner", &preview.id, None, false));
+    ready.wait();
+    epoch.fetch_add(1, Ordering::AcqRel); // drop last attachment then reconnect while resolve is blocked
+    release.wait();
+    assert!(task.join().unwrap().is_err());
+    assert!(computer.status("owner").unwrap().grant.is_none());
+}
+
+#[test]
 fn native_host_lease_excludes_a_second_runtime_until_explicit_stop() {
     let fixture = Fixture::new();
     fixture.arm();
@@ -590,4 +621,35 @@ fn stopped_workers_keep_the_host_lease_until_native_exit_and_cannot_hide_unknown
         )
         .unwrap();
     other.allow("other", &preview.id, None, true).unwrap();
+}
+
+#[test]
+fn failed_private_cleanup_keeps_bytes_reserved_until_deletion_succeeds() {
+    let fixture = Fixture::new();
+    fixture.arm();
+    let receipt = fixture
+        .computer
+        .screenshot("owner", "cleanup-frame")
+        .unwrap();
+    let frame = receipt.frame.unwrap();
+    let path = fixture.computer.artifact_path("owner", &frame.id).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap(); // deterministic remove_file failure
+    let id = frame.id.clone();
+    fixture
+        .store
+        .transaction(move |tx| {
+            tx.execute(
+                "UPDATE computer_frame SET expired=1,bytes=268435456 WHERE id=?1",
+                [id],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    fixture.computer.prune().unwrap();
+    assert_eq!(fixture.computer.journal.stored_bytes().unwrap(), 268435456);
+    assert!(fixture.computer.screenshot("owner", "over-quota").is_err());
+    std::fs::remove_dir(&path).unwrap();
+    fixture.computer.prune().unwrap();
+    assert_eq!(fixture.computer.journal.stored_bytes().unwrap(), 0);
 }

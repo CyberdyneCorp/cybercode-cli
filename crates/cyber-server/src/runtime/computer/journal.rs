@@ -161,7 +161,7 @@ impl Journal {
     pub fn stored_bytes(&self) -> Result<u64> {
         Ok(self.0.read(|db| {
             db.query_row(
-                "SELECT COALESCE(SUM(bytes),0) FROM computer_frame WHERE expired=0",
+                "SELECT COALESCE(SUM(bytes),0) FROM computer_frame",
                 [],
                 |row| row.get::<_, i64>(0).map(|value| value.max(0) as u64),
             )

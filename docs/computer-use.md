@@ -35,7 +35,7 @@ This explicitly requests macOS Screen Recording and Accessibility consent for th
 
 ## Arm one attached Session
 
-Keep the intended Session open in the TUI or dashboard, open a disposable application window, and use its exact Session ID. Owner review can resolve the application in the background; bring it to the front before requesting capture/input:
+Keep the intended Session open in the TUI or dashboard, open a disposable application window, and use its exact Session ID. Owner review can resolve the application in the background; bring it to the front before requesting input:
 
 ```sh
 # Prints the proposed target without arming it.
@@ -52,7 +52,7 @@ cyber computer stop
 
 An application grant pins its bundle ID, PID, launch time and window. `--display N` explicitly grants a whole native display; `--display 0` selects the main display. Whole-display capture can reveal other visible applications, so application scope is preferable when it meets the task. Grants expire after 300 seconds by default and accept at most 900 seconds. They never survive server restart or inherit to child Sessions, friends' agents or hub members. Only one native worker and one live host grant are admitted at a time. A per-user native lock coordinates separate server/embedded processes, and remains held until a cancelled worker actually exits. The empty `/private/tmp/cyber-computer-<uid>.lock` file remains after release; do not unlink a lock held by a running server.
 
-Computer-specific dashboard modules implement health/setup, exact target review, explicit arming, private capture preview and global Stop; constructor/view/logout integration is tracked in the parallel dashboard completion change. The global banner names the controlling Session even while you view another Session. The TUI shows an active-control banner; **Ctrl+Alt+Esc**, while the TUI has keyboard focus, revokes native input independently of the current overlay or model/tool request. It is not an operating-system global hotkey. `Esc` interruption also revokes the interrupted Session's grant. Losing the attached Session's live human presence fences subsequent native input; the periodic browser presence lease can take up to its 45-second expiry after an ungraceful disconnect. Stop cannot undo already delivered clicks or text.
+The dashboard includes Native computer use controls for health/setup, exact target review, explicit arming, private capture preview and global Stop. Expand the native controls above the workspace to review a target; a controlling Session remains visible in the global banner even when no Session is selected. Logout sends an independent Stop before clearing owner credentials. The TUI shows an active-control banner; **Ctrl+Alt+Esc**, while the TUI has keyboard focus, revokes native input independently of the current overlay or model/tool request. It is not an operating-system global hotkey. `Esc` interruption also revokes the interrupted Session's grant. Losing the last attached Session's live human presence permanently revokes that grant; reconnecting requires a fresh target review and owner grant. The periodic browser presence lease can take up to its 45-second expiry after an ungraceful disconnect. Stop cannot undo already delivered clicks or text.
 
 ## Let the model act
 

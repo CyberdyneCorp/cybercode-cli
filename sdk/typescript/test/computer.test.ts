@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CyberClientError } from "../src/index.js";
+import { CyberApiError, CyberClientError } from "../src/index.js";
 import { json, mockClient } from "./support.js";
 
 test("generated native owner controls keep exact review scope and Location", async () => {
@@ -17,4 +17,20 @@ test("private frame transport rejects other media and oversized PNG payloads wit
  for(const response of [new Response("<html>bad</html>",{headers:{"content-type":"text/html"}}),new Response(new Uint8Array(8*1024*1024+1),{headers:{"content-type":"image/png"}})]) {
   const {client,calls}=mockClient(()=>response);await assert.rejects(client.session.computerFrame("ses_owner","cuf_fixture"),(error:unknown)=>error instanceof CyberClientError&&error.reason==="MalformedResponse");assert.equal(calls.length,1);
  }
+});
+
+test("private frame errors preserve typed API errors and bound hostile error bodies", async () => {
+ const {client}=mockClient(()=>json(404,{_tag:"ComputerFrameExpiredError",message:"expired"}));
+ await assert.rejects(client.session.computerFrame("ses_owner","cuf_fixture"),(error:unknown)=>error instanceof CyberApiError&&error.status===404&&error.tag==="ComputerFrameExpiredError");
+ const huge=mockClient(()=>new Response("x".repeat(65537),{status:500}));
+ await assert.rejects(huge.client.session.computerFrame("ses_owner","cuf_fixture"),(error:unknown)=>error instanceof CyberClientError&&error.reason==="MalformedResponse");
+ const malformed=mockClient(()=>new Response("not a png",{headers:{"content-type":"image/png"}}));
+ await assert.rejects(malformed.client.session.computerFrame("ses_owner","cuf_fixture"),(error:unknown)=>error instanceof CyberClientError&&error.reason==="MalformedResponse");
+});
+test("aborting a stalled private frame body cancels the reader without replay", async () => {
+ let entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});let cancelled=false;
+ const {client,calls}=mockClient(()=>new Response(new ReadableStream<Uint8Array>({pull(){entered();},cancel(){cancelled=true;}}),{headers:{"content-type":"image/png"}}));
+ const stop=new AbortController();const reason=new Error("owner cancelled");
+ const pending=client.session.computerFrame("ses_owner","cuf_fixture",{signal:stop.signal});await started;stop.abort(reason);
+ await assert.rejects(pending,error=>error===reason);assert.ok(cancelled);assert.equal(calls.length,1);
 });

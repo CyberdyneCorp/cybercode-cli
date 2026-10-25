@@ -14,8 +14,10 @@ Status: implementation checks passed; **physical macOS acceptance pending**. No 
 | Clippy | Passed for all targets of cyber-computer/core/server/tools/app/client/cli/tui with warnings denied; final TUI/helper changes checked again |
 | macOS adapter | Compiled with local SDK; standalone Objective-C syntax check passed. This does not prove native capture/input behavior. |
 | OpenAPI / SDK generation | Export test and generator consistency passed; TypeScript typecheck passed |
-| SDK suite | 115 passed, 8 skipped because `CYBER_BIN` was unset; no live account/provider claims |
-| Browser modules / private transport | 26 passed; typecheck and generated bundle check passed |
+| SDK suite | 117 passed, 8 skipped because `CYBER_BIN` was unset; no live account/provider claims |
+| Browser modules / private transport | 40 passed; typecheck and generated bundle check passed |
+
+A real Chromium regression using the embedded dashboard with mocked native HTTP responses passed: global cross-Session banner, target review/arming, explicit private PNG preview and logout Stop. The fixture did not call a native adapter or request OS consent.
 
 Only `aarch64-apple-darwin` is installed locally. Unsupported-platform execution, other architectures, signed distribution and full workspace verification rely on CI/release acceptance; they are not claimed as locally tested. Test counts are for this change's recorded checks, not current repository-wide totals.
 
