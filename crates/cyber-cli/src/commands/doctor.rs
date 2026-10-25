@@ -1,6 +1,8 @@
 //! `cyber doctor` (`cli-commands` → Doctor and debug commands): pass/warn/fail checks,
 //! exit 1 when any check fails.
 
+mod computer;
+
 use cyber_core::paths::DatabaseLocation;
 use cyber_llm::catalog::{
     BuildInputs, Catalog, CredentialSource, Origin, SourceOptions, load_source,
@@ -52,6 +54,7 @@ pub fn run(ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
     checks.push(rt.block_on(server(ctx)));
     checks.extend(rt.block_on(peer_checks(ctx)));
     checks.push(rt.block_on(account_check(ctx)));
+    checks.push(rt.block_on(computer::inspect(ctx)));
     report(global, &checks)
 }
 
