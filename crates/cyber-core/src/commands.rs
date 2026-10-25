@@ -281,6 +281,10 @@ pub const BUILTIN: &[(&str, &str)] = &[
     ("cost", "Show this Session's usage and cost"),
     ("stats", "Show usage statistics"),
     ("theme", "Switch the color theme"),
+    (
+        "sounds",
+        "Sound alerts: turn them on or off, pick a pack, set the volume, preview each event",
+    ),
     ("sidebar", "Show or hide the sidebar"),
     ("timestamps", "Show or hide message times"),
     ("recap", "Summarize this Session so far"),

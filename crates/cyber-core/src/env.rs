@@ -22,6 +22,15 @@ impl EnvSource for ProcessEnv {
     }
 }
 
+/// A lookup function as an [`EnvSource`], for callers handed `&dyn Fn` (the TUI).
+pub struct FnEnv<'a>(pub &'a dyn Fn(&str) -> Option<String>);
+
+impl EnvSource for FnEnv<'_> {
+    fn get(&self, key: &str) -> Option<String> {
+        (self.0)(key).filter(|v| !v.is_empty())
+    }
+}
+
 impl EnvSource for HashMap<String, String> {
     fn get(&self, key: &str) -> Option<String> {
         HashMap::get(self, key).filter(|v| !v.is_empty()).cloned()

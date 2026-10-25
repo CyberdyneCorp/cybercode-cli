@@ -378,8 +378,9 @@ impl App {
         self.workflow_notice(&run, notice_text(&run));
     }
 
-    /// Into the owner's transcript when it is open, else a toast; and a desktop
-    /// notification while the terminal is unfocused.
+    /// Into the owner's transcript when it is open, else a toast; and an alert: a
+    /// desktop notification while the terminal is unfocused, and the `workflow` or
+    /// `workflow_failed` sound.
     fn workflow_notice(&mut self, run: &Summary, text: String) {
         if run.session_id == self.session.id {
             let notices = &mut self.watch.notices;
@@ -394,9 +395,14 @@ impl App {
         } else {
             self.toast(text.clone());
         }
-        if !self.focused {
-            self.attention(&text);
-        }
+        // Any end but `completed` (failed, stopped, over budget, paused by a restart)
+        // needs a look.
+        let event = if run.status == "completed" {
+            crate::sound::Alert::Workflow
+        } else {
+            crate::sound::Alert::WorkflowFailed
+        };
+        self.alert(event, &text);
     }
 
     /// Indicators from the runs, before every frame: the sidebar rows and the progress
@@ -478,6 +484,48 @@ mod tests {
             "ended_ms": 5}),
         )
         .unwrap()
+    }
+
+    /// A completed run sounds `workflow`; a run ending any other way (failed, stopped,
+    /// over budget, paused by a restart) sounds `workflow_failed`.
+    #[test]
+    fn a_run_end_sounds_by_its_status() {
+        let cache = tempfile::tempdir().unwrap();
+        let recorder = crate::sound::player::Recorder::default();
+        let mut app = App::new(Default::default(), Vec::new(), "cyber");
+        app.sounds = crate::sound::Sounds::recording(Default::default(), cache.path(), &recorder);
+        app.session.id = "ses_1".into();
+        app.focused = false;
+        app.clock = Some(app.started());
+        let mut paused = run("e", "paused", 1, 2);
+        paused.interrupted = true;
+        let runs = [
+            run("a", "completed", 2, 2),
+            run("b", "failed", 1, 2),
+            run("c", "stopped", 1, 2),
+            run("d", "budget_exceeded", 1, 2),
+            paused,
+        ];
+        for (i, ended) in runs.into_iter().enumerate() {
+            app.clock = Some(app.started() + crate::sound::THROTTLE * (i as u32 + 1));
+            app.watch_ended(ended);
+            app.flush_sounds();
+        }
+        let played: Vec<_> = recorder
+            .played()
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            played,
+            [
+                "cyber-workflow-v1-60.wav",
+                "cyber-workflow_failed-v1-60.wav",
+                "cyber-workflow_failed-v1-60.wav",
+                "cyber-workflow_failed-v1-60.wav",
+                "cyber-workflow_failed-v1-60.wav",
+            ]
+        );
     }
 
     #[test]

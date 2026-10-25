@@ -592,6 +592,7 @@ pub fn help(f: &mut Frame, app: &App, area: Rect) {
             "/agents",
             "Sessions reachable from this one: message, watch, open, rename",
         ),
+        ("/sounds", "sound alerts: pack, volume, events; p previews"),
         (
             "/btw <question> · /side",
             "side question; not added to the session",

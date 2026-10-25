@@ -25,7 +25,7 @@ serde.workspace = true
 serde_json.workspace = true
 jsonschema = { version = "0.58.6", default-features = false }
 syntect = { version = "=5.3.0", default-features = false, features = ["default-syntaxes", "parsing", "regex-fancy"] }
-tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
+tokio = { version = "1", features = ["rt", "sync", "time", "macros", "signal"] }
 two-face = { version = "=0.5.2", default-features = false, features = ["syntect-fancy"] }
 unicode-width = "0.2"
 
@@ -34,6 +34,8 @@ cyber-app = { path = "../cyber-app" }
 cyber-store = { path = "../cyber-store" }
 insta = { version = "=1.47.0", default-features = false }
 rusqlite.workspace = true
+# Pins the synthesized alert sounds.
+sha2.workspace = true
 tempfile.workspace = true
 
 cyber-account = { path = "../cyber-account" }

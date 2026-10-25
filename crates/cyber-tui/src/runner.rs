@@ -75,6 +75,9 @@ pub(crate) async fn start(
     app.explorer.icons = prefs.explorer_icons;
     app.notifications = prefs.notifications;
     app.home = env("HOME").or_else(|| env("USERPROFILE"));
+    app.sounds =
+        crate::sound::Sounds::detect(prefs.sounds, prefs.sound_limits, env, sound_cache(env));
+    app.sounds.global_events = prefs.sound_global_events;
     app.hyperlinks = crate::osc::hyperlinks(env);
     let warnings = prefs.themes.warnings.clone();
     app.set_appearance(prefs.themes, prefs.appearance);
@@ -93,6 +96,15 @@ pub(crate) async fn start(
         app.toast(gone);
     }
     Ok((app, open_picker))
+}
+
+/// Where alert sounds are rendered: `<cache>/sounds` of the XDG layout; `None` without
+/// a home directory.
+fn sound_cache(env: &dyn Fn(&str) -> Option<String>) -> Option<std::path::PathBuf> {
+    let env = cyber_core::env::FnEnv(env);
+    let home = cyber_core::paths::home_dir(&env)?;
+    let paths = cyber_core::paths::Paths::resolve(&env, &home);
+    Some(paths.cache.join("sounds"))
 }
 
 /// `CI` is true (`installation-upgrade` → Container and CI usage): no onboarding offers.
@@ -298,6 +310,7 @@ async fn event_loop(
     let initial = memory_persistence.gate(app, initial);
     dispatch(app, client, store, &tx, &mut refresh, terminal, initial);
     let mut tick = tokio::time::interval(Duration::from_millis(250));
+    let mut terminate = Terminate::new();
     query_background(app);
     while !app.quit {
         native_presence.sync(client, &app.session, app.computer.supported);
@@ -321,12 +334,24 @@ async fn event_loop(
                 Vec::new()
             },
             _ = tick.tick() => on_tick(app, client, &mut server, &mut team_events).await,
+            () = terminate.recv() => {
+                app.quit = true;
+                Vec::new()
+            },
         };
         let actions = memory_persistence.gate(app, actions);
         dispatch(app, client, store, &tx, &mut refresh, terminal, actions);
+        app.flush_sounds();
     }
-    // A deliberate terminal exit revokes its Session even if another owner
-    // attachment remains; a failed network delivery is still fenced by presence.
+    exited(app, client).await;
+    Ok(())
+}
+
+/// The loop ended: a playing alert sound stops, and a deliberate terminal exit revokes
+/// its Session even if another owner attachment remains; a failed network delivery is
+/// still fenced by presence.
+async fn exited(app: &mut App, client: &Client) {
+    app.sounds.stop();
     if app.computer.supported {
         let _ = tokio::time::timeout(
             Duration::from_secs(2),
@@ -337,7 +362,49 @@ async fn event_loop(
         )
         .await;
     }
-    Ok(())
+}
+
+/// SIGHUP (the terminal closed) and SIGTERM end the loop as a quit does, so the exit
+/// path still runs: a playing alert sound is stopped (`tui` → Sound alerts), since its
+/// player has its own process group and would not get the terminal's SIGHUP.
+#[cfg(unix)]
+struct Terminate(Option<[tokio::signal::unix::Signal; 2]>);
+
+#[cfg(unix)]
+impl Terminate {
+    fn new() -> Self {
+        use tokio::signal::unix::{SignalKind, signal};
+        let hangup = signal(SignalKind::hangup()).ok();
+        let term = signal(SignalKind::terminate()).ok();
+        Self(hangup.zip(term).map(<[_; 2]>::from))
+    }
+
+    async fn recv(&mut self) {
+        match &mut self.0 {
+            Some([hangup, term]) => {
+                tokio::select! {
+                    _ = hangup.recv() => {},
+                    _ = term.recv() => {},
+                }
+            }
+            None => std::future::pending().await,
+        }
+    }
+}
+
+/// No signals to watch: the player is killed by a quit only.
+#[cfg(not(unix))]
+struct Terminate;
+
+#[cfg(not(unix))]
+impl Terminate {
+    fn new() -> Self {
+        Self
+    }
+
+    async fn recv(&mut self) {
+        std::future::pending().await
+    }
 }
 
 /// Paint the frame and its terminal hyperlink spans as one rendering step.
@@ -362,6 +429,7 @@ async fn on_tick(
 ) -> Vec<Action> {
     server.tick(app, client).await;
     team_events.sync(app, client).await;
+    app.poll_sounds();
     let mut actions = app.admissions.poll();
     app.refresh_admissions();
     actions.extend(app.machine_poll());
@@ -626,6 +694,7 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
             app.branches.set(branches);
             app.requests = requests;
             app.sync_overlay();
+            app.alert_requests();
             if std::mem::take(&mut refresh.again) {
                 return vec![Action::Refresh];
             }

@@ -3,29 +3,31 @@
 ### Requirement: Sound alerts
 (P1) The TUI SHALL play a short sound for each alert event:
 - `input`: a permission or question request is waiting;
-- `done`: the Session finished a Drain and is idle, or a side-chat reply arrived;
+- `done`: the Session finished a Drain and is idle, or the Session sent a notification (`session.notification.sent`);
 - `error`: a Turn failed or `session.error` arrived;
 - `workflow`: a watched workflow run completed;
-- `workflow_failed`: a watched workflow run failed or was stopped;
+- `workflow_failed`: a watched workflow run ended any other way: failed, stopped, over its budget, or paused by a restart;
 - `message`: a cross-session message was delivered to or held for the attached Session.
 
 `tui.sounds.when` SHALL be `unfocused` (default: play only while the terminal reports it is unfocused) or `always`.
 
-At most one sound SHALL play every 1.5 seconds. An alert of higher priority, in the order `input`, `error`, `workflow_failed`, `done`, `workflow`, `message`, SHALL replace a waiting lower one, and other alerts inside the window SHALL be dropped.
+At most one sound SHALL play every 1.5 seconds. An alert of higher priority, in the order `input`, `error`, `workflow_failed`, `done`, `workflow`, `message`, SHALL replace a waiting lower sound or cut a playing lower one short, and other alerts inside the window SHALL be dropped.
 
 Playing a sound SHALL never block drawing or key handling. Sounds SHALL be played by the platform's own player, run directly and never through a shell:
 - `afplay` on macOS;
 - `pw-play`, `paplay` or `aplay` on Linux;
 - `System.Media.SoundPlayer` through PowerShell on Windows, with the file path passed in an environment variable.
 
-Each player process SHALL have no access to the terminal. It SHALL be killed after 5 seconds, when a newer sound starts, and when the TUI exits.
+Each player process SHALL have no access to the terminal. It SHALL be killed after 5 seconds, when a newer sound starts, and when the TUI exits, including on SIGHUP and SIGTERM. A player SHALL only be searched for in absolute `PATH` entries.
 
 The system SHALL fall back to the terminal bell when:
 - the pack is `bell`;
 - no player is found, or the player cannot be started;
 - `SSH_CONNECTION` or `SSH_TTY` is set and `tui.sounds.play_over_ssh` is not `true`.
 
-When a sound plays, the bell that `tui.notifications: auto` would write SHALL be left out. The desktop notification SHALL still be sent.
+A player that exits with an error SHALL ring the bell for that alert and SHALL be kept for later alerts.
+
+When a sound plays, the bell that `tui.notifications: auto` would write SHALL be left out. The desktop notification SHALL still be sent. At volume 0 no sound SHALL play, and the notification SHALL keep its bell.
 
 `tui.sounds.enabled` SHALL default to `true`, and `tui.sounds.events.<event>: false` SHALL silence one event. The server and `cyber exec` SHALL never play sounds.
 
@@ -68,7 +70,7 @@ Rendered files SHALL be cached under the cache directory, keyed by pack, event, 
 - a pack name, to use that pack's sound for the event;
 - an absolute or `~/` path to a regular file of at most 5 MiB with the extension `.wav`, `.aiff`, `.aif`, `.mp3`, `.ogg` or `.oga`.
 
-A path SHALL be honoured only from the global `tui.jsonc`. A rejected or missing file SHALL fall back to the pack's sound with one warning.
+A path SHALL be honoured only from the global `tui.jsonc`. A rejected or missing file, a file the detected player cannot decode (`aplay` and PowerShell take only `.wav`, `afplay` takes no Ogg), or a file the player fails to play SHALL fall back to the pack's sound with one warning.
 
 A project `tui.jsonc` SHALL only be able to set `sounds.enabled: false`, lower `sounds.volume`, or set an event to `false`. Any other `sounds` value from a project SHALL be ignored with a warning.
 
@@ -93,7 +95,7 @@ A project `tui.jsonc` SHALL only be able to set `sounds.enabled: false`, lower `
 - turns each event on and off;
 - previews each event's sound.
 
-A preview SHALL play regardless of focus, `when` and the throttle. The overlay SHALL show the detected player, or the reason the bell fallback is used. Choices SHALL be saved to `kv.json`, where they override the global `tui.jsonc` and are overridden by the restrictions of a project `tui.jsonc`. Every state SHALL be shown as a word, so the overlay is usable with `NO_COLOR` and in screen-reader mode.
+A preview SHALL play regardless of focus, `when` and the throttle. The overlay SHALL show the detected player, or the reason the bell fallback is used. Choices SHALL be saved to `kv.json`, where they override the global `tui.jsonc` unless that file was written after them (as `/theme`), and are overridden by the restrictions of a project `tui.jsonc`. Turning an event back on SHALL restore the pack or file the global `tui.jsonc` gives it. Every state SHALL be shown as a word, so the overlay is usable with `NO_COLOR` and in screen-reader mode.
 
 #### Scenario: Pick a pack and preview
 - **WHEN** the user opens `/sounds`, selects `retro`, and presses `p` on the `input` row
@@ -104,7 +106,7 @@ A preview SHALL play regardless of focus, `when` and the throttle. The overlay S
 - **THEN** the overlay shows `bell only: SSH session`
 
 ### Requirement: Needs-input attention
-(P0) When the attached Session, or a Session this TUI watches, gains a permission or question request that this TUI has not alerted for, the TUI SHALL fire the attention notification of `tui.notifications` with the text `cyber: <session name> needs input`, together with the `input` sound alert. This SHALL happen once per request ID per TUI process, including when a reconnect or snapshot shows the same request again, and it SHALL follow the same focus rule as the `input` sound.
+(P0) When the attached Session gains a permission or question request, or one is routed to it, that this TUI has not alerted for, the TUI SHALL fire the attention notification of `tui.notifications` with the text `cyber: <session name> needs input`, together with the `input` sound alert. This SHALL happen once per request ID per TUI process, including when a reconnect or snapshot shows the same request again, and it SHALL follow the same focus rule as the `input` sound.
 
 #### Scenario: Permission request notifies once
 - **WHEN** the terminal is unfocused and a permission request appears, then the event stream reconnects and the request is still pending

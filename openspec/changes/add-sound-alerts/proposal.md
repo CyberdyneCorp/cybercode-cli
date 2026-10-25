@@ -2,7 +2,7 @@
 
 The TUI can only get the user's attention with the terminal bell and an OSC 9 desktop notification (`crates/cyber-tui/src/osc.rs`, `tui.notifications`). The bell sounds the same for every event, many terminals mute it, and some flash instead. Someone who leaves an agent running and switches to another window can't tell by ear whether the agent finished, failed or is blocked on an approval.
 
-There is also a gap in today's behavior. `tui` → Attention notifications (P0) says the user is notified when a Session **needs input**, but `attention()` is only called on `session.idle`, side-chat replies and workflow-run ends. A permission or question request arrives with no notification, which is the case that matters most for an unattended agent.
+There is also a gap in today's behavior. `tui` → Attention notifications (P0) says the user is notified when a Session **needs input**, but `attention()` is only called on `session.idle`, Session notifications and workflow-run ends. A permission or question request arrives with no notification, which is the case that matters most for an unattended agent.
 
 ## What Changes
 
@@ -11,7 +11,7 @@ There is also a gap in today's behavior. `tui` → Attention notifications (P0) 
   - `done`: the Session finished its work and is idle;
   - `error`: a Turn failed;
   - `workflow`: a watched workflow run completed;
-  - `workflow_failed`: a watched workflow run failed or was stopped;
+  - `workflow_failed`: a watched workflow run ended any other way (failed, stopped, over budget, paused by a restart);
   - `message`: a cross-session message arrived or is held.
   
   Sounds play only while the terminal is unfocused by default (`tui.sounds.when: "unfocused"`). Playback never blocks a frame or a key, and alerts are throttled so a burst produces one sound.

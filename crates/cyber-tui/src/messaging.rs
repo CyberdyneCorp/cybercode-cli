@@ -451,6 +451,25 @@ impl Messages {
 }
 
 impl App {
+    /// A message delivered to or held for this Session: the `message` alert.
+    pub(crate) fn message_alert(&mut self, kind: &str, data: &Value) {
+        let held = match kind {
+            "messaging.message.delivered.1" => false,
+            "messaging.message.held.1" => true,
+            _ => return,
+        };
+        if data["direction"] != "in" {
+            return;
+        }
+        let from = clean(data["from"].as_str().unwrap_or_default());
+        let text = if held {
+            format!("cyber: message held from {from}")
+        } else {
+            format!("cyber: message from {from}")
+        };
+        self.alert(crate::sound::Alert::Message, &text);
+    }
+
     /// `/messages`, the palette entry and `messages_view`.
     pub(crate) fn open_messages(&mut self) -> Vec<Action> {
         self.messaging.card_focus = false;

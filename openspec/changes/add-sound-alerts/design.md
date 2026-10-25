@@ -2,7 +2,7 @@
 
 Attention today is one function, `App::attention(text)` in `crates/cyber-tui/src/osc.rs`. It writes a BEL and/or an OSC 9 or OSC 777 sequence, as chosen by `tui.notifications` (`auto` | `bell` | `osc9` | `osc777` | `off`). It is called from three places:
 - `session.idle` while unfocused (`app.rs`);
-- a side-chat reply (`side_chat.rs`);
+- a Session notification, `session.notification.sent` (`side_chat.rs`);
 - a workflow run's end (`workflow_watch.rs`).
 
 Focus comes from crossterm `FocusGained` and `FocusLost` (`runner.rs`, `App::focused`). Permission and question requests reach the TUI through snapshots (`model.rs`, `Request::Permission` and `Request::Question`) and nothing alerts on them. Session errors arrive as `session.error`.
@@ -29,16 +29,20 @@ No audio code or dependency exists in the workspace. The release builds eight ta
 
 | `Alert` | Trigger | Priority |
 |---|---|---|
-| `Input` | a permission or question request whose ID this TUI has not alerted for before | 1 (highest) |
+| `Input` | a permission or question request of the attached Session, or routed to it, whose ID this TUI has not alerted for before | 1 (highest) |
 | `Error` | `session.error`, or a Turn that ended `failed` | 2 |
-| `WorkflowFailed` | a watched run ended `failed` or `stopped` (`workflow_watch.rs`) | 3 |
-| `Done` | `session.idle` after a Drain | 4 |
+| `WorkflowFailed` | a watched run ended any way but `completed`: `failed`, `stopped`, `budget_exceeded`, or paused by a restart (`workflow_watch.rs`) | 3 |
+| `Done` | `session.idle` after a Drain, or a Session notification | 4 |
 | `Workflow` | a watched run `completed` | 5 |
 | `Message` | an incoming cross-session message, `delivered` or `held` | 6 |
 
 `alert` does two things. It calls the existing `attention(text)`, so the desktop notification and bell behavior of `tui.notifications` is unchanged. It also passes the event to the `Sounds` controller. When a sound actually plays, the BEL that `auto` would add is dropped so the user does not hear two alerts; the OSC 9 is still sent.
 
-The side-chat reply maps to `Done`.
+A Session notification (`session.notification.sent`, from the model's `notify` tool) maps to `Done`, and is notified whatever the focus, as before. A side-chat (`/btw`) answer is shown in the overlay the user is looking at and does not alert.
+
+Requests reach the TUI through the attached Session's snapshot, so a request alerts when it belongs to the attached Session or is routed to it. Requests of Sessions only watched through `/agents` or the sidebar are not fetched and do not alert; that is left to a later change.
+
+What an alert writes is decided in one place, `Notifications::alert_sequence(text, outcome)`: the notification without its bell when a sound covers the alert, and exactly one BEL when the bell stands in for the sound.
 
 Alerted request IDs are remembered for the TUI process, in a bounded set of 512. A reconnect that replays the same pending request therefore does not alert again.
 
@@ -51,8 +55,9 @@ Alerted request IDs are remembered for the TUI process, in a bounded set of 512.
 Terminals that never report focus leave `focused == true`, so `unfocused` stays quiet there. The docs say so and point to `always`.
 
 **Throttle:** at most one sound every 1.5 s.
-- A higher-priority alert in the window replaces a pending lower one if the lower one has not started yet.
-- Alerts of equal or lower priority in the window are dropped.
+- A higher-priority alert in the window replaces a waiting lower one, or cuts a playing lower one short and restarts the window. A needs-input request soon after a `message` sound therefore still sounds.
+- Alerts of equal or lower priority in the window are dropped: the sound already chosen covers them, so their notification leaves the bell out.
+- At volume 0 nothing plays and the alert counts as silent, so the notification keeps its bell.
 - Dropped alerts are counted for tests only.
 
 `/sounds` previews ignore both `when` and the throttle.
@@ -96,7 +101,7 @@ Rendered files go to `<cache_dir>/cyber/sounds/<pack>-<event>-v<SYNTH_VERSION>-<
 
 ### Players
 
-`sound/player.rs` finds the player once at startup by searching `PATH`. It never runs anything through a shell.
+`sound/player.rs` finds the player once at startup by searching the absolute entries of `PATH`; a relative entry (`.`, `node_modules/.bin`) would resolve against the project checkout, which could ship its own "player". It never runs anything through a shell.
 
 | OS | Order | Command |
 |---|---|---|
@@ -110,11 +115,11 @@ How a player runs:
 - It is spawned with stdin, stdout and stderr null, and in its own process group on Unix, so Ctrl+C in the TUI does not reach it and it cannot draw on the screen.
 - A detached task waits up to 5 s, then kills it.
 - At most one player runs at a time, and a new sound kills the previous one.
-- When the TUI exits, a running player is killed.
+- When the TUI exits, a running player is killed. The player has its own process group and so does not get the terminal's SIGHUP; the event loop therefore treats SIGHUP and SIGTERM as a quit, so the exit path stops the player.
 
 **Fallback to the terminal bell (BEL).** The bell is used when:
 - no player is found;
-- the player cannot be spawned;
+- the player cannot be spawned, or a pack sound cannot be rendered;
 - the pack is `bell`;
 - it is a remote session: `SSH_CONNECTION` or `SSH_TTY` is set and `tui.sounds.play_over_ssh` is false (default).
 
@@ -127,7 +132,7 @@ For an SSH session, the BEL travels to the user's local terminal, which is the o
 - a pack name, to borrow one event's sound from another pack;
 - an absolute path, or one starting with `~/`, to a user file.
 
-A path is accepted only from the global `tui.jsonc`. It must be a regular file of at most 5 MiB with the extension `.wav`, `.aiff`, `.aif`, `.mp3`, `.ogg` or `.oga`. Whether the format plays is up to the player. The TUI checks the file when the configuration loads and again just before playing. A file that is rejected or missing falls back to the pack's sound and gives one warning.
+A path is accepted only from the global `tui.jsonc`. It must be a regular file of at most 5 MiB with the extension `.wav`, `.aiff`, `.aif`, `.mp3`, `.ogg` or `.oga`. Whether the format plays is up to the player, with two known limits: `System.Media.SoundPlayer` and `aplay` take only WAV (`aplay` would play anything else as raw noise), and `afplay` has no Ogg decoder; such a file is never handed to that player. The TUI checks the file when the configuration loads and again just before playing. A file that is rejected, missing, not playable by the player, or that the player exits on with an error falls back to the pack's sound and gives one warning. A failing exit on a pack sound rings the bell for that alert, is logged once, and keeps the player: one busy device must not silence the rest of the session.
 
 ### Configuration and precedence
 
@@ -146,7 +151,7 @@ A path is accepted only from the global `tui.jsonc`. It must be a regular file o
 The layers apply in this order:
 1. defaults;
 2. global `tui.jsonc`;
-3. `/sounds` choices saved in `kv.json`, which win over the global file, the same way `/theme` works;
+3. `/sounds` choices saved in `kv.json`, which win over the global file unless it was written after them, the same way `/theme` works;
 4. the project `tui.jsonc`, which can only restrict.
 
 A project layer may set:
@@ -154,9 +159,9 @@ A project layer may set:
 - a lower `volume`;
 - an event to `false`.
 
-Any other `sounds` key in a project file is ignored with a warning. An unknown key or an out-of-range value gives a warning and keeps the default, matching the other `tui.*` keys. `tui.notifications: "off"` does **not** turn sounds off: the two are independent channels.
+Any other `sounds` key in a project file, and a project volume above the global one, is ignored with a warning. An unknown key or an out-of-range value gives a warning and keeps the default, matching the other `tui.*` keys. `tui.notifications: "off"` does **not** turn sounds off: the two are independent channels.
 
-**Default on.** `enabled` defaults to `true` with `when: "unfocused"`. The sound replaces a bell that `auto` already rings today, so the default adds no new noise to an unfocused terminal; it changes what that noise sounds like. `message` defaults to on, because held messages wait for the user.
+**Default on (confirmed).** `enabled` defaults to `true` with `when: "unfocused"`. The sound replaces a bell that `auto` already rings today, so the default adds no new noise to an unfocused terminal; it changes what that noise sounds like. `message` defaults to on, because held messages wait for the user.
 
 ### `/sounds` overlay
 
@@ -178,7 +183,7 @@ The overlay shows which player was detected, or why the bell fallback is used: "
 ## Risks / Trade-offs
 
 - **The Windows player starts slowly.** PowerShell takes about 300–600 ms to start, so the sound arrives late. This is acceptable for an alert, and a future change can add a small native `PlaySound` call behind `cfg(windows)` without changing the spec.
-- **Linux with no sound server.** `aplay` without PulseAudio or PipeWire may fail when the device is busy. The non-zero exit is logged once and later alerts fall back to the bell.
+- **Linux with no sound server.** `aplay` without PulseAudio or PipeWire may fail when the device is busy. The non-zero exit rings the bell for that alert and is logged once; later alerts try the player again.
 - **The first alert.** It has to render a WAV first, which takes a few ms. This happens off the UI thread in the spawned task.
 - **Annoyance.** The throttle, the unfocused default and the per-event toggles limit noise. A project can never turn sounds on.
 
@@ -188,5 +193,4 @@ None. `tui.notifications` keeps its meaning. A user who had `tui.notifications: 
 
 ## Open Questions
 
-- Should `enabled` default to `false` for the first release? The design says on, because sounds only replace the bell in an unfocused terminal.
 - Should the web dashboard reuse these sounds as browser audio after a click to opt in? That would be a separate change.

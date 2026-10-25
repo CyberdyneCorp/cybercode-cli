@@ -14,6 +14,10 @@ use ratatui::style::Style;
 use unicode_width::UnicodeWidthChar;
 
 use crate::markdown::osc8_safe;
+use crate::sound::Outcome;
+
+/// The terminal bell.
+pub(crate) const BEL: &str = "\x07";
 
 /// The largest copy sent through OSC 52; terminals drop longer ones.
 pub const OSC52_MAX: usize = 100_000;
@@ -54,8 +58,8 @@ impl Notifications {
             })
             .collect();
         match self {
-            Self::Auto => Some(format!("\x07\x1b]9;{text}\x07")),
-            Self::Bell => Some("\x07".into()),
+            Self::Auto => Some(format!("{BEL}\x1b]9;{text}\x07")),
+            Self::Bell => Some(BEL.into()),
             Self::Osc9 => Some(format!("\x1b]9;{text}\x07")),
             Self::Osc777 => Some(format!(
                 "\x1b]777;notify;Cyber Code;{}\x07",
@@ -64,16 +68,34 @@ impl Notifications {
             Self::Off => None,
         }
     }
+
+    /// What an alert writes (`tui` → Sound alerts): the notification for `text`, when
+    /// given, and the bell at most once. A sound that covers the alert leaves the
+    /// notification's bell out (`auto` keeps its OSC 9, `bell` writes nothing); when the
+    /// bell stands in for the sound it rings once, inside the notification or before it.
+    pub fn alert_sequence(self, text: Option<&str>, outcome: Outcome) -> Option<String> {
+        let notification = text.and_then(|text| match (self, outcome) {
+            (Self::Auto, Outcome::Sound) => Self::Osc9.sequence(text),
+            (Self::Bell, Outcome::Sound) => None,
+            _ => self.sequence(text),
+        });
+        let rang = text.is_some() && matches!(self, Self::Auto | Self::Bell);
+        let bell = (outcome == Outcome::Bell && !rang).then_some(BEL);
+        match (bell, notification) {
+            (None, notification) => notification,
+            (Some(bell), notification) => {
+                Some(format!("{bell}{}", notification.unwrap_or_default()))
+            }
+        }
+    }
 }
 
 impl crate::app::App {
-    /// Notify the user through `tui.notifications`.
-    pub(crate) fn attention(&mut self, text: &str) {
-        let Some(sequence) = self.notifications.sequence(text) else {
-            return;
-        };
+    /// Write a notification or the bell to the terminal; tests keep it in
+    /// `attention_log` instead.
+    pub(crate) fn write_terminal(&mut self, sequence: &str) {
         #[cfg(test)]
-        self.attention_log.push(sequence);
+        self.attention_log.push(sequence.to_owned());
         #[cfg(not(test))]
         {
             let mut out = io::stdout();
@@ -308,6 +330,55 @@ mod tests {
             "\x1b]777;notify;Cyber Code;a,b\x07"
         );
         assert_eq!(Notifications::Off.sequence(text), None);
+        // One BEL at most: left out under a sound, rung once in its place.
+        for (notifications, text, outcome, expected) in [
+            (
+                Notifications::Auto,
+                Some("done"),
+                Outcome::Sound,
+                Some("\x1b]9;done\x07"),
+            ),
+            (Notifications::Bell, Some("done"), Outcome::Sound, None),
+            (
+                Notifications::Auto,
+                Some("done"),
+                Outcome::Bell,
+                Some("\x07\x1b]9;done\x07"),
+            ),
+            (
+                Notifications::Bell,
+                Some("done"),
+                Outcome::Bell,
+                Some("\x07"),
+            ),
+            (
+                Notifications::Osc9,
+                Some("done"),
+                Outcome::Bell,
+                Some("\x07\x1b]9;done\x07"),
+            ),
+            (
+                Notifications::Off,
+                Some("done"),
+                Outcome::Bell,
+                Some("\x07"),
+            ),
+            (Notifications::Auto, None, Outcome::Bell, Some("\x07")),
+            (Notifications::Auto, None, Outcome::Sound, None),
+            (
+                Notifications::Auto,
+                Some("done"),
+                Outcome::Silent,
+                Some("\x07\x1b]9;done\x07"),
+            ),
+            (Notifications::Off, Some("done"), Outcome::Silent, None),
+        ] {
+            assert_eq!(
+                notifications.alert_sequence(text, outcome).as_deref(),
+                expected,
+                "{notifications:?} {outcome:?}"
+            );
+        }
         assert_eq!(
             Notifications::parse(Some("osc9")),
             Some(Notifications::Osc9)
