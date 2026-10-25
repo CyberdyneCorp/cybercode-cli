@@ -180,7 +180,7 @@ impl Runtime {
 
     fn integration_orphan_run(&self, id: &str) -> Result<Option<String>, RuntimeError> {
         let id = id.to_string();
-        self.inner.store.read(move|db|Ok(db.query_row("SELECT id FROM workflow_run WHERE name='integrate' AND json_extract(data,'$.args.integration_admission.batch_id')=?1 AND json_extract(data,'$.origin.kind')='bundled' ORDER BY started_ms DESC LIMIT 1",[id],|row|row.get(0)).optional()?)).map_err(Into::into)
+        self.inner.store.read(move|db|Ok(db.query_row("SELECT r.id FROM workflow_run r JOIN integration_batch b ON b.id=?1 WHERE r.name='integrate' AND r.session_id=b.session_id AND json_extract(r.data,'$.directory')=b.directory AND json_extract(r.data,'$.args.integration_admission.batch_id')=b.id AND json_extract(r.data,'$.args.integration_admission.attempt')=json_extract(b.data,'$.attempt') AND json_extract(r.data,'$.origin.kind')='bundled' ORDER BY r.started_ms DESC LIMIT 1",[id],|row|row.get(0)).optional()?)).map_err(Into::into)
     }
 
     pub fn integration_claim(
@@ -237,12 +237,25 @@ impl Runtime {
         })
     }
     pub fn integration_bind(&self, id: &str, run: &str) -> Result<IntegrationBatch, RuntimeError> {
-        let run = run.to_string();
+        let run = self
+            .workflow_run(run)?
+            .ok_or_else(|| RuntimeError::Invalid("integration run missing".into()))?;
         self.integration_update(id, move |batch| {
+            let admission = &run.args["integration_admission"];
+            if run.session_id != batch.session_id
+                || run.directory != batch.directory
+                || admission["batch_id"].as_str() != Some(batch.id.as_str())
+                || admission["attempt"].as_u64() != Some(u64::from(batch.attempt))
+                || run.origin != json!({"kind":"bundled","name":"integrate"})
+            {
+                return Err(
+                    "Integration run does not match the current owner/attempt claim".into(),
+                );
+            }
             if batch.status != "cancelled" {
                 batch.status = "running".into();
             }
-            batch.run_id = Some(run);
+            batch.run_id = Some(run.id);
             Ok(())
         })
     }

@@ -14,14 +14,23 @@ const CAP: usize = 1024 * 1024;
 /// Permission and hook admission precede native launch. The command text is a quoted
 /// representation for policy inspection only; execution always uses the original argv.
 pub(crate) async fn run(ctx: &Ctx<'_>, check: &Check) -> Result<Value, ToolError> {
-    execute(ctx, check, false).await
+    execute(ctx, check, false, None).await
 }
 
-pub(crate) async fn publish(ctx: &Ctx<'_>, check: &Check) -> Result<Value, ToolError> {
-    execute(ctx, check, true).await
+pub(crate) async fn publish(
+    ctx: &Ctx<'_>,
+    check: &Check,
+    admission: Option<&Value>,
+) -> Result<Value, ToolError> {
+    execute(ctx, check, true, admission).await
 }
 
-async fn execute(ctx: &Ctx<'_>, check: &Check, publication: bool) -> Result<Value, ToolError> {
+async fn execute(
+    ctx: &Ctx<'_>,
+    check: &Check,
+    publication: bool,
+    admission: Option<&Value>,
+) -> Result<Value, ToolError> {
     let started = std::time::Instant::now();
     let command = check
         .argv
@@ -96,6 +105,11 @@ async fn execute(ctx: &Ctx<'_>, check: &Check, publication: bool) -> Result<Valu
             json!({"outcome":"timed_out","settled":true,"exit_code":null,"log":"","log_truncated":false,
             "limitation":"run wall budget ended before native launch"}),
         );
+    }
+    // Hook/permission preparation may wait. Revalidate at dispatch, not only
+    // before entering that asynchronous admission sequence.
+    if let Some(args) = admission {
+        ctx.host.ensure_publication_live(args)?;
     }
     let mut process = bash::spawn(ctx, &prepared, &ctx.location, Stdio::piped()).await?;
     let mut readers = Vec::new();

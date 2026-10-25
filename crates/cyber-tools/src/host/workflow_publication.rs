@@ -186,7 +186,7 @@ impl BuiltinHost {
             timeout_seconds: 120,
         };
         self.ensure_publication_live(args)?;
-        let pushed = crate::tools::solve_check::publish(ctx, &push).await?;
+        let pushed = crate::tools::solve_check::publish(ctx, &push, Some(args)).await?;
         self.integration_append(&key,0,json!({"phase":"push","operation_id":operation,"definition_sha256":definition,"outcome":pushed}))?;
         if pushed["outcome"] != "passed" || pushed["settled"] != true {
             return Err(failed(
@@ -202,6 +202,7 @@ impl BuiltinHost {
             self.integration_append(&key, 1, receipt.clone())?;
             return Ok(receipt);
         }
+        self.ensure_publication_live(args)?;
         self.integration_append(&key,1,json!({"phase":"create_intent","operation_id":operation,"definition_sha256":definition,"settled":false}))?;
         let temp = crate::sandboxing::session_tmp(ctx)?;
         let body_file = crate::worktrees::OwnedFile::create(
@@ -230,7 +231,7 @@ impl BuiltinHost {
             ],
             timeout_seconds: 120,
         };
-        let result = crate::tools::solve_check::publish(ctx, &create).await?;
+        let result = crate::tools::solve_check::publish(ctx, &create, Some(args)).await?;
         self.integration_append(&key,2,json!({"phase":"create_settlement","operation_id":operation,"definition_sha256":definition,"outcome":result}))?;
         records = self.integration_record(&key)?;
         let Some(found) = self
@@ -250,7 +251,7 @@ impl BuiltinHost {
         Ok(receipt)
     }
 
-    fn ensure_publication_live(&self, args: &Value) -> Result<(), ToolError> {
+    pub(crate) fn ensure_publication_live(&self, args: &Value) -> Result<(), ToolError> {
         if let Some(id) = args["integration_admission"]["batch_id"].as_str() {
             let batch = self
                 .runtime()
@@ -292,7 +293,7 @@ impl BuiltinHost {
             ],
             timeout_seconds: 60,
         };
-        let result = crate::tools::solve_check::publish(ctx, &check).await?;
+        let result = crate::tools::solve_check::publish(ctx, &check, None).await?;
         if result["outcome"] != "passed"
             || result["settled"] != true
             || result["log_truncated"] == true

@@ -842,7 +842,14 @@ async fn the_library_tab_lists_the_library_and_starts_a_workflow_from_its_form()
     assert_eq!(
         names,
         [
-            "audit", "migrate", "plan", "release", "research", "review", "solve"
+            "audit",
+            "integrate",
+            "migrate",
+            "plan",
+            "release",
+            "research",
+            "review",
+            "solve"
         ]
     );
     for (width, height) in [(120, 40), (80, 24)] {

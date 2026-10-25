@@ -25,6 +25,11 @@ struct CheckSource<'a> {
 }
 type Configuration = (Value, BTreeMap<String, String>);
 tokio::task_local! { static PINNED: (String, Configuration, PathBuf); }
+tokio::task_local! { static NATIVE_GIT: bool; }
+
+pub(crate) fn native_git_authority(ctx: &Ctx<'_>) -> bool {
+    isolated(ctx) || NATIVE_GIT.try_with(|enabled| *enabled).unwrap_or(false)
+}
 
 pub(crate) fn configuration(ctx: &Ctx<'_>) -> Option<Result<Configuration, String>> {
     PINNED
@@ -84,6 +89,16 @@ impl BuiltinHost {
     }
 
     pub(super) async fn prepare_integration(
+        &self,
+        owner: &TurnContext,
+        value: Value,
+    ) -> Result<Value, PrepareError> {
+        NATIVE_GIT
+            .scope(true, self.prepare_integration_manifest(owner, value))
+            .await
+    }
+
+    async fn prepare_integration_manifest(
         &self,
         owner: &TurnContext,
         value: Value,

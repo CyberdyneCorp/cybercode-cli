@@ -716,3 +716,38 @@ async fn a_late_publication_receipt_cannot_attach_to_a_replaced_attempt() {
     assert_ne!(ready["run_id"], current["run_id"]);
     server.close().await;
 }
+
+#[tokio::test]
+async fn a_failed_second_start_cannot_recover_the_previous_successful_run() {
+    let model = ScriptedModel::start(reply);
+    let (temp, api, _) = repository();
+    let server = open(temp, &model).await;
+    let owner = server.session().await;
+    let batch = submit(&server, &owner, manifest(&[("api", &api)])).await;
+    run(&server, &batch).await;
+    let ready = settled(&server, &batch).await;
+    assert_eq!(ready["status"], "ready");
+    let id = ready["id"].as_str().unwrap();
+    let old_run = ready["run_id"].as_str().unwrap();
+    let claimed = server
+        .app
+        .runtime
+        .integration_claim(
+            id,
+            ready["revision"].as_u64().unwrap(),
+            ready["args"].clone(),
+        )
+        .unwrap();
+    assert_eq!(claimed.attempt, 2);
+    assert!(server.app.runtime.integration_bind(id, old_run).is_err());
+    let failed = server
+        .app
+        .runtime
+        .integration_start_failed(id, "injected start failure".into())
+        .unwrap();
+    assert_eq!(failed.status, "unknown");
+    assert!(failed.run_id.is_none());
+    assert_eq!(failed.previous_runs, vec![old_run.to_string()]);
+    assert_eq!(failed.report.as_ref().unwrap()["eligible"], false);
+    server.close().await;
+}

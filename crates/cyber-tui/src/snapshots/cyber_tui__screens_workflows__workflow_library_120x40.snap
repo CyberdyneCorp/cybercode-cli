@@ -2,15 +2,15 @@
 source: crates/cyber-tui/src/screens_workflows.rs
 expression: shown
 ---
-╭ Workflows · Library · ~/work/app ─────────────────────────────────────────────────────────────────────── 7 Workflows ╮
+╭ Workflows · Library · ~/work/app ─────────────────────────────────────────────────────────────────────── 8 Workflows ╮
 │ ▸ audit          [bundled]  Codebase-wide bug or security sweep: read-only finders per chunk of files, then independ…│
+│   integrate      [bundled]  Compose pinned contributions in an isolated checkout, verify the combined source and req…│
 │   migrate        [bundled]  File-by-file migration in batches: each batch is edited in its own worktree, checked wit…│
 │   plan           [bundled]  Plans drafted from several independent angles, scored by judges on a fixed rubric, then …│
 │   release        [project]  Monitor                                                                                  │
 │   research       [bundled]  Cross-checked research: searchers per source and angle, readers that extract claims with…│
 │   review         [bundled]  Multi-angle code review of a diff: read-only reviewers per lens and file group, then an …│
 │   solve          [bundled]  Try independent patches in isolated worktrees, run host-owned verification and ask an in…│
-│                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
