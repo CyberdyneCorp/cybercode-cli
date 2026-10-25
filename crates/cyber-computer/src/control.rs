@@ -250,6 +250,43 @@ mod tests {
             "pending computer permission does not widen or silently revoke the owner's grant"
         );
     }
+    #[test]
+    fn stop_during_slow_attendance_or_supervisor_checks_cannot_admit_a_late_event() {
+        for mode in 0..2 {
+            let blocked = Arc::new(AtomicBool::new(false));
+            let ready = Arc::new(std::sync::Barrier::new(2));
+            let release = Arc::new(std::sync::Barrier::new(2));
+            let (flag, entered, resume) = (blocked.clone(), ready.clone(), release.clone());
+            let attendance = Arc::new(move |_: &str| {
+                if mode == 0 && flag.load(Ordering::Acquire) {
+                    entered.wait();
+                    resume.wait();
+                }
+                true
+            });
+            let (flag, entered, resume) = (blocked.clone(), ready.clone(), release.clone());
+            let supervisor = Arc::new(move || {
+                if mode == 1 && flag.load(Ordering::Acquire) {
+                    entered.wait();
+                    resume.wait();
+                }
+                true
+            });
+            let controller = Controller::with_supervisor(true, attendance, supervisor);
+            let target = target();
+            controller.arm(admission(&target, 100), None).unwrap();
+            let frame = frame(&controller, &target, 100);
+            let permit = controller
+                .input(admission(&target, 101), &frame.id, action(), &geometry())
+                .unwrap();
+            blocked.store(true, Ordering::Release);
+            let worker = std::thread::spawn(move || permit.cancelled());
+            ready.wait();
+            controller.stop();
+            release.wait();
+            assert!(worker.join().unwrap());
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
