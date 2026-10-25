@@ -10,7 +10,7 @@
 - [x] 2.1 Add global-only experimental feature/config/schema validation and typed native capability/OS-consent health.
 - [x] 2.2 Add owner-armed Session/target/process-bound expiring grants, one-host-input lease, human-presence checks and non-inheritance by children/hub agents.
 - [x] 2.3 Integrate `computer.capture`/`computer.control` with Modes/permissions, exact target review and denial behavior; prevent bypass from arming/widening a grant.
-- [ ] 2.4 Add independent emergency Stop and expiry/interrupt/logout/restart/OS-revocation fencing with bounded native calls and key/button cleanup.
+- [x] 2.4 Add independent emergency Stop and expiry/interrupt/logout/restart/OS-revocation fencing with bounded native calls and key/button cleanup.
 
 ## 3. Native actions and evidence
 
@@ -36,7 +36,7 @@
 ## Implementation evidence and remaining acceptance
 
 - Compiled native Objective-C adapter uses public Apple SDK APIs, links into the server, and dynamically loads ScreenCaptureKit for explicit unsupported-version behavior. Native syntax/build checks passed; signed/notarized distribution and physical-device behavior remain unaccepted (1.4/5.4).
-- Deterministic local checks: computer domain14, global-only configuration2, runtime11, real TCP owner/privacy2, model schema1, TUI1, CLI/doctor2 and owned Session-presence stream1 passed. A separate core settings unit test passed. Strict Clippy passed across cyber-computer/core/server/tools/app/client/cli/tui with all targets and warnings denied.
-- Browser modules/transport26 tests and typecheck passed; SDK115 tests passed with8 existing process tests skipped because CYBER_BIN was not supplied. OpenAPI export and SDK generation/typecheck passed. Only aarch64-apple-darwin is installed locally; unsupported-platform execution and the wider workspace suites await CI (5.3/5.5).
-- Dashboard constructor/view/logout and CSP/blob preview are integrated. Browser module/transport checks and a real Chromium test with mocked native HTTP responses verify global cross-Session authority, explicit review/arming, private PNG preview and logout Stop without invoking the OS adapter.
+- Deterministic local checks: computer domain15, global-only configuration2, runtime15, exact-Session presence3, real TCP owner/privacy2, model schema1, TUI1, CLI/doctor2 and owned Session-presence stream1 passed. A separate core settings unit test passed. Strict Clippy passed across cyber-computer/core/server/tools/app/client/cli/tui with all targets and warnings denied.
+- Browser modules/transport40 tests and typecheck passed; SDK117 tests passed with8 process tests skipped because CYBER_BIN was not supplied. OpenAPI export and SDK generation/typecheck passed. Only aarch64-apple-darwin is installed locally; unsupported-platform execution and the wider workspace suites await CI (5.3/5.5).
+- Dashboard constructor/view/logout and CSP/blob preview are integrated. Browser module/transport checks and three focused Chromium scenarios against the frozen built CLI with mocked native HTTP responses verify global cross-Session authority, explicit review/arming, private PNG preview and logout Stop without invoking the OS adapter.
 - No real desktop capture, input injection, OS permission prompt or native device acceptance has been performed. Task5.4 remains blocked on explicit controlled-test participation and OS grants; fixtures must not be described as physical acceptance.

@@ -1,6 +1,6 @@
 # Local web dashboard
 
-The dashboard runs in the same `cyber` server as the terminal client. It provides Session navigation, transcripts, prompts and an approval inbox, plus the existing workflow, Job and Goal controls. This is the first P1 browser slice; full Settings, attachments, terminal emulation, Relay and paired Devices are outside this delivery.
+The dashboard runs in the same `cyber` server as the terminal client. It provides Session navigation, transcripts, prompts and an approval inbox, plus the existing workflow, Job and Goal controls. This is the first P1 browser slice; full Settings, general attachment previews, terminal emulation, Relay and paired Devices remain unfinished. Experimental native computer controls are available separately on macOS 14+.
 
 ## Start and sign in
 
@@ -81,6 +81,16 @@ The approval inbox displays the original Session, request, Location and command,
 ![Desktop approval inbox](screenshots/web-dashboard-desktop.png)
 
 [View the 360-pixel mobile approval inbox](screenshots/web-dashboard-mobile.png). Long commands scroll within the card.
+
+## Native computer controls (experimental)
+
+Open **Native computer use (experimental)** above the Session workspace to inspect host support and OS consent. After enabling `computer_use` in trusted global configuration, keep a Session attached, enter an application bundle ID or explicitly choose a whole display, and select **Review native target**. Review its exact process/window/display and expiry before checking the authorization box and selecting **Arm reviewed target**. OS setup is a separate deliberate action that opens permission prompts on the host.
+
+The active-control banner names the controlling Session, target and expiry even when you view another Session or an empty Location. **STOP native input** revokes this server's native grant independently of a busy model/tool request. Changing the model, agent or Mode requires stopping control first. A lost last Session attachment invalidates the old grant; reconnecting requires fresh owner review.
+
+**View authorized capture** explicitly loads the latest retained screenshot through owner-authenticated headers. The preview stays in page memory and is cleared on Session changes or logout. This private native PNG view does not add general prompt-attachment previews. Logging out attempts a host-wide Stop before clearing credentials; if the network prevents delivery, native presence is bounded by the existing lease expiry. Use `cyber computer stop` on the host when Stop cannot be confirmed.
+
+See [Native computer use](computer-use.md) for setup, privacy and limits. Automated browser tests simulate native HTTP responses; real desktop capture/input and signed release acceptance remain pending.
 
 ## Development and acceptance
 

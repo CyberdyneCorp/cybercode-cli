@@ -41,7 +41,7 @@ Keep the intended Session open in the TUI or dashboard, open a disposable applic
 # Prints the proposed target without arming it.
 cyber computer allow ses_EXACT_ID --app com.apple.TextEdit
 
-# Resolve/review the frontmost window again and explicitly arm this scope.
+# Resolve/review the current on-screen window again and explicitly arm this scope.
 cyber computer allow ses_EXACT_ID --app com.apple.TextEdit --ttl 300 --yes
 
 cyber computer status ses_EXACT_ID
@@ -62,7 +62,7 @@ Input requires the server-issued frame ID from a screenshot taken within 10 seco
 
 Named keys are enter, escape, tab, space, backspace, delete, arrows, home/end and page_up/page_down; ASCII letters/digits resolve through the current native keyboard layout. Characters that the layout cannot resolve without hidden modifiers fail closed; use Unicode `type` for text. Application scope rejects Control shortcuts and shortcuts outside the limited editing allowlist to avoid switching applications or invoking host-wide actions. Secure text fields and protected system/security application targets are denied. These checks reduce risk; they do not turn native application input into a filesystem sandbox.
 
-Native events are fenced while human permission/question requests are pending. Stop native control before approving another tool, answering a question or changing administrative authority; scoped computer capture/control approvals remain possible under the existing finite owner grant. Known Cyber dashboard/TUI window titles are refused as native action targets. These checks prevent direct self-approval through the normal control surfaces; native applications still have host authority, and this is not a general isolation boundary against scripts, developer tools or host applications that can execute commands.
+Native events are fenced while human permission/question requests are pending. Stop native control before approving another tool, answering a question or changing the Session model, agent, Mode or administrative authority; scoped computer capture/control approvals remain possible under the existing finite owner grant. Known Cyber dashboard/TUI window titles are refused as native action targets. These checks prevent direct self-approval through the normal control surfaces; native applications still have host authority, and this is not a general isolation boundary against scripts, developer tools or host applications that can execute commands.
 
 Screen text is untrusted external content. It cannot authorize wider scope, renew a grant or approve another tool. Do not authorize credential entry, password fields, operating-system permission dialogs or an application with private information visible unless you intend that content to be supplied to the selected provider.
 

@@ -6,10 +6,11 @@ Status: implementation checks passed; **physical macOS acceptance pending**. No 
 
 | Check | Result |
 |---|---|
-| `cargo test -p cyber-computer --lib` | 14 passed: geometry, input bounds/redaction, expiring grants, rate limits, cross-controller/session fencing, supervisor and independent Stop races |
+| `cargo test -p cyber-computer --lib` | 15 passed: geometry, input bounds/redaction, expiring grants, rate limits, cross-controller/session fencing, supervisor and independent Stop races |
 | `cargo test -p cyber-core --test config native` | 2 passed: global-only authority and managed feature locks |
-| Server `runtime::computer::tests` | 11 passed: private artifacts, incomplete writes, retention, durable intent/settlement/replay/unknown acknowledgement, cross-Runtime host lease and busy-worker Stop |
-| `cargo test -p cyber-server --test computer` | 2 passed with fake native adapter: real TCP auth/Location/target review/global Stop, self-approval refusal and durable typed-text privacy |
+| Server `runtime::computer::tests` | 15 passed: private artifacts, incomplete writes, retention, durable intent/settlement/replay/unknown acknowledgement, cross-Runtime host lease and busy-worker Stop |
+| `cargo test -p cyber-server --test computer` | 2 passed with fake native adapter: real TCP auth/Location/target review/global Stop, self-approval and model/agent/Mode widening refusal, durable typed-text privacy |
+| Exact Session presence | 3 passed, including disconnect/reconnect and lease expiry before reattachment; grants and outstanding reviews cannot revive |
 | Tool schema, TUI control state, CLI/doctor, client-owned presence stream | 5 focused tests passed; one core settings unit also passed |
 | Clippy | Passed for all targets of cyber-computer/core/server/tools/app/client/cli/tui with warnings denied; final TUI/helper changes checked again |
 | macOS adapter | Compiled with local SDK; standalone Objective-C syntax check passed. This does not prove native capture/input behavior. |
@@ -17,7 +18,9 @@ Status: implementation checks passed; **physical macOS acceptance pending**. No 
 | SDK suite | 117 passed, 8 skipped because `CYBER_BIN` was unset; no live account/provider claims |
 | Browser modules / private transport | 40 passed; typecheck and generated bundle check passed |
 
-A real Chromium regression using the embedded dashboard with mocked native HTTP responses passed: global cross-Session banner, target review/arming, explicit private PNG preview and logout Stop. The fixture did not call a native adapter or request OS consent.
+Three focused Chromium dashboard scenarios passed against the frozen built CLI and its embedded assets, including global cross-Session banner, target review/arming, authenticated private PNG rendering under the actual CSP and logout Stop. Native HTTP responses were simulated; the fixture did not call an OS adapter or request consent. The three doctor/feature-list regressions exposed by the first CI run also pass locally.
+
+Independent review identified and fixed reconnecting grants or target reviews, a missing final drag Stop checkpoint, model/agent authority switching during control, and screenshot cleanup that released quota before deleting retained bytes. Regression tests cover stale reviews during blocked target resolution, observed OS revocation/restoration, failed cleanup and a cleanup backlog exceeding 500 rows. Final platform CI results remain a separate merge gate.
 
 Only `aarch64-apple-darwin` is installed locally. Unsupported-platform execution, other architectures, signed distribution and full workspace verification rely on CI/release acceptance; they are not claimed as locally tested. Test counts are for this change's recorded checks, not current repository-wide totals.
 
