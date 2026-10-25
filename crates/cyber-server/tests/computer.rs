@@ -19,8 +19,26 @@ use std::{
     },
 };
 use support::{Harness, Setup};
-struct NoServices;
+#[derive(Default)]
+struct NoServices {
+    publication_calls: Arc<AtomicUsize>,
+}
 impl Services for NoServices {
+    fn integration_operation<'a>(
+        &'a self,
+        _: &'a TurnContext,
+        _: &'a str,
+        _: &'a str,
+        _: Value,
+    ) -> BoxFuture<'a, Result<Value, http::ApiError>> {
+        self.publication_calls.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async {
+            Err(http::ApiError::service_unavailable(
+                "fixture",
+                "publication must not dispatch",
+            ))
+        })
+    }
     fn models(&self, _: &Path) -> BoxFuture<'_, Result<Vec<ModelInfo>, String>> {
         Box::pin(async { Ok(vec![]) })
     }
@@ -50,7 +68,7 @@ fn state(h: &Harness, runtime: Runtime) -> AppState {
         runtime,
         remote_tools: Arc::default(),
         store: h.store.clone(),
-        services: Arc::new(NoServices),
+        services: Arc::new(NoServices::default()),
         options: Arc::new(HttpOptions {
             version: "fixture".into(),
             password: Some("owner-fixture-password".into()),
@@ -120,8 +138,11 @@ async fn owner_routes_bind_auth_location_exact_review_and_global_stop() {
         .unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/api/v1", listener.local_addr().unwrap());
+    let services = Arc::new(NoServices::default());
+    let mut configured = state(&h, h.runtime.clone());
+    configured.services = services.clone();
     let task = tokio::spawn(http::serve_tcp(
-        http::router(state(&h, h.runtime.clone())),
+        http::router(configured),
         listener,
         std::future::pending(),
     ));
@@ -188,6 +209,18 @@ async fn owner_routes_bind_auth_location_exact_review_and_global_stop() {
     assert!(
         h.runtime.switch_mode(&id, "bypass").await.is_err(),
         "native input cannot change its own Mode while armed"
+    );
+    let publication = client.post(format!("{url}/workflows/integrations/intg_fixture/publish"))
+        .basic_auth("cyber",Some("owner-fixture-password"))
+        .json(&json!({"expected_revision":1,"operation_id":"native-self-publish","remote":"origin","repository":"fixture/repository","title":"fixture","body":"fixture"}))
+        .send().await.unwrap();
+    assert_eq!(publication.status(), 403);
+    let denied: Value = publication.json().await.unwrap();
+    assert_eq!(denied["_tag"], "ComputerConsentError");
+    assert_eq!(
+        services.publication_calls.load(Ordering::SeqCst),
+        0,
+        "armed native input cannot dispatch Git/GitHub publication"
     );
     let original = h.runtime.session_info(&id).await.unwrap();
     assert!(h.runtime.switch_agent(&id, "reviewer").await.is_err());

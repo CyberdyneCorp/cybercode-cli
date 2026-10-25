@@ -260,6 +260,11 @@ export type Capabilities = {
   "session.prompt": boolean;
 };
 
+export type Check = {
+  argv: string[];
+  timeout_seconds?: number;
+};
+
 /** The `check` that ran after a `met` verdict. */
 export type CheckRun = {
   command: string;
@@ -534,6 +539,13 @@ export type ContextMeter = {
   compacted: boolean;
 };
 
+export type Contribution = {
+  label: string;
+  commit: string;
+  depends_on?: string[];
+  hub?: HubReference | null;
+};
+
 export type CreateBody = {
   budget?: Budget | null;
   id?: string | null;
@@ -647,6 +659,10 @@ export type Data_Array_of_InboxRow = {
   data: InboxRow[];
 };
 
+export type Data_Array_of_IntegrationBatch = {
+  data: IntegrationBatch[];
+};
+
 export type Data_Array_of_LoopState = {
   data: LoopState[];
 };
@@ -733,6 +749,10 @@ export type Data_GoalFork = {
 
 export type Data_GoalsView = {
   data: GoalsView;
+};
+
+export type Data_IntegrationBatch = {
+  data: IntegrationBatch;
 };
 
 export type Data_InteractiveClient = {
@@ -1412,6 +1432,20 @@ export type HubClaimTask = {
   expected_revision: number;
 };
 
+/**
+ * Fresh human/project authorization for an owner-selected integration reference.
+ * This attests identity and binding, never a patch's verification result.
+ */
+export type HubContributionAuthorization = {
+  project: string;
+  repository: HubRepository;
+  member: string;
+  member_generation: number;
+  project_revision: number;
+  task?: string | null;
+  agent?: string | null;
+};
+
 export type HubCreateProject = {
   name: string;
   repository: string;
@@ -1429,22 +1463,26 @@ export type HubData = {
 };
 
 export type HubData10 = {
-  data: HubDelivery[];
+  data: HubMessage[];
 };
 
 export type HubData11 = {
-  data: HubDeliveryAuthorization;
+  data: HubDelivery[];
 };
 
 export type HubData12 = {
-  data: HubTask[];
+  data: HubDeliveryAuthorization;
 };
 
 export type HubData13 = {
-  data: HubSnapshot;
+  data: HubTask[];
 };
 
 export type HubData14 = {
+  data: HubSnapshot;
+};
+
+export type HubData15 = {
   data: HubEventPage;
 };
 
@@ -1457,27 +1495,27 @@ export type HubData3 = {
 };
 
 export type HubData4 = {
-  data: HubMember[];
+  data: HubContributionAuthorization;
 };
 
 export type HubData5 = {
-  data: HubInvitationView[];
+  data: HubMember[];
 };
 
 export type HubData6 = {
-  data: HubApplicationView[];
+  data: HubInvitationView[];
 };
 
 export type HubData7 = {
-  data: HubJoinOutcome;
+  data: HubApplicationView[];
 };
 
 export type HubData8 = {
-  data: HubAgent[];
+  data: HubJoinOutcome;
 };
 
 export type HubData9 = {
-  data: HubMessage[];
+  data: HubAgent[];
 };
 
 export type HubDelivery = {
@@ -1811,6 +1849,12 @@ export type HubRedeem = {
   code?: string | null;
 };
 
+export type HubReference = {
+  project: string;
+  task?: string | null;
+  agent?: string | null;
+};
+
 export type HubRegisterRuntime = {
   name?: string | null;
 };
@@ -2000,6 +2044,44 @@ export type InstallationNotice = {
   /** `major`, `minor` or `patch`. */
   kind: string;
   notes_url?: string | null;
+};
+
+export type IntegrationBatch = {
+  id: string;
+  session_id: string;
+  directory: string;
+  revision: number;
+  attempt: number;
+  status: string;
+  manifest: Manifest;
+  args: unknown;
+  budget?: unknown;
+  run_id?: string | null;
+  previous_runs: string[];
+  created_ms: number;
+  updated_ms: number;
+  report?: unknown;
+  publication?: unknown;
+};
+
+export type IntegrationPublish = {
+  expected_revision: number;
+  operation_id: string;
+  remote: string;
+  repository: string;
+  title: string;
+  body: string;
+  acknowledge_review_unavailable?: boolean;
+};
+
+export type IntegrationRevision = {
+  expected_revision: number;
+};
+
+export type IntegrationSubmit = {
+  session_id: string;
+  manifest: Manifest;
+  budget?: unknown;
 };
 
 export type InteractiveClient = {
@@ -2578,6 +2660,13 @@ export type ManagedPolicy = {
   error?: string | null;
   /** `policy.plugins.disabled`: plugin names no scope may enable. */
   plugins_disabled: string[];
+};
+
+export type Manifest = {
+  target_branch?: string | null;
+  contributions: Contribution[];
+  checks: Check[];
+  reviewer_model?: string;
 };
 
 export type MaskedHeader = {

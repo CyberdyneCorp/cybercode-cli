@@ -22,6 +22,11 @@ impl Collaboration {
         binding: &Binding,
     ) -> Result<(), ApiError> {
         let client = self.pinned(binding).await?;
+        if client.account.issuer != current.issuer || client.account.sub != current.sub {
+            return Err(ApiError::conflict(
+                "AccountChangedError: replay account changed",
+            ));
+        }
         let base = format!("/projects/{}", binding.project);
         // These authorized reads run BEFORE looking up the saved cursor. A new member,
         // role generation, policy revision or account cannot inherit prior visibility.

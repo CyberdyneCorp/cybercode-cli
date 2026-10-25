@@ -6,6 +6,10 @@
 #[path = "support/scripted_model.rs"]
 mod scripted_model;
 
+#[cfg(unix)]
+#[path = "support/integration_queue.rs"]
+mod integration_queue;
+
 use std::time::Duration;
 
 use cyber_app::{App, AppOptions};
@@ -434,7 +438,14 @@ async fn the_library_lists_saved_workflows_by_precedence_with_issues() {
     assert_eq!(
         names,
         [
-            "audit", "migrate", "plan", "release", "research", "review", "solve"
+            "audit",
+            "integrate",
+            "migrate",
+            "plan",
+            "release",
+            "research",
+            "review",
+            "solve"
         ],
         "{listed}"
     );

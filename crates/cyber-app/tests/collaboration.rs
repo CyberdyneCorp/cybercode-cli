@@ -214,6 +214,9 @@ async fn real_hub_publication_delivers_once_held_and_logout_blocks_release() {
     assert_eq!(wrong_projects.load(std::sync::atomic::Ordering::SeqCst), 0);
     wrong_server.abort();
     connector.call("bind".into(),json!({"operation_id":"cop_fixture_bind","directory":app.repo,"hub_url":url,"project":project,"confirm":true})).await.unwrap();
+    let mismatch = connector.call("messages.send".into(),json!({"project":project,"operation_id":"cop_wrong_actor","expected_actor":{"issuer":fixture.state.issuer,"subject":"another-user"},"target":{"kind":"project"},"text":"must not dispatch"})).await.unwrap_err();
+    assert_eq!(mismatch.status, reqwest::StatusCode::CONFLICT);
+    assert_eq!(mismatch.body.tag, "AccountChangedError");
     let (_, created) = app.create("default").await;
     let session = created["data"]["id"].as_str().unwrap().to_owned();
     let publication=connector.call("publish".into(),json!({"operation_id":"cop_fixture_publish","session_id":session,"project":project,"name":"reviewer"})).await.unwrap();
@@ -564,6 +567,56 @@ async fn real_hub_publication_delivers_once_held_and_logout_blocks_release() {
         .release(&session, &inbox.message_id, InboxDelivery::Queue)
         .await
         .expect("current live publication/member proof must permit explicit receiver release");
+    // An unattempted offline intent from the old generation must not be sent under
+    // a same-subject rejoin that happened entirely while this client was disconnected.
+    let prior: ContributionAuthorization = human
+        .get(&format!("/projects/{project}/contributions/authorization"))
+        .await
+        .unwrap();
+    let owner_member = prior.member.clone();
+    hub.db
+        .write(move |db| {
+            let mut member: Member =
+                cyber_collab::storage::get(db, "member", owner_member.as_str())?;
+            member.generation += 2;
+            cyber_collab::storage::put(
+                db,
+                "member",
+                member.id.as_str(),
+                member.project.as_str(),
+                &member,
+            )
+        })
+        .unwrap();
+    connector.local.enqueue("cop_old_generation".into(),serde_json::to_string(&(&fixture.state.issuer,"alice")).unwrap(),publication["hub_id"].as_str().unwrap().into(),project.to_string(),json!({"method":"POST","path":format!("/projects/{project}/messages"),"mutation":{"operation_id":"cop_old_generation","payload":{"target":{"kind":"project"},"text":"STALE_GENERATION_MUST_NOT_SEND","reply_to":null,"depth":0,"hops":1}},"authorization":prior})).unwrap();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let receipts = connector
+                .local
+                .receipts(
+                    publication["hub_id"].as_str().unwrap().into(),
+                    project.to_string(),
+                )
+                .unwrap();
+            if receipts.iter().any(|receipt| {
+                receipt["operation_id"] == "cop_old_generation" && receipt["state"] == "rejected"
+            }) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("old generation intent must receive a local rejection receipt");
+    let visible: Vec<Message> = human
+        .get(&format!("/projects/{project}/messages"))
+        .await
+        .unwrap();
+    assert!(
+        !visible
+            .iter()
+            .any(|message| message.text == "STALE_GENERATION_MUST_NOT_SEND")
+    );
     accounts.logout(false).await.unwrap();
     let released = app
         .app

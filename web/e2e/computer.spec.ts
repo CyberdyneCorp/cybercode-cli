@@ -31,6 +31,12 @@ test('native global authority, exact review, private preview and logout Stop are
   const arm=controls.getByRole('button',{name:'Arm reviewed target',exact:true});await expect(arm).toBeDisabled();
   await controls.getByRole('checkbox',{name:'I reviewed this exact target and authorize native capture/input'}).check();await arm.click();
   await expect(controls.getByRole('alert')).toContainText('ARMED');expect(frameReads).toBe(0);
+  await dashboard.prompt(first,'NATIVE_VIEWPORT_ROWS\n'+Array.from({length:80},(_,index)=>`NATIVE_VIEWPORT_ROW_${index}`).join('\n'));
+  await expect(page.getByText('NATIVE_VIEWPORT_ROW_79',{exact:false})).toBeVisible();
+  await page.evaluate(()=>window.scrollTo(0,document.body.scrollHeight));
+  await expect(controls.getByRole('button',{name:'STOP native input',exact:true})).toBeInViewport();
+  await page.evaluate(()=>window.scrollTo(0,0));
+
   await controls.getByRole('button',{name:'View authorized capture',exact:true}).click();
   await expect(controls.getByAltText('Authorized private native screenshot')).toHaveJSProperty('naturalWidth',1);expect(frameReads).toBe(1);
   await select(page,'Other Session');await expect(controls.getByRole('alert')).toContainText(first);

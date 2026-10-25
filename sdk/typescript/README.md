@@ -237,6 +237,25 @@ npm run build       # dist/
 `examples/` (drive a session, stream events with resume, approve permissions, register an app
 tool, run a workflow, run several workflows at once).
 
+## Verified integration queue
+
+Generated owner operations use `client.workflow.integrationSubmit`, `integrationList`, `integrationShow`, `integrationRun`, `integrationCancel`, `integrationReport` and `integrationPublish`. Mutation options accept a retained `idempotencyKey`; revision-bound actions require `expected_revision`. Local commit batches need no Cyber Account. Optional hub attribution requires current authorization.
+
+```ts
+const batch = await client.workflow.integrationSubmit({
+  session_id: ownerSessionId,
+  manifest: {
+    contributions: [{label: "api", commit: fullLocalCommit, depends_on: []}],
+    checks: [{argv: ["cargo", "test"], timeout_seconds: 300}],
+    reviewer_model: "verify",
+  },
+});
+await client.workflow.integrationRun(batch.id, {expected_revision: batch.revision});
+console.log(await client.workflow.integrationReport(batch.id)); // Refresh until terminal.
+```
+
+Review host evidence and destination before explicitly publishing; the SDK never merges automatically. See [integration manifests, costs and recovery](../../docs/verified-integrations.md).
+
 ## Workflow runs
 
 `client.workflows.run({ name | script, args?, budget?, max_concurrent?, session_id? })` starts a

@@ -108,6 +108,12 @@ pub fn document() -> Value {
         "policy",
         "Owner updates enrollment and guest policy at an expected revision",
     );
+    c.read::<ContributionAuthorization>(
+        "/projects/{projectID}/contributions/authorization",
+        "contributionAuthorization",
+        "Fresh human authorization for repository-bound contribution references",
+        &["task", "agent"],
+    );
     c.read::<Vec<Member>>(
         "/projects/{projectID}/members",
         "members",

@@ -16,8 +16,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub type LogoutHook =
-    dyn Fn(Option<cyber_account::Secret>, bool) -> BoxFuture<'static, ()> + Send + Sync;
+pub type LogoutHook = dyn Fn(Option<(cyber_account::Secret, cyber_account::Account)>, bool) -> BoxFuture<'static, ()>
+    + Send
+    + Sync;
 pub type SettingsFn = dyn Fn() -> Result<AccountSettings, Error> + Send + Sync;
 struct Attempt {
     view: LoginAttempt,
@@ -83,6 +84,16 @@ impl Accounts {
             .await?
             .map(|t| t.access_token().clone())
             .ok_or_else(|| api_error(Error::NotLoggedIn))
+    }
+    /// One verified credential record; never combine a token with a later account selection.
+    pub(crate) async fn credential_snapshot(
+        &self,
+    ) -> Result<(cyber_account::Secret, cyber_account::Account), ApiError> {
+        let tokens = self
+            .tokens()
+            .await?
+            .ok_or_else(|| api_error(Error::NotLoggedIn))?;
+        Ok((tokens.access_token().clone(), tokens.account().clone()))
     }
     fn finish(&self, id: &str, result: Result<(), Error>) {
         let Ok(mut attempts) = self.inner.attempts.lock() else {
@@ -294,7 +305,12 @@ impl AccountService for Accounts {
                 .map(|hooks| hooks.clone())
                 .unwrap_or_default();
             for hook in hooks {
-                let cleanup = hook(tokens.as_ref().map(|t| t.access_token().clone()), all);
+                let cleanup = hook(
+                    tokens
+                        .as_ref()
+                        .map(|t| (t.access_token().clone(), t.account().clone())),
+                    all,
+                );
                 let _ = tokio::time::timeout(Duration::from_secs(5), cleanup).await;
             }
             if let Some(tokens) = tokens

@@ -831,7 +831,18 @@ impl RunHost {
         );
         let (tools, runtime) = (Arc::clone(&self.tools), self.runtime.clone());
         let (mut owner, run_id) = (self.owner.clone(), self.run_id.clone());
-        if self.solve_base.is_some() && record.label.as_deref() == Some("solve judge") {
+        if (self.solve_base.is_some() && record.label.as_deref() == Some("solve judge"))
+            || (record.label.as_deref() == Some("integration reviewer")
+                && self
+                    .runtime
+                    .upgrade()
+                    .and_then(|runtime| runtime.workflow_run(&self.run_id).ok().flatten())
+                    .is_some_and(|run| {
+                        run.origin == json!({"kind":"bundled","name":"integrate"})
+                            && cyber_workflow::bundled::module("integrate")
+                                .is_some_and(|module| module.digest == run.digest)
+                    }))
+        {
             owner.mode = "plan".into();
         }
         let task = self.handle.spawn(async move {
@@ -1114,6 +1125,25 @@ impl RunHost {
 /// first polled: the engine dispatches a batch of calls before polling any of them, so a
 /// recorded result can wait for a call of its batch that is polled later.
 impl WorkflowHost for RunHost {
+    fn integration(&self, input: Value) -> HostFuture<'_> {
+        let trusted = self
+            .runtime
+            .upgrade()
+            .and_then(|runtime| runtime.workflow_run(&self.run_id).ok().flatten())
+            .is_some_and(|run| {
+                run.origin == json!({"kind":"bundled","name":"integrate"})
+                    && cyber_workflow::bundled::module("integrate")
+                        .is_some_and(|module| module.digest == run.digest)
+            });
+        if !trusted {
+            return Box::pin(async {
+                Err(failed(
+                    "only the embedded integration revision may request host verification",
+                ))
+            });
+        }
+        self.tool("__integration".into(), input)
+    }
     fn solve(&self, input: Value) -> HostFuture<'_> {
         if self.solve_base.is_none() {
             return Box::pin(async {

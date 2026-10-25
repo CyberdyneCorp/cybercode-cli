@@ -142,6 +142,10 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../migrations/20261025020000_session_source_directory.sql"),
     },
     Migration {
+        id: "20261025030000_integration_batches",
+        sql: include_str!("../migrations/20261025030000_integration_batches.sql"),
+    },
+    Migration {
         id: "20261026010000_computer",
         sql: include_str!("../migrations/20261026010000_computer.sql"),
     },

@@ -147,6 +147,7 @@ mod worktree_events;
 pub use worktree_events::{WorktreeChange, WorktreeExit, WorktreeNotice, relocates};
 mod worktree_output;
 pub use worktree_output::{SessionSetupSink, SetupChannel, SetupUpdate};
+pub mod integrations;
 mod workflow_ask;
 mod workflow_control;
 mod workflow_host;

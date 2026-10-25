@@ -47,16 +47,46 @@ static BOOL supported(void) { if (@available(macOS 14.0, *)) return YES; return 
 static BOOL protected_app(NSString *bundle) {
     return [@[@"com.apple.systempreferences", @"com.apple.SystemSettings", @"com.apple.SecurityAgent", @"com.apple.loginwindow", @"com.apple.securityagent"] containsObject:bundle ?: @""];
 }
+bool cyber_computer_restricted_role(const char *role, const char *subrole) {
+    if(!role)return true;
+    const char *restricted[]={"AXSecureTextField","AXSystemDialog","AXDialog","AXSheet","AXUnknown"};
+    for(size_t index=0;index<sizeof(restricted)/sizeof(restricted[0]);index++)
+        if(strcmp(role,restricted[index])==0 || (subrole && strcmp(subrole,restricted[index])==0))return true;
+    return false;
+}
+// A leaf button may sit inside an OS dialog/sheet. Walk only public role,
+// subrole/modal/parent attributes, never field values. Unsupported/cyclic/slow
+// chains fail closed, with bounded depth and AX messaging timeouts.
+static BOOL restricted_element(AXUIElementRef leaf) {
+    if(!leaf || CFGetTypeID(leaf)!=AXUIElementGetTypeID())return YES;
+    AXUIElementRef current=(AXUIElementRef)CFRetain(leaf);uint64_t until=monotonic_ms()+1000;
+    for(int depth=0;depth<8;depth++) {
+        if(monotonic_ms()>=until){CFRelease(current);return YES;}
+        AXUIElementSetMessagingTimeout(current,0.25f);CFTypeRef role=NULL,subrole=NULL,parent=NULL,modal=NULL;
+        AXError named=AXUIElementCopyAttributeValue(current,kAXRoleAttribute,&role);
+        AXError sub=AXUIElementCopyAttributeValue(current,kAXSubroleAttribute,&subrole);
+        BOOL invalid=named!=kAXErrorSuccess || !role || CFGetTypeID(role)!=CFStringGetTypeID() || (sub!=kAXErrorSuccess && sub!=kAXErrorNoValue && sub!=kAXErrorAttributeUnsupported) || (subrole && CFGetTypeID(subrole)!=CFStringGetTypeID());
+        if(!invalid)invalid=cyber_computer_restricted_role([(__bridge NSString *)role UTF8String],subrole?[(__bridge NSString *)subrole UTF8String]:NULL);
+        BOOL application=!invalid && CFEqual(role,kAXApplicationRole);
+        if(!invalid && CFEqual(role,kAXWindowRole)) {
+            AXError queried=AXUIElementCopyAttributeValue(current,kAXModalAttribute,&modal);
+            if((queried!=kAXErrorSuccess && queried!=kAXErrorNoValue && queried!=kAXErrorAttributeUnsupported) || (modal && (CFGetTypeID(modal)!=CFBooleanGetTypeID() || CFBooleanGetValue(modal))))invalid=YES;
+        }
+        if(!invalid && !application) {
+            AXError found=AXUIElementCopyAttributeValue(current,kAXParentAttribute,&parent);
+            invalid=found!=kAXErrorSuccess || !parent || CFGetTypeID(parent)!=AXUIElementGetTypeID() || CFEqual(parent,current);
+        }
+        if(role)CFRelease(role);if(subrole)CFRelease(subrole);if(modal)CFRelease(modal);CFRelease(current);
+        if(invalid || application){if(parent)CFRelease(parent);return invalid || monotonic_ms()>=until;}
+        current=(AXUIElementRef)parent;
+    }
+    CFRelease(current);return YES;
+}
 static BOOL secure_focus(void) {
-    AXUIElementRef system = AXUIElementCreateSystemWide(); AXUIElementSetMessagingTimeout(system,0.25f); CFTypeRef focused = NULL;
-    AXError error = AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute, &focused); CFRelease(system);
-    if (error != kAXErrorSuccess || !focused || CFGetTypeID(focused)!=AXUIElementGetTypeID()) { if(focused)CFRelease(focused); return error != kAXErrorNoValue && error != kAXErrorAttributeUnsupported; }
-    AXUIElementSetMessagingTimeout((AXUIElementRef)focused,0.25f);
-    CFTypeRef role = NULL; CFTypeRef subrole = NULL;
-    AXError roleError=AXUIElementCopyAttributeValue((AXUIElementRef)focused, kAXRoleAttribute, &role);
-    AXUIElementCopyAttributeValue((AXUIElementRef)focused, kAXSubroleAttribute, &subrole);
-    BOOL secure = roleError!=kAXErrorSuccess || (role && CFEqual(role, CFSTR("AXSecureTextField"))) || (subrole && (CFEqual(subrole, CFSTR("AXSecureTextField")) || CFEqual(subrole, CFSTR("AXSystemDialog"))));
-    if (role) CFRelease(role); if (subrole) CFRelease(subrole); CFRelease(focused); return secure;
+    AXUIElementRef system=AXUIElementCreateSystemWide();AXUIElementSetMessagingTimeout(system,0.25f);CFTypeRef focused=NULL;
+    AXError error=AXUIElementCopyAttributeValue(system,kAXFocusedUIElementAttribute,&focused);CFRelease(system);
+    BOOL restricted=error!=kAXErrorSuccess || !focused || CFGetTypeID(focused)!=AXUIElementGetTypeID() || restricted_element((AXUIElementRef)focused);
+    if(focused)CFRelease(focused);return restricted;
 }
 
 int cyber_computer_health(bool prompt, char **output) {
@@ -231,7 +261,7 @@ static BOOL pointer_target(NSDictionary *expected, CGPoint at) {
     AXUIElementRef hit=NULL;AXError result=AXUIElementCopyElementAtPosition(system,at.x,at.y,&hit);CFRelease(system);
     if(result!=kAXErrorSuccess || !hit) {if(hit)CFRelease(hit);return NO;}
     AXUIElementSetMessagingTimeout(hit,0.25f);pid_t pid=0;
-    BOOL known=AXUIElementGetPid(hit,&pid)==kAXErrorSuccess && pid>0;
+    BOOL known=AXUIElementGetPid(hit,&pid)==kAXErrorSuccess && pid>0 && !restricted_element(hit);
     NSRunningApplication *application=known?[NSRunningApplication runningApplicationWithProcessIdentifier:pid]:nil;
     known=known && application && application.bundleIdentifier;
     BOOL protected=known && protected_app(application.bundleIdentifier);

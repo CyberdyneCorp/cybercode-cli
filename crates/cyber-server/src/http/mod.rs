@@ -20,6 +20,7 @@ mod goals;
 mod guard;
 mod hooks;
 mod idempotency;
+pub mod integrations;
 mod intelligence;
 mod interactive;
 mod jobs;
@@ -525,6 +526,21 @@ pub trait Services: Send + Sync {
             "workflow",
             "Workflow Runs are unavailable in this host",
         ))
+    }
+    /// Owner-only source revalidation/publication for a trusted integration run.
+    fn integration_operation<'a>(
+        &'a self,
+        _owner: &'a crate::runtime::TurnContext,
+        _run: &'a str,
+        _operation: &'a str,
+        _input: serde_json::Value,
+    ) -> BoxFuture<'a, Result<serde_json::Value, ApiError>> {
+        Box::pin(async {
+            Err(ApiError::service_unavailable(
+                "workflow",
+                "Integration operations are unavailable in this host",
+            ))
+        })
     }
     /// Refuse starting or resuming `module` for `owner` when a `workflow.run` rule
     /// denies it (`workflows` → Permissions for runs). An authenticated API client

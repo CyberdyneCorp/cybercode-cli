@@ -5,7 +5,7 @@ function checkbox(label: string, checked: boolean, action: (value: boolean) => v
 
 /** Inert text only: native target names never become HTML or executable URLs. */
 export function computerPanel(model: ComputerControls): HTMLElement {
-  const section = node("section"); section.className = "authority computer-controls"; section.setAttribute("aria-label", "Native computer controls");
+  const section = node("section"); section.className = `authority computer-controls${model.active || model.uncertain ? " native-active" : ""}`; section.setAttribute("aria-label", "Native computer controls");
   const banner = computerBanner(model); if (banner) section.append(banner);
   const details = node("details"); details.open = model.expanded; details.addEventListener("toggle", () => { model.expanded = details.open; }); details.append(node("summary", "Native computer use (experimental)")); section.append(details);
   const report = model.report;

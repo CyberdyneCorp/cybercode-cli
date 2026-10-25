@@ -8,6 +8,7 @@ pub mod bundled;
 pub mod diagnostic;
 pub mod discovery;
 pub mod engine;
+pub mod integration;
 pub mod meta;
 pub mod module;
 mod scan;

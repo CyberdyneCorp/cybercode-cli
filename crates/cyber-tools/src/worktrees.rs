@@ -1199,10 +1199,29 @@ impl GitExecution for GitPort<'_> {
                         .into(),
                 );
             }
+            let authority = if crate::host::workflow_integration::native_git_authority(self.ctx) {
+                let search = crate::host::review::trusted_path(self.ctx);
+                let program = crate::host::review::trusted_program(self.ctx, "git", &search)
+                    .ok_or_else(|| {
+                        io::Error::other(
+                            "trusted Git executable is unavailable outside project sources",
+                        )
+                    })?;
+                Some((program, search))
+            } else {
+                None
+            };
+            let program = match &authority {
+                Some((program, _)) => program
+                    .to_str()
+                    .ok_or_else(|| io::Error::other("Git executable path is not Unicode"))?,
+                None => "git",
+            };
             let mut prepared = match &self.writable {
                 Some(roots) => {
                     crate::sandboxing::prepare_worktree_git(
                         self.ctx,
+                        program,
                         &arguments,
                         roots,
                         &self.read_only,
@@ -1212,7 +1231,7 @@ impl GitExecution for GitPort<'_> {
                 None => {
                     crate::sandboxing::prepare_worktree_command(
                         self.ctx,
-                        "git",
+                        program,
                         &arguments,
                         self.credentials,
                     )
@@ -1221,6 +1240,18 @@ impl GitExecution for GitPort<'_> {
             }
             .map_err(tool_error)?;
             isolate_git_config(&mut prepared);
+            if let Some((_, search)) = authority {
+                prepared
+                    .env
+                    .retain(|(key, _)| !key.eq_ignore_ascii_case("PATH"));
+                prepared.env.push((
+                    "PATH".into(),
+                    std::env::join_paths(search)
+                        .map_err(io::Error::other)?
+                        .to_string_lossy()
+                        .into_owned(),
+                ));
+            }
             run_captured(self.ctx, prepared, directory, GIT_CAPTURE).await
         })
     }
@@ -1228,13 +1259,16 @@ impl GitExecution for GitPort<'_> {
 
 const GIT_CAPTURE: usize = 1024 * 1024;
 
-/// Strips ambient `GIT_*` variables and excludes system and global configuration.
+/// Strips ambient Git variables, disables implicit fetch/replacement aliases, and
+/// excludes system/global configuration so inspection stays local and identity-bound.
 pub(crate) fn isolate_git_config(prepared: &mut crate::sandboxing::Prepared) {
     prepared
         .env
         .retain(|(key, _)| !key.to_ascii_uppercase().starts_with("GIT_"));
     prepared.env.extend([
         ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+        ("GIT_NO_LAZY_FETCH".into(), "1".into()),
+        ("GIT_NO_REPLACE_OBJECTS".into(), "1".into()),
         (
             "GIT_CONFIG_GLOBAL".into(),
             if cfg!(windows) { "NUL" } else { "/dev/null" }.into(),
@@ -1414,7 +1448,7 @@ fn tool_error(error: crate::tools::ToolError) -> io::Error {
     }
 }
 
-async fn authorize_worktree(
+pub(crate) async fn authorize_worktree(
     ctx: &Ctx<'_>,
     explicit: bool,
     request: Request,

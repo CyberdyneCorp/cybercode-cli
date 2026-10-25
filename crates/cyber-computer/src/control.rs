@@ -177,6 +177,58 @@ mod tests {
     }
 
     #[test]
+    fn observed_geometry_change_invalidates_frames_but_bad_references_do_not() {
+        let controller = Controller::new(true);
+        let target = target();
+        controller.arm(admission(&target, 100), None).unwrap();
+        let old = frame(&controller, &target, 100);
+        let moved = Geometry::new(
+            100,
+            100,
+            Rect {
+                x: 1.,
+                y: 0.,
+                width: 100.,
+                height: 100.,
+            },
+            0,
+        )
+        .unwrap();
+        assert!(
+            controller
+                .input(admission(&target, 101), &old.id, action(), &moved)
+                .is_err()
+        );
+        assert!(
+            controller
+                .input(admission(&target, 102), &old.id, action(), &geometry())
+                .is_err()
+        );
+        let fresh = frame(&controller, &target, 103);
+        assert!(
+            controller
+                .input(admission(&target, 104), "missing", action(), &moved)
+                .is_err()
+        );
+        assert!(
+            controller
+                .input(admission(&target, 104), &old.id, action(), &moved)
+                .is_err()
+        );
+        let mut foreign = admission(&target, 104);
+        foreign.session = "ses_other";
+        assert!(
+            controller
+                .input(foreign, &fresh.id, action(), &moved)
+                .is_err()
+        );
+        drop(
+            controller
+                .input(admission(&target, 105), &fresh.id, action(), &geometry())
+                .unwrap(),
+        );
+    }
+    #[test]
     fn input_is_rate_limited_and_a_backwards_clock_never_resets_the_window() {
         let controller = Controller::new(true);
         let target = target();
@@ -630,12 +682,22 @@ impl Controller {
             ));
         }
         let mut state = self.lock()?;
-        let grant = self.authorized(&state, &admission)?.clone();
+        let grant = state.grant.as_ref().ok_or(Error::NotArmed)?.clone();
+        if !self.live(&grant, admission.now) || grant.session_id != admission.session {
+            return Err(Error::NotArmed);
+        }
         if self.active.load(Ordering::Acquire) != 0 {
             return Err(Error::Busy);
         }
         let frame = state.frames.get(frame_id).ok_or(Error::StaleFrame)?.clone();
-        self.check_frame(&frame, &grant, admission.now, current_geometry)?;
+        // Reject stale/missing/foreign references before invalidating any newer
+        // frame. A real observed scope/geometry mismatch cannot resurrect an old
+        // frame merely by moving the window/focus back within its age limit.
+        self.check_frame(&frame, &grant, admission.now, &frame.geometry)?;
+        if grant.target != *admission.target || &frame.geometry != current_geometry {
+            state.frames.clear();
+            return Err(Error::StaleFrame);
+        }
         action.validate(&frame.geometry)?;
         Self::rate(&mut state, admission.now)?;
         Ok(InputPermit {

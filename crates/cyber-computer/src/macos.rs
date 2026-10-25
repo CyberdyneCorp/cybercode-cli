@@ -196,3 +196,83 @@ fn action(permit: &InputPermit) -> Result<Value, Error> {
         Action::Wait { milliseconds } => json!({"action":"wait","milliseconds":milliseconds}),
     })
 }
+
+#[cfg(test)]
+mod pointer_policy_tests {
+    unsafe extern "C" {
+        fn cyber_computer_restricted_role(
+            role: *const std::ffi::c_char,
+            subrole: *const std::ffi::c_char,
+        ) -> bool;
+        fn cyber_computer_pointer_scope(
+            scoped: bool,
+            identified: bool,
+            protected_surface: bool,
+            expected_pid: i32,
+            hit_pid: i32,
+            focused_window: bool,
+            matching_geometry: bool,
+        ) -> bool;
+    }
+    #[test]
+    fn native_dialog_policy_rejects_restricted_ancestors_of_ordinary_buttons() {
+        // SAFETY: pure role classification accepts only static C string inputs;
+        // this does not call Accessibility, inspect a window or dispatch input.
+        unsafe {
+            assert!(!cyber_computer_restricted_role(
+                c"AXButton".as_ptr(),
+                std::ptr::null()
+            ));
+            for role in [
+                c"AXSecureTextField",
+                c"AXSystemDialog",
+                c"AXDialog",
+                c"AXSheet",
+                c"AXUnknown",
+            ] {
+                assert!(cyber_computer_restricted_role(
+                    role.as_ptr(),
+                    std::ptr::null()
+                ));
+                assert!(cyber_computer_restricted_role(
+                    c"AXWindow".as_ptr(),
+                    role.as_ptr()
+                ));
+            }
+            assert!(cyber_computer_restricted_role(
+                std::ptr::null(),
+                std::ptr::null()
+            ));
+        }
+    }
+    #[test]
+    fn native_pointer_policy_refuses_covering_apps_other_windows_and_protected_overlays() {
+        // SAFETY: this native helper is pure boolean/integer policy. It does not
+        // inspect a desktop, request consent, capture pixels or dispatch input.
+        unsafe {
+            assert!(cyber_computer_pointer_scope(
+                true, true, false, 42, 42, true, true
+            ));
+            assert!(!cyber_computer_pointer_scope(
+                true, true, false, 42, 99, true, true
+            ));
+            assert!(!cyber_computer_pointer_scope(
+                true, true, false, 42, 42, false, true
+            ));
+            assert!(!cyber_computer_pointer_scope(
+                true, true, false, 42, 42, true, false
+            ));
+            for scoped in [false, true] {
+                assert!(!cyber_computer_pointer_scope(
+                    scoped, false, false, 42, 42, true, true
+                ));
+                assert!(!cyber_computer_pointer_scope(
+                    scoped, true, true, 42, 42, true, true
+                ));
+            }
+            assert!(cyber_computer_pointer_scope(
+                false, true, false, 42, 99, false, false
+            ));
+        }
+    }
+}

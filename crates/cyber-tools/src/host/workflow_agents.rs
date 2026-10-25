@@ -134,7 +134,7 @@ impl BuiltinHost {
             mode: owner.mode,
             message_id: String::new(),
             call_id: cyber_core::ids::new_id("call"),
-            name: if tool == "__solve" {
+            name: if matches!(tool.as_str(), "__solve" | "__integration") {
                 "bash".into()
             } else {
                 tool.clone()
@@ -159,6 +159,7 @@ impl BuiltinHost {
         };
         let value = match tool.as_str() {
             "__solve" => self.verify_solve(&ctx, &run_id).await,
+            "__integration" => self.integration_tool(&ctx, &run_id).await,
             "read" => tools::fs::read_value(&ctx).await,
             "glob" => tools::search::glob_value(&ctx).await,
             "grep" => tools::search::grep_value(&ctx).await,

@@ -72,7 +72,7 @@ The password grants **owner access** and stays in page memory. Off-loopback acce
 
 The server owns execution and stores state in SQLite, so work can outlive a terminal window. After a crash, Sessions recover interrupted state and Workflows can replay; see [server lifecycle and recovery](docs/local-core-guide.md#background-server-and-rebuilds).
 
-For independent patch attempts, host-recorded tests and a separate read-only judge, start with the [verified `solve` workflow](docs/verified-workflows.md). Candidate patches remain available for human review; nothing is merged automatically.
+For independent patch attempts, host-recorded tests and a separate read-only judge, start with the [verified `solve` workflow](docs/verified-workflows.md). Candidate patches remain available for human review; nothing is merged automatically. To combine complementary commits, use the [verified integration queue](docs/verified-integrations.md): submit a dependency manifest, test the combined patch, review independent advice, then explicitly publish a branch and PR.
 
 Experimental [native computer use](docs/computer-use.md) adds macOS 14+ application/display screenshots and input with expiring owner grants, CLI/browser owner controls, private evidence and emergency Stop. Off by default; live desktop acceptance is pending.
 
@@ -117,7 +117,9 @@ mindmap
       Signed releases and cyber upgrade
     Agents and automation
       Subagents and worktrees partial
-      Workflows and verified solve
+      workflows["Workflows"]
+        solve["Verified solve"]
+        integrations["Integration queue"]
       Goals and loops
       Agent teams experimental
     Safety and recovery
@@ -174,7 +176,7 @@ The TUI, web dashboard, CLI, SDK and MCP clients call one server. That server en
 | Use the browser dashboard and remote approvals | [Dashboard guide](docs/web-dashboard.md) |
 | Enable native screenshots and input | [Native computer use](docs/computer-use.md) |
 | Run agents across machines or a group project | [Direct peers](docs/peers.md) · [Project hub](docs/collaboration.md) |
-| Build or customize a workflow | [Workflow guide](docs/local-core-guide.md#workflows-p2-m21) · [Verified solve](docs/verified-workflows.md) |
+| Build or customize a workflow | [Workflow guide](docs/local-core-guide.md#workflows-p2-m21) · [Verified solve](docs/verified-workflows.md) · [Integration queue](docs/verified-integrations.md) |
 | See the interface | [Screenshots](docs/screenshots/README.md) · [Dashboard screenshots](docs/web-dashboard.md#browser-views) |
 | Integrate another program | [TypeScript SDK](sdk/typescript/README.md) · [Plugin SDK](sdk/plugin/README.md) · [OpenAPI](sdk/openapi.json) |
 | Find a command or planned capability | [CLI reference](docs/cli.md) · [Roadmap](ROADMAP.md) · [OpenSpec](openspec/specs) |

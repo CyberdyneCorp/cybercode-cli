@@ -1319,3 +1319,79 @@ async fn human_replies_derive_chain_counters_but_agent_replies_cannot_reset_them
             .is_err()
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn contribution_authorization_is_fresh_human_only_and_project_scoped() {
+    let h = TestHub::new().await;
+    let project = h.project().await;
+    h.add(&project, "bob");
+    let published = h.agent(&h.bob, &project, "contributor").await;
+    let route = format!("/projects/{}/contributions/authorization", project.id);
+    let authorized: ContributionAuthorization = h.alice.get(&route).await.unwrap();
+    assert_eq!(authorized.repository, project.repository);
+    assert_eq!(authorized.project, project.id);
+    let linked = format!("{route}?agent={}", published.agent.id);
+    assert!(
+        h.alice
+            .get::<ContributionAuthorization>(&linked)
+            .await
+            .is_ok()
+    );
+    let agent = HubClient::new(&h.url, Secret::new(published.capability.unwrap())).unwrap();
+    assert!(
+        agent
+            .get::<ContributionAuthorization>(&route)
+            .await
+            .is_err()
+    );
+    let other = h.project().await;
+    assert!(
+        h.alice
+            .get::<ContributionAuthorization>(&format!(
+                "/projects/{}/contributions/authorization?agent={}",
+                other.id, published.agent.id
+            ))
+            .await
+            .is_err()
+    );
+    assert!(
+        h.alice
+            .get::<ContributionAuthorization>(&format!("{route}?task=missing"))
+            .await
+            .is_err()
+    );
+    assert!(
+        h.alice
+            .get::<ContributionAuthorization>(&format!("{route}?agent=a&agent=b"))
+            .await
+            .is_err()
+    );
+    // The previously cached proof for the contributor cannot authorize a revoked org.
+    h.fixture
+        .state
+        .users
+        .lock()
+        .unwrap()
+        .get_mut("bob")
+        .unwrap()["orgs"] = json!([]);
+    assert!(
+        h.alice
+            .get::<ContributionAuthorization>(&linked)
+            .await
+            .is_err()
+    );
+    // Read-only authorization itself also refreshes the invoking human's positive cache.
+    h.fixture
+        .state
+        .users
+        .lock()
+        .unwrap()
+        .get_mut("alice")
+        .unwrap()["orgs"] = json!([]);
+    assert!(
+        h.alice
+            .get::<ContributionAuthorization>(&route)
+            .await
+            .is_err()
+    );
+}

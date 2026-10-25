@@ -90,18 +90,13 @@ impl Collaboration {
         if binding.hub_id != origin.hub_id {
             return Err(ApiError::forbidden("checkout binding changed"));
         }
-        let account = self
-            .accounts
-            .current()
-            .await?
-            .account
-            .ok_or_else(ApiError::unauthorized)?;
+        let client = self.pinned(&binding).await?;
+        let account = &client.account;
         if account.issuer != publication.issuer || account.sub != publication.subject {
             return Err(ApiError::forbidden(
                 "publication belongs to another account",
             ));
         }
-        let client = self.pinned(&binding).await?;
         let members: Vec<Member> = client
             .get(&format!("/projects/{}/members", publication.project))
             .await
