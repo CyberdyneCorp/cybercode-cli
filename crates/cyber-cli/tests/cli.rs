@@ -334,7 +334,7 @@ fn bundled_workflows_can_be_turned_off() {
     assert_eq!(count(&mut disabled), 0);
     assert_eq!(
         count(&mut env.command(&["workflows", "list", "--format", "json"])),
-        6
+        cyber_workflow::bundled::modules().len()
     );
 }
 

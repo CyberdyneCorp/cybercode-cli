@@ -1,5 +1,5 @@
 //! The Workflows embedded in the binary (`workflows` → Saved and bundled workflows, Bundled
-//! workflow contracts): `review`, `audit`, `migrate`, `research`, `plan` and `solve`.
+//! workflow contracts): `review`, `audit`, `migrate`, `research`, `plan`, `solve` and `integrate`.
 //!
 //! Modules cannot import, so each embedded source is the module followed by the shared
 //! helpers of `bundled/common.js`, joined at compile time. The digest covers both, so a
