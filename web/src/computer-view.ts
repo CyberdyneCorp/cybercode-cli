@@ -18,6 +18,8 @@ export function computerPanel(model: ComputerControls): HTMLElement {
     const input = node("input"); input.value = model.selector; input.placeholder = "com.apple.TextEdit"; input.setAttribute("aria-label", "Application bundle ID or display ID"); input.dataset.focus = "computer-target"; input.addEventListener("input", () => { model.selector = input.value; });
     details.append(input, checkbox("Explicit whole display scope", model.display, (value) => { model.display = value; model.preview = undefined; model.changed(); }), button("Review native target", () => { void model.reviewTarget(); }, model.busy));
   }
+  if (model.latestFrame) { details.append(node("p", `Latest private capture: ${model.latestFrame.id} · ${new Date(model.latestFrame.created_ms).toLocaleTimeString()} · ${model.latestFrame.bytes} bytes`), button("View authorized capture", () => { void model.previewFrame(); }, model.frameBusy)); }
+  if (model.imageURL) { const image = node("img"); image.className = "computer-capture"; image.alt = "Authorized private native screenshot"; image.src = model.imageURL; details.append(image); }
   const preview = model.preview;
   if (preview) {
     details.append(node("p", preview.warning), node("pre", JSON.stringify(preview.target, null, 2)), node("p", `Review expires ${new Date(preview.expires_at).toLocaleTimeString()}. Grant lasts ${model.ttl} seconds.`));

@@ -18,6 +18,7 @@ Start with the [project README](../README.md) for setup, the feature mindmap and
 | Understand the shared-server design | [Architecture diagrams](architecture.md) |
 | Understand storage choices | [Storage architecture decision](decisions/0001-storage-architecture.md) |
 | Inspect product contracts | [OpenSpec specifications](../openspec/specs) |
+| Enable native screenshots and input with owner grants | [Native computer use](computer-use.md) |
 | Use the browser dashboard and remote approvals | [Dashboard guide](web-dashboard.md) |
 | Compare independent patches with tests and a judge | [Verified solve workflows](verified-workflows.md) |
 

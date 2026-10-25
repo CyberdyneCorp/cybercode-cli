@@ -453,6 +453,13 @@ impl Controller {
             .cloned()
     }
 
+    pub fn revoke_grant(&self, id: &str) {
+        if let Ok(state) = self.state.lock()
+            && state.grant.as_ref().is_some_and(|grant| grant.id == id)
+        {
+            self.stop();
+        }
+    }
     pub fn stop_session(&self, session: &str) {
         if let Ok(state) = self.state.lock()
             && state

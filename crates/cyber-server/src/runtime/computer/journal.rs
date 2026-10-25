@@ -138,6 +138,22 @@ impl Journal {
             serde_json::from_str(&target).map_err(|_| ComputerError::Storage)?,
         ))
     }
+    pub fn latest_frame(&self, session: &str, retention_days: u64) -> Result<Option<FrameInfo>> {
+        let session = session.to_owned();
+        let cutoff = if retention_days == 0 {
+            i64::MIN
+        } else {
+            super::wall_ms().saturating_sub(
+                retention_days
+                    .saturating_mul(86_400_000)
+                    .min(i64::MAX as u64) as i64,
+            )
+        };
+        let metadata=self.0.read(move|db|db.query_row("SELECT metadata FROM computer_frame WHERE session_id=?1 AND expired=0 AND ready=1 AND created_ms>?2 ORDER BY created_ms DESC,id DESC LIMIT 1",rusqlite::params![session,cutoff],|row|row.get::<_,String>(0)).optional().map_err(Into::into))?;
+        metadata
+            .map(|metadata| serde_json::from_str(&metadata).map_err(|_| ComputerError::Storage))
+            .transpose()
+    }
     pub fn stored_bytes(&self) -> Result<u64> {
         Ok(self.0.read(|db| {
             db.query_row(

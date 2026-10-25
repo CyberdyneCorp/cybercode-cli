@@ -7,6 +7,22 @@
 #include <time.h>
 #include <unistd.h>
 #include <dlfcn.h>
+#include <fcntl.h>
+#include <sys/file.h>
+#include <sys/stat.h>
+#include <errno.h>
+
+// A per-user host lease survives caller cancellation while a native worker still
+// owns the descriptor. CLOEXEC prevents agents/subprocesses inheriting authority.
+int cyber_computer_lease_acquire(void) {
+    char path[128]; snprintf(path,sizeof(path),"/private/tmp/cyber-computer-%u.lock",getuid());
+    int fd=open(path,O_CREAT|O_RDWR|O_CLOEXEC|O_NOFOLLOW,0600);if(fd<0)return -2;
+    struct stat info;
+    if(fstat(fd,&info)!=0 || !S_ISREG(info.st_mode) || info.st_uid!=getuid() || info.st_nlink!=1 || fchmod(fd,0600)!=0) {close(fd);return -2;}
+    if(flock(fd,LOCK_EX|LOCK_NB)!=0) {int reason=errno;close(fd);return reason==EWOULDBLOCK ? -1 : -2;}
+    return fd;
+}
+void cyber_computer_lease_release(int fd) {if(fd>=0)close(fd);}
 
 // No native request or screenshot is logged. All output has explicit ownership.
 void cyber_computer_free(void *pointer) { free(pointer); }

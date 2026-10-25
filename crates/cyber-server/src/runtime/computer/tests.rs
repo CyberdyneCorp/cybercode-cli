@@ -8,6 +8,7 @@ struct Fake {
     captures: AtomicUsize,
     fail: AtomicBool,
     wrong_capture: AtomicBool,
+    host_lease: Arc<AtomicBool>,
     block_resolve: Mutex<Option<(Arc<std::sync::Barrier>, Arc<std::sync::Barrier>)>>,
 }
 impl Default for Fake {
@@ -32,11 +33,25 @@ impl Default for Fake {
             captures: AtomicUsize::new(0),
             fail: AtomicBool::new(false),
             wrong_capture: AtomicBool::new(false),
+            host_lease: Arc::new(AtomicBool::new(false)),
             block_resolve: Mutex::new(None),
         }
     }
 }
+struct FakeLease(Arc<AtomicBool>);
+impl Drop for FakeLease {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
 impl Backend for Fake {
+    fn acquire_lease(&self) -> std::result::Result<cyber_computer::backend::HostLease, Error> {
+        if self.host_lease.swap(true, Ordering::SeqCst) {
+            return Err(Error::Busy);
+        }
+        Ok(Arc::new(FakeLease(Arc::clone(&self.host_lease))))
+    }
+
     fn health(&self, _prompt: bool) -> std::result::Result<Health, Error> {
         Ok(Health {
             supported: true,
@@ -399,4 +414,86 @@ fn stop_fences_an_owner_allow_already_resolving_its_target() {
     release.wait();
     assert!(task.join().unwrap().is_err());
     assert!(computer.status("owner").unwrap().grant.is_none());
+}
+
+#[test]
+fn native_host_lease_excludes_a_second_runtime_until_explicit_stop() {
+    let fixture = Fixture::new();
+    fixture.arm();
+    let other = Computer::new(
+        Arc::clone(&fixture.store),
+        fixture._root.path().join("second"),
+        Arc::new(|| ComputerPolicy {
+            enabled: true,
+            retention_days: 1,
+        }),
+        Arc::new(|_| true),
+        fixture.backend.clone(),
+    )
+    .unwrap();
+    let preview = other
+        .preview(
+            "other",
+            Selector {
+                app: Some("test.fixture".into()),
+                display: None,
+            },
+        )
+        .unwrap();
+    assert!(other.allow("other", &preview.id, None, false).is_err());
+    fixture.computer.stop_all();
+    let preview = other
+        .preview(
+            "other",
+            Selector {
+                app: Some("test.fixture".into()),
+                display: None,
+            },
+        )
+        .unwrap();
+    other.allow("other", &preview.id, None, false).unwrap();
+    assert!(other.status("other").unwrap().grant.is_some());
+}
+#[test]
+fn incomplete_capture_artifacts_never_become_readable_frame_authority() {
+    let fixture = Fixture::new();
+    fixture.arm();
+    let frame = fixture.frame();
+    assert_eq!(
+        fixture
+            .computer
+            .status("owner")
+            .unwrap()
+            .latest_frame
+            .unwrap()
+            .id,
+        frame.id
+    );
+    let id = frame.id.clone();
+    fixture
+        .store
+        .transaction(move |tx| {
+            tx.execute("UPDATE computer_frame SET ready=0 WHERE id=?1", [id])?;
+            Ok(())
+        })
+        .unwrap();
+    assert!(matches!(
+        fixture.computer.frame_bytes("owner", &frame.id),
+        Err(ComputerError::FrameExpired)
+    ));
+    assert!(
+        fixture
+            .computer
+            .status("owner")
+            .unwrap()
+            .latest_frame
+            .is_none()
+    );
+    assert!(
+        fixture
+            .computer
+            .input("owner", "incomplete", &frame.id, motion(), true)
+            .is_err()
+    );
+    assert_eq!(fixture.backend.inputs.load(Ordering::SeqCst), 0);
 }

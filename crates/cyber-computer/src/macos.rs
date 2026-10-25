@@ -8,6 +8,8 @@ use super::{Backend, Capture, Health, Native, NativeTarget, Selector};
 use crate::{Action, Error, control::InputPermit};
 
 unsafe extern "C" {
+    fn cyber_computer_lease_acquire() -> i32;
+    fn cyber_computer_lease_release(fd: i32);
     fn cyber_computer_health(prompt: bool, output: *mut *mut c_char) -> i32;
     fn cyber_computer_resolve(selector: *const c_char, output: *mut *mut c_char) -> i32;
     fn cyber_computer_capture(
@@ -70,7 +72,26 @@ extern "C" fn cancelled(context: *const c_void) -> bool {
     }
 }
 
+struct NativeLease(i32);
+impl Drop for NativeLease {
+    fn drop(&mut self) {
+        unsafe {
+            cyber_computer_lease_release(self.0);
+        }
+    }
+}
 impl Backend for Native {
+    fn acquire_lease(&self) -> Result<super::HostLease, Error> {
+        let fd = unsafe { cyber_computer_lease_acquire() };
+        if fd == -1 {
+            return Err(Error::Busy);
+        }
+        if fd < 0 {
+            return Err(Error::Native("native per-user host lock is unavailable"));
+        }
+        Ok(std::sync::Arc::new(NativeLease(fd)))
+    }
+
     fn health(&self, prompt: bool) -> Result<Health, Error> {
         let mut output = std::ptr::null_mut();
         let mut health: Health = result(

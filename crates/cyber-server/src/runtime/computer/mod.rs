@@ -19,7 +19,7 @@ use std::{
 
 use cyber_computer::{
     Action,
-    backend::{Backend, Health, NativeTarget, Selector},
+    backend::{Backend, Health, HostLease, NativeTarget, Selector},
     control::{Admission, Controller, Target},
 };
 use cyber_store::Store;
@@ -76,6 +76,7 @@ pub struct GrantView {
 #[schemars(rename = "ComputerStatus")]
 pub struct Status {
     pub enabled: bool,
+    pub latest_frame: Option<FrameInfo>,
     pub health: Health,
     pub grant: Option<GrantView>,
     pub unknown_operations: Vec<UnknownOperation>,
@@ -108,7 +109,8 @@ struct Reviewed {
 }
 
 pub struct Computer {
-    controller: Controller,
+    controller: Arc<Controller>,
+    host_lease: Arc<Mutex<Option<(String, String, HostLease)>>>,
     backend: Arc<dyn Backend>,
     journal: journal::Journal,
     artifacts: PathBuf,
@@ -147,6 +149,7 @@ impl Computer {
         self.preview_generation
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         self.controller.stop();
+        self.release_host_lease(None);
         if let Ok(mut previews) = self.previews.lock() {
             previews.clear();
         }
@@ -181,7 +184,12 @@ impl Computer {
         let guard =
             Arc::new(move |session: &str| checked_policy().enabled && checked_attendance(session));
         Ok(Self {
-            controller: Controller::with_supervisor(policy().enabled, guard, supervisor),
+            controller: Arc::new(Controller::with_supervisor(
+                policy().enabled,
+                guard,
+                supervisor,
+            )),
+            host_lease: Arc::new(Mutex::new(None)),
             backend,
             journal,
             artifacts,
@@ -198,6 +206,9 @@ impl Computer {
     fn enabled(&self) -> bool {
         let enabled = (self.policy)().enabled;
         self.controller.set_enabled(enabled);
+        if !enabled {
+            self.release_host_lease(None);
+        }
         enabled
     }
     fn require_enabled(&self) -> Result<()> {
@@ -231,13 +242,20 @@ impl Computer {
         Ok(Status {
             enabled: self.enabled(),
             health: self.backend.health(false)?,
+            latest_frame: self
+                .journal
+                .latest_frame(session, (self.policy)().retention_days)?,
             grant: self.grant(session),
             unknown_operations: self.journal.unknown(session)?,
         })
     }
     fn global_grant(&self) -> Option<GrantView> {
         let now = self.now();
-        let grant = self.controller.current(now)?;
+        let Some(grant) = self.controller.current(now) else {
+            self.controller.stop();
+            self.release_host_lease(None);
+            return None;
+        };
         Some(GrantView {
             id: grant.id,
             session_id: grant.session_id,
@@ -333,8 +351,20 @@ impl Computer {
                     .ok_or(ComputerError::Invalid("invalid grant duration"))
             })
             .transpose()?;
-        self.controller
-            .arm(self.admission(session, &scope, true, true)?, ttl)?;
+        let facts = self.admission(session, &scope, true, true)?;
+        // Release stale grants before acquiring a process-wide native lock.
+        if self.controller.current(self.now()).is_none() {
+            self.controller.stop();
+            self.release_host_lease(None);
+        }
+        let lease = self.backend.acquire_lease()?;
+        let grant = self.controller.arm(facts, ttl)?;
+        *self.host_lease.lock().map_err(|_| ComputerError::Storage)? =
+            Some((grant.id.clone(), session.into(), lease));
+        self.expire_host_lease(
+            grant.id.clone(),
+            grant.expires_at.saturating_sub(self.now()),
+        );
         // Stop increments the review epoch before revoking the controller. A
         // Stop racing between review validation and arm must also fence the new
         // grant; checking again closes the check/arm gap without blocking Stop.
@@ -344,6 +374,7 @@ impl Computer {
                 .load(std::sync::atomic::Ordering::Acquire)
         {
             self.controller.stop_session(session);
+            self.release_host_lease(Some(session));
             return Err(ComputerError::Conflict);
         }
         self.grant(session).ok_or(ComputerError::Conflict)
@@ -352,6 +383,7 @@ impl Computer {
         self.preview_generation
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         self.controller.stop_session(session);
+        self.release_host_lease(Some(session));
         if let Ok(mut previews) = self.previews.lock() {
             previews.retain(|_, value| value.preview.session_id != session);
         }
@@ -367,6 +399,7 @@ impl Computer {
             .current(self.now())
             .filter(|grant| grant.session_id == session)
             .ok_or(cyber_computer::Error::NotArmed)?;
+        let _host_lease = self.worker_lease(session)?;
         let selector = self.selector_for_identity(&grant.target)?;
         let target = self.backend.resolve(&selector)?;
         let scope = target.target();
@@ -437,6 +470,7 @@ impl Computer {
         if let Some(receipt) = self.journal.replay(session, operation, &fingerprint)? {
             return Ok(receipt);
         }
+        let _host_lease = self.worker_lease(session)?;
         let (_, target) = self.journal.read_frame(
             session,
             frame_id,
@@ -480,6 +514,42 @@ impl Computer {
             return Err(ComputerError::Unknown);
         }
         Ok(receipt)
+    }
+    fn worker_lease(&self, session: &str) -> Result<HostLease> {
+        self.host_lease
+            .lock()
+            .map_err(|_| ComputerError::Storage)?
+            .as_ref()
+            .filter(|(_, owner, _)| owner == session)
+            .map(|(_, _, lease)| Arc::clone(lease))
+            .ok_or(cyber_computer::Error::NotArmed.into())
+    }
+    fn release_host_lease(&self, session: Option<&str>) {
+        if let Ok(mut held) = self.host_lease.lock()
+            && held
+                .as_ref()
+                .is_some_and(|(_, owner, _)| session.is_none_or(|session| owner == session))
+        {
+            held.take();
+        }
+    }
+    fn expire_host_lease(&self, id: String, milliseconds: u64) {
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            let controller = Arc::downgrade(&self.controller);
+            let held = Arc::downgrade(&self.host_lease);
+            runtime.spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(milliseconds)).await;
+                if let Some(controller) = controller.upgrade() {
+                    controller.revoke_grant(&id);
+                }
+                if let Some(held) = held.upgrade()
+                    && let Ok(mut held) = held.lock()
+                    && held.as_ref().is_some_and(|(grant, _, _)| grant == &id)
+                {
+                    held.take();
+                }
+            });
+        }
     }
     fn selector_for_identity(&self, target: &Target) -> Result<Selector> {
         let identity = &target.identity;

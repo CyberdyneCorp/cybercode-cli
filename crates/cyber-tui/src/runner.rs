@@ -322,6 +322,18 @@ async fn event_loop(
         let actions = memory_persistence.gate(app, actions);
         dispatch(app, client, store, &tx, &mut refresh, terminal, actions);
     }
+    // A deliberate terminal exit revokes its Session even if another owner
+    // attachment remains; a failed network delivery is still fenced by presence.
+    if app.computer.supported {
+        let _ = tokio::time::timeout(
+            Duration::from_secs(2),
+            client.at(&app.session.directory).post(
+                &format!("/sessions/{}/computer/stop", app.session.id),
+                json!({}),
+            ),
+        )
+        .await;
+    }
     Ok(())
 }
 

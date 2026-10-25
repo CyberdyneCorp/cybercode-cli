@@ -121,7 +121,14 @@ impl Capture {
     }
 }
 
+pub type HostLease = std::sync::Arc<dyn Send + Sync>;
 pub trait Backend: Send + Sync {
+    /// Native implementations coordinate all server processes of this OS user.
+    /// Fake adapters use a process-local no-op unless testing lease exclusion.
+    fn acquire_lease(&self) -> Result<HostLease, Error> {
+        Ok(std::sync::Arc::new(()))
+    }
+
     /// Prompting is allowed only from the explicit owner setup endpoint.
     fn health(&self, prompt: bool) -> Result<Health, Error>;
     fn resolve(&self, selector: &Selector) -> Result<NativeTarget, Error>;
