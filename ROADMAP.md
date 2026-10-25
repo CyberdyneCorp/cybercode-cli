@@ -182,7 +182,7 @@ Local use never depends on CyberdyneAuth. Self-hosters can point `account.issuer
 
 ## Requirement inventory
 
-The table counts requirements in `openspec/specs` by phase tag (49 capabilities, 0 untagged). It is generated from the first phase tag of each requirement; use `python3 scripts/spec_inventory.py` to refresh it. Later-phase extensions inside a requirement do not add another count.
+The table counts requirements in `openspec/specs` by phase tag (51 capabilities, 0 untagged). It is generated from the first phase tag of each requirement; use `python3 scripts/spec_inventory.py` to refresh it. Later-phase extensions inside a requirement do not add another count.
 
 The pending change `defer-editor-integration` moves 13 `editor-integration` requirements from P1 to P3. The table reflects canonical specs, so it changes when that change is archived (P1 227 → 214, P3 145 → 158).
 
@@ -216,6 +216,7 @@ The pending change `defer-editor-integration` moves 13 `editor-integration` requ
 | `org-policy` |  |  |  | 15 |  | 15 |
 | `permissions-modes` | 15 | 7 |  |  |  | 22 |
 | `plugins-marketplace` |  | 14 | 2 |  | 6 | 22 |
+| `project-collaboration` |  |  |  | 2 |  | 2 |
 | `provider-catalog` | 17 | 6 | 2 |  |  | 25 |
 | `provider-credentials` | 12 | 7 |  | 2 |  | 21 |
 | `remote-control` |  |  |  | 17 | 1 | 18 |
@@ -232,12 +233,13 @@ The pending change `defer-editor-integration` moves 13 `editor-integration` requ
 | `tool-registry` | 15 | 3 |  |  |  | 18 |
 | `tui` | 19 | 32 | 5 | 1 | 1 | 58 |
 | `vcs-integration` | 2 | 3 |  | 10 |  | 15 |
+| `verified-integrations` |  |  | 4 |  |  | 4 |
 | `verified-workflows` |  |  | 5 |  |  | 5 |
 | `web-client` |  | 1 |  | 1 | 1 | 3 |
-| `workflows` |  |  | 31 | 2 | 1 | 34 |
+| `workflows` |  |  | 32 | 2 | 1 | 35 |
 | `workspace-trust` | 4 |  |  |  |  | 4 |
 | `worktrees` |  | 9 | 4 |  |  | 13 |
-| **Total** | **330** | **270** | **125** | **159** | **15** | **899** |
+| **Total** | **330** | **270** | **130** | **161** | **15** | **906** |
 
 
 Most capabilities span phases. A spec is a product contract, and each phase implements the slice tagged for it. For example, `tui` has its basics in P0, rewind and modes in P1, the agent view and workflow monitor in P2, remote indicators in P3 and mods panes in P4.

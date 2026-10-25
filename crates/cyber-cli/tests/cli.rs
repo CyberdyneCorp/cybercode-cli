@@ -2187,16 +2187,21 @@ fn unix_status_fixture_waits_for_a_delayed_request_on_a_nonblocking_accepted_str
 #[test]
 fn lsp_status_reads_a_registered_unix_socket_without_tcp_startup() {
     let env = Env::new();
-    let socket = env.root.join("server.sock");
+    let socket = env.root.join("cyber-home/state/server.sock");
+    std::fs::create_dir_all(socket.parent().unwrap()).unwrap();
     let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
     register_status_listener(&env, "", Some(&socket));
     let root = env.root.clone();
     listener.set_nonblocking(true).unwrap();
     let server = std::thread::spawn(move || {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        // Keep the fixture available through cold CLI startup; the client also
+        // bounds its own request.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         let stream = loop {
-            if let Ok((stream, _)) = listener.accept() {
-                break stream;
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) => panic!("Unix fixture accept error: {error:?}"),
             }
             assert!(
                 std::time::Instant::now() < deadline,
