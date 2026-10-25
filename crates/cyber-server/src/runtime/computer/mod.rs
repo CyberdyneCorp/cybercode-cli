@@ -126,6 +126,32 @@ pub struct Computer {
     preview_generation: std::sync::atomic::AtomicU64,
 }
 
+/// Prepare private capture storage before any model/plugin process can launch.
+/// Bootstrap registers this directory in its home-scoped sandbox hidden paths;
+/// modes alone do not isolate same-user subprocesses or full-access owner shells.
+pub fn prepare_artifact_root(path: &std::path::Path) -> Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            return Err(ComputerError::Storage);
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir_all(path)?
+        }
+        Err(_) => return Err(ComputerError::Storage),
+    }
+    let metadata = std::fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(ComputerError::Storage);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
 /// Runs in the authoritative Session-deletion transaction. Minimal native
 /// outcome/unknown-action ledger rows remain for reconciliation, never pixels.
 pub(super) fn mark_session_deleted(
@@ -201,6 +227,7 @@ impl Computer {
         backend: Arc<dyn Backend>,
         supervisor: Arc<dyn Fn() -> bool + Send + Sync>,
     ) -> Result<Self> {
+        prepare_artifact_root(&artifacts)?;
         let journal = journal::Journal(store);
         journal.recover()?;
         let (checked_policy, checked_attendance) = (Arc::clone(&policy), Arc::clone(&attendance));

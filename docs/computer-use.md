@@ -74,6 +74,8 @@ Typed strings remain ephemeral to dispatch; durable tool arguments, audit rows a
 
 ## Owner API and SDK
 
+The capture directory is prepared before model/plugin subprocesses start and registered as a hidden path for that installation's home. Built-in filesystem tools and sandboxed commands cannot bypass Session-bound previews by reading another Session's PNG, even with explicit read grants. This is a tool/sandbox boundary: full-access or arbitrary owner shells still run with the host user's authority, not a separate OS identity.
+
 Private capture previews are an explicit owner action: the dashboard fetches a bounded PNG through authenticated headers, keeps its Blob URL in memory and revokes it on Session changes/logout. Captures are never loaded through a password-bearing URL.
 
 The owner API exposes `/api/v1/tools/computer/health`, `/setup`, `/stop`, and `/api/v1/sessions/{sessionID}/computer` with `/preview`, `/allow`, `/stop` and `/frames/{frameID}`. All responses use `Cache-Control: no-store`. Session routes require the exact Location. The owner password grants host control authority; these are not hub-member or peer grants. The CLI refuses setup/arming when invoked with an agent Session marker, but a local process with arbitrary owner-shell access can bypass such client checks; this feature does not add OS privilege separation. Stop revokes the Sessions managed by the addressed server; a separate custom-home/embedded server has its own Stop endpoint. The per-user native lease still prevents concurrent input across those servers. Use trusted HTTPS/SSH forwarding for access away from the host.

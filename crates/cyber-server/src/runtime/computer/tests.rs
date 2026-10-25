@@ -378,6 +378,7 @@ fn wrong_native_capture_and_artifact_failure_are_settled_without_a_frame() {
     assert!(receipt.frame.is_none());
     assert!(f.computer.screenshot("owner", "wrong").unwrap().replayed);
     f.backend.wrong_capture.store(false, Ordering::SeqCst);
+    std::fs::remove_dir(&f.computer.artifacts).unwrap();
     std::fs::write(&f.computer.artifacts, b"not a directory").unwrap();
     let receipt = f.computer.screenshot("owner", "disk").unwrap();
     assert_eq!(receipt.outcome, "unknown");
@@ -769,4 +770,26 @@ fn deleting_capture_owner_expires_pixels_even_without_retention_and_keeps_unknow
     assert_eq!(fixture.computer.journal.stored_bytes().unwrap(), 0);
     let preserved=fixture.store.read(|db|db.query_row("SELECT COUNT(*) FROM computer_operation WHERE operation_key='unsettled-delete' AND status='intent'",[],|row|row.get::<_,i64>(0)).map_err(Into::into)).unwrap();
     assert_eq!(preserved, 1);
+}
+
+#[test]
+fn private_capture_storage_is_prepared_and_refuses_non_directory_roots() {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path().join("computer");
+    prepare_artifact_root(&root).unwrap();
+    assert!(root.is_dir());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&root).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        let alias = temporary.path().join("alias");
+        std::os::unix::fs::symlink(&root, &alias).unwrap();
+        assert!(prepare_artifact_root(&alias).is_err());
+    }
+    let file = temporary.path().join("file");
+    std::fs::write(&file, "owner fixture").unwrap();
+    assert!(prepare_artifact_root(&file).is_err());
 }

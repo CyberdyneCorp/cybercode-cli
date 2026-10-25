@@ -48,3 +48,8 @@
 - **GIVEN** a Session owns private captures with time-based retention disabled or a capture worker is finishing
 - **WHEN** the Session is deleted
 - **THEN** its frames become unavailable atomically with deletion, file cleanup is attempted and retried after failures, late workers cannot recreate capture artifacts, and minimal native unknown-outcome evidence remains available for reconciliation without screenshot bytes
+
+#### Scenario: Another Session attempts a filesystem bypass
+- **GIVEN** one Session owns a private computer capture and another model Session has otherwise allowed reads
+- **WHEN** that Session uses a built-in file tool or a sandboxed subprocess to read the capture directory
+- **THEN** the private root is hidden before the bytes are read, explicit readable-path grants do not re-expose it, and the authorized owner frame API remains available; arbitrary full-access owner shells are outside this sandbox guarantee

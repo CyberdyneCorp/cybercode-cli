@@ -8,7 +8,7 @@ Status: automated implementation checks passed; **controlled live application ca
 |---|---|
 | `cargo test -p cyber-computer --lib` | 18 passed: geometry, input bounds/redaction, expiring grants, rate limits, cross-controller/session fencing, supervisor and independent Stop races |
 | `cargo test -p cyber-core --test config native` | 2 passed: global-only authority and managed feature locks |
-| Server `runtime::computer::tests` | 16 passed: private artifacts, incomplete writes, retention, durable intent/settlement/replay/unknown acknowledgement, cross-Runtime host lease and busy-worker Stop |
+| Server `runtime::computer::tests` | 17 passed: private artifacts, incomplete writes, retention, durable intent/settlement/replay/unknown acknowledgement, cross-Runtime host lease and busy-worker Stop |
 | `cargo test -p cyber-server --test computer` | 3 passed with fake native adapter: Session deletion with retention disabled, real TCP auth/Location/target review/global Stop, self-approval and model/agent/Mode widening refusal, durable typed-text privacy |
 | Exact Session presence | 3 passed, including disconnect/reconnect and lease expiry before reattachment; grants and outstanding reviews cannot revive |
 | Tool schema, TUI control state, CLI/doctor, client-owned presence stream | 5 focused tests passed; one core settings unit also passed |
@@ -17,6 +17,7 @@ Status: automated implementation checks passed; **controlled live application ca
 | OpenAPI / SDK generation | Export test and generator consistency passed; TypeScript typecheck passed |
 | SDK suite | 124 passed against the frozen CLI; 2 account/hub cases skip macOS to avoid native Keychain writes; no live account/provider claims |
 | Browser modules / private transport | 44 passed; typecheck and generated bundle check passed |
+| Private filesystem boundary | Exact-path/canonical-alias unit, home-scoped bootstrap unit, cross-Session built-in read refusal with authorized frame API positive control, and actual default/read-only subprocess canary tests passed. Strict all-target Clippy passed for computer/sandbox/server/tools/app/CLI; no OS input or new consent-binary build was performed. |
 
 Three focused Chromium dashboard scenarios passed against the frozen built CLI and its embedded assets, including global cross-Session banner, target review/arming, authenticated private PNG rendering under the actual CSP and logout Stop. Native HTTP responses were simulated; the fixture did not call an OS adapter or request consent. The three doctor/feature-list regressions exposed by the first CI run also pass locally.
 
