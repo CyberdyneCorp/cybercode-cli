@@ -230,18 +230,11 @@ pub fn redacted_input(input: Option<&serde_json::Value>) -> serde_json::Value {
         }
         Err(_) => json!({"action":"invalid","arguments_redacted":true}),
     };
-    if let Some(frame) = frame.and_then(|value| {
-        value
-            .as_str()
-            .filter(|value| {
-                value.len() <= 80
-                    && value
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-            })
-            .map(str::to_owned)
-    }) {
-        value["frame_id"] = json!(frame);
+    // Before admission the model-supplied frame label is untrusted text too.
+    // The native journal stores the real reference only after validating its
+    // Session/frame binding; hooks and initial call events receive a digest.
+    if let Some(frame) = frame.and_then(|value| value.as_str().map(str::to_owned)) {
+        value["frame_sha256"] = json!(format!("{:x}", Sha256::digest(frame.as_bytes())));
     }
     value
 }
@@ -352,7 +345,7 @@ mod tests {
     fn malformed_and_valid_tool_records_never_persist_raw_typed_text() {
         let secret = "private typing fixture";
         for input in [
-            serde_json::json!({"action":"type","text":secret}),
+            serde_json::json!({"action":"type","text":secret,"frame_id":secret}),
             serde_json::json!({"action":"bad","text":secret,"unrecognized":secret}),
             serde_json::json!({"action":"screenshot","text":secret}),
         ] {
