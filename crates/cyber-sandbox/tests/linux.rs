@@ -307,3 +307,51 @@ async fn deny_read_glob_launches_in_a_large_checkout() {
     assert!(out.contains("launched"), "{out}");
     assert!(!out.contains("SECRET"), "{out}");
 }
+
+#[tokio::test]
+async fn nested_private_roots_launch_without_exposing_or_overwriting_credentials() {
+    let s = setup();
+    let state = s.root.join("private-state");
+    let tls = state.join("peer-tls");
+    std::fs::create_dir_all(&tls).unwrap();
+    let password = state.join("password");
+    let key = tls.join("key.pem");
+    std::fs::write(&password, "PRIVATE_PASSWORD_CANARY").unwrap();
+    std::fs::write(&key, "PRIVATE_TLS_CANARY").unwrap();
+    let alias = s.root.join("private-alias");
+    std::os::unix::fs::symlink(&state, &alias).unwrap();
+    let public = s.root.join("public-control.txt");
+    std::fs::write(&public, "PUBLIC_CONTROL_READABLE").unwrap();
+    for config in [json!({}), json!({"sandbox":{"policy":"read-only"}})] {
+        let mut l = launch(&s, config, None);
+        // Register the child first and aliases too: neither ordering nor a
+        // canonical alias may create a mountpoint inside the sealed parent.
+        l.unreadable.extend([
+            tls.clone(),
+            state.clone(),
+            alias.clone(),
+            alias.join("peer-tls/key.pem"),
+        ]);
+        let (ok, output) = run(
+            &l,
+            &format!(
+                "cat {}; cat {}; printf overwrite > {}; printf launched; cat {}",
+                q(&password),
+                q(&alias.join("peer-tls/key.pem")),
+                q(&password),
+                q(&public)
+            ),
+        )
+        .await;
+        assert!(ok, "sandbox did not launch: {output}");
+        assert!(output.contains("launched"), "{output}");
+        assert!(output.contains("PUBLIC_CONTROL_READABLE"), "{output}");
+        assert!(!output.contains("PRIVATE_PASSWORD_CANARY"), "{output}");
+        assert!(!output.contains("PRIVATE_TLS_CANARY"), "{output}");
+        assert_eq!(
+            std::fs::read_to_string(&password).unwrap(),
+            "PRIVATE_PASSWORD_CANARY"
+        );
+        assert_eq!(std::fs::read_to_string(&key).unwrap(), "PRIVATE_TLS_CANARY");
+    }
+}

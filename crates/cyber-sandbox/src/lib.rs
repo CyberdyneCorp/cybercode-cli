@@ -12,6 +12,8 @@ mod profiles;
 pub mod proxy;
 #[cfg(target_os = "macos")]
 mod seatbelt;
+#[cfg(any(target_os = "linux", test))]
+mod unreadable_roots;
 #[cfg(windows)]
 pub mod windows_confine;
 #[cfg(windows)]
