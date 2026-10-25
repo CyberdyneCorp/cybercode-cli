@@ -1517,7 +1517,12 @@ impl Inner {
                 .recent_calls
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
-            recent.push(format!("{}\u{0}{}", call.name, call.arguments));
+            let arguments = if call.name == "computer" {
+                cyber_computer::action::redacted_input(call.input.as_ref()).to_string()
+            } else {
+                call.arguments.clone()
+            };
+            recent.push(format!("{}\u{0}{}", call.name, arguments));
             let n = recent.len();
             n >= 3 && recent[n - 3..].iter().all(|f| *f == recent[n - 1])
         };
@@ -1545,7 +1550,11 @@ impl Inner {
             action: "doom_loop".into(),
             resources: vec![call.name.clone()],
             always_patterns: vec![call.name.clone()],
-            metadata: serde_json::json!({ "arguments": call.arguments }),
+            metadata: if call.name == "computer" {
+                serde_json::json!({"arguments":cyber_computer::action::redacted_input(call.input.as_ref())})
+            } else {
+                serde_json::json!({ "arguments": call.arguments })
+            },
         };
         // An interrupt abandons requests only after the Drain ends, so the wait must
         // end with the Drain's cancellation instead of waiting for that.
@@ -1590,10 +1599,16 @@ impl Inner {
                 ),
             ));
         }
-        let input = call
-            .input
-            .clone()
-            .ok_or_else(|| (CallStatus::Error, invalid_arguments(&call.arguments)))?;
+        let input = call.input.clone().ok_or_else(|| {
+            (
+                CallStatus::Error,
+                if call.name == "computer" {
+                    "Invalid native computer action".into()
+                } else {
+                    invalid_arguments(&call.arguments)
+                },
+            )
+        })?;
         if def.retry_safety != RetrySafety::ReadOnly && !paused.is_empty() {
             return Err((
                 CallStatus::Error,

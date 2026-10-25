@@ -227,3 +227,73 @@ async fn owner_routes_bind_auth_location_exact_review_and_global_stop() {
     assert_eq!(backend.prompts.load(Ordering::SeqCst), 0);
     task.abort();
 }
+
+#[tokio::test]
+async fn native_tool_arguments_and_doom_loop_metadata_never_persist_typed_content() {
+    use cyber_server::runtime::{Admission, Delivery, PermissionReply, RetrySafety};
+    let secret = "native-private-sentinel";
+    let args = r#"{"action":"type","frame_id":"cuf_00000000000000000000000000","text":"native-private-sentinel"}"#;
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                support::tools(&[
+                    ("one", "computer", args),
+                    ("two", "computer", args),
+                    ("three", "computer", args),
+                ]),
+                support::text("done"),
+            ],
+        )],
+        ..Setup::default()
+    });
+    h.tools
+        .defs
+        .lock()
+        .unwrap()
+        .push(support::def("computer", RetrySafety::Never, false));
+    h.tools
+        .set("computer", support::Behavior::Return("posted".into()));
+    let id = h.session().await;
+    h.runtime
+        .admit(&id, Admission::text("native fixture", Delivery::Queue))
+        .await
+        .unwrap();
+    let request = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if let Some(request) = h
+                .runtime
+                .pending_requests(Some(&id))
+                .into_iter()
+                .find(|r| r.action.as_deref() == Some("doom_loop"))
+            {
+                break request;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!request.metadata.to_string().contains(secret));
+    assert!(request.metadata.to_string().contains("text_sha256"));
+    h.runtime
+        .reply_permission(&request.id, PermissionReply::Reject { message: None })
+        .unwrap();
+    h.settle(&id).await;
+    for event in h.store.read_events(&id, -1, 500).unwrap().events {
+        assert!(
+            !event.data.to_string().contains(secret),
+            "raw native input in {}",
+            event.kind
+        );
+    }
+    assert!(
+        h.tools
+            .executed
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|inv| inv.input.to_string().contains(secret)),
+        "actual native invocation remains ephemeral until dispatch"
+    );
+}
