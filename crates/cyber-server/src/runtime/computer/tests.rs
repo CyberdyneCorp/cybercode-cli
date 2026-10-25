@@ -312,6 +312,18 @@ fn recovery_does_not_replay_intents_or_restore_grants() {
     assert_eq!(receipt.outcome, "unknown");
     assert!(receipt.replayed);
     assert_eq!(f.computer.journal.unknown("owner").unwrap().len(), 1);
+    let unknown = f.computer.journal.unknown_all().unwrap();
+    f.computer.journal.acknowledge(&unknown).unwrap();
+    assert_eq!(
+        f.computer
+            .journal
+            .replay("owner", "crashed", "digest")
+            .unwrap()
+            .unwrap()
+            .outcome,
+        "unknown",
+        "acknowledgement is not evidence of a native outcome"
+    );
     let restarted = Computer::new(
         Arc::clone(&f.store),
         f._root.path().join("computer"),

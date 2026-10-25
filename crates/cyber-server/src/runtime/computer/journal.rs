@@ -37,7 +37,7 @@ impl Journal {
             .unwrap_or(Receipt {
                 operation_id: operation,
                 action,
-                outcome: if status == "intent" {
+                outcome: if matches!(status.as_str(), "intent" | "unknown_acknowledged") {
                     "unknown".into()
                 } else {
                     status
