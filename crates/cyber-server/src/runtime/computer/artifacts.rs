@@ -65,6 +65,14 @@ impl Computer {
             created = true;
             file.write_all(&capture.png)?;
             file.sync_all()?;
+            let id = info.id.clone();
+            self.journal.0.transaction(move |tx| {
+                tx.execute(
+                    "UPDATE computer_frame SET ready=1 WHERE id=?1 AND expired=0",
+                    [id],
+                )?;
+                Ok(())
+            })?;
             Ok(())
         })();
         if let Err(error) = written {

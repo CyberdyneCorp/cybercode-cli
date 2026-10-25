@@ -20,6 +20,7 @@ CREATE TABLE computer_frame (
     bytes INTEGER NOT NULL,
     created_ms INTEGER NOT NULL,
     expires_ms INTEGER,
+    ready INTEGER NOT NULL DEFAULT 0,
     expired INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX computer_frame_session ON computer_frame(session_id,created_ms);

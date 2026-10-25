@@ -129,7 +129,7 @@ impl Journal {
                     .min(i64::MAX as u64) as i64,
             )
         };
-        let row = self.0.read(move |db| db.query_row("SELECT metadata,native_target FROM computer_frame WHERE id=?1 AND session_id=?2 AND expired=0 AND created_ms>?3",rusqlite::params![frame,session,cutoff],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?))).optional().map_err(Into::into))?;
+        let row = self.0.read(move |db| db.query_row("SELECT metadata,native_target FROM computer_frame WHERE id=?1 AND session_id=?2 AND expired=0 AND ready=1 AND created_ms>?3",rusqlite::params![frame,session,cutoff],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?))).optional().map_err(Into::into))?;
         let Some((info, target)) = row else {
             return Err(ComputerError::FrameExpired);
         };
