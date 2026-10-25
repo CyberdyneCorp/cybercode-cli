@@ -1291,6 +1291,9 @@ impl ToolHost for BuiltinHost {
             if let Err(error) = self.check_agent_tool(&inv) {
                 return ToolOutcome::Failed(error);
             }
+            if inv.name == "computer" && !crate::tools::computer::valid_input(&inv.input) {
+                return ToolOutcome::Failed("Invalid native computer action".into());
+            }
             if let Err(message) = crate::schema::validate(&tool.def().spec.input_schema, &inv.input)
             {
                 return ToolOutcome::Failed(if inv.name == "computer" {

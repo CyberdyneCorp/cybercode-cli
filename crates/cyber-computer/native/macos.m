@@ -52,9 +52,9 @@ static BOOL secure_focus(void) {
     if (error != kAXErrorSuccess || !focused) return error != kAXErrorNoValue && error != kAXErrorAttributeUnsupported;
     AXUIElementSetMessagingTimeout((AXUIElementRef)focused,0.25f);
     CFTypeRef role = NULL; CFTypeRef subrole = NULL;
-    AXUIElementCopyAttributeValue((AXUIElementRef)focused, kAXRoleAttribute, &role);
+    AXError roleError=AXUIElementCopyAttributeValue((AXUIElementRef)focused, kAXRoleAttribute, &role);
     AXUIElementCopyAttributeValue((AXUIElementRef)focused, kAXSubroleAttribute, &subrole);
-    BOOL secure = (role && CFEqual(role, CFSTR("AXSecureTextField"))) || (subrole && (CFEqual(subrole, CFSTR("AXSecureTextField")) || CFEqual(subrole, CFSTR("AXSystemDialog"))));
+    BOOL secure = roleError!=kAXErrorSuccess || (role && CFEqual(role, CFSTR("AXSecureTextField"))) || (subrole && (CFEqual(subrole, CFSTR("AXSecureTextField")) || CFEqual(subrole, CFSTR("AXSystemDialog"))));
     if (role) CFRelease(role); if (subrole) CFRelease(subrole); CFRelease(focused); return secure;
 }
 
@@ -103,7 +103,7 @@ static NSDictionary *target_with_focus(NSDictionary *selector, BOOL requireFocus
     } else {
         id value = selector[@"display"]; if (![value isKindOfClass:NSNumber.class]) return nil;
         display = [value unsignedIntValue]; if (!display) display = CGMainDisplayID();
-        if (!CGDisplayIsActive(display)) return nil; bounds = CGDisplayBounds(display); windowID = 0;
+        if (!CGDisplayIsActive(display)) return nil; bounds = CGDisplayBounds(display);
     }
     if (bounds.size.width <= 0 || bounds.size.height <= 0) return nil;
     CGFloat scale = 1;
@@ -184,15 +184,39 @@ int cyber_computer_capture(const char *request, char **metadata, uint8_t **bytes
     }
 }
 
+// Public AX window geometry prevents keyboard input entering a different app
+// dialog/window merely because its owner PID still matches the captured window.
+static BOOL focused_app_window(NSDictionary *expected) {
+    if (![expected[@"app"] isKindOfClass:NSString.class]) return YES;
+    AXUIElementRef app=AXUIElementCreateApplication([expected[@"pid"] intValue]);AXUIElementSetMessagingTimeout(app,0.25f);
+    CFTypeRef window=NULL,position=NULL,size=NULL;
+    AXError result=AXUIElementCopyAttributeValue(app,kAXFocusedWindowAttribute,&window);CFRelease(app);
+    BOOL okay=NO;
+    if(result==kAXErrorSuccess && window && CFGetTypeID(window)==AXUIElementGetTypeID()) {
+        AXUIElementSetMessagingTimeout((AXUIElementRef)window,0.25f);
+        AXError positioned=AXUIElementCopyAttributeValue((AXUIElementRef)window,kAXPositionAttribute,&position);
+        AXError sized=AXUIElementCopyAttributeValue((AXUIElementRef)window,kAXSizeAttribute,&size);
+        CGPoint point;CGSize dimensions;
+        if(positioned==kAXErrorSuccess && sized==kAXErrorSuccess && position && size && CFGetTypeID(position)==AXValueGetTypeID() && CFGetTypeID(size)==AXValueGetTypeID() && AXValueGetValue(position,kAXValueCGPointType,&point) && AXValueGetValue(size,kAXValueCGSizeType,&dimensions)) {
+            okay=fabs(point.x-[expected[@"x"] doubleValue])<1 && fabs(point.y-[expected[@"y"] doubleValue])<1 && fabs(dimensions.width-[expected[@"width"] doubleValue])<1 && fabs(dimensions.height-[expected[@"height"] doubleValue])<1;
+        }
+    }
+    if(position)CFRelease(position);if(size)CFRelease(size);if(window)CFRelease(window);return okay;
+}
+
 typedef bool (*Cancel)(const void *);
 static int checkpoint(NSDictionary *expected, Cancel cancelled, const void *context, uint64_t deadline) {
     if (cancelled(context)) return 4;
     if (monotonic_ms() >= deadline) return 6;
     if (!AXIsProcessTrusted() || !CGPreflightScreenCaptureAccess()) return 2;
-    if (!same_target(expected, target(selector_for(expected))) || secure_focus()) return 3;
+    if (!same_target(expected, target(selector_for(expected))) || !focused_app_window(expected) || secure_focus()) return 3;
     if (cancelled(context)) return 4;
     if (monotonic_ms() >= deadline) return 6;
     return 0;
+}
+static BOOL visible_point(CGPoint point) {
+    uint32_t count=0;CGDirectDisplayID display;
+    return isfinite(point.x) && isfinite(point.y) && CGGetDisplaysWithPoint(point,1,&display,&count)==kCGErrorSuccess && count==1;
 }
 static CGPoint point(NSDictionary *value) { return CGPointMake([value[@"x"] doubleValue], [value[@"y"] doubleValue]); }
 static bool mouse(CGEventType type, CGPoint at, CGMouseButton button, int clicks) {
@@ -218,7 +242,8 @@ static int drag(NSDictionary *expected, NSDictionary *action, Cancel cancel, con
     while (monotonic_ms() - start < duration) {
         status = checkpoint(expected, cancel, context, deadline); if (status) break;
         CGFloat fraction = MIN(1.0, (double)(monotonic_ms() - start) / (double)duration);
-        current = CGPointMake(from.x + (to.x-from.x)*fraction, from.y + (to.y-from.y)*fraction);
+        CGPoint next = CGPointMake(from.x + (to.x-from.x)*fraction, from.y + (to.y-from.y)*fraction);
+        if (!visible_point(next)) { status=3; break; } current=next;
         if (!mouse(kCGEventLeftMouseDragged, current, kCGMouseButtonLeft, 0)) { status = 6; break; } usleep(10000);
     }
     if (!status) { current = to; if (!mouse(kCGEventLeftMouseDragged, to, kCGMouseButtonLeft, 0)) status = 6; }
@@ -284,6 +309,8 @@ int cyber_computer_input(const char *targetJSON, const char *actionJSON, Cancel 
         NSDictionary *expected = decode(targetJSON), *action = decode(actionJSON); if (!expected || !action) return 6;
         uint64_t deadline = monotonic_ms() + 5000; int status = checkpoint(expected, cancel, context, deadline); if (status) return status;
         NSString *kind = action[@"action"];
+        if (([kind isEqual:@"move"] || [kind isEqual:@"click"] || [kind isEqual:@"scroll"]) && !visible_point(point(action[@"point"]))) return 3;
+        if ([kind isEqual:@"drag"] && (!visible_point(point(action[@"from"])) || !visible_point(point(action[@"to"])))) return 3;
         if ([kind isEqual:@"move"]) { return mouse(kCGEventMouseMoved, point(action[@"point"]), kCGMouseButtonLeft, 0) ? 0 : 6; }
         if ([kind isEqual:@"click"]) return click(expected, action, cancel, context, deadline);
         if ([kind isEqual:@"drag"]) return drag(expected, action, cancel, context, deadline);

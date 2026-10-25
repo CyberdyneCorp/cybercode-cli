@@ -179,7 +179,7 @@ pub async fn blocking<T: Send + 'static>(
 }
 
 impl crate::runtime::Inner {
-    pub(super) fn require_computer_stopped(
+    pub(in crate::runtime) fn require_computer_stopped(
         &self,
     ) -> std::result::Result<(), crate::runtime::RuntimeError> {
         if let Some(computer) = self.computer.get() {

@@ -106,6 +106,14 @@ fn on_off(on: bool) -> &'static str {
 }
 
 fn set(ctx: &Context, name: &str, scope: FeatureScope, on: bool) -> Result<(), CliError> {
+    if name == cyber_core::features::COMPUTER_USE
+        && on
+        && std::env::var_os("CYBER_SESSION_ID").is_some()
+    {
+        return Err(CliError::usage(
+            "computer_use must be enabled by the human owner, outside an agent subprocess",
+        ));
+    }
     if name == cyber_core::features::COMPUTER_USE && matches!(scope, FeatureScope::Project) {
         return Err(CliError::usage(
             "computer_use is global-only; use --scope user",

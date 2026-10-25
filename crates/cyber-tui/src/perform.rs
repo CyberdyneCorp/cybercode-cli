@@ -900,17 +900,6 @@ pub async fn perform_owned(
             crate::admissions::perform_action(client, action).await
         }
         Action::Refresh => snapshot(client, &session.id).await,
-        Action::ComputerStatus => Ok(Msg::Computer {
-            session_id: session.id.clone(),
-            result: client.get("/tools/computer/health").await.map_err(err),
-        }),
-        Action::ComputerStop => {
-            client
-                .post("/tools/computer/stop", json!({}))
-                .await
-                .map_err(err)?;
-            Ok(Msg::Toast("Native computer control stopped".into()))
-        }
         Action::LoadSidebar(_) | Action::ReconnectMcp(_) => {
             sidebar_action(client, session, action).await
         }
@@ -954,7 +943,9 @@ pub async fn perform_owned(
         | Action::LoadPlugins { .. }
         | Action::LoadAgents
         | Action::FindFiles(_) => load_choices(client, session, action).await,
-        Action::Loop(_)
+        Action::ComputerStatus
+        | Action::ComputerStop
+        | Action::Loop(_)
         | Action::Goal(_)
         | Action::Workflow(_)
         | Action::Team(_)
@@ -979,6 +970,9 @@ pub async fn perform_owned(
 /// and the update check; and the branch tree (`/tree`, `/label`).
 async fn scheduled(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
     match action {
+        Action::ComputerStatus | Action::ComputerStop => {
+            crate::computer::perform(client, session, action).await
+        }
         Action::Branch(request) => crate::branches::perform(client, session, request).await,
         Action::Export(request) => crate::export::perform(client, request).await,
         Action::LoadUpdate => crate::update::perform(client).await,

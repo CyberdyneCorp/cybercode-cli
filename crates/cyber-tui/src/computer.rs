@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Default)]
 pub struct State {
     pub session: String,
-    pub grant: Option<(String, i64)>,
+    pub grant: Option<(String, i64, String)>,
     pub uncertain: bool,
     pub supported: bool,
     pending: bool,
@@ -39,7 +39,16 @@ impl State {
                 self.grant = value["data"]["grant"]["target"]["identity"]
                     .as_str()
                     .zip(value["data"]["grant"]["expires_at"].as_i64())
-                    .map(|(id, expires)| (id.into(), expires));
+                    .map(|(id, expires)| {
+                        (
+                            id.into(),
+                            expires,
+                            value["data"]["grant"]["session_id"]
+                                .as_str()
+                                .unwrap_or("unknown Session")
+                                .into(),
+                        )
+                    });
             }
             Err(_) => {
                 self.uncertain = self.grant.is_some();
@@ -51,19 +60,20 @@ impl State {
         if session != self.session {
             return None;
         }
-        let (target, expiry) = self.grant.as_ref()?;
+        let (target, expiry, owner) = self.grant.as_ref()?;
         if *expiry <= crate::loops::now_ms() && !self.uncertain {
             return None;
         }
         Some(format!(
-            "Computer {} · {} · until {} · Ctrl+Alt+Esc STOP",
+            "Computer {} · Ctrl+Alt+Esc STOP · {} · {}s · {}",
             if self.uncertain {
                 "status unknown"
             } else {
                 "ARMED"
             },
+            crate::sidebar::clean(owner),
+            expiry.saturating_sub(crate::loops::now_ms()).max(0) / 1000,
             crate::sidebar::clean(target),
-            expiry
         ))
     }
 }
@@ -130,5 +140,30 @@ impl Drop for Presence {
         if let Some(task) = self.task.take() {
             task.abort();
         }
+    }
+}
+
+pub async fn perform(
+    client: &cyber_client::Client,
+    session: &Session,
+    action: Action,
+) -> Result<crate::perform::Msg, String> {
+    use crate::perform::Msg;
+    match action {
+        Action::ComputerStatus => Ok(Msg::Computer {
+            session_id: session.id.clone(),
+            result: client
+                .get("/tools/computer/health")
+                .await
+                .map_err(|error| error.to_string()),
+        }),
+        Action::ComputerStop => {
+            client
+                .post("/tools/computer/stop", serde_json::json!({}))
+                .await
+                .map_err(|error| error.to_string())?;
+            Ok(Msg::Toast("Native computer control stopped".into()))
+        }
+        _ => Err("Unsupported native computer action".into()),
     }
 }

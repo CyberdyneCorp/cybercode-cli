@@ -39,6 +39,7 @@ pub struct AllowArgs {
     pub acknowledge_unknown: bool,
 }
 pub fn run(command: ComputerCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
+    owner_command(&command, std::env::var_os("CYBER_SESSION_ID").is_some())?;
     let rt = super::serve::runtime()?;
     rt.block_on(async {
         let info=super::serve::start(ctx).await?;
@@ -65,6 +66,14 @@ pub fn run(command: ComputerCmd, ctx: &Context, global: &GlobalArgs) -> Result<(
         };
         output::json(&value)
     })
+}
+fn owner_command(command: &ComputerCmd, agent_session: bool) -> Result<(), CliError> {
+    if agent_session && matches!(command, ComputerCmd::Setup { .. } | ComputerCmd::Allow(_)) {
+        return Err(CliError::usage(
+            "native setup and arming require the human owner's terminal or dashboard; agent subprocesses cannot grant themselves native control",
+        ));
+    }
+    Ok(())
 }
 fn session_path(id: &str) -> Result<String, CliError> {
     if id.is_empty()
@@ -139,5 +148,7 @@ mod tests {
             })
         ));
         assert!(session_path("ses_one/path").is_err());
+        assert!(owner_command(&ComputerCmd::Setup { yes: true }, true).is_err());
+        assert!(owner_command(&ComputerCmd::Stop { session: None }, true).is_ok());
     }
 }

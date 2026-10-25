@@ -75,7 +75,16 @@ fn schema() -> Value {
     json!({"type":"object","oneOf":variants})
 }
 
+pub(crate) fn valid_input(input: &Value) -> bool {
+    static VALIDATOR: std::sync::OnceLock<jsonschema::Validator> = std::sync::OnceLock::new();
+    VALIDATOR
+        .get_or_init(|| jsonschema::validator_for(&schema()).expect("constant native tool schema"))
+        .is_valid(input)
+}
 async fn run(ctx: &Ctx<'_>) -> Result<String, ToolError> {
+    if !valid_input(&ctx.inv.input) {
+        return Err(failed("Invalid native computer action"));
+    }
     let runtime = ctx
         .host
         .runtime()
@@ -147,14 +156,13 @@ mod tests {
     use super::*;
     #[test]
     fn schema_requires_frames_and_bounded_native_actions() {
-        let schema = schema();
         for value in [
             json!({"action":"status"}),
             json!({"action":"screenshot"}),
             json!({"action":"type","frame_id":"cuf_fixture","text":"hello"}),
             json!({"action":"key","frame_id":"cuf_fixture","chord":{"key":"enter","modifiers":[]}}),
         ] {
-            assert!(crate::schema::validate(&schema, &value).is_ok());
+            assert!(valid_input(&value));
         }
         for value in [
             json!({"action":"allow"}),
@@ -162,7 +170,7 @@ mod tests {
             json!({"action":"screenshot","app":"wider scope"}),
             json!({"action":"wait","frame_id":"cuf_fixture","milliseconds":5001}),
         ] {
-            assert!(crate::schema::validate(&schema, &value).is_err());
+            assert!(!valid_input(&value));
         }
     }
 }

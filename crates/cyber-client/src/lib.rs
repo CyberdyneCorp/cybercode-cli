@@ -707,6 +707,48 @@ mod tests {
         assert_eq!(value["custom"], "pinned");
     }
 
+    #[tokio::test]
+    async fn owned_computer_presence_stream_closes_when_consumer_drops() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        struct Closed(Arc<AtomicBool>);
+        impl Drop for Closed {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+        let closed = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&closed);
+        let router = axum::Router::new().route(
+            "/api/v1/sessions/{id}/events",
+            axum::routing::get(move |uri: axum::http::Uri| {
+                let guard = Closed(Arc::clone(&observed));
+                async move {
+                    assert_eq!(uri.path(), "/api/v1/sessions/ses_owner/events");
+                    assert_eq!(uri.query(), Some("after=42"));
+                    let stream = futures::stream::unfold(guard, |guard| async move {
+                        std::future::pending::<
+                            Option<(Result<axum::body::Bytes, std::convert::Infallible>, Closed)>,
+                        >()
+                        .await
+                        .map(|(bytes, _)| (bytes, guard))
+                    });
+                    axum::http::Response::builder()
+                        .header("content-type", "text/event-stream")
+                        .body(axum::body::Body::from_stream(stream))
+                        .unwrap()
+                }
+            }),
+        );
+        let client = Client::embedded(EmbeddedClient::new(router));
+        let stream = client.session_event_stream("ses_owner", 42).await.unwrap();
+        assert!(!closed.load(Ordering::Acquire));
+        drop(stream);
+        assert!(closed.load(Ordering::Acquire));
+    }
+
     #[test]
     fn directories_are_percent_encoded_for_headers() {
         assert_eq!(encode("/tmp/a b/ç"), "/tmp/a%20b/%C3%A7");

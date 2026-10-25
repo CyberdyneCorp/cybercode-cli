@@ -295,13 +295,7 @@ async fn event_loop(
         sync_mouse(&mut std::io::stdout(), app.mouse_capture());
         set_title(app);
         app.progress_sync();
-        let frame = terminal
-            .draw(|f| crate::view::draw(f, app))
-            .map_err(|e| e.to_string())?;
-        let links = app.take_screen_links();
-        if app.hyperlinks && matches!(app.overlay, crate::app::Overlay::None) {
-            let _ = crate::osc::write_hyperlinks(&mut std::io::stdout(), frame.buffer, &links);
-        }
+        draw_frame(terminal, app)?;
         let actions = tokio::select! {
             Some(Ok(ev)) = keys.next() => terminal_event(app, ev),
             ev = server.next() => match ev {
@@ -333,6 +327,18 @@ async fn event_loop(
             ),
         )
         .await;
+    }
+    Ok(())
+}
+
+/// Paint the frame and its terminal hyperlink spans as one rendering step.
+fn draw_frame(terminal: &mut Term, app: &App) -> Result<(), String> {
+    let frame = terminal
+        .draw(|frame| crate::view::draw(frame, app))
+        .map_err(|error| error.to_string())?;
+    let links = app.take_screen_links();
+    if app.hyperlinks && matches!(app.overlay, crate::app::Overlay::None) {
+        let _ = crate::osc::write_hyperlinks(&mut std::io::stdout(), frame.buffer, &links);
     }
     Ok(())
 }

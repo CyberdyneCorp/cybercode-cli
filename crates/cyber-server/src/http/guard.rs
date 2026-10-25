@@ -137,7 +137,7 @@ pub fn loopback_host(host: &str) -> bool {
 }
 
 fn public(path: &str) -> bool {
-    path.ends_with("/health")
+    matches!(path, "/health" | "/api/v1/health")
 }
 
 /// Routes browsers open with `EventSource` or WebSocket, which cannot set headers.
