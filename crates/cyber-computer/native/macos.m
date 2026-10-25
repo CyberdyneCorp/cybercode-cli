@@ -197,24 +197,66 @@ int cyber_computer_capture(const char *request, char **metadata, uint8_t **bytes
     }
 }
 
-// Public AX window geometry prevents keyboard input entering a different app
-// dialog/window merely because its owner PID still matches the captured window.
+// Public AX window geometry and object identity bind input to the reviewed
+// focused window without private AX/window-number APIs or reading field values.
+static BOOL window_geometry(AXUIElementRef window, NSDictionary *expected) {
+    if(!window || CFGetTypeID(window)!=AXUIElementGetTypeID())return NO;
+    AXUIElementSetMessagingTimeout(window,0.25f);CFTypeRef position=NULL,size=NULL;
+    AXError positioned=AXUIElementCopyAttributeValue(window,kAXPositionAttribute,&position);
+    AXError sized=AXUIElementCopyAttributeValue(window,kAXSizeAttribute,&size);
+    CGPoint point;CGSize dimensions;BOOL okay=NO;
+    if(positioned==kAXErrorSuccess && sized==kAXErrorSuccess && position && size && CFGetTypeID(position)==AXValueGetTypeID() && CFGetTypeID(size)==AXValueGetTypeID() && AXValueGetValue(position,kAXValueCGPointType,&point) && AXValueGetValue(size,kAXValueCGSizeType,&dimensions)) {
+        okay=fabs(point.x-[expected[@"x"] doubleValue])<1 && fabs(point.y-[expected[@"y"] doubleValue])<1 && fabs(dimensions.width-[expected[@"width"] doubleValue])<1 && fabs(dimensions.height-[expected[@"height"] doubleValue])<1;
+    }
+    if(position)CFRelease(position);if(size)CFRelease(size);return okay;
+}
+static AXUIElementRef focused_window(pid_t pid) CF_RETURNS_RETAINED;
+static AXUIElementRef focused_window(pid_t pid) {
+    AXUIElementRef app=AXUIElementCreateApplication(pid);AXUIElementSetMessagingTimeout(app,0.25f);
+    CFTypeRef window=NULL;AXError result=AXUIElementCopyAttributeValue(app,kAXFocusedWindowAttribute,&window);CFRelease(app);
+    if(result==kAXErrorSuccess && window && CFGetTypeID(window)==AXUIElementGetTypeID())return (AXUIElementRef)window;
+    if(window)CFRelease(window);return NULL;
+}
 static BOOL focused_app_window(NSDictionary *expected) {
     if (![expected[@"app"] isKindOfClass:NSString.class]) return YES;
-    AXUIElementRef app=AXUIElementCreateApplication([expected[@"pid"] intValue]);AXUIElementSetMessagingTimeout(app,0.25f);
-    CFTypeRef window=NULL,position=NULL,size=NULL;
-    AXError result=AXUIElementCopyAttributeValue(app,kAXFocusedWindowAttribute,&window);CFRelease(app);
-    BOOL okay=NO;
-    if(result==kAXErrorSuccess && window && CFGetTypeID(window)==AXUIElementGetTypeID()) {
-        AXUIElementSetMessagingTimeout((AXUIElementRef)window,0.25f);
-        AXError positioned=AXUIElementCopyAttributeValue((AXUIElementRef)window,kAXPositionAttribute,&position);
-        AXError sized=AXUIElementCopyAttributeValue((AXUIElementRef)window,kAXSizeAttribute,&size);
-        CGPoint point;CGSize dimensions;
-        if(positioned==kAXErrorSuccess && sized==kAXErrorSuccess && position && size && CFGetTypeID(position)==AXValueGetTypeID() && CFGetTypeID(size)==AXValueGetTypeID() && AXValueGetValue(position,kAXValueCGPointType,&point) && AXValueGetValue(size,kAXValueCGSizeType,&dimensions)) {
-            okay=fabs(point.x-[expected[@"x"] doubleValue])<1 && fabs(point.y-[expected[@"y"] doubleValue])<1 && fabs(dimensions.width-[expected[@"width"] doubleValue])<1 && fabs(dimensions.height-[expected[@"height"] doubleValue])<1;
-        }
+    AXUIElementRef window=focused_window([expected[@"pid"] intValue]);BOOL okay=window_geometry(window,expected);
+    if(window)CFRelease(window);return okay;
+}
+// Pure policy shared by the adapter and a no-OS-call FFI regression test.
+bool cyber_computer_pointer_scope(bool scoped, bool identified, bool protectedSurface, int expectedPID, int hitPID, bool focusedWindow, bool matchingGeometry) {
+    return identified && !protectedSurface && (!scoped || (expectedPID==hitPID && focusedWindow && matchingGeometry));
+}
+static BOOL pointer_target(NSDictionary *expected, CGPoint at) {
+    AXUIElementRef system=AXUIElementCreateSystemWide();AXUIElementSetMessagingTimeout(system,0.25f);
+    AXUIElementRef hit=NULL;AXError result=AXUIElementCopyElementAtPosition(system,at.x,at.y,&hit);CFRelease(system);
+    if(result!=kAXErrorSuccess || !hit) {if(hit)CFRelease(hit);return NO;}
+    AXUIElementSetMessagingTimeout(hit,0.25f);pid_t pid=0;
+    BOOL known=AXUIElementGetPid(hit,&pid)==kAXErrorSuccess && pid>0;
+    NSRunningApplication *application=known?[NSRunningApplication runningApplicationWithProcessIdentifier:pid]:nil;
+    known=known && application && application.bundleIdentifier;
+    BOOL protected=known && protected_app(application.bundleIdentifier);
+    CFTypeRef window=NULL,role=NULL,title=NULL;
+    if(known && !protected) {
+        AXUIElementCopyAttributeValue(hit,kAXRoleAttribute,&role);
+        if(role && CFEqual(role,kAXWindowRole))window=CFRetain(hit);
+        else if(AXUIElementCopyAttributeValue(hit,kAXWindowAttribute,&window)!=kAXErrorSuccess)known=NO;
+        known=known && window && CFGetTypeID(window)==AXUIElementGetTypeID();
     }
-    if(position)CFRelease(position);if(size)CFRelease(size);if(window)CFRelease(window);return okay;
+    if(known && !protected) {
+        AXUIElementSetMessagingTimeout((AXUIElementRef)window,0.25f);
+        AXError named=AXUIElementCopyAttributeValue((AXUIElementRef)window,kAXTitleAttribute,&title);
+        // An unidentified window cannot be distinguished from an admin surface.
+        known=named==kAXErrorSuccess && title && CFGetTypeID(title)==CFStringGetTypeID();
+        if(known) {NSString *name=[(__bridge NSString *)title lowercaseString];protected=[name hasPrefix:@"cyber ·"] || [name hasPrefix:@"cyber code"];}
+    }
+    BOOL scoped=[expected[@"app"] isKindOfClass:NSString.class],sameWindow=NO,sameGeometry=NO;
+    if(known && !protected && scoped) {
+        AXUIElementRef focused=focused_window([expected[@"pid"] intValue]);
+        sameWindow=focused && CFEqual(window,focused);sameGeometry=window_geometry((AXUIElementRef)window,expected);
+        if(focused)CFRelease(focused);
+    }
+    BOOL okay=cyber_computer_pointer_scope(scoped,known,protected,[expected[@"pid"] intValue],pid,sameWindow,sameGeometry);
+    if(title)CFRelease(title);if(role)CFRelease(role);if(window)CFRelease(window);CFRelease(hit);return okay;
 }
 
 typedef bool (*Cancel)(const void *);
@@ -231,6 +273,11 @@ static BOOL visible_point(CGPoint point) {
     uint32_t count=0;CGDirectDisplayID display;
     return isfinite(point.x) && isfinite(point.y) && CGGetDisplaysWithPoint(point,1,&display,&count)==kCGErrorSuccess && count==1;
 }
+static int pointer_checkpoint(NSDictionary *expected, CGPoint at, Cancel cancel, const void *context, uint64_t deadline) {
+    int status=checkpoint(expected,cancel,context,deadline);if(status)return status;
+    if(!visible_point(at) || !pointer_target(expected,at))return 3;
+    if(cancel(context))return 4;if(monotonic_ms()>=deadline)return 6;return 0;
+}
 static CGPoint point(NSDictionary *value) { return CGPointMake([value[@"x"] doubleValue], [value[@"y"] doubleValue]); }
 static bool mouse(CGEventType type, CGPoint at, CGMouseButton button, int clicks) {
     CGEventRef event = CGEventCreateMouseEvent(NULL, type, at, button); if (!event) return false;
@@ -242,24 +289,24 @@ static int click(NSDictionary *expected, NSDictionary *action, Cancel cancel, co
     CGEventType down = button == kCGMouseButtonLeft ? kCGEventLeftMouseDown : (button == kCGMouseButtonRight ? kCGEventRightMouseDown : kCGEventOtherMouseDown);
     CGEventType up = button == kCGMouseButtonLeft ? kCGEventLeftMouseUp : (button == kCGMouseButtonRight ? kCGEventRightMouseUp : kCGEventOtherMouseUp);
     for (int n = 1; n <= [action[@"clicks"] intValue]; n++) {
-        int status = checkpoint(expected, cancel, context, deadline); if (status) return status;
-        CGPoint at = point(action[@"point"]); bool posted = mouse(down, at, button, n); bool released = mouse(up, at, button, n); if (!posted || !released) return 6;
+        CGPoint at = point(action[@"point"]);int status = pointer_checkpoint(expected, at, cancel, context, deadline); if (status) return status;
+        bool posted = mouse(down, at, button, n); bool released = mouse(up, at, button, n); if (!posted || !released) return 6;
     }
     return 0;
 }
 static int drag(NSDictionary *expected, NSDictionary *action, Cancel cancel, const void *context, uint64_t deadline) {
     CGPoint from = point(action[@"from"]), to = point(action[@"to"]), current = from;
     uint64_t duration = [action[@"duration_ms"] unsignedLongLongValue], start = monotonic_ms();
+    int initial=pointer_checkpoint(expected,from,cancel,context,deadline);if(initial)return initial;
     if (!mouse(kCGEventLeftMouseDown, from, kCGMouseButtonLeft, 1)) return 6;
     int status = 0;
     while (monotonic_ms() - start < duration) {
-        status = checkpoint(expected, cancel, context, deadline); if (status) break;
         CGFloat fraction = MIN(1.0, (double)(monotonic_ms() - start) / (double)duration);
         CGPoint next = CGPointMake(from.x + (to.x-from.x)*fraction, from.y + (to.y-from.y)*fraction);
-        if (!visible_point(next)) { status=3; break; } current=next;
+        status=pointer_checkpoint(expected,next,cancel,context,deadline);if(status)break;current=next;
         if (!mouse(kCGEventLeftMouseDragged, current, kCGMouseButtonLeft, 0)) { status = 6; break; } usleep(10000);
     }
-    if (!status) status = checkpoint(expected, cancel, context, deadline);
+    if (!status) status = pointer_checkpoint(expected, to, cancel, context, deadline);
     if (!status) { current = to; if (!mouse(kCGEventLeftMouseDragged, to, kCGMouseButtonLeft, 0)) status = 6; }
     // Release is cleanup, even after cancellation; no button remains deliberately held.
     if (!mouse(kCGEventLeftMouseUp, current, kCGMouseButtonLeft, 1)) return 6; return status;
@@ -325,12 +372,13 @@ int cyber_computer_input(const char *targetJSON, const char *actionJSON, Cancel 
         NSString *kind = action[@"action"];
         if (([kind isEqual:@"move"] || [kind isEqual:@"click"] || [kind isEqual:@"scroll"]) && !visible_point(point(action[@"point"]))) return 3;
         if ([kind isEqual:@"drag"] && (!visible_point(point(action[@"from"])) || !visible_point(point(action[@"to"])))) return 3;
-        if ([kind isEqual:@"move"]) { return mouse(kCGEventMouseMoved, point(action[@"point"]), kCGMouseButtonLeft, 0) ? 0 : 6; }
+        if ([kind isEqual:@"move"]) { status=pointer_checkpoint(expected,point(action[@"point"]),cancel,context,deadline);if(status)return status;return mouse(kCGEventMouseMoved, point(action[@"point"]), kCGMouseButtonLeft, 0) ? 0 : 6; }
         if ([kind isEqual:@"click"]) return click(expected, action, cancel, context, deadline);
         if ([kind isEqual:@"drag"]) return drag(expected, action, cancel, context, deadline);
         if ([kind isEqual:@"type"]) return type_text(expected, action[@"text"], cancel, context, deadline);
         if ([kind isEqual:@"key"]) return key(expected, action[@"chord"], cancel, context, deadline);
         if ([kind isEqual:@"scroll"]) {
+            status=pointer_checkpoint(expected,point(action[@"point"]),cancel,context,deadline);if(status)return status;
             CGEventRef event = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitPixel, 2, [action[@"dy"] intValue], [action[@"dx"] intValue]);
             if (!event) return 6; CGEventSetLocation(event, point(action[@"point"])); CGEventPost(kCGHIDEventTap, event); CFRelease(event); return 0;
         }
