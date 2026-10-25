@@ -1,4 +1,4 @@
-import { test, expect, login, select, send, tab } from './browser.js';
+import { test, expect, login, recordLeases, select, send, tab } from './browser.js';
 import { DashboardFixture, eventually } from './fixture.js';
 
 test('offline cards cannot submit, reconnect refetches live pending state', async ({ dashboard, page, context }) => {
@@ -22,38 +22,32 @@ test('offline cards cannot submit, reconnect refetches live pending state', asyn
 
 test('server restart invalidates the browser lease and requires fresh attachment', async ({ dashboard, page }) => {
   await dashboard.session('Restart acceptance');
-  const leaseIds: string[] = [];
-  page.on('response', async (response) => {
-    if (response.url().endsWith('/interactive-clients') && response.request().method() === 'POST' && response.ok()) {
-      const body = await response.json() as { data: { client_id: string } }; leaseIds.push(body.data.client_id);
-    }
-  });
+  const leases = await recordLeases(page);
   await login(page, dashboard); await select(page, 'Restart acceptance');
-  await expect.poll(() => leaseIds.length).toBe(1);
+  // The dashboard may attach more than once (for example on stream reconnect).
+  await expect.poll(() => leases.length).toBeGreaterThan(0);
+  const before = new Set(leases.map(lease => lease.client_id));
   const previous = (await dashboard.api<{ id: string }>('/health')).id;
   await dashboard.restart();
   expect((await dashboard.api<{ id: string }>('/health')).id === previous).toBe(false);
   // A restarted owner process must not inherit its predecessor's interactive proof.
   await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible({ timeout: 30_000 });
   await login(page, dashboard); await select(page, 'Restart acceptance');
-  await expect.poll(() => leaseIds.length).toBeGreaterThanOrEqual(2);
-  expect(new Set(leaseIds).size).toBeGreaterThanOrEqual(2);
+  await expect.poll(() => leases.some(lease => !before.has(lease.client_id))).toBe(true);
 });
 
 test('a real 45-second browser lease expires without silently approving work', async ({ dashboard, page }) => {
   test.setTimeout(85_000);
   const session = await dashboard.session('Expiry acceptance');
+  const leases = await recordLeases(page);
   await login(page, dashboard); await select(page, 'Expiry acceptance');
-  let lease: { client_id: string; expires_at: number } | undefined;
+  await expect.poll(() => leases.length).toBeGreaterThan(0);
+  const before = leases.length;
   // Reload creates a known fresh attachment; retain no password across the reload.
   await page.reload();
-  page.on('response', async (response) => {
-    if (response.url().endsWith('/interactive-clients') && response.request().method() === 'POST' && response.ok()) {
-      lease = (await response.json() as { data: { client_id: string; expires_at: number } }).data;
-    }
-  });
   await login(page, dashboard); await select(page, 'Expiry acceptance');
-  await expect.poll(() => Boolean(lease)).toBe(true);
+  await expect.poll(() => leases.length).toBeGreaterThan(before);
+  const lease = leases.at(-1)!;
   await page.route('**/interactive-clients', async (route) => { if(route.request().method()==='POST')await route.abort('connectionreset');else await route.continue(); });
   await page.route('**/interactive-clients/*', async (route) => {
     if (route.request().method() === 'PUT') await route.abort('connectionreset'); else await route.continue();
@@ -61,8 +55,8 @@ test('a real 45-second browser lease expires without silently approving work', a
   await dashboard.prompt(session, 'WRITE_BROWSER:waiting_expiry');
   await dashboard.waitPending('permissions',session);
   expect(await dashboard.file('waiting_expiry.txt')).toBeUndefined();
-  await page.waitForTimeout(Math.max(0, lease!.expires_at - Date.now()) + 1_500);
-  const renewal = await dashboard.request(`/sessions/${session}/interactive-clients/${lease!.client_id}`, 'PUT', {});
+  await page.waitForTimeout(Math.max(0, lease.expires_at - Date.now()) + 1_500);
+  const renewal = await dashboard.request(`/sessions/${session}/interactive-clients/${lease.client_id}`, 'PUT', {});
   expect(renewal.status).toBe(404);
   await eventually(()=>dashboard.pending('permissions',session),(pending)=>pending.length===0);
   expect(await dashboard.file('waiting_expiry.txt')).toBeUndefined();
@@ -75,10 +69,10 @@ test('a real 45-second browser lease expires without silently approving work', a
 test('an expiring browser lease does not clear an independently attached terminal', async ({ dashboard, page }) => {
   test.setTimeout(85_000);
   const session = await dashboard.session('Terminal presence');
-  let leaseId:string|undefined;
-  page.on('response',async response=>{if(response.url().endsWith('/interactive-clients')&&response.request().method()==='POST'&&response.ok()){leaseId=(await response.json() as {data:{client_id:string}}).data.client_id;}});
+  const leases = await recordLeases(page);
   await login(page, dashboard); await select(page, 'Terminal presence');
-  await expect.poll(()=>Boolean(leaseId)).toBe(true);
+  await expect.poll(() => leases.length).toBeGreaterThan(0);
+  const leaseId = leases.at(-1)!.client_id;
   const controller = new AbortController();
   const stream = await fetch(`${dashboard.url}/api/v1/sessions/${session}/events`, { headers: { authorization: dashboard.authorization, 'x-cyber-directory': dashboard.repo }, signal: controller.signal });
   expect(stream.ok).toBe(true);
@@ -88,7 +82,7 @@ test('an expiring browser lease does not clear an independently attached termina
     await page.route('**/interactive-clients',async route=>{if(route.request().method()==='POST')await route.abort('connectionreset');else await route.continue();});
     await page.route('**/interactive-clients/*', async (route) => { if (route.request().method() === 'PUT') await route.abort('connectionreset'); else await route.continue(); });
     await page.waitForTimeout(46_500);
-    expect((await dashboard.request(`/sessions/${session}/interactive-clients/${leaseId!}`,'PUT',{})).status).toBe(404);
+    expect((await dashboard.request(`/sessions/${session}/interactive-clients/${leaseId}`,'PUT',{})).status).toBe(404);
     await dashboard.prompt(session, 'WRITE_BROWSER:terminal_remains');
     const pending = await dashboard.waitPending('permissions', session);
     expect(await dashboard.file('terminal_remains.txt')).toBeUndefined();

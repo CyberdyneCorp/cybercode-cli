@@ -1,4 +1,5 @@
 import { test, expect, login, select, send, tab } from './browser.js';
+import type { Page } from '@playwright/test';
 import { eventually } from './fixture.js';
 
 test('Runs binds real workflow pause/resume/stop, Job output/stop and Goal controls without automatic candidate application', async ({ dashboard, page }) => {
@@ -46,13 +47,16 @@ test('Runs binds real workflow pause/resume/stop, Job output/stop and Goal contr
 
 });
 
+// The reply can also become an untitled Session's generated title, so match the transcript only.
+const reply = (page: Page) => page.locator('.prose', { hasText: /^Scripted browser response\.$/u });
+
 test('Session navigation scopes the transcript and New Session creates a real owner Session', async ({ dashboard, page }) => {
   await dashboard.session('First browser Session');
   await dashboard.session('Second browser Session');
   await login(page, dashboard);
   await select(page, 'First browser Session');
   await send(page, 'A transcript unique to the first Session');
-  await expect(page.getByText('Scripted browser response.', { exact: true })).toBeVisible();
+  await expect(reply(page)).toBeVisible();
   await select(page, 'Second browser Session');
   await tab(page, 'Conversation');
   await expect(page.getByText('A transcript unique to the first Session', { exact: true })).toHaveCount(0);
@@ -70,7 +74,7 @@ test('Session navigation scopes the transcript and New Session creates a real ow
   const prompted = page.waitForRequest(request => request.method() === 'POST' && new URL(request.url()).pathname === `/api/v1/sessions/${created.id}/prompt`);
   await send(page, 'A fresh Session conversation');
   await prompted;
-  await expect(page.getByText('Scripted browser response.', { exact: true })).toBeVisible();
+  await expect(reply(page)).toBeVisible();
 });
 
 test('older transcript pages survive live refresh and reconnect until Latest messages is selected', async ({ dashboard, page }) => {
