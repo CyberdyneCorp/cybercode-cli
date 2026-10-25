@@ -7,7 +7,7 @@ pub use client_state::MemoryClientStore;
 #[cfg(windows)]
 pub use editor_draft::MemoryEditorDraft;
 mod secrets;
-pub use secrets::redact_credentials;
+pub use secrets::{redact_credentials, redact_credentials_with};
 mod storage;
 #[cfg(windows)]
 #[allow(unsafe_code)] // Owned, bounded native handle/security queries are isolated in this backend.

@@ -132,7 +132,7 @@ async fn abort_all<const N: usize>(tasks: [tokio::task::JoinHandle<()>; N]) {
 
 /// Serve until `stop` is notified.
 pub async fn run_server_until(
-    app: App,
+    mut app: App,
     opts: ServeOptions,
     on_ready: impl FnOnce(&str),
     stop: Arc<Notify>,
@@ -171,6 +171,8 @@ pub async fn run_server_until(
     {
         return Err("non-loopback owner listeners require global server.tls.cert and server.tls.key; use loopback with an SSH forward or configure HTTPS".into());
     }
+    let events = app.telemetry_events.take();
+    let telemetry = start_telemetry(&app, events).await;
     let sweeper = crate::retention::spawn(app.runtime.clone(), app.paths.data.clone(), retention);
     let updates = crate::update_check::spawn(&app, opts.update.clone());
     let scheme = if tls.is_some() { "https" } else { "http" };
@@ -217,6 +219,7 @@ pub async fn run_server_until(
         stop: Arc::clone(&stop),
         peer: peer_handle,
     });
+    state.telemetry = Some(Arc::clone(&telemetry) as _);
     let router = http::router(state);
     cyber_core::log::info(
         "server",
@@ -258,8 +261,7 @@ pub async fn run_server_until(
     closing.cancel();
     stop.notify_waiters();
     crate::peer_discovery::unpublish(publication).await;
-    abort_all([sweeper, updates]).await;
-    app.runtime.shutdown().await;
+    shut_down(&app, &telemetry, [sweeper, updates]).await;
     for task in [tcp_task, peer_task, unix_task].into_iter().flatten() {
         let _ = task.await;
     }
@@ -275,6 +277,56 @@ pub async fn run_server_until(
         remove_registration(&app.paths, &registration.id);
     }
     Ok(())
+}
+
+/// Stop the background `tasks`, then the runtime, then telemetry: the runtime's last
+/// events are mapped before the open spans end.
+async fn shut_down<const N: usize>(
+    app: &App,
+    telemetry: &cyber_telemetry::Telemetry,
+    tasks: [tokio::task::JoinHandle<()>; N],
+) {
+    abort_all(tasks).await;
+    app.runtime.shutdown().await;
+    telemetry.shutdown().await;
+}
+
+/// Resolve the telemetry settings once (a change applies on restart, and `cyber telemetry
+/// show` says so) and start exporting the runtime's events when export is on: from
+/// `events`, which `App::build` subscribed before its recovery, or from now on when the
+/// settings changed on disk since.
+async fn start_telemetry(
+    app: &App,
+    events: Option<tokio::sync::broadcast::Receiver<cyber_server::runtime::LiveEvent>>,
+) -> Arc<cyber_telemetry::Telemetry> {
+    let telemetry = Arc::new(cyber_telemetry::Telemetry::start(
+        Arc::clone(&app.telemetry_config),
+        Arc::new(cyber_core::env::ProcessEnv),
+        &app.state.options.default_directory,
+    ));
+    if telemetry.settings().enabled {
+        telemetry.export(
+            events.unwrap_or_else(|| app.runtime.subscribe()),
+            Arc::new(app.runtime.clone()),
+            telemetry_account(app).await,
+        );
+    }
+    telemetry
+}
+
+/// The ids of the account signed in at start, for the telemetry resource. Signing in or
+/// out applies at the next start; a slow account read is not waited for.
+async fn telemetry_account(app: &App) -> Option<cyber_telemetry::AccountIds> {
+    let service = app.state.services.account()?;
+    let view = tokio::time::timeout(std::time::Duration::from_secs(2), service.current())
+        .await
+        .ok()?
+        .ok()?;
+    let account = view.account?;
+    Some(cyber_telemetry::AccountIds {
+        sub: account.sub,
+        org_id: account.org.map(|org| org.id),
+    })
 }
 
 /// After a key rotation, `server.json` names the new fingerprint.

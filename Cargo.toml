@@ -11,6 +11,7 @@ members = [
     "crates/cyber-tools",
     "crates/cyber-snapshot",
     "crates/cyber-sandbox",
+    "crates/cyber-telemetry",
     "crates/cyber-app",
     "crates/cyber-client",
     "crates/cyber-cli",

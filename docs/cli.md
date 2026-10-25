@@ -77,6 +77,7 @@ cyber [OPTIONS] [COMMAND]
 - [`messages`](#cyber-messages): Send messages between Sessions and read their message history
 - [`doctor`](#cyber-doctor): Check configuration, skills, commands, credentials, catalog, database, sandbox, tools and server
 - [`stats`](#cyber-stats): Usage statistics: activity, streaks, tokens, cost and per-model totals
+- [`telemetry`](#cyber-telemetry): The server's OpenTelemetry export status: settings, sources and counters
 - [`upgrade`](#cyber-upgrade): Upgrade cyber to the channel's latest version or to VERSION
 - [`uninstall`](#cyber-uninstall): Remove cyber: its binary (script installs), PATH lines and directories
 - [`eval`](#cyber-eval): Run evaluation manifests and write reports
@@ -2588,6 +2589,26 @@ cyber stats [OPTIONS]
 - `--models`: One row per model.
 - `--tools`: Tool calls by name.
 - `--by <GROUP>`: One row per usage origin (`user`, `session`, `client`, `job`, `mcp`, ...) Values: `origin`.
+
+## `cyber telemetry`
+
+The server's OpenTelemetry export status: settings, sources and counters
+
+```text
+cyber telemetry [OPTIONS] <COMMAND>
+```
+
+**Subcommands:**
+
+- [`show`](#cyber-telemetry-show): Export settings per signal with their sources, counters, ignored project values and whether a restart is required. Exits 0 whether or not export is on
+
+## `cyber telemetry show`
+
+Export settings per signal with their sources, counters, ignored project values and whether a restart is required. Exits 0 whether or not export is on
+
+```text
+cyber telemetry show [OPTIONS]
+```
 
 ## `cyber upgrade`
 

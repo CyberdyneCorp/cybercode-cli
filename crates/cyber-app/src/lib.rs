@@ -92,6 +92,12 @@ pub struct App {
     /// The defaults and user layers only, for user-scope keys such as `peers`.
     global_config: Arc<services::GlobalConfigFn>,
     owner_server_config: Arc<services::GlobalConfigFn>,
+    /// The global `telemetry` section for a Location (`observability-costs`).
+    telemetry_config: Arc<cyber_telemetry::status::LoadFn>,
+    /// The exporter's subscription of a served App when export is on, taken before the
+    /// restart recovery so that the events settling work an earlier process left are
+    /// exported too. Always `None` for an in-process App, which never exports.
+    telemetry_events: Option<tokio::sync::broadcast::Receiver<cyber_server::runtime::LiveEvent>>,
 }
 
 pub fn version() -> &'static str {
@@ -160,6 +166,31 @@ fn owner_server_config_loader(paths: Paths, home: PathBuf) -> Arc<services::Glob
     })
 }
 
+/// A subscription to `runtime`'s events when the settings of `location` turn export on.
+/// The server resolves them again at start; only the subscription is taken this early.
+fn telemetry_events(
+    load: &cyber_telemetry::status::LoadFn,
+    location: &std::path::Path,
+    runtime: &Runtime,
+) -> Option<tokio::sync::broadcast::Receiver<cyber_server::runtime::LiveEvent>> {
+    let settings = cyber_telemetry::resolve(&load(location), &ProcessEnv, cyber_telemetry::GRPC);
+    settings.enabled.then(|| runtime.subscribe())
+}
+
+fn telemetry_config_loader(paths: Paths, home: PathBuf) -> Arc<cyber_telemetry::status::LoadFn> {
+    Arc::new(move |location| {
+        config::load_telemetry(&LoadRequest {
+            location,
+            paths: &paths,
+            env: &ProcessEnv,
+            home: &home,
+            profile: None,
+            overrides: &[],
+            flags: json!({}),
+        })
+    })
+}
+
 /// Remotes are read from user config on every send, so `cyber peers add`, `rm` and edits
 /// apply without a restart.
 fn peer_lookup(global: Arc<services::GlobalConfigFn>, paths: Paths) -> Arc<host::PeerLookup> {
@@ -180,7 +211,19 @@ pub fn config_loader(paths: Paths, home: PathBuf) -> Arc<ConfigFn> {
 }
 
 impl App {
+    /// An in-process App (embedded and ephemeral runs, `cyber eval`, skills, tests). It
+    /// never exports telemetry (`observability-costs`): only a served App does.
     pub async fn build(opts: AppOptions) -> Result<App, String> {
+        Self::build_with(opts, false).await
+    }
+
+    /// The App that [`run_server_until`] will serve: when the telemetry settings turn
+    /// export on, the exporter's subscription is taken before the restart recovery.
+    pub async fn build_served(opts: AppOptions) -> Result<App, String> {
+        Self::build_with(opts, true).await
+    }
+
+    async fn build_with(opts: AppOptions, served: bool) -> Result<App, String> {
         let env = ProcessEnv;
         let config = config_loader(opts.paths.clone(), opts.home.clone());
         let global = config(&opts.default_directory)
@@ -271,6 +314,7 @@ impl App {
         host.attach_client_hooks(Arc::clone(&remote_tools) as _)?;
         let global_config = global_config_loader(opts.paths.clone(), opts.home.clone());
         let owner_server_config = owner_server_config_loader(opts.paths.clone(), opts.home.clone());
+        let telemetry_config = telemetry_config_loader(opts.paths.clone(), opts.home.clone());
         let tools = host::AppHost {
             builtin: Arc::clone(&host),
             remote: Arc::clone(&remote_tools),
@@ -323,6 +367,11 @@ impl App {
                     .map_err(|e| e.to_string())?
             }
         });
+        // Before any recovery: what it settles is counted (`observability-costs` → spans
+        // are not resurrected after a restart, but metrics are recorded at settlement).
+        let telemetry_events = served
+            .then(|| telemetry_events(telemetry_config.as_ref(), &opts.default_directory, &runtime))
+            .flatten();
         runtime.recover_jobs().await.map_err(|e| e.to_string())?;
         // Sender records of messages a crash left half-recorded (`cross-session-messaging`).
         runtime
@@ -380,6 +429,7 @@ impl App {
             .map_err(|e| e.to_string())?;
         let state = AppState {
             service: None,
+            telemetry: None,
             runtime: runtime.clone(),
             remote_tools,
             store: Arc::clone(&store),
@@ -424,6 +474,8 @@ impl App {
             mcp_credentials,
             global_config,
             owner_server_config,
+            telemetry_config,
+            telemetry_events,
         })
     }
 

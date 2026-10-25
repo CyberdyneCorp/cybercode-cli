@@ -50,6 +50,8 @@ pub struct Setup {
     pub reply: Option<Reply>,
     /// The scripted provider's models (with their prices), replacing its unpriced `main`.
     pub models: Option<Value>,
+    /// Built for `run_server_until` (`App::build_served`), as `cyber serve` builds it.
+    pub served: bool,
 }
 
 impl Default for Setup {
@@ -62,6 +64,7 @@ impl Default for Setup {
             database: None,
             reply: None,
             models: None,
+            served: false,
         }
     }
 }
@@ -185,7 +188,7 @@ impl ModeApp {
             config.extend(extra.clone());
         }
         std::fs::write(paths.config.join("cyber.json"), config.to_string()).unwrap();
-        App::build(AppOptions {
+        let options = AppOptions {
             paths,
             home: root.join("home"),
             database: setup
@@ -201,8 +204,12 @@ impl ModeApp {
             remote_skill_fetcher: None,
             workflow_cores: None,
             isolation: Some(setup.isolation),
-        })
-        .await
+        };
+        if setup.served {
+            App::build_served(options).await
+        } else {
+            App::build(options).await
+        }
         .unwrap()
     }
 

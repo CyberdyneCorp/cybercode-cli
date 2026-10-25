@@ -1019,6 +1019,15 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .ok::<Located<super::system::Machine>>(g),
         op(
             "get",
+            "/telemetry",
+            "v1.telemetry.get",
+            "The server's OpenTelemetry export settings with their sources, counters and ignored project values; header values are always `***`",
+        )
+        .located()
+        .ok::<Located<super::telemetry::TelemetryStatus>>(g)
+        .error::<ErrorBody>(g, 503, "ServiceUnavailableError with service `telemetry` in a host without a server"),
+        op(
+            "get",
             "/features",
             "v1.features.list",
             "Every registered feature with its maturity, default, effective value and source for the Location",

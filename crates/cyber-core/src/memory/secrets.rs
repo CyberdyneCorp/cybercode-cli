@@ -42,11 +42,17 @@ pub(super) fn check(text: &str) -> Result<(), MemoryError> {
 /// Replace each credential-shaped match with `[REDACTED]`; text that only looks random
 /// (high entropy) is kept, since command output such as hashes is legitimately so.
 pub fn redact_credentials(text: &str) -> String {
+    redact_credentials_with(text, "[REDACTED]")
+}
+
+/// [`redact_credentials`] with a caller-chosen `marker`, such as `***` for telemetry.
+pub fn redact_credentials_with(text: &str, marker: &str) -> String {
+    let marker = regex::NoExpand(marker);
     CREDENTIALS
         .iter()
         .chain(REDACTED_ASSIGNMENTS.iter())
         .fold(text.to_string(), |text, pattern| {
-            pattern.replace_all(&text, "[REDACTED]").into_owned()
+            pattern.replace_all(&text, marker.clone()).into_owned()
         })
 }
 
@@ -79,6 +85,19 @@ mod tests {
         assert!(!redacted.contains("abc123") && !redacted.contains("AKIAABCDEFGHIJKLMNOP"));
         assert!(redacted.starts_with("ok\n") && redacted.contains("done"));
         assert_eq!(super::redact_credentials("plain hi"), "plain hi");
+    }
+
+    #[test]
+    fn the_marker_is_the_callers_and_never_expanded() {
+        let text = "key sk-abcdefghijkl and ghp_abcdefghijkl";
+        assert_eq!(
+            super::redact_credentials_with(text, "***"),
+            "key *** and ***"
+        );
+        assert_eq!(
+            super::redact_credentials_with("sk-abcdefghijkl", "$0"),
+            "$0"
+        );
     }
 
     #[test]
