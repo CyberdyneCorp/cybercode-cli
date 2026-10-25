@@ -37,7 +37,7 @@ Package-manager manifests (Homebrew, npm, Scoop, WinGet, AUR, Nix) are rendered 
 ./target/debug/cyber web               # start/reuse the server and open your browser
 ```
 
-Enter the password on the login page. The dashboard shares Sessions with the terminal: read transcripts, send prompts, approve permissions, answer questions, and monitor or control Workflows, Jobs and Goals.
+Enter the password on the login page. The dashboard shares Sessions with the terminal: read transcripts, send prompts, review held agent messages, approve permissions, answer questions, and monitor or control Workflows, Jobs and Goals.
 
 To open it manually, follow the URL printed by:
 
