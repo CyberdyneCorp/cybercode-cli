@@ -364,14 +364,14 @@ fi
       expect(report.publication.records.at(-1)?.data.outcome?.outcome).toBe("failed");
     }
     const paths = JSON.parse((await dashboard.terminal(["debug","paths","--format","json"])).stdout) as {tmp:string};
-    const temp = join(paths.tmp,"sessions",`integration-${ready.run_id}`);
+    const temp = join(paths.tmp,"sessions",`i-${ready.run_id.replace(/^run_/, "")}`);
     expect(await readFile(join(temp,"push-count"),"utf8")).toBe("x");
     expect(await readFile(join(temp,"create-count"),"utf8").catch(()=>"absent")).toBe("absent");
     return;
   }
   if (publicationGate !== "ack") {
     const paths = JSON.parse((await dashboard.terminal(["debug","paths","--format","json"])).stdout) as {tmp:string};
-    const temp = join(paths.tmp,"sessions",`integration-${ready.run_id}`);
+    const temp = join(paths.tmp,"sessions",`i-${ready.run_id.replace(/^run_/, "")}`);
     const publishing = dashboard.request(`/workflows/integrations/${batch.id}/publish`,"POST",input).then(response=>({response}),error=>({error}));
     const gateTemp = await eventually(async()=>{
       const scratch = (await readdir(paths.tmp,{recursive:true})).filter(name=>name.endsWith(`${publicationGate}-started`)).map(name=>dirname(join(paths.tmp,name)));
@@ -402,7 +402,7 @@ fi
   const paths = JSON.parse(
     (await dashboard.terminal(["debug", "paths", "--format", "json"])).stdout,
   ) as { tmp: string };
-  const temp = join(paths.tmp, "sessions", `integration-${ready.run_id}`);
+  const temp = join(paths.tmp, "sessions", `i-${ready.run_id.replace(/^run_/, "")}`);
   expect(await readFile(join(temp, "push-count"), "utf8")).toBe("x");
   expect(await readFile(join(temp, "create-count"), "utf8")).toBe("x");
   expect(await readFile(join(temp,"native-env-executed"),"utf8").catch(()=>"absent")).toBe("absent");

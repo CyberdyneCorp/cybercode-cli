@@ -307,7 +307,7 @@ impl BuiltinHost {
             cancel: ctx.cancel.clone(),
         };
         let ctx = &context;
-        let temporary = self.opts.temp_dir.join(format!("integration-{run_id}"));
+        let temporary = temporary_directory(&self.opts.temp_dir, run_id);
         PINNED
             .scope((ctx.inv.session_id.clone(), config, temporary), async {
                 match operation {
@@ -795,6 +795,12 @@ impl BuiltinHost {
     }
 }
 
+// Keep the full run identity while staying below ordinary Session directory
+// length: Linux's Unix proxy socket shares this private temporary root.
+fn temporary_directory(base: &Path, run: &str) -> PathBuf {
+    base.join(format!("i-{}", run.trim_start_matches("run_")))
+}
+
 fn check_preview(record: &Value) -> Value {
     let mut result = record.clone();
     if let Some(log) = record["log"].as_str().filter(|log| log.len() > 16_384) {
@@ -899,4 +905,42 @@ fn protected_configuration(path: &str) -> bool {
         "cyber.json" | "cyber.jsonc" | ".cyber" | ".git" | ".gitmodules" | ".worktreeinclude"
     ) || path.starts_with(".cyber/")
         || path.starts_with(".git/")
+}
+
+#[cfg(all(test, unix))]
+mod temporary_tests {
+    use super::temporary_directory;
+    use cyber_sandbox::proxy::{Decide, Proxy};
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn integration_temporary_root_preserves_the_unix_proxy_path_budget() {
+        let root = tempfile::Builder::new()
+            .prefix("iq-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let pad = 35usize.saturating_sub(root.path().as_os_str().len() + 1);
+        let base = root.path().join("s".repeat(pad.max(1)));
+        std::fs::create_dir_all(&base).unwrap();
+        let run = "run_01M5RSRC355PSECP37B874X9KQ";
+        let socket = "proxy-01m5rsrc355psec37b874x9kqx.sock";
+        let old = base.join(format!("integration-{run}"));
+        std::fs::create_dir(&old).unwrap();
+        let decide: Decide = Arc::new(|_| Box::pin(async { false }));
+        let rejected = Proxy::start_unix(Arc::clone(&decide), &old.join(socket)).await;
+        assert!(
+            rejected.is_err(),
+            "old long path must reproduce the Unix bind failure"
+        );
+        let corrected = temporary_directory(&base, run);
+        std::fs::create_dir(&corrected).unwrap();
+        let proxy = Proxy::start_unix(decide, &corrected.join(socket)).await;
+        assert!(
+            proxy.is_ok(),
+            "short full-identity path must bind: {}",
+            proxy
+                .err()
+                .map_or_else(String::new, |error| error.to_string())
+        );
+    }
 }

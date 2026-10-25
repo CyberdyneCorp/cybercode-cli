@@ -177,7 +177,9 @@ impl Runtime {
             WorkflowRunStatus::Paused | WorkflowRunStatus::WaitingInput => "unknown",
         }
         .into();
-        batch.report = run.result;
+        batch.report = run
+            .result
+            .or_else(|| run.error.map(|error| json!({"error":error})));
         Ok(())
     }
 
