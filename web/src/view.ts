@@ -1,6 +1,7 @@
 import { integrationsView } from "./integrations-view.js";
 import type { Content, Message, PendingRequest, RunDetail } from "../../sdk/typescript/src/generated/types.js";
 import { Dashboard, type Card, type Tab } from "./model.js";
+import { messageInbox } from "./inbox-view.js";
 
 function node<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text?: string): HTMLElementTagNameMap[K] {
   const element = document.createElement(tag); element.className = className;
@@ -99,7 +100,7 @@ export class View {
     title.append(left, meta); main.append(title);
     const count = state.cards.length;
     const tabs = node("nav", "tabs"); tabs.setAttribute("aria-label", "Session views");
-    for (const [tab, label] of [["conversation", "Conversation"], ["approvals", "Approvals"], ["runs", "Runs"], ["integrations", "Integrations"]] as const) {
+    for (const [tab, label] of [["conversation", "Conversation"], ["approvals", "Approvals"], ["runs", "Runs"], ["inbox", "Message inbox"], ["integrations", "Integrations"]] as const) {
       const item = button(label, () => this.model.setTab(tab), false, `tab ${state.tab === tab ? "active" : ""}`); item.setAttribute("aria-current", state.tab === tab ? "page" : "false"); if (tab === "approvals") item.append(node("span", "count", String(count))); tabs.append(item);
     }
     main.append(tabs);
@@ -114,6 +115,7 @@ export class View {
     else if (state.tab === "approvals") content.append(this.approvals());
     else if (state.tab === "integrations") content.append(integrationsView(this.model.integrations, this.model.actionable));
     else if (state.tab === "runs") content.append(this.runs());
+    else if (state.tab === "inbox") content.append(messageInbox(this.model.inbox, this.model.actionable, (part) => this.part(part)));
     else content.append(this.conversation());
     main.append(content); if (state.session && state.tab === "conversation") main.append(this.composer()); return main;
   }
@@ -125,7 +127,7 @@ export class View {
       const empty = node("div", "empty-state"); empty.append(node("span", "empty-glyph", "✳"), node("h2", "", state.session ? "A clear place to start" : "Choose a Session"), node("p", "", state.session ? "Send a direction or queue the next step. Requests that need your judgement appear in Approvals." : "Open an existing Session to follow its work and review requests.")); wrap.append(empty);
     }
     for (const message of state.messages) wrap.append(this.message(message));
-    if (state.liveText && !state.olderTranscript) { const live = node("article", "message assistant"); live.append(node("div", "message-label", "Assistant · streaming"), node("div", "prose", state.liveText)); wrap.append(live); }
+    if (state.liveText && !state.olderTranscript && !state.messages.some((message) => message.id === state.liveMessage)) { const live = node("article", "message assistant"); live.append(node("div", "message-label", "Assistant · streaming"), node("div", "prose", state.liveText)); wrap.append(live); }
     if (state.diffs.length) {
       const changes = node("section", "changes"); changes.append(heading("WORKING TREE", `${state.diffs.length} changed file${state.diffs.length === 1 ? "" : "s"}`));
       for (const diff of state.diffs) {
@@ -140,7 +142,10 @@ export class View {
     const label = message.kind === "user" ? "You" : message.kind === "assistant" ? `${message.agent ?? "Assistant"} · ${message.finished ? "completed" : "working"}` : "Session note";
     article.append(node("div", "message-label", label));
     if (message.kind === "user") for (const part of message.parts) article.append(this.part(part));
-    else article.append(node("div", "prose", message.text));
+    else {
+      const live = this.model.state.liveMessage === message.id ? this.model.state.liveText : "";
+      article.append(node("div", "prose", live.startsWith(message.text) && live.length > message.text.length ? live : message.text));
+    }
     for (const tool of message.tools ?? []) {
       const detail = node("details", "tool"); const summary = node("summary", "", `${tool.name} · ${prettyStatus(tool.status)}`); detail.append(summary, code(tool.arguments, "Tool arguments")); if (tool.output) detail.append(code(tool.output, "Tool output")); article.append(detail);
     }

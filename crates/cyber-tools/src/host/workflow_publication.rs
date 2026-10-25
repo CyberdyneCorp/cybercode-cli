@@ -159,7 +159,7 @@ impl BuiltinHost {
                 "publication has a prior native intent without a matching remote PR; its outcome is unresolved and will not be repeated automatically",
             ));
         }
-        self.integration_append(&key,-1,json!({"phase":"intent","operation_id":operation,"definition_sha256":definition,"repository":slug,"branch":branch,"commit":commit,"settled":false}))?;
+        self.integration_append(&key,-1,json!({"phase":"intent","operation_id":operation,"definition_sha256":definition,"repository":slug,"remote":remote,"destination":destinations[0],"target":target,"branch":branch,"commit":commit,"settled":false}))?;
         let push = cyber_workflow::solve::Check {
             argv: vec![
                 "git".into(),

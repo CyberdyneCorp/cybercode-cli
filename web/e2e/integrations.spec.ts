@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, writeFile, readdir } from "node:fs/promises";
+import { join, dirname } from "node:path";
 import { test, expect, login, select, tab } from "./browser.js";
 import { eventually, hostile } from "./fixture.js";
 
@@ -213,7 +213,8 @@ test("a server crash during native verification remains unknown and never reexec
   expect(dashboard.modelRequests).toHaveLength(0);
 });
 
-test("publication reconciles a lost command acknowledgement without repeating Git or PR creation", async ({
+for (const publicationGate of ["ack", "lookup", "admission", "uncertain"] as const) {
+test(publicationGate === "ack" ? "publication reconciles a lost command acknowledgement without repeating Git or PR creation" : publicationGate === "uncertain" ? "unknown publication receipts remain inspectable without repeating native effects" : `cancellation during publication ${publicationGate} prevents PR creation`, async ({
   dashboard,
 }) => {
   test.skip(
@@ -229,7 +230,7 @@ test("publication reconciles a lost command acknowledgement without repeating Gi
   expect(gitPath).not.toBe("");
   await writeFile(
     join(bin, "git"),
-    `#!/bin/sh\nfor arg do\n if [ "$arg" = push ]; then printf x >> "$TMPDIR/push-count"; exit 0; fi\ndone\nexec '${gitPath}' "$@"\n`,
+    `#!/bin/sh\nif [ -n "\${LD_PRELOAD+x}\${DYLD_INSERT_LIBRARIES+x}\${DYLD_LIBRARY_PATH+x}\${GH_CONFIG_DIR+x}" ]; then printf x > "$TMPDIR/native-env-executed"; exit 79; fi\ncase "\${HOME-}:\${XDG_CONFIG_HOME-}" in *contributed*) exit 79;; esac\nfor arg do\n if [ "$arg" = push ]; then printf x >> "$TMPDIR/push-count"; exit ${publicationGate === "uncertain" ? 76 : 0}; fi\ndone\nexec '${gitPath}' "$@"\n`,
   );
   await chmod(join(bin, "git"), 0o700);
   const configPath = join(dashboard.home, "config/cyber.json");
@@ -241,6 +242,20 @@ test("publication reconciles a lost command acknowledgement without repeating Gi
     worktree: "allow",
     external_directory: "allow",
   };
+  if (publicationGate === "admission") {
+    const hook = join(bin, "wait-create.py");
+    await writeFile(hook, `import os,sys,time
+sys.stdin.read()
+root=os.environ['TMPDIR']
+open(os.path.join(root,'admission-started'),'w').close()
+while not os.path.exists(os.path.join(root,'release-admission')): time.sleep(.05)
+`);
+    config.sandbox = {readable_paths:[bin]};
+    config.hooks = {PreToolUse:[{matcher:"bash",hooks:[{type:"command", command:`python3 '${hook}'`, if:{field:"tool_input.command",matches:"^'gh' 'pr' 'create' "}}]}]};
+  }
+  if (publicationGate === "ack") {
+    config.sandbox = {env:{set:{LD_PRELOAD:"",DYLD_INSERT_LIBRARIES:"",DYLD_LIBRARY_PATH:"./contributed-libraries",GH_CONFIG_DIR:"./contributed-gh",HOME:"./contributed-home",XDG_CONFIG_HOME:"./contributed-config"}}};
+  }
   await writeFile(configPath, JSON.stringify(config));
   await dashboard.restartWithTrustedPath(bin);
   const git = (args: string[]) => {
@@ -311,9 +326,22 @@ test("publication reconciles a lost command acknowledgement without repeating Gi
   };
   await writeFile(
     join(bin, "gh"),
-    `#!/bin/sh\nif [ "$2" = list ]; then\n if [ -f "$TMPDIR/pr.json" ]; then cat "$TMPDIR/pr.json"; else printf '[]'; fi\nelse\n printf x >> "$TMPDIR/create-count"\n printf '%s' '${JSON.stringify([row])}' > "$TMPDIR/pr.json"\n printf 'response lost after remote creation' >&2\n exit 76\nfi\n`,
+    `#!/bin/sh\nif [ -n "\${LD_PRELOAD+x}\${DYLD_INSERT_LIBRARIES+x}\${DYLD_LIBRARY_PATH+x}\${GH_CONFIG_DIR+x}" ]; then printf x > "$TMPDIR/native-env-executed"; exit 79; fi\ncase "\${HOME-}:\${XDG_CONFIG_HOME-}" in *contributed*) exit 79;; esac\nif [ "$2" = list ]; then\n if [ -f "$TMPDIR/pr.json" ]; then cat "$TMPDIR/pr.json"; else printf '[]'; fi\nelse\n printf x >> "$TMPDIR/create-count"\n printf '%s' '${JSON.stringify([row])}' > "$TMPDIR/pr.json"\n printf 'response lost after remote creation' >&2\n exit 76\nfi\n`,
   );
   await chmod(join(bin, "gh"), 0o700);
+  if (publicationGate !== "ack") {
+    const wait = publicationGate === "lookup" ? `printf x > "$TMPDIR/lookup-started"
+while [ ! -f "$TMPDIR/release-lookup" ]; do sleep .05; done
+` : "";
+    await writeFile(join(bin,"gh"), `#!/bin/sh
+if [ "$2" = list ]; then
+${wait}printf '[]'
+else
+ printf x >> "$TMPDIR/create-count"
+ exit 76
+fi
+`);
+  }
   const input = {
     expected_revision: ready.revision,
     operation_id: "publication-lost-ack",
@@ -323,6 +351,45 @@ test("publication reconciles a lost command acknowledgement without repeating Gi
     body: "Real host checks, mocked remote transport only.",
     acknowledge_review_unavailable: true,
   };
+  if (publicationGate === "uncertain") {
+    const result = await dashboard.request(`/workflows/integrations/${batch.id}/publish`,"POST",input);
+    expect(result.ok).toBe(false);
+    for (const suffix of ["","/report"]) {
+      const report = await dashboard.api<{publication:{phase:string;last_phase:string;repository:string;destination:string;records:{data:{phase:string;outcome?:{settled:boolean;outcome:string}}}[]}}>(`/workflows/integrations/${batch.id}${suffix}`);
+      expect(report.publication.phase).toBe("unknown");
+      expect(report.publication.last_phase).toBe("push");
+      expect(report.publication.repository).toBe("fixture/integration");
+      expect(report.publication.destination).toBe("https://github.com/fixture/integration.git");
+      expect(report.publication.records.at(-1)?.data.outcome?.settled).toBe(true);
+      expect(report.publication.records.at(-1)?.data.outcome?.outcome).toBe("failed");
+    }
+    const paths = JSON.parse((await dashboard.terminal(["debug","paths","--format","json"])).stdout) as {tmp:string};
+    const temp = join(paths.tmp,"sessions",`integration-${ready.run_id}`);
+    expect(await readFile(join(temp,"push-count"),"utf8")).toBe("x");
+    expect(await readFile(join(temp,"create-count"),"utf8").catch(()=>"absent")).toBe("absent");
+    return;
+  }
+  if (publicationGate !== "ack") {
+    const paths = JSON.parse((await dashboard.terminal(["debug","paths","--format","json"])).stdout) as {tmp:string};
+    const temp = join(paths.tmp,"sessions",`integration-${ready.run_id}`);
+    const publishing = dashboard.request(`/workflows/integrations/${batch.id}/publish`,"POST",input).then(response=>({response}),error=>({error}));
+    const gateTemp = await eventually(async()=>{
+      const scratch = (await readdir(paths.tmp,{recursive:true})).filter(name=>name.endsWith(`${publicationGate}-started`)).map(name=>dirname(join(paths.tmp,name)));
+      for (const candidate of [temp,join(paths.tmp,"sessions",owner),...scratch]) {
+        if (await readFile(join(candidate,`${publicationGate}-started`),"utf8").then(()=>true).catch(()=>false)) return candidate;
+      }
+      return "";
+    },Boolean);
+    await dashboard.api(`/workflows/integrations/${batch.id}/cancel`,"POST",{expected_revision:ready.revision});
+    await writeFile(join(gateTemp,`release-${publicationGate}`),"continue");
+    const outcome = await publishing;
+    if ("error" in outcome) throw outcome.error;
+    expect(outcome.response.ok).toBe(false);
+    expect(await readFile(join(temp,"create-count"),"utf8").catch(()=>"absent")).toBe("absent");
+    const cancelled = await dashboard.api<{status:string}>(`/workflows/integrations/${batch.id}`);
+    expect(cancelled.status).toBe("cancelled");
+    return;
+  }
   const published = await dashboard.api<{
     revision: number;
     publication: { phase: string };
@@ -338,4 +405,7 @@ test("publication reconciles a lost command acknowledgement without repeating Gi
   const temp = join(paths.tmp, "sessions", `integration-${ready.run_id}`);
   expect(await readFile(join(temp, "push-count"), "utf8")).toBe("x");
   expect(await readFile(join(temp, "create-count"), "utf8")).toBe("x");
+  expect(await readFile(join(temp,"native-env-executed"),"utf8").catch(()=>"absent")).toBe("absent");
 });
+
+}

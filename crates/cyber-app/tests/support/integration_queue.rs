@@ -454,6 +454,29 @@ async fn repository_hooks_never_run_and_external_filter_configuration_is_refused
         !status.is_success(),
         "partial clones require an explicit object fetch before admission"
     );
+    git(&root, &["config", "--unset", "remote.origin.promisor"]);
+    git(&root, &["config", "extensions.worktreeConfig", "true"]);
+    git(
+        &root,
+        &[
+            "config",
+            "--worktree",
+            "merge.evil.driver",
+            "touch driver-ran",
+        ],
+    );
+    let (status, _) = server
+        .call(
+            Method::POST,
+            "/workflows/integrations",
+            Some(json!({"session_id":owner,"manifest":manifest(&[("api",&api)])})),
+        )
+        .await;
+    assert!(
+        !status.is_success(),
+        "worktree-specific drivers must not evade common-config inspection"
+    );
+    assert!(!root.join("driver-ran").exists());
     server.close().await;
 }
 
@@ -749,5 +772,37 @@ async fn a_failed_second_start_cannot_recover_the_previous_successful_run() {
     assert!(failed.run_id.is_none());
     assert_eq!(failed.previous_runs, vec![old_run.to_string()]);
     assert_eq!(failed.report.as_ref().unwrap()["eligible"], false);
+    server.close().await;
+}
+
+#[tokio::test]
+async fn reserved_configuration_root_symlinks_are_rejected_at_admission() {
+    let model = ScriptedModel::start(reply);
+    let (temp, _, _) = repository();
+    let root = temp.path().canonicalize().unwrap();
+    git(&root, &["checkout", "--quiet", "-b", "configuration-link"]);
+    std::os::unix::fs::symlink("outside-owner-policy", root.join(".cyber")).unwrap();
+    git(&root, &["add", ".cyber"]);
+    git(&root, &["commit", "--quiet", "-m", "reserved root symlink"]);
+    let commit = git_text(&root, &["rev-parse", "HEAD"]);
+    git(&root, &["checkout", "--quiet", "main"]);
+    let server = open(temp, &model).await;
+    let owner = server.session().await;
+    let (status, _) = server
+        .call(
+            Method::POST,
+            "/workflows/integrations",
+            Some(json!({"session_id":owner,"manifest":manifest(&[("configuration",&commit)])})),
+        )
+        .await;
+    assert!(!status.is_success());
+    assert!(
+        server
+            .app
+            .runtime
+            .integration_batches(root.to_str().unwrap())
+            .unwrap()
+            .is_empty()
+    );
     server.close().await;
 }

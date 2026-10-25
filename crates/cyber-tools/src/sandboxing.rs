@@ -60,6 +60,7 @@ pub(crate) struct Boundary {
 #[derive(Default)]
 struct Scope<'a> {
     ambient_temp: bool,
+    native_authority: bool,
     git_roots: Option<&'a [PathBuf]>,
     /// Kept read-only inside `git_roots`.
     git_read_only: &'a [PathBuf],
@@ -134,6 +135,25 @@ pub(crate) async fn prepare_command(
     prepare_scoped_command(ctx, program, args, scope).await
 }
 
+/// Host integration Git/GitHub authority uses the host environment and existing
+/// credential grants, never project-selected environment overlays.
+pub(crate) async fn prepare_authoritative_command(
+    ctx: &Ctx<'_>,
+    program: &str,
+    args: &[String],
+) -> Result<Prepared, ToolError> {
+    prepare_scoped_command(
+        ctx,
+        program,
+        args,
+        Scope {
+            native_authority: true,
+            ..Scope::default()
+        },
+    )
+    .await
+}
+
 /// Automatic formatters use owned temporary roots rather than the ambient OS temp tree.
 pub(crate) async fn prepare_formatter_command(
     ctx: &Ctx<'_>,
@@ -152,6 +172,7 @@ pub(crate) async fn prepare_worktree_command(
 ) -> Result<Prepared, ToolError> {
     let scope = Scope {
         extra_credentials: credentials,
+        native_authority: crate::host::workflow_integration::native_git_authority(ctx),
         ..Scope::default()
     };
     prepare_scoped_command(ctx, program, args, scope).await
@@ -180,6 +201,7 @@ pub(crate) async fn prepare_worktree_git(
     let scope = Scope {
         git_roots: Some(writable),
         git_read_only: read_only,
+        native_authority: crate::host::workflow_integration::native_git_authority(ctx),
         ..Scope::default()
     };
     prepare_scoped_command(ctx, program, args, scope).await
@@ -253,13 +275,23 @@ async fn prepare_scoped_command(
         config: sandbox.clone(),
     };
     let wrapped = cyber_sandbox::wrap(&launch, program, args).map_err(|e| failed(e.to_string()))?;
-    let base = command_environment(
-        std::env::vars(),
-        &sandbox,
-        &config,
-        ctx.host.opts.models.as_deref(),
-        scope.extra_credentials,
-    );
+    let base = if scope.native_authority {
+        authority_environment(
+            std::env::vars(),
+            &sandbox,
+            &config,
+            ctx.host.opts.models.as_deref(),
+            scope.extra_credentials,
+        )
+    } else {
+        command_environment(
+            std::env::vars(),
+            &sandbox,
+            &config,
+            ctx.host.opts.models.as_deref(),
+            scope.extra_credentials,
+        )
+    };
     let mut env: Vec<(String, String)> = base
         .into_iter()
         .filter(|(k, _)| !wrapped.env.contains_key(k) && k != "TMPDIR")
@@ -306,6 +338,44 @@ fn command_environment(
     credentials.extend(credential_env_names(config));
     credentials.extend_from_slice(extra_credentials);
     cyber_sandbox::policy_env(vars, sandbox, &credentials)
+}
+
+fn authority_environment(
+    vars: impl Iterator<Item = (String, String)>,
+    sandbox: &SandboxConfig,
+    config: &serde_json::Value,
+    models: Option<&dyn cyber_server::runtime::ModelResolver>,
+    credentials: &[String],
+) -> Vec<(String, String)> {
+    let mut trusted = sandbox.clone();
+    trusted.env.set.clear();
+    let mut env = command_environment(vars, &trusted, config, models, credentials);
+    env.retain(|(key, _)| {
+        let key = key.to_ascii_uppercase();
+        !key.starts_with("LD_")
+            && !key.starts_with("DYLD_")
+            && !matches!(
+                key.as_str(),
+                "GH_CONFIG_DIR"
+                    | "BASH_ENV"
+                    | "ENV"
+                    | "GCONV_PATH"
+                    | "LOCPATH"
+                    | "LIBPATH"
+                    | "SHLIB_PATH"
+                    | "PYTHONPATH"
+                    | "PYTHONHOME"
+                    | "PERL5LIB"
+                    | "PERL5OPT"
+                    | "RUBYOPT"
+                    | "RUBYLIB"
+                    | "NODE_OPTIONS"
+                    | "NODE_PATH"
+                    | "OPENSSL_CONF"
+                    | "OPENSSL_MODULES"
+            )
+    });
+    env
 }
 
 async fn start_proxy(decide: Decide, _tmp: &Path) -> std::io::Result<Proxy> {
@@ -642,6 +712,58 @@ mod tests {
             .into_iter()
             .map(|(name, _)| name)
             .collect()
+    }
+
+    #[test]
+    fn native_authority_rejects_project_overlays_and_runtime_loaders_without_changing_checks() {
+        let mut sandbox = cyber_sandbox::SandboxConfig::resolve(
+            &serde_json::json!({}),
+            &Default::default(),
+            Some("workspace-write"),
+            std::path::Path::new("/trusted/home"),
+        );
+        sandbox.env.set = std::collections::BTreeMap::from([
+            ("LD_PRELOAD".into(), "./contributed.so".into()),
+            ("DYLD_INSERT_LIBRARIES".into(), "./contributed.dylib".into()),
+            ("GH_CONFIG_DIR".into(), "./contributed-gh".into()),
+            ("HOME".into(), "./contributed-home".into()),
+            ("XDG_CONFIG_HOME".into(), "./contributed-config".into()),
+            ("CHECK_OVERLAY".into(), "owner-check-value".into()),
+        ]);
+        let vars = vec![
+            ("HOME".into(), "/trusted/home".into()),
+            ("LD_PRELOAD".into(), "./ambient-loader.so".into()),
+            ("GH_CONFIG_DIR".into(), "./ambient-gh".into()),
+        ];
+        let native = super::authority_environment(
+            vars.clone().into_iter(),
+            &sandbox,
+            &serde_json::json!({}),
+            None,
+            &[],
+        );
+        assert!(!native.iter().any(|(key, value)| key.starts_with("LD_")
+            || key.starts_with("DYLD_")
+            || key == "GH_CONFIG_DIR"
+            || value.starts_with("./contributed")
+            || key == "CHECK_OVERLAY"));
+        let check = super::command_environment(
+            vars.into_iter(),
+            &sandbox,
+            &serde_json::json!({}),
+            None,
+            &[],
+        );
+        assert!(
+            check
+                .iter()
+                .any(|(key, value)| key == "CHECK_OVERLAY" && value == "owner-check-value")
+        );
+        assert!(
+            check
+                .iter()
+                .any(|(key, value)| key == "LD_PRELOAD" && value == "./contributed.so")
+        );
     }
 
     #[test]

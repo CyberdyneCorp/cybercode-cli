@@ -17,6 +17,17 @@ Validated locally on macOS on 2026-10-24 at implementation commit `69b4faed` bef
 - Current OpenAPI snapshot, generated SDK sources, strict all-target Clippy for the seven affected packages, formatting, diff whitespace, strict OpenSpec change validation and dashboard committed-build checks passed. Spec lint reported 0 errors and 23 warnings; no main-branch comparison was performed for those warnings.
 - The final macOS CLI/helper build succeeded and emitted a linker compact-unwind size warning. The frozen CLI SHA-256 was `a506de13716462fff407c2699786ae0f21012374657e0e5d8d61eefbce0fb456`.
 
+## Review and current-main revalidation (2026-10-25)
+
+Merged main `82597aa0`, preserving the message inbox and transcript paging fixes. The first CI run exposed an overly broad native Git environment rule, a missing TUI library entry, missing local Git fixture identity and mobile tab overflow. Those were corrected without weakening integration authority.
+
+- Existing worktree setup suite: 32 passed; concurrent workflow writer regression: 1 passed; TUI library/form test and three updated snapshots: 1 passed.
+- Final App integration suite: 20 passed, adding exact reserved configuration-root symlink refusal and current-attempt orphan recovery checks. Native authority environment regression: 1 passed, proving runtime-loader/config overlays are removed for authoritative commands while ordinary verification preserves its environment.
+- Merged dashboard unit suite: 34 passed. Full browser suite: 28 passed before the final read-only receipt/environment additions. The final six integration browser cases all passed against the refreshed binary, including trusted Git/GitHub executable environment probes, cancellation during GitHub lookup and hook admission, unknown publication receipt inspection with no repeated push/create, and lost-ack reconciliation.
+- Current-main generated SDK process acceptance and CLI submission/run/concurrency acceptance passed. Strict all-target Clippy for tools/server/app/TUI/CLI passed after the final changes; formatting, generated SDK, CLI help reference and strict OpenSpec validation passed. All 96 specs/changes passed strict validation on the merged tree.
+- A rebuild first failed at linking with `errno=28` (disk full), before tests ran. Builds stopped while obsolete generated artifacts were reclaimed; subsequent focused checks/build succeeded. No user data was removed. The successful macOS build still emitted the compact-unwind linker-size warning.
+- Final frozen CLI SHA-256: `40ed5908e54e5ad7a6123acc5ad31a7089f381faa8c5c797bb30be27e2bfc84c`. Platform CI for the updated tip remains pending; the earlier failed CI run is not presented as acceptance.
+
 ## Evidence and recovery guarantees
 
 Native check intents and settlements record the immutable argv definition, prepared launch environment hash, source fingerprint, output and outcome. Reports retain the original verified diff and check evidence after later source mutation. Completed batches and revision history survive restart. An interrupted native effect stays unknown and cannot be turned into a passing check by replaying agent JSON.

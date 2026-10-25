@@ -843,13 +843,13 @@ pub(super) async fn reject_repository_drivers(
                 "--no-includes",
                 "--name-only",
                 "--get-regexp",
-                "^(filter\\.|merge\\..*\\.driver$|include\\.|includeIf\\.|includeif\\.|url\\.|extensions\\.partialclone$|remote\\..*\\.promisor$)",
+                "^(filter\\.|merge\\..*\\.driver$|include\\.|includeIf\\.|includeif\\.|url\\.|extensions\\.(partialclone|worktreeconfig)$|remote\\..*\\.promisor$)",
             ]),
         )
         .await
         .map_err(|e| e.to_string())?;
     if output.status.success() && !output.stdout.is_empty() {
-        return Err("integration refuses repository-local external filters, merge drivers, URL rewrites, partial-clone fetchers or included configuration".into());
+        return Err("integration refuses repository-local external filters, merge drivers, URL rewrites, partial-clone fetchers, worktree-specific or included configuration".into());
     }
     if output.status.code() != Some(1) && !output.status.success() {
         return Err("cannot inspect repository-local execution settings".into());
@@ -896,7 +896,7 @@ fn protected_configuration(path: &str) -> bool {
     let path = path.to_ascii_lowercase();
     matches!(
         path.as_str(),
-        "cyber.json" | "cyber.jsonc" | ".gitmodules" | ".worktreeinclude"
+        "cyber.json" | "cyber.jsonc" | ".cyber" | ".git" | ".gitmodules" | ".worktreeinclude"
     ) || path.starts_with(".cyber/")
         || path.starts_with(".git/")
 }

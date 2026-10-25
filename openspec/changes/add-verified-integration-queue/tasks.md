@@ -30,3 +30,5 @@
 ## Acceptance status
 
 Local implementation evidence and deployment limits are recorded in [verified-integration-acceptance.md](../../../docs/measurements/verified-integration-acceptance.md). Live CyberdyneAuth acceptance remains blocked by the external outage; hub-linked operations fail closed. Real GitHub publication and non-macOS platform acceptance remain deployment/CI checks, not fixture-proven claims. Required `integrate` transcripts must remain excluded when the parallel retention implementation is integrated.
+
+2026-10-25 review follow-up: current-main merge and CI regressions are fixed locally; current-attempt orphan binding, publication dispatch fencing after asynchronous admission, reserved-root symlink refusal, host-only native environments and bounded uncertainty receipts have focused regression coverage. Final local evidence is recorded above; 4.5 remains open until the updated PR tip passes platform CI and final integration review.

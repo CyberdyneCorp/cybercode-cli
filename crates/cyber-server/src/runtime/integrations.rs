@@ -141,9 +141,6 @@ impl Runtime {
     }
 
     fn integration_effective(&self, batch: &mut IntegrationBatch) -> Result<(), RuntimeError> {
-        if batch.status == "cancelled" {
-            return Ok(());
-        }
         let run_id = match &batch.run_id {
             Some(id) => Some(id.clone()),
             None if batch.status == "preparing" => self.integration_orphan_run(&batch.id)?,
@@ -152,6 +149,12 @@ impl Runtime {
         let Some(run_id) = run_id else {
             return Ok(());
         };
+        if let Some(receipt) = self.integration_publication_receipts(&run_id)? {
+            batch.publication = Some(receipt);
+        }
+        if batch.status == "cancelled" {
+            return Ok(());
+        }
         let Some(run) = self.workflow_run(&run_id)? else {
             batch.status = "unknown".into();
             return Ok(());
@@ -176,6 +179,38 @@ impl Runtime {
         .into();
         batch.report = run.result;
         Ok(())
+    }
+
+    fn integration_publication_receipts(&self, run: &str) -> Result<Option<Value>, RuntimeError> {
+        let aggregate = format!("integration_publication_{run}");
+        let page = self.inner.store.read_events(&aggregate, -1, 16)?;
+        let records = page
+            .events
+            .iter()
+            .map(
+                |event| json!({"seq":event.seq,"data":publication_preview(&event.data,&aggregate)}),
+            )
+            .collect::<Vec<_>>();
+        let Some(first) = records.first() else {
+            return Ok(None);
+        };
+        let last = &records.last().expect("nonempty receipts")["data"];
+        let mut receipt = first["data"].clone();
+        receipt["phase"] = if last["phase"] == "published" && !page.has_more {
+            "published"
+        } else {
+            "unknown"
+        }
+        .into();
+        receipt["settled"] = (receipt["phase"] == "published").into();
+        receipt["last_phase"] = last["phase"].clone();
+        if let Some(pr) = last.get("pull_request") {
+            receipt["pull_request"] = pr.clone();
+        }
+        receipt["aggregate_id"] = aggregate.into();
+        receipt["records_truncated"] = page.has_more.into();
+        receipt["records"] = records.into();
+        Ok(Some(receipt))
     }
 
     fn integration_orphan_run(&self, id: &str) -> Result<Option<String>, RuntimeError> {
@@ -316,4 +351,35 @@ impl Runtime {
             })?;
         Ok(batch)
     }
+}
+
+// Native records are retained in full; owner queue responses bound their previews.
+fn publication_preview(record: &Value, aggregate: &str) -> Value {
+    if record.to_string().len() <= 16_384 {
+        return record.clone();
+    }
+    let mut preview = json!({"preview_truncated":true,"full_evidence_aggregate":aggregate});
+    for key in [
+        "phase",
+        "operation_id",
+        "definition_sha256",
+        "repository",
+        "remote",
+        "destination",
+        "target",
+        "branch",
+        "commit",
+    ] {
+        if let Some(text) = record[key].as_str() {
+            let mut end = text.len().min(512);
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            preview[key] = text[..end].into();
+        }
+    }
+    if let Some(outcome) = record.get("outcome") {
+        preview["outcome"] = json!({"outcome":outcome["outcome"],"settled":outcome["settled"],"exit_code":outcome["exit_code"],"log_truncated":true});
+    }
+    preview
 }

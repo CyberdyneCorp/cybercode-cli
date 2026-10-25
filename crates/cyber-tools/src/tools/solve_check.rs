@@ -54,47 +54,7 @@ async fn execute(
             }
             other => other,
         })?;
-    let authority = publication
-        .then(|| {
-            let search = crate::host::review::trusted_path(ctx);
-            let program = crate::host::review::trusted_program(ctx, &check.argv[0], &search)
-                .ok_or_else(|| {
-                    failed("trusted publication executable is unavailable outside project sources")
-                })?;
-            let program = program
-                .to_str()
-                .ok_or_else(|| failed("publication executable path is not Unicode"))?
-                .to_string();
-            Ok::<_, ToolError>((program, search))
-        })
-        .transpose()?;
-    let program = authority
-        .as_ref()
-        .map_or(check.argv[0].as_str(), |(program, _)| program.as_str());
-    let mut prepared = crate::sandboxing::prepare_command(ctx, program, &check.argv[1..]).await?;
-    if let Some((_, search)) = authority {
-        prepared
-            .env
-            .retain(|(key, _)| !key.eq_ignore_ascii_case("PATH"));
-        prepared.env.push((
-            "PATH".into(),
-            std::env::join_paths(search)
-                .map_err(|error| failed(error.to_string()))?
-                .to_string_lossy()
-                .into_owned(),
-        ));
-    }
-    if publication {
-        crate::worktrees::isolate_git_config(&mut prepared);
-        prepared
-            .env
-            .retain(|(key, _)| !matches!(key.as_str(), "GH_DEBUG" | "GH_HOST" | "DEBUG"));
-        prepared.env.push(("GH_HOST".into(), "github.com".into()));
-        prepared.env.push(("GH_PROMPT_DISABLED".into(), "1".into()));
-        prepared
-            .env
-            .push(("GIT_TERMINAL_PROMPT".into(), "0".into()));
-    }
+    let mut prepared = prepare_launch(ctx, check, publication).await?;
     let environment_sha256 = {
         use sha2::{Digest, Sha256};
         format!("{:x}",Sha256::digest(serde_json::to_vec(&serde_json::json!({"program":prepared.program,"args":prepared.args,"env":prepared.env,"cwd":ctx.location})).map_err(|error|failed(error.to_string()))?))
@@ -155,6 +115,59 @@ fn check_timeout(ctx: &Ctx<'_>, check: &Check) -> u64 {
         .unwrap_or_default()
         .as_millis();
     declared.min((deadline as u128).saturating_sub(now).min(u64::MAX as u128) as u64)
+}
+
+async fn prepare_launch(
+    ctx: &Ctx<'_>,
+    check: &Check,
+    publication: bool,
+) -> Result<crate::sandboxing::Prepared, ToolError> {
+    let authority = publication
+        .then(|| {
+            let search = crate::host::review::trusted_path(ctx);
+            let program = crate::host::review::trusted_program(ctx, &check.argv[0], &search)
+                .ok_or_else(|| {
+                    failed("trusted publication executable is unavailable outside project sources")
+                })?;
+            let program = program
+                .to_str()
+                .ok_or_else(|| failed("publication executable path is not Unicode"))?
+                .to_string();
+            Ok::<_, ToolError>((program, search))
+        })
+        .transpose()?;
+    let program = authority
+        .as_ref()
+        .map_or(check.argv[0].as_str(), |(program, _)| program.as_str());
+    let mut prepared = if publication {
+        crate::sandboxing::prepare_authoritative_command(ctx, program, &check.argv[1..]).await?
+    } else {
+        crate::sandboxing::prepare_command(ctx, program, &check.argv[1..]).await?
+    };
+    if let Some((_, search)) = authority {
+        prepared
+            .env
+            .retain(|(key, _)| !key.eq_ignore_ascii_case("PATH"));
+        prepared.env.push((
+            "PATH".into(),
+            std::env::join_paths(search)
+                .map_err(|error| failed(error.to_string()))?
+                .to_string_lossy()
+                .into_owned(),
+        ));
+    }
+    if publication {
+        crate::worktrees::isolate_git_config(&mut prepared);
+        prepared
+            .env
+            .retain(|(key, _)| !matches!(key.as_str(), "GH_DEBUG" | "GH_HOST" | "DEBUG"));
+        prepared.env.push(("GH_HOST".into(), "github.com".into()));
+        prepared.env.push(("GH_PROMPT_DISABLED".into(), "1".into()));
+        prepared
+            .env
+            .push(("GIT_TERMINAL_PROMPT".into(), "0".into()));
+    }
+    Ok(prepared)
 }
 
 async fn wait(

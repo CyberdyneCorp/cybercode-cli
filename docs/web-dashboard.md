@@ -70,6 +70,12 @@ The page displays connection state and disables stale actions during recovery. I
 
 ## Browser views
 
+The **Message inbox** tab lists held incoming agent messages separately from tool permissions. Cards show the sender, target Session, full admitted text and available hub/project/owner provenance. Review the content and check its review box to **Release to queue**, or **Drop message** to discard it. The server rechecks project authorization and receiver policy before release; releasing a message never approves a tool. Older held messages may require **Load older sender details** before their actions become available. Ordinary held prompts are not agent-message cards.
+
+An uncertain response keeps the original message/action/idempotency key. Refresh reconciles decisions made by another client; retry sends only the original action. Session/Location switches, logout and failed inbox reads clear stale sender/content cards. Incoming text is rendered inert, including HTML and remote image links.
+
+See the [message inbox acceptance evidence](implementation/dashboard-message-inbox.md) and [360px screenshot](screenshots/web-dashboard-message-inbox-mobile.png).
+
 The approval inbox displays the original Session, request, Location and command, with separate one-time, saved-scope and rejection actions. Screenshots below come from the real CLI and a scripted local provider, using fixture data.
 
 ![Desktop approval inbox](screenshots/web-dashboard-desktop.png)
