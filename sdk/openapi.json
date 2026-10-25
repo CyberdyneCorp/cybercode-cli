@@ -13872,6 +13872,426 @@
         ],
         "description": "A file's content, or that it is binary."
       },
+      "Data_ComputerHealthReport": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ComputerHealthReport"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "ComputerHealthReport": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "grant": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComputerGrantView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "health": {
+            "$ref": "#/components/schemas/ComputerHealth"
+          }
+        },
+        "required": [
+          "enabled",
+          "health"
+        ]
+      },
+      "ComputerGrantView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/ComputerTarget"
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "target",
+          "expires_at"
+        ]
+      },
+      "ComputerTarget": {
+        "type": "object",
+        "properties": {
+          "identity": {
+            "type": "string",
+            "description": "Bundle/display identity resolved by the native backend, never by a model."
+          }
+        },
+        "required": [
+          "identity"
+        ]
+      },
+      "ComputerHealth": {
+        "type": "object",
+        "properties": {
+          "supported": {
+            "type": "boolean"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "minimum_version": {
+            "type": "string"
+          },
+          "screen_capture": {
+            "type": "boolean"
+          },
+          "accessibility": {
+            "type": "boolean"
+          },
+          "binary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "supported",
+          "platform",
+          "minimum_version",
+          "screen_capture",
+          "accessibility",
+          "binary"
+        ]
+      },
+      "Setup": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "confirm"
+        ]
+      },
+      "Data_ComputerStatus": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ComputerStatus"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "ComputerStatus": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "latest_frame": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComputerFrameInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "health": {
+            "$ref": "#/components/schemas/ComputerHealth"
+          },
+          "grant": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComputerGrantView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unknown_operations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComputerUnknownOperation"
+            }
+          }
+        },
+        "required": [
+          "enabled",
+          "health",
+          "unknown_operations"
+        ]
+      },
+      "ComputerFrameInfo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "grant_id": {
+            "type": "string"
+          },
+          "captured_at": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "target": {
+            "$ref": "#/components/schemas/ComputerNativeTarget"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "grant_id",
+          "captured_at",
+          "target",
+          "sha256",
+          "bytes",
+          "created_ms"
+        ]
+      },
+      "ComputerNativeTarget": {
+        "type": "object",
+        "properties": {
+          "identity": {
+            "type": "string"
+          },
+          "app": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pid": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "window": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "display": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "launch_ms": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "x": {
+            "type": "number",
+            "format": "double"
+          },
+          "y": {
+            "type": "number",
+            "format": "double"
+          },
+          "width": {
+            "type": "number",
+            "format": "double"
+          },
+          "height": {
+            "type": "number",
+            "format": "double"
+          },
+          "image_width": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "image_height": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "rotation": {
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0,
+            "maximum": 65535
+          }
+        },
+        "required": [
+          "identity",
+          "pid",
+          "window",
+          "display",
+          "launch_ms",
+          "x",
+          "y",
+          "width",
+          "height",
+          "image_width",
+          "image_height",
+          "rotation"
+        ]
+      },
+      "ComputerUnknownOperation": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "operation_id": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "started_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "session_id",
+          "operation_id",
+          "action",
+          "started_ms"
+        ]
+      },
+      "ComputerSelector": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "display": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0
+          }
+        }
+      },
+      "Data_ComputerPreview": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ComputerPreview"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "ComputerPreview": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/ComputerNativeTarget"
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "unknown_operations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComputerUnknownOperation"
+            }
+          },
+          "warning": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "target",
+          "expires_at",
+          "unknown_operations",
+          "warning"
+        ]
+      },
+      "Allow": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "preview_id": {
+            "type": "string"
+          },
+          "confirm": {
+            "type": "boolean"
+          },
+          "ttl_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "acknowledge_unknown": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "preview_id",
+          "confirm"
+        ]
+      },
+      "Data_ComputerGrantView": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ComputerGrantView"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
       "Data_AnyValue": {
         "type": "object",
         "properties": {
@@ -26878,6 +27298,454 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Located_Content"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tools/computer/health": {
+      "get": {
+        "operationId": "v1.tool.computerHealth",
+        "summary": "Native computer readiness without capture",
+        "tags": [
+          "tool"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_ComputerHealthReport"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tools/computer/setup": {
+      "post": {
+        "operationId": "v1.tool.computerSetup",
+        "summary": "Explicit owner OS-consent setup",
+        "tags": [
+          "tool"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_ComputerHealthReport"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Setup"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tools/computer/stop": {
+      "post": {
+        "operationId": "v1.tool.computerStopAll",
+        "summary": "Immediately revoke native control",
+        "tags": [
+          "tool"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "OK"
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/computer": {
+      "get": {
+        "operationId": "v1.session.computerStatus",
+        "summary": "Session native control status",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_ComputerStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/computer/preview": {
+      "post": {
+        "operationId": "v1.session.computerPreview",
+        "summary": "Review an exact native target without capture",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_ComputerPreview"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComputerSelector"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/computer/allow": {
+      "post": {
+        "operationId": "v1.session.computerAllow",
+        "summary": "Explicit owner arming of a reviewed target",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_ComputerGrantView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Allow"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/computer/stop": {
+      "post": {
+        "operationId": "v1.session.computerStop",
+        "summary": "Revoke this Session's native grant",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "OK"
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/computer/frames/{frameID}": {
+      "get": {
+        "operationId": "v1.session.computerFrame",
+        "summary": "Read a private Session-bound PNG capture",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "frameID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Private bounded PNG",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
                 }
               }
             }

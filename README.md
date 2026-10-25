@@ -53,7 +53,7 @@ To open it manually, follow the URL printed by:
 ./target/debug/cyber web --no-open
 ```
 
-The password grants **owner access** and stays in page memory. Off-loopback access requires HTTPS; a user-managed SSH forward is also supported. See the [dashboard guide](docs/web-dashboard.md) for remote setup, disconnect behavior and desktop/mobile screenshots. Full Settings, attachment previews and terminal emulation are outside this first browser slice.
+The password grants **owner access** and stays in page memory. Off-loopback access requires HTTPS; a user-managed SSH forward is also supported. See the [dashboard guide](docs/web-dashboard.md) for remote setup, disconnect behavior and desktop/mobile screenshots. Full Settings, general attachment previews and terminal emulation remain unfinished.
 
 ## Common commands
 
@@ -65,6 +65,7 @@ The password grants **owner access** and stays in page memory. Off-loopback acce
 ./target/debug/cyber workflows list                # bundled and saved Workflows
 ./target/debug/cyber workflows run audit --wait    # run a bundled audit
 ./target/debug/cyber service status                # inspect the shared server
+./target/debug/cyber computer status               # inspect native support and OS consent
 ./target/debug/cyber doctor                        # check your setup
 ./target/debug/cyber upgrade                       # verified upgrade of an installed release
 ```
@@ -72,6 +73,8 @@ The password grants **owner access** and stays in page memory. Off-loopback acce
 The server owns execution and stores state in SQLite, so work can outlive a terminal window. After a crash, Sessions recover interrupted state and Workflows can replay; see [server lifecycle and recovery](docs/local-core-guide.md#background-server-and-rebuilds).
 
 For independent patch attempts, host-recorded tests and a separate read-only judge, start with the [verified `solve` workflow](docs/verified-workflows.md). Candidate patches remain available for human review; nothing is merged automatically. To combine complementary commits, use the [verified integration queue](docs/verified-integrations.md): submit a dependency manifest, test the combined patch, review independent advice, then explicitly publish a branch and PR.
+
+Experimental [native computer use](docs/computer-use.md) adds macOS 14+ application/display screenshots and input with expiring owner grants, CLI/browser owner controls, private evidence and emergency Stop. Off by default; controlled macOS capture, input and Stop acceptance passed. Other layouts and signed distribution remain release checks.
 
 ## Sessions and people working together
 
@@ -135,6 +138,9 @@ mindmap
       Local Session messages
       Direct peers
       Project hub experimental
+    Native computer use
+      macOS 14 plus
+      Owner grants and Stop
 ```
 
 ## Known gaps
@@ -152,6 +158,7 @@ Other limits to consider:
 
 - **Acceptance is ongoing:** the full local-model baseline, Windows enforcement and several P1 migration, memory and code-intelligence paths remain open.
 - **Automation has edges:** reserved workflow budgets, finished-agent transcript retention and persistent cron-style scheduling remain unfinished; agent teams and the project hub are experimental.
+- **Native computer use is experimental:** macOS 14+ only, off by default; controlled capture, input and Stop passed. Other layouts, live OS revocation and release signing remain unverified.
 - **Remote access is private:** physical-device certificate trust is an operator check. Relay, paired Devices and mobile apps remain roadmap work.
 
 Use the [feature reference](docs/features.md), [P1 evidence](docs/implementation/p1-status.md), [P2 evidence](docs/implementation/p2-status.md) and [roadmap](ROADMAP.md) for exact scope. A planned OpenSpec requirement is not proof of implementation.
@@ -167,6 +174,7 @@ The TUI, web dashboard, CLI, SDK and MCP clients call one server. That server en
 | Configure providers, permissions, MCP or Sessions | [Local core guide](docs/local-core-guide.md) |
 | Send traces, metrics and logs to my OpenTelemetry collector | [OpenTelemetry export](docs/local-core-guide.md#opentelemetry-export) · `cyber telemetry show` |
 | Use the browser dashboard and remote approvals | [Dashboard guide](docs/web-dashboard.md) |
+| Enable native screenshots and input | [Native computer use](docs/computer-use.md) |
 | Run agents across machines or a group project | [Direct peers](docs/peers.md) · [Project hub](docs/collaboration.md) |
 | Build or customize a workflow | [Workflow guide](docs/local-core-guide.md#workflows-p2-m21) · [Verified solve](docs/verified-workflows.md) · [Integration queue](docs/verified-integrations.md) |
 | See the interface | [Screenshots](docs/screenshots/README.md) · [Dashboard screenshots](docs/web-dashboard.md#browser-views) |

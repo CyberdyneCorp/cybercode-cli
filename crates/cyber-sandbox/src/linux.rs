@@ -68,12 +68,12 @@ pub(crate) fn wrap(
         .deny_read
         .expand()
         .map_err(SandboxError::Unavailable)?;
-    for path in launch
-        .unreadable
-        .iter()
-        .chain(&denied)
-        .filter(|p| p.exists())
-    {
+    let private =
+        crate::unreadable_roots::outermost(launch.unreadable.iter().chain(&denied).cloned())
+            .map_err(|error| {
+                SandboxError::Unavailable(format!("private root resolution failed: {error}"))
+            })?;
+    for path in &private {
         if path.is_dir() {
             // An empty private overlay must also reject writes, rather than
             // reporting success for effects that disappear with the sandbox. Mode 0000

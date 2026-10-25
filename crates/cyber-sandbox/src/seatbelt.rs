@@ -60,6 +60,30 @@ pub(crate) fn profile(launch: &Launch) -> String {
             let _ = writeln!(out, "(deny file-write* {})", filters(&launch.read_only));
         }
     }
+    // Private credentials/captures can live below a writable project or an
+    // explicit writable root. These later denials must override that broad
+    // write allowance, including renaming an ancestor out of the hidden path.
+    if !launch.unreadable.is_empty() {
+        let _ = writeln!(out, "(deny file-write* {})", filters(&launch.unreadable));
+        let mut ancestors = std::collections::BTreeSet::new();
+        for path in &launch.unreadable {
+            let canonical = std::path::PathBuf::from(real(path));
+            for ancestor in canonical
+                .ancestors()
+                .skip(1)
+                .filter(|path| path.parent().is_some())
+            {
+                ancestors.insert(ancestor.to_path_buf());
+            }
+        }
+        for ancestor in ancestors {
+            let _ = writeln!(
+                out,
+                "(deny file-write-unlink (literal {}))",
+                quote(&ancestor.to_string_lossy())
+            );
+        }
+    }
     // A hidden file must not be renamed, linked or moved out of its pattern and then read
     // under the new name: no writes to a match, no removal of the directories the
     // pattern names.
@@ -123,4 +147,50 @@ fn real(path: &Path) -> String {
 
 fn quote(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+#[cfg(test)]
+mod private_write_tests {
+    use super::*;
+    #[test]
+    fn unreadable_write_and_ancestor_denials_follow_broad_workspace_allowance() {
+        let root = tempfile::tempdir().unwrap();
+        let state = root.path().join("project/owner-state");
+        std::fs::create_dir_all(&state).unwrap();
+        let project = state.parent().unwrap().to_path_buf();
+        let config = crate::SandboxConfig::resolve(
+            &serde_json::json!({}),
+            &Default::default(),
+            None,
+            root.path(),
+        );
+        let launch = Launch {
+            config,
+            writable: vec![project.clone()],
+            read_only: vec![],
+            unreadable: vec![state.clone()],
+            deny_read: Default::default(),
+            proxy: None,
+            helper: None,
+        };
+        let output = profile(&launch);
+        let allowed = output
+            .find(&format!(
+                "(allow file-write* {})",
+                filters(std::slice::from_ref(&project))
+            ))
+            .unwrap();
+        let private = output
+            .find(&format!("(deny file-write* {})", filters(&[state])))
+            .unwrap();
+        let ancestor = output
+            .find(&format!(
+                "(deny file-write-unlink (literal {}))",
+                quote(&real(&project))
+            ))
+            .unwrap();
+        assert!(private > allowed);
+        assert!(ancestor > allowed);
+        assert!(!output.contains("(deny file-write-unlink (literal \"/\"))"));
+    }
 }

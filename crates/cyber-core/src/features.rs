@@ -50,9 +50,16 @@ pub struct Entry {
 pub const TEAMS: &str = "teams";
 /// Shared project hub and explicitly published local agents.
 pub const COLLABORATION: &str = "collaboration";
+pub const COMPUTER_USE: &str = "computer_use";
 
 /// Every feature this binary knows.
 pub const REGISTRY: &[Entry] = &[
+    Entry {
+        name: COMPUTER_USE,
+        maturity: Maturity::Experimental,
+        default: false,
+        description: "Native computer use: explicit owner-armed macOS screen and input control",
+    },
     Entry {
         name: TEAMS,
         maturity: Maturity::Experimental,

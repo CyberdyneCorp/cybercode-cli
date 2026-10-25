@@ -957,3 +957,158 @@ async fn accept_edits_allows_write_but_keeps_non_edit_and_recursive_rm_asks() {
     }
     assert_eq!(f.read("build/out.o"), "object");
 }
+
+#[tokio::test]
+async fn private_computer_capture_root_refuses_other_session_builtin_reads() {
+    use cyber_computer::{
+        Error,
+        backend::{Backend, Capture, Health, NativeTarget, Selector},
+        control::InputPermit,
+    };
+    use std::sync::Arc;
+    struct CaptureFixture;
+    impl Backend for CaptureFixture {
+        fn health(&self, _: bool) -> Result<Health, Error> {
+            Ok(Health {
+                supported: true,
+                platform: "fixture".into(),
+                minimum_version: "fixture".into(),
+                screen_capture: true,
+                accessibility: true,
+                binary: "fixture".into(),
+            })
+        }
+        fn resolve(&self, _: &Selector) -> Result<NativeTarget, Error> {
+            Ok(NativeTarget {
+                identity: "app:fixture:42:1:7".into(),
+                app: Some("fixture.app".into()),
+                pid: 42,
+                window: 7,
+                display: 1,
+                launch_ms: 1,
+                x: 0.,
+                y: 0.,
+                width: 1.,
+                height: 1.,
+                image_width: 1,
+                image_height: 1,
+                rotation: 0,
+            })
+        }
+        fn capture(&self, target: &NativeTarget) -> Result<Capture, Error> {
+            let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+            png.extend(1u32.to_be_bytes());
+            png.extend(1u32.to_be_bytes());
+            Ok(Capture {
+                target: target.clone(),
+                png,
+            })
+        }
+        fn input(&self, _: &NativeTarget, _: &InputPermit) -> Result<(), Error> {
+            panic!("privacy fixture must not inject input")
+        }
+    }
+    let f = Fixture::new();
+    let home = f.dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let paths = cyber_core::paths::Paths::resolve(
+        &std::collections::HashMap::from([(
+            "CYBER_HOME".into(),
+            f.dir.path().join("capture-install").display().to_string(),
+        )]),
+        &home,
+    );
+    paths.ensure().unwrap();
+    cyber_tools::plugin_host::hide_computer_artifacts(&paths, &home).unwrap();
+    let root = paths.data.join("computer");
+    let computer = cyber_server::runtime::computer::Computer::new(
+        f.store.clone(),
+        root.clone(),
+        Arc::new(|| cyber_server::runtime::computer::ComputerPolicy {
+            enabled: true,
+            retention_days: 1,
+        }),
+        Arc::new(|_| true),
+        Arc::new(CaptureFixture),
+    )
+    .unwrap();
+    let preview = computer
+        .preview(
+            "ses_capture_owner",
+            Selector {
+                app: Some("fixture.app".into()),
+                display: None,
+            },
+        )
+        .unwrap();
+    computer
+        .allow("ses_capture_owner", &preview.id, None, false)
+        .unwrap();
+    let frame = computer
+        .screenshot("ses_capture_owner", "fixture-owned-capture")
+        .unwrap()
+        .frame
+        .unwrap();
+    assert!(
+        !computer
+            .frame_bytes("ses_capture_owner", &frame.id)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(computer.frame_bytes("ses_test", &frame.id).is_err());
+    let directory = std::fs::read_dir(&root)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let canary = directory.join("private-canary.txt");
+    std::fs::write(&canary, "CROSS_SESSION_CAPTURE_CANARY").unwrap();
+    f.set_config(json!({"permissions":{"read":"allow","external_directory":"allow"},"sandbox":{"readable_paths":[root]}}));
+    let denied = failed(f.call("default", "read", json!({"path":canary})).await);
+    assert!(denied.starts_with("Sandbox denied: read"), "{denied}");
+    assert!(!denied.contains("CROSS_SESSION_CAPTURE_CANARY"));
+    f.write("public.txt", "PUBLIC_CONTROL");
+    assert!(
+        ok(f.call("default", "read", json!({"path":"public.txt"}))
+            .await)
+        .contains("PUBLIC_CONTROL")
+    );
+    assert!(
+        !computer
+            .frame_bytes("ses_capture_owner", &frame.id)
+            .unwrap()
+            .is_empty(),
+        "owner API remains readable after sandbox registration"
+    );
+}
+
+#[tokio::test]
+async fn builtin_read_cannot_obtain_owner_api_password() {
+    let f = Fixture::new();
+    let home = f.dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let paths = cyber_core::paths::Paths::resolve(
+        &std::collections::HashMap::from([(
+            "CYBER_HOME".into(),
+            f.dir.path().join("owner-install").display().to_string(),
+        )]),
+        &home,
+    );
+    paths.ensure().unwrap();
+    cyber_tools::plugin_host::hide_computer_artifacts(&paths, &home).unwrap();
+    let password = paths.state.join("password");
+    std::fs::write(&password, "OWNER_API_PASSWORD_CANARY").unwrap();
+    f.set_config(json!({"permissions":{"read":"allow","external_directory":"allow"},"sandbox":{"readable_paths":[paths.state]}}));
+    let denied = failed(f.call("default", "read", json!({"path":password})).await);
+    assert!(denied.starts_with("Sandbox denied: read"), "{denied}");
+    assert!(!denied.contains("OWNER_API_PASSWORD_CANARY"));
+    f.write("owner-public.txt", "OWNER_PUBLIC_CONTROL");
+    assert!(
+        ok(
+            f.call("default", "read", json!({"path":"owner-public.txt"}))
+                .await
+        )
+        .contains("OWNER_PUBLIC_CONTROL")
+    );
+}

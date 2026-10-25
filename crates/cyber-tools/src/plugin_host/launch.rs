@@ -163,7 +163,7 @@ impl LaunchContext<'_> {
             "CYBER_PLUGIN_ROOT".into(),
             plugin.root.display().to_string(),
         );
-        env
+        cyber_sandbox::owner_environment(env).into_iter().collect()
     }
 }
 

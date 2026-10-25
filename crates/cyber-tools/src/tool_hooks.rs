@@ -150,6 +150,9 @@ impl BuiltinHost {
             )));
         }
         if let Some(input) = decision.updated_input {
+            if inv.name == "computer" {
+                return Err(ToolError::Failed("native computer input cannot be rewritten by a hook; request a fresh reviewed action".into()));
+            }
             crate::schema::validate(schema, &input)
                 .map_err(|_| ToolError::Failed("hook produced invalid tool input".into()))?;
             inv.asker
@@ -828,10 +831,16 @@ impl BuiltinHost {
         extra: Value,
         cancel: CancellationToken,
     ) -> Result<HookDecision, ToolError> {
-        let mut fields = json!({"tool_name":inv.name,"tool_input":inv.input,"call_id":inv.call_id})
-            .as_object()
-            .expect("object")
-            .clone();
+        let hook_input = if inv.name == "computer" {
+            cyber_computer::action::redacted_input(Some(&inv.input))
+        } else {
+            inv.input.clone()
+        };
+        let mut fields =
+            json!({"tool_name":inv.name,"tool_input":hook_input,"call_id":inv.call_id})
+                .as_object()
+                .expect("object")
+                .clone();
         if let Some(extra) = extra.as_object() {
             fields.extend(extra.clone());
         }

@@ -305,7 +305,7 @@ fn uninstall_stops_the_registered_server() {
     let built = Path::new(env!("CARGO_BIN_EXE_cyber"));
     let mut command = env.command(built, &["serve", "--register", "--port", "0"]);
     #[cfg(unix)]
-    command.arg("--socket").arg(env.root.join("u.sock"));
+    command.arg("--socket").arg(env.dir("state").join("u.sock"));
     let log = env.root.join("server-stderr.log");
     let mut server = OwnedServer(
         command

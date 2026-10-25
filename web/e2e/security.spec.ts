@@ -6,7 +6,7 @@ test('public shell, authenticated data, explicit memory-only credentials and ine
   const shell = await page.request.get(dashboard.url);
   expect(shell.status()).toBe(200);
   const csp = shell.headers()['content-security-policy'] ?? '';
-  for (const directive of ["default-src 'none'", "script-src 'self'", "style-src 'self'", "connect-src 'self'", "frame-ancestors 'none'", "base-uri 'none'", "form-action 'self'"]) expect(csp.includes(directive)).toBe(true);
+  for (const directive of ["default-src 'none'", "script-src 'self'", "style-src 'self'", "connect-src 'self'", "img-src 'self' blob:", "frame-ancestors 'none'", "base-uri 'none'", "form-action 'self'"]) expect(csp.includes(directive)).toBe(true);
   expect(csp.includes("'unsafe-eval'")).toBe(false);
   expect((await shell.text()).includes(session)).toBe(false);
   expect((await page.request.get(`${dashboard.url}/api/v1/sessions`)).status()).toBe(401);

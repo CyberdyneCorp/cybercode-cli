@@ -18,6 +18,8 @@ cyber-core.workspace = true
 futures = "0.3"
 regex = "1"
 serde_json.workspace = true
+sha2.workspace = true
+base64 = "0.22"
 thiserror.workspace = true
 tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "time", "macros", "process"] }
 

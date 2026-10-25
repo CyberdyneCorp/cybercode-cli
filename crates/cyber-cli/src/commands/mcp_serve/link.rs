@@ -124,12 +124,12 @@ async fn connect(paths: &Paths) -> Option<Client> {
     Some(client_for(&registration, password).await)
 }
 
-/// The registered Unix socket when it answers (peer credentials, no password), else TCP
-/// with the local password.
+/// The registered Unix socket when it answers, with same-user peer checks and
+/// the local owner password; otherwise TCP with the same credential.
 async fn client_for(registration: &Registration, password: String) -> Client {
     #[cfg(unix)]
     if let Some(socket) = &registration.socket {
-        let client = Client::unix(socket);
+        let client = Client::unix_authenticated(socket, password.clone());
         let probe = tokio::time::timeout(PROBE_TIMEOUT, client.get("/health")).await;
         if matches!(probe, Ok(Ok(_))) {
             return client;

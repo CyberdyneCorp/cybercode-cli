@@ -282,6 +282,7 @@ async fn event_loop(
         ticks: 0,
     };
     let mut team_events = crate::team::Events::default();
+    let mut native_presence = crate::computer::Presence::default();
     let mut refresh = Refresh::default();
     let initial = initial_actions(app, store, opts, open_picker);
     spawn_commands(client, &tx);
@@ -290,16 +291,11 @@ async fn event_loop(
     let mut tick = tokio::time::interval(Duration::from_millis(250));
     query_background(app);
     while !app.quit {
+        native_presence.sync(client, &app.session, app.computer.supported);
         sync_mouse(&mut std::io::stdout(), app.mouse_capture());
         set_title(app);
         app.progress_sync();
-        let frame = terminal
-            .draw(|f| crate::view::draw(f, app))
-            .map_err(|e| e.to_string())?;
-        let links = app.take_screen_links();
-        if app.hyperlinks && matches!(app.overlay, crate::app::Overlay::None) {
-            let _ = crate::osc::write_hyperlinks(&mut std::io::stdout(), frame.buffer, &links);
-        }
+        draw_frame(terminal, app)?;
         let actions = tokio::select! {
             Some(Ok(ev)) = keys.next() => terminal_event(app, ev),
             ev = server.next() => match ev {
@@ -320,6 +316,30 @@ async fn event_loop(
         let actions = memory_persistence.gate(app, actions);
         dispatch(app, client, store, &tx, &mut refresh, terminal, actions);
     }
+    // A deliberate terminal exit revokes its Session even if another owner
+    // attachment remains; a failed network delivery is still fenced by presence.
+    if app.computer.supported {
+        let _ = tokio::time::timeout(
+            Duration::from_secs(2),
+            client.at(&app.session.directory).post(
+                &format!("/sessions/{}/computer/stop", app.session.id),
+                json!({}),
+            ),
+        )
+        .await;
+    }
+    Ok(())
+}
+
+/// Paint the frame and its terminal hyperlink spans as one rendering step.
+fn draw_frame(terminal: &mut Term, app: &App) -> Result<(), String> {
+    let frame = terminal
+        .draw(|frame| crate::view::draw(frame, app))
+        .map_err(|error| error.to_string())?;
+    let links = app.take_screen_links();
+    if app.hyperlinks && matches!(app.overlay, crate::app::Overlay::None) {
+        let _ = crate::osc::write_hyperlinks(&mut std::io::stdout(), frame.buffer, &links);
+    }
     Ok(())
 }
 
@@ -338,6 +358,7 @@ async fn on_tick(
     actions.extend(app.machine_poll());
     actions.extend(app.login_poll());
     actions.extend(app.collaboration_poll());
+    actions.extend(app.computer.poll(&app.session, std::time::Instant::now()));
     actions.extend(app.agents_poll());
     actions
 }
@@ -571,6 +592,7 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
     };
     match msg {
         Msg::AdmissionStarted(_) | Msg::AdmissionUpdated { .. } => {}
+        Msg::Computer { session_id, result } => app.computer.apply(&session_id, result),
         Msg::Snapshot {
             session,
             items,

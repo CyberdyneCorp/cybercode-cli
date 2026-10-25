@@ -30,6 +30,10 @@ LOCATION_HEADER = "x-cyber-directory"
 IDENT = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
 
 ERROR_TAGS = [
+    "ComputerUnsupportedPlatformError", "ComputerDisabledError", "ComputerConsentError",
+    "ComputerBusyError", "ComputerStaleFrameError", "ComputerLimitError",
+    "ComputerFrameExpiredError", "ComputerConflictError", "ComputerUnknownOutcomeError",
+    "ComputerStorageError", "ComputerInvalidRequestError",
     "CommandNotFoundError",
     "ConflictError",
     "FeatureDisabledError",
@@ -209,6 +213,8 @@ def response_shape(schemas: dict, op: dict) -> tuple[str, bool, bool]:
     content = response.get("content", {})
     if "text/event-stream" in content:
         return "EventEnvelope", False, True
+    if "image/png" in content:
+        return "Uint8Array", False, False
     schema = json_schema(content)
     if schema is None:
         return ("void" if code in (202, 204) else "unknown"), False, False
@@ -244,6 +250,7 @@ def collect(spec: dict) -> list[dict]:
                 "result": result,
                 "unwrap": unwrap,
                 "stream": stream,
+                "binary": "image/png" in success(op)[1].get("content", {}),
             })
     return sorted(ops, key=lambda o: o["id"])
 
@@ -282,7 +289,8 @@ def render_table(ops: list[dict]) -> str:
             f"    located: {json.dumps(op['located'])},\n"
             f"    unwrap: {json.dumps(op['unwrap'])},\n"
             f"    stream: {json.dumps(op['stream'])},\n"
-            f"  }},\n"
+            + ("    binary: true,\n" if op["binary"] else "")
+            + f"  }},\n"
         )
     return "export const operations = {\n" + "".join(rows) + "} as const satisfies Record<string, OperationSpec>;\n"
 
@@ -386,6 +394,8 @@ export interface OperationSpec {
   readonly unwrap: boolean;
   /** The response is a `text/event-stream` of `EventEnvelope`s. */
   readonly stream: boolean;
+  /** A private bounded PNG, returned as bytes rather than JSON. */
+  readonly binary?: boolean;
 }
 
 export interface RequestOptions {

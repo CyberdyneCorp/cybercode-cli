@@ -110,7 +110,10 @@ fn has_line(out: &Output, line: &str) {
 
 #[track_caller]
 fn first_line_starts(out: &Output, start: &str) {
-    let first = lines(out).first().cloned().unwrap_or_default();
+    let first = lines(out)
+        .into_iter()
+        .find(|line| line.starts_with("teams "))
+        .unwrap_or_default();
     assert!(first.starts_with(start), "{start}: {}", stdout(out));
 }
 

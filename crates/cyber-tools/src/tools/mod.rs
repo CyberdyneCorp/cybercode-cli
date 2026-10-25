@@ -4,6 +4,7 @@ pub(crate) mod agent;
 mod background;
 pub(crate) mod bash;
 pub(crate) mod collaboration;
+pub(crate) mod computer;
 mod deliver;
 mod dev_server;
 mod formatters;
@@ -90,6 +91,7 @@ pub(crate) fn all() -> Vec<Box<dyn Tool>> {
         Box::new(messaging::WatchSession),
         Box::new(loops::ScheduleWakeup),
         Box::new(goal::GoalTool),
+        Box::new(computer::Computer),
         Box::new(team::TeamSpawn),
         Box::new(team::TeamMerge),
         Box::new(team::TeamTaskCreate),

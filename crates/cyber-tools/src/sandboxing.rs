@@ -601,7 +601,10 @@ pub(crate) async fn report(ctx: &Ctx<'_>, denials: &[Denial]) -> String {
 
 /// The profile's `deny_read` globs, which `read`, `glob` and `grep` also hide.
 pub(crate) fn hidden(ctx: &Ctx<'_>) -> DenyRead {
-    effective(ctx).deny_read_for(&ctx.location, &ctx.host.opts.home)
+    let sandbox = effective(ctx);
+    sandbox
+        .deny_read_for(&ctx.location, &ctx.host.opts.home)
+        .with_hidden_paths(&sandbox.unreadable(&ctx.host.opts.home))
 }
 
 /// The refusal of a `read` of a hidden path, recorded as a sandbox denial.
@@ -628,7 +631,10 @@ pub(crate) async fn refuse_hidden(ctx: &Ctx<'_>, paths: &[&Path]) -> Result<(), 
             "Sandbox denied: read (the sandbox configuration could not be read: {error})"
         ))
     })?;
-    let hidden = resolve(ctx, &config, &sources).deny_read_for(&ctx.location, &ctx.host.opts.home);
+    let sandbox = resolve(ctx, &config, &sources);
+    let hidden = sandbox
+        .deny_read_for(&ctx.location, &ctx.host.opts.home)
+        .with_hidden_paths(&sandbox.unreadable(&ctx.host.opts.home));
     match paths.iter().find(|path| hidden.denies(path)) {
         Some(path) => Err(failed(hidden_read(ctx, path).await)),
         None => Ok(()),

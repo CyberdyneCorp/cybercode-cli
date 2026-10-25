@@ -10,6 +10,10 @@ use crate::model::{Choice, Item, Queued, Request, Session};
 /// Results the runner applies to the App.
 #[derive(Debug, Clone)]
 pub enum Msg {
+    Computer {
+        session_id: String,
+        result: Result<Value, String>,
+    },
     /// The server refused a prompt: the draft and its chips go back to the composer.
     PromptRefused {
         session_id: String,
@@ -953,7 +957,9 @@ pub async fn perform_owned(
         | Action::LoadPlugins { .. }
         | Action::LoadAgents
         | Action::FindFiles(_) => load_choices(client, session, action).await,
-        Action::Loop(_)
+        Action::ComputerStatus
+        | Action::ComputerStop
+        | Action::Loop(_)
         | Action::Goal(_)
         | Action::Workflow(_)
         | Action::Team(_)
@@ -980,6 +986,9 @@ pub async fn perform_owned(
 /// and the update check; and the branch tree (`/tree`, `/label`).
 async fn scheduled(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
     match action {
+        Action::ComputerStatus | Action::ComputerStop => {
+            crate::computer::perform(client, session, action).await
+        }
         Action::Branch(request) => crate::branches::perform(client, session, request).await,
         Action::Export(request) => crate::export::perform(client, request).await,
         Action::LoadUpdate => crate::update::perform(client).await,

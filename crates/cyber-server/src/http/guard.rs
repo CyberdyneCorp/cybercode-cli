@@ -43,11 +43,15 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
     {
         return error.into_response();
     }
+    // Same-UID Unix peers can be sandboxed model processes, not necessarily
+    // owner clients. They need the owner credential too. A missing Unix password
+    // fails closed; only explicitly in-process Embedded calls bypass auth.
     // The PTY socket authenticates with its single-use ticket on every transport.
-    if transport == Transport::Tcp
+    if transport != Transport::Embedded
         && !public(req.uri().path())
         && !super::pty::attach_route(req.uri().path())
-        && !authorized(&req, state.options.password.as_deref())
+        && ((transport == Transport::Unix && state.options.password.is_none())
+            || !authorized(&req, state.options.password.as_deref()))
     {
         return basic_challenge();
     }
@@ -137,7 +141,7 @@ pub fn loopback_host(host: &str) -> bool {
 }
 
 fn public(path: &str) -> bool {
-    path.ends_with("/health")
+    matches!(path, "/health" | "/api/v1/health")
 }
 
 /// Routes browsers open with `EventSource` or WebSocket, which cannot set headers.

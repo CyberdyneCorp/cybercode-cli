@@ -278,7 +278,7 @@ async fn a_registered_server_is_healthy_and_unregisters_on_stop() {
     let stop = Arc::new(Notify::new());
     let opts = ServeOptions {
         port: Some(0),
-        socket: cfg!(unix).then(|| tmp.path().join("s.sock")),
+        socket: cfg!(unix).then(|| p.state.join("s.sock")),
         register: true,
         ..ServeOptions::default()
     };
@@ -304,7 +304,7 @@ async fn a_registered_server_is_healthy_and_unregisters_on_stop() {
         "a version mismatch is not healthy"
     );
     #[cfg(unix)]
-    assert!(tmp.path().join("s.sock").exists());
+    assert!(p.state.join("s.sock").exists());
     #[cfg(not(unix))]
     assert!(reg.socket.is_none());
 
@@ -314,7 +314,7 @@ async fn a_registered_server_is_healthy_and_unregisters_on_stop() {
         ServeOptions {
             port: Some(0),
             no_tcp: cfg!(unix),
-            socket: cfg!(unix).then(|| tmp.path().join("t.sock")),
+            socket: cfg!(unix).then(|| p.state.join("t.sock")),
             ..ServeOptions::default()
         },
         |_| {},
@@ -330,7 +330,7 @@ async fn a_registered_server_is_healthy_and_unregisters_on_stop() {
         .unwrap()
         .unwrap();
     assert!(cyber_app::read_registration(&p).is_none());
-    assert!(!tmp.path().join("s.sock").exists());
+    assert!(!p.state.join("s.sock").exists());
     #[cfg(not(unix))]
     assert_eq!(
         std::fs::read_to_string(p.state.join("cyber.sock")).unwrap(),
@@ -6732,4 +6732,33 @@ async fn mode_switch_to_plan_is_durable_and_next_turn_denies_writes() {
     let state = reopened.runtime.state(&id).await.unwrap();
     assert_eq!(state.info.mode, "plan");
     reopened.runtime.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_socket_outside_private_state_is_rejected_before_readiness_or_unlink() {
+    let tmp = tempfile::tempdir().unwrap();
+    let marker = tmp.path().join("user.socket");
+    std::fs::write(&marker, "keep me").unwrap();
+    let ready = std::sync::atomic::AtomicBool::new(false);
+    let result = cyber_app::run_server_until(
+        app(tmp.path()).await,
+        ServeOptions {
+            socket: Some(marker.clone()),
+            port: Some(0),
+            register: true,
+            ..Default::default()
+        },
+        |_| ready.store(true, std::sync::atomic::Ordering::SeqCst),
+        Arc::new(Notify::new()),
+    )
+    .await;
+    assert!(
+        result
+            .unwrap_err()
+            .contains("inside the private state directory")
+    );
+    assert!(!ready.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(!paths(tmp.path()).state.join("server.json").exists());
+    assert_eq!(std::fs::read_to_string(marker).unwrap(), "keep me");
 }

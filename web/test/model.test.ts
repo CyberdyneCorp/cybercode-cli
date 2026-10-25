@@ -12,6 +12,7 @@ class Fake implements Port {
   sessions = [session("ses_one"), session("ses_two", "/other")];
   failReply = false; commitReply = false; failAttach = false; failPrompt = false; cleared = 0;
   hook?: (path: string, options: RequestOptions) => Promise<unknown> | undefined;
+  async bytes(): Promise<Uint8Array> { throw new Error("no private image in this fixture"); }
   password(): void {} clear(): void { this.cleared++; }
   async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
     this.calls.push({ path, options: structuredClone({ ...options, signal: undefined }) });
@@ -180,4 +181,12 @@ test("a late latest-page snapshot cannot overwrite a newly selected older transc
   const { model } = await ready(t, api); defer = true; const pending = model.refresh();
   await model.olderMessages(); assert.equal(model.state.messages[0]!.id, "older");
   resolve(page("stale-latest")); await pending; assert.equal(model.state.messages[0]!.id, "older");
+});
+
+test("dashboard wires global native authority without Sessions and sends Stop before logout clears owner auth", async () => {
+  const api=new Fake();api.sessions=[];
+  api.hook=(path)=>path==="/tools/computer/health"?Promise.resolve({data:{enabled:true,health:{supported:true,platform:"fixture",minimum_version:"fixture",screen_capture:true,accessibility:true,binary:"fixture"},grant:{id:"cug_other",session_id:"ses_other",target:{identity:"fixture"},expires_at:200000}}}):undefined;
+  const model=new Dashboard(api,()=>api.now);await model.login("fixture-only");
+  await until(()=>!!model.computer.active);assert.equal(model.computer.active?.session_id,"ses_other");
+  model.logout();const stop=api.calls.find(call=>call.path==="/tools/computer/stop");assert.equal(stop?.options.finishOnLogout,true);assert.equal(api.cleared,1);assert.equal(model.computer.report,undefined);
 });

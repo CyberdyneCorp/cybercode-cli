@@ -61,7 +61,7 @@ pub struct AppOptions {
     pub snapshots: bool,
     /// Whether a client can answer permission requests.
     pub interactive: bool,
-    /// Basic-auth password for TCP; `None` disables auth (embedded).
+    /// Owner Basic-auth password for TCP and Unix; `None` is for trusted embedded calls.
     pub password: Option<String>,
     /// Where remote MCP servers' OAuth credentials live. `None` (every production caller)
     /// is this platform's store (`oauth::open_store`); embedders and tests pass their own.
@@ -224,6 +224,12 @@ impl App {
     }
 
     async fn build_with(opts: AppOptions, served: bool) -> Result<App, String> {
+        // Establish the private directory before Linux sandbox mount planning or
+        // any plugin, LSP, MCP, hook or model-driven subprocess can launch.
+        cyber_tools::plugin_host::hide_computer_artifacts(&opts.paths, &opts.home)?;
+        if let Some(password) = &opts.password {
+            cyber_sandbox::reserve_owner_credential(password);
+        }
         let env = ProcessEnv;
         let config = config_loader(opts.paths.clone(), opts.home.clone());
         let global = config(&opts.default_directory)

@@ -269,3 +269,197 @@ async fn sandboxed_commands_cannot_read_cyber_credential_files() {
         );
     }
 }
+
+#[tokio::test]
+async fn sandboxed_commands_cannot_read_another_sessions_private_computer_artifacts() {
+    use sha2::{Digest, Sha256};
+    for sandbox_policy in [None, Some("read-only")] {
+        let app = ModeApp::start(Setup {
+            sandbox_policy,
+            ..Setup::default()
+        })
+        .await;
+        let private = app.root.join("data/computer");
+        assert!(
+            private.is_dir(),
+            "bootstrap must prepare the hidden root before subprocesses launch"
+        );
+        let victim = bypass_session(&app).await;
+        let attacker = bypass_session(&app).await;
+        assert_ne!(victim, attacker);
+        let folder = private.join(format!("{:x}", Sha256::digest(victim.as_bytes())));
+        std::fs::create_dir_all(&folder).unwrap();
+        let capture = folder.join(format!("{}.png", cyber_core::ids::new_id("cuf")));
+        let marker = format!("computer-private-{}", ulid::Ulid::new());
+        std::fs::write(&capture, &marker).unwrap();
+        let public = app.repo.join("ordinary-file.txt");
+        std::fs::write(&public, "public-canary-readable").unwrap();
+        // An explicit readable_paths grant still cannot expose a registered
+        // private root, including files created after the App was bootstrapped.
+        let config = app.root.join("config/cyber.json");
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
+        value["sandbox"]["readable_paths"] = json!([private]);
+        std::fs::write(config, value.to_string()).unwrap();
+        app.run(
+            &attacker,
+            &format!(
+                "RUN<<cat '{}'; echo private-read-attempted; cat '{}'>>",
+                capture.display(),
+                public.display()
+            ),
+        )
+        .await;
+        let outputs = app.outputs(&attacker).await;
+        assert_eq!(outputs.len(), 1, "{outputs:?}");
+        assert!(
+            outputs[0].contains("private-read-attempted"),
+            "the real subprocess did not run: {outputs:?}"
+        );
+        assert!(
+            outputs[0].contains("public-canary-readable"),
+            "ordinary reads should remain available: {outputs:?}"
+        );
+        assert!(
+            !outputs[0].contains(&marker),
+            "cross-Session private capture escaped the OS sandbox ({sandbox_policy:?}): {outputs:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&capture).unwrap(),
+            marker,
+            "read denial must not destroy the owner's capture"
+        );
+    }
+}
+
+#[tokio::test]
+async fn sandboxed_commands_cannot_read_owner_password_after_rotation() {
+    for sandbox_policy in [None, Some("read-only")] {
+        let app = ModeApp::start(Setup {
+            sandbox_policy,
+            ..Setup::default()
+        })
+        .await;
+        let state = app.root.join("state");
+        let password = state.join("password");
+        let marker = format!("owner-password-{}", ulid::Ulid::new());
+        let replacement = state.join("password-replacement");
+        std::fs::write(&replacement, &marker).unwrap();
+        std::fs::rename(&replacement, &password).unwrap();
+        let session = bypass_session(&app).await;
+        let public = app.repo.join("public-owner-control.txt");
+        std::fs::write(&public, "OWNER_PUBLIC_CONTROL").unwrap();
+        app.run(
+            &session,
+            &format!(
+                "RUN<<cat '{}'; echo owner-read-attempted; cat '{}'>>",
+                password.display(),
+                public.display()
+            ),
+        )
+        .await;
+        let outputs = app.outputs(&session).await;
+        assert_eq!(outputs.len(), 1);
+        assert!(outputs[0].contains("owner-read-attempted"));
+        assert!(outputs[0].contains("OWNER_PUBLIC_CONTROL"));
+        assert!(
+            !outputs[0].contains(&marker),
+            "private owner credential escaped sandbox"
+        );
+        assert_eq!(std::fs::read_to_string(password).unwrap(), marker);
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn unreadable_owner_state_cannot_be_overwritten_or_moved_from_a_writable_root() {
+    // This fixture deliberately grants a root containing its synthetic home.
+    // Override only bypass eligibility; the command still runs in the explicit
+    // workspace-write OS sandbox whose private-path enforcement is under test.
+    let app = ModeApp::start(Setup {
+        sandbox_policy: Some("workspace-write"),
+        isolation: cyber_tools::IsolationOptions {
+            dangerously_bypass: true,
+            container: false,
+        },
+        ..Setup::default()
+    })
+    .await;
+    let state = app.root.join("state");
+    let data = app.root.join("data");
+    assert!(
+        data.join("computer").is_dir(),
+        "the data ancestor must contain a registered hidden capture directory"
+    );
+    let canary = state.join("password");
+    let marker = format!("private-state-canary-{}", ulid::Ulid::new());
+    std::fs::write(&canary, &marker).unwrap();
+    let config = app.root.join("config/cyber.json");
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
+    value["sandbox"]["writable_roots"] = json!([app.root]);
+    std::fs::write(config, value.to_string()).unwrap();
+    let session = bypass_session(&app).await;
+    let control = app.root.join("ordinary-writable-control.txt");
+    let attempts = [
+        format!("printf replaced > '{}'", canary.display()),
+        format!("rm '{}'", canary.display()),
+        format!(
+            "mv '{}' '{}'",
+            canary.display(),
+            app.repo.join("moved-password").display()
+        ),
+        format!(
+            "ln '{}' '{}'",
+            canary.display(),
+            app.repo.join("linked-password").display()
+        ),
+        format!(
+            "mv '{}' '{}'",
+            state.display(),
+            app.root.join("moved-state").display()
+        ),
+        format!(
+            "mv '{}' '{}'",
+            data.display(),
+            app.root.join("moved-data").display()
+        ),
+    ];
+    for (index, command) in attempts.iter().enumerate() {
+        app.run(
+            &session,
+            &format!(
+                "RUN<<{command}; printf public-control > '{}'; echo write-attempted-{index}>>",
+                control.display()
+            ),
+        )
+        .await;
+        assert_eq!(
+            std::fs::read_to_string(&canary).unwrap(),
+            marker,
+            "private owner canary changed after {command}"
+        );
+        assert!(
+            state.is_dir() && data.is_dir(),
+            "a hidden root or its ancestor moved"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&control).unwrap(),
+            "public-control",
+            "ordinary writes must remain available"
+        );
+    }
+    assert!(!app.repo.join("moved-password").exists());
+    assert!(!app.repo.join("linked-password").exists());
+    assert!(!app.root.join("moved-state").exists());
+    assert!(!app.root.join("moved-data").exists());
+    let outputs = app.outputs(&session).await;
+    assert_eq!(outputs.len(), attempts.len());
+    for output in outputs {
+        assert!(
+            output.contains("write-attempted-"),
+            "real sandboxed subprocess did not run: {output}"
+        );
+        assert!(!output.contains(&marker));
+    }
+}

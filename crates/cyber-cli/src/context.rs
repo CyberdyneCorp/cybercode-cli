@@ -26,6 +26,8 @@ impl Context {
     pub fn new(global: &GlobalArgs) -> Result<Self, CliError> {
         let ctx = Self::existing(global)?;
         ctx.paths.ensure()?;
+        cyber_tools::plugin_host::hide_computer_artifacts(&ctx.paths, &ctx.home)
+            .map_err(CliError::runtime)?;
         // Before any command can start a sandboxed process (`sandbox run`, hooks, MCP
         // servers, LSP), not only when an App is built.
         cyber_tools::plugin_host::hide_credential_files(&ctx.paths, &ctx.home);

@@ -30,6 +30,7 @@ pub struct Op {
     query: Vec<&'static str>,
     located: bool,
     stream: bool,
+    binary: bool,
     websocket: bool,
     /// Declared error responses beyond the default tagged error.
     errors: Vec<(u16, &'static str, Schema)>,
@@ -50,6 +51,7 @@ fn op(method: &'static str, path: &'static str, id: &'static str, summary: &'sta
         query: Vec::new(),
         located: false,
         stream: false,
+        binary: false,
         websocket: false,
         errors: Vec::new(),
         peer: false,
@@ -99,6 +101,11 @@ impl Op {
     /// Location-scoped: accepts `location[directory]` and `x-cyber-directory`.
     fn located(mut self) -> Self {
         self.located = true;
+        self
+    }
+
+    fn binary(mut self) -> Self {
+        self.binary = true;
         self
     }
 
@@ -1527,6 +1534,72 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .query(&["path", "session_id"])
         .ok::<Located<cyber_core::files::Content>>(g),
     ];
+    ops.extend(vec![
+        op(
+            "get",
+            "/tools/computer/health",
+            "v1.tool.computerHealth",
+            "Native computer readiness without capture",
+        )
+        .ok::<Data<crate::runtime::computer::HealthReport>>(g),
+        op(
+            "post",
+            "/tools/computer/setup",
+            "v1.tool.computerSetup",
+            "Explicit owner OS-consent setup",
+        )
+        .body::<super::computer::Setup>(g)
+        .ok::<Data<crate::runtime::computer::HealthReport>>(g),
+        op(
+            "post",
+            "/tools/computer/stop",
+            "v1.tool.computerStopAll",
+            "Immediately revoke native control",
+        )
+        .status(204),
+        op(
+            "get",
+            "/sessions/{sessionID}/computer",
+            "v1.session.computerStatus",
+            "Session native control status",
+        )
+        .located()
+        .ok::<Data<crate::runtime::computer::Status>>(g),
+        op(
+            "post",
+            "/sessions/{sessionID}/computer/preview",
+            "v1.session.computerPreview",
+            "Review an exact native target without capture",
+        )
+        .body::<cyber_computer::backend::Selector>(g)
+        .located()
+        .ok::<Data<crate::runtime::computer::Preview>>(g),
+        op(
+            "post",
+            "/sessions/{sessionID}/computer/allow",
+            "v1.session.computerAllow",
+            "Explicit owner arming of a reviewed target",
+        )
+        .body::<super::computer::Allow>(g)
+        .located()
+        .ok::<Data<crate::runtime::computer::GrantView>>(g),
+        op(
+            "post",
+            "/sessions/{sessionID}/computer/stop",
+            "v1.session.computerStop",
+            "Revoke this Session's native grant",
+        )
+        .located()
+        .status(204),
+        op(
+            "get",
+            "/sessions/{sessionID}/computer/frames/{frameID}",
+            "v1.session.computerFrame",
+            "Read a private Session-bound PNG capture",
+        )
+        .located()
+        .binary(),
+    ]);
     ops.extend(collaboration_operations(g));
     ops
 }
@@ -1844,6 +1917,8 @@ fn operation(o: &Op, error: &Schema, envelope: &Schema) -> Value {
     }
     let success = if o.stream {
         json!({ "description": "Server-sent events; each `data` is an EventEnvelope", "content": { "text/event-stream": { "schema": envelope } } })
+    } else if o.binary {
+        json!({"description":"Private bounded PNG", "content":{"image/png":{"schema":{"type":"string","format":"binary"}}}})
     } else {
         match &o.response {
             Some(schema) => {

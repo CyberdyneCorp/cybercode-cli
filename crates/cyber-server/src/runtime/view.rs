@@ -38,7 +38,7 @@ pub fn messages(state: &SessionState, provider: &str, model: &str) -> Vec<Messag
                     )));
                 }
             }
-            Entry::Assistant(a) => push_assistant(state, a, provider, model, &mut out),
+            Entry::Assistant(a) => push_assistant(state, a, provider, model, strip_media, &mut out),
         }
     }
     out
@@ -49,6 +49,7 @@ fn push_assistant(
     a: &AssistantEntry,
     provider: &str,
     model: &str,
+    strip_media: bool,
     out: &mut Vec<Message>,
 ) {
     let mut content = Vec::new();
@@ -118,6 +119,35 @@ fn push_assistant(
         role: Role::User,
         content: results,
     });
+    if !strip_media {
+        let images = calls
+            .iter()
+            .filter_map(|call| {
+                if call.name != "computer" || call.status != CallStatus::Ok {
+                    return None;
+                }
+                let frame: super::computer::FrameInfo =
+                    serde_json::from_value(call.structured_output.as_ref()?.get("frame")?.clone())
+                        .ok()?;
+                Some(Content::Attachment(cyber_llm::AttachmentRef {
+                    sha256: frame.sha256,
+                    media_type: "image/png".into(),
+                    name: Some(format!("computer:{}", frame.id)),
+                    size: frame.bytes,
+                    width: Some(frame.target.image_width),
+                    height: Some(frame.target.image_height),
+                    pages: None,
+                    original: None,
+                }))
+            })
+            .collect::<Vec<_>>();
+        if !images.is_empty() {
+            out.push(Message {
+                role: Role::User,
+                content: images,
+            });
+        }
+    }
 }
 
 fn strip(parts: &[Content]) -> Vec<Content> {

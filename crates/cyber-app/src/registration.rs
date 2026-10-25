@@ -157,7 +157,27 @@ pub fn registration_path(paths: &Paths) -> PathBuf {
 
 pub fn read_registration(paths: &Paths) -> Option<Registration> {
     let text = std::fs::read_to_string(registration_path(paths)).ok()?;
-    serde_json::from_str(&text).ok()
+    let registration: Registration = serde_json::from_str(&text).ok()?;
+    #[cfg(unix)]
+    if let Some(socket) = &registration.socket {
+        crate::server::local_socket(
+            &crate::server::ServeOptions {
+                socket: Some(PathBuf::from(socket)),
+                ..Default::default()
+            },
+            paths,
+        )
+        .ok()?;
+    }
+    Some(registration)
+}
+
+fn checked_registration(paths: &Paths) -> Result<Option<Registration>, String> {
+    let registration = read_registration(paths);
+    if registration.is_none() && registration_path(paths).exists() {
+        return Err("Existing server registration is invalid or uses an unsafe Unix socket. Stop the old server manually, remove its stale registration and restart with a socket inside the private state directory (or authenticated TCP).".into());
+    }
+    Ok(registration)
 }
 
 /// Remove `server.json` only when it still holds this server's ID.
@@ -258,11 +278,12 @@ async fn start_service_with(
     version: &str,
     web: Option<(Option<&str>, Option<u16>, bool)>,
 ) -> Result<ServerClientInfo, String> {
+    let existing = checked_registration(paths)?;
     let password = crate::password(paths)?;
     let me = ClientBuild::current(version);
     let mut notice = None;
     let mut launch_bind = web.map(|(host, port, _)| (host.map(str::to_owned), port));
-    if let Some(reg) = read_registration(paths)
+    if let Some(reg) = existing
         && let Some(probe) = probe_registration(&reg).await
         && probe.serves(&reg)
     {
@@ -473,7 +494,7 @@ where
 
 /// Ask the registered server to stop and wait for it to unregister.
 pub async fn stop_service(paths: &Paths) -> Result<Option<Registration>, String> {
-    let Some(reg) = read_registration(paths) else {
+    let Some(reg) = checked_registration(paths)? else {
         return Ok(None);
     };
     let (client, url) = server_client(&reg)?;
@@ -593,5 +614,88 @@ mod windows_std {
                 }
             }
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod socket_registration_tests {
+    use super::*;
+    fn paths(root: &Path) -> Paths {
+        Paths {
+            state: root.join("state"),
+            data: root.join("data"),
+            config: root.join("config"),
+            cache: root.join("cache"),
+            tmp: root.join("tmp"),
+        }
+    }
+    #[test]
+    fn registered_unix_sockets_require_the_owned_state_boundary() {
+        let temporary = tempfile::tempdir().unwrap();
+        let paths = paths(temporary.path());
+        paths.ensure().unwrap();
+        std::fs::create_dir_all(paths.state.join("nested")).unwrap();
+        let save = |socket: PathBuf| {
+            let registration = Registration::current(
+                "srv_fixture".into(),
+                "http://127.0.0.1:4747".into(),
+                Some(socket.display().to_string()),
+            );
+            write_private(
+                &registration_path(&paths),
+                &serde_json::to_string(&registration).unwrap(),
+            )
+            .unwrap();
+        };
+        save(paths.state.join("nested/owner.sock"));
+        assert!(read_registration(&paths).is_some());
+        save(temporary.path().join("outside.sock"));
+        assert!(read_registration(&paths).is_none());
+        std::os::unix::fs::symlink(temporary.path(), paths.state.join("escape")).unwrap();
+        save(paths.state.join("escape/owner.sock"));
+        assert!(read_registration(&paths).is_none());
+    }
+    #[tokio::test]
+    async fn unsafe_legacy_socket_registration_never_connects_or_sends_owner_credentials() {
+        let temporary = tempfile::tempdir().unwrap();
+        let paths = paths(temporary.path());
+        paths.ensure().unwrap();
+        let workspace = temporary.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let socket = workspace.join("legacy-owner.sock");
+        let trap = tokio::net::UnixListener::bind(&socket).unwrap();
+        let registration = Registration::current(
+            "srv_legacy".into(),
+            String::new(),
+            Some(socket.display().to_string()),
+        );
+        write_private(
+            &registration_path(&paths),
+            &serde_json::to_string(&registration).unwrap(),
+        )
+        .unwrap();
+        write_private(
+            &paths.state.join("password"),
+            "synthetic-owner-credential-never-send",
+        )
+        .unwrap();
+        assert!(read_registration(&paths).is_none());
+        let stopped = stop_service(&paths).await.unwrap_err();
+        assert!(stopped.contains("unsafe Unix socket"));
+        assert!(
+            crate::registered_lsp_status(&paths, &workspace)
+                .await
+                .is_err()
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), trap.accept())
+                .await
+                .is_err(),
+            "unsafe legacy socket received an automatic client connection"
+        );
+        assert!(
+            registration_path(&paths).is_file(),
+            "preserve the rejected receipt for explicit owner cleanup"
+        );
     }
 }

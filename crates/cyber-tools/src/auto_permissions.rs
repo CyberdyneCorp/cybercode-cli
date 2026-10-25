@@ -154,7 +154,11 @@ impl Ctx<'_> {
                 action: request.action.clone(),
                 resources: request.resources.clone(),
                 tool: self.inv.name.clone(),
-                input: self.inv.input.clone(),
+                input: if self.inv.name == "computer" {
+                    cyber_computer::action::redacted_input(Some(&self.inv.input))
+                } else {
+                    self.inv.input.clone()
+                },
                 policy: settings.policy.clone(),
             },
             ancestor_id: ancestor_id.clone(),

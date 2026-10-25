@@ -17,6 +17,7 @@ const MAX_EXPANSION_ENTRIES: usize = 1_000_000;
 #[derive(Debug, Clone, Default)]
 pub struct DenyRead {
     patterns: Vec<(String, String, regex::Regex)>,
+    hidden_paths: Vec<PathBuf>,
 }
 
 impl DenyRead {
@@ -30,21 +31,50 @@ impl DenyRead {
                 (anchored, source, compiled)
             })
             .collect();
-        Self { patterns }
+        Self {
+            patterns,
+            hidden_paths: Vec::new(),
+        }
     }
 
+    /// Add exact private paths without treating glob characters in their names
+    /// as patterns. In-process readers use the same home-scoped unreadable roots
+    /// that OS launches receive separately.
+    pub fn with_hidden_paths(mut self, paths: &[PathBuf]) -> Self {
+        for path in paths {
+            self.hidden_paths.push(path.clone());
+            if let Ok(canonical) = std::fs::canonicalize(path) {
+                self.hidden_paths.push(canonical);
+            }
+        }
+        self.hidden_paths.sort();
+        self.hidden_paths.dedup();
+        self
+    }
     pub fn is_empty(&self) -> bool {
-        self.patterns.is_empty()
+        self.patterns.is_empty() && self.hidden_paths.is_empty()
     }
 
     /// Anchored glob patterns, for `cyber sandbox explain`.
     pub fn anchored(&self) -> Vec<String> {
-        self.patterns.iter().map(|(a, _, _)| a.clone()).collect()
+        self.patterns
+            .iter()
+            .map(|(a, _, _)| a.clone())
+            .chain(self.hidden_paths.iter().map(|path| slash(path)))
+            .collect()
     }
 
     /// Regular expressions for the Seatbelt profile.
     pub fn regexes(&self) -> Vec<String> {
-        self.patterns.iter().map(|(_, r, _)| r.clone()).collect()
+        self.patterns
+            .iter()
+            .map(|(_, r, _)| r.clone())
+            .chain(
+                self.hidden_paths
+                    .iter()
+                    .map(|path| format!("^{}(?:/|$)", regex::escape(&slash(path)))),
+            )
+            .collect()
     }
 
     /// Exact expressions for the directories whose rename or removal would move a match
@@ -64,16 +94,36 @@ impl DenyRead {
                 }
             }
         }
+        for path in self
+            .hidden_paths
+            .iter()
+            .flat_map(|path| path.ancestors())
+            .filter(|path| path.parent().is_some())
+        {
+            let exact = format!("^{}$", regex::escape(&slash(path)));
+            if !out.contains(&exact) {
+                out.push(exact);
+            }
+        }
         out
     }
 
     /// Whether `path` (or, when it exists, its canonical form) is hidden.
     pub fn denies(&self, path: &Path) -> bool {
+        let canonical_path = std::fs::canonicalize(path).ok();
+        if self.hidden_paths.iter().any(|root| {
+            path.starts_with(root)
+                || canonical_path
+                    .as_ref()
+                    .is_some_and(|path| path.starts_with(root))
+        }) {
+            return true;
+        }
         if self.patterns.is_empty() {
             return false;
         }
         let lexical = slash(path);
-        let canonical = std::fs::canonicalize(path).ok().map(|p| slash(&p));
+        let canonical = canonical_path.as_ref().map(|p| slash(p));
         self.patterns.iter().any(|(_, _, re)| {
             re.is_match(&lexical) || canonical.as_deref().is_some_and(|c| re.is_match(c))
         })
@@ -87,6 +137,12 @@ impl DenyRead {
             let base = literal_base(anchored);
             expand_one(&base, re, anchored, &mut out)?;
         }
+        out.extend(
+            self.hidden_paths
+                .iter()
+                .filter(|path| std::fs::symlink_metadata(path).is_ok())
+                .cloned(),
+        );
         out.sort();
         out.dedup();
         Ok(out)
@@ -370,5 +426,35 @@ mod tests {
             d.expand().unwrap(),
             vec![root.join("a/b/other.pem"), root.join("key.pem")]
         );
+    }
+}
+
+#[cfg(test)]
+mod private_path_tests {
+    use super::*;
+    #[test]
+    fn exact_private_roots_cover_children_and_aliases_without_glob_interpretation() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().join("private[1]");
+        std::fs::create_dir(&root).unwrap();
+        let frame = root.join("frame.txt");
+        std::fs::write(&frame, "private").unwrap();
+        let hidden = DenyRead::default().with_hidden_paths(std::slice::from_ref(&root));
+        assert!(!hidden.is_empty());
+        assert!(hidden.denies(&frame));
+        assert!(!hidden.denies(&temporary.path().join("private1/frame.txt")));
+        assert!(
+            hidden
+                .regexes()
+                .iter()
+                .any(|source| regex::Regex::new(source).unwrap().is_match(&slash(&frame)))
+        );
+        assert!(hidden.expand().unwrap().contains(&root));
+        #[cfg(unix)]
+        {
+            let alias = temporary.path().join("public.txt");
+            std::os::unix::fs::symlink(&frame, &alias).unwrap();
+            assert!(hidden.denies(&alias));
+        }
     }
 }

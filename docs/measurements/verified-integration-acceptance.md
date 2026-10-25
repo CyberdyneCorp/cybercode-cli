@@ -1,6 +1,6 @@
 # Verified integration queue acceptance
 
-Validated locally on macOS on 2026-10-24 at implementation commit `69b4faed` before merging telemetry main `8ef37de7`. The subsequent main merge had one generated SDK type conflict, resolved by regeneration from the combined schema; combined SDK/dashboard type and build checks passed. Platform CI remains pending. The queue composes complementary local commits and checks the **combined** source. A passing individual contribution, model response, or reviewer recommendation cannot create host verification evidence.
+Validated locally on macOS on 2026-10-24 at implementation commit `69b4faed` before merging telemetry main `8ef37de7`. The subsequent main merge had one generated SDK type conflict, resolved by regeneration from the combined schema; combined SDK/dashboard type and build checks passed. Final PR platform CI passed as recorded below. The queue composes complementary local commits and checks the **combined** source. A passing individual contribution, model response, or reviewer recommendation cannot create host verification evidence.
 
 ## Local checks
 
@@ -26,9 +26,13 @@ Merged main `82597aa0`, preserving the message inbox and transcript paging fixes
 - Merged dashboard unit suite: 34 passed. Full browser suite: 28 passed before the final read-only receipt/environment additions. The final six integration browser cases all passed against the refreshed binary, including trusted Git/GitHub executable environment probes, cancellation during GitHub lookup and hook admission, unknown publication receipt inspection with no repeated push/create, and lost-ack reconciliation.
 - Current-main generated SDK process acceptance and CLI submission/run/concurrency acceptance passed. Strict all-target Clippy for tools/server/app/TUI/CLI passed after the final changes; formatting, generated SDK, CLI help reference and strict OpenSpec validation passed. All 96 specs/changes passed strict validation on the merged tree.
 - A rebuild first failed at linking with `errno=28` (disk full), before tests ran. Builds stopped while obsolete generated artifacts were reclaimed; subsequent focused checks/build succeeded. No user data was removed. The successful macOS build still emitted the compact-unwind linker-size warning.
-- Final frozen CLI SHA-256: `ca786c6441f475aa04af7da5af070ac2c92681847b28849c488f282624382c22`. Platform CI for the updated tip remains pending; the earlier failed CI run is not presented as acceptance.
+- Final frozen CLI SHA-256: `ca786c6441f475aa04af7da5af070ac2c92681847b28849c488f282624382c22`. The earlier failed CI runs are not presented as acceptance; final PR CI is recorded below.
 
-The next Linux CI pass exposed a Unix proxy pathname limit: custom embedded App temporary paths plus the integration name produced a 109-byte Unix socket path, beyond Linux's 107-byte pathname limit. Integration temporary directories now use a shorter prefix while preserving the complete run ULID. An actual Unix Proxy regression proves the old path fails to bind and the corrected path binds; the 20 App cases, catalog-disable CLI regression and strict Clippy passed afterward. Failed queue reports also preserve the original workflow diagnostic. The shared catalog-count and Windows upgrade-fixture identity fixes are included; updated platform CI remains pending.
+A subsequent Linux CI run exposed a Unix proxy pathname limit: custom embedded App temporary paths plus the integration name produced a 109-byte Unix socket path, beyond Linux's 107-byte pathname limit. Integration temporary directories now use a shorter prefix while preserving the complete run ULID. An actual Unix Proxy regression proves the old path fails to bind and the corrected path binds; the 20 App cases, catalog-disable CLI regression and strict Clippy passed afterward. Failed queue reports also preserve the original workflow diagnostic. The shared catalog-count and Windows upgrade-fixture identity fixes are included.
+
+## Final PR acceptance and merge (2026-10-25)
+
+[PR #40](https://github.com/CyberdyneCorp/cybercode-cli/pull/40) completed final review and merged as `27af19f8`. All 16 checks passed on exact head `6e0fd50abe0e0bdb13b1d5f105b196eb39b51789` in [CI run 40173318129](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40173318129): Linux/macOS full Rust suites, Windows native and metadata/migration tests, dashboard, TypeScript SDK, OpenSpec, Windows lint, changes and all eight release build targets. This closes the PR's platform-CI and final-review checklist. It does not claim success for the separate post-merge main CI run or the deployment checks below.
 
 ## Evidence and recovery guarantees
 
@@ -38,8 +42,8 @@ Publication has separate durable intent/settlement records. A lost command ackno
 
 ## Limits requiring deployment acceptance
 
-- CyberdyneAuth is offline. Fresh issuer/membership revocation, account snapshot and replay-generation behavior are covered with signed local issuer fixtures; real login, organization/guest policy and live revocation still require authenticated deployment acceptance. Hub-linked contributions fail closed during this outage. Local commits do not require a Cyber Account.
+- CyberdyneAuth was unavailable during this acceptance (user-reported outage). Fresh issuer/membership revocation, account snapshot and replay-generation behavior are covered with signed local issuer fixtures; real login, organization/guest policy and live revocation still require authenticated deployment acceptance. Hub-linked contributions fail closed during this outage. Local commits do not require a Cyber Account.
 - GitHub publication acceptance uses local Git/GitHub executable adapters. No real remote push or PR creation is performed by these tests. Real credential grants and remote publication require owner acceptance in a disposable repository.
-- Local OS sandbox acceptance was run on macOS. Linux and Windows verification remains for platform CI; the POSIX publication adapter test explicitly skips Windows.
+- Local OS sandbox acceptance was run on macOS, and the final PR passed Linux/macOS Rust and Windows native CI. The POSIX publication adapter tests explicitly skip Windows; manual Windows publication and real remote publication remain unperformed.
 - Verification uses the owner's local toolchain and configured sandbox, not a reproducible-container claim. Cost reports distinguish actual priced usage, unpriced/incomplete usage and unavailable prediction; a budget ceiling is not an estimated bill.
 - Required integration evidence and reviewer Sessions remain durable. The parallel transcript-retention implementation must retain bundled `integrate` runs; root integration will preserve this exclusion before enabling finished-agent expiry.

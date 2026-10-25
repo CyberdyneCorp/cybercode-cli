@@ -20,7 +20,7 @@ pub struct ServeOptions {
     pub hostname: String,
     /// `None` tries 4747, then an OS-assigned port.
     pub port: Option<u16>,
-    /// `None` uses `<state>/cyber.sock`.
+    /// `None` uses `<state>/cyber.sock`; overrides must stay inside the private state directory.
     pub socket: Option<PathBuf>,
     pub no_tcp: bool,
     /// Write `server.json` so clients find this server.
@@ -353,12 +353,54 @@ fn rewrite_fingerprint(
 }
 
 #[cfg(unix)]
-fn local_socket(opts: &ServeOptions, paths: &Paths) -> Result<Option<PathBuf>, String> {
-    Ok(Some(
-        opts.socket
-            .clone()
-            .unwrap_or_else(|| paths.state.join("cyber.sock")),
-    ))
+pub(crate) fn local_socket(opts: &ServeOptions, paths: &Paths) -> Result<Option<PathBuf>, String> {
+    let root = std::fs::canonicalize(&paths.state).map_err(|error| error.to_string())?;
+    use std::os::unix::fs::FileTypeExt;
+    let socket = opts
+        .socket
+        .clone()
+        .unwrap_or_else(|| root.join("cyber.sock"));
+    let invalid = || {
+        "Unix socket must be an absolute path inside the private state directory, with an existing non-symlink parent; use <state>/cyber.sock or authenticated TCP".to_string()
+    };
+    if !socket.is_absolute()
+        || socket
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return Err(invalid());
+    }
+    // Accept the configured state's spelling and its canonical spelling, but no
+    // workspace alias. A model-writable parent could impersonate the listener
+    // and collect an owner's Basic credential even with same-UID peer checks.
+    let relative = socket
+        .strip_prefix(&paths.state)
+        .or_else(|_| socket.strip_prefix(&root))
+        .map_err(|_| invalid())?;
+    let mut checked = root.clone();
+    for part in relative.components() {
+        if !matches!(part, std::path::Component::Normal(_)) {
+            return Err(invalid());
+        }
+        checked.push(part);
+        match std::fs::symlink_metadata(&checked) {
+            Ok(metadata) if metadata.file_type().is_symlink() => return Err(invalid()),
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    let parent = checked.parent().ok_or_else(invalid)?;
+    let parent = std::fs::canonicalize(parent).map_err(|_| invalid())?;
+    if !parent.starts_with(&root) || checked == root {
+        return Err(invalid());
+    }
+    if let Ok(metadata) = std::fs::symlink_metadata(&checked)
+        && !metadata.file_type().is_socket()
+    {
+        return Err("refusing to replace a non-socket file in the private state directory".into());
+    }
+    Ok(Some(checked))
 }
 
 #[cfg(not(unix))]
@@ -480,5 +522,59 @@ mod dashboard_tests {
         let config =
             json!({"server":{"tls":{"cert":dir.join("cert.pem"),"key":dir.join("key.pem")}}});
         assert!(owner_tls_files(&config).unwrap().is_some());
+    }
+}
+
+#[cfg(all(test, unix))]
+mod socket_tests {
+    use super::*;
+
+    #[test]
+    fn owner_socket_cannot_use_a_model_writable_parent_or_symlink_alias() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = temp.path().join("state");
+        let workspace = temp.path().join("workspace");
+        std::fs::create_dir_all(state.join("nested")).unwrap();
+        std::fs::create_dir_all(&workspace).unwrap();
+        let paths = Paths {
+            state: state.clone(),
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+            cache: temp.path().join("cache"),
+            tmp: temp.path().join("tmp"),
+        };
+        let select = |path| {
+            local_socket(
+                &ServeOptions {
+                    socket: Some(path),
+                    ..Default::default()
+                },
+                &paths,
+            )
+        };
+        assert_eq!(
+            select(state.join("custom.sock")).unwrap(),
+            Some(std::fs::canonicalize(&state).unwrap().join("custom.sock"))
+        );
+        assert!(select(state.join("nested/custom.sock")).is_ok());
+        assert!(select(workspace.join("steal.sock")).is_err());
+        assert!(select(state.join("../workspace/steal.sock")).is_err());
+        assert!(select(state.join("missing/custom.sock")).is_err());
+        assert!(select(state.clone()).is_err());
+        std::fs::write(state.join("password"), "owner-canary").unwrap();
+        assert!(select(state.join("password")).is_err());
+        assert_eq!(
+            std::fs::read_to_string(state.join("password")).unwrap(),
+            "owner-canary"
+        );
+        assert!(select(PathBuf::from("relative.sock")).is_err());
+        std::os::unix::fs::symlink(&workspace, state.join("escape")).unwrap();
+        assert!(select(state.join("escape/steal.sock")).is_err());
+        std::os::unix::fs::symlink(state.join("nested"), state.join("alias")).unwrap();
+        assert!(select(state.join("alias/custom.sock")).is_err());
+        std::os::unix::fs::symlink(&state, workspace.join("alias")).unwrap();
+        assert!(select(workspace.join("alias/custom.sock")).is_err());
+        std::os::unix::fs::symlink(workspace.join("sentinel"), state.join("leaf.sock")).unwrap();
+        assert!(select(state.join("leaf.sock")).is_err());
     }
 }

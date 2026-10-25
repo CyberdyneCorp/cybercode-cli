@@ -1,6 +1,6 @@
 # Local web dashboard
 
-The dashboard runs in the same `cyber` server as the terminal client. It provides Session navigation, transcripts, prompts and an approval inbox, plus the existing workflow, Job and Goal controls. This is the first P1 browser slice; full Settings, attachments, terminal emulation, Relay and paired Devices are outside this delivery.
+The dashboard runs in the same `cyber` server as the terminal client. It provides Session navigation, transcripts, prompts and an approval inbox, plus the existing workflow, Job and Goal controls. This is the first P1 browser slice; full Settings, general attachment previews, terminal emulation, Relay and paired Devices remain unfinished. Experimental native computer controls are available separately on macOS 14+.
 
 ## Start and sign in
 
@@ -60,7 +60,7 @@ Use **Older messages** to browse transcript pages and **Latest messages** to ret
 
 ## Approval and disconnect behavior
 
-The owner-authenticated lease APIs are `POST /api/v1/sessions/{sessionID}/interactive-clients`, and `PUT`/`DELETE /api/v1/sessions/{sessionID}/interactive-clients/{clientID}`. Create and renew return `{ "data": { "client_id", "session_id", "expires_at" } }`, with `expires_at` in Unix milliseconds; release returns 204. Use the same Location and an idempotency key for each logical mutation. Replaying an expired receipt never recreates presence; an unknown or expired renewal returns 404.
+Same-UID Unix clients also require the owner Basic credential; socket access alone does not authorize browser presence or approvals. The owner-authenticated lease APIs are `POST /api/v1/sessions/{sessionID}/interactive-clients`, and `PUT`/`DELETE /api/v1/sessions/{sessionID}/interactive-clients/{clientID}`. Create and renew return `{ "data": { "client_id", "session_id", "expires_at" } }`, with `expires_at` in Unix milliseconds; release returns 204. Use the same Location and an idempotency key for each logical mutation. Replaying an expired receipt never recreates presence; an unknown or expired renewal returns 404.
 
 Selecting a Session establishes a browser-presence lease, renewed every 15 seconds and expiring after 45 seconds without renewal. Presence permits asking an attached human; it does not grant tool permissions or relax Mode, sandbox, Location or saved-rule policy. Requests from child Sessions keep their original owner identity.
 
@@ -81,6 +81,16 @@ The approval inbox displays the original Session, request, Location and command,
 ![Desktop approval inbox](screenshots/web-dashboard-desktop.png)
 
 [View the 360-pixel mobile approval inbox](screenshots/web-dashboard-mobile.png). Long commands scroll within the card.
+
+## Native computer controls (experimental)
+
+Open **Native computer use (experimental)** above the Session workspace to inspect host support and OS consent. After enabling `computer_use` in trusted global configuration, keep a Session attached, enter an application bundle ID or explicitly choose a whole display, and select **Review native target**. Review its exact process/window/display and expiry before checking the authorization box and selecting **Arm reviewed target**. OS setup is a separate deliberate action that opens permission prompts on the host.
+
+The active-control banner names the controlling Session, target and expiry even when you view another Session or an empty Location. **STOP native input** revokes this server's native grant independently of a busy model/tool request. Changing the model, agent or Mode requires stopping control first. A lost last Session attachment invalidates the old grant; reconnecting requires fresh owner review.
+
+**View authorized capture** explicitly loads the latest retained screenshot through owner-authenticated headers. The preview stays in page memory and is cleared on Session changes or logout. This private native PNG view does not add general prompt-attachment previews. Logging out attempts a host-wide Stop before clearing credentials; if the network prevents delivery, native presence is bounded by the existing lease expiry. Use `cyber computer stop` on the host when Stop cannot be confirmed.
+
+See [Native computer use](computer-use.md) for setup, privacy and limits. Automated browser tests simulate native HTTP responses; real desktop capture/input and signed release acceptance remain pending.
 
 ## Complementary integration queue
 
@@ -103,3 +113,5 @@ npm run test:e2e
 ```
 
 Build `cargo build -p cyber-cli` first; the browser fixture uses that binary. Browser evidence and platform limitations are recorded in [dashboard implementation evidence](implementation/web-dashboard.md). Physical second-device acceptance must be recorded separately from headless browser or local-forward testing.
+
+Unix transport compatibility: owner sockets now require Basic credentials and must live under the protected state directory. Custom paths must be absolute with existing non-symlink parents. If an old registration points outside that directory, automatic attach/start/stop refuses it before sending credentials. Stop the old process through its original terminal or service manager, remove its obsolete registration only after it has stopped, then start the current server with the default socket or a private-state socket. Restarting the old server is necessary to activate the new state and authentication protections.

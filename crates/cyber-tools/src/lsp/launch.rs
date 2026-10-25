@@ -392,7 +392,9 @@ impl LocalLauncher {
         for key in ["TMPDIR", "TEMP", "TMP"] {
             environment.insert(key.into(), resources.scratch.to_string_lossy().into());
         }
-        environment
+        cyber_sandbox::owner_environment(environment)
+            .into_iter()
+            .collect()
     }
 }
 

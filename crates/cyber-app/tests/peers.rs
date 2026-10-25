@@ -173,7 +173,7 @@ impl Served {
         let stop = Arc::new(Notify::new());
         let options = ServeOptions {
             port: Some(0),
-            socket: cfg!(unix).then(|| root.join("s.sock")),
+            socket: cfg!(unix).then(|| paths.state.join("s.sock")),
             register: true,
             ..extra
         };
@@ -2362,11 +2362,12 @@ async fn a_server_stopped_as_it_starts_still_stops() {
         ..Setup::default()
     };
     let app = ModeApp::build(&root, &repo, &model, &setup).await;
+    let paths = app.paths.clone();
     let stop = Arc::new(Notify::new());
     stop.notify_one();
     let options = ServeOptions {
         port: Some(0),
-        socket: cfg!(unix).then(|| root.join("s.sock")),
+        socket: cfg!(unix).then(|| paths.state.join("s.sock")),
         register: true,
         ..ServeOptions::default()
     };

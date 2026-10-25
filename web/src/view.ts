@@ -1,3 +1,5 @@
+import { computerBanner, computerPanel } from "./computer-view.js";
+
 import { integrationsView } from "./integrations-view.js";
 import type { Content, Message, PendingRequest, RunDetail } from "../../sdk/typescript/src/generated/types.js";
 import { Dashboard, type Card, type Tab } from "./model.js";
@@ -68,7 +70,7 @@ export class View {
     const right = node("div", "top-actions"); right.append(connection, button("Reconnect", () => this.model.wake(), state.connection === "connecting", "button quiet"), button("Logout", () => this.model.logout(), false, "button quiet"));
     top.append(brand, right);
     const workspace = node("div", "workspace"); workspace.append(this.sidebar(), this.main());
-    shell.append(top, workspace); if (state.review) shell.append(this.review(state.review)); if (state.feedback) shell.append(this.feedback(state.feedback)); return shell;
+    shell.append(top, computerPanel(this.model.computer), workspace); if (state.review) shell.append(this.review(state.review)); if (state.feedback) shell.append(this.feedback(state.feedback)); return shell;
   }
   private sidebar(): HTMLElement {
     const state = this.model.state; const aside = node("aside", "sidebar");
@@ -231,6 +233,9 @@ export class View {
     const actions = node("div", "request-actions"); actions.append(button("Submit answers", () => { void this.model.answer(card, { answers: body }); }, disabled || body.some((row) => !row.length), "button primary"), button("Dismiss question", () => { void this.model.answer(card, {}); }, disabled, "button quiet danger")); article.append(actions);
     const status = this.status(card); if (status) article.append(status); return article;
   }
+  private nativeStop(dialog: HTMLDialogElement): void {
+    const banner = computerBanner(this.model.computer); if (banner) dialog.prepend(banner);
+  }
   private review(card: Card): HTMLDialogElement {
     const dialog = node("dialog", "dialog"); const request = card.request; if (request.kind !== "permission") return dialog;
     dialog.setAttribute("aria-labelledby", "saved-approval-heading"); const title = node("h2", "", "Review saved approval"); title.id = "saved-approval-heading";
@@ -238,6 +243,7 @@ export class View {
     const input = node("input"); input.type = "checkbox"; input.dataset.focus = "review-scope"; input.checked = this.model.state.reviewed; input.addEventListener("change", () => { this.model.state.reviewed = input.checked; this.model.emit(); });
     const label = node("label", "choice"); label.append(input, node("span", "", "I reviewed this saved approval scope")); dialog.append(label);
     const actions = node("div", "request-actions"); actions.append(button("Cancel", () => { this.model.state.review = undefined; this.model.emit(); }), button("Approve always", () => { void this.model.answer(card, { reply: "always" }); }, !this.model.state.reviewed || !this.model.actionable, "button primary")); dialog.append(actions);
+    this.nativeStop(dialog);
     dialog.addEventListener("cancel", (event) => { event.preventDefault(); this.model.state.review = undefined; this.model.emit(); }); return dialog;
   }
   private feedback(card: Card): HTMLDialogElement {
@@ -247,6 +253,7 @@ export class View {
     const submit = button("Reject with feedback", () => { if (input.value.trim()) void this.model.answer(card, { reply: "reject", message: input.value }); }, true, "button danger");
     input.addEventListener("input", () => { this.model.state.feedbackDraft = input.value; submit.disabled = !input.value.trim() || !this.model.actionable; });
     const actions = node("div", "request-actions"); actions.append(button("Cancel", () => { this.model.state.feedback = undefined; this.model.emit(); }), submit); dialog.append(actions);
+    this.nativeStop(dialog);
     dialog.addEventListener("cancel", (event) => { event.preventDefault(); this.model.state.feedback = undefined; this.model.emit(); }); return dialog;
   }
   private runs(): HTMLElement {

@@ -261,6 +261,13 @@ async fn publish(
     parts: Parts,
     Json(body): Json<IntegrationPublish>,
 ) -> Result<Json<Data<IntegrationBatch>>, ApiError> {
+    state.runtime.require_computer_stopped().map_err(|_| {
+        ApiError::new(
+            StatusCode::FORBIDDEN,
+            "ComputerConsentError",
+            "Stop native computer control before publishing an integration",
+        )
+    })?;
     let batch = existing(&state, &id, &parts).await?;
     if batch.revision != body.expected_revision || batch.status != "ready" {
         return Err(ApiError::conflict(

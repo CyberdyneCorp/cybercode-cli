@@ -268,7 +268,7 @@ Transitions SHALL be durable events (`workflow.run.started.1`, `workflow.run.dis
 - **THEN** the call is rejected at once with `No interactive approver for workflow run` and the agent continues
 
 ### Requirement: Saved and bundled workflows
-(P2) The system SHALL discover saved Workflows from `.cyber/workflows/**/*.{ts,js}` (project), `~/.config/cyber/workflows/` (global) and plugins, and SHALL bundle `review` (multi-angle code review with verification), `audit` (codebase-wide bug or security sweep), `migrate` (file-by-file migration with build and test checks), `research` (cross-checked research with sources) `plan` (plans drafted from several independent angles, then merged), and `solve` (independent candidate implementations with host-run checks and an independent judge, as defined by `verified-workflows`). Project workflows SHALL override global and bundled ones with the same name.
+(P2) The system SHALL discover saved Workflows from `.cyber/workflows/**/*.{ts,js}` (project), `~/.config/cyber/workflows/` (global) and plugins, and SHALL bundle `review` (multi-angle code review with verification), `audit` (codebase-wide bug or security sweep), `migrate` (file-by-file migration with build and test checks), `research` (cross-checked research with sources) `plan` (plans drafted from several independent angles, then merged), `solve` (independent candidate implementations with host-run checks and an independent judge, as defined by `verified-workflows`), and `integrate` (complementary commits, host checks on combined source and read-only review, as defined by `verified-integrations`). Project workflows SHALL override global and bundled ones with the same name.
 
 Bundled Workflows SHALL be embedded in the `cyber` binary, carry the origin `bundled` with their name, and have the lowest precedence: global roots override them and project roots override both. A listing SHALL mark every entry's origin (`bundled`, `global` or `project`) and name the definitions it shadows. `workflows.bundled: false` or `CYBER_DISABLE_BUNDLED_WORKFLOWS=1` SHALL hide the bundled Workflows from listings, the `workflow` tool and runs by name. `cyber workflows show <name>` SHALL print a library entry's meta, args schema, default budgets and origin (and with `--source` its source), and `cyber workflows eject <name> [--global] [--force]` SHALL copy a bundled Workflow's source to `.cyber/workflows/<name>.js` (or the global root), refusing to overwrite an existing file without `--force`. A run of a bundled Workflow SHALL record its origin and source digest, and a release that changes a bundled source SHALL be treated on resume like an edited saved module.
 
@@ -278,7 +278,7 @@ Bundled Workflows SHALL be embedded in the `cyber` binary, carry the origin `bun
 
 #### Scenario: Bundled listed on a fresh install
 - **WHEN** a user with no saved Workflows runs `cyber workflows list`
-- **THEN** `review`, `audit`, `migrate`, `research`, `plan` and `solve` are listed with origin `bundled`
+- **THEN** `review`, `audit`, `migrate`, `research`, `plan`, `solve` and `integrate` are listed with origin `bundled`
 
 #### Scenario: Ejected copy overrides the bundled one
 - **WHEN** the user runs `cyber workflows eject audit`, edits `.cyber/workflows/audit.js`, and runs `cyber workflows run audit`
@@ -295,6 +295,10 @@ Bundled Workflows SHALL be embedded in the `cyber` binary, carry the origin `bun
 #### Scenario: Start a verified solve
 - **WHEN** the user runs `cyber workflows run solve --args` with a valid task and required checks
 - **THEN** the server starts the verified candidate/check/judge protocol under the effective run ceilings
+
+#### Scenario: Customized integration script lacks native authority
+- **WHEN** a user ejects or overrides `integrate` and calls its native host verification bridge
+- **THEN** the host rejects that call unless the run has the exact embedded origin and source digest
 
 ### Requirement: Model-authored workflows
 (P2) The model SHALL be able to start a Workflow through a `workflow` tool that takes either `name` + `args` or inline `script` + `args` (and optional `budget` fields). Inline scripts SHALL be persisted to `<state>/workflows/<run_id>.js` (JavaScript, see Workflow module format) and listed with the run as `script_file`, so that the user can read, edit and relaunch them, or save them into `.cyber/workflows/`. A resume SHALL read `script_file` again when it exists, like a saved Workflow, so an edited script needs `revision: true` and then runs as a new revision; a run whose file is gone resumes its stored source. The tool SHALL return the run handle (`run_id`, name, status, phases and budget) without waiting for the run.
@@ -569,3 +573,14 @@ When `workflows.resume_after_restart` is `true` (default `false`), the interrupt
 #### Scenario: Resume every interrupted run
 - **WHEN** the user runs `cyber workflows resume --interrupted` after a restart left three runs paused with `interrupted: true` and one paused by the user
 - **THEN** the three interrupted runs are resumed, and the user-paused run stays paused
+
+### Requirement: Integration queue workflow surfaces
+(P2) `cyber workflows integrations submit|list|show|run|cancel|report|publish` and `/api/v1/workflows/integrations` SHALL expose the verified integration queue through existing workflow ownership, Location, permission, idempotency and budget boundaries. SDK and browser clients SHALL show manifests, progress, conflicts, host evidence, independent review, target staleness and explicit publication outcomes. Local owner-selected batches SHALL work without an account; authenticated hub-linked actions SHALL preserve current membership requirements.
+
+#### Scenario: Owner runs a local integration batch
+- **WHEN** an owner submits local commit contributions and admitted checks without a Cyber Account
+- **THEN** the local queue can verify them and present evidence without claiming hub membership or publishing automatically
+
+#### Scenario: Browser retries a cancellation
+- **WHEN** a browser loses acknowledgement of cancellation
+- **THEN** it retries the same revision-bound operation key without cancelling a newer attempt

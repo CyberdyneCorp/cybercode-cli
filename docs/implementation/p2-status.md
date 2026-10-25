@@ -1,5 +1,9 @@
 # P2 implementation status
 
+## Native computer use (experimental; controlled macOS acceptance passed)
+
+The macOS-first implementation adds compiled ScreenCaptureKit/CoreGraphics capture/input, global-only opt-in, local owner target review, expiring grants, human presence, independent Stop, private frame retention and durable native receipts. CLI/API/model-tool, TUI banner/Stop and browser owner controls are described in [Native computer use](../computer-use.md). Fake-native tests and native SDK compile checks remain separate from live acceptance. Authorized disposable-window ScreenCaptureKit capture, local vision routing, mouse/Unicode keyboard input, overlay/focus/geometry refusal, reconnect fencing and Stop during drag passed on macOS26.7/arm64. Other layouts, live OS revocation and release signing remain pending; see the [live evidence](../measurements/native-computer-acceptance.md). See [tasks](../../openspec/changes/add-native-computer-use/tasks.md).
+
 ## Verified solve (2026-10-23)
 
 The sixth bundled workflow implements clean-base admission, two to four isolated solvers pinned to that commit, host-owned literal-argv checks with durable intents and settlements, and an independent judge forced into Plan mode. Submitted solver subtrees are fenced against further admission. Full-access configuration, extra writable roots and ambient temp access cannot widen solve command writes beyond the candidate boundary. Direct file-tool writes outside it are denied.
@@ -12,7 +16,7 @@ P2 evidence lives here and is kept separate from the P1 files (`p1-status.md`, `
 
 ## Verified complementary integrations (2026-10-24)
 
-The `integrate` workflow and owner integration queue compose pinned local commits in managed checkouts, verify the combined source with literal owner-selected argv, and request an independent read-only reviewer. CLI, owner API/SDK and dashboard expose immutable batches and explicit publication. See [usage and limitations](../verified-integrations.md). Live CyberdyneAuth attribution remains pending during the issuer outage; local unattributed commits require no account. Implementation acceptance is recorded in the active [tasks](../../openspec/changes/add-verified-integration-queue/tasks.md).
+The `integrate` workflow and owner integration queue compose pinned local commits in managed checkouts, verify the combined source with literal owner-selected argv, and request an independent read-only reviewer. CLI, owner API/SDK and dashboard expose immutable batches and explicit publication. See [usage and limitations](../verified-integrations.md). Live CyberdyneAuth attribution remains unverified after the user-reported issuer outage; local unattributed commits require no account. Implementation acceptance is recorded in the active [tasks](../../openspec/changes/archive/2026-10-25-add-verified-integration-queue/tasks.md).
 
 ## Goals, slice 2 (`implement-m2-3-goals`, 2026-10-22)
 

@@ -4278,6 +4278,7 @@ async fn embedded_dashboard_is_public_inert_and_never_falls_back_over_api_or_fil
             .unwrap();
         assert!(csp.contains("script-src 'self'"));
         assert!(csp.contains("frame-ancestors 'none'"));
+        assert!(csp.contains("img-src 'self' blob:"));
         assert!(!csp.contains("unsafe-inline"));
         assert_eq!(response.headers()["referrer-policy"], "no-referrer");
         assert!(

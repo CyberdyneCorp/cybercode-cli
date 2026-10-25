@@ -29,6 +29,7 @@ struct Counts {
     leases: HashMap<String, Lease>,
     managed: HashMap<String, String>,
     watching_leases: bool,
+    native_epochs: HashMap<String, u64>,
 }
 
 /// Open streams by scope.
@@ -75,7 +76,10 @@ pub struct PresenceGuard {
 impl Presence {
     /// Count a stream open until the guard is dropped.
     pub fn attach(&self, scope: Watching) -> PresenceGuard {
-        *self.lock().open.entry(scope.clone()).or_default() += 1;
+        let mut counts = self.lock();
+        expire_locked(&mut counts);
+        *counts.open.entry(scope.clone()).or_default() += 1;
+        drop(counts);
         self.1.notify_one();
         PresenceGuard {
             presence: self.clone(),
@@ -178,6 +182,7 @@ impl Presence {
             return Err(InteractiveClientError::Missing);
         }
         counts.leases.remove(id);
+        native_loss(&mut counts, session);
         drop(counts);
         self.1.notify_one();
         Ok(())
@@ -244,6 +249,21 @@ impl Presence {
             legacy,
         )
     }
+    pub(crate) fn native_epoch(&self, session: &str) -> u64 {
+        let mut counts = self.lock();
+        expire_locked(&mut counts);
+        *counts.native_epochs.entry(session.to_owned()).or_default()
+    }
+    pub(crate) fn live_session(&self, session: &str) -> bool {
+        let counts = self.lock();
+        counts
+            .open
+            .get(&Watching::Session(session.to_owned()))
+            .is_some_and(|count| *count > 0)
+            || counts.leases.values().any(|lease| {
+                lease.receipt.session_id == session && lease.deadline > tokio::time::Instant::now()
+            })
+    }
     fn lock(&self) -> std::sync::MutexGuard<'_, Counts> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -257,6 +277,9 @@ impl Drop for PresenceGuard {
         if *open == 0 {
             counts.open.remove(&self.scope);
             counts.closed.insert(self.scope.clone(), Instant::now());
+        }
+        if let Watching::Session(session) = &self.scope {
+            native_loss(&mut counts, session);
         }
         drop(counts);
         self.presence.1.notify_one();
@@ -286,10 +309,27 @@ fn expire_locked(counts: &mut Counts) {
         }
     });
     for session in expired {
+        native_loss(counts, &session);
         counts
             .closed
             .insert(Watching::Session(session), Instant::now());
     }
+}
+// Called while holding Counts: losing the last exact Session attachment is
+// permanent for existing grants, even if another attachment arrives before polling.
+fn native_loss(counts: &mut Counts, session: &str) {
+    if counts
+        .open
+        .get(&Watching::Session(session.to_owned()))
+        .is_some_and(|n| *n > 0)
+        || counts.leases.values().any(|lease| {
+            lease.receipt.session_id == session && lease.deadline > tokio::time::Instant::now()
+        })
+    {
+        return;
+    }
+    let epoch = counts.native_epochs.entry(session.to_owned()).or_default();
+    *epoch = epoch.wrapping_add(1);
 }
 fn attended(counts: &Counts, scopes: &[InteractiveScope], legacy: bool) -> bool {
     let managed = scopes
@@ -325,6 +365,30 @@ fn attended(counts: &Counts, scopes: &[InteractiveScope], legacy: bool) -> bool 
 mod tests {
     use super::*;
 
+    #[test]
+    fn native_epoch_records_last_disconnect_before_reconnect_without_polling() {
+        let presence = Presence::default();
+        let session = "ses_native";
+        let first = presence.attach(Watching::Session(session.into()));
+        let second = presence.attach(Watching::Session(session.into()));
+        let epoch = presence.native_epoch(session);
+        drop(first);
+        assert_eq!(presence.native_epoch(session), epoch);
+        drop(second);
+        let _new = presence.attach(Watching::Session(session.into()));
+        assert_ne!(presence.native_epoch(session), epoch);
+    }
+    #[tokio::test(start_paused = true)]
+    async fn native_epoch_records_expiry_before_new_lease_can_restore_attendance() {
+        let presence = Presence::default();
+        let session = "ses_native";
+        presence.create(session, "/repo").unwrap();
+        let epoch = presence.native_epoch(session);
+        tokio::time::advance(INTERACTIVE_TTL + Duration::from_secs(1)).await;
+        presence.create(session, "/repo").unwrap();
+        assert!(presence.live_session(session));
+        assert_ne!(presence.native_epoch(session), epoch);
+    }
     #[test]
     fn a_scope_is_present_while_a_stream_is_open_and_remembered_after() {
         let presence = Presence::default();

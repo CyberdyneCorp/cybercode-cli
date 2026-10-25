@@ -1,6 +1,7 @@
 import { Integrations } from "./integrations.js";
 import type { EventEnvelope, FileDiff, GoalsView, Job, LocationInfo, Message, PendingRequest, RunDetail, Session, SessionRow, WorkflowRunSummary } from "../../sdk/typescript/src/generated/types.js";
 import { ApiFault, operationKey, type Port, type RequestOptions } from "./transport.js";
+import { ComputerControls } from "./computer.js";
 import { MessageInbox } from "./inbox.js";
 
 export type Connection = "authentication required" | "connecting" | "connected" | "reconnecting" | "offline";
@@ -59,7 +60,9 @@ export class Dashboard {
   #pageVersion = 0;
   readonly integrations: Integrations;
   readonly inbox: MessageInbox;
+  readonly computer: ComputerControls;
   constructor(readonly api: Port, readonly now = Date.now) {
+    this.computer = new ComputerControls(api, () => this.state.authenticated ? { session: this.state.session?.id ?? "", directory: this.state.directory, actionable: this.actionable, signal: this.#attachment.signal } : undefined, () => this.emit(), now);
     this.integrations = new Integrations(api, () => ({directory:this.state.directory,session:this.state.session?.id,enabled:this.actionable}), () => this.emit());
     this.inbox = new MessageInbox(api, () => this.state.authenticated && this.state.session ? { session: this.state.session.id, directory: this.state.session.directory, actionable: this.actionable, signal: this.#attachment.signal } : undefined, () => this.emit());
   }
@@ -79,6 +82,7 @@ export class Dashboard {
       this.#failures = 0;
       if (this.state.sessions[0]) await this.selectSession(this.state.sessions[0].id);
       else this.state.connection = "connected";
+      void this.computer.refresh();
     } catch (error) {
       if (generation === this.#generation) this.authenticationRequired(error instanceof ApiFault && error.kind === "network" ? "Server unavailable. Sign in again when it is reachable." : "Sign-in was not accepted. Check the local server password.");
       this.#failures++;
@@ -86,16 +90,18 @@ export class Dashboard {
     } finally { this.state.authBusy = false; this.emit(); }
   }
   authenticationRequired(message = "Your connection needs authentication. Sign in again."): void {
-    this.inbox.reset(); this.integrations.reset();
-    this.stopAttachment(); this.api.clear(); this.#identity = undefined; this.#decisions.clear(); this.#commands.clear(); this.#cursors.clear(); this.jobLog = undefined;
+    this.computer.reset(); this.inbox.reset();
+    this.computer.clear(); this.stopAttachment(); this.api.clear(); this.#identity = undefined; this.#decisions.clear(); this.#commands.clear(); this.#cursors.clear(); this.jobLog = undefined;
+    this.integrations.reset();
     this.state = initial(); this.state.notice = message; this.emit();
   }
   logout(): void {
-    this.releaseLease(); this.authenticationRequired("Signed out. The server and its running work continue.");
+    void this.computer.stop(); this.releaseLease(); this.authenticationRequired("Signed out. The server and its running work continue.");
   }
   async switchLocation(directory: string): Promise<void> {
     if (!this.state.authenticated || this.state.loading) return;
-    this.inbox.reset(); this.integrations.reset();
+    this.computer.reset(); this.inbox.reset();
+    this.integrations.reset();
     this.state.liveText = ""; this.state.liveMessage = undefined;
     this.releaseLease(); this.stopAttachment();
     const generation = this.#generation; this.jobLog = undefined;
@@ -108,6 +114,7 @@ export class Dashboard {
       if (generation !== this.#generation) return;
       if (this.state.sessions[0]) await this.selectSession(this.state.sessions[0].id);
       else this.state.connection = "connected";
+      void this.computer.refresh();
     } catch (error) { if (generation === this.#generation) this.showError(error); } finally { if (generation === this.#generation) { this.state.loading = false; this.emit(); } }
   }
   async loadSessions(cursor?: string): Promise<void> {
@@ -125,7 +132,8 @@ export class Dashboard {
   }
   async selectSession(id: string): Promise<void> {
     if (!this.state.authenticated) return;
-    this.inbox.reset(); this.integrations.reset();
+    this.computer.reset(); this.inbox.reset();
+    this.integrations.reset();
     this.releaseLease(); this.stopAttachment();
     const generation = this.#generation;
     this.jobLog = undefined;
@@ -213,7 +221,7 @@ export class Dashboard {
     this.reconcileCards([...permissions.data, ...questions.data], generation);
     if (current.data.status !== "running" || this.finishedMessage(this.state.liveMessage)) { this.state.liveText = ""; this.state.liveMessage = undefined; }
     // Optional inbox reads must not delay Session attachment or permission updates.
-    void this.inbox.refresh();
+    void this.inbox.refresh(); void this.computer.refresh();
     this.emit();
   }
   private async optional<T>(path: string, label: string, options: RequestOptions): Promise<T | undefined> {

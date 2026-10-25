@@ -81,14 +81,16 @@ pub fn draw(f: &mut Frame, app: &App) {
         // Full screen over the transcript, composer and sidebar; the footer stays.
         app.set_screen_links(Vec::new());
         app.progress.set_on_screen(false);
-        let panel = recap(
-            f,
-            app,
-            Rect {
-                height: area.height.saturating_sub(plan.footer.height),
-                ..area
-            },
-        );
+        let panel = Rect {
+            height: area.height.saturating_sub(plan.footer.height),
+            ..area
+        };
+        let panel = if app.computer.banner(&app.session.id).is_some() {
+            banner(f, app, panel)
+        } else {
+            panel
+        };
+        let panel = recap(f, app, panel);
         full_screen(f, app, panel);
         footer::draw(f, app, plan.footer, plan.compact_footer);
         return;
@@ -235,7 +237,8 @@ fn full_screen(f: &mut Frame, app: &App, panel: Rect) {
 /// The unsupported-version warning on the first row of `area`, while the rest keeps at
 /// least three rows; returns the area below it.
 fn banner(f: &mut Frame, app: &App, area: Rect) -> Rect {
-    let Some(text) = &app.update.banner else {
+    let computer_banner = app.computer.banner(&app.session.id);
+    let Some(text) = computer_banner.as_ref().or(app.update.banner.as_ref()) else {
         return area;
     };
     if area.height < 4 {

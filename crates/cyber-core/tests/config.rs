@@ -2220,3 +2220,45 @@ fn owner_server_load_is_global_section_only_and_preserves_tls_errors() {
     f.write("global:cyber.jsonc", "malformed global configuration");
     assert!(config::load_owner_server(&f.request(&f.repo, &[])).is_err());
 }
+
+#[test]
+fn native_computer_authority_is_global_only_and_obeys_managed_lock() {
+    let mut f = Fixture::new();
+    f.write(
+        "global:cyber.jsonc",
+        r#"{"features":{"computer_use":true}}"#,
+    );
+    assert!(
+        config::ComputerSettings::from_global(
+            &config::load_global(&f.request(&f.repo, &[])).unwrap()
+        )
+        .unwrap()
+        .enabled
+    );
+    f.managed(r#"{"policy":{"features":{"lock":{"computer_use":false}}}}"#);
+    assert!(
+        !config::ComputerSettings::from_global(
+            &config::load_global(&f.request(&f.repo, &[])).unwrap()
+        )
+        .unwrap()
+        .enabled
+    );
+    f.write("cyber.jsonc", r#"{"features":{"computer_use":true}}"#);
+    assert!(
+        f.load().is_err(),
+        "even untrusted project native settings must be rejected explicitly"
+    );
+}
+#[test]
+fn native_global_loading_ignores_process_feature_and_config_overrides() {
+    let mut f = Fixture::new();
+    f.env.insert("CYBER_FEATURES".into(), "computer_use".into());
+    let overrides = vec!["features.computer_use=true".into()];
+    let mut req = f.request(&f.repo, &overrides);
+    req.flags = json!({"features":{"computer_use":true}});
+    assert!(
+        !config::ComputerSettings::from_global(&config::load_global(&req).unwrap())
+            .unwrap()
+            .enabled
+    );
+}

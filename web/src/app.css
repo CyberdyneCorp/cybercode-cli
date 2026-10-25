@@ -3,3 +3,10 @@
 
 /* Receiver inbox and additional navigation remain usable on narrow screens. */
 .tabs{overflow-x:auto}.tab{flex-shrink:0;white-space:nowrap}.message-inbox{display:grid;gap:16px;min-width:0}.message-inbox .mono{overflow-wrap:anywhere}.message-inbox .field{display:flex;flex-direction:row;align-items:flex-start;gap:10px}.message-inbox input[type=checkbox]{width:18px;height:18px;flex-shrink:0}.message-inbox .message>.button{margin:8px 8px 0 0}
+
+.computer-controls { margin: 0.5rem 1rem; }
+.computer-capture { max-width: 100%; max-height: 60vh; object-fit: contain; }
+
+.computer-controls.native-active { position: sticky; top: 67px; z-index: 4; max-height: calc(100dvh - 79px); overflow: auto; background: #17201c; }
+.computer-controls.native-active > .notice { position: sticky; top: 0; z-index: 1; background: #17201c; }
+@media(max-width:620px) { .computer-controls.native-active { top: 61px; max-height: calc(100dvh - 73px); } }

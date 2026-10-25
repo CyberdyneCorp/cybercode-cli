@@ -225,6 +225,8 @@ impl BuiltinHost {
                 }
                 _ => None,
             }
+        } else if ctx.inv.name == "computer" {
+            serde_json::from_str::<Value>(&output).ok()
         } else {
             None
         };
@@ -1179,6 +1181,13 @@ impl ToolHost for BuiltinHost {
                         .get()
                         .is_some_and(|service| service.agent_scope(&turn.session_id).is_some())
             })
+            .filter(|d| {
+                d.spec.name != "computer"
+                    || self
+                        .runtime()
+                        .and_then(|runtime| runtime.computer().ok())
+                        .is_some_and(|computer| computer.offered())
+            })
             .filter(|d| tools::worktree_offered(&d.spec.name, turn.worktree))
             .filter(|d| !fully_denied_scoped(&rules, tools::action_of(&d.spec.name), &d.spec.name))
             .filter(|d| {
@@ -1284,9 +1293,16 @@ impl ToolHost for BuiltinHost {
             if let Err(error) = self.check_agent_tool(&inv) {
                 return ToolOutcome::Failed(error);
             }
+            if inv.name == "computer" && !crate::tools::computer::valid_input(&inv.input) {
+                return ToolOutcome::Failed("Invalid native computer action".into());
+            }
             if let Err(message) = crate::schema::validate(&tool.def().spec.input_schema, &inv.input)
             {
-                return ToolOutcome::Failed(message);
+                return ToolOutcome::Failed(if inv.name == "computer" {
+                    "Invalid native computer action".into()
+                } else {
+                    message
+                });
             }
             let hook_decision = match self
                 .pre_tool_hooks(&mut inv, &tool.def().spec.input_schema, cancel.clone())
@@ -1305,6 +1321,9 @@ impl ToolHost for BuiltinHost {
                 Err(error) => return ToolOutcome::Failed(error),
             };
             let outcome = self.run_builtin(tool.as_ref(), &ctx).await;
+            if ctx.inv.name == "computer" {
+                return self.settle_call(&ctx, outcome, started).await;
+            }
             let Some(input) = ctx.denial.take_retry(&outcome) else {
                 return self.settle_call(&ctx, outcome, started).await;
             };
@@ -1606,6 +1625,7 @@ fn offered(
     let by_mode = match (mode, name) {
         (Mode::Plan, "write" | "plan_exit" | "todo" | "skill" | "notify") => true,
         (Mode::Plan, "plan_enter") => false,
+        (Mode::Plan, "computer") => true,
         (Mode::Plan, _) => safety == cyber_server::runtime::RetrySafety::ReadOnly,
         (_, "plan_exit") => false,
         _ => true,

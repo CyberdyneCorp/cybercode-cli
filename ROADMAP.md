@@ -99,7 +99,9 @@ The [current inventory](docs/implementation/spec-doc-reconciliation.md) contains
 - A queue of 3 goals runs to completion with `check: cargo test`, and the queue advances automatically.
 - Mixed-model workflow: the fan-out runs on a local/cheap model and verification on a frontier model, with cost reported per tier.
 
-**Approved additions (2026-10-24):** The [verified integration queue](docs/verified-integrations.md) now implements durable complementary commits, isolated composition, host checks on the combined source, independent read-only review, owner CLI/API/SDK/dashboard controls and explicit PR publication. macOS actual CLI/SDK/browser, crash recovery and signed Auth fixture acceptance are recorded in [the active tasks](openspec/changes/add-verified-integration-queue/tasks.md); live CyberdyneAuth, actual GitHub publication and Linux/Windows feature acceptance remain unverified. [Native computer use](openspec/changes/add-native-computer-use/proposal.md) is tracked separately. The user approved both designs; local work continues while live issuer acceptance is held during the user-reported outage.
+**Approved additions (2026-10-24):** The [verified integration queue](docs/verified-integrations.md) implements durable complementary commits, isolated composition, checks on the combined source, independent read-only review, owner CLI/API/SDK/dashboard controls and explicit PR publication. [Archived implementation tasks](openspec/changes/archive/2026-10-25-add-verified-integration-queue/tasks.md) record actual macOS CLI/SDK/browser acceptance and green Linux/macOS/Windows CI. Live CyberdyneAuth, real GitHub publication and manual Windows publication remain unverified.
+
+Experimental [native computer use](docs/computer-use.md) has a compiled macOS14+ adapter, private evidence, expiring owner grants, a model tool and CLI/API/SDK/browser/TUI controls. Controlled fixture capture, input and Stop acceptance passed; additional hardware layouts, live OS revocation and signed distribution remain release checks. See the [acceptance record](docs/measurements/native-computer-acceptance.md). Both designs were approved; live issuer acceptance remains unperformed after the user-reported outage.
 
 ## P3: Connectivity
 
@@ -175,7 +177,7 @@ Local use never depends on CyberdyneAuth. Self-hosters can point `account.issuer
 
 ## Requirement inventory
 
-The table counts requirements in `openspec/specs` by phase tag (49 capabilities, 0 untagged). It is generated from the first phase tag of each requirement; use `python3 scripts/spec_inventory.py` to refresh it. Later-phase extensions inside a requirement do not add another count.
+The table counts requirements in `openspec/specs` by phase tag (51 capabilities, 0 untagged). It is generated from the first phase tag of each requirement; use `python3 scripts/spec_inventory.py` to refresh it. Later-phase extensions inside a requirement do not add another count.
 
 The pending change `defer-editor-integration` moves 13 `editor-integration` requirements from P1 to P3. The table reflects canonical specs, so it changes when that change is archived (P1 227 → 214, P3 145 → 158).
 
@@ -209,6 +211,7 @@ The pending change `defer-editor-integration` moves 13 `editor-integration` requ
 | `org-policy` |  |  |  | 15 |  | 15 |
 | `permissions-modes` | 15 | 7 |  |  |  | 22 |
 | `plugins-marketplace` |  | 14 | 2 |  | 6 | 22 |
+| `project-collaboration` |  |  |  | 2 |  | 2 |
 | `provider-catalog` | 17 | 6 | 2 |  |  | 25 |
 | `provider-credentials` | 12 | 7 |  | 2 |  | 21 |
 | `remote-control` |  |  |  | 17 | 1 | 18 |
@@ -225,12 +228,13 @@ The pending change `defer-editor-integration` moves 13 `editor-integration` requ
 | `tool-registry` | 15 | 3 |  |  |  | 18 |
 | `tui` | 19 | 32 | 5 | 1 | 1 | 58 |
 | `vcs-integration` | 2 | 3 |  | 10 |  | 15 |
+| `verified-integrations` |  |  | 4 |  |  | 4 |
 | `verified-workflows` |  |  | 5 |  |  | 5 |
 | `web-client` |  | 1 |  | 1 | 1 | 3 |
-| `workflows` |  |  | 31 | 2 | 1 | 34 |
+| `workflows` |  |  | 32 | 2 | 1 | 35 |
 | `workspace-trust` | 4 |  |  |  |  | 4 |
 | `worktrees` |  | 9 | 4 |  |  | 13 |
-| **Total** | **330** | **270** | **125** | **159** | **15** | **899** |
+| **Total** | **330** | **270** | **130** | **161** | **15** | **906** |
 
 
 Most capabilities span phases. A spec is a product contract, and each phase implements the slice tagged for it. For example, `tui` has its basics in P0, rewind and modes in P1, the agent view and workflow monitor in P2, remote indicators in P3 and mods panes in P4.

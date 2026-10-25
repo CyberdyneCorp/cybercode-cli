@@ -163,6 +163,28 @@ impl PluginSecrets for FileSecrets {
     }
 }
 
+/// Prepare and hide native captures and owner API state before any tool/plugin subprocess starts.
+/// These processes share the owner's UID, so mode 0700 alone is insufficient.
+pub fn hide_computer_artifacts(
+    paths: &cyber_core::paths::Paths,
+    home: &std::path::Path,
+) -> Result<(), String> {
+    // Protect the directory, including password rotations and the default socket,
+    // rather than only files present at bootstrap. Authentication also protects
+    // custom Unix sockets: a file-read denial alone is not a socket-connect fence.
+    for root in [paths.data.join("computer"), paths.state.clone()] {
+        cyber_server::runtime::computer::prepare_artifact_root(&root)
+            .map_err(|error| error.to_string())?;
+        let canonical = std::fs::canonicalize(&root).map_err(|error| error.to_string())?;
+        cyber_sandbox::hide_credential_file(home, root);
+        cyber_sandbox::hide_credential_file(home, canonical);
+    }
+    if let Ok(password) = std::fs::read_to_string(paths.state.join("password")) {
+        cyber_sandbox::reserve_owner_credential(password.trim());
+    }
+    Ok(())
+}
+
 /// Hide cyber's credential files (in the data directory, including the ChatGPT and GitHub
 /// Copilot logins, and the peer listener's key in the state directory) from every sandboxed launch of this process for `home`. On the file backend the secret file is created (empty, owner-only)
 /// first: a sandbox hides only paths that exist when it starts.
@@ -264,6 +286,48 @@ pub fn secret_file(paths: &cyber_core::paths::Paths) -> PathBuf {
 mod tests {
     use super::*;
     use crate::mcp::oauth::MemoryVault;
+
+    #[test]
+    fn computer_artifacts_are_prepared_and_hidden_even_with_explicit_read_grants() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let paths = cyber_core::paths::Paths {
+            data: root.path().join("data"),
+            config: root.path().join("config"),
+            state: root.path().join("state"),
+            cache: root.path().join("cache"),
+            tmp: root.path().join("tmp"),
+        };
+        paths.ensure().unwrap();
+        hide_computer_artifacts(&paths, &home).unwrap();
+        let private = paths.data.join("computer");
+        assert!(private.is_dir());
+        let sandbox = cyber_sandbox::SandboxConfig::resolve(
+            &serde_json::json!({"sandbox":{"readable_paths":[private]}}),
+            &Default::default(),
+            None,
+            &home,
+        );
+        assert!(sandbox.unreadable(&home).contains(&private));
+        assert!(
+            sandbox
+                .unreadable(&home)
+                .contains(&std::fs::canonicalize(&private).unwrap())
+        );
+        assert!(sandbox.unreadable(&home).contains(&paths.state));
+        assert!(
+            sandbox
+                .unreadable(&home)
+                .contains(&std::fs::canonicalize(&paths.state).unwrap())
+        );
+        let other_home = root.path().join("other-home");
+        std::fs::create_dir_all(&other_home).unwrap();
+        assert!(
+            !sandbox.unreadable(&other_home).contains(&private),
+            "one installation's private mount must not leak into another home's sandbox plan"
+        );
+    }
 
     #[test]
     fn account_credential_paths_are_hidden_without_overwriting_a_login() {

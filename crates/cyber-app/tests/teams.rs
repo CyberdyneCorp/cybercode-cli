@@ -53,9 +53,15 @@ async fn feature_and_team_definition_routes_follow_the_location_configuration() 
         "---\nteammates:\n  - name: api\n    agent: build\n    runner: desk\n---\n",
     );
     let (_, body) = app.send("GET", "/features", None).await;
-    assert_eq!(body["data"][0]["enabled"], true, "{body}");
+    let feature = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["name"] == "teams")
+        .unwrap();
+    assert_eq!(feature["enabled"], true, "{body}");
     assert_eq!(
-        body["data"][0]["source"],
+        feature["source"],
         format!("project:{}", project_config.display())
     );
     let (status, body) = app.send("GET", "/team-definitions", None).await;

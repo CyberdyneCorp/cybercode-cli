@@ -1834,3 +1834,44 @@ mod tests {
         assert!(app.composer.is_empty());
     }
 }
+
+#[cfg(test)]
+mod computer_integration_tests {
+    use super::*;
+
+    #[test]
+    fn busy_agents_editor_keeps_native_warning_and_global_stop() {
+        let session = Session {
+            id: "owner-session".into(),
+            ..Default::default()
+        };
+        let mut app = App::new(session, Vec::new(), "cyber");
+        app.overlay = Overlay::Agents;
+        let mut editor = Editor::new(
+            EditorKind::Rename {
+                id: "other-session".into(),
+            },
+            "Other Session",
+            "Keep this draft".into(),
+        );
+        editor.busy = true;
+        app.directory.editor = Some(editor);
+        app.computer.poll(&app.session, Instant::now());
+        app.computer.apply("owner-session", Ok(json!({"data":{"grant":{"session_id":"owner-session","target":{"identity":"app:fixture"},"expires_at":i64::MAX}}})));
+        let screen = crate::screens::render(&mut app, 160, 48, &Default::default());
+        assert!(screen.contains("Computer ARMED"), "{screen}");
+        assert!(screen.contains("Ctrl+Alt+Esc STOP"), "{screen}");
+        assert_eq!(
+            app.on_key(KeyEvent::new(
+                KeyCode::Esc,
+                KeyModifiers::CONTROL | KeyModifiers::ALT
+            )),
+            vec![Action::ComputerStop]
+        );
+        assert_eq!(app.overlay, Overlay::Agents);
+        assert_eq!(
+            app.directory.editor.as_ref().unwrap().input,
+            "Keep this draft"
+        );
+    }
+}
