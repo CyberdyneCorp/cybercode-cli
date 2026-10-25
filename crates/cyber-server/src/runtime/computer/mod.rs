@@ -383,7 +383,9 @@ impl Computer {
         let lease = self.backend.acquire_lease()?;
         self.journal
             .acknowledge(&reviewed.preview.unknown_operations)?;
-        if reviewed.presence_epoch != (self.presence_epoch)(session) {
+        if reviewed.deadline <= Instant::now()
+            || reviewed.presence_epoch != (self.presence_epoch)(session)
+        {
             return Err(ComputerError::Conflict);
         }
         let grant = self
@@ -398,7 +400,8 @@ impl Computer {
         // Stop increments the review epoch before revoking the controller. A
         // Stop racing between review validation and arm must also fence the new
         // grant; checking again closes the check/arm gap without blocking Stop.
-        if reviewed.presence_epoch != (self.presence_epoch)(session)
+        if reviewed.deadline <= Instant::now()
+            || reviewed.presence_epoch != (self.presence_epoch)(session)
             || reviewed.generation
                 != self
                     .preview_generation

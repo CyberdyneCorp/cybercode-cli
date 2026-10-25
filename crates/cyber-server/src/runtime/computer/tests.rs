@@ -8,6 +8,8 @@ struct Fake {
     captures: AtomicUsize,
     fail: AtomicBool,
     wrong_capture: AtomicBool,
+    screen_consent: AtomicBool,
+    input_consent: AtomicBool,
     host_lease: Arc<AtomicBool>,
     block_input: Mutex<Option<(Arc<std::sync::Barrier>, Arc<std::sync::Barrier>)>>,
     block_resolve: Mutex<Option<(Arc<std::sync::Barrier>, Arc<std::sync::Barrier>)>>,
@@ -34,6 +36,8 @@ impl Default for Fake {
             captures: AtomicUsize::new(0),
             fail: AtomicBool::new(false),
             wrong_capture: AtomicBool::new(false),
+            screen_consent: AtomicBool::new(true),
+            input_consent: AtomicBool::new(true),
             host_lease: Arc::new(AtomicBool::new(false)),
             block_input: Mutex::new(None),
             block_resolve: Mutex::new(None),
@@ -59,8 +63,8 @@ impl Backend for Fake {
             supported: true,
             platform: "fixture".into(),
             minimum_version: "fixture".into(),
-            screen_capture: true,
-            accessibility: true,
+            screen_capture: self.screen_consent.load(Ordering::SeqCst),
+            accessibility: self.input_consent.load(Ordering::SeqCst),
             binary: "fixture".into(),
         })
     }
@@ -652,4 +656,43 @@ fn failed_private_cleanup_keeps_bytes_reserved_until_deletion_succeeds() {
     std::fs::remove_dir(&path).unwrap();
     fixture.computer.prune().unwrap();
     assert_eq!(fixture.computer.journal.stored_bytes().unwrap(), 0);
+}
+
+#[test]
+fn observed_os_consent_revocation_cannot_rearm_after_consent_is_restored() {
+    for screen in [false, true] {
+        let fixture = Fixture::new();
+        fixture.arm();
+        assert!(fixture.computer.health(false).unwrap().grant.is_some());
+        let consent = if screen {
+            &fixture.backend.screen_consent
+        } else {
+            &fixture.backend.input_consent
+        };
+        consent.store(false, Ordering::SeqCst);
+        assert!(fixture.computer.health(false).unwrap().grant.is_none());
+        consent.store(true, Ordering::SeqCst);
+        assert!(fixture.computer.status("owner").unwrap().grant.is_none());
+        fixture.arm();
+        assert!(fixture.computer.status("owner").unwrap().grant.is_some());
+    }
+}
+
+#[test]
+fn undeletable_cleanup_batch_does_not_starve_later_expired_files() {
+    let fixture = Fixture::new();
+    let directory = fixture.computer.artifacts.join(digest(b"owner"));
+    std::fs::create_dir_all(&directory).unwrap();
+    for index in 0..=500 {
+        let path = directory.join(format!("cuf_{index:026}.png"));
+        if index < 500 {
+            std::fs::create_dir(path).unwrap();
+        } else {
+            std::fs::write(path, b"fixture").unwrap();
+        }
+    }
+    fixture.store.transaction(|tx|{for index in 0..=500 {tx.execute("INSERT INTO computer_frame (id,session_id,sha256,metadata,native_target,bytes,created_ms,expired) VALUES (?1,'owner','fixture','{}','{}',7,0,1)",[format!("cuf_{index:026}")])?;}Ok(())}).unwrap();
+    fixture.computer.prune().unwrap();
+    assert!(!directory.join(format!("cuf_{:026}.png", 500)).exists());
+    assert_eq!(fixture.computer.journal.stored_bytes().unwrap(), 3500);
 }

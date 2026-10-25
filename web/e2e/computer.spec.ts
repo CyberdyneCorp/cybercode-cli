@@ -3,13 +3,10 @@ import { test, expect, login, select } from './browser.js';
 // HTTP routes simulate native state; this suite never requests OS consent,
 // captures a desktop or injects host input.
 test('native global authority, exact review, private preview and logout Stop are wired into the browser', async ({page,dashboard}) => {
-  await page.route('**/app/app.js',route=>route.fulfill({path:new URL('../dist/app.js',import.meta.url).pathname,contentType:'text/javascript'}));
-  await page.route('**/app/app.css',route=>route.fulfill({path:new URL('../dist/app.css',import.meta.url).pathname,contentType:'text/css'}));
   const first=await dashboard.session('Native owner');await dashboard.session('Other Session');
   const target={identity:'app:test.fixture:42:100:window:7',app:'test.fixture',display:1,pid:42,window:7,x:0,y:0,width:100,height:100,image_width:100,image_height:100};
   let grant:unknown={id:'cug_other',session_id:'ses_other',target:{identity:target.identity},expires_at:Date.now()+300000};
   const writes:{path:string;body:unknown}[]=[];let frameReads=0;
-  await page.route('**/api/v1/**/computer**',route=>route.fallback());
   await page.route('**/api/v1/tools/computer/**',async route=>{
     const path=new URL(route.request().url()).pathname;
     if(path.endsWith('/health'))return route.fulfill({json:{data:{enabled:true,health:{supported:true,platform:'fixture',minimum_version:'fixture',screen_capture:true,accessibility:true,binary:'fixture'},grant}}});
