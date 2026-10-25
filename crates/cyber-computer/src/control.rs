@@ -330,7 +330,7 @@ pub struct InputPermit {
 
 impl InputPermit {
     pub fn cancelled(&self) -> bool {
-        !(self.supervisor)() || self.capture.cancelled()
+        self.capture.cancelled() || !(self.supervisor)()
     }
     pub fn action(&self) -> &Action {
         &self.action

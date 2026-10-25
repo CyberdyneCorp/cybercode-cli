@@ -47,9 +47,13 @@ impl Runtime {
         });
         let supervisor_runtime = self.inner.me.clone();
         let supervisor = Arc::new(move || {
-            supervisor_runtime
-                .upgrade()
-                .is_some_and(|inner| inner.pending(None).is_empty())
+            supervisor_runtime.upgrade().is_some_and(|inner| {
+                inner
+                    .waiters
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .is_empty()
+            })
         });
         let computer = Arc::new(Computer::with_supervisor(
             Arc::clone(&self.inner.store),
