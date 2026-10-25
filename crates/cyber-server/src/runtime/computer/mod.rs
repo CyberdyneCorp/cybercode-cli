@@ -137,6 +137,12 @@ impl Computer {
             health: self.backend.health(prompt)?,
         })
     }
+    pub fn require_stopped(&self) -> Result<()> {
+        if self.controller.has_authority(self.now()) {
+            return Err(cyber_computer::Error::Consent("stop native computer control before changing administrative authority or answering other tools").into());
+        }
+        Ok(())
+    }
     pub fn stop_all(&self) {
         self.preview_generation
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
@@ -152,13 +158,30 @@ impl Computer {
         attendance: Arc<Attendance>,
         backend: Arc<dyn Backend>,
     ) -> Result<Self> {
+        Self::with_supervisor(
+            store,
+            artifacts,
+            policy,
+            attendance,
+            backend,
+            Arc::new(|| true),
+        )
+    }
+    pub fn with_supervisor(
+        store: Arc<Store>,
+        artifacts: PathBuf,
+        policy: Arc<Policy>,
+        attendance: Arc<Attendance>,
+        backend: Arc<dyn Backend>,
+        supervisor: Arc<dyn Fn() -> bool + Send + Sync>,
+    ) -> Result<Self> {
         let journal = journal::Journal(store);
         journal.recover()?;
         let (checked_policy, checked_attendance) = (Arc::clone(&policy), Arc::clone(&attendance));
         let guard =
             Arc::new(move |session: &str| checked_policy().enabled && checked_attendance(session));
         Ok(Self {
-            controller: Controller::with_attendance(policy().enabled, guard),
+            controller: Controller::with_supervisor(policy().enabled, guard, supervisor),
             backend,
             journal,
             artifacts,

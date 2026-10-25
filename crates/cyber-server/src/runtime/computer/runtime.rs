@@ -45,12 +45,19 @@ impl Runtime {
                 !inner.closed.is_cancelled() && inner.presence.live_session(session)
             })
         });
-        let computer = Arc::new(Computer::new(
+        let supervisor_runtime = self.inner.me.clone();
+        let supervisor = Arc::new(move || {
+            supervisor_runtime
+                .upgrade()
+                .is_some_and(|inner| inner.pending(None).is_empty())
+        });
+        let computer = Arc::new(Computer::with_supervisor(
             Arc::clone(&self.inner.store),
             path,
             policy,
             attendance,
             backend,
+            supervisor,
         )?);
         self.inner
             .computer
@@ -86,6 +93,11 @@ impl Runtime {
             .ok_or(ComputerError::Invalid(
                 "native computer runtime is unavailable in this host",
             ))
+    }
+    pub fn require_computer_stopped(
+        &self,
+    ) -> std::result::Result<(), crate::runtime::RuntimeError> {
+        self.inner.require_computer_stopped()
     }
     pub fn computer_stop(&self, session: &str) {
         if let Some(computer) = self.inner.computer.get() {
@@ -160,4 +172,17 @@ pub async fn blocking<T: Send + 'static>(
     tokio::task::spawn_blocking(run)
         .await
         .map_err(|_| ComputerError::Native(cyber_computer::Error::Native("native worker failed")))?
+}
+
+impl crate::runtime::Inner {
+    pub(super) fn require_computer_stopped(
+        &self,
+    ) -> std::result::Result<(), crate::runtime::RuntimeError> {
+        if let Some(computer) = self.computer.get() {
+            computer
+                .require_stopped()
+                .map_err(|error| crate::runtime::RuntimeError::Invalid(error.to_string()))?;
+        }
+        Ok(())
+    }
 }

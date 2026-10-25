@@ -545,6 +545,12 @@ impl Inner {
         id: &str,
         reply: PermissionReply,
     ) -> Result<(), RuntimeError> {
+        if matches!(reply, PermissionReply::Once | PermissionReply::Always) {
+            let scoped_computer=self.pending(None).iter().any(|request|request.id==id && matches!(&request.kind,PendingKind::Permission(ask) if matches!(ask.action.as_str(),"computer.capture"|"computer.control")));
+            if !scoped_computer {
+                self.require_computer_stopped()?;
+            }
+        }
         let waiter = self
             .take_waiter(id)
             .ok_or_else(|| RuntimeError::Invalid(format!("no pending request {id}")))?;
@@ -578,6 +584,9 @@ impl Inner {
         id: &str,
         reply: QuestionReply,
     ) -> Result<(), RuntimeError> {
+        if !matches!(reply, QuestionReply::Dismissed) {
+            self.require_computer_stopped()?;
+        }
         let waiter = self
             .take_waiter(id)
             .ok_or_else(|| RuntimeError::Invalid(format!("no pending request {id}")))?;

@@ -12,6 +12,7 @@ use serde::Serialize;
 use std::time::{Duration, Instant};
 
 type Attendance = dyn Fn(&str) -> bool + Send + Sync;
+type Supervisor = dyn Fn() -> bool + Send + Sync;
 
 use crate::{Action, Error, Geometry};
 
@@ -221,6 +222,34 @@ mod tests {
         std::thread::sleep(Duration::from_millis(2));
         assert!(permit.cancelled());
     }
+    #[test]
+    fn pending_human_requests_fence_admission_and_already_admitted_native_input() {
+        let safe = Arc::new(AtomicBool::new(true));
+        let observed = Arc::clone(&safe);
+        let controller = Controller::with_supervisor(
+            true,
+            Arc::new(|_| true),
+            Arc::new(move || observed.load(Ordering::Acquire)),
+        );
+        let target = target();
+        controller.arm(admission(&target, 100), None).unwrap();
+        let frame = frame(&controller, &target, 100);
+        let permit = controller
+            .input(admission(&target, 101), &frame.id, action(), &geometry())
+            .unwrap();
+        safe.store(false, Ordering::Release);
+        assert!(permit.cancelled());
+        drop(permit);
+        assert!(
+            controller
+                .input(admission(&target, 102), &frame.id, action(), &geometry())
+                .is_err()
+        );
+        assert!(
+            controller.has_authority(102),
+            "pending computer permission does not widen or silently revoke the owner's grant"
+        );
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
@@ -258,6 +287,7 @@ pub struct Controller {
     active: Arc<AtomicUsize>,
     state: Mutex<State>,
     attendance: Arc<Attendance>,
+    supervisor: Arc<Supervisor>,
 }
 
 /// Kept by the native worker until it really exits, including after a caller
@@ -292,6 +322,7 @@ impl Drop for CapturePermit {
 }
 
 pub struct InputPermit {
+    supervisor: Arc<Supervisor>,
     capture: CapturePermit,
     action: Action,
     frame: Frame,
@@ -299,7 +330,7 @@ pub struct InputPermit {
 
 impl InputPermit {
     pub fn cancelled(&self) -> bool {
-        self.capture.cancelled()
+        !(self.supervisor)() || self.capture.cancelled()
     }
     pub fn action(&self) -> &Action {
         &self.action
@@ -329,12 +360,20 @@ impl Controller {
     }
 
     pub fn with_attendance(enabled: bool, attendance: Arc<Attendance>) -> Self {
+        Self::with_supervisor(enabled, attendance, Arc::new(|| true))
+    }
+    pub fn with_supervisor(
+        enabled: bool,
+        attendance: Arc<Attendance>,
+        supervisor: Arc<Supervisor>,
+    ) -> Self {
         Self {
             enabled: AtomicBool::new(enabled),
             generation: Arc::new(AtomicU64::new(0)),
             active: Arc::new(AtomicUsize::new(0)),
             state: Mutex::new(State::default()),
             attendance,
+            supervisor,
         }
     }
 
@@ -389,6 +428,18 @@ impl Controller {
         self.active.load(Ordering::Acquire) != 0
     }
 
+    /// Conservative admin fence: temporary attendance loss cannot authorize a
+    /// native UI event to widen permissions before the owner explicitly stops.
+    pub fn has_authority(&self, now: u64) -> bool {
+        self.busy()
+            || self.lock().ok().is_some_and(|state| {
+                state.grant.as_ref().is_some_and(|grant| {
+                    grant.generation == self.generation.load(Ordering::Acquire)
+                        && now >= grant.created_at
+                        && now < grant.expires_at
+                })
+            })
+    }
     pub fn stop(&self) {
         self.generation.fetch_add(1, Ordering::AcqRel);
     }
@@ -469,6 +520,11 @@ impl Controller {
         current_geometry: &Geometry,
     ) -> Result<InputPermit, Error> {
         self.ready(&admission)?;
+        if !(self.supervisor)() {
+            return Err(Error::Consent(
+                "resolve pending human approvals before native input",
+            ));
+        }
         let mut state = self.lock()?;
         let grant = self.authorized(&state, &admission)?.clone();
         if self.active.load(Ordering::Acquire) != 0 {
@@ -479,6 +535,7 @@ impl Controller {
         action.validate(&frame.geometry)?;
         Self::rate(&mut state, admission.now)?;
         Ok(InputPermit {
+            supervisor: Arc::clone(&self.supervisor),
             capture: self.permit(grant, admission.now),
             frame,
             action,

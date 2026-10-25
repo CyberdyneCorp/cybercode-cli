@@ -184,6 +184,57 @@ async fn owner_routes_bind_auth_location_exact_review_and_global_stop() {
         .await
         .unwrap();
     assert_eq!(armed.status(), 200);
+    assert!(
+        h.runtime.switch_mode(&id, "bypass").await.is_err(),
+        "native input cannot change its own Mode while armed"
+    );
+    let asker = h.runtime.operation_asker(&id).await.unwrap();
+    let asking = tokio::spawn(async move {
+        asker
+            .permission(cyber_server::runtime::PermissionAsk {
+                action: "bash".into(),
+                resources: vec!["echo fixture".into()],
+                always_patterns: vec![],
+                metadata: Value::Null,
+            })
+            .await
+    });
+    let request = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if let Some(request) = h.runtime.pending_requests(Some(&id)).into_iter().next() {
+                break request;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        h.runtime
+            .reply_permission(&request.id, cyber_server::runtime::PermissionReply::Always)
+            .await
+            .is_err()
+    );
+    assert!(
+        h.runtime
+            .pending_requests(Some(&id))
+            .iter()
+            .any(|r| r.id == request.id),
+        "blocked self-approval leaves the request pending"
+    );
+    h.runtime
+        .reply_permission(
+            &request.id,
+            cyber_server::runtime::PermissionReply::Reject {
+                message: Some("fixture denial".into()),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        asking.await.unwrap(),
+        cyber_server::runtime::PermissionReply::Reject { .. }
+    ));
     let health = client
         .get(format!("{url}/tools/computer/health"))
         .basic_auth("cyber", Some("owner-fixture-password"))
@@ -282,6 +333,7 @@ async fn native_tool_arguments_and_doom_loop_metadata_never_persist_typed_conten
     assert!(metadata.to_string().contains("text_sha256"));
     h.runtime
         .reply_permission(&request.id, PermissionReply::Reject { message: None })
+        .await
         .unwrap();
     h.settle(&id).await;
     for event in h.store.read_events(&id, -1, 500).unwrap().events {

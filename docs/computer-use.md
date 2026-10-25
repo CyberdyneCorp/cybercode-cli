@@ -35,7 +35,7 @@ This explicitly requests macOS Screen Recording and Accessibility consent for th
 
 ## Arm one attached Session
 
-Keep the intended Session open in the TUI or dashboard, bring a disposable application window to the front, and use its exact Session ID:
+Keep the intended Session open in the TUI or dashboard, open a disposable application window, and use its exact Session ID. Owner review can resolve the application in the background; bring it to the front before requesting capture/input:
 
 ```sh
 # Prints the proposed target without arming it.
@@ -52,7 +52,7 @@ cyber computer stop
 
 An application grant pins its bundle ID, PID, launch time and window. `--display N` explicitly grants a whole native display; `--display 0` selects the main display. Whole-display capture can reveal other visible applications, so application scope is preferable when it meets the task. Grants expire after 300 seconds by default and accept at most 900 seconds. They never survive server restart or inherit to child Sessions, friends' agents or hub members. Only one native worker and one live host grant are admitted at a time.
 
-The dashboard's native controls expose health/setup, exact target review, explicit arming and global Stop. The global banner names the controlling Session even while you view another Session. The TUI shows an active-control banner; **Ctrl+Alt+Esc** revokes native input independently of the current overlay or model/tool request. `Esc` interruption also revokes the interrupted Session's grant. Losing the attached Session's live human presence fences subsequent native input; the periodic browser presence lease can take up to its 45-second expiry after an ungraceful disconnect. Stop cannot undo already delivered clicks or text.
+The dashboard's native controls expose health/setup, exact target review, explicit arming and global Stop. The global banner names the controlling Session even while you view another Session. The TUI shows an active-control banner; **Ctrl+Alt+Esc**, while the TUI has keyboard focus, revokes native input independently of the current overlay or model/tool request. It is not an operating-system global hotkey. `Esc` interruption also revokes the interrupted Session's grant. Losing the attached Session's live human presence fences subsequent native input; the periodic browser presence lease can take up to its 45-second expiry after an ungraceful disconnect. Stop cannot undo already delivered clicks or text.
 
 ## Let the model act
 
@@ -61,6 +61,8 @@ Choose a model with image input for screenshots. The `computer` tool offers `sta
 Input requires the server-issued frame ID from a screenshot taken within 10 seconds, unchanged target/focus/geometry, in-image coordinates, live owner grant/presence and current OS consent. Limits are 10 input actions per second, 300 per grant, 5 seconds per action and 16 KiB UTF-8 per typed string. Capture coordinates are relative to the returned image; the native adapter maps these into desktop logical points, including negative monitor origins. Rotation and geometry changes invalidate previous frames.
 
 Named keys are enter, escape, tab, space, backspace, delete, arrows, home/end and page_up/page_down; ASCII letters/digits resolve through the current native keyboard layout. Characters that the layout cannot resolve without hidden modifiers fail closed; use Unicode `type` for text. Application scope rejects Control shortcuts and shortcuts outside the limited editing allowlist to avoid switching applications or invoking host-wide actions. Secure text fields and protected system/security application targets are denied. These checks reduce risk; they do not turn native application input into a filesystem sandbox.
+
+Native events are fenced while human permission/question requests are pending. Stop native control before approving another tool, answering a question or changing administrative authority; scoped computer capture/control approvals remain possible under the existing finite owner grant. Known Cyber dashboard/TUI window titles are refused as native action targets. These checks prevent direct self-approval through the normal control surfaces; native applications still have host authority, and this is not a general isolation boundary against scripts, developer tools or host applications that can execute commands.
 
 Screen text is untrusted external content. It cannot authorize wider scope, renew a grant or approve another tool. Do not authorize credential entry, password fields, operating-system permission dialogs or an application with private information visible unless you intend that content to be supplied to the selected provider.
 

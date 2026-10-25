@@ -61,12 +61,22 @@ static NSDictionary *window_for_pid(pid_t pid) {
     }
     return nil;
 }
-static NSDictionary *target(NSDictionary *selector) {
+static BOOL protected_window(NSDictionary *window) {
+    NSString *title = [window[(__bridge NSString *)kCGWindowName] lowercaseString];
+    return [title hasPrefix:@"cyber ·"] || [title hasPrefix:@"cyber code"];
+}
+static NSDictionary *target_with_focus(NSDictionary *selector, BOOL requireFocus) {
     NSRunningApplication *front = NSWorkspace.sharedWorkspace.frontmostApplication;
     if (!front || protected_app(front.bundleIdentifier)) return nil;
     id app = selector[@"app"]; BOOL scoped = [app isKindOfClass:NSString.class];
-    if (scoped && ![front.bundleIdentifier isEqualToString:app]) return nil;
-    NSDictionary *window = window_for_pid(front.processIdentifier); if (!window) return nil;
+    if (scoped && ![front.bundleIdentifier isEqualToString:app]) {
+        if (requireFocus) return nil;
+        NSArray<NSRunningApplication *> *matches = [NSRunningApplication runningApplicationsWithBundleIdentifier:app];
+        if (matches.count != 1) return nil;
+        front = matches.firstObject;
+        if (protected_app(front.bundleIdentifier)) return nil;
+    }
+    NSDictionary *window = window_for_pid(front.processIdentifier); if (!window || (requireFocus && protected_window(window))) return nil;
     CGRect bounds; CGDirectDisplayID display; uint32_t windowID = [window[(__bridge NSString *)kCGWindowNumber] unsignedIntValue];
     if (scoped) {
         if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)window[(__bridge NSString *)kCGWindowBounds], &bounds)) return nil;
@@ -90,6 +100,7 @@ static NSDictionary *target(NSDictionary *selector) {
     NSString *identity = scoped ? [NSString stringWithFormat:@"app:%@:%d:%llu:window:%u", app, front.processIdentifier, launch, windowID] : [NSString stringWithFormat:@"display:%u", display];
     return @{ @"identity": identity, @"app": scoped ? app : NSNull.null, @"pid": @(front.processIdentifier), @"window": @(windowID), @"display": @(display), @"launch_ms": @(launch), @"x": @(bounds.origin.x), @"y": @(bounds.origin.y), @"width": @(bounds.size.width), @"height": @(bounds.size.height), @"image_width": @(width), @"image_height": @(height), @"rotation": @((uint16_t)CGDisplayRotation(display)) };
 }
+static NSDictionary *target(NSDictionary *selector) { return target_with_focus(selector, YES); }
 static NSDictionary *selector_for(NSDictionary *value) {
     id app = value[@"app"]; return [app isKindOfClass:NSString.class] ? @{ @"app": app } : @{ @"display": value[@"display"] ?: @0 };
 }
@@ -104,7 +115,7 @@ int cyber_computer_resolve(const char *request, char **output) {
     @autoreleasepool {
         if (!supported()) return 1;
         if (!CGPreflightScreenCaptureAccess()) return 2;
-        NSDictionary *value = target(decode(request)); return value ? encode(value, output) : 3;
+        NSDictionary *value = target_with_focus(decode(request), NO); return value ? encode(value, output) : 3;
     }
 }
 

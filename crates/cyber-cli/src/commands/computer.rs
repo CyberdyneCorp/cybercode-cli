@@ -22,7 +22,7 @@ pub enum ComputerCmd {
 #[derive(Debug, Args)]
 pub struct AllowArgs {
     pub session: String,
-    /// Bundle ID of the frontmost application (for example com.apple.TextEdit).
+    /// Bundle ID of the application (for example com.apple.TextEdit).
     #[arg(long, required_unless_present = "display", conflicts_with = "display")]
     pub app: Option<String>,
     /// Native display ID; 0 explicitly selects the main display.

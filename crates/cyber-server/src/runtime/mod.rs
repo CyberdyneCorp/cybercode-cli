@@ -1977,6 +1977,7 @@ impl Runtime {
     }
 
     pub async fn switch_mode(&self, session_id: &str, mode: &str) -> Result<(), RuntimeError> {
+        self.require_computer_stopped()?;
         selection::validate_mode(mode)?;
         // `agent-teams` → Permissions in teams: never above the lead's Mode.
         let handle = self.inner.handle(session_id).await?;
