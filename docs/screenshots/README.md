@@ -16,6 +16,7 @@ The fixture data is explicit:
 ```bash
 python3 -m venv /tmp/cyber-shots
 /tmp/cyber-shots/bin/pip install pyte pillow
+/tmp/cyber-shots/bin/python -m unittest discover -s scripts/screens -p test_capture.py
 PY=/tmp/cyber-shots/bin/python just screenshots
 ```
 
