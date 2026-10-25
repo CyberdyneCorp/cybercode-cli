@@ -78,23 +78,27 @@ impl Journal {
         Ok(())
     }
     pub fn unknown(&self, session: &str) -> Result<Vec<UnknownOperation>> {
-        let session = session.to_owned();
-        Ok(self.0.read(move |db| {
-            let mut query = db.prepare("SELECT operation_key,action,started_ms FROM computer_operation WHERE session_id=?1 AND action!='screenshot' AND status IN ('intent','unknown') ORDER BY operation_key")?;
-            query.query_map([session], |row| Ok(UnknownOperation { operation_id: row.get(0)?, action: row.get(1)?, started_ms: row.get(2)? }))?.collect::<std::result::Result<Vec<_>,_>>().map_err(Into::into)
+        self.unknown_for(Some(session.to_owned()))
+    }
+    pub fn unknown_all(&self) -> Result<Vec<UnknownOperation>> {
+        self.unknown_for(None)
+    }
+    fn unknown_for(&self, session: Option<String>) -> Result<Vec<UnknownOperation>> {
+        Ok(self.0.read(move|db| {
+            let mut query=db.prepare("SELECT operation_key,action,started_ms,session_id FROM computer_operation WHERE (?1 IS NULL OR session_id=?1) AND action!='screenshot' AND status IN ('intent','unknown') ORDER BY operation_key")?;
+            query.query_map([session],|row|Ok(UnknownOperation {operation_id:row.get(0)?,action:row.get(1)?,started_ms:row.get(2)?,session_id:row.get(3)?}))?.collect::<std::result::Result<Vec<_>,_>>().map_err(Into::into)
         })?)
     }
-    pub fn acknowledge(&self, session: &str, expected: &[UnknownOperation]) -> Result<()> {
-        let session = session.to_owned();
+    pub fn acknowledge(&self, expected: &[UnknownOperation]) -> Result<()> {
         let expected = expected
             .iter()
             .map(|row| row.operation_id.clone())
             .collect::<Vec<_>>();
-        let okay = self.0.transaction(move |tx| {
-            let mut query = tx.prepare("SELECT operation_key FROM computer_operation WHERE session_id=?1 AND action!='screenshot' AND status IN ('intent','unknown') ORDER BY operation_key")?;
-            let actual = query.query_map([&session], |row| row.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
-            if actual != expected { return Ok(false); }
-            tx.execute("UPDATE computer_operation SET status='unknown_acknowledged' WHERE session_id=?1 AND action!='screenshot' AND status IN ('intent','unknown')", [&session])?; Ok(true)
+        let okay=self.0.transaction(move|tx| {
+            let mut query=tx.prepare("SELECT operation_key FROM computer_operation WHERE action!='screenshot' AND status IN ('intent','unknown') ORDER BY operation_key")?;
+            let actual=query.query_map([],|row|row.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
+            if actual!=expected {return Ok(false);}
+            tx.execute("UPDATE computer_operation SET status='unknown_acknowledged' WHERE action!='screenshot' AND status IN ('intent','unknown')",[])?;Ok(true)
         })?;
         if !okay {
             return Err(ComputerError::Conflict);

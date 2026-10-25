@@ -9,6 +9,7 @@ struct Fake {
     fail: AtomicBool,
     wrong_capture: AtomicBool,
     host_lease: Arc<AtomicBool>,
+    block_input: Mutex<Option<(Arc<std::sync::Barrier>, Arc<std::sync::Barrier>)>>,
     block_resolve: Mutex<Option<(Arc<std::sync::Barrier>, Arc<std::sync::Barrier>)>>,
 }
 impl Default for Fake {
@@ -34,6 +35,7 @@ impl Default for Fake {
             fail: AtomicBool::new(false),
             wrong_capture: AtomicBool::new(false),
             host_lease: Arc::new(AtomicBool::new(false)),
+            block_input: Mutex::new(None),
             block_resolve: Mutex::new(None),
         }
     }
@@ -84,6 +86,14 @@ impl Backend for Fake {
     fn input(&self, _: &NativeTarget, permit: &InputPermit) -> std::result::Result<(), Error> {
         assert!(!permit.cancelled());
         self.inputs.fetch_add(1, Ordering::SeqCst);
+        let block = self.block_input.lock().unwrap().take();
+        if let Some((ready, release)) = block {
+            ready.wait();
+            release.wait();
+        }
+        if permit.cancelled() {
+            return Err(Error::NotArmed);
+        }
         if self.fail.load(Ordering::SeqCst) {
             Err(Error::Native("fixture failure"))
         } else {
@@ -496,4 +506,71 @@ fn incomplete_capture_artifacts_never_become_readable_frame_authority() {
             .is_err()
     );
     assert_eq!(fixture.backend.inputs.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn stopped_workers_keep_the_host_lease_until_native_exit_and_cannot_hide_unknowns_by_switching_session()
+ {
+    let fixture = Fixture::new();
+    fixture.arm();
+    let frame = fixture.frame();
+    let computer = Arc::new(fixture.computer);
+    let ready = Arc::new(std::sync::Barrier::new(2));
+    let release = Arc::new(std::sync::Barrier::new(2));
+    *fixture.backend.block_input.lock().unwrap() = Some((ready.clone(), release.clone()));
+    let native = Arc::clone(&computer);
+    let worker =
+        std::thread::spawn(move || native.input("owner", "busy-native", &frame.id, motion(), true));
+    ready.wait();
+    computer.stop_all();
+    let other = Computer::new(
+        Arc::clone(&fixture.store),
+        fixture._root.path().join("other"),
+        Arc::new(|| ComputerPolicy {
+            enabled: true,
+            retention_days: 1,
+        }),
+        Arc::new(|_| true),
+        fixture.backend.clone(),
+    )
+    .unwrap();
+    let preview = other
+        .preview(
+            "other",
+            Selector {
+                app: Some("test.fixture".into()),
+                display: None,
+            },
+        )
+        .unwrap();
+    assert!(
+        other.allow("other", &preview.id, None, true).is_err(),
+        "Stop cannot transfer input while a native worker lives"
+    );
+    release.wait();
+    assert!(
+        worker.join().unwrap().is_err(),
+        "a new runtime recovered the in-flight intent conservatively"
+    );
+    let preview = other
+        .preview(
+            "other",
+            Selector {
+                app: Some("test.fixture".into()),
+                display: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(preview.unknown_operations[0].session_id, "owner");
+    assert!(other.allow("other", &preview.id, None, false).is_err());
+    let preview = other
+        .preview(
+            "other",
+            Selector {
+                app: Some("test.fixture".into()),
+                display: None,
+            },
+        )
+        .unwrap();
+    other.allow("other", &preview.id, None, true).unwrap();
 }

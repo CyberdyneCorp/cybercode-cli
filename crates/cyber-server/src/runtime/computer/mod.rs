@@ -34,6 +34,7 @@ type Attendance = dyn Fn(&str) -> bool + Send + Sync;
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(rename = "ComputerUnknownOperation")]
 pub struct UnknownOperation {
+    pub session_id: String,
     pub operation_id: String,
     pub action: String,
     pub started_ms: i64,
@@ -289,7 +290,7 @@ impl Computer {
             )
             .into());
         }
-        let preview = Preview { id:cyber_core::ids::new_id("cup"), session_id:session.into(), target, expires_at:wall_ms()+30_000, unknown_operations:self.journal.unknown(session)?, warning:"Native capture supplies visible application/display content to the selected model. Input controls the host application outside the workspace filesystem sandbox. Review this exact scope; Stop revokes future input, not already delivered events.".into() };
+        let preview = Preview { id:cyber_core::ids::new_id("cup"), session_id:session.into(), target, expires_at:wall_ms()+30_000, unknown_operations:self.journal.unknown_all()?, warning:"Native capture supplies visible application/display content to the selected model. Input controls the host application outside the workspace filesystem sandbox. Review this exact scope; Stop revokes future input, not already delivered events.".into() };
         let mut previews = self.previews.lock().map_err(|_| ComputerError::Storage)?;
         previews.retain(|_, value| value.deadline > Instant::now());
         if previews.len() >= 16 {
@@ -341,8 +342,6 @@ impl Computer {
         if !reviewed.preview.unknown_operations.is_empty() && !acknowledge_unknown {
             return Err(ComputerError::Unknown);
         }
-        self.journal
-            .acknowledge(session, &reviewed.preview.unknown_operations)?;
         let scope = current.target();
         let ttl = ttl_seconds
             .map(|seconds| {
@@ -358,6 +357,8 @@ impl Computer {
             self.release_host_lease(None);
         }
         let lease = self.backend.acquire_lease()?;
+        self.journal
+            .acknowledge(&reviewed.preview.unknown_operations)?;
         let grant = self.controller.arm(facts, ttl)?;
         *self.host_lease.lock().map_err(|_| ComputerError::Storage)? =
             Some((grant.id.clone(), session.into(), lease));
