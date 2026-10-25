@@ -19,7 +19,7 @@
 - [ ] 3.1 Add feature/account/binding-aware collaboration navigation and People view using the local owner API.
 - [ ] 3.2 Add project/direct conversations, attribution, threads/history and reconnect/authorization handling without widening visibility.
 - [ ] 3.3 Add shared Tasks create/claim/update/report controls with revision and claim fences, queued receipts and visible conflicts.
-- [ ] 3.4 Add held-message inspection/release/refusal bound to exact project/sender/target IDs and immutable content, reusing receiver policy.
+- [x] 3.4 Add held-message inspection/release/refusal bound to exact project/sender/target IDs and immutable content, reusing receiver policy. Implemented in PR #36 with 30 dashboard unit tests and 23 real-server browser tests; provenance/consent/uncertain retries and inert content covered. Live issuer acceptance remains pending separately in section 2; the full multi-user browser acceptance remains task 3.5.
 - [ ] 3.5 Test real hub/server with separate users/agents and two browsers: privacy, stale mutations, lost acknowledgements, consent, revocation and Location switches.
 
 ## 4. Reserved budgets
