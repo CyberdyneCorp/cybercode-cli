@@ -105,10 +105,15 @@ export class HttpTransport implements Transport {
     try {
       const response = await this.connection.fetch(url, { ...init, redirect: "error", cache: "no-store", signal: signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal });
       if (!response.ok) throw errorFromResponse(response.status, await response.text());
-      if (response.headers.get("content-type")?.split(";")[0] !== "image/png" || !response.body) throw new CyberClientError("MalformedResponse", "expected private PNG");
+      if (response.headers.get("content-type")?.split(";")[0] !== "image/png" || !response.body || Number(response.headers.get("content-length")) > 8 * 1024 * 1024) throw new CyberClientError("MalformedResponse", "expected private PNG");
       const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let length = 0;
       try { for (;;) { const part = await reader.read(); if (part.done) break; length += part.value.length; if (length > 8 * 1024 * 1024) throw new CyberClientError("MalformedResponse", "private PNG exceeds 8 MiB"); chunks.push(part.value); } } finally { await reader.cancel().catch(() => {}); }
       const bytes = new Uint8Array(length); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; } return bytes;
+    } catch (error) {
+      if (error instanceof CyberClientError) throw error;
+      if (signal?.aborted) throw signal.reason;
+      if (timeout.signal.aborted) throw new CyberClientError("Timeout", "private PNG request timed out", { cause: error });
+      throw new CyberClientError("Transport", "private PNG request failed", { cause: error });
     } finally { clearTimeout(timer); }
   }
 
