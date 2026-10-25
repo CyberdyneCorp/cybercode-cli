@@ -2,7 +2,7 @@
 
 - [x] 1.1 Inspect the existing sidebar, `/agents` sources/actions, native Stop integration and screenshot capture pipeline.
 - [x] 1.2 Draft proposal, design and testable TUI requirements for named reachable Sessions/agents.
-- [ ] 1.3 Review proposal/design/tasks with the user and record approval before capability implementation.
+- [x] 1.3 Review proposal/design/tasks with the user and record approval before capability implementation. On 2026-10-25 the user explicitly approved PR #45 and requested implementation in the same PR.
 
 ## 2. Shared data and bounded overview
 
@@ -27,4 +27,4 @@
 
 ## Current status
 
-Specification only. No sidebar capability code or refreshed screenshots have been implemented in this change. User design review (1.3) is pending.
+The user approved the design on 2026-10-25. Implementation and refreshed screenshots are in progress; verification and capture evidence will be recorded as completed.
