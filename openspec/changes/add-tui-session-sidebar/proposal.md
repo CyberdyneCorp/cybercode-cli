@@ -21,7 +21,7 @@ PR #42 already added the full agent directory, and PR #41 preserved its interact
 
 ## Acceptance and review
 
-The first version is a bounded overview of what the attached Session can already reach, not an assertion that every remote machine or future Relay is connected. Existing auth errors and unknown availability remain explicit. User review of proposal, design and tasks is required before implementation; this proposal does not record approval that has not happened.
+The first version is a bounded overview of what the attached Session can already reach, not an assertion that every remote machine or future Relay is connected. Existing auth errors and unknown availability remain explicit. The user approved the proposal, design and tasks on 2026-10-25 and requested implementation in PR #45. See the task record and acceptance evidence.
 
 ## Impact
 

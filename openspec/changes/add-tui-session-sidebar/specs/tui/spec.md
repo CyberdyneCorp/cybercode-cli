@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Sidebar reachable Session overview
-(P1) The right sidebar SHALL provide a collapsible, initially expanded Sessions and agents overview after Context. It SHALL show at most six reachable named entries total, grouped as local Sessions, team/child agents and remote Sessions/agents, with actual state, kind and concise provenance. It SHALL use supplied Session titles or advertised agent names/addresses, sanitize external text and truncate by terminal display width. Overflow SHALL link to the existing agent directory. The current Session title SHALL remain in the existing header without a duplicate reachable row. Human hub members and offline peer wildcard records SHALL NOT be counted as discovered Sessions.
+(P1) The right sidebar SHALL provide a collapsible, initially expanded Sessions and agents overview after Context. It SHALL show at most six reachable named entries total, grouped as local Sessions, team/child agents and remote Sessions/agents, with actual state, kind and concise provenance. It SHALL use supplied Session titles or advertised agent names/addresses, sanitize external text and truncate by terminal display width. The preview budget SHALL reserve an entry for each nonempty group before filling remaining slots, so local history cannot starve team/remote names. Overflow SHALL link to the existing agent directory. The current Session title SHALL remain in the existing header without a duplicate reachable row. Human hub members and offline peer wildcard records SHALL NOT be counted as discovered Sessions.
 
 #### Scenario: Named local and remote entries
 - **WHEN** the attached Session can reach a local Session, a teammate and a Session on a paired peer
