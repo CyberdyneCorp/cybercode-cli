@@ -1,0 +1,123 @@
+---
+source: crates/cyber-tui/src/session_overview.rs
+expression: screen
+---
+
+                                                                                                                  New session
+
+                                                                                                                  Context
+                                                                                                                  $0.00 spent
+
+                                                                                                                  ▼ Sessions & agents
+                                                                                                                  Local Sessions (1)
+                                                                                                                  Update README examples
+                                                                                                                    running · session
+                  ██████╗██╗   ██╗██████╗ ███████╗██████╗      ██████╗ ██████╗ ██████╗ ███████╗                   Team / child agents (1)
+                 ██╔════╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗    ██╔════╝██╔═══██╗██╔══██╗██╔════╝                   Check regression tests
+                 ██║      ╚████╔╝ ██████╔╝█████╗  ██████╔╝    ██║     ██║   ██║██║  ██║█████╗                       running · subagent
+                 ██║       ╚██╔╝  ██╔══██╗██╔══╝  ██╔══██╗    ██║     ██║   ██║██║  ██║██╔══╝                     Remote (1)
+                 ╚██████╗   ██║   ██████╔╝███████╗██║  ██║    ╚██████╗╚██████╔╝██████╔╝███████╗                   Review API contracts
+                  ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝     ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝                     running · peer:studio
+                                                                                                                  Open /agents
+                                            local-first coding agent
+
+
+                        Agent
+                        Model
+                        Mode
+                        Path
+
+
+                        Tips
+                        ctrl+p    command palette
+                        ctrl+x b  show or hide the sidebar
+                        ctrl+x m  switch model
+                        ctrl+x l  sessions
+                        ctrl+x h  keys
+
+
+
+
+
+
+
+
+
+
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃
+┃  ·   ·
+                                                                                         $0.00  ctrl+p commands   ● Cyber Code
+row 6: 0-111 fg=#1f2933 bg=#ffffff
+row 6: 112-113 fg=#1f2933 bg=#f6f6f7
+row 6: 114-132 fg=#1f2933 bg=#f6f6f7 bold
+row 6: 133-159 fg=#1f2933 bg=#f6f6f7
+row 15: 0-17 fg=#1f2933 bg=#ffffff
+row 15: 18-18 fg=#8dc2d4 bg=#ffffff
+row 15: 19-19 fg=#8ec2d4 bg=#ffffff
+row 15: 20-21 fg=#8fc2d5 bg=#ffffff
+row 15: 22-22 fg=#90c1d5 bg=#ffffff
+row 15: 23-23 fg=#91c1d6 bg=#ffffff
+row 15: 24-24 fg=#92c1d6 bg=#ffffff
+row 15: 25-27 fg=#1f2933 bg=#ffffff
+row 15: 28-28 fg=#95c0d7 bg=#ffffff
+row 15: 29-29 fg=#95c0d8 bg=#ffffff
+row 15: 30-30 fg=#96c0d8 bg=#ffffff
+row 15: 31-33 fg=#1f2933 bg=#ffffff
+row 15: 34-34 fg=#99bfda bg=#ffffff
+row 15: 35-35 fg=#9abeda bg=#ffffff
+row 15: 36-36 fg=#9bbedb bg=#ffffff
+row 15: 37-38 fg=#9cbedb bg=#ffffff
+row 15: 39-39 fg=#9dbddc bg=#ffffff
+row 15: 40-40 fg=#9ebddc bg=#ffffff
+row 15: 41-41 fg=#1f2933 bg=#ffffff
+row 15: 42-42 fg=#9fbddd bg=#ffffff
+row 15: 43-43 fg=#a0bcdd bg=#ffffff
+row 15: 44-45 fg=#a1bcde bg=#ffffff
+row 15: 46-46 fg=#a2bcde bg=#ffffff
+row 15: 47-47 fg=#a3bcdf bg=#ffffff
+row 15: 48-48 fg=#a4bbdf bg=#ffffff
+row 15: 49-50 fg=#a5bbe0 bg=#ffffff
+row 15: 51-51 fg=#a6bbe0 bg=#ffffff
+row 15: 52-52 fg=#a7bae1 bg=#ffffff
+row 15: 53-54 fg=#1f2933 bg=#ffffff
+row 15: 55-55 fg=#a9bae2 bg=#ffffff
+row 15: 56-56 fg=#aab9e2 bg=#ffffff
+row 15: 57-57 fg=#abb9e3 bg=#ffffff
+row 15: 58-62 fg=#1f2933 bg=#ffffff
+row 15: 63-63 fg=#afb8e5 bg=#ffffff
+row 15: 64-64 fg=#b0b7e5 bg=#ffffff
+row 15: 65-65 fg=#b1b7e6 bg=#ffffff
+row 15: 66-67 fg=#b2b7e6 bg=#ffffff
+row 15: 68-68 fg=#b3b7e7 bg=#ffffff
+row 15: 69-69 fg=#b4b6e7 bg=#ffffff
+row 15: 70-70 fg=#1f2933 bg=#ffffff
+row 15: 71-71 fg=#b5b6e8 bg=#ffffff
+row 15: 72-72 fg=#b6b6e8 bg=#ffffff
+row 15: 73-74 fg=#b7b5e9 bg=#ffffff
+row 15: 75-75 fg=#b8b5e9 bg=#ffffff
+row 15: 76-76 fg=#b9b5ea bg=#ffffff
+row 15: 77-77 fg=#bab4ea bg=#ffffff
+row 15: 78-78 fg=#1f2933 bg=#ffffff
+row 15: 79-79 fg=#bcb4eb bg=#ffffff
+row 15: 80-80 fg=#bcb3eb bg=#ffffff
+row 15: 81-81 fg=#bdb3ec bg=#ffffff
+row 15: 82-82 fg=#beb3ec bg=#ffffff
+row 15: 83-83 fg=#beb3ed bg=#ffffff
+row 15: 84-84 fg=#bfb3ed bg=#ffffff
+row 15: 85-85 fg=#c0b3ed bg=#ffffff
+row 15: 86-86 fg=#1f2933 bg=#ffffff
+row 15: 87-87 fg=#c1b2ee bg=#ffffff
+row 15: 88-88 fg=#c2b2ee bg=#ffffff
+row 15: 89-89 fg=#c3b2ef bg=#ffffff
+row 15: 90-90 fg=#c4b1ef bg=#ffffff
+row 15: 91-91 fg=#c5b1ef bg=#ffffff
+row 15: 92-92 fg=#c5b1f0 bg=#ffffff
+row 15: 93-93 fg=#c6b1f0 bg=#ffffff
+row 15: 94-94 fg=#c7b0f1 bg=#ffffff
+row 15: 95-111 fg=#1f2933 bg=#ffffff
+row 15: 112-113 fg=#1f2933 bg=#f6f6f7
+row 15: 114-136 fg=#5b6878 bg=#f6f6f7
+row 15: 137-159 fg=#1f2933 bg=#f6f6f7

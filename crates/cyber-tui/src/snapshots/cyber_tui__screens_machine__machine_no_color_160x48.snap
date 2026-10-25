@@ -9,13 +9,17 @@ expression: screen
   This keeps the cache warm:                                                                                      100 tokens · window unknown
                                                                                                                   — spent
   1. Memoization: results are cached
-                                                                                                                  ▼ MCP
-  • avoids recomputation                                                                                          No MCP servers
-                                                                                                                  add one: cyber mcp add
+                                                                                                                  ▼ Sessions & agents
+  • avoids recomputation                                                                                          Reachable Sessions not loaded
+                                                                                                                  Open /agents
     rust
-    fn fib(n: u64) -> u64 { n }                                                                                   LSP
+    fn fib(n: u64) -> u64 { n }                                                                                   ▼ MCP
+                                                                                                                  No MCP servers
+  ▣ Build · main · 11.3s                                                                                          add one: cyber mcp add
+
+                                                                                                                  LSP
                                                                                                                   LSPs will activate as files are read
-  ▣ Build · main · 11.3s
+
                                                                                                                   ▼ Machine                         macOS 15.0
                                                                                                                   CPU  [##..........]  18%
                                                                                                                        12 cores · 82% idle
@@ -24,10 +28,6 @@ expression: screen
                                                                                                                   Disk [###########.]  93%
                                                                                                                        861 / 926 GB · 64.8 free
                                                                                                                   load 2.1 1.8 1.6
-
-
-
-
 
 
 

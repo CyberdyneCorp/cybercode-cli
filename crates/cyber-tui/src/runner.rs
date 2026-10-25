@@ -260,6 +260,15 @@ pub(crate) struct Refresh {
     queued_mode: Option<(String, String)>,
 }
 
+/// Fence directory callbacks once when the active stream is lost.
+fn disconnected(app: &mut App) {
+    if app.sidebar.connection != crate::sidebar::Connection::Reconnecting {
+        app.directory.forget();
+        app.sidebar.clear_reachable();
+    }
+    app.sidebar.connection = crate::sidebar::Connection::Reconnecting;
+}
+
 async fn event_loop(
     terminal: &mut Term,
     app: &mut App,
@@ -301,7 +310,7 @@ async fn event_loop(
             ev = server.next() => match ev {
                 Some(ev) => server_event(app, &ev),
                 None => {
-                    app.sidebar.connection = crate::sidebar::Connection::Reconnecting;
+                    disconnected(app);
                     Vec::new()
                 }
             },
@@ -1081,6 +1090,32 @@ fn set_title(app: &App) {
 #[cfg(test)]
 mod mode_tests {
     use super::*;
+
+    #[test]
+    fn lost_stream_clears_discovery_and_old_callbacks_cannot_repopulate_it() {
+        let mut app = app();
+        app.session.id = "ses_owner".into();
+        let actions = app.open_agents();
+        let Action::Directory(request) = &actions[0] else {
+            panic!()
+        };
+        let generation = request.generation;
+        app.sidebar.set_reachable(vec!["listing:ses_old".into()]);
+        disconnected(&mut app);
+        assert!(app.sidebar.reachable.is_empty());
+        app.agents_reply(
+            "ses_owner",
+            generation,
+            crate::agents::Source::Messaging,
+            Ok(crate::agents::Fetched {
+                rows: vec![crate::agents::Entry::from_listing(&json!({
+                    "session_id":"ses_old","address":"old","name":"Old","kind":"local"
+                }))],
+                ..Default::default()
+            }),
+        );
+        assert!(app.directory.rows().next().is_none());
+    }
 
     #[test]
     fn window_title_drops_control_characters_from_a_model_written_title() {

@@ -1,0 +1,44 @@
+---
+source: crates/cyber-tui/src/session_overview.rs
+expression: screen
+---
+ cyber ·                                                                                       idle
+
+                                                                      New session
+
+                                                                      Context
+                                                                      $0.00 spent
+
+            ██████╗██╗   ██╗██████╗ ███████╗██████╗      ██████╗ ███  ▼ Sessions & agents
+           ██╔════╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗    ██╔════╝██╔═  Local Sessions (1)
+           ██║      ╚████╔╝ ██████╔╝█████╗  ██████╔╝    ██║     ██║   Update README examples
+           ██║       ╚██╔╝  ██╔══██╗██╔══╝  ██╔══██╗    ██║     ██║     running · session
+           ╚██████╗   ██║   ██████╔╝███████╗██║  ██║    ╚██████╗╚███  Team / child agents (1)
+            ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝     ╚═════╝ ╚══  Check regression tests
+                                                                        running · subagent
+                                      local-first coding agent        Remote (1)
+                                                                      Review API contracts
+                                                                        running · peer:studio
+                  Agent                                               Open /agents
+                  Model
+                  Mode
+                  Path
+
+
+                  Tips
+                  ctrl+p    command palette
+                  ctrl+x b  show or hide the sidebar
+                  ctrl+x m  switch model
+                  ctrl+x l  sessions
+                  ctrl+x h  keys
+
+
+
+
+
+                                                                      ● Cyber Code
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃
+┃  ·   ·
+                                                                             $0.00  ctrl+p commands

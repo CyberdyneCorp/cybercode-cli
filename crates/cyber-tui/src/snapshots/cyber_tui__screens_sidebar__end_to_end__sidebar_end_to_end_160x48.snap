@@ -9,19 +9,19 @@ expression: "render(&mut app, 160, 48, &Opts::default())"
     │ # Notes                                                                                                     100 tokens · window unknown
     │ one                                                                                                         — spent
     │ two
-                                                                                                                  ▼ MCP
-  Wrote it.                                                                                                       ● context7 stdio Connected · 0 tools
-                                                                                                                  ● local stdio Connected · 0 tools
+                                                                                                                  ▼ Sessions & agents
+  Wrote it.                                                                                                       Reachable Sessions not loaded
+                                                                                                                  Open /agents
   ▣ Build · main · 11.3s
+                                                                                                                  ▼ MCP
+                                                                                                                  ● context7 stdio Connected · 0 tools
+                                                                                                                  ● local stdio Connected · 0 tools
+
                                                                                                                   LSP
                                                                                                                   LSPs will activate as files are read
 
                                                                                                                   ▼ Modified files
                                                                                                                   notes.md                               +3 -0
-
-
-
-
 
 
 

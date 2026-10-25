@@ -38,7 +38,23 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let bottom = bottom(app, width);
     let bottom_height = (bottom.len() as u16).min(inner.height);
     let top_height = inner.height - bottom_height;
-    let sections = sections(app, width);
+    let sections = sections(app, width, top_height as usize);
+    app.sidebar.set_drawn_reachable(
+        sections
+            .rows
+            .iter()
+            .filter_map(|(_, row)| match row {
+                Row::Reachable(key) => Some(key.clone()),
+                _ => None,
+            })
+            .collect(),
+    );
+    let shown = !app.sidebar.collapsed.contains(&Section::Sessions)
+        && sections.rows.iter().any(|(line, row)| {
+            *row == Row::Header(Section::Sessions) && line.saturating_add(1) < top_height as usize
+        });
+    app.overview_visible
+        .store(shown, std::sync::atomic::Ordering::Relaxed);
     push_rows(
         app,
         Rect {
@@ -75,20 +91,24 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 /// take a second click.
 fn push_rows(app: &App, area: Rect, rows: &[(usize, Row)]) {
     let order = app.sidebar.rows();
-    for &(line, row) in rows {
-        let Some(index) = order.iter().position(|r| *r == row) else {
+    for (line, row) in rows {
+        let Some(index) = order.iter().position(|r| r == row) else {
             continue;
         };
         let act = match row {
             Row::Header(_) => Act::First,
-            Row::Workflow(_) | Row::Mcp(_) | Row::File(_) => Act::Second,
+            _ => Act::Second,
         };
-        let target = Target::Row {
-            list: List::Sidebar,
-            index,
-            act,
+        let target = match row {
+            Row::Reachable(key) => Target::SidebarEntry(key.clone()),
+            Row::Directory => Target::SidebarDirectory,
+            _ => Target::Row {
+                list: List::Sidebar,
+                index,
+                act,
+            },
         };
-        super::push_lines(app, area, line..line + 1, 0, target);
+        super::push_lines(app, area, *line..*line + 1, 0, target);
     }
 }
 
@@ -124,10 +144,10 @@ impl std::ops::DerefMut for Out {
 /// The sections, top to bottom, wrapped to `width`.
 #[cfg(test)]
 pub fn top(app: &App, width: usize) -> Vec<Line<'static>> {
-    sections(app, width).lines
+    sections(app, width, usize::MAX).lines
 }
 
-fn sections(app: &App, width: usize) -> Out {
+fn sections(app: &App, width: usize, height: usize) -> Out {
     let mut out = Out::default();
     let bold = Style::default()
         .fg(app.theme.text)
@@ -159,6 +179,7 @@ fn sections(app: &App, width: usize) -> Out {
         out.push(muted_line(app, &truncate_end(&branch, width)));
     }
     context(app, width, &mut out);
+    reachable(app, width, height, &mut out);
     goal(app, width, &mut out);
     workflows(app, width, &mut out);
     super::team::sidebar(app, width, &mut out);
@@ -168,6 +189,136 @@ fn sections(app: &App, width: usize) -> Out {
     machine(app, width, &mut out);
     files(app, width, &mut out);
     out
+}
+
+fn reachable(app: &App, width: usize, height: usize, out: &mut Out) {
+    use crate::agents::{Source as AgentSource, Status};
+    use crate::session_overview;
+    let collapsed = app.sidebar.collapsed.contains(&Section::Sessions);
+    let arrow = if collapsed { "▶" } else { "▼" };
+    out.push(Line::default());
+    out.row(
+        Row::Header(Section::Sessions),
+        header(
+            app,
+            Some(Row::Header(Section::Sessions)),
+            format!("{arrow} Sessions & agents"),
+        ),
+    );
+    if collapsed {
+        return;
+    }
+    let full = session_overview::project(&app.directory, &app.session.id);
+    let mut status = Out::default();
+    reachable_source_status(app, &mut status);
+    let fixed = full.counts.iter().filter(|count| **count > 0).count()
+        + status.len()
+        + usize::from(full.unavailable_peers > 0)
+        + 1;
+    let limit = height.saturating_sub(out.len() + fixed) / 2;
+    let overview = session_overview::project_limit(&app.directory, &app.session.id, limit);
+    reachable_groups(app, width, out, &overview);
+    if overview.total == 0 {
+        let state = app.directory.source(AgentSource::Messaging);
+        let text = if app.session.id.is_empty() {
+            "Attach a Session to discover"
+        } else if state.loading && state.status == Status::Unread {
+            "Loading reachable Sessions…"
+        } else if state.error.is_some() {
+            "Session listing unavailable"
+        } else {
+            match state.status {
+                Status::Unread => "Reachable Sessions not loaded",
+                Status::Disabled => "Messaging disabled here",
+                Status::Unsupported => "Directory unsupported by server",
+                _ => "No other reachable Sessions",
+            }
+        };
+        out.push(muted_line(app, &truncate_end(text, width)));
+    }
+    reachable_source_status(app, out);
+    if overview.unavailable_peers > 0 {
+        out.push(muted_line(
+            app,
+            &format!("{} peer availability records", overview.unavailable_peers),
+        ));
+    }
+    let footer = if overview.total > overview.entries.len() {
+        format!(
+            "+{} more · /agents",
+            overview.total - overview.entries.len()
+        )
+    } else {
+        "Open /agents".into()
+    };
+    out.row(
+        Row::Directory,
+        header(app, Some(Row::Directory), truncate_end(&footer, width)),
+    );
+}
+
+fn reachable_source_status(app: &App, out: &mut Out) {
+    use crate::agents::{Source, Status};
+    let messaging = app.directory.source(Source::Messaging);
+    if messaging.error.is_some() && !messaging.rows.is_empty() {
+        out.push(muted_line(app, "Session listing stale"));
+    }
+    let hub = app.directory.source(Source::Hub);
+    let text = if hub.error.is_some() {
+        Some("Hub unavailable / access lost")
+    } else if hub.loading && hub.status == Status::Unread {
+        Some("Hub roster loading…")
+    } else {
+        match hub.status {
+            Status::Inactive => Some("Hub off / project not bound"),
+            Status::Disabled => Some("Hub disabled here"),
+            Status::Unsupported => Some("Hub unsupported by server"),
+            _ => None,
+        }
+    };
+    if let Some(text) = text {
+        out.push(muted_line(app, text));
+    }
+}
+
+fn reachable_groups(
+    app: &App,
+    width: usize,
+    out: &mut Out,
+    overview: &crate::session_overview::Overview<'_>,
+) {
+    use crate::session_overview::{self, Group};
+    for group in Group::ALL {
+        if overview.counts[group as usize] == 0 {
+            continue;
+        }
+        out.push(muted_line(
+            app,
+            &truncate_end(
+                &format!("{} ({})", group.title(), overview.counts[group as usize]),
+                width,
+            ),
+        ));
+        for entry in overview
+            .entries
+            .iter()
+            .filter(|entry| session_overview::group(entry) == group)
+        {
+            let row = Row::Reachable(entry.key.clone());
+            out.row(
+                row.clone(),
+                header(
+                    app,
+                    Some(row),
+                    truncate_end(session_overview::name(entry), width.saturating_sub(2)),
+                ),
+            );
+            out.push(muted_line(
+                app,
+                &truncate_end(&format!("  {}", session_overview::detail(entry)), width),
+            ));
+        }
+    }
 }
 
 fn muted_line(app: &App, text: &str) -> Line<'static> {
@@ -422,7 +573,7 @@ fn mcp(app: &App, width: usize, out: &mut Out) {
     out.push(Line::default());
     let arrow = if collapsed { "▶" } else { "▼" };
     let row = Row::Header(Section::Mcp);
-    out.row(row, header(app, Some(row), format!("{arrow} MCP")));
+    out.row(row.clone(), header(app, Some(row), format!("{arrow} MCP")));
     if collapsed {
         return;
     }
@@ -713,7 +864,7 @@ fn files(app: &App, width: usize, out: &mut Out) {
     let arrow = if collapsed { "▶" } else { "▼" };
     let row = Row::Header(Section::Files);
     out.row(
-        row,
+        row.clone(),
         header(app, Some(row), format!("{arrow} Modified files")),
     );
     if collapsed {

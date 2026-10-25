@@ -510,7 +510,7 @@ mod end_to_end {
         chord(&mut app, 'e');
         let rows = app.sidebar.rows();
         let file = rows.iter().position(|r| matches!(r, Row::File(0))).unwrap();
-        app.sidebar.focus = Some(file - 1);
+        app.sidebar.select_focus(file - 1);
         key(&mut app, 'j');
         assert_eq!(app.sidebar.focused(), Some(Row::File(0)));
         press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
@@ -521,7 +521,13 @@ mod end_to_end {
         assert!(matches!(app.overlay, Overlay::None) && app.sidebar.focus.is_some());
 
         // Space on the MCP header collapses it.
-        app.sidebar.focus = Some(0);
+        let mcp = app
+            .sidebar
+            .rows()
+            .iter()
+            .position(|row| *row == Row::Header(Section::Mcp))
+            .unwrap();
+        app.sidebar.select_focus(mcp);
         key(&mut app, ' ');
         assert!(app.sidebar.collapsed.contains(&Section::Mcp));
         assert!(!text(&buffer(&mut app, 160, 48, &Opts::default())).contains("● local"));
@@ -534,7 +540,7 @@ mod end_to_end {
             .iter()
             .position(|r| matches!(r, Row::Mcp(i) if app.sidebar.servers()[*i].name == "context7"))
             .unwrap();
-        app.sidebar.focus = Some(failed);
+        app.sidebar.select_focus(failed);
         std::fs::write(&late, STUB).unwrap();
         let actions = key(&mut app, 'r');
         assert_eq!(actions, vec![Action::ReconnectMcp("context7".into())]);

@@ -123,8 +123,15 @@ async fn two_runs_in_the_sidebar_and_the_section_goes_with_the_last_run() {
         shown.contains("2 workflows 31/102 agents · 30%"),
         "the progress line sums both runs:\n{shown}"
     );
-    // Enter on a row opens that run in the monitor.
+    // Enter on a workflow row opens that run in the monitor.
     app.focus_sidebar();
+    let index = app
+        .sidebar
+        .rows()
+        .iter()
+        .position(|row| matches!(row, crate::sidebar::Row::Workflow(0)))
+        .unwrap();
+    app.sidebar.select_focus(index);
     let actions = app.on_key(crossterm::event::KeyEvent::new(
         KeyCode::Enter,
         crossterm::event::KeyModifiers::NONE,

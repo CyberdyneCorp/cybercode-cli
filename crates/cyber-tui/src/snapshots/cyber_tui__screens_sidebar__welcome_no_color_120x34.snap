@@ -9,17 +9,17 @@ expression: "render(&mut app, 120, 34, &no_color)"
    ██╔════╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗    ██╔════╝██╔═══██╗██╔══██╗██╔════╝     window unknown
    ██║      ╚████╔╝ ██████╔╝█████╗  ██████╔╝    ██║     ██║   ██║██║  ██║█████╗       $0.00 spent
    ██║       ╚██╔╝  ██╔══██╗██╔══╝  ██╔══██╗    ██║     ██║   ██║██║  ██║██╔══╝
-   ╚██████╗   ██║   ██████╔╝███████╗██║  ██║    ╚██████╗╚██████╔╝██████╔╝███████╗     ▼ MCP
-    ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝     ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝     No MCP servers
-                                                                                      add one: cyber mcp add
+   ╚██████╗   ██║   ██████╔╝███████╗██║  ██║    ╚██████╗╚██████╔╝██████╔╝███████╗     ▼ Sessions & agents
+    ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝     ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝     Reachable Sessions not loaded
+                                                                                      Open /agents
                           1.0.0 · local-first coding agent
-                                                                                      LSP
-                                                                                      LSPs will activate as files are
-          Agent  Build                                                                read
+                                                                                      ▼ MCP
+                                                                                      No MCP servers
+          Agent  Build                                                                add one: cyber mcp add
           Model  main test
-          Mode   default
-          Path   ~/work/app
-          LSP    LSPs will activate as files are read
+          Mode   default                                                              LSP
+          Path   ~/work/app                                                           LSPs will activate as files are
+          LSP    LSPs will activate as files are read                                 read
 
 
           Tips

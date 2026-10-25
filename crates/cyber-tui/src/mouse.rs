@@ -25,10 +25,17 @@ pub const WHEEL_LINES: u16 = 3;
 pub const DOUBLE_CLICK: Duration = Duration::from_millis(500);
 
 /// What a click on a rectangle of the last frame does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
     /// A row of a list; see [`Act`].
-    Row { list: List, index: usize, act: Act },
+    Row {
+        list: List,
+        index: usize,
+        act: Act,
+    },
+    /// A discovery row carries the exact identity from the rendered frame.
+    SidebarEntry(String),
+    SidebarDirectory,
     /// A chip, a tab or a collapsed row: press this key.
     Key(KeyEvent),
     /// A pane that takes focus.
@@ -167,7 +174,7 @@ impl Mouse {
             .iter()
             .rev()
             .find(|(rect, _)| rect.contains(at))
-            .map(|&(_, target)| target)
+            .map(|(_, target)| target.clone())
     }
 
     /// The topmost pane at a cell, under any target drawn on it.
@@ -176,8 +183,8 @@ impl Mouse {
         self.hits()
             .iter()
             .rev()
-            .find_map(|&(rect, target)| match target {
-                Target::Pane(pane) if rect.contains(at) => Some(pane),
+            .find_map(|(rect, target)| match target {
+                Target::Pane(pane) if rect.contains(at) => Some(*pane),
                 _ => None,
             })
     }
@@ -279,7 +286,7 @@ impl App {
             return Vec::new();
         };
         let press = Press {
-            target,
+            target: target.clone(),
             cell: (column, row),
             context: self.click_context(),
             at: self.now(),
@@ -306,6 +313,8 @@ impl App {
             self.leave_sidebar();
         }
         match target {
+            Target::SidebarEntry(key) => self.press_sidebar_entry(Some(key), press, previous),
+            Target::SidebarDirectory => self.press_sidebar_entry(None, press, previous),
             Target::Row {
                 list,
                 index,
@@ -317,6 +326,45 @@ impl App {
             | Target::Key(_) => self.press_control(press, previous),
             Target::Pane(pane) => self.focus_pane(pane),
             Target::Inside => Vec::new(),
+        }
+    }
+
+    fn press_sidebar_entry(
+        &mut self,
+        key: Option<String>,
+        mut press: Press,
+        previous: Option<Press>,
+    ) -> Vec<Action> {
+        if !matches!(self.overlay, Overlay::None) || !self.sidebar_visible() {
+            return Vec::new();
+        }
+        if let Some(key) = &key {
+            self.sidebar.focus_reachable(key.clone());
+        } else {
+            let Some(index) = self
+                .sidebar
+                .rows()
+                .iter()
+                .position(|row| *row == crate::sidebar::Row::Directory)
+            else {
+                return Vec::new();
+            };
+            self.sidebar.select_focus(index);
+        }
+        press.item = Some(key.clone().unwrap_or_else(|| "agents-directory".into()));
+        let armed = previous.is_some_and(|last| {
+            last.target == press.target && last.context == press.context && last.item == press.item
+        });
+        if armed {
+            let actions = self.open_reachable_agent(key.as_deref());
+            self.mouse.last = Some(Press {
+                item: None,
+                ..press
+            });
+            actions
+        } else {
+            self.mouse.last = Some(press);
+            Vec::new()
         }
     }
 
@@ -372,7 +420,7 @@ impl App {
         if double {
             return Vec::new();
         }
-        let actions = match press.target {
+        let actions = match press.target.clone() {
             Target::Row { list, index, .. } if self.select_row(list, index) => self.activate(list),
             Target::Key(key) => self.on_key(key),
             _ => Vec::new(),
@@ -496,7 +544,9 @@ impl App {
     fn selected_sidebar_item(&self) -> Option<String> {
         use crate::sidebar::Row;
         let s = &self.sidebar;
-        Some(match *s.rows().get(s.focus?)? {
+        Some(match s.focused()? {
+            Row::Reachable(key) => format!("reachable {key}"),
+            Row::Directory => "agents directory".into(),
             Row::Header(section) => format!("section {section:?}"),
             Row::Workflow(i) => format!("run {}", s.workflows.get(i)?.id),
             Row::Mcp(i) => format!("mcp {}", s.servers().get(i)?.name),
@@ -588,7 +638,7 @@ impl App {
         if !self.sidebar_visible() || index >= self.sidebar.rows().len() {
             return false;
         }
-        self.sidebar.focus = Some(index);
+        self.sidebar.select_focus(index);
         true
     }
 
@@ -1041,13 +1091,62 @@ mod tests {
     }
 
     #[test]
+    fn directory_footer_does_not_retarget_when_discovery_adds_rows() {
+        let mut app = app();
+        app.session.id = "ses_ME".into();
+        app.sidebar.drawer = true;
+        app.mouse.push(line(3), Target::SidebarDirectory);
+        assert!(click(&mut app, 2, 3).is_empty());
+        app.sidebar.set_reachable(vec!["listing:ses_added".into()]);
+        let actions = click(&mut app, 2, 3);
+        assert_eq!(app.overlay, Overlay::Agents);
+        assert!(app.directory.selected.is_none());
+        assert!(
+            actions
+                .iter()
+                .all(|action| matches!(action, Action::Directory(_)))
+        );
+    }
+
+    #[test]
+    fn sidebar_click_uses_drawn_identity_even_after_cache_reorders_or_removes_it() {
+        let mut app = app();
+        app.session.id = "ses_ME".into();
+        app.sidebar.drawer = true;
+        let entry = crate::agents::Entry::from_listing(
+            &json!({"session_id":"ses_target", "address":"target", "name":"Target", "kind":"local"}),
+        );
+        app.directory.messaging.rows = vec![entry];
+        app.refresh_reachable_rows();
+        app.mouse
+            .push(line(3), Target::SidebarEntry("listing:ses_target".into()));
+        assert!(click(&mut app, 2, 3).is_empty());
+        assert_eq!(
+            app.sidebar.focused(),
+            Some(crate::sidebar::Row::Reachable("listing:ses_target".into()))
+        );
+        app.directory.messaging.rows.clear();
+        app.refresh_reachable_rows();
+        let actions = click(&mut app, 2, 3);
+        assert_eq!(app.overlay, Overlay::Agents);
+        assert!(app.directory.selected.is_none());
+        assert!(app.directory.editor.is_none());
+        assert!(
+            actions
+                .iter()
+                .all(|action| matches!(action, Action::Directory(_)))
+        );
+        assert_eq!(app.session.id, "ses_ME");
+    }
+
+    #[test]
     fn a_click_on_the_transcript_takes_focus_back_from_the_sidebar() {
         let mut app = app();
         app.mouse
             .push(Rect::new(0, 0, 60, 20), Target::Pane(Pane::Transcript));
         app.mouse
             .push(Rect::new(60, 0, 40, 20), Target::Pane(Pane::Sidebar));
-        app.sidebar.focus = Some(0);
+        app.sidebar.select_focus(0);
         app.sidebar.drawer = true;
         click(&mut app, 70, 5);
         assert_eq!(
@@ -1067,7 +1166,7 @@ mod tests {
             .push(Rect::new(0, 0, 60, 20), Target::Pane(Pane::Transcript));
         let details = KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL);
         app.mouse.push(line(3), Target::Key(details));
-        app.sidebar.focus = Some(0);
+        app.sidebar.select_focus(0);
         app.sidebar.drawer = true;
         let expanded = app.expand_tools;
         click(&mut app, 5, 3);

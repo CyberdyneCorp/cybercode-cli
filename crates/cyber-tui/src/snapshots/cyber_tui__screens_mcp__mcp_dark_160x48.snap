@@ -9,13 +9,17 @@ expression: screen
   This keeps the cache warm:                                                                                      100 tokens · window unknown
                                                                                                                   — spent
   1. Memoization: results are cached
-                                                                                                                  ▼ MCP
-  • avoids recomputation                                                                                          ● context7 remote Connected · 2 tools
-                                                                                                                  ● deepwiki remote Connecting
-    rust                                                                                                          ● files stdio Failed
-    fn fib(n: u64) -> u64 { n }                                                                                     MCP startup failed; inspect local logs[31m
+                                                                                                                  ▼ Sessions & agents
+  • avoids recomputation                                                                                          Reachable Sessions not loaded
+                                                                                                                  Open /agents
+    rust
+    fn fib(n: u64) -> u64 { n }                                                                                   ▼ MCP
+                                                                                                                  ● context7 remote Connected · 2 tools
+  ▣ Build · main · 11.3s                                                                                          ● deepwiki remote Connecting
+                                                                                                                  ● files stdio Failed
+                                                                                                                    MCP startup failed; inspect local logs[31m
                                                                                                                   ● linear remote Needs auth
-  ▣ Build · main · 11.3s                                                                                            cyber mcp auth linear
+                                                                                                                    cyber mcp auth linear
                                                                                                                   ● old stdio Disabled
                                                                                                                   ● corp remote Blocked
                                                                                                                     blocked by organization policy
@@ -41,65 +45,56 @@ expression: screen
 
 
 
-
-
-
-
 ┃
 ┃ Ask anything… "/" commands · "@" files · "!" shell
 ┃                                                                                                                 ~/work/app
 ┃ Build · main test · default
  ~/work/app                                                                            100 · —  ctrl+p commands   ● Cyber Code 1.0.0
-row 8: 0-1 fg=#d6e4f0 bg=#0b0f14
-row 8: 2-3 fg=#6b7a8f bg=#0b0f14
-row 8: 4-10 fg=#d6e4f0 bg=#0b0f14
-row 8: 11-23 fg=#c792ea bg=#0b0f14
-row 8: 24-111 fg=#d6e4f0 bg=#0b0f14
-row 8: 112-113 fg=#d6e4f0 bg=#13181d
-row 8: 114-115 fg=#7ee787 bg=#13181d
-row 8: 116-123 fg=#d6e4f0 bg=#13181d
-row 8: 124-130 fg=#666f77 bg=#13181d
-row 8: 131-140 fg=#6b7a8f bg=#13181d
-row 8: 141-150 fg=#666f77 bg=#13181d
-row 8: 151-159 fg=#d6e4f0 bg=#13181d
-row 9: 0-111 fg=#d6e4f0 bg=#0b0f14
-row 9: 112-113 fg=#d6e4f0 bg=#13181d
-row 9: 114-115 fg=#ffcc66 bg=#13181d
-row 9: 116-123 fg=#d6e4f0 bg=#13181d
-row 9: 124-130 fg=#666f77 bg=#13181d
-row 9: 131-141 fg=#6b7a8f bg=#13181d
-row 9: 142-159 fg=#d6e4f0 bg=#13181d
-row 10: 0-1 fg=#d6e4f0 bg=#0b0f14
-row 10: 2-3 fg=#d6e4f0 bg=#171c21
-row 10: 4-110 fg=#666f77 bg=#171c21
-row 10: 111-111 fg=#d6e4f0 bg=#0b0f14
-row 10: 112-113 fg=#d6e4f0 bg=#13181d
-row 10: 114-115 fg=#ff6b6b bg=#13181d
-row 10: 116-120 fg=#d6e4f0 bg=#13181d
-row 10: 121-126 fg=#666f77 bg=#13181d
-row 10: 127-133 fg=#6b7a8f bg=#13181d
-row 10: 134-159 fg=#d6e4f0 bg=#13181d
 row 12: 0-111 fg=#d6e4f0 bg=#0b0f14
 row 12: 112-113 fg=#d6e4f0 bg=#13181d
-row 12: 114-115 fg=#ffcc66 bg=#13181d
-row 12: 116-121 fg=#d6e4f0 bg=#13181d
-row 12: 122-128 fg=#666f77 bg=#13181d
-row 12: 129-139 fg=#6b7a8f bg=#13181d
-row 12: 140-159 fg=#d6e4f0 bg=#13181d
+row 12: 114-115 fg=#7ee787 bg=#13181d
+row 12: 116-123 fg=#d6e4f0 bg=#13181d
+row 12: 124-130 fg=#666f77 bg=#13181d
+row 12: 131-140 fg=#6b7a8f bg=#13181d
+row 12: 141-150 fg=#666f77 bg=#13181d
+row 12: 151-159 fg=#d6e4f0 bg=#13181d
+row 13: 0-8 fg=#00e5ff bg=#0b0f14
+row 13: 9-23 fg=#6b7a8f bg=#0b0f14
+row 13: 24-111 fg=#d6e4f0 bg=#0b0f14
+row 13: 112-113 fg=#d6e4f0 bg=#13181d
+row 13: 114-115 fg=#ffcc66 bg=#13181d
+row 13: 116-123 fg=#d6e4f0 bg=#13181d
+row 13: 124-130 fg=#666f77 bg=#13181d
+row 13: 131-141 fg=#6b7a8f bg=#13181d
+row 13: 142-159 fg=#d6e4f0 bg=#13181d
 row 14: 0-111 fg=#d6e4f0 bg=#0b0f14
 row 14: 112-113 fg=#d6e4f0 bg=#13181d
-row 14: 114-115 fg=#666f77 bg=#13181d
-row 14: 116-118 fg=#d6e4f0 bg=#13181d
-row 14: 119-124 fg=#666f77 bg=#13181d
-row 14: 125-133 fg=#6b7a8f bg=#13181d
+row 14: 114-115 fg=#ff6b6b bg=#13181d
+row 14: 116-120 fg=#d6e4f0 bg=#13181d
+row 14: 121-126 fg=#666f77 bg=#13181d
+row 14: 127-133 fg=#6b7a8f bg=#13181d
 row 14: 134-159 fg=#d6e4f0 bg=#13181d
-row 15: 0-111 fg=#d6e4f0 bg=#0b0f14
-row 15: 112-113 fg=#d6e4f0 bg=#13181d
-row 15: 114-115 fg=#666f77 bg=#13181d
-row 15: 116-119 fg=#d6e4f0 bg=#13181d
-row 15: 120-126 fg=#666f77 bg=#13181d
-row 15: 127-134 fg=#6b7a8f bg=#13181d
-row 15: 135-159 fg=#d6e4f0 bg=#13181d
+row 16: 0-111 fg=#d6e4f0 bg=#0b0f14
+row 16: 112-113 fg=#d6e4f0 bg=#13181d
+row 16: 114-115 fg=#ffcc66 bg=#13181d
+row 16: 116-121 fg=#d6e4f0 bg=#13181d
+row 16: 122-128 fg=#666f77 bg=#13181d
+row 16: 129-139 fg=#6b7a8f bg=#13181d
+row 16: 140-159 fg=#d6e4f0 bg=#13181d
+row 18: 0-111 fg=#d6e4f0 bg=#0b0f14
+row 18: 112-113 fg=#d6e4f0 bg=#13181d
+row 18: 114-115 fg=#666f77 bg=#13181d
+row 18: 116-118 fg=#d6e4f0 bg=#13181d
+row 18: 119-124 fg=#666f77 bg=#13181d
+row 18: 125-133 fg=#6b7a8f bg=#13181d
+row 18: 134-159 fg=#d6e4f0 bg=#13181d
+row 19: 0-111 fg=#d6e4f0 bg=#0b0f14
+row 19: 112-113 fg=#d6e4f0 bg=#13181d
+row 19: 114-115 fg=#666f77 bg=#13181d
+row 19: 116-119 fg=#d6e4f0 bg=#13181d
+row 19: 120-126 fg=#666f77 bg=#13181d
+row 19: 127-134 fg=#6b7a8f bg=#13181d
+row 19: 135-159 fg=#d6e4f0 bg=#13181d
 row 47: 0-10 fg=#6b7a8f bg=#0b0f14
 row 47: 11-86 fg=#d6e4f0 bg=#0b0f14
 row 47: 87-93 fg=#6b7a8f bg=#0b0f14

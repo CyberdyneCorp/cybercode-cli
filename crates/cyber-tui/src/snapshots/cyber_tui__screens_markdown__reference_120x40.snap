@@ -9,17 +9,17 @@ expression: "render(&mut app, width, height, &opts)"
         # Build up solution iteratively                                               100 tokens · window unknown
         dp = [0, 1]                                                                   — spent
         for i in range(2, n + 1):
-            dp.append(dp[i - 1] + dp[i - 2])                                          ▼ MCP
-        return dp[n]                                                                  No MCP servers
-                                                                                      add one: cyber mcp add
+            dp.append(dp[i - 1] + dp[i - 2])                                          ▼ Sessions & agents
+        return dp[n]                                                                  Reachable Sessions not loaded
+                                                                                      Open /agents
   This code demonstrates dynamic optimization principles:
-                                                                                      LSP
-  1. Overlapping Subproblems: Both examples break down problems into smaller,         LSPs will activate as files are
-     repeated subproblems                                                             read
+                                                                                      ▼ MCP
+  1. Overlapping Subproblems: Both examples break down problems into smaller,         No MCP servers
+     repeated subproblems                                                             add one: cyber mcp add
   2. Optimal Substructure: Solutions are built from optimal solutions of
-     subproblems
-  3. Memoization: Results are cached to avoid recomputation
-
+     subproblems                                                                      LSP
+  3. Memoization: Results are cached to avoid recomputation                           LSPs will activate as files are
+                                                                                      read
   Key benefits of this approach, see the guide (https://example.com/dp):
 
   • Time complexity improvement from exponential to polynomial
@@ -71,8 +71,8 @@ row 12: 2-4 fg=#6b7a8f bg=#0b0f14
 row 12: 5-28 fg=#d6e4f0 bg=#0b0f14 bold
 row 12: 29-83 fg=#d6e4f0 bg=#0b0f14
 row 12: 84-85 fg=#d6e4f0 bg=#13181d
-row 12: 86-117 fg=#6b7a8f bg=#13181d
-row 12: 118-119 fg=#d6e4f0 bg=#13181d
+row 12: 86-99 fg=#6b7a8f bg=#13181d
+row 12: 100-119 fg=#d6e4f0 bg=#13181d
 row 20: 0-1 fg=#d6e4f0 bg=#0b0f14
 row 20: 2-3 fg=#6b7a8f bg=#0b0f14
 row 20: 4-83 fg=#d6e4f0 bg=#0b0f14

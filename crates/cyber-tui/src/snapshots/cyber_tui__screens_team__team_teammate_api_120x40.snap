@@ -9,6 +9,10 @@ expression: screen
   ▣ Build · main · 11.3s                                                              100 tokens · window unknown
                                                                                       — spent
 
+                                                                                      ▼ Sessions & agents
+                                                                                      Reachable Sessions not loaded
+                                                                                      Open /agents
+
                                                                                       Team feature
                                                                                       ○ lead  ○ api  ○ ui  ○ tests
 
@@ -19,10 +23,6 @@ expression: screen
                                                                                       LSP
                                                                                       LSPs will activate as files are
                                                                                       read
-
-
-
-
 
 
 

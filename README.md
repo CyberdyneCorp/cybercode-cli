@@ -78,7 +78,13 @@ Experimental [native computer use](docs/computer-use.md) adds macOS 14+ applicat
 
 ## Sessions and people working together
 
-Cyber supports communication between Sessions and between different people's agents working on the same Git project:
+Cyber supports communication between Sessions and between different people's agents working on the same Git project.
+
+The TUI sidebar previews named local Sessions, team/child agents and remote Sessions with status and source labels. Open `/agents` for the full directory and its message, watch and rename actions.
+
+![Named local, team and remote Sessions in the TUI sidebar](docs/screenshots/sessions-sidebar.png)
+
+*Actual TUI capture with isolated demo data. See the [screenshot gallery and capture instructions](docs/screenshots/README.md).*
 
 - **On one server:** Sessions and agents can discover, message and watch each other. See [Session messaging](docs/local-core-guide.md#cross-session-messaging).
 - **Across your machines:** [direct peers](docs/peers.md) connect Sessions without an account or relay.

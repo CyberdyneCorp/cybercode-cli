@@ -49,6 +49,8 @@ pub fn draw(f: &mut Frame, app: &App) {
     let area = f.area();
     f.render_widget(Block::default().style(base(app)), area);
     app.mouse.clear();
+    app.overview_visible
+        .store(false, std::sync::atomic::Ordering::Relaxed);
     let plan = layout::plan(
         area,
         &layout::Inputs {

@@ -9,18 +9,18 @@ expression: "shot(&mut app, 140, &ids)"
           ██║       ╚██╔╝  ██╔══██╗██╔══╝  ██╔══██╗    ██║     ██║   ██║██║  ██║██╔══╝              window unknown
           ╚██████╗   ██║   ██████╔╝███████╗██║  ██║    ╚██████╗╚██████╔╝██████╔╝███████╗            $0.00 spent
            ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝     ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝
-                                                                                                    ▼ MCP
-                                 1.0.0 · local-first coding agent                                   No MCP servers
-                                                                                                    add one: cyber mcp add
+                                                                                                    ▼ Sessions & agents
+                                 1.0.0 · local-first coding agent                                   Reachable Sessions not loaded
+                                                                                                    Open /agents
 
-                 Agent  Build                                                                       Peers  desk ●  nas ○
-                 Model  main test
-                 Mode   default                                                                     LSP
-                 Path   ~/work/app                                                                  LSPs will activate as files are read
-                 LSP    LSPs will activate as files are read
+                 Agent  Build                                                                       ▼ MCP
+                 Model  main test                                                                   No MCP servers
+                 Mode   default                                                                     add one: cyber mcp add
+                 Path   ~/work/app
+                 LSP    LSPs will activate as files are read                                        Peers  desk ●  nas ○
 
-
-                 Tips
+                                                                                                    LSP
+                 Tips                                                                               LSPs will activate as files are read
                  ctrl+p    command palette
                  ctrl+x b  show or hide the sidebar
                  ctrl+x m  switch model

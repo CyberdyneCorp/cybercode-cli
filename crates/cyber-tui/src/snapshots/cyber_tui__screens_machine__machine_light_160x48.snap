@@ -9,13 +9,17 @@ expression: screen
   This keeps the cache warm:                                                                                      100 tokens · window unknown
                                                                                                                   — spent
   1. Memoization: results are cached
-                                                                                                                  ▼ MCP
-  • avoids recomputation                                                                                          No MCP servers
-                                                                                                                  add one: cyber mcp add
+                                                                                                                  ▼ Sessions & agents
+  • avoids recomputation                                                                                          Reachable Sessions not loaded
+                                                                                                                  Open /agents
     rust
-    fn fib(n: u64) -> u64 { n }                                                                                   LSP
+    fn fib(n: u64) -> u64 { n }                                                                                   ▼ MCP
+                                                                                                                  No MCP servers
+  ▣ Build · main · 11.3s                                                                                          add one: cyber mcp add
+
+                                                                                                                  LSP
                                                                                                                   LSPs will activate as files are read
-  ▣ Build · main · 11.3s
+
                                                                                                                   ▼ Machine                         macOS 15.0
                                                                                                                   CPU  ██▌             18%
                                                                                                                        12 cores · 82% idle
@@ -24,10 +28,6 @@ expression: screen
                                                                                                                   Disk █████████████   93%
                                                                                                                        861 / 926 GB · 64.8 free
                                                                                                                   load 2.1 1.8 1.6
-
-
-
-
 
 
 
@@ -55,18 +55,18 @@ row 6: 2-4 fg=#5b6878 bg=#ffffff
 row 6: 5-16 fg=#1f2933 bg=#ffffff bold
 row 6: 17-111 fg=#1f2933 bg=#ffffff
 row 6: 112-159 fg=#1f2933 bg=#f6f6f7
-row 15: 0-111 fg=#1f2933 bg=#ffffff
-row 15: 112-113 fg=#1f2933 bg=#f6f6f7
-row 15: 114-118 fg=#5b6878 bg=#f6f6f7
-row 15: 119-132 fg=#1a7f37 bg=#d0d7de
-row 15: 133-159 fg=#1f2933 bg=#f6f6f7
-row 17: 0-111 fg=#1f2933 bg=#ffffff
-row 17: 112-113 fg=#1f2933 bg=#f6f6f7
-row 17: 114-118 fg=#5b6878 bg=#f6f6f7
-row 17: 119-132 fg=#9a6700 bg=#d0d7de
-row 17: 133-159 fg=#1f2933 bg=#f6f6f7
 row 19: 0-111 fg=#1f2933 bg=#ffffff
 row 19: 112-113 fg=#1f2933 bg=#f6f6f7
 row 19: 114-118 fg=#5b6878 bg=#f6f6f7
-row 19: 119-132 fg=#cf222e bg=#d0d7de
+row 19: 119-132 fg=#1a7f37 bg=#d0d7de
 row 19: 133-159 fg=#1f2933 bg=#f6f6f7
+row 21: 0-111 fg=#1f2933 bg=#ffffff
+row 21: 112-113 fg=#1f2933 bg=#f6f6f7
+row 21: 114-118 fg=#5b6878 bg=#f6f6f7
+row 21: 119-132 fg=#9a6700 bg=#d0d7de
+row 21: 133-159 fg=#1f2933 bg=#f6f6f7
+row 23: 0-111 fg=#1f2933 bg=#ffffff
+row 23: 112-113 fg=#1f2933 bg=#f6f6f7
+row 23: 114-118 fg=#5b6878 bg=#f6f6f7
+row 23: 119-132 fg=#cf222e bg=#d0d7de
+row 23: 133-159 fg=#1f2933 bg=#f6f6f7

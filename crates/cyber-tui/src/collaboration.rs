@@ -297,6 +297,7 @@ impl App {
         if session_id != self.session.id || generation != self.collaboration.generation {
             return;
         }
+        self.agents_observe_hub(result.as_ref().ok());
         let state = &mut self.collaboration;
         state.loading = false;
         match result {
