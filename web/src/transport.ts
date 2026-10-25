@@ -20,6 +20,7 @@ export interface Port {
   password(value: string): void;
   clear(): void;
   request<T>(path: string, options?: RequestOptions): Promise<T>;
+  bytes(path: string, options?: RequestOptions): Promise<Uint8Array>;
   stream(path: string, options: StreamOptions): AsyncIterable<EventEnvelope>;
 }
 export const operationKey = () => crypto.randomUUID();
@@ -57,6 +58,31 @@ export class HttpApi implements Port {
     } catch (error) {
       if (error instanceof ApiFault) throw error;
       throw new ApiFault("network");
+    } finally { clearTimeout(timer); this.#controllers.delete(controller); }
+  }
+  /** Owner-authenticated private PNG read; bytes never outlive logout authority. */
+  async bytes(path: string, options: RequestOptions = {}): Promise<Uint8Array> {
+    if (options.method && options.method !== "GET") throw new ApiFault("refused");
+    const controller = new AbortController(); this.#controllers.add(controller);
+    const epoch = this.#epoch; const timer = setTimeout(() => controller.abort(), 30_000);
+    try {
+      const response = await this.fetcher(this.url(path), this.init({ ...options, method: "GET", finishOnLogout: false }, controller.signal));
+      this.status(response.status, epoch);
+      if (response.headers.get("content-type")?.split(";")[0] !== "image/png" || !response.body || Number(response.headers.get("content-length")) > 8 * 1024 * 1024) throw new ApiFault("refused");
+      const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let length = 0;
+      try {
+        for (;;) {
+          const part = await reader.read(); if (part.done) break;
+          length += part.value.length; if (length > 8 * 1024 * 1024) throw new ApiFault("refused"); chunks.push(part.value);
+        }
+      } finally { await reader.cancel().catch(() => {}); }
+      if (epoch !== this.#epoch) throw new ApiFault("auth", 401);
+      const result = new Uint8Array(length); let offset = 0;
+      for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.length; }
+      return result;
+    } catch (error) {
+      if (epoch !== this.#epoch) throw new ApiFault("auth", 401);
+      if (error instanceof ApiFault) throw error; throw new ApiFault("network");
     } finally { clearTimeout(timer); this.#controllers.delete(controller); }
   }
   async *stream(path: string, options: StreamOptions): AsyncIterable<EventEnvelope> {

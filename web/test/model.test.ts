@@ -12,6 +12,7 @@ class Fake implements Port {
   sessions = [session("ses_one"), session("ses_two", "/other")];
   failReply = false; commitReply = false; failAttach = false; failPrompt = false; cleared = 0;
   hook?: (path: string, options: RequestOptions) => Promise<unknown> | undefined;
+  async bytes(): Promise<Uint8Array> { throw new Error("no private image in this fixture"); }
   password(): void {} clear(): void { this.cleared++; }
   async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
     this.calls.push({ path, options: structuredClone({ ...options, signal: undefined }) });
