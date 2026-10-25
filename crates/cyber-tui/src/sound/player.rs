@@ -201,7 +201,7 @@ pub trait Player: Send {
     fn play(&mut self, job: Job, failed: &Sender<Failure>);
     fn stop(&mut self);
     /// A player process is still running (tests).
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     fn busy(&self) -> bool {
         false
     }
@@ -326,7 +326,7 @@ impl Player for Process {
         kill(&mut playing.child);
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     fn busy(&self) -> bool {
         lock(&self.playing).child.is_some()
     }

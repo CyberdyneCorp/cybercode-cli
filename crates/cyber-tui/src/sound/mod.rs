@@ -219,6 +219,18 @@ pub fn cache_file(dir: &Path, pack: Pack, event: Alert, volume: u8) -> PathBuf {
     ))
 }
 
+/// The synthesizer version of a [`cache_file`] name, `None` for any other name.
+fn rendered_version(name: &str) -> Option<u32> {
+    let rest = Pack::ALL.iter().find_map(|pack| {
+        Alert::ALL
+            .iter()
+            .find_map(|event| name.strip_prefix(&format!("{}-{}-v", pack.name(), event.name())))
+    })?;
+    let (version, volume) = rest.strip_suffix(".wav")?.split_once('-')?;
+    volume.parse::<u8>().ok()?;
+    version.parse().ok()
+}
+
 /// The cached file, rendered first when it is missing. The file is written to a
 /// temporary name of its own and renamed, so a player never reads half of it; files of
 /// other synthesizer versions are removed then, best effort. Two renders of one file
@@ -253,13 +265,12 @@ pub fn ensure(dir: &Path, pack: Pack, event: Alert, volume: u8) -> std::io::Resu
     }
 }
 
-/// Remove rendered files of other synthesizer versions.
+/// Remove rendered files of other synthesizer versions. Only names [`cache_file`]
+/// could have produced are touched: any other file in the directory is kept.
 fn remove_stale(dir: &Path) {
-    let current = format!("-v{}-", synth::SYNTH_VERSION);
     for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
         let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name.ends_with(".wav") && !name.contains(&current) {
+        if rendered_version(&name.to_string_lossy()).is_some_and(|v| v != synth::SYNTH_VERSION) {
             let _ = std::fs::remove_file(entry.path());
         }
     }
@@ -671,7 +682,7 @@ impl Sounds {
     }
 
     /// A player process is still running.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub fn busy(&self) -> bool {
         self.player.busy()
     }
@@ -804,12 +815,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let stale = dir.path().join("cyber-done-v0-60.wav");
         let other = dir.path().join("notes.txt");
+        // A user's own sound in the cache directory is not a rendered file.
+        let mine = dir.path().join("ping.wav");
         std::fs::write(&stale, b"old").unwrap();
         std::fs::write(&other, b"keep").unwrap();
+        std::fs::write(&mine, b"RIFF").unwrap();
         let first = ensure(dir.path(), Pack::Cyber, Alert::Done, 60).unwrap();
         assert_eq!(first.file_name().unwrap(), "cyber-done-v1-60.wav");
         assert!(!stale.exists(), "a stale version is removed");
         assert!(other.exists());
+        assert!(mine.exists(), "only rendered files are removed");
         // A second request reuses the file: a marker written into it stays.
         std::fs::write(&first, b"marker").unwrap();
         let again = ensure(dir.path(), Pack::Cyber, Alert::Done, 60).unwrap();
