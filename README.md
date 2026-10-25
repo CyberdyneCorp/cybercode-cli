@@ -158,7 +158,7 @@ Other limits to consider:
 
 - **Acceptance is ongoing:** the full local-model baseline, Windows enforcement and several P1 migration, memory and code-intelligence paths remain open.
 - **Automation has edges:** reserved workflow budgets, finished-agent transcript retention and persistent cron-style scheduling remain unfinished; agent teams and the project hub are experimental.
-- **Native computer use is experimental:** macOS 14+ only, off by default; real desktop behavior and release signing still need acceptance.
+- **Native computer use is experimental:** macOS 14+ only, off by default; controlled capture, input and Stop passed. Other layouts, live OS revocation and release signing remain unverified.
 - **Remote access is private:** physical-device certificate trust is an operator check. Relay, paired Devices and mobile apps remain roadmap work.
 
 Use the [feature reference](docs/features.md), [P1 evidence](docs/implementation/p1-status.md), [P2 evidence](docs/implementation/p2-status.md) and [roadmap](ROADMAP.md) for exact scope. A planned OpenSpec requirement is not proof of implementation.

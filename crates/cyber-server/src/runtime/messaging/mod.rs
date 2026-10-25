@@ -146,6 +146,13 @@ pub struct ReachableSession {
     /// caller is `refuse`.
     #[serde(rename = "canReceive")]
     pub can_receive: bool,
+    /// The Workflow Run that created this Session: a workflow agent of the caller.
+    #[serde(
+        default,
+        rename = "workflowRunId",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub workflow_run_id: Option<String>,
 }
 
 /// The messaging facade every surface (tools, HTTP, MCP serve, the CLI over HTTP) uses.
@@ -318,6 +325,7 @@ impl Messaging {
                     state,
                     location: t.candidate.location,
                     can_receive,
+                    workflow_run_id: t.workflow_run_id,
                 }
             })
             .collect()

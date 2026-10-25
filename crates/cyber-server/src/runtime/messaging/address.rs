@@ -62,6 +62,9 @@ pub struct Target {
     /// The peer of an `X@P` target. Its candidate is the address itself until the peer
     /// resolves `X`: `session_id` and `name` are `X@P`, which `message.send` checks.
     pub peer: Option<String>,
+    /// The Workflow Run that created the Session (a workflow agent); only the reachable
+    /// listing reads it.
+    pub workflow_run_id: Option<String>,
 }
 
 impl Target {
@@ -82,6 +85,7 @@ impl Target {
             archived: false,
             inbound: None,
             peer: Some(peer.to_owned()),
+            workflow_run_id: None,
         }
     }
 }
@@ -228,6 +232,7 @@ fn target(row: &rusqlite::Row<'_>, caller: Option<&str>) -> rusqlite::Result<Tar
         archived: row.get::<_, i64>(5)? != 0,
         inbound: inbound_override(row.get(6)?, row.get(7)?),
         peer: None,
+        workflow_run_id: None,
     })
 }
 
@@ -445,7 +450,10 @@ pub fn reply_address(db: &Connection, target: &str, sender: &str) -> rusqlite::R
 /// The Sessions `caller` can message, newest first, at most [`REACHABLE_LIMIT`]: its
 /// subagents (archived ones too, which cannot receive) and every other non-archived root
 /// Session, optionally in one `directory`. Each is addressed by its name when that name
-/// resolves to it from the caller, else by its ID.
+/// resolves to it from the caller, else by its ID. A member of the caller's team is a
+/// teammate named by its member name, which the team tier resolves first; a workflow
+/// agent's Session carries its run (`cross-session-messaging` → Reachable session
+/// provenance).
 pub fn reachable(
     db: &Connection,
     caller: Option<&str>,
@@ -457,7 +465,11 @@ pub fn reachable(
               WHERE o.parent_id IS NULL AND o.archived = 0 AND o.title = s.title),
             (SELECT count(*) FROM session c
               WHERE c.parent_id = ?1 AND c.archived = 0
-                AND c.subagent_name = coalesce(s.subagent_name, s.title))
+                AND c.subagent_name = coalesce(s.subagent_name, s.title)),
+            s.workflow_run_id,
+            (SELECT m.name FROM team_member c
+               JOIN team_member m ON m.team_id = c.team_id AND m.session_id <> c.session_id
+              WHERE c.session_id = ?1 AND m.session_id = s.id)
          FROM session s
          WHERE ((?1 IS NOT NULL AND s.parent_id = ?1)
                 OR (s.parent_id IS NULL AND s.archived = 0 AND s.id IS NOT ?1))
@@ -467,10 +479,16 @@ pub fn reachable(
     stmt.query_map(params![caller, directory, REACHABLE_LIMIT], |row| {
         let mut t = target(row, caller)?;
         let (roots, subagents): (i64, i64) = (row.get(NEXT_COLUMN)?, row.get(NEXT_COLUMN + 1)?);
+        t.workflow_run_id = row.get(NEXT_COLUMN + 2)?;
+        if let Some(member) = row.get::<_, Option<String>>(NEXT_COLUMN + 3)? {
+            t.candidate.kind = AddressKind::Teammate;
+            t.candidate.name = member;
+        }
         let unique = match t.candidate.kind {
             AddressKind::Subagent => {
                 !t.archived && subagents == 1 && row.get::<_, Option<String>>(4)?.is_some()
             }
+            AddressKind::Teammate => true,
             _ => roots == 1 && subagents == 0,
         };
         if unique && addressable_name(&t.candidate.name) {
@@ -500,6 +518,7 @@ mod tests {
             archived: false,
             inbound: None,
             peer: None,
+            workflow_run_id: None,
         }
     }
 
@@ -596,6 +615,63 @@ mod tests {
                 assert_eq!(reply_address(db, "ses_ui", "ses_lead").unwrap(), "lead");
                 assert_eq!(reply_address(db, "ses_out", "ses_ui").unwrap(), "adhoc/ui");
                 assert_eq!(teammate_name(db, "ses_ui", "ses_ui").unwrap(), None);
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn the_listing_tags_teammates_and_workflow_agents() {
+        let store = team_store();
+        store
+            .transaction(|tx| {
+                tx.execute_batch(
+                    "INSERT INTO session (id, title, directory, parent_id, subagent_name, workflow_run_id, agent, model, mode, created_at, updated_at, last_seq)
+                     VALUES ('ses_wf', 'review (@build)', '/r', 'ses_lead', 'reviewer', 'wfr_1', 'build', 'test/main', 'default', 6, 6, -1),
+                            ('ses_sub', 'tests (@build)', '/r', 'ses_lead', 'tests', NULL, 'build', 'test/main', 'default', 7, 7, -1);",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        store
+            .read(|db| {
+                let listed = |caller: &str| {
+                    reachable(db, Some(caller), None)
+                        .unwrap()
+                        .into_iter()
+                        .map(|t| {
+                            let id = t.candidate.session_id.clone();
+                            (id, (t.address, t.candidate.kind, t.workflow_run_id))
+                        })
+                        .collect::<std::collections::HashMap<_, _>>()
+                };
+                let lead = listed("ses_lead");
+                assert_eq!(lead["ses_api"], ("api".into(), AddressKind::Teammate, None));
+                // A stopped member is still a teammate.
+                assert_eq!(lead["ses_docs"].1, AddressKind::Teammate);
+                assert_eq!(
+                    lead["ses_wf"],
+                    (
+                        "reviewer".into(),
+                        AddressKind::Subagent,
+                        Some("wfr_1".into())
+                    )
+                );
+                assert_eq!(
+                    lead["ses_sub"],
+                    ("tests".into(), AddressKind::Subagent, None)
+                );
+                // Every listed teammate address resolves to that teammate.
+                let target = resolve(db, Some("ses_lead"), "api").unwrap().unwrap();
+                assert_eq!(target.candidate.session_id, "ses_api");
+                // Outside the team the members are ordinary roots named by their title.
+                let out = listed("ses_out");
+                assert_eq!(
+                    out["ses_api"],
+                    ("adhoc/api".into(), AddressKind::Local, None)
+                );
+                assert_eq!(out["ses_lead"].1, AddressKind::Local);
+                assert!(!out.contains_key("ses_wf"));
                 Ok(())
             })
             .unwrap();

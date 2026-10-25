@@ -58,6 +58,8 @@ pub enum List {
     Messages,
     /// The members of `/team`.
     Team,
+    /// The rows of `/agents`.
+    Directory,
     /// The rows of `/tree`.
     Tree,
     /// The Settings Config rows.
@@ -421,6 +423,7 @@ impl App {
             | List::Themes
             | List::Messages
             | List::Team
+            | List::Directory
             | List::Tree
             | List::Config
             | List::OutputStyles => self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
@@ -436,6 +439,10 @@ impl App {
             (List::Themes, Overlay::Themes(_)) => self.select_theme(index),
             (List::Runs | List::Agents, Overlay::Workflows) => self.select_run_row(list, index),
             (List::Messages, Overlay::Messages) => self.select_message(index),
+            // An open editor takes the keys.
+            (List::Directory, Overlay::Agents) if self.directory.editor.is_none() => {
+                self.directory.select_index(index)
+            }
             (List::Sidebar, Overlay::None) => self.select_sidebar_row(index),
             _ => self.select_list_row(list, index),
         }
@@ -461,6 +468,7 @@ impl App {
             (List::Runs, Overlay::Workflows) => self.workflows.current().map(|r| r.id.clone()),
             (List::Agents, Overlay::Workflows) => self.selected_agent(),
             (List::Messages, Overlay::Messages) => self.messaging.selected.clone(),
+            (List::Directory, Overlay::Agents) => self.directory.current().map(|e| e.key.clone()),
             (List::Team, Overlay::Team) => self.sidebar.team.ready().and_then(|team| {
                 let member = team.members.get(self.team.selected)?;
                 Some(member.session_id.clone())
@@ -641,6 +649,7 @@ fn wheel_moves(overlay: &Overlay) -> bool {
             | Overlay::Messages
             | Overlay::Team
             | Overlay::Collaboration
+            | Overlay::Agents
             | Overlay::Tree
     )
 }

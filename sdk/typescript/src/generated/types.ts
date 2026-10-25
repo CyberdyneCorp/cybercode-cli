@@ -3351,6 +3351,8 @@ export type ReachableSession = {
    * caller is `refuse`.
    */
   canReceive: boolean;
+  /** The Workflow Run that created this Session: a workflow agent of the caller. */
+  workflowRunId?: string | null;
 };
 
 /** What a reachable Session is doing. */

@@ -269,6 +269,10 @@ pub const BUILTIN: &[(&str, &str)] = &[
         "messages",
         "Show messages to and from other Sessions; release or drop held ones",
     ),
+    (
+        "agents",
+        "Sessions this one can message: message, watch, open, rename",
+    ),
     ("files", "Browse project files"),
     ("settings", "Open settings"),
     ("status", "Show Session, server and machine status"),

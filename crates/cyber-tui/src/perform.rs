@@ -48,6 +48,20 @@ pub enum Msg {
         generation: u64,
         result: Box<Result<crate::collaboration::Snapshot, String>>,
     },
+    /// One `/agents` source for `session_id`.
+    Directory {
+        session_id: String,
+        generation: u64,
+        source: crate::agents::Source,
+        result: Result<crate::agents::Fetched, String>,
+    },
+    /// An `/agents` row action finished: the outcome to show, or why it failed.
+    DirectoryDone {
+        session_id: String,
+        /// The action's ID ([`crate::agents::Job`]).
+        id: u64,
+        result: Result<String, crate::agents::Failure>,
+    },
     Snapshot {
         session: Session,
         items: Vec<Item>,
@@ -950,6 +964,8 @@ pub async fn perform_owned(
         | Action::Workflow(_)
         | Action::Team(_)
         | Action::Collaboration(_)
+        | Action::Directory(_)
+        | Action::DirectoryOp(_)
         | Action::Branch(_)
         | Action::Login(_)
         | Action::OutputStyle(_)
@@ -981,6 +997,8 @@ async fn scheduled(client: &Client, session: &Session, action: Action) -> Result
         Action::Collaboration(request) => {
             crate::collaboration::perform(client, session, request).await
         }
+        Action::Directory(request) => crate::agents::perform(client, session, request).await,
+        Action::DirectoryOp(job) => crate::agents::perform_op(client, session, job).await,
         Action::Goal(request) => crate::goals::perform(client, request).await,
         Action::Login(request) => crate::login::perform(client, request).await,
         Action::OutputStyle(request) => crate::output_styles::perform(client, request).await,

@@ -1,0 +1,52 @@
+---
+source: crates/cyber-tui/src/screens_agents.rs
+expression: shown
+---
+╭ Agents · review ──────────────────────────────────────────────────────────────────────────────────────[all]  sessions   subagents   teammates   peers   hub  ╮
+│ / type to filter by address, name, kind or location                                                                                                          │
+│ This server                                                                                                                                                  │
+│  ○ tests                      subagent       idle          open   ~/work/app                                                                                 │
+│  ○ migration                  session        idle          open   ~/work/app/services/db                                                                     │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│ ↑↓ move · type filter · tab kind · enter message · ctrl+w watch · ctrl+o open · ctrl+r rename · ctrl+g held messages · ctrl+l refresh · esc clear/close      │
+│                                                                                                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ~/work/app                                                                              $0.00  ctrl+p commands

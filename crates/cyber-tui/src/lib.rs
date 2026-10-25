@@ -1,6 +1,7 @@
 //! The terminal UI (`tui`). It talks to the server only through the public API.
 
 mod admissions;
+mod agents;
 mod app;
 mod attachments;
 pub mod books;
@@ -54,6 +55,8 @@ mod workflows;
 mod screens;
 #[cfg(test)]
 mod screens_a11y;
+#[cfg(test)]
+mod screens_agents;
 #[cfg(test)]
 mod screens_attachments;
 #[cfg(test)]

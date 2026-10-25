@@ -203,6 +203,10 @@ pub enum Action {
     /// `/team`, `/team start|stop|resume` (`agent-teams`).
     Team(crate::team::Request),
     Collaboration(crate::collaboration::Request),
+    /// `/agents`: read one source of the directory.
+    Directory(crate::agents::Request),
+    /// `/agents`: message, watch or rename the selected row through its route.
+    DirectoryOp(crate::agents::Job),
     /// `/goal` (`goals`).
     Goal(crate::goals::GoalRequest),
     /// `/tree` and `/label` (`tui` → Branch tree view).
@@ -353,6 +357,8 @@ pub enum Overlay {
     /// `/team`: the members and the task board; the team is `Sidebar::team`.
     Team,
     Collaboration,
+    /// `/agents`: the Sessions this one can message; its state is `App::directory`.
+    Agents,
     /// `/tree`: the branch tree; its state is `App::branches`.
     Tree,
     /// `/login`: a provider sign-in; its state is `App::login`.
@@ -516,6 +522,8 @@ pub struct App {
     pub team: crate::team::TeamState,
     pub collaboration: crate::collaboration::PanelState,
     pub computer: crate::computer::State,
+    /// The `/agents` directory's sources, filter, selection and editor.
+    pub directory: crate::agents::Directory,
     /// The Session's current Goal, for the footer.
     pub goals: crate::goals::Goals,
     /// The `/login` dialog.
@@ -613,6 +621,7 @@ impl App {
             team: Default::default(),
             collaboration: Default::default(),
             computer: Default::default(),
+            directory: Default::default(),
             goals: Default::default(),
             login: Default::default(),
             output_styles: Default::default(),
@@ -754,7 +763,11 @@ impl App {
         self.forget_settings();
         self.messaging = Default::default();
         self.collaboration.forget();
-        if matches!(self.overlay, Overlay::Messages | Overlay::Collaboration) {
+        self.directory.forget();
+        if matches!(
+            self.overlay,
+            Overlay::Messages | Overlay::Collaboration | Overlay::Agents
+        ) {
             self.overlay = Overlay::None;
         }
         self.progress.forget_session();
@@ -1005,6 +1018,7 @@ impl App {
             Overlay::Messages => self.messages_key(key),
             Overlay::Team => self.team_key(key),
             Overlay::Collaboration => self.collaboration_key(key),
+            Overlay::Agents => self.agents_key(key),
             Overlay::Tree => self.tree_key(key),
         }
     }
@@ -1110,6 +1124,7 @@ impl App {
             "tool_details" => self.expand_tools = !self.expand_tools,
             "background_command" => return self.move_to_background(),
             "messages_view" => return self.open_messages(),
+            "agents_view" => return self.open_agents(),
             _ => {}
         }
         Vec::new()
@@ -1294,7 +1309,11 @@ impl App {
     }
 
     pub fn on_paste(&mut self, text: &str) {
-        if self.rename_paste(text) || self.login_paste(text) || self.collaboration_paste(text) {
+        if self.rename_paste(text)
+            || self.login_paste(text)
+            || self.collaboration_paste(text)
+            || self.agents_paste(text)
+        {
             return;
         }
         if let Overlay::Memory = self.overlay {
@@ -1810,6 +1829,7 @@ impl App {
             "files" => self.open_explorer(),
             "workflows" => self.open_workflows(),
             "messages" => self.open_messages(),
+            "agents" => self.open_agents(),
             "collab" => self.open_collaboration(),
             "help" => {
                 self.overlay = Overlay::Help;

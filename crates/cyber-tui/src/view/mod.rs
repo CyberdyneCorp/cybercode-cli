@@ -1,5 +1,6 @@
 //! Drawing (`tui` → Message and part rendering, Permission prompt, Question prompt).
 
+mod agents;
 mod branches;
 mod collaboration;
 mod composer;
@@ -75,18 +76,21 @@ pub fn draw(f: &mut Frame, app: &App) {
             | Overlay::Messages
             | Overlay::Team
             | Overlay::Collaboration
+            | Overlay::Agents
     ) {
         // Full screen over the transcript, composer and sidebar; the footer stays.
         app.set_screen_links(Vec::new());
         app.progress.set_on_screen(false);
-        let panel = recap(
-            f,
-            app,
-            Rect {
-                height: area.height.saturating_sub(plan.footer.height),
-                ..area
-            },
-        );
+        let panel = Rect {
+            height: area.height.saturating_sub(plan.footer.height),
+            ..area
+        };
+        let panel = if app.computer.banner(&app.session.id).is_some() {
+            banner(f, app, panel)
+        } else {
+            panel
+        };
+        let panel = recap(f, app, panel);
         full_screen(f, app, panel);
         footer::draw(f, app, plan.footer, plan.compact_footer);
         return;
@@ -128,7 +132,8 @@ pub fn draw(f: &mut Frame, app: &App) {
         | Overlay::Workflows
         | Overlay::Messages
         | Overlay::Team
-        | Overlay::Collaboration => {}
+        | Overlay::Collaboration
+        | Overlay::Agents => {}
         Overlay::Tree => branches::draw(f, app, area),
         Overlay::Themes(s) => themes::draw(f, app, s, area),
         Overlay::Picker(p) => overlays::picker(f, app, p, area),
@@ -156,6 +161,49 @@ pub fn draw(f: &mut Frame, app: &App) {
     }
 }
 
+/// Filter chips: `[current]` selected, the others muted, e.g. `[all] in  out  held`.
+pub(super) fn filter_chips<T: PartialEq + Copy>(
+    all: &[T],
+    current: T,
+    label: impl Fn(T) -> &'static str,
+    t: &crate::theme::Tokens,
+) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    for &filter in all {
+        let label = label(filter);
+        if filter == current {
+            spans.push(Span::styled(format!("[{label}]"), t.selected()));
+        } else {
+            spans.push(Span::styled(
+                format!(" {label} "),
+                Style::default().fg(t.text_muted),
+            ));
+        }
+        spans.push(Span::raw(" "));
+    }
+    spans
+}
+
+/// Key hints joined with ` · `, wrapped to `width`; a wrapped line starts with ` · `.
+pub(super) fn key_hints(keys: &[&str], width: usize) -> Vec<Line<'static>> {
+    use unicode_width::UnicodeWidthStr;
+    let mut lines = vec![String::from(" ")];
+    for key in keys {
+        let last = lines.last_mut().expect("a line");
+        let sep = if last.trim().is_empty() { "" } else { " · " };
+        if last.width() + sep.len() + key.width() > width && !last.trim().is_empty() {
+            lines.push(format!(" · {key}"));
+        } else {
+            last.push_str(sep);
+            last.push_str(key);
+        }
+    }
+    lines
+        .into_iter()
+        .map(|l| Line::from(Span::raw(l)))
+        .collect()
+}
+
 /// Register `target` over the lines `lines` of a paragraph drawn in `body` from its
 /// line `skip` on; the part scrolled away or cut off below takes no clicks.
 pub(super) fn push_lines(app: &App, body: Rect, lines: Range<usize>, skip: usize, target: Target) {
@@ -181,6 +229,7 @@ fn full_screen(f: &mut Frame, app: &App, panel: Rect) {
         Overlay::Messages => messaging::view(f, app, panel),
         Overlay::Team => team::view(f, app, panel),
         Overlay::Collaboration => collaboration::view(f, app, panel),
+        Overlay::Agents => agents::view(f, app, panel),
         _ => settings::draw(f, app, panel),
     }
 }

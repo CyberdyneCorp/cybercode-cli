@@ -72,3 +72,11 @@ Before running this plan, the owner must explicitly agree to the controlled test
 9. Stop all test grants and close the disposable window/profile. Check private retention/expiry and that ordinary exports do not include screenshot bytes. Do not publish private captures as acceptance evidence without separate owner review.
 
 Record actual binary identity, OS/display configuration, permission decisions, fixture results and operation IDs here after execution. Fixture tests must remain distinct from these physical results.
+
+## Cross-platform CI before the newer-main integration
+
+[Run 40191525061](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40191525061) passed all 16 checks on `d72c5829704b141dab49f7ea79979a02cf511caf`: Linux/macOS workspace nextest and doctests, Windows native tests and AppContainer isolation, all eight release builds, SDK, browser and specification checks. The Linux nested-private-root bubblewrap execution regression passed there. The subsequent merge of PR42 from main requires its own fresh integration CI; the earlier green run is not substituted for it.
+
+Additional local verification retained an observed limitation: ordinary aggregate OTLP `cargo test`, both parallel and serial, returned 19/20 because its process-global shutdown-log count included other cases. The failing case passed alone, and all 20 passed under configured nextest process isolation. No origin claim is made for those aggregate results.
+
+The PR42 integration passed 535 TUI tests with 3 explicit ignores (one plugin subprocess control and two Linux file-vault cases that avoid macOS vault writes). The new busy Agents editor regression keeps the native warning visible and routes focused Ctrl+Alt+Esc to global Stop without losing the draft. TUI all-target Clippy, OpenAPI source consistency, SDK generation/typecheck and formatting passed; strict OpenSpec validation passed 98/98. Fresh integration CI remains required.
