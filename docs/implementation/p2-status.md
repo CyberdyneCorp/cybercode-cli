@@ -1,8 +1,8 @@
 # P2 implementation status
 
-## Native computer use (experimental; physical acceptance pending)
+## Native computer use (experimental; input acceptance pending)
 
-The macOS-first implementation adds compiled ScreenCaptureKit/CoreGraphics capture/input, global-only opt-in, local owner target review, expiring grants, human presence, independent Stop, private frame retention and durable native receipts. CLI/API/model-tool, TUI banner/Stop and browser owner controls are described in [Native computer use](../computer-use.md). Fake-native tests and native SDK compile checks are separate from real desktop acceptance: live screenshot/input, permissions, display/keyboard layouts and release signing remain pending explicit controlled-device participation. See [tasks](../../openspec/changes/add-native-computer-use/tasks.md).
+The macOS-first implementation adds compiled ScreenCaptureKit/CoreGraphics capture/input, global-only opt-in, local owner target review, expiring grants, human presence, independent Stop, private frame retention and durable native receipts. CLI/API/model-tool, TUI banner/Stop and browser owner controls are described in [Native computer use](../computer-use.md). Fake-native tests and native SDK compile checks remain separate from live acceptance. Authorized disposable-window ScreenCaptureKit capture and local vision routing passed on macOS26.7/arm64; mouse/key actions remain held on Accessibility permission. Other layouts, full input/Stop acceptance and release signing remain pending; see the [live evidence](../measurements/native-computer-acceptance.md). See [tasks](../../openspec/changes/add-native-computer-use/tasks.md).
 
 ## Verified solve (2026-10-23)
 

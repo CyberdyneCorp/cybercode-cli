@@ -2,7 +2,7 @@
 
 Cyber can observe and operate a native application through the `computer` model tool on macOS 14+. The capability is off by default. Linux, Windows and older macOS return explicit unsupported results; there is no shell, AppleScript, clipboard or external helper fallback. Native ScreenCaptureKit/CoreGraphics code is compiled into the server binary, so installed users do not need Xcode, Node or a runtime compiler.
 
-The implementation has deterministic fake-adapter tests and native compile checks. **Live desktop acceptance is pending**: no real screenshots, OS permission prompts or input injection were performed during automated development. The [acceptance record and controlled-device plan](measurements/native-computer-acceptance.md) separates these checks from the remaining physical tests. Do not treat these checks as proof that a particular display layout, keyboard layout or signed distribution has passed native acceptance.
+The implementation has deterministic fake-adapter tests and native compile checks. Controlled live testing has verified application-window capture and delivery to a local vision model on macOS 26.7; **mouse and keyboard acceptance is still pending Accessibility permission**. The [acceptance record and controlled-device plan](measurements/native-computer-acceptance.md) separates actual device results from fixtures and remaining checks. Other display/keyboard layouts and signed distribution remain unaccepted.
 
 ## Enable and inspect
 

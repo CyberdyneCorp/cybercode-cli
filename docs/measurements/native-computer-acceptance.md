@@ -1,6 +1,6 @@
 # Native computer acceptance
 
-Status: implementation checks passed; **physical macOS acceptance pending**. No real desktop capture, input injection or operating-system consent prompt has been performed for this change.
+Status: automated implementation checks passed; **controlled live application capture passed, mouse/keyboard acceptance pending Accessibility permission**. The owner explicitly authorized the disposable-window test on 2026-10-25. OS setup was deliberately requested; restarting only the isolated server enabled Screen Recording. No native input has been injected.
 
 ## Local evidence
 
@@ -8,14 +8,14 @@ Status: implementation checks passed; **physical macOS acceptance pending**. No 
 |---|---|
 | `cargo test -p cyber-computer --lib` | 18 passed: geometry, input bounds/redaction, expiring grants, rate limits, cross-controller/session fencing, supervisor and independent Stop races |
 | `cargo test -p cyber-core --test config native` | 2 passed: global-only authority and managed feature locks |
-| Server `runtime::computer::tests` | 15 passed: private artifacts, incomplete writes, retention, durable intent/settlement/replay/unknown acknowledgement, cross-Runtime host lease and busy-worker Stop |
-| `cargo test -p cyber-server --test computer` | 2 passed with fake native adapter: real TCP auth/Location/target review/global Stop, self-approval and model/agent/Mode widening refusal, durable typed-text privacy |
+| Server `runtime::computer::tests` | 16 passed: private artifacts, incomplete writes, retention, durable intent/settlement/replay/unknown acknowledgement, cross-Runtime host lease and busy-worker Stop |
+| `cargo test -p cyber-server --test computer` | 3 passed with fake native adapter: Session deletion with retention disabled, real TCP auth/Location/target review/global Stop, self-approval and model/agent/Mode widening refusal, durable typed-text privacy |
 | Exact Session presence | 3 passed, including disconnect/reconnect and lease expiry before reattachment; grants and outstanding reviews cannot revive |
 | Tool schema, TUI control state, CLI/doctor, client-owned presence stream | 5 focused tests passed; one core settings unit also passed |
 | Clippy | Passed for all targets of cyber-computer/core/server/tools/app/client/cli/tui with warnings denied; final TUI/helper changes checked again |
 | macOS adapter | Compiled with local SDK; standalone Objective-C syntax check passed. This does not prove native capture/input behavior. |
 | OpenAPI / SDK generation | Export test and generator consistency passed; TypeScript typecheck passed |
-| SDK suite | 117 passed, 8 skipped because `CYBER_BIN` was unset; no live account/provider claims |
+| SDK suite | 124 passed against the frozen CLI; 2 account/hub cases skip macOS to avoid native Keychain writes; no live account/provider claims |
 | Browser modules / private transport | 44 passed; typecheck and generated bundle check passed |
 
 Three focused Chromium dashboard scenarios passed against the frozen built CLI and its embedded assets, including global cross-Session banner, target review/arming, authenticated private PNG rendering under the actual CSP and logout Stop. Native HTTP responses were simulated; the fixture did not call an OS adapter or request consent. The three doctor/feature-list regressions exposed by the first CI run also pass locally.
@@ -23,6 +23,17 @@ Three focused Chromium dashboard scenarios passed against the frozen built CLI a
 Independent review identified and fixed reconnecting grants or target reviews, a missing final drag Stop checkpoint, model/agent authority switching during control, and screenshot cleanup that released quota before deleting retained bytes. Regression tests cover stale reviews during blocked target resolution, observed OS revocation/restoration, failed cleanup and a cleanup backlog exceeding 500 rows. Final platform CI results remain a separate merge gate.
 
 Only `aarch64-apple-darwin` is installed locally. Unsupported-platform execution, other architectures, signed distribution and full workspace verification rely on CI/release acceptance; they are not claimed as locally tested. Test counts are for this change's recorded checks, not current repository-wide totals.
+
+## Controlled live capture evidence (2026-10-25)
+
+- Host: macOS 26.7, arm64. Opaque disposable Cocoa application only; no personal applications or whole-display capture.
+- Frozen executable SHA-256: `0fa107ad9ea6db0736979bf1ac955065c6ce52f8b047a76288452e23e7f10556`. It remained unchanged through OS setup and the isolated-server restart. Later Session-deletion changes are covered by separate regression tests; these captures do not claim to exercise a subsequently rebuilt executable.
+- Two real `computer` tool screenshots passed through the production runtime and ScreenCaptureKit adapter, followed by acknowledged global Stop. Frame dimensions were 1200×1144 pixels for a 600×572-point window (2× scale, rotation 0).
+- First frame: `cuf_01M5RSYVXM576NP22H2KBSEVF5`, 201274 bytes, SHA-256 `93b698905badcbd125797fe663d3d0f10cc26e44d16647c0364ba19a5011d711`.
+- Visible-canary capture after a fixture-only appearance correction: `cuf_01M5RT7C2YY1GVP1CWT1KGM9M8`, 218961 bytes, SHA-256 `3bfdbcfaa942cd0b7e9d69ab87209996b659c881f286fa3340cfb74b35f0f78a`.
+- Both images were inspected privately and contained only the fixture. Button/counter, text field, scroll rows and drag canvas were visible in the second image. Screenshot bytes are not published as evidence.
+- The scripted loopback vision provider received an authorized PNG projection. No external provider or paid-model request was used.
+- Read-only native health after restart: Screen Recording granted, Accessibility denied. Mouse/key injection, occlusion/focus/geometry negatives and Stop during actual input remain unperformed; permission settings alone are not recorded as a passing input test.
 
 ## Controlled device plan for owner review
 
