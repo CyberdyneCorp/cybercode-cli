@@ -36,7 +36,7 @@ Publication has separate durable intent/settlement records. A lost command ackno
 
 ## Limits requiring deployment acceptance
 
-- CyberdyneAuth is offline. Fresh issuer/membership revocation, account snapshot and replay-generation behavior are covered with signed local issuer fixtures; real login, organization/guest policy and live revocation still require authenticated deployment acceptance. Hub-linked contributions fail closed during this outage. Local commits do not require a Cyber Account.
+- CyberdyneAuth was unavailable during this acceptance (user-reported outage). Fresh issuer/membership revocation, account snapshot and replay-generation behavior are covered with signed local issuer fixtures; real login, organization/guest policy and live revocation still require authenticated deployment acceptance. Hub-linked contributions fail closed during this outage. Local commits do not require a Cyber Account.
 - GitHub publication acceptance uses local Git/GitHub executable adapters. No real remote push or PR creation is performed by these tests. Real credential grants and remote publication require owner acceptance in a disposable repository.
 - Local OS sandbox acceptance was run on macOS. Linux and Windows verification remains for platform CI; the POSIX publication adapter test explicitly skips Windows.
 - Verification uses the owner's local toolchain and configured sandbox, not a reproducible-container claim. Cost reports distinguish actual priced usage, unpriced/incomplete usage and unavailable prediction; a budget ceiling is not an estimated bill.

@@ -16,7 +16,7 @@ P2 evidence lives here and is kept separate from the P1 files (`p1-status.md`, `
 
 ## Verified complementary integrations (2026-10-24)
 
-The `integrate` workflow and owner integration queue compose pinned local commits in managed checkouts, verify the combined source with literal owner-selected argv, and request an independent read-only reviewer. CLI, owner API/SDK and dashboard expose immutable batches and explicit publication. See [usage and limitations](../verified-integrations.md). Live CyberdyneAuth attribution remains pending during the issuer outage; local unattributed commits require no account. Implementation acceptance is recorded in the active [tasks](../../openspec/changes/add-verified-integration-queue/tasks.md).
+The `integrate` workflow and owner integration queue compose pinned local commits in managed checkouts, verify the combined source with literal owner-selected argv, and request an independent read-only reviewer. CLI, owner API/SDK and dashboard expose immutable batches and explicit publication. See [usage and limitations](../verified-integrations.md). Live CyberdyneAuth attribution remains unverified after the user-reported issuer outage; local unattributed commits require no account. Implementation acceptance is recorded in the active [tasks](../../openspec/changes/add-verified-integration-queue/tasks.md).
 
 ## Goals, slice 2 (`implement-m2-3-goals`, 2026-10-22)
 

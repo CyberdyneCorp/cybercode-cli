@@ -6,7 +6,7 @@ Status: implementation checks passed; **physical macOS acceptance pending**. No 
 
 | Check | Result |
 |---|---|
-| `cargo test -p cyber-computer --lib` | 15 passed: geometry, input bounds/redaction, expiring grants, rate limits, cross-controller/session fencing, supervisor and independent Stop races |
+| `cargo test -p cyber-computer --lib` | 18 passed: geometry, input bounds/redaction, expiring grants, rate limits, cross-controller/session fencing, supervisor and independent Stop races |
 | `cargo test -p cyber-core --test config native` | 2 passed: global-only authority and managed feature locks |
 | Server `runtime::computer::tests` | 15 passed: private artifacts, incomplete writes, retention, durable intent/settlement/replay/unknown acknowledgement, cross-Runtime host lease and busy-worker Stop |
 | `cargo test -p cyber-server --test computer` | 2 passed with fake native adapter: real TCP auth/Location/target review/global Stop, self-approval and model/agent/Mode widening refusal, durable typed-text privacy |
@@ -16,7 +16,7 @@ Status: implementation checks passed; **physical macOS acceptance pending**. No 
 | macOS adapter | Compiled with local SDK; standalone Objective-C syntax check passed. This does not prove native capture/input behavior. |
 | OpenAPI / SDK generation | Export test and generator consistency passed; TypeScript typecheck passed |
 | SDK suite | 117 passed, 8 skipped because `CYBER_BIN` was unset; no live account/provider claims |
-| Browser modules / private transport | 40 passed; typecheck and generated bundle check passed |
+| Browser modules / private transport | 44 passed; typecheck and generated bundle check passed |
 
 Three focused Chromium dashboard scenarios passed against the frozen built CLI and its embedded assets, including global cross-Session banner, target review/arming, authenticated private PNG rendering under the actual CSP and logout Stop. Native HTTP responses were simulated; the fixture did not call an OS adapter or request consent. The three doctor/feature-list regressions exposed by the first CI run also pass locally.
 

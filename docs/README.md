@@ -21,6 +21,7 @@ Start with the [project README](../README.md) for setup, the feature mindmap and
 | Enable native screenshots and input with owner grants | [Native computer use](computer-use.md) |
 | Use the browser dashboard and remote approvals | [Dashboard guide](web-dashboard.md) |
 | Compare independent patches with tests and a judge | [Verified solve workflows](verified-workflows.md) |
+| Combine complementary commits and explicitly publish a PR | [Verified integration queue](verified-integrations.md) |
 
 Specifications include future work. A specification's presence does not mean the feature is implemented or accepted; use the feature reference and acceptance audit together.
 
