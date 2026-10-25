@@ -33,7 +33,7 @@
 - [x] 5.2 Test interruption before/after native dispatch, exactly-once receipt settlement, unknown recovery, revocation and emergency stop under a busy model/tool queue.
 - [x] 5.3 Test capture limits, malformed keys/text, artifact reference isolation, typed-text redaction and unsupported platform absence of side effects.
 - [x] 5.4 With explicit controlled-test consent and OS grants, verify real macOS screenshot, move/click/drag/scroll/text/key editing, coordinate transforms and Stop in a disposable test window; report evidence separately from fixtures.
-- [ ] 5.5 Validate OpenSpec, generated contracts/bundles, relevant Rust/browser/SDK suites and native/cross-platform CI; perform code/security review before ready-to-merge.
+- [x] 5.5 Validate OpenSpec, generated contracts/bundles, relevant Rust/browser/SDK suites and native/cross-platform CI; perform code/security review before ready-to-merge.
 
 ## Implementation evidence and remaining acceptance
 
@@ -44,3 +44,5 @@
 - The owner authorized controlled live testing on 2026-10-25. The unchanged frozen server, launched from Terminal after exact Screen Recording/Accessibility grants, passed real app-scoped capture, local vision delivery, move/click/drag/scroll/ASCII+Unicode text/key/wait, geometry/focus/modal/overlay refusal, reconnect fencing and independent Stop during drag. All grants ended stopped; raw typed canaries were absent from isolated durable messages/database/logs. Exact binary identity, operation IDs and remaining layout/signing limits are in the acceptance record.
 
 - CI evidence: [run 40191525061](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40191525061) passed all 16 checks on exact head `d72c5829704b141dab49f7ea79979a02cf511caf`; native release signing remains a separate unfinished gate.
+
+- Final integration review preserved the incoming `/agents` directory and fixed native warning/Stop visibility over fullscreen panels. The combined TUI suite passed 535 tests with 3 explicitly ignored; strict TUI Clippy, API export, SDK checks and all 98 OpenSpec items passed. The exact integration tip `caed26d7` passed all 16 checks in [run 40203354126](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40203354126), and PR #41 merged as `9ab0172c`. Signing/packaging acceptance (1.4) remains open.
