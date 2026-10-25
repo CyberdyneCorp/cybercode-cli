@@ -251,7 +251,7 @@ impl Asker {
                         let reply = PermissionReply::Reject {
                             message: Some("The operation was cancelled".into()),
                         };
-                        inner.record_reply(&request, &reply).await?;
+                        inner.record_withdrawal(&request, &reply).await?;
                         let _ = sender.send(reply);
                     }
                     Reply::Question(sender) => {
@@ -303,7 +303,7 @@ impl Inner {
                 let reply = PermissionReply::Reject {
                     message: Some("The operation was cancelled".into()),
                 };
-                self.record_reply(&request, &reply).await?;
+                self.record_withdrawal(&request, &reply).await?;
                 let _ = sender.send(reply);
             }
         }
@@ -490,7 +490,7 @@ impl Inner {
                 match waiter.reply {
                     Reply::Permission(sender) => {
                         let reply = PermissionReply::Reject { message: None };
-                        self.record_reply(&request, &reply).await?;
+                        self.record_withdrawal(&request, &reply).await?;
                         let _ = sender.send(reply);
                     }
                     Reply::Question(sender) => {
@@ -610,8 +610,30 @@ impl Inner {
         request: &PendingRequest,
         reply: &PermissionReply,
     ) -> Result<(), RuntimeError> {
+        self.record_permission_reply(request, reply, false).await
+    }
+
+    /// The reply the runtime records when it withdraws a request (a stop, an abandoned
+    /// call): marked `cancelled: true`, so it never counts as a person's decision.
+    async fn record_withdrawal(
+        &self,
+        request: &PendingRequest,
+        reply: &PermissionReply,
+    ) -> Result<(), RuntimeError> {
+        self.record_permission_reply(request, reply, true).await
+    }
+
+    async fn record_permission_reply(
+        &self,
+        request: &PendingRequest,
+        reply: &PermissionReply,
+        cancelled: bool,
+    ) -> Result<(), RuntimeError> {
         let handle = self.handle(&request.session_id).await?;
-        let payload = serde_json::json!({ "request_id": request.id, "call_id": request.call_id, "reply": reply });
+        let mut payload = serde_json::json!({ "request_id": request.id, "call_id": request.call_id, "reply": reply });
+        if cancelled {
+            payload["cancelled"] = true.into();
+        }
         self.commit(
             &handle,
             vec![cyber_store::NewEvent::new(

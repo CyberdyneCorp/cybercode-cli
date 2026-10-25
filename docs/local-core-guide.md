@@ -411,7 +411,7 @@ On Windows, sandboxed commands (shell tools, hooks, LSP, MCP and plugin servers)
 
 `sandbox.env` takes `mode` (`inherit`, the masked server environment, or `none`: only `PATH`, `HOME`, `TMPDIR`, `LANG`, `TERM`), `set` (added to every sandboxed process), `allow` and `deny` (name patterns applied after masking; `deny` wins) and `login_shell` (`bash -l`). The `CYBER*` markers and, in proxy mode, the proxy variables are always set.
 
-When the OS refuses a sandboxed command, the result ends with `Sandbox denied: <read|write|network> <target>` and the denial is stored as `sandbox.denied.1` `{ session_id, call_id, operation, target }`. The model may call `bash` again with `sandbox: "escalate"` and a `justification`; that raises a `sandbox.escalate` request showing both, and an approval runs that one call unsandboxed (`sandbox.escalated.1`). The sandbox is a ceiling: `bypass` still asks for an escalation and for a domain outside the allowlist, `dont-ask` denies and `auto` classifies. Only an explicit `sandbox.escalate` or `network` allow rule from a user, global, command-line or managed layer, or a domain a person approved `always`, crosses it without asking; a wildcard action (`"permissions": "allow"`) or a repository, agent or Session rule does not. Telemetry export of these events waits for the telemetry exporter.
+When the OS refuses a sandboxed command, the result ends with `Sandbox denied: <read|write|network> <target>` and the denial is stored as `sandbox.denied.1` `{ session_id, call_id, operation, target }`. The model may call `bash` again with `sandbox: "escalate"` and a `justification`; that raises a `sandbox.escalate` request showing both, and an approval runs that one call unsandboxed (`sandbox.escalated.1`). The sandbox is a ceiling: `bypass` still asks for an escalation and for a domain outside the allowlist, `dont-ask` denies and `auto` classifies. Only an explicit `sandbox.escalate` or `network` allow rule from a user, global, command-line or managed layer, or a domain a person approved `always`, crosses it without asking; a wildcard action (`"permissions": "allow"`) or a repository, agent or Session rule does not. With [OpenTelemetry export](#opentelemetry-export) on, denials and escalations are `sandbox.denied` and `sandbox.escalated` events on the tool span (the target only with `telemetry.log_prompts`).
 
 Nobody answers a prompt in `cyber exec`, so a request its Session still raises (a sandbox ceiling such as `sandbox.escalate` or an unlisted domain in `--yolo`, or any ask in `--mode default`) is rejected at once with `Rejected by user: no interactive approver is attached to cyber exec`. The model reads the denial, the Turn continues, and the run lists it under `denials` (exit 5 with `--fail-on-deny`).
 
@@ -422,6 +422,135 @@ Nobody answers a prompt in `cyber exec`, so a request its Session still raises (
 `bypass` is admitted only when commands run in the OS sandbox with `workspace-write` or stricter (a sandbox with `network: on`, or a writable root that is relative or contains the home directory, does not count), inside a detected container or VM (`/.dockerenv`, `/run/.containerenv`, a container cgroup, `CYBER_CONTAINER=1`, `REMOTE_CONTAINERS`, `DEVCONTAINER`, `CODESPACES=true`; Flatpak, toolbox and distrobox share the user's home and the host, so they count only with `CYBER_CONTAINER=1`), or with `--dangerously-bypass-permissions` on `cyber serve`, an embedded TUI or `cyber exec --embedded|--ephemeral`. `--dangerously-skip-permissions` (Claude Code's name) on `cyber exec` and the TUI is that flag plus `--mode bypass`, with the same `--embedded|--ephemeral` requirement: on the shared server it exits 2 and names them (use `--mode bypass` there when its sandbox or a container already admits `bypass`), and it conflicts with `--auto` or another `--mode`. Otherwise creating or switching a Session to `bypass` (including `exec --yolo`, an agent's `permission_mode` applied without an explicit `mode`, and switching to an agent whose own sandbox does not admit it) fails with `bypass mode requires a sandbox, a container, or --dangerously-bypass-permissions`. `/health` reports `sandbox: { policy, profile, enforcement, isolation }` with `isolation` `sandbox`, `container` or `none`. An OS-managed `policy.modes.disable` (for example `["bypass"]`) refuses those Modes with `<mode> mode is disabled by your organization` wherever a Session takes one: creation (also from an agent's `permission_mode`), the deferred agent default at the first Turn, worktree starts and every switch, including `plan_exit`; a malformed managed document disables `bypass`. Every Turn admits the Session's Mode again before the model or any tool runs, so a Session stored in a Mode the server no longer admits (restarted without the flag, a looser sandbox, a newly disabled Mode) fails its Turns with the refusal until it switches to an admitted Mode.
 
 `cyber permissions test [--agent a] [--mode m] (--tool <name> --resource <r> | -- <shell command>)` and `GET /api/v1/permissions/test?agent&mode&tool&resource&command` evaluate the effective ruleset as a Session would (each tool under its action: `write`, `apply_patch` and `notebook_edit` as `edit`, `powershell`, `monitor` and `pty_*` as `bash` commands, `send_file` as `read`; bash command splitting, protected paths, critical removals, saved approvals, excluded commands and the Mode) without creating a Session or running anything: `npm test → allow (saved approval, project)`, `git push → ask (default rules)`.
+
+## OpenTelemetry export
+
+The background server can export traces, metrics and logs over OTLP to a collector you run. Export is off by default. Only the background server exports; its clients (the TUI, `cyber exec`, `cyber api`) never do, so each Session is exported once. In-process runs are never exported, even with export on: `cyber exec --embedded` and `--ephemeral`, `cyber tui --embedded`, `cyber serve --stdio`, `cyber eval` and skill commands.
+
+### Settings
+
+Set these in global configuration (`~/.config/cyber/cyber.jsonc`, or `CYBER_CONFIG` / `CYBER_CONFIG_CONTENT`):
+
+```jsonc
+{
+  "telemetry": {
+    "otel": {
+      "enabled": true,                          // default false
+      "endpoint": "https://otel.example.com",   // a base URL
+      "protocol": "http/protobuf",              // or "http/json", "grpc"
+      "headers": { "authorization": "Bearer {env:OTEL_TOKEN}" }
+    },
+    "log_prompts": false                        // default false
+  }
+}
+```
+
+A project layer's `telemetry.otel` and `telemetry.log_prompts` are never read, even in a trusted checkout, so a repository cannot send your Sessions to its own collector or turn on content capture. `cyber telemetry show` lists such values as ignored. An invalid telemetry value keeps export off; it never makes the rest of the configuration invalid or a Turn fail.
+
+Defaults: protocol `http/protobuf`, endpoint `http://localhost:4318` (`http://localhost:4317` for `grpc`), a 10 s timeout and a 60 s metric interval (`OTEL_METRIC_EXPORT_INTERVAL` changes it). For HTTP, `/v1/traces`, `/v1/metrics` or `/v1/logs` is appended to a configured or generic endpoint; a per-signal endpoint is used as given.
+
+### Precedence
+
+Settings are resolved once at server start; run `cyber service restart` after a change (`show` reports `restart required` until then). Highest first:
+
+1. **Off switches.** `CYBER_DISABLE_TELEMETRY` (truthy) or `OTEL_SDK_DISABLED=true` turns export off.
+2. **Managed policy.** A managed policy document that is present but malformed turns export off. There is no managed telemetry key yet; when org policy adds one it will win over every user setting.
+3. **Enablement.** Export is on only when `telemetry.otel.enabled` is `true`. **No `OTEL_*` variable enables export**: an `OTEL_EXPORTER_OTLP_ENDPOINT` set for other programs is not picked up until you enable export yourself, and `show` then reports `telemetry.otel.enabled is not true`.
+4. **Values.** A per-signal variable (`OTEL_EXPORTER_OTLP_{TRACES,METRICS,LOGS}_{ENDPOINT,PROTOCOL,HEADERS,TIMEOUT}`) beats the generic `OTEL_EXPORTER_OTLP_*` variable, which beats `telemetry.otel.*`, which beats the default. A headers variable (URL-encoded `name=value` pairs) replaces the configured header map as a whole. Timeouts are milliseconds.
+5. **Per-signal switch.** `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=none` turns one signal off; any value other than `otlp` is reported as unsupported and keeps that signal off.
+
+These keep export off, with the reason in `show` and one `warn` log line, while the server still starts: an endpoint that is not an absolute `http`/`https` URL, an unknown protocol, a non-string header value, `grpc` in a build without the `otlp-grpc` feature (release builds include it), and headers with a plain `http://` endpoint whose host is not loopback (header values are credentials and are never sent in clear text off the machine).
+
+The resource has `service.name=cyber` (`OTEL_SERVICE_NAME` overrides it), `service.version`, `cyber.build`, `os.type`, and `cyber.account.sub` and `cyber.account.org_id` when a Cyber Account is signed in at server start. `OTEL_RESOURCE_ATTRIBUTES` adds attributes but cannot replace `service.version`, `os.type` or any `cyber.*` key. TLS client certificates and custom CA variables (`OTEL_EXPORTER_OTLP_CERTIFICATE` and related) are not read; the system roots are used.
+
+### Checking the settings
+
+`cyber telemetry show [--format json]` (or `GET /api/v1/telemetry`, SDK `client.telemetry.get()`) asks the background server, whose environment is the one that exports. It prints whether export is on and why not, `log_prompts` with its source, each signal's endpoint, protocol, headers and timeout with the source of each value (`config (<layer>)`, `env (<VARIABLE>)`, `policy (<managed>)` or `default`), the `exported`, `failed` and `dropped` counters with the last error, `dropped events`, the resource (the account only as `account signed in: yes|no`), the ignored project values and product telemetry (always off). Header values are always shown as `***`, and the endpoint without userinfo or query.
+
+### Spans
+
+Each span ends from the event that completes its work. Every span carries `cyber.session.id`.
+
+| Span | From → to | Parent |
+|---|---|---|
+| `cyber.workflow.run` | `workflow.run.started.1` → completed, failed or stopped | none: the root of its own trace, linked to the owner Session's open Turn |
+| `cyber.workflow.agent` | `workflow.agent.started.1` → `workflow.agent.settled.1` | the run span |
+| `cyber.session` | the first Turn, or a hook that runs before it → `Idle` (one activity period, not the Session's lifetime) | a workflow child Session: its agent span; a subagent: the parent's open Turn span; a root Session: none |
+| `cyber.turn` | a prompt promotion (or a step with no open Turn) → the next promotion or `Idle` | the session span |
+| `cyber.tool` | `session.tool.called.1` → `session.tool.settled.1` | the open Turn span |
+| `cyber.hook` | the hook receipt's start → its settlement | the tool call, else the Turn, else the session span. A hook that runs while the Session is idle (`UserPromptSubmit`, `SessionStart`, a configuration hook) opens the session span; the following Turn joins it, or it ends with the hook when no Turn follows |
+
+Attributes: Turns carry `cyber.agent`, `cyber.mode`, `cyber.model`, `cyber.tokens.<class>`, `cyber.cost.usd` (absent when unpriced) and `cyber.finish_reason`, and a failed Turn has an `Error` status. Tool spans carry `cyber.tool.name`, `cyber.call.id`, `cyber.tool.attempt` and `cyber.tool.outcome`, with an `Error` status when the call failed or was denied. Hook spans carry `cyber.hook.id`, `cyber.hook.event`, `cyber.hook.scope`, `cyber.hook.outcome` and `cyber.hook.decision`. Run and agent spans carry `cyber.workflow.run_id`, `cyber.workflow.name`, `cyber.workflow.status`, `cyber.workflow.agent_id` and `cyber.workflow.phase`. Span events: `permission.decision` (`decision`, `source`), `sandbox.denied` and `sandbox.escalated` (`operation`) on the tool span, and `retry` on the Turn span.
+
+### Metrics
+
+Every metric is a cumulative counter recorded when work settles. Session, call and run IDs are never metric attributes.
+
+| Metric | Unit | Attributes |
+|---|---|---|
+| `cyber.session.count` | `{session}` | `cyber.session.kind` (`root`, `subagent`, `workflow_agent`) |
+| `cyber.turn.count` | `{turn}` | `outcome` (`completed`, `failed`, `interrupted`), `cyber.agent` |
+| `cyber.token.usage` | `{token}` | `type` (`input`, `output`, `reasoning`, `cache_read`, `cache_write`), `cyber.model`, `cyber.provider` |
+| `cyber.cost.usage` | `USD` | `cyber.model`; unpriced steps add nothing |
+| `cyber.tool.calls` | `{call}` | `cyber.tool.name`, `outcome` |
+| `cyber.tool.errors` | `{call}` | `cyber.tool.name` (calls settled with status `error`, denials included) |
+| `cyber.permission.decisions` | `{decision}` | `decision` (`allow`, `deny`), `source` (`user`, `auto`), `cyber.permission.action` |
+| `cyber.active_time` | `s` | `cyber.session.kind` (Turn wall time) |
+
+Tokens and cost cover every billed model call, as `cyber usage` counts them: steps, generated titles, compactions, auto-mode reviews and auxiliary calls. Decisions a rule settles without a request are not counted, nor are requests the runtime withdraws when a Turn is stopped or a call abandoned.
+
+### Logs
+
+Every structured log record that passes the level filter is also exported as an OTLP log record: severity, `component`, and the identifier fields `session_id`, `request_id`, `run_id`, `call_id`, `kind`, `status` and `pid`. The message is content, because many messages quote file paths and error text: it becomes the record's body only with `log_prompts`, redacted and capped like other content, and a record has no body otherwise. Other scalar fields are exported only with `log_prompts`, redacted; objects and arrays never are. The OpenTelemetry SDK's own logs are disabled.
+
+### Privacy
+
+By default nothing is exported that holds content: no prompt text, model output, tool input or output, Session title, directory, sandbox target, log message text or non-identifier log field. Tool spans carry the tool name, duration and outcome only. Hook stdin and stdout are never exported, even with `telemetry.log_hook_io`.
+
+With `telemetry.log_prompts: true` in global configuration, Turns gain `cyber.prompt` and `cyber.response`, tool spans `cyber.tool.input` and `cyber.tool.output`, sandbox events `target`, and Sessions `cyber.session.title` and `cyber.directory`. Every value is redacted before export: structured values by key (`authorization`, `token`, any `headers` value, …), text by the credential patterns (`sk-…`, `ghp_…`, …) and the configured header values matched exactly, each replaced by `***`. Values are capped at 16 KiB and end with `…[truncated]` when cut. Header values never appear in an attribute, a log record, an error message or `show`, whatever `log_prompts` says.
+
+### Delivery
+
+Export never blocks or fails a Turn: the exporter reads the runtime's event stream and only makes in-memory SDK calls; batches go out through bounded queues (2048 items, batches of 512, honoring `OTEL_BSP_*` and `OTEL_BLRP_*`). Events the exporter could not keep up with are counted as `dropped events`; items in batches the collector rejected or never received count as `failed` per signal. An unreachable collector is reported once, as one `telemetry export failing` warn line with the masked endpoint and the redacted error and as `last_error` in `show`, and once more as `telemetry export recovered` when it answers again; the other signals' failures show only in their counters, their `last_error` and the final `telemetry export stopped` line. A signal's counters move only when one of its batches is attempted: traces and logs after their batch delay (the SDK defaults: 5 s for spans, 1 s for logs) plus up to the export timeout, metrics at the next interval or at shutdown, so `show` can report `failed 0` for a while after a Turn. The SDK's own queue overflow has no counter and is not included.
+
+The exporter never follows a redirect: a collector that answers 3xx counts as a failed export, so the export and its headers never reach a host that was not configured. When the SDK cannot build an exporter from the resolved settings (an endpoint its URI parser rejects, such as a non-ASCII host), export stays off and `show` reports `the traces exporter could not be built: …` as the reason. The SDK reads `OTEL_EXPORTER_OTLP_COMPRESSION` itself; this build has no compression, so the SDK ignores the variable with a warning and exports uncompressed.
+
+At shutdown the server ends every open span with `cyber.interrupted=true`, flushes all three signals in parallel and gives up after 3 s in total, then logs `telemetry export stopped` with the final counters (to the file only). What was not exported by then is dropped.
+
+### Restart behavior
+
+Spans are built from live events only and never from stored history. Stopping the server settles a running tool call as interrupted, and its span ends with `cyber.interrupted=true`; the call is counted once, by the server that stopped. After a server restart, work that started before it gets no span when it settles: the old server already exported its span as interrupted, and the new one records only its metrics (a tool call settles with `cyber.tool.name=unknown`). The exporter subscribes before the restart recovery runs, so what the recovery settles or resumes (`workflows.resume_after_restart`) is counted even before the server listens. A Session created before the restart is read once from the database for its parenting; when its parent's spans ended with the old server, its spans start a new trace.
+
+### Local collector recipe
+
+Run the OpenTelemetry Collector with a debug exporter and point Cyber at it:
+
+```yaml
+# otel-collector.yaml
+receivers:
+  otlp:
+    protocols:
+      http: { endpoint: 0.0.0.0:4318 }
+      grpc: { endpoint: 0.0.0.0:4317 }
+exporters:
+  debug: { verbosity: detailed }
+service:
+  pipelines:
+    traces:  { receivers: [otlp], exporters: [debug] }
+    metrics: { receivers: [otlp], exporters: [debug] }
+    logs:    { receivers: [otlp], exporters: [debug] }
+```
+
+```bash
+docker run --rm -p 4317:4317 -p 4318:4318 \
+  -v "$PWD/otel-collector.yaml:/etc/otelcol/config.yaml" otel/opentelemetry-collector:latest
+# in ~/.config/cyber/cyber.jsonc: "telemetry": { "otel": { "enabled": true } }
+cyber service restart
+cyber telemetry show          # export on, endpoints http://localhost:4318/v1/…
+cyber exec "list the files"   # spans and metrics appear in the collector output
+```
+
+Metrics arrive at the next 60 s interval or when the server stops. For a quick check set `OTEL_METRIC_EXPORT_INTERVAL=5000` in the server's environment.
 
 ## TUI themes and color
 

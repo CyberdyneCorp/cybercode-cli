@@ -36,6 +36,7 @@ pub mod sessions;
 pub mod skills;
 pub mod stats;
 pub mod teams;
+pub mod telemetry;
 pub mod trust;
 pub mod tui;
 pub mod uninstall;
@@ -139,6 +140,7 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
         Command::Pr(args) => pr::run(args, &ctx, &cli.global),
         Command::Doctor => doctor::run(&ctx, &cli.global),
         Command::Stats(args) => stats::run(args, &ctx, &cli.global),
+        Command::Telemetry { cmd } => telemetry::run(cmd, &ctx, &cli.global),
         Command::Eval { cmd } => eval::run(cmd, &ctx),
         Command::Upgrade(args) => upgrade::run(args, &ctx, &cli.global),
         Command::External(_)

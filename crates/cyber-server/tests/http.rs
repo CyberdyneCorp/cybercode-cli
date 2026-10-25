@@ -118,6 +118,7 @@ impl Services for FakeServices {
 fn state(h: &Harness, password: Option<&str>) -> AppState {
     AppState {
         service: None,
+        telemetry: None,
         runtime: h.runtime.clone(),
         remote_tools: Arc::default(),
         store: Arc::clone(&h.store),
@@ -1169,6 +1170,7 @@ async fn clients_register_tools_that_the_model_can_call() {
     });
     let state = AppState {
         service: None,
+        telemetry: None,
         runtime: runtime.clone(),
         remote_tools: remote,
         store,
@@ -3300,6 +3302,102 @@ async fn hook_notices_follow_session_and_location_without_durable_replay() {
     );
 }
 
+/// `LiveEvent::HookReceipt` is internal to the telemetry exporter: the Location, all
+/// Locations and Session streams never forward it, while the hook notice after it still
+/// arrives.
+#[tokio::test]
+async fn event_stream_never_forwards_hook_receipts() {
+    use cyber_core::{
+        config::{self, LoadRequest},
+        hooks::{HookCatalog, HookEvent, HookIdentity, HookLocation},
+        paths::Paths,
+    };
+    let h = Harness::new(Setup::default());
+    let id = h.session().await;
+    let env = std::collections::HashMap::from([(
+        "CYBER_HOME".into(),
+        h.dir.path().join("hooks-config").display().to_string(),
+    )]);
+    let paths = Paths::resolve(&env, h.dir.path());
+    paths.ensure().unwrap();
+    std::fs::write(paths.config.join("cyber.jsonc"),json!({"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"printf reviewed","id":"guard"}]}]}}).to_string()).unwrap();
+    let resolved = config::load(&LoadRequest {
+        location: &h.repo,
+        paths: &paths,
+        env: &env,
+        home: h.dir.path(),
+        profile: None,
+        overrides: &[],
+        flags: json!({}),
+    })
+    .unwrap();
+    let definition = HookCatalog::from_config(&resolved)
+        .unwrap()
+        .definitions
+        .remove(0);
+    let event = HookEvent::new(
+        "PreToolUse",
+        HookIdentity {
+            session_id: id.clone(),
+            location: HookLocation {
+                directory: h.repo.clone(),
+                workspace: None,
+            },
+            project_id: "global".into(),
+            agent: "build".into(),
+            mode: "default".into(),
+            parent_session_id: None,
+            workflow_run_id: None,
+        },
+        1,
+        json!({"call_id":"call_receipt","tool_name":"read"})
+            .as_object()
+            .unwrap()
+            .clone(),
+    )
+    .unwrap();
+    let cursor = h.state(&id).await.last_seq;
+    let base = tcp(&h, "pw").await;
+    let client = reqwest::Client::new();
+    let mut streams = Vec::new();
+    for path in [
+        "/event".to_string(),
+        "/event?scope=all".to_string(),
+        format!("/sessions/{id}/events?after={cursor}"),
+    ] {
+        let response = client
+            .get(format!("{base}{path}"))
+            .basic_auth("cyber", Some("pw"))
+            .send()
+            .await
+            .unwrap();
+        streams.push(response.bytes_stream());
+    }
+    for stream in streams.iter_mut().take(2) {
+        read_sse_until(stream, "server.connected").await;
+    }
+    let mut live = h.runtime.subscribe();
+    h.runtime
+        .record_skipped_hook(&event, &definition, "untrusted")
+        .await
+        .unwrap();
+    let receipt = loop {
+        if let cyber_server::runtime::LiveEvent::HookReceipt { receipt, .. } =
+            live.recv().await.unwrap()
+        {
+            break receipt.id;
+        }
+    };
+    h.runtime.hook_notice(&id, "guard", "after the receipts");
+    for stream in &mut streams {
+        let buffer = read_sse_until(stream, "after the receipts").await;
+        assert!(
+            !buffer.contains(&receipt) && !buffer.contains("hook.receipt"),
+            "{buffer}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn hook_execution_api_is_authenticated_paginated_and_preserves_receipt_privacy() {
     use cyber_core::{
@@ -3981,6 +4079,7 @@ async fn client_hook_registration_drops_on_disconnect() {
     });
     let state = AppState {
         service: None,
+        telemetry: None,
         runtime,
         remote_tools: Arc::clone(&remote),
         store,
@@ -4291,4 +4390,125 @@ async fn owner_tls_serves_same_dashboard_and_authenticated_api_with_verified_cer
     );
     stop.send(()).unwrap();
     task.await.unwrap().unwrap();
+}
+
+/// A report that hands the route raw header values and an endpoint with credentials.
+struct LeakyTelemetry {
+    seen: std::sync::Mutex<Vec<std::path::PathBuf>>,
+}
+
+impl http::telemetry::TelemetryReport for LeakyTelemetry {
+    fn status(&self, location: &Path) -> http::telemetry::TelemetryStatus {
+        use http::telemetry::*;
+        self.seen.lock().unwrap().push(location.to_path_buf());
+        let signal = |endpoint: &str| SignalStatus {
+            enabled: true,
+            reason: None,
+            endpoint: endpoint.into(),
+            protocol: "http/protobuf".into(),
+            timeout_ms: 10_000,
+            headers: vec![MaskedHeader {
+                name: "authorization".into(),
+                value: "Bearer abc".into(),
+            }],
+            sources: SignalSources {
+                endpoint: "default".into(),
+                protocol: "default".into(),
+                headers: "config (global:/c/cyber.jsonc)".into(),
+                timeout: "default".into(),
+            },
+            exported: 0,
+            failed: 0,
+            dropped: 0,
+            last_error: None,
+        };
+        TelemetryStatus {
+            enabled: true,
+            reason: None,
+            log_prompts: SourcedFlag {
+                value: false,
+                source: "default".into(),
+            },
+            signals: TelemetrySignals {
+                traces: signal("https://u5er:pa55w0rd@otel.example/v1/traces?token=q5ecret#fr4g"),
+                metrics: signal("https://otel.example/v1/metrics"),
+                logs: signal("not a url with pa55w0rd"),
+            },
+            dropped_events: 0,
+            resource: TelemetryResource {
+                service_name: "cyber".into(),
+                service_version: "0.1.0".into(),
+                os_type: "linux".into(),
+                account_signed_in: false,
+            },
+            ignored: Vec::new(),
+            restart_required: false,
+            product: ProductTelemetry { enabled: false },
+        }
+    }
+}
+
+/// `GET /telemetry` is owner-authenticated, asks the report for the request's Location,
+/// and answers every header value as `***` and endpoints without userinfo or query,
+/// whatever the report holds. A host without a report answers 503.
+#[tokio::test]
+async fn telemetry_status_masks_headers() {
+    let h = Harness::new(Setup::default());
+    let report = Arc::new(LeakyTelemetry {
+        seen: std::sync::Mutex::new(Vec::new()),
+    });
+    let mut state = state(&h, Some("s3cret"));
+    state.telemetry = Some(Arc::clone(&report) as http::telemetry::TelemetryHandle);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/api/v1", listener.local_addr().unwrap());
+    tokio::spawn(http::serve_tcp(
+        http::router(state),
+        listener,
+        std::future::pending(),
+    ));
+    let client = reqwest::Client::new();
+    let denied = client
+        .get(format!("{base}/telemetry"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), 401);
+    let response = client
+        .get(format!("{base}/telemetry"))
+        .basic_auth("cyber", Some("s3cret"))
+        .header("x-cyber-directory", h.repo.display().to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = response.text().await.unwrap();
+    for leaked in ["Bearer abc", "u5er", "pa55w0rd", "q5ecret", "fr4g"] {
+        assert!(!body.contains(leaked), "{leaked}: {body}");
+    }
+    let value: Value = serde_json::from_str(&body).unwrap();
+    let signals = &value["data"]["signals"];
+    assert_eq!(
+        signals["traces"]["headers"],
+        json!([{"name": "authorization", "value": "***"}])
+    );
+    assert_eq!(
+        signals["traces"]["endpoint"],
+        "https://otel.example/v1/traces"
+    );
+    assert_eq!(signals["logs"]["endpoint"], "(invalid endpoint)");
+    assert_eq!(
+        signals["metrics"]["sources"]["headers"],
+        "config (global:/c/cyber.jsonc)"
+    );
+    let seen = report.seen.lock().unwrap().clone();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(
+        value["location"]["directory"],
+        seen[0].display().to_string()
+    );
+    assert!(seen[0].ends_with("repo"), "{seen:?}");
+
+    let (status, body) = Api::new(&h).get("/telemetry").await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["service"], "telemetry");
 }

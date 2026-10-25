@@ -1462,6 +1462,12 @@ export interface Operations {
     body: undefined;
     response: S.Task[];
   };
+  "v1.telemetry.get": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_TelemetryStatus;
+  };
   "v1.tool.computerHealth": {
     path: Record<string, never>;
     query: Record<string, never>;
@@ -4240,6 +4246,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.telemetry.get": {
+    tag: "telemetry",
+    name: "get",
+    method: "GET",
+    path: "/api/v1/telemetry",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
   "v1.tool.computerHealth": {
     tag: "tool",
     name: "computerHealth",
@@ -5268,6 +5286,11 @@ export function createGroups(caller: Caller) {
       /** The team's task board in creation order, optionally only one `status` or `owner` (`GET /api/v1/teams/{teamID}/tasks`) */
       tasks: (teamID: string, query?: Operations["v1.teams.tasks"]["query"], options?: RequestOptions): Promise<Operations["v1.teams.tasks"]["response"]> =>
         caller.call("v1.teams.tasks", { path: { teamID }, query }, options),
+    },
+    telemetry: {
+      /** The server's OpenTelemetry export settings with their sources, counters and ignored project values; header values are always `***` (`GET /api/v1/telemetry`) */
+      get: (options?: RequestOptions): Promise<Operations["v1.telemetry.get"]["response"]> =>
+        caller.call("v1.telemetry.get", {}, options),
     },
     tool: {
       /** Native computer readiness without capture (`GET /api/v1/tools/computer/health`) */

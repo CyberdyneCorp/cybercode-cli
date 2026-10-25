@@ -49,6 +49,7 @@ impl Services for NoServices {
 async fn serve(h: &Harness) -> String {
     let state = AppState {
         service: None,
+        telemetry: None,
         runtime: h.runtime.clone(),
         remote_tools: Arc::default(),
         store: Arc::clone(&h.store),
