@@ -663,7 +663,9 @@ async fn a_replaced_native_temporary_root_cannot_redirect_host_artifact_writes()
     let report = settled(&server, &batch).await;
     assert_eq!(report["status"], "ready", "{report}");
     let run = report["run_id"].as_str().unwrap();
-    let temporary = root.join("tmp/sessions").join(format!("integration-{run}"));
+    let temporary = root
+        .join("tmp/sessions")
+        .join(format!("i-{}", run.trim_start_matches("run_")));
     let retained = temporary.with_extension("retained");
     let escape = root.join("tmp/escape");
     std::fs::create_dir_all(&escape).unwrap();
