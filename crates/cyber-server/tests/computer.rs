@@ -265,7 +265,7 @@ async fn native_tool_arguments_and_doom_loop_metadata_never_persist_typed_conten
                 .runtime
                 .pending_requests(Some(&id))
                 .into_iter()
-                .find(|r| r.action.as_deref() == Some("doom_loop"))
+                .find(|r| matches!(&r.kind,cyber_server::runtime::PendingKind::Permission(ask) if ask.action=="doom_loop"))
             {
                 break request;
             }
@@ -274,8 +274,12 @@ async fn native_tool_arguments_and_doom_loop_metadata_never_persist_typed_conten
     })
     .await
     .unwrap();
-    assert!(!request.metadata.to_string().contains(secret));
-    assert!(request.metadata.to_string().contains("text_sha256"));
+    let metadata = match &request.kind {
+        cyber_server::runtime::PendingKind::Permission(ask) => &ask.metadata,
+        _ => unreachable!(),
+    };
+    assert!(!metadata.to_string().contains(secret));
+    assert!(metadata.to_string().contains("text_sha256"));
     h.runtime
         .reply_permission(&request.id, PermissionReply::Reject { message: None })
         .unwrap();
