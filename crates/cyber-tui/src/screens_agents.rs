@@ -137,7 +137,12 @@ fn stabilize(app: &mut App, root: &std::path::Path) {
 async fn agents_lists_local_sessions_and_subagents() {
     let server = machine(json!({})).await;
     let review = titled(&server, "review").await;
-    located(&server, "migration", &server.root().join("services/db")).await;
+    located(
+        &server,
+        "migration",
+        &server.root().join("services").join("db"),
+    )
+    .await;
     subagent(&server, &review, "tests").await;
     let mut app = open(&server, &review).await;
     assert_eq!(app.directory.messaging.status, Status::Ready);
@@ -190,10 +195,14 @@ async fn agents_lists_local_sessions_and_subagents() {
             assert!(shown.contains(needle), "{needle:?}:\n{shown}");
         }
         let migration = line_of(&shown, "○ migration");
-        for column in ["session", "idle", "open", "~/work/app/services/db"] {
+        // The server reports the directory with native separators.
+        let location = format!("~/work/app{0}services{0}db", std::path::MAIN_SEPARATOR);
+        for column in ["session", "idle", "open", &location] {
             assert!(migration.contains(column), "{column:?}: {migration}");
         }
-        insta::assert_snapshot!(name, shown);
+        if cfg!(not(windows)) {
+            insta::assert_snapshot!(name, shown);
+        }
     }
     let opts = Opts {
         no_color: true,
@@ -543,7 +552,11 @@ async fn agents_hub_agent_row() {
     assert_eq!(entry.kind.label(), "hub agent");
     assert_eq!(entry.location.label(), format!("hub:{}", hub.project));
     let shown = screen(&mut app, 140, 32);
-    assert!(line_of(&shown, "reviewer").contains("hub agent"), "{shown}");
+    // The filter line also shows "reviewer", so match the row by its glyph.
+    assert!(
+        line_of(&shown, "● reviewer").contains("hub agent"),
+        "{shown}"
+    );
     assert!(shown.contains("Project hub"), "{shown}");
     for (c, reason) in [('w', "watch does not apply"), ('r', "cannot be renamed")] {
         assert!(ctrl(&mut app, c).is_empty());
