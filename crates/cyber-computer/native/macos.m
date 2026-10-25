@@ -47,9 +47,10 @@ static BOOL protected_app(NSString *bundle) {
     return [@[@"com.apple.systempreferences", @"com.apple.SystemSettings", @"com.apple.SecurityAgent", @"com.apple.loginwindow", @"com.apple.securityagent"] containsObject:bundle ?: @""];
 }
 static BOOL secure_focus(void) {
-    AXUIElementRef system = AXUIElementCreateSystemWide(); CFTypeRef focused = NULL;
+    AXUIElementRef system = AXUIElementCreateSystemWide(); AXUIElementSetMessagingTimeout(system,0.25f); CFTypeRef focused = NULL;
     AXError error = AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute, &focused); CFRelease(system);
     if (error != kAXErrorSuccess || !focused) return error != kAXErrorNoValue && error != kAXErrorAttributeUnsupported;
+    AXUIElementSetMessagingTimeout((AXUIElementRef)focused,0.25f);
     CFTypeRef role = NULL; CFTypeRef subrole = NULL;
     AXUIElementCopyAttributeValue((AXUIElementRef)focused, kAXRoleAttribute, &role);
     AXUIElementCopyAttributeValue((AXUIElementRef)focused, kAXSubroleAttribute, &subrole);
@@ -189,6 +190,8 @@ static int checkpoint(NSDictionary *expected, Cancel cancelled, const void *cont
     if (monotonic_ms() >= deadline) return 6;
     if (!AXIsProcessTrusted() || !CGPreflightScreenCaptureAccess()) return 2;
     if (!same_target(expected, target(selector_for(expected))) || secure_focus()) return 3;
+    if (cancelled(context)) return 4;
+    if (monotonic_ms() >= deadline) return 6;
     return 0;
 }
 static CGPoint point(NSDictionary *value) { return CGPointMake([value[@"x"] doubleValue], [value[@"y"] doubleValue]); }

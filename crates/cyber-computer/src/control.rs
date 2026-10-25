@@ -302,10 +302,11 @@ pub struct CapturePermit {
 }
 
 impl CapturePermit {
+    fn revoked(&self) -> bool {
+        self.generation.load(Ordering::Acquire) != self.expected || Instant::now() >= self.deadline
+    }
     pub fn cancelled(&self) -> bool {
-        self.generation.load(Ordering::Acquire) != self.expected
-            || Instant::now() >= self.deadline
-            || !(self.attendance)(&self.grant.session_id)
+        self.revoked() || !(self.attendance)(&self.grant.session_id) || self.revoked()
     }
     pub fn target(&self) -> &Target {
         &self.grant.target
@@ -330,7 +331,7 @@ pub struct InputPermit {
 
 impl InputPermit {
     pub fn cancelled(&self) -> bool {
-        self.capture.cancelled() || !(self.supervisor)()
+        self.capture.cancelled() || !(self.supervisor)() || self.capture.revoked()
     }
     pub fn action(&self) -> &Action {
         &self.action
