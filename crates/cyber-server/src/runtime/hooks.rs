@@ -79,6 +79,56 @@ pub struct HookExecutionRecord {
     pub io: Option<HookExecutionIo>,
 }
 
+/// The live summary of a receipt (`LiveEvent::HookReceipt`) for the telemetry exporter,
+/// published when a receipt is admitted and when it settles. It has no IO field, so hook
+/// IO never reaches telemetry, even with `log_hook_io`.
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+pub struct HookReceipt {
+    pub id: String,
+    pub hook_id: String,
+    pub event: String,
+    pub scope: HookScope,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    pub started_ms: i64,
+    /// Absent until it settles.
+    pub duration_ms: Option<u64>,
+    pub outcome: Option<HookOutcome>,
+    /// The decision kind of a settled receipt, when the handler made one.
+    pub decision: Option<HookAction>,
+}
+
+impl HookReceipt {
+    pub fn of(record: &HookExecutionRecord) -> Self {
+        Self {
+            id: record.id.clone(),
+            hook_id: record.hook_id.clone(),
+            event: record.event.clone(),
+            scope: record.scope,
+            call_id: record.call_id.clone(),
+            tool_name: record.tool_name.clone(),
+            started_ms: record.started_ms,
+            duration_ms: record.duration_ms,
+            outcome: record.outcome,
+            decision: record.decision.as_ref().and_then(|d| d.decision),
+        }
+    }
+
+    /// Whether the receipt has settled.
+    pub fn settled(&self) -> bool {
+        self.outcome.is_some()
+    }
+}
+
+fn publish_receipt(bus: &super::bus::Bus, record: &HookExecutionRecord) {
+    bus.publish(super::LiveEvent::HookReceipt {
+        session_id: record.session_id.clone(),
+        receipt: HookReceipt::of(record),
+    });
+}
+
 pub struct HookExecutionResult {
     pub outcome: HookOutcome,
     pub decision: HookDecision,
@@ -91,6 +141,7 @@ pub struct HookExecutionResult {
 /// Call verify before effects; finish records observations even after admission closes.
 pub struct HookExecution {
     store: Arc<Store>,
+    bus: super::bus::Bus,
     authority: AdmissionAuthority,
     activity: super::activity::Scope,
     record: HookExecutionRecord,
@@ -144,6 +195,7 @@ impl HookExecution {
             )],
         )?;
         self.settled = true;
+        publish_receipt(&self.bus, &self.record);
         Ok(self.record.clone())
     }
 }
@@ -161,14 +213,20 @@ impl Drop for HookExecution {
         self.record.acknowledged = Some(false);
         self.record.must_stop = true;
         self.record.io = None;
-        let _ = self.store.append(
-            &self.record.id,
-            Expected::Seq(0),
-            vec![NewEvent::new(
-                EXECUTED,
-                serde_json::to_value(&self.record).expect("receipt serializes"),
-            )],
-        );
+        if self
+            .store
+            .append(
+                &self.record.id,
+                Expected::Seq(0),
+                vec![NewEvent::new(
+                    EXECUTED,
+                    serde_json::to_value(&self.record).expect("receipt serializes"),
+                )],
+            )
+            .is_ok()
+        {
+            publish_receipt(&self.bus, &self.record);
+        }
     }
 }
 
@@ -293,8 +351,10 @@ impl Runtime {
             }
             Err(error) => return Err(error.into()),
         }
+        publish_receipt(&self.inner.bus, &record);
         Ok(Some(HookExecution {
             store: Arc::clone(&self.inner.store),
+            bus: self.inner.bus.clone(),
             authority,
             activity,
             record,
@@ -349,6 +409,12 @@ impl Runtime {
                 NewEvent::new(EXECUTED, terminal),
             ],
         )?;
+        let mut admitted = record.clone();
+        admitted.duration_ms = None;
+        admitted.outcome = None;
+        admitted.decision = None;
+        publish_receipt(&self.inner.bus, &admitted);
+        publish_receipt(&self.inner.bus, &record);
         Ok(())
     }
 

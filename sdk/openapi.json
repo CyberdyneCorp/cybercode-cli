@@ -9003,6 +9003,301 @@
           "available"
         ]
       },
+      "Located_TelemetryStatus": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/TelemetryStatus"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "TelemetryStatus": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether OpenTelemetry export is on."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why export is off."
+          },
+          "log_prompts": {
+            "$ref": "#/components/schemas/SourcedFlag",
+            "description": "`telemetry.log_prompts`."
+          },
+          "signals": {
+            "$ref": "#/components/schemas/TelemetrySignals"
+          },
+          "dropped_events": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Runtime events the exporter could not keep up with."
+          },
+          "resource": {
+            "$ref": "#/components/schemas/TelemetryResource"
+          },
+          "ignored": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IgnoredTelemetry"
+            },
+            "description": "Project values of `telemetry.otel` and `telemetry.log_prompts`, never read."
+          },
+          "restart_required": {
+            "type": "boolean",
+            "description": "The configuration on disk differs from the running settings; they apply on restart."
+          },
+          "product": {
+            "$ref": "#/components/schemas/ProductTelemetry"
+          }
+        },
+        "required": [
+          "enabled",
+          "log_prompts",
+          "signals",
+          "dropped_events",
+          "resource",
+          "ignored",
+          "restart_required",
+          "product"
+        ]
+      },
+      "SourcedFlag": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": "string",
+            "description": "`config (<layer>)`, `env (<VARIABLE>)`, `policy (<managed source>)` or `default`."
+          }
+        },
+        "required": [
+          "value",
+          "source"
+        ]
+      },
+      "TelemetrySignals": {
+        "type": "object",
+        "properties": {
+          "traces": {
+            "$ref": "#/components/schemas/SignalStatus"
+          },
+          "metrics": {
+            "$ref": "#/components/schemas/SignalStatus"
+          },
+          "logs": {
+            "$ref": "#/components/schemas/SignalStatus"
+          }
+        },
+        "required": [
+          "traces",
+          "metrics",
+          "logs"
+        ]
+      },
+      "SignalStatus": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether this signal is exported."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why this signal is off while export is on, such as `OTEL_TRACES_EXPORTER=none`."
+          },
+          "endpoint": {
+            "type": "string",
+            "description": "The effective endpoint, without userinfo or query."
+          },
+          "protocol": {
+            "type": "string",
+            "description": "`http/protobuf`, `http/json` or `grpc`."
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MaskedHeader"
+            },
+            "description": "Every header with its value as `***`."
+          },
+          "sources": {
+            "$ref": "#/components/schemas/SignalSources"
+          },
+          "exported": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Items the endpoint acknowledged."
+          },
+          "failed": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Items in batches the endpoint rejected or could not receive."
+          },
+          "dropped": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExportError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "enabled",
+          "endpoint",
+          "protocol",
+          "timeout_ms",
+          "headers",
+          "sources",
+          "exported",
+          "failed",
+          "dropped"
+        ]
+      },
+      "MaskedHeader": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string",
+            "description": "Always `***`."
+          }
+        },
+        "required": [
+          "name",
+          "value"
+        ]
+      },
+      "SignalSources": {
+        "type": "object",
+        "properties": {
+          "endpoint": {
+            "type": "string"
+          },
+          "protocol": {
+            "type": "string"
+          },
+          "headers": {
+            "type": "string"
+          },
+          "timeout": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "endpoint",
+          "protocol",
+          "headers",
+          "timeout"
+        ],
+        "description": "The source of each signal value, labelled as [`SourcedFlag::source`]."
+      },
+      "ExportError": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "The error, with header values redacted."
+          },
+          "at_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix milliseconds."
+          }
+        },
+        "required": [
+          "message",
+          "at_ms"
+        ]
+      },
+      "TelemetryResource": {
+        "type": "object",
+        "properties": {
+          "service.name": {
+            "type": "string"
+          },
+          "service.version": {
+            "type": "string"
+          },
+          "os.type": {
+            "type": "string"
+          },
+          "account_signed_in": {
+            "type": "boolean",
+            "description": "Whether the resource carries a Cyber Account; its identifiers are never shown."
+          }
+        },
+        "required": [
+          "service.name",
+          "service.version",
+          "os.type",
+          "account_signed_in"
+        ]
+      },
+      "IgnoredTelemetry": {
+        "type": "object",
+        "properties": {
+          "pointer": {
+            "type": "string",
+            "description": "JSON pointer, such as `/telemetry/otel/endpoint`."
+          },
+          "source": {
+            "type": "string",
+            "description": "The project layer, such as `project:/repo/.cyber/cyber.jsonc`."
+          }
+        },
+        "required": [
+          "pointer",
+          "source"
+        ]
+      },
+      "ProductTelemetry": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "description": "Product telemetry is not implemented and always off."
+      },
       "Located_Array_of_FeatureStatus": {
         "type": "object",
         "properties": {
@@ -21981,6 +22276,65 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Located_Machine"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/telemetry": {
+      "get": {
+        "operationId": "v1.telemetry.get",
+        "summary": "The server's OpenTelemetry export settings with their sources, counters and ignored project values; header values are always `***`",
+        "tags": [
+          "telemetry"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_TelemetryStatus"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "ServiceUnavailableError with service `telemetry` in a host without a server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
                 }
               }
             }

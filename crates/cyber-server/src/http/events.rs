@@ -238,7 +238,9 @@ fn session_of(event: &LiveEvent) -> Option<&str> {
         | LiveEvent::McpToolsChanged { .. }
         | LiveEvent::MemoryUpdated { .. }
         | LiveEvent::WorkflowProgress { .. }
-        | LiveEvent::Worktree { .. } => None,
+        | LiveEvent::Worktree { .. }
+        // Internal to the telemetry exporter: no client stream carries it.
+        | LiveEvent::HookReceipt { .. } => None,
         LiveEvent::Durable { session_id, .. }
         | LiveEvent::HookNotice { session_id, .. }
         | LiveEvent::RequestRouted { session_id, .. }
