@@ -79,6 +79,13 @@ The [current inventory](docs/implementation/spec-doc-reconciliation.md) contains
 
 **Local web dashboard (`web-client`, P1, not owned by an M1.x milestone): first slice implemented and automated acceptance passed.** [`implement-local-web-dashboard`](openspec/changes/implement-local-web-dashboard/proposal.md) implements a responsive Session/transcript view, composer, permission/question inbox and existing workflow/Job/Goal controls. Setup, CI results and the remaining physical-device acceptance check are tracked in the [dashboard guide](docs/web-dashboard.md) and [evidence](docs/implementation/web-dashboard.md). Browser approvals use server-owned request identities, interactive-presence expiry and acknowledged replies. Loopback, a user-managed SSH forward or a TLS-protected LAN/VPN endpoint work without a Cyber Account; the browser password grants owner authority. No automatic tunnel or public exposure is added. Relay/paired Device access remains M3.2. The full TUI-equivalent web target follows the first dashboard slice.
 
+**TUI agent directory (`tui` and `cross-session-messaging`, P1): planned next after OpenTelemetry export.** A `/agents` overlay listing every Session this Session can reach, in one place:
+- local Sessions, subagents and teammates;
+- direct-peer Sessions as `name@peer`, with offline peers as `*@peer`;
+- once those transports ship, published hub agents and Relay machines.
+
+Each row shows the address, kind, state (`idle`, `running`, `waiting_input`, `offline`) and Location, with actions to message, watch, attach (peers with an `attach` grant), rename (local Sessions) and open held messages. It reads the existing `GET /api/v1/messaging/sessions` listing and the hub People list, and adds no new transport. Today the only ways to list reachable Sessions are `cyber messages list --reachable` and the model's `list_sessions` tool.
+
 ## P2: Autonomy & orchestration (flagship)
 
 **Capabilities:** `workflows` (including automatic orchestration), `goals`, `loops-scheduling`, `agent-teams` (behind feature `teams`), `cross-session-messaging` (direct peers), `tui` (agent view, workflow monitor, goal panel), `background-tasks` (`notify`, `send_file`), `skills-commands` (bundled `batch`, `review`, `audit`), `exec-mode` (`--goal`, `--workflow`).
@@ -106,7 +113,7 @@ The [current inventory](docs/implementation/spec-doc-reconciliation.md) contains
 **Milestones**
 1. **M3.1 Cyber Account:** `cyber login` via CyberdyneAuth (OIDC code + PKCE, loopback redirect), keyring storage, refresh serialized across processes, `whoami`, entitlements and org claims.
 2. **M3.2 Relay + remote control:** outbound WebSocket relay, E2E encryption (X25519), QR device pairing, device list/revoke, push notifications, web client; `cyber relay serve` for self-hosting. Reuse the P1 local-dashboard bundle with the account/paired-Device Relay transport; private-network P1 approvals do not imply this milestone is implemented.
-3. **M3.3 Cross-machine messaging:** relay transport, approval by default, org opt-in.
+3. **M3.3 Cross-machine messaging:** relay transport, approval by default, org opt-in. Proposed in [`add-account-relay-messaging`](openspec/changes/add-account-relay-messaging/proposal.md). It covers machine identity, an account roster on the Relay with names kept end-to-end, mutual six-word machine approval, `<session>@<member>/<machine>` addressing for org members, a messaging-only Relay connection that can ship before the rest of M3.2, and `cyber machines`.
 4. **M3.4 Runners:** orchestrator + self-hosted runner pools, environments, session identity tokens; `--cloud`, `teleport` (remote → local) and **`handoff` (live local → remote)**.
 5. **M3.5 Automation:** routines (schedule / API / GitHub / webhook triggers), channels (webhook, MCP channel, chat bridges), GitHub App/Action + auto-fix PRs.
 6. **M3.6 Sharing & policy:** share service (private / org / public), redaction, server-managed org policy and spend limits.
