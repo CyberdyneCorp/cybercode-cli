@@ -7,7 +7,7 @@ const preview: NativePreview = { id: "review", session_id: "owner", expires_at: 
 function fixture(t: { after(callback: () => void): void }) {
  const calls: Array<{ path: string; options: RequestOptions }> = []; let context: ComputerContext | undefined = { session: "owner", directory: "/repo", actionable: true, signal: new AbortController().signal };
  let hook: ((path: string) => Promise<unknown>) | undefined;
- const api = { request: async <T>(path: string, options: RequestOptions = {}) => { calls.push({ path, options }); return (hook ? await hook(path) : { data: path.endsWith("/preview") ? preview : report }) as T; } } as Port;
+ const api = { bytes: async (path:string,options:RequestOptions={}) => {calls.push({path,options});return new Uint8Array([137,80,78,71,13,10,26,10]);}, request: async <T>(path: string, options: RequestOptions = {}) => { calls.push({ path, options }); return (hook ? await hook(path) : { data: path.endsWith("/preview") ? preview : report }) as T; } } as Port;
  const model = new ComputerControls(api, () => context, () => {}, () => 100); t.after(() => { context = undefined; model.clear(); });
  return { model, calls, context: (value: ComputerContext | undefined) => { context = value; }, hook: (value: (path: string) => Promise<unknown>) => { hook = value; } };
 }
@@ -22,4 +22,12 @@ test("switches fence delayed review replies and unknown operations require ackno
 test("Stop stays available during blocked owner actions and uncertain responses never replay", async (t) => {
  const f = fixture(t); await f.model.refresh(); let finish!: (value: unknown) => void; f.hook(path => path.endsWith("/preview") ? new Promise(resolve => { finish = resolve; }) : Promise.resolve({ data: report })); f.model.selector = "fixture"; const task = f.model.reviewTarget(); assert.equal(f.model.busy, true); await f.model.stop(); assert.equal(f.calls.filter(call => call.path.endsWith("/stop")).length, 1); finish({ data: preview }); await task; assert.equal(f.model.preview, undefined);
  f.hook(() => Promise.reject(new Error("fixture disconnect"))); await f.model.stop(); assert.equal(f.model.uncertain, true); assert.match(f.model.notice, /could not be confirmed/);
+});
+
+test("private capture bytes are fetched only on explicit preview and revoked on Session change", async (t) => {
+ const f=fixture(t);const frame={id:"cuf_fixture",session_id:"owner",created_ms:100,sha256:"fixture",bytes:8,target:preview.target};
+ f.hook(path=>Promise.resolve({data:path.endsWith("/computer")?{latest_frame:frame}:report}));
+ await f.model.refresh();assert.equal(f.model.latestFrame?.id,"cuf_fixture");assert.equal(f.calls.filter(call=>call.path.includes("/frames/")).length,0);
+ await f.model.previewFrame();const image=f.model.imageURL;assert.ok(image?.startsWith("blob:"));assert.equal(f.calls.filter(call=>call.path.includes("/frames/")).length,1);
+ f.model.reset();assert.equal(f.model.imageURL,undefined);await assert.rejects(fetch(image!));
 });
