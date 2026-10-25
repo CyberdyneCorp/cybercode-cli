@@ -697,7 +697,7 @@ async fn tools_are_strict_and_map_route_errors_unchanged() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn same_user_unix_socket_needs_no_password() {
+async fn same_user_unix_socket_requires_the_owner_password() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let server = Server::start("127.0.0.1:0").await;
     let socket = server.h.dir.path().join("s.sock");
@@ -720,31 +720,57 @@ async fn same_user_unix_socket_needs_no_password() {
     tokio::spawn(async move {
         http::serve_unix(http::router(state), &path, std::future::pending()).await
     });
-    let mut stream = loop {
-        match tokio::net::UnixStream::connect(&socket).await {
-            Ok(stream) => break stream,
-            Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
-        }
-    };
     let body = json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
         "protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"bridge","version":"1"}}})
     .to_string();
-    let request = format!(
-        "POST /api/v1/mcp/serve HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    );
-    stream.write_all(request.as_bytes()).await.unwrap();
-    let mut response = String::new();
-    stream.read_to_string(&mut response).await.unwrap();
-    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
-    assert!(
-        response.to_ascii_lowercase().contains("mcp-session-id:"),
-        "{response}"
-    );
-    assert!(
-        response.contains("\"protocolVersion\":\"2025-06-18\""),
-        "{response}"
-    );
+    use base64::Engine;
+    for password in [None, Some("wrong-fixture-password"), Some(PASSWORD)] {
+        let mut stream = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match tokio::net::UnixStream::connect(&socket).await {
+                    Ok(stream) => break stream,
+                    Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+                }
+            }
+        })
+        .await
+        .expect("owner Unix socket did not become ready");
+        let authorization = password
+            .map(|password| {
+                format!(
+                    "Authorization: Basic {}\r\n",
+                    base64::engine::general_purpose::STANDARD.encode(format!("cyber:{password}"))
+                )
+            })
+            .unwrap_or_default();
+        let request = format!(
+            "POST /api/v1/mcp/serve HTTP/1.1\r\nHost: localhost\r\n{authorization}Content-Type: application/json\r\nAccept: application/json, text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut response = String::new();
+        tokio::time::timeout(Duration::from_secs(5), stream.read_to_string(&mut response))
+            .await
+            .unwrap()
+            .unwrap();
+        if password != Some(PASSWORD) {
+            assert!(response.starts_with("HTTP/1.1 401"), "{response}");
+            assert!(
+                !response.contains(PASSWORD),
+                "owner credential must not appear in an auth refusal"
+            );
+            continue;
+        }
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        assert!(
+            response.to_ascii_lowercase().contains("mcp-session-id:"),
+            "{response}"
+        );
+        assert!(
+            response.contains("\"protocolVersion\":\"2025-06-18\""),
+            "{response}"
+        );
+    }
 }
 
 // Session creation over MCP (`mcp-server` → Session creation over MCP).
