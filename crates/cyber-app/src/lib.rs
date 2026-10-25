@@ -224,6 +224,9 @@ impl App {
     }
 
     async fn build_with(opts: AppOptions, served: bool) -> Result<App, String> {
+        // Establish the private directory before Linux sandbox mount planning or
+        // any plugin, LSP, MCP, hook or model-driven subprocess can launch.
+        cyber_tools::plugin_host::hide_computer_artifacts(&opts.paths, &opts.home)?;
         let env = ProcessEnv;
         let config = config_loader(opts.paths.clone(), opts.home.clone());
         let global = config(&opts.default_directory)

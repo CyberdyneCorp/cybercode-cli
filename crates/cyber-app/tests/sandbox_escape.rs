@@ -269,3 +269,65 @@ async fn sandboxed_commands_cannot_read_cyber_credential_files() {
         );
     }
 }
+
+#[tokio::test]
+async fn sandboxed_commands_cannot_read_another_sessions_private_computer_artifacts() {
+    use sha2::{Digest, Sha256};
+    for sandbox_policy in [None, Some("read-only")] {
+        let app = ModeApp::start(Setup {
+            sandbox_policy,
+            ..Setup::default()
+        })
+        .await;
+        let private = app.root.join("data/computer");
+        assert!(
+            private.is_dir(),
+            "bootstrap must prepare the hidden root before subprocesses launch"
+        );
+        let victim = bypass_session(&app).await;
+        let attacker = bypass_session(&app).await;
+        assert_ne!(victim, attacker);
+        let folder = private.join(format!("{:x}", Sha256::digest(victim.as_bytes())));
+        std::fs::create_dir_all(&folder).unwrap();
+        let capture = folder.join(format!("{}.png", cyber_core::ids::new_id("cuf")));
+        let marker = format!("computer-private-{}", ulid::Ulid::new());
+        std::fs::write(&capture, &marker).unwrap();
+        let public = app.repo.join("ordinary-file.txt");
+        std::fs::write(&public, "public-canary-readable").unwrap();
+        // An explicit readable_paths grant still cannot expose a registered
+        // private root, including files created after the App was bootstrapped.
+        let config = app.root.join("config/cyber.json");
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
+        value["sandbox"]["readable_paths"] = json!([private]);
+        std::fs::write(config, value.to_string()).unwrap();
+        app.run(
+            &attacker,
+            &format!(
+                "RUN<<cat '{}'; echo private-read-attempted; cat '{}'>>",
+                capture.display(),
+                public.display()
+            ),
+        )
+        .await;
+        let outputs = app.outputs(&attacker).await;
+        assert_eq!(outputs.len(), 1, "{outputs:?}");
+        assert!(
+            outputs[0].contains("private-read-attempted"),
+            "the real subprocess did not run: {outputs:?}"
+        );
+        assert!(
+            outputs[0].contains("public-canary-readable"),
+            "ordinary reads should remain available: {outputs:?}"
+        );
+        assert!(
+            !outputs[0].contains(&marker),
+            "cross-Session private capture escaped the OS sandbox ({sandbox_policy:?}): {outputs:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&capture).unwrap(),
+            marker,
+            "read denial must not destroy the owner's capture"
+        );
+    }
+}

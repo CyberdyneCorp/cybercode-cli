@@ -34,7 +34,9 @@ use connection::{CallError, Connection, Handler, RpcError};
 use launch::Denials;
 use restart::{AfterCrash, Crashes};
 
-pub use secrets::{PluginSecrets, VaultSecrets, hide_credential_files, open_secrets};
+pub use secrets::{
+    PluginSecrets, VaultSecrets, hide_computer_artifacts, hide_credential_files, open_secrets,
+};
 
 /// The plugin host protocol version this core speaks.
 pub const PROTOCOL_VERSION: &str = "1";
