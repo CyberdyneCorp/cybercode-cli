@@ -28,7 +28,7 @@ use std::path::PathBuf;
 
 pub use container_plan::{APPCONTAINER_FLAG, ContainerPlan};
 pub use deny_read::DenyRead;
-pub use env::{BASE_VARS, mask_env, policy_env};
+pub use env::{BASE_VARS, mask_env, owner_environment, policy_env, reserve_owner_credential};
 pub use isolation::{BYPASS_REQUIREMENT, Isolation, container_markers, in_container};
 pub use policy::{
     DEFAULT_DOMAINS, EnvPolicy, MANAGED_NOTICE, NetworkMode, Policy, SandboxConfig,

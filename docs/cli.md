@@ -1982,7 +1982,7 @@ cyber serve [OPTIONS]
 
 - `--hostname <HOSTNAME>`: Address to bind (default 127.0.0.1). Off loopback requires global server.tls. Default: `127.0.0.1`.
 - `--port <PORT>`: TCP port (default 4747, falling back to a free port)
-- `--socket <SOCKET>`: Unix socket path (default <state>/cyber.sock)
+- `--socket <SOCKET>`: Unix socket path inside private state (default <state>/cyber.sock)
 - `--no-tcp`: Do not listen on TCP.
 - `--register`: Register in server.json so clients find this server.
 - `--sandbox <SANDBOX>`: Sandbox policy for model-run commands: read-only, workspace-write or full-access.

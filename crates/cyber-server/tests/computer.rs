@@ -491,12 +491,12 @@ async fn same_uid_unix_clients_need_owner_auth_before_presence_or_computer_grant
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
     let client = reqwest::Client::builder()
-        .unix_socket(&socket)
+        .unix_socket(socket.clone())
         .build()
         .unwrap();
     assert_eq!(
         client
-            .get("http://localhost/health")
+            .get("http://localhost/api/v1/health")
             .send()
             .await
             .unwrap()
@@ -597,7 +597,7 @@ async fn unix_owner_routes_fail_closed_without_a_configured_password() {
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
     let client = reqwest::Client::builder()
-        .unix_socket(&socket)
+        .unix_socket(socket.clone())
         .build()
         .unwrap();
     for password in [None, Some("arbitrary-fixture-password")] {
@@ -610,7 +610,7 @@ async fn unix_owner_routes_fail_closed_without_a_configured_password() {
     }
     assert_eq!(
         client
-            .get("http://localhost/health")
+            .get("http://localhost/api/v1/health")
             .send()
             .await
             .unwrap()

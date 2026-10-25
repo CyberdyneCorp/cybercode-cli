@@ -1189,7 +1189,7 @@ impl LocalLauncher<'_> {
         for key in ["TMPDIR", "TEMP", "TMP"] {
             env.insert(key.into(), resources.scratch.path.display().to_string());
         }
-        env
+        cyber_sandbox::owner_environment(env).into_iter().collect()
     }
 }
 

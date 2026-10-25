@@ -12,6 +12,8 @@
 - [x] 2.3 Integrate `computer.capture`/`computer.control` with Modes/permissions, exact target review and denial behavior; prevent bypass from arming/widening a grant.
 - [x] 2.4 Add independent emergency Stop and expiry/interrupt/logout/restart/OS-revocation fencing with bounded native calls and key/button cleanup.
 
+- [x] 2.5 Require owner authentication on same-UID Unix requests, hide complete owner state before child launches, protect private-root writes/ancestor replacement and refuse unsafe custom/legacy socket paths.
+
 ## 3. Native actions and evidence
 
 - [x] 3.1 Implement bounded ScreenCaptureKit capture and server-owned frame metadata, coordinates, scale/rotation/target identity and image modality handling.
@@ -30,13 +32,13 @@
 - [x] 5.1 Test fake-adapter grant/Mode/consent/frame/geometry/focus checks with zero input on rejection, concurrency/rate limits and stale owner actions.
 - [x] 5.2 Test interruption before/after native dispatch, exactly-once receipt settlement, unknown recovery, revocation and emergency stop under a busy model/tool queue.
 - [ ] 5.3 Test capture limits, malformed keys/text, artifact reference isolation, typed-text redaction and unsupported platform absence of side effects.
-- [ ] 5.4 With explicit controlled-test consent and OS grants, verify real macOS screenshot, move/click/drag/scroll/text/key editing, coordinate transforms and Stop in a disposable test window; report evidence separately from fixtures.
+- [x] 5.4 With explicit controlled-test consent and OS grants, verify real macOS screenshot, move/click/drag/scroll/text/key editing, coordinate transforms and Stop in a disposable test window; report evidence separately from fixtures.
 - [ ] 5.5 Validate OpenSpec, generated contracts/bundles, relevant Rust/browser/SDK suites and native/cross-platform CI; perform code/security review before ready-to-merge.
 
 ## Implementation evidence and remaining acceptance
 
-- Compiled native Objective-C adapter uses public Apple SDK APIs, links into the server, and dynamically loads ScreenCaptureKit for explicit unsupported-version behavior. Native syntax/build checks passed; signed/notarized distribution and physical-device behavior remain unaccepted (1.4/5.4).
-- Deterministic local checks: computer domain18, global-only configuration2, runtime16, exact-Session presence3, real TCP owner/privacy3, model schema1, TUI1, CLI/doctor2 and owned Session-presence stream1 passed. A separate core settings unit test passed. Strict Clippy passed across cyber-computer/core/server/tools/app/client/cli/tui with all targets and warnings denied.
+- Compiled native Objective-C adapter uses public Apple SDK APIs, links into the server, and dynamically loads ScreenCaptureKit for explicit unsupported-version behavior. Native syntax/build checks passed; signed/notarized distribution remains unaccepted (1.4); controlled physical capture/input passed (5.4).
+- Deterministic local checks: computer domain18, global-only configuration2, runtime17, exact-Session presence3, real TCP/Unix owner/privacy5, model schema1, TUI1, CLI/doctor2 and owned Session-presence stream1 passed. A separate core settings unit test passed. Strict Clippy passed across cyber-computer/core/server/tools/app/client/cli/tui with all targets and warnings denied.
 - Browser modules/transport44 tests and typecheck passed; SDK124 tests passed against the frozen CLI, with2 account/hub cases skipped on macOS to avoid native Keychain writes. OpenAPI export and SDK generation/typecheck passed. Only aarch64-apple-darwin is installed locally; unsupported-platform execution and the wider workspace suites await CI (5.3/5.5).
 - Dashboard constructor/view/logout and CSP/blob preview are integrated. Browser module/transport checks and three focused Chromium scenarios against the frozen built CLI with mocked native HTTP responses verify global cross-Session authority, explicit review/arming, private PNG preview and logout Stop without invoking the OS adapter.
-- The owner authorized controlled live testing on 2026-10-25. Two real fixture-only ScreenCaptureKit captures and a local vision-provider projection passed on macOS26.7/arm64; isolated-server restart picked up Screen Recording. No native input has occurred: Accessibility still reports denied. Task5.4 remains open for actual mouse/key actions, negative cases and Stop during input; see the acceptance record for exact frozen-binary identity and image hashes.
+- The owner authorized controlled live testing on 2026-10-25. The unchanged frozen server, launched from Terminal after exact Screen Recording/Accessibility grants, passed real app-scoped capture, local vision delivery, move/click/drag/scroll/ASCII+Unicode text/key/wait, geometry/focus/modal/overlay refusal, reconnect fencing and independent Stop during drag. All grants ended stopped; raw typed canaries were absent from isolated durable messages/database/logs. Exact binary identity, operation IDs and remaining layout/signing limits are in the acceptance record.

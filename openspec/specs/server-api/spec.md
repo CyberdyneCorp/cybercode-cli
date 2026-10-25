@@ -40,7 +40,7 @@ The server API is the single public contract every Cyber Code client uses: the T
 - **THEN** it reports the registration, whether it is healthy for this version, and whether it is `stale` for this build
 
 ### Requirement: Listener defaults
-(P0) The server SHALL bind `127.0.0.1` by default. It SHALL try port 4747 first and fall back to an OS-assigned free port. On macOS and Linux it SHALL also listen on the Unix domain socket `~/.local/state/cyber/cyber.sock` (mode 0600). `--hostname`, `--port` and `--socket` SHALL override these defaults, and `--no-tcp` SHALL disable the TCP listener.
+(P0) The server SHALL bind `127.0.0.1` by default. It SHALL try port 4747 first and fall back to an OS-assigned free port. On macOS and Linux it SHALL also listen on the Unix domain socket `~/.local/state/cyber/cyber.sock` (mode 0600). `--hostname`, `--port` and `--socket` SHALL override these defaults, and `--no-tcp` SHALL disable the TCP listener. An overridden Unix socket SHALL be an absolute path under the private state directory, with an existing non-symlink parent and no symlink leaf or path traversal. A non-socket existing leaf SHALL NOT be replaced. Unsafe legacy socket registrations SHALL NOT receive owner credentials.
 
 #### Scenario: Port 4747 busy
 - **WHEN** port 4747 is already in use and no `--port` is given
@@ -51,18 +51,18 @@ The server API is the single public contract every Cyber Code client uses: the T
 - **THEN** it accepts requests only on the Unix socket and `server.json` has no `url`
 
 ### Requirement: Local password authentication
-(P0) The server SHALL keep a password in `~/.local/state/cyber/password` (mode 0600), generated on first use as 32 random bytes encoded base64url. It SHALL require HTTP Basic credentials (username `cyber`) on every TCP route. An `auth_token` query parameter carrying base64 `cyber:<password>` SHALL be accepted only on `GET /api/v1/event`, `GET /api/v1/sessions/:sessionID/events` and PTY connect upgrades, where browsers cannot set headers; on any other route it SHALL be ignored, because query strings reach logs and histories. Unix-socket requests from the same OS user SHALL be authenticated by peer credentials without a password. `cyber service password [value]` SHALL print or replace the password, restarting the server on replacement.
+(P0) The server SHALL keep a password in `~/.local/state/cyber/password` (mode 0600), generated on first use as 32 random bytes encoded base64url. It SHALL require HTTP Basic credentials (username `cyber`) on TCP and Unix owner API routes, except existing public health/static resources and separately authenticated PTY ticket routes. An `auth_token` query parameter carrying base64 `cyber:<password>` SHALL be accepted only on `GET /api/v1/event`, `GET /api/v1/sessions/:sessionID/events` and PTY connect upgrades, where browsers cannot set headers; on any other route it SHALL be ignored, because query strings reach logs and histories. Unix-socket requests SHALL additionally require peer credentials of the server OS user; same-UID credentials alone SHALL NOT grant owner API access. A Unix listener without a configured owner password SHALL fail closed; trusted in-process Embedded calls MAY bypass local password authentication. `cyber service password [value]` SHALL print or replace the password, restarting the server on replacement.
 
 #### Scenario: Missing credentials
-- **WHEN** a TCP request arrives without valid Basic credentials, `auth_token` on a stream route, or Bearer token
+- **WHEN** a TCP or same-user Unix request arrives without valid Basic credentials or an allowed stream-route `auth_token`
 - **THEN** the server responds `401` with `WWW-Authenticate: Basic realm="cyber"` and `{ "_tag": "UnauthorizedError" }`
 
 #### Scenario: Same-user socket
 - **WHEN** a process owned by the server's OS user connects over the Unix socket
-- **THEN** the request is authorized without credentials
+- **THEN** the request is rejected without the owner credential and authorized with valid owner Basic credentials
 
 #### Scenario: Query token rejected on a mutating route
-- **WHEN** `POST /api/v1/sessions?auth_token=...` arrives with no Basic or Bearer header
+- **WHEN** `POST /api/v1/sessions?auth_token=...` arrives with no Basic header
 - **THEN** the server responds `401`
 
 ### Requirement: Cyber Account bearer authentication

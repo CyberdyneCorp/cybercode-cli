@@ -60,7 +60,7 @@ Use **Older messages** to browse transcript pages and **Latest messages** to ret
 
 ## Approval and disconnect behavior
 
-The owner-authenticated lease APIs are `POST /api/v1/sessions/{sessionID}/interactive-clients`, and `PUT`/`DELETE /api/v1/sessions/{sessionID}/interactive-clients/{clientID}`. Create and renew return `{ "data": { "client_id", "session_id", "expires_at" } }`, with `expires_at` in Unix milliseconds; release returns 204. Use the same Location and an idempotency key for each logical mutation. Replaying an expired receipt never recreates presence; an unknown or expired renewal returns 404.
+Same-UID Unix clients also require the owner Basic credential; socket access alone does not authorize browser presence or approvals. The owner-authenticated lease APIs are `POST /api/v1/sessions/{sessionID}/interactive-clients`, and `PUT`/`DELETE /api/v1/sessions/{sessionID}/interactive-clients/{clientID}`. Create and renew return `{ "data": { "client_id", "session_id", "expires_at" } }`, with `expires_at` in Unix milliseconds; release returns 204. Use the same Location and an idempotency key for each logical mutation. Replaying an expired receipt never recreates presence; an unknown or expired renewal returns 404.
 
 Selecting a Session establishes a browser-presence lease, renewed every 15 seconds and expiring after 45 seconds without renewal. Presence permits asking an attached human; it does not grant tool permissions or relax Mode, sandbox, Location or saved-rule policy. Requests from child Sessions keep their original owner identity.
 
@@ -113,3 +113,5 @@ npm run test:e2e
 ```
 
 Build `cargo build -p cyber-cli` first; the browser fixture uses that binary. Browser evidence and platform limitations are recorded in [dashboard implementation evidence](implementation/web-dashboard.md). Physical second-device acceptance must be recorded separately from headless browser or local-forward testing.
+
+Unix transport compatibility: owner sockets now require Basic credentials and must live under the protected state directory. Custom paths must be absolute with existing non-symlink parents. If an old registration points outside that directory, automatic attach/start/stop refuses it before sending credentials. Stop the old process through its original terminal or service manager, remove its obsolete registration only after it has stopped, then start the current server with the default socket or a private-state socket. Restarting the old server is necessary to activate the new state and authentication protections.

@@ -1,6 +1,6 @@
 # Native computer acceptance
 
-Status: automated implementation checks passed; **controlled live application capture passed, mouse/keyboard acceptance pending Accessibility permission**. The owner explicitly authorized the disposable-window test on 2026-10-25. OS setup was deliberately requested; restarting only the isolated server enabled Screen Recording. No native input has been injected.
+Status: **controlled live capture and input acceptance passed** on the disposable Cocoa fixture on 2026-10-25. The owner explicitly authorized testing and granted Screen Recording/Accessibility to the frozen server. Running that unchanged server from the owner’s Terminal and restarting it after the exact Accessibility grant produced live health with both permissions enabled. Later owner-state/Unix-authentication fixes are verified separately through automated tests; this physical run does not claim to exercise a rebuilt executable.
 
 ## Local evidence
 
@@ -9,7 +9,7 @@ Status: automated implementation checks passed; **controlled live application ca
 | `cargo test -p cyber-computer --lib` | 18 passed: geometry, input bounds/redaction, expiring grants, rate limits, cross-controller/session fencing, supervisor and independent Stop races |
 | `cargo test -p cyber-core --test config native` | 2 passed: global-only authority and managed feature locks |
 | Server `runtime::computer::tests` | 17 passed: private artifacts, incomplete writes, retention, durable intent/settlement/replay/unknown acknowledgement, cross-Runtime host lease and busy-worker Stop |
-| `cargo test -p cyber-server --test computer` | 3 passed with fake native adapter: Session deletion with retention disabled, real TCP auth/Location/target review/global Stop, self-approval and model/agent/Mode widening refusal, durable typed-text privacy |
+| `cargo test -p cyber-server --test computer` | 5 passed with fake native adapter: Session deletion with retention disabled, real TCP/Unix auth/Location/target review/global Stop, self-approval and model/agent/Mode widening refusal, durable typed-text privacy |
 | Exact Session presence | 3 passed, including disconnect/reconnect and lease expiry before reattachment; grants and outstanding reviews cannot revive |
 | Tool schema, TUI control state, CLI/doctor, client-owned presence stream | 5 focused tests passed; one core settings unit also passed |
 | Clippy | Passed for all targets of cyber-computer/core/server/tools/app/client/cli/tui with warnings denied; final TUI/helper changes checked again |
@@ -25,6 +25,12 @@ Independent review identified and fixed reconnecting grants or target reviews, a
 
 Only `aarch64-apple-darwin` is installed locally. Unsupported-platform execution, other architectures, signed distribution and full workspace verification rely on CI/release acceptance; they are not claimed as locally tested. Test counts are for this change's recorded checks, not current repository-wide totals.
 
+## Owner authority verification
+
+Focused owner-boundary regressions passed: same-UID Unix requests without/wrong credentials return401 before presence/native grants; authenticated clients succeed; a Unix listener without an owner password fails closed. The client Basic-header test, legacy MCP Unix rejection/acceptance and two legacy-registration cases passed. A synthetic legacy socket trap accepted zero connections while stop/status refused the unsafe record.
+
+State-directory registration, an otherwise-approved built-in password read, and actual default/read-only subprocess password reads after replacement passed. Explicit broad-writable-root tests proved protected state cannot be read, overwritten or renamed while an ordinary outside-repository write still succeeds. Credential environment allow/set and known Basic-value aliases were stripped in the dedicated regression. Strict all-target Clippy passed for computer, sandbox, server, tools, app, client and CLI after these changes. These source tests do not replace the frozen-binary physical results below.
+
 ## Controlled live capture evidence (2026-10-25)
 
 - Host: macOS 26.7, arm64. Opaque disposable Cocoa application only; no personal applications or whole-display capture.
@@ -34,7 +40,22 @@ Only `aarch64-apple-darwin` is installed locally. Unsupported-platform execution
 - Visible-canary capture after a fixture-only appearance correction: `cuf_01M5RT7C2YY1GVP1CWT1KGM9M8`, 218961 bytes, SHA-256 `3bfdbcfaa942cd0b7e9d69ab87209996b659c881f286fa3340cfb74b35f0f78a`.
 - Both images were inspected privately and contained only the fixture. Button/counter, text field, scroll rows and drag canvas were visible in the second image. Screenshot bytes are not published as evidence.
 - The scripted loopback vision provider received an authorized PNG projection. No external provider or paid-model request was used.
-- Read-only native health after restart: Screen Recording granted, Accessibility denied. Mouse/key injection, occlusion/focus/geometry negatives and Stop during actual input remain unperformed; permission settings alone are not recorded as a passing input test.
+- These first two captures preceded Accessibility acceptance. The later controlled input run used the same frozen executable, with Screen Recording and Accessibility both reporting granted after the owner launched it from Terminal and restarted it after granting the exact executable.
+
+## Controlled live input evidence (2026-10-25)
+
+All actions ran through the actual model-facing `computer` tool, production runtime, native adapter and private owner controls, using a scripted loopback vision provider and an exact-Session event attachment. Every admitted input used a freshly captured application frame. No personal application, whole-display image, external provider or OS credential dialog was used.
+
+- Session: `ses_01M5SAW0AMACS6DZ4739MW4QMF`; initial fixture PID 49436/window 18517, bundle `ai.cyberdyne.cybercode.acceptance.20261025`. A privately inspected 1200×1144 PNG contained only the opaque fixture, SHA-256 `94e9d6863a2ac59f056990df2d611ca56e282f5b4e4e950190195542538f9b30`.
+- Move and left click posted; the button counter increased by exactly one. Symbolic Command+A and text entry changed only the fixture field. Scroll changed its recorded offset from 0 to 400. A 600ms drag recorded 27 moves and ended with the button released. A 150ms wait posted.
+- Unicode typing separately verified an exact 59-byte UTF-8 string containing Greek, CJK and a surrogate-pair emoji. Operation `native_fixture_af082a51-9d84-4653-bac2-b9ddac4afb60` posted. Durable audit retained only byte count 59 and SHA-256 `70e838ebd542aff3e99eecbbb24090167ddae34530ce504af49c41f7c1b92e99`.
+- Geometry changes and another focused fixture window rejected old frames before input. A simulated fixture modal with an ordinary button also rejected keyboard input. Same-app and separate-app floating overlays produced a durable uncertain result and no fixture click. The separate overlay PID 89460 was tested while fixture PID 86208 remained frontmost; operation `native_fixture_141560ba-0327-4ac9-bea4-63ea760fbd74` recorded `unknown`, `replayed:false` and click delta 0.
+- Independent global Stop returned in 2ms during a 5s drag after the fixture observed mouse-down. The button was released, the grant was null and operation `native_fixture_f9bd0b7e-52b0-4bff-b95d-87738289ff81` settled `unknown`, without replay. This is an observed controlled run, not a general latency guarantee.
+- Disconnecting and reattaching the exact Session event stream did not revive the old grant: the next old-frame action reported the Session unarmed. All runs ended with acknowledged global Stop and no active grant.
+- Both ASCII and Unicode typed canaries were absent as raw bytes from the isolated database/WAL, server log and persisted message evidence. Their audit hashes/byte counts matched independently. Private PNGs and detailed fixture receipts remain local; none are published here.
+- The disposable fixture needed an ARC auxiliary-window lifetime fix and a modal cleanup fix; these changed only test-fixture code. A freshly launched fixture was explicitly brought forward before testing: an inactive fixture correctly produced unknown/no input. Early probe failures are retained privately and are not counted as successful actions.
+
+The physical run exercised 2× scale, rotation 0 and display 1 on macOS 26.7/arm64. Other scales, rotated/negative-origin displays, live OS-permission revocation, right/double clicks, the focused-TUI shortcut, and signed/notarized distribution remain unverified on hardware. Fake-adapter and CI results remain distinct from this device evidence.
 
 ## Controlled device plan for owner review
 

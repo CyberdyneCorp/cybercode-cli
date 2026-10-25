@@ -1082,3 +1082,33 @@ async fn private_computer_capture_root_refuses_other_session_builtin_reads() {
         "owner API remains readable after sandbox registration"
     );
 }
+
+#[tokio::test]
+async fn builtin_read_cannot_obtain_owner_api_password() {
+    let f = Fixture::new();
+    let home = f.dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let paths = cyber_core::paths::Paths::resolve(
+        &std::collections::HashMap::from([(
+            "CYBER_HOME".into(),
+            f.dir.path().join("owner-install").display().to_string(),
+        )]),
+        &home,
+    );
+    paths.ensure().unwrap();
+    cyber_tools::plugin_host::hide_computer_artifacts(&paths, &home).unwrap();
+    let password = paths.state.join("password");
+    std::fs::write(&password, "OWNER_API_PASSWORD_CANARY").unwrap();
+    f.set_config(json!({"permissions":{"read":"allow","external_directory":"allow"},"sandbox":{"readable_paths":[paths.state]}}));
+    let denied = failed(f.call("default", "read", json!({"path":password})).await);
+    assert!(denied.starts_with("Sandbox denied: read"), "{denied}");
+    assert!(!denied.contains("OWNER_API_PASSWORD_CANARY"));
+    f.write("owner-public.txt", "OWNER_PUBLIC_CONTROL");
+    assert!(
+        ok(
+            f.call("default", "read", json!({"path":"owner-public.txt"}))
+                .await
+        )
+        .contains("OWNER_PUBLIC_CONTROL")
+    );
+}

@@ -1,6 +1,58 @@
 //! Credential masking (`sandbox` → Credential masking).
 #![cfg_attr(windows, allow(unsafe_code))]
 
+use base64::Engine;
+use sha2::{Digest, Sha256};
+
+// Owner API authority must not be delegated by a project environment override.
+// Keep digests only; this registry has no Debug/serialization surface.
+static OWNER_CREDENTIALS: std::sync::RwLock<Vec<[u8; 32]>> = std::sync::RwLock::new(Vec::new());
+
+pub fn reserve_owner_credential(value: &str) {
+    if value.is_empty() {
+        return;
+    }
+    let credential = format!("cyber:{value}");
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&credential);
+    let authorization = format!("Basic {encoded}");
+    let mut reserved = OWNER_CREDENTIALS
+        .write()
+        .unwrap_or_else(|error| error.into_inner());
+    for form in [
+        value,
+        credential.as_str(),
+        encoded.as_str(),
+        authorization.as_str(),
+    ] {
+        let digest: [u8; 32] = Sha256::digest(form.as_bytes()).into();
+        if !reserved.contains(&digest) {
+            reserved.push(digest);
+        }
+    }
+}
+
+/// Final filter, applied after configured environment overlays as well as masking.
+/// `allow` and `set` cannot delegate owner API authentication to model subprocesses.
+pub fn owner_environment(
+    vars: impl IntoIterator<Item = (String, String)>,
+) -> Vec<(String, String)> {
+    let vars: Vec<_> = vars.into_iter().collect();
+    for (name, value) in &vars {
+        if name.eq_ignore_ascii_case("CYBER_SERVER_PASSWORD") {
+            reserve_owner_credential(value);
+        }
+    }
+    let reserved = OWNER_CREDENTIALS
+        .read()
+        .unwrap_or_else(|error| error.into_inner());
+    vars.into_iter()
+        .filter(|(name, value)| {
+            !name.eq_ignore_ascii_case("CYBER_SERVER_PASSWORD")
+                && !reserved.contains(&Sha256::digest(value.as_bytes()).into())
+        })
+        .collect()
+}
+
 /// Remove credential-looking variables unless explicitly allowed. `extra` adds exact names,
 /// such as provider credential variables from the catalog. Exact names follow
 /// the platform's case rules; no glob or Unicode normalization is applied here.
@@ -36,6 +88,9 @@ pub fn policy_env(
     config: &crate::SandboxConfig,
     extra: &[String],
 ) -> Vec<(String, String)> {
+    // Inspect reserved names before generic masking removes them, so aliases of
+    // an inherited attach credential are also removed on standalone CLI paths.
+    let vars = owner_environment(vars).into_iter();
     let kept: Vec<(String, String)> = if config.env.clean {
         vars.filter(|(name, _)| {
             BASE_VARS
@@ -54,7 +109,7 @@ pub fn policy_env(
         out.retain(|(existing, _)| existing != name);
         out.push((name.clone(), value.clone()));
     }
-    out
+    owner_environment(out)
 }
 
 #[cfg(not(windows))]
@@ -101,6 +156,43 @@ fn is_secret(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owner_authority_is_removed_after_allow_and_set_including_value_aliases() {
+        let secret = format!("owner-fixture-{}", std::process::id());
+        reserve_owner_credential(&secret);
+        let mut config = crate::SandboxConfig::resolve(
+            &serde_json::json!({}),
+            &Default::default(),
+            None,
+            std::path::Path::new("/fixture-home"),
+        );
+        config.env_allow = vec!["*".into()];
+        config.env.set.insert("CONFIG_ALIAS".into(), secret.clone());
+        config
+            .env
+            .set
+            .insert("CYBER_SERVER_PASSWORD".into(), secret.clone());
+        let kept = policy_env(
+            vec![
+                ("PATH".into(), "/fixture/bin".into()),
+                ("INHERITED_ALIAS".into(), secret.clone()),
+            ]
+            .into_iter(),
+            &config,
+            &[],
+        );
+        assert_eq!(kept, vec![("PATH".into(), "/fixture/bin".into())]);
+        let encoded = base64::engine::general_purpose::STANDARD.encode(format!("cyber:{secret}"));
+        assert!(
+            owner_environment(vec![
+                ("WRAPPED_ALIAS".into(), secret),
+                ("ENCODED_ALIAS".into(), encoded.clone()),
+                ("HEADER_ALIAS".into(), format!("Basic {encoded}"))
+            ])
+            .is_empty()
+        );
+    }
 
     #[test]
     fn secrets_are_removed_unless_allowed() {

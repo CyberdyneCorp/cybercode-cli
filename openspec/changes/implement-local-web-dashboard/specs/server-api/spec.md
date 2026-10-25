@@ -1,18 +1,18 @@
 ## MODIFIED Requirements
 
 ### Requirement: Local password authentication
-(P0) The server SHALL keep a password in `~/.local/state/cyber/password` (mode 0600), generated on first use as 32 random bytes encoded base64url. It SHALL require HTTP Basic credentials (username `cyber`) on TCP API routes except the unauthenticated health route defined by "Health and version". (P1) The embedded dashboard shell/assets at `/` and `/app/*` MAY be public, but SHALL contain no server/Session data or credentials; static fallback SHALL NOT intercept API routes or read arbitrary filesystem paths. No other authentication exemption is introduced by the web client. An `auth_token` query parameter carrying base64 `cyber:<password>` SHALL be accepted only on `GET /api/v1/event`, `GET /api/v1/sessions/:sessionID/events` and PTY connect upgrades, where browsers cannot set headers; on any other route it SHALL be ignored, because query strings reach logs and histories. Unix-socket requests from the same OS user SHALL be authenticated by peer credentials without a password. `cyber service password [value]` SHALL print or replace the password, restarting the server on replacement.
+(P0) The server SHALL keep a password in `~/.local/state/cyber/password` (mode 0600), generated on first use as 32 random bytes encoded base64url. It SHALL require HTTP Basic credentials (username `cyber`) on TCP API routes except the unauthenticated health route defined by "Health and version". (P1) The embedded dashboard shell/assets at `/` and `/app/*` MAY be public, but SHALL contain no server/Session data or credentials; static fallback SHALL NOT intercept API routes or read arbitrary filesystem paths. No other authentication exemption is introduced by the web client. An `auth_token` query parameter carrying base64 `cyber:<password>` SHALL be accepted only on `GET /api/v1/event`, `GET /api/v1/sessions/:sessionID/events` and PTY connect upgrades, where browsers cannot set headers; on any other route it SHALL be ignored, because query strings reach logs and histories. Unix-socket requests SHALL require both peer credentials of the server OS user and the local owner password. `cyber service password [value]` SHALL print or replace the password, restarting the server on replacement.
 
 #### Scenario: Missing credentials
-- **WHEN** a TCP request arrives without valid Basic credentials, `auth_token` on a stream route, or Bearer token
+- **WHEN** a TCP request arrives without valid Basic credentials or an allowed stream-route `auth_token`
 - **THEN** the server responds `401` with `WWW-Authenticate: Basic realm="cyber"` and `{ "_tag": "UnauthorizedError" }`
 
 #### Scenario: Same-user socket
 - **WHEN** a process owned by the server's OS user connects over the Unix socket
-- **THEN** the request is authorized without credentials
+- **THEN** the request is authorized only with the local owner credential
 
 #### Scenario: Query token rejected on a mutating route
-- **WHEN** `POST /api/v1/sessions?auth_token=...` arrives with no Basic or Bearer header
+- **WHEN** `POST /api/v1/sessions?auth_token=...` arrives with no Basic header
 - **THEN** the server responds `401`
 
 ## ADDED Requirements

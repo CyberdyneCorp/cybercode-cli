@@ -18,7 +18,7 @@ pub struct ServeArgs {
     /// TCP port (default 4747, falling back to a free port).
     #[arg(long)]
     pub port: Option<u16>,
-    /// Unix socket path (default <state>/cyber.sock).
+    /// Unix socket path inside private state (default <state>/cyber.sock).
     #[arg(long)]
     pub socket: Option<std::path::PathBuf>,
     /// Do not listen on TCP.

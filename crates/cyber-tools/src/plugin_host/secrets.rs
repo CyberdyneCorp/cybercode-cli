@@ -163,18 +163,25 @@ impl PluginSecrets for FileSecrets {
     }
 }
 
-/// Prepare and hide native captures before any tool/plugin subprocess starts.
+/// Prepare and hide native captures and owner API state before any tool/plugin subprocess starts.
 /// These processes share the owner's UID, so mode 0700 alone is insufficient.
 pub fn hide_computer_artifacts(
     paths: &cyber_core::paths::Paths,
     home: &std::path::Path,
 ) -> Result<(), String> {
-    let root = paths.data.join("computer");
-    cyber_server::runtime::computer::prepare_artifact_root(&root)
-        .map_err(|error| error.to_string())?;
-    let canonical = std::fs::canonicalize(&root).map_err(|error| error.to_string())?;
-    cyber_sandbox::hide_credential_file(home, root);
-    cyber_sandbox::hide_credential_file(home, canonical);
+    // Protect the directory, including password rotations and the default socket,
+    // rather than only files present at bootstrap. Authentication also protects
+    // custom Unix sockets: a file-read denial alone is not a socket-connect fence.
+    for root in [paths.data.join("computer"), paths.state.clone()] {
+        cyber_server::runtime::computer::prepare_artifact_root(&root)
+            .map_err(|error| error.to_string())?;
+        let canonical = std::fs::canonicalize(&root).map_err(|error| error.to_string())?;
+        cyber_sandbox::hide_credential_file(home, root);
+        cyber_sandbox::hide_credential_file(home, canonical);
+    }
+    if let Ok(password) = std::fs::read_to_string(paths.state.join("password")) {
+        cyber_sandbox::reserve_owner_credential(password.trim());
+    }
     Ok(())
 }
 
@@ -307,6 +314,12 @@ mod tests {
             sandbox
                 .unreadable(&home)
                 .contains(&std::fs::canonicalize(&private).unwrap())
+        );
+        assert!(sandbox.unreadable(&home).contains(&paths.state));
+        assert!(
+            sandbox
+                .unreadable(&home)
+                .contains(&std::fs::canonicalize(&paths.state).unwrap())
         );
         let other_home = root.path().join("other-home");
         std::fs::create_dir_all(&other_home).unwrap();

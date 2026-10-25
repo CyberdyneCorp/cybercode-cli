@@ -88,7 +88,7 @@ pub use service::ServiceControl;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transport {
     Tcp,
-    /// The Unix socket; peers were checked to be the same OS user at accept.
+    /// The Unix socket; same-UID peers must also provide the owner credential.
     Unix,
     /// In-process calls with no listener; authentication is off.
     Embedded,
@@ -657,7 +657,8 @@ pub trait Services: Send + Sync {
 
 pub struct HttpOptions {
     pub version: String,
-    /// Basic-auth password for TCP; `None` disables authentication on TCP (tests only).
+    /// Owner Basic-auth password for TCP and Unix; `None` disables TCP auth in
+    /// explicit fixtures only and makes Unix owner routes fail closed.
     pub password: Option<String>,
     pub cors_origins: Vec<String>,
     /// The Location for requests that name none.
