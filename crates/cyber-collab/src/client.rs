@@ -66,7 +66,10 @@ impl HubClient {
     }
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, Error> {
         let url = self.url(path)?;
-        let public = url.path().ends_with("/api/v1/hub/hello");
+        let public = url
+            .path()
+            .trim_end_matches('/')
+            .ends_with("/api/v1/hub/hello");
         let request = self.http.get(url);
         let request = if public {
             request
@@ -143,6 +146,7 @@ mod tests {
                 listener,
                 Router::new()
                     .route("/prefix/api/v1/hub/hello", get(hello))
+                    .route("/prefix/api/v1/hub/hello/", get(hello))
                     .route("/prefix/api/v1/hub/projects", get(private)),
             )
             .await
@@ -154,6 +158,7 @@ mod tests {
         )
         .unwrap();
         assert!(client.get::<bool>("/hello").await.unwrap());
+        assert!(client.get::<bool>("/hello/").await.unwrap());
         assert!(
             client
                 .get::<bool>("/api/v1/hub/hello?probe=1")
