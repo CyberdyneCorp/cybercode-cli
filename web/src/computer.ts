@@ -20,6 +20,7 @@ export class ComputerControls {
   reset(): void { this.clearImage(); this.latestFrame = undefined; this.frameBusy = false; this.#generation++; clearTimeout(this.#timer); this.#refreshing = false; this.busy = false; this.preview = undefined; this.reviewed = false; this.acknowledgeUnknown = false; this.uncertain = !!this.report?.grant; this.changed(); }
   clear(): void { this.reset(); this.report = undefined; this.uncertain = false; this.notice = ""; }
   get active(): NativeGrant | undefined { const grant = this.report?.grant; return grant && (grant.expires_at > this.now() || this.uncertain) ? grant : undefined; }
+  get canReview(): boolean { const context=this.context(); return !!context?.session && context.actionable && !!this.report?.enabled && this.report.health.supported && !this.busy; }
   get canAllow(): boolean { const context = this.context(); return !!this.report?.enabled && !!this.report.health.supported && !!context?.actionable && !!this.preview && this.preview.session_id === context.session && this.preview.expires_at > this.now() && this.reviewed && (!this.preview.unknown_operations.length || this.acknowledgeUnknown) && !this.busy && !this.uncertain; }
   async refresh(): Promise<void> {
     const context = this.context(); if (!context || this.#refreshing) return;
@@ -29,6 +30,7 @@ export class ComputerControls {
     finally { if (generation === this.#generation) { this.#refreshing = false; this.changed(); clearTimeout(this.#timer); this.#timer = setTimeout(() => { void this.refresh(); }, 2000); } }
   }
   private async refreshFrame(context:ComputerContext,generation:number):Promise<void> {
+    if(!context.session){this.clearImage();this.latestFrame=undefined;return;}
     try {
       const status=await this.api.request<{data:{latest_frame?:NativeFrame|null}}>(`/sessions/${encodeURIComponent(context.session)}/computer`,{directory:context.directory,signal:context.signal});
       if(generation!==this.#generation)return;
@@ -71,7 +73,7 @@ export class ComputerControls {
     void this.refresh();
   }
   private async mutate(path: string, body: unknown, preview = false): Promise<void> {
-    const context = this.context(); if (!context?.actionable || this.busy) return;
+    const context = this.context(); if (!context || this.busy || (path !== "/tools/computer/setup" && !context.actionable)) return;
     const generation = this.#generation; this.busy = true; this.notice = ""; this.changed();
     try { const value = await this.api.request<{ data: NativePreview }>(path, { method: "POST", body, directory: context.directory, signal: context.signal }); if (generation !== this.#generation) return; if (preview) this.preview = value.data; this.notice = preview ? "Review this exact native target; this review expires in 30 seconds." : "Native owner action completed."; }
     catch { if (generation === this.#generation) { this.preview = undefined; this.uncertain = true; this.notice = "Native action was not confirmed. Refresh status and review the target again; input is never automatically replayed."; } }

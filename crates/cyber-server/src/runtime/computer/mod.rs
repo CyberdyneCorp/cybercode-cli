@@ -472,7 +472,7 @@ impl Computer {
             return Ok(receipt);
         }
         let _host_lease = self.worker_lease(session)?;
-        let (_, target) = self.journal.read_frame(
+        let (frame_info, target) = self.journal.read_frame(
             session,
             frame_id,
             wall_ms(),
@@ -490,6 +490,7 @@ impl Computer {
             action,
             &current.geometry()?,
         )?;
+        let audit = json!({"frame_id":frame_id,"input":audit["input"],"grant_id":frame_info.grant_id,"target":target,"permitted":permitted});
         self.journal
             .begin(session, operation, &kind, &fingerprint, audit, wall_ms())?;
         let outcome = if permit.cancelled() {

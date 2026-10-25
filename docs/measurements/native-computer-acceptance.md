@@ -15,7 +15,7 @@ Status: implementation checks passed; **physical macOS acceptance pending**. No 
 | macOS adapter | Compiled with local SDK; standalone Objective-C syntax check passed. This does not prove native capture/input behavior. |
 | OpenAPI / SDK generation | Export test and generator consistency passed; TypeScript typecheck passed |
 | SDK suite | 115 passed, 8 skipped because `CYBER_BIN` was unset; no live account/provider claims |
-| Browser modules / private transport | 25 passed; typecheck and generated bundle check passed |
+| Browser modules / private transport | 26 passed; typecheck and generated bundle check passed |
 
 Only `aarch64-apple-darwin` is installed locally. Unsupported-platform execution, other architectures, signed distribution and full workspace verification rely on CI/release acceptance; they are not claimed as locally tested. Test counts are for this change's recorded checks, not current repository-wide totals.
 

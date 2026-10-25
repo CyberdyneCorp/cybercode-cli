@@ -36,3 +36,7 @@ test("emergency Stop survives logout transport cleanup and stale replies cannot 
  const f=fixture(t);let finish!:(value:unknown)=>void;f.hook(path=>path.endsWith("/stop")?new Promise(resolve=>{finish=resolve;}):Promise.resolve({data:report}));
  const stopping=f.model.stop();assert.equal(f.calls[0]?.options.finishOnLogout,true);f.model.clear();f.model.report=report;finish(undefined);await stopping;assert.equal(f.model.report.grant?.id,"grant");
 });
+
+test("global health and emergency Stop work without a selected Session", async (t) => {
+ const f=fixture(t);f.context({session:"",directory:"/empty",actionable:false,signal:new AbortController().signal});await f.model.refresh();assert.equal(f.model.active?.session_id,"other-session");assert.equal(f.calls.filter(call=>call.path.startsWith("/sessions/")).length,0);await f.model.stop();assert.ok(f.calls.some(call=>call.path==="/tools/computer/stop"));
+});

@@ -358,6 +358,11 @@ fn typed_text_never_enters_native_journal() {
     assert!(!rows.contains("sentinel-private-content"));
     assert!(rows.contains("text_sha256"));
     assert!(rows.contains("text_bytes"));
+    assert!(rows.contains(&frame.grant_id));
+    assert!(
+        rows.contains(&frame.target.identity),
+        "native evidence retains its target binding after private frame expiry"
+    );
 }
 #[test]
 fn wrong_native_capture_and_artifact_failure_are_settled_without_a_frame() {
