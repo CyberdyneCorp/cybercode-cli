@@ -846,7 +846,7 @@ cyber computer allow [OPTIONS] <SESSION>
 
 **Options:**
 
-- `--app <APP>`: Bundle ID of the frontmost application (for example com.apple.TextEdit)
+- `--app <APP>`: Bundle ID of the application (for example com.apple.TextEdit)
 - `--display <DISPLAY>`: Native display ID; 0 explicitly selects the main display.
 - `--ttl <TTL>`: Lifetime in seconds (1–900); default 300.
 - `--yes`: Confirm this native scope after reviewing its details printed below.

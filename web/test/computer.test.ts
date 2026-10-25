@@ -31,3 +31,8 @@ test("private capture bytes are fetched only on explicit preview and revoked on 
  await f.model.previewFrame();const image=f.model.imageURL;assert.ok(image?.startsWith("blob:"));assert.equal(f.calls.filter(call=>call.path.includes("/frames/")).length,1);
  f.model.reset();assert.equal(f.model.imageURL,undefined);await assert.rejects(fetch(image!));
 });
+
+test("emergency Stop survives logout transport cleanup and stale replies cannot clear a newer grant", async (t) => {
+ const f=fixture(t);let finish!:(value:unknown)=>void;f.hook(path=>path.endsWith("/stop")?new Promise(resolve=>{finish=resolve;}):Promise.resolve({data:report}));
+ const stopping=f.model.stop();assert.equal(f.calls[0]?.options.finishOnLogout,true);f.model.clear();f.model.report=report;finish(undefined);await stopping;assert.equal(f.model.report.grant?.id,"grant");
+});

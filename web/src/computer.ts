@@ -14,7 +14,7 @@ export class ComputerControls {
   preview: NativePreview | undefined;
   latestFrame: NativeFrame | undefined; imageURL: string | undefined; frameBusy = false;
   notice = ""; busy = false; uncertain = false; reviewed = false; acknowledgeUnknown = false;
-  selector = ""; display = false; ttl = 300;
+  selector = ""; display = false; ttl = 300; expanded = false;
   #generation = 0; #refreshing = false; #timer: ReturnType<typeof setTimeout> | undefined;
   constructor(readonly api: Port, readonly context: () => ComputerContext | undefined, readonly changed: () => void, readonly now = Date.now) {}
   reset(): void { this.clearImage(); this.latestFrame = undefined; this.frameBusy = false; this.#generation++; clearTimeout(this.#timer); this.#refreshing = false; this.busy = false; this.preview = undefined; this.reviewed = false; this.acknowledgeUnknown = false; this.uncertain = !!this.report?.grant; this.changed(); }
@@ -63,10 +63,10 @@ export class ComputerControls {
   /** Stop is independent of ordinary in-flight controls and is safe to repeat. */
   async stop(): Promise<void> {
     const context = this.context(); if (!context) return;
-    this.#generation++; this.#refreshing = false; this.busy = false; clearTimeout(this.#timer);
+    const generation=++this.#generation; this.#refreshing = false; this.busy = false; clearTimeout(this.#timer);
     this.preview = undefined; this.reviewed = false;
-    try { await this.api.request("/tools/computer/stop", { method: "POST", directory: context.directory }); this.report = this.report ? { ...this.report, grant: null } : undefined; this.uncertain = false; this.notice = "Native computer control stopped."; }
-    catch { this.uncertain = true; this.notice = "Stop could not be confirmed. Use cyber computer stop on the host; do not assume input stopped."; }
+    try { await this.api.request("/tools/computer/stop", { method: "POST", directory: context.directory, finishOnLogout:true }); if(generation!==this.#generation)return; this.report = this.report ? { ...this.report, grant: null } : undefined; this.uncertain = false; this.notice = "Native computer control stopped."; }
+    catch { if(generation!==this.#generation)return; this.uncertain = true; this.notice = "Stop could not be confirmed. Use cyber computer stop on the host; do not assume input stopped."; }
     this.changed();
     void this.refresh();
   }
