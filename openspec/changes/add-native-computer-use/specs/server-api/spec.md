@@ -31,4 +31,3 @@ The owner listener SHALL accept custom Unix socket paths only as absolute, non-t
 #### Scenario: Model-writable socket path
 - **WHEN** an owner configures a socket in a workspace or through a symlink outside protected state
 - **THEN** startup fails before readiness or socket replacement, with a migration diagnostic
-
