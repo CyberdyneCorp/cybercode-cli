@@ -2,7 +2,7 @@
 
 - [x] 1.1 Inspect browser/native scope and official macOS capture/input/OS-consent APIs; user selected macOS first with explicit unsupported-platform behavior.
 - [x] 1.2 Draft proposal, design and contract deltas, separating native automation from the desktop wrapper.
-- [ ] 1.3 Review artifacts, owner-control boundaries and initial platform/version with the user before implementation.
+- [x] 1.3 Review artifacts, owner-control boundaries and initial platform/version with the user before implementation. On 2026-10-24 the user explicitly answered “Approve both designs and implement” after receiving both design links in PR #32; macOS first was selected separately.
 - [ ] 1.4 Verify maintained native bindings, build/signing requirements and ScreenCaptureKit/CoreGraphics adapter packaging on macOS without requiring a runtime compiler.
 
 ## 2. Capability and authority

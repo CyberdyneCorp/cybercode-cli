@@ -21,4 +21,4 @@ The project hub coordinates people, agents and tasks, but teammate reports are a
 
 Local owner-selected contributions work without a Cyber Account. Hub-linked contributions require real membership checks and fail closed while Auth is unavailable; local-only operation must not become an authentication bypass for remote content. Deliver domain/storage/checking first, then CLI/API/SDK, browser controls and integrated acceptance.
 
-No automatic merge to main, automatic conflict-resolution acceptance, GitHub permission synchronization, hosted runner fleet or claim that passing declared checks proves correctness. The implementation must verify combinations, not merely concatenate individual reports. New capability implementation awaits review of this proposal, design and tasks.
+No automatic merge to main, automatic conflict-resolution acceptance, GitHub permission synchronization, hosted runner fleet or claim that passing declared checks proves correctness. The implementation must verify combinations, not merely concatenate individual reports. The user approved the linked designs and requested implementation on 2026-10-24.

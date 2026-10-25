@@ -2,7 +2,7 @@
 
 - [x] 1.1 Inspect solve, hub, worktree and workflow contracts; identify missing combined-contribution verification.
 - [x] 1.2 Draft proposal, design and testable contract deltas.
-- [ ] 1.3 Review artifacts with the user and record approval before capability implementation.
+- [x] 1.3 Review artifacts with the user and record approval before capability implementation. On 2026-10-24 the user explicitly answered “Approve both designs and implement” after receiving the integration-queue and macOS computer-use design links in PR #32.
 
 ## 2. Domain and durable runtime
 
