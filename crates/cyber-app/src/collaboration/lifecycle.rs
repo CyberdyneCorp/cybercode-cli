@@ -16,7 +16,10 @@ fn capability_key(publication: &Publication) -> String {
     )
 }
 impl Collaboration {
-    pub(super) async fn revoke_runtimes(&self, token: Option<cyber_account::Secret>) {
+    pub(super) async fn revoke_runtimes(
+        &self,
+        credential: Option<(cyber_account::Secret, cyber_account::Account)>,
+    ) {
         let Ok(publications) = self.local.publications() else {
             return;
         };
@@ -26,7 +29,12 @@ impl Collaboration {
         let mut revoked = std::collections::BTreeSet::new();
         for publication in publications {
             let _ = self.secrets.delete(&capability_key(&publication)).await;
-            let Some(token) = token.clone() else { continue };
+            let Some((token, account)) = credential.clone() else {
+                continue;
+            };
+            if publication.issuer != account.issuer || publication.subject != account.sub {
+                continue;
+            }
             let Some(runtime) = publication.runtime.as_deref() else {
                 continue;
             };
@@ -44,6 +52,14 @@ impl Collaboration {
                 continue;
             };
             if let Ok(client) = HubClient::new(&binding.hub_url, token) {
+                let Ok(hello) = client.get::<HubHello>("/hello").await else {
+                    continue;
+                };
+                if hello.hub_id.as_str() != binding.hub_id
+                    || hello.issuer.trim_end_matches('/') != account.issuer.trim_end_matches('/')
+                {
+                    continue;
+                }
                 let _: Result<MutationResult<Value>, _> = client
                     .mutate(
                         Method::DELETE,
@@ -107,12 +123,9 @@ impl Collaboration {
         if repository(&checkout, &binding.remote).await? != binding.repository {
             return Err(error("RepositoryMismatchError: checkout remote changed"));
         }
-        let account = self
-            .accounts
-            .current()
-            .await?
-            .account
-            .ok_or_else(ApiError::unauthorized)?;
+        let client = self.pinned(&binding).await?;
+        Self::expected_actor(&client, &input)?;
+        let account = &client.account;
         let existing = self.local.publication(&session).map_err(storage)?;
         let mut publication = existing.unwrap_or_else(|| Publication {
             session_id: session.clone(),
@@ -140,7 +153,6 @@ impl Collaboration {
         publication.alias = field(&input, "name")?.into();
         // Commit the context boundary before sending any metadata to a hub.
         self.local.publish(publication.clone()).map_err(storage)?;
-        let client = self.pinned(&binding).await?;
         let base = format!("/projects/{}", binding.project);
         // Each explicit publication starts a fresh runtime enrollment. A revoked or
         // expired runtime from a previous login must never be silently resurrected.
@@ -283,6 +295,31 @@ impl Collaboration {
                 continue;
             };
             let client = self.pinned(binding).await?;
+            if client.account.issuer != current.issuer || client.account.sub != current.sub {
+                return Err(ApiError::conflict(
+                    "AccountChangedError: account changed before outbox replay",
+                ));
+            }
+            let scope = Self::contribution_scope(&client, &project).await?;
+            let recorded: Option<ContributionAuthorization> = body
+                .get("authorization")
+                .cloned()
+                .and_then(|value| serde_json::from_value(value).ok());
+            if recorded.is_none_or(|record| {
+                record.member != scope.member
+                    || record.member_generation != scope.member_generation
+                    || record.project_revision != scope.project_revision
+                    || record.repository != scope.repository
+                    || record.project != scope.project
+            }) {
+                self.local
+                    .reject(
+                        operation_id,
+                        "Membership or project generation changed; review a new operation".into(),
+                    )
+                    .map_err(storage)?;
+                continue;
+            }
             let method = Method::from_bytes(field(&body, "method")?.as_bytes())
                 .map_err(|_| error("invalid pending operation"))?;
             let path = field(&body, "path")?;
@@ -365,6 +402,12 @@ impl Collaboration {
             return Ok(());
         };
         let client = self.pinned(binding).await?;
+        if client.account.issuer != publication.issuer || client.account.sub != publication.subject
+        {
+            return Err(ApiError::conflict(
+                "AccountChangedError: publication account changed",
+            ));
+        }
         let base = format!("/projects/{}", publication.project);
         if renewed.insert((
             publication.hub_id.clone(),

@@ -243,14 +243,48 @@ async fn handle(
         })
         .into_response());
     }
-    let mut actor = hub.authenticate(&headers, method != Method::GET).await?;
     let parts: Vec<String> = path.split('/').map(str::to_owned).collect();
+    let contribution_authorization = method == Method::GET
+        && parts.len() == 4
+        && parts[0] == "projects"
+        && parts[2] == "contributions"
+        && parts[3] == "authorization";
+    let mut actor = hub
+        .authenticate(
+            &headers,
+            method != Method::GET || contribution_authorization,
+        )
+        .await?;
     let project = if parts.first().is_some_and(|s| s == "projects") {
         parts.get(1).map(String::as_str)
     } else {
         None
     };
     hub.rate(&actor, project)?;
+    if contribution_authorization {
+        if actor.agent.is_some() {
+            return Err(Error::forbidden());
+        }
+        let references = contribution_query(uri.query().unwrap_or_default())?;
+        if let Some(agent) = references.get("agent") {
+            let project = parts[1].clone();
+            let copy = actor.clone();
+            let agent = agent.clone();
+            let source = hub.db.read(move |db| {
+                copy.scope(db, &project, true)?;
+                let agent: Agent = get(db, "agent", &agent)?;
+                if agent.project.as_str() != project || !agent.active {
+                    return Err(Error::forbidden());
+                }
+                get::<Member>(db, "member", agent.owner.as_str())
+            })?;
+            let proof = hub
+                .auth
+                .subject(&source.issuer, &source.subject, true)
+                .await?;
+            hub.remember(proof)?;
+        }
+    }
     if parts.get(2).is_some_and(|p| p == "deliveries") {
         let project = parts[1].clone();
         let copy = actor.clone();
@@ -433,6 +467,68 @@ fn visible(db: &Connection, actor: &Actor, message: &Message) -> Result<bool, Er
     }
     Ok(false)
 }
+fn contribution_query(query: &str) -> Result<std::collections::BTreeMap<String, String>, Error> {
+    let mut result = std::collections::BTreeMap::new();
+    for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
+        if !matches!(key.as_ref(), "task" | "agent")
+            || value.is_empty()
+            || result
+                .insert(key.into_owned(), value.into_owned())
+                .is_some()
+        {
+            return Err(Error::invalid(
+                "invalid contribution authorization references",
+            ));
+        }
+    }
+    Ok(result)
+}
+fn contribution_authorization(
+    db: &Connection,
+    hub: &Hub,
+    actor: &Actor,
+    project: &str,
+    query: &str,
+) -> Result<Value, Error> {
+    if actor.agent.is_some() {
+        return Err(Error::forbidden());
+    }
+    let actor = actor.scope(db, project, true)?;
+    let references = contribution_query(query)?;
+    let descriptor: Project = get(db, "project", project)?;
+    if let Some(task) = references.get("task") {
+        let task: Task = get(db, "task", task)?;
+        if task.project.as_str() != project {
+            return Err(Error::forbidden());
+        }
+    }
+    if let Some(agent) = references.get("agent") {
+        let agent: Agent = get(db, "agent", agent)?;
+        let owner: Member = get(db, "member", agent.owner.as_str())?;
+        let publication: Publication = get(db, "publication", agent.id.as_str())?;
+        if agent.project.as_str() != project
+            || !agent.active
+            || !owner.active
+            || owner.project.as_str() != project
+            || publication.generation != owner.generation
+            || publication.expires_at <= now()
+            || !hub.auth_cached_source(db, &owner)?
+        {
+            return Err(Error::forbidden());
+        }
+    }
+    let member = actor.member.ok_or_else(Error::forbidden)?;
+    value(ContributionAuthorization {
+        project: descriptor.id,
+        repository: descriptor.repository,
+        member: member.id,
+        member_generation: member.generation,
+        project_revision: descriptor.revision,
+        task: references.get("task").cloned(),
+        agent: references.get("agent").cloned(),
+    })
+}
+
 fn agent_owner(db: &Connection, actor: &Actor, id: &str) -> Result<Agent, Error> {
     let agent: Agent = get(db, "agent", id)?;
     if actor.agent.as_ref().is_some_and(|a| a.id != agent.id)
@@ -574,6 +670,9 @@ fn read(
     let project = *p.get(1).ok_or_else(Error::missing)?;
     let actor = actor.scope(db, project, false)?;
     match p.as_slice() {
+        ["projects", _, "contributions", "authorization"] => {
+            contribution_authorization(db, hub, &actor, project, query)
+        }
         ["projects", _] => value(get::<Project>(db, "project", project)?),
         ["projects", _, "members"] => value(list::<Member>(db, "member", project)?),
         ["projects", _, "agents"] => {

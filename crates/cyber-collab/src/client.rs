@@ -65,10 +65,15 @@ impl HubClient {
         Ok(url)
     }
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, Error> {
-        let response = self
-            .http
-            .get(self.url(path)?)
-            .bearer_auth(self.token.expose())
+        let url = self.url(path)?;
+        let public = url.path().ends_with("/api/v1/hub/hello");
+        let request = self.http.get(url);
+        let request = if public {
+            request
+        } else {
+            request.bearer_auth(self.token.expose())
+        };
+        let response = request
             .send()
             .await
             .map_err(|_| Error::new("HubUnavailableError", "hub is unreachable"))?;
@@ -115,4 +120,47 @@ async fn response_json<T: DeserializeOwned>(mut response: reqwest::Response) -> 
             .unwrap_or_else(|_| Error::new("HubUnavailableError", "hub refused the request")));
     }
     serde_json::from_slice(&bytes).map_err(|_| Error::invalid("invalid hub response"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn public_hello_never_sends_a_user_credential() {
+        use axum::{Json, Router, http::HeaderMap, routing::get};
+        async fn hello(headers: HeaderMap) -> Json<serde_json::Value> {
+            assert!(!headers.contains_key("authorization"));
+            Json(serde_json::json!({"data":true}))
+        }
+        async fn private(headers: HeaderMap) -> Json<serde_json::Value> {
+            assert_eq!(headers["authorization"], "Bearer fixture-only-secret");
+            Json(serde_json::json!({"data":true}))
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new()
+                    .route("/prefix/api/v1/hub/hello", get(hello))
+                    .route("/prefix/api/v1/hub/projects", get(private)),
+            )
+            .await
+            .unwrap();
+        });
+        let client = HubClient::new(
+            &format!("{url}/prefix"),
+            Secret::new("fixture-only-secret".into()),
+        )
+        .unwrap();
+        assert!(client.get::<bool>("/hello").await.unwrap());
+        assert!(
+            client
+                .get::<bool>("/api/v1/hub/hello?probe=1")
+                .await
+                .unwrap()
+        );
+        assert!(client.get::<bool>("/projects").await.unwrap());
+        task.abort();
+    }
 }

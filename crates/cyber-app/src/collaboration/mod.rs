@@ -27,6 +27,16 @@ use std::{
     },
 };
 
+pub(super) struct HubConnection {
+    client: HubClient,
+    account: cyber_account::Account,
+}
+impl std::ops::Deref for HubConnection {
+    type Target = HubClient;
+    fn deref(&self) -> &Self::Target {
+        &self.client
+    }
+}
 pub struct Collaboration {
     pub local: LocalStore,
     accounts: Arc<Accounts>,
@@ -254,42 +264,29 @@ impl Collaboration {
         }
         Ok(binding)
     }
-    async fn client(&self, url: &str) -> Result<HubClient, ApiError> {
-        HubClient::new(url, self.accounts.access_token().await?).map_err(hub_error)
+    async fn client(&self, url: &str) -> Result<HubConnection, ApiError> {
+        let (token, account) = self.accounts.credential_snapshot().await?;
+        Ok(HubConnection {
+            client: HubClient::new(url, token).map_err(hub_error)?,
+            account,
+        })
     }
-    async fn issuer_checked_client(&self, url: &str) -> Result<HubClient, ApiError> {
-        let token = self.accounts.access_token().await?;
-        let account = self
-            .accounts
-            .current()
-            .await?
-            .account
-            .ok_or_else(ApiError::unauthorized)?;
-        // Inspect public metadata without sending a user token to an unrelated issuer.
-        let public =
-            HubClient::new(url, cyber_account::Secret::new(String::new())).map_err(hub_error)?;
-        let hello: HubHello = public.get("/hello").await.map_err(hub_error)?;
-        if account.issuer.trim_end_matches('/') != hello.issuer.trim_end_matches('/') {
+    async fn issuer_checked_client(&self, url: &str) -> Result<HubConnection, ApiError> {
+        let client = self.client(url).await?;
+        let hello: HubHello = client.get("/hello").await.map_err(hub_error)?;
+        if client.account.issuer.trim_end_matches('/') != hello.issuer.trim_end_matches('/') {
             return Err(error(
                 "IssuerMismatchError: hub and selected account use different issuers",
             ));
         }
-        HubClient::new(url, token).map_err(hub_error)
+        Ok(client)
     }
-    pub(super) async fn pinned(&self, binding: &Binding) -> Result<HubClient, ApiError> {
-        let client = self.client(&binding.hub_url).await?;
+    pub(super) async fn pinned(&self, binding: &Binding) -> Result<HubConnection, ApiError> {
+        let client = self.issuer_checked_client(&binding.hub_url).await?;
         let hello: HubHello = client.get("/hello").await.map_err(hub_error)?;
         if hello.hub_id.as_str() != binding.hub_id {
             return Err(error(
                 "HubIdentityMismatchError: hub identity changed; explicitly inspect and bind again",
-            ));
-        }
-        let current = self.accounts.current().await?;
-        if current.account.is_none_or(|account| {
-            account.issuer.trim_end_matches('/') != hello.issuer.trim_end_matches('/')
-        }) {
-            return Err(error(
-                "IssuerMismatchError: hub and selected account use different issuers",
             ));
         }
         Ok(client)
@@ -303,7 +300,7 @@ impl Collaboration {
         let checkout = self.checkout(&input).await?;
         let hub_url = field(&input, "hub_url")?;
         let project = identifier(&input, "project")?;
-        let client = self.client(hub_url).await?;
+        let client = self.issuer_checked_client(hub_url).await?;
         let hello: HubHello = client.get("/hello").await.map_err(hub_error)?;
         let descriptor: Project = client
             .get(&format!("/projects/{project}"))
@@ -403,10 +400,71 @@ impl Collaboration {
             member.active && member.issuer == account.issuer && member.subject == account.sub
         }))
     }
+    fn expected_actor(client: &HubConnection, input: &Value) -> Result<(), ApiError> {
+        let Some(expected) = input.get("expected_actor") else {
+            return Ok(());
+        };
+        if expected["issuer"] != client.account.issuer || expected["subject"] != client.account.sub
+        {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "AccountChangedError",
+                "Selected account changed; refresh and review the action",
+            ));
+        }
+        Ok(())
+    }
+    pub(super) async fn contribution_scope(
+        client: &HubConnection,
+        project: &str,
+    ) -> Result<ContributionAuthorization, ApiError> {
+        client
+            .get(&format!("/projects/{project}/contributions/authorization"))
+            .await
+            .map_err(hub_error)
+    }
+    async fn authorize_contribution(
+        &self,
+        binding: &Binding,
+        client: &HubClient,
+        input: &Value,
+    ) -> Result<Value, ApiError> {
+        if repository(Path::new(&binding.checkout), &binding.remote).await? != binding.repository {
+            return Err(error(
+                "RepositoryMismatchError: pinned checkout remote changed",
+            ));
+        }
+        let base = format!("/projects/{}", binding.project);
+        let query = {
+            let mut query = url::form_urlencoded::Serializer::new(String::new());
+            for name in ["task", "agent"] {
+                if let Some(value) = input.get(name).and_then(Value::as_str) {
+                    query.append_pair(name, value);
+                }
+            }
+            query.finish()
+        };
+        let authorization: cyber_collab::api::ContributionAuthorization = client
+            .get(&format!("{base}/contributions/authorization?{query}"))
+            .await
+            .map_err(hub_error)?;
+        if authorization.project.as_str() != binding.project
+            || authorization.repository != binding.repository
+        {
+            return Err(error(
+                "ProjectBindingMismatchError: contribution repository differs from the pinned checkout",
+            ));
+        }
+        serde_json::to_value(authorization).map_err(|_| error("invalid contribution authorization"))
+    }
     async fn project_call(&self, operation: &str, input: Value) -> Result<Value, ApiError> {
         let binding = self.binding(&input).await?;
         let client = self.pinned(&binding).await?;
+        Self::expected_actor(&client, &input)?;
         let base = format!("/projects/{}", binding.project);
+        if operation == "integration.authorize" {
+            return self.authorize_contribution(&binding, &client, &input).await;
+        }
         if operation == "participants" {
             let members: Value = client
                 .get(&format!("{base}/members"))
@@ -483,6 +541,7 @@ impl Collaboration {
             "member",
             "invitation",
             "application",
+            "expected_actor",
         ] {
             object.remove(key);
         }
@@ -490,13 +549,8 @@ impl Collaboration {
             object.entry("depth").or_insert(json!(0));
             object.entry("hops").or_insert(json!(1));
         }
-        let account = self
-            .accounts
-            .current()
-            .await?
-            .account
-            .ok_or_else(ApiError::unauthorized)?;
-        let identity = serde_json::to_string(&(account.issuer, account.sub))
+        let account = &client.account;
+        let identity = serde_json::to_string(&(&account.issuer, &account.sub))
             .map_err(|_| error("invalid identity"))?;
         let mutation = Mutation {
             operation_id: operation_id.clone(),
@@ -504,13 +558,14 @@ impl Collaboration {
         };
         let durable = operation.starts_with("messages.") || operation.starts_with("tasks.");
         if durable {
+            let authorization = Self::contribution_scope(&client, &binding.project).await?;
             self.local
                 .enqueue(
                     operation_id.clone(),
                     identity,
                     binding.hub_id,
                     binding.project,
-                    json!({"method":method.as_str(),"path":path,"mutation":mutation}),
+                    json!({"method":method.as_str(),"path":path,"mutation":mutation,"authorization":authorization}),
                 )
                 .map_err(storage)?;
         }
