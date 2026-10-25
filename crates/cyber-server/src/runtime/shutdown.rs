@@ -29,6 +29,9 @@ impl Runtime {
     /// Close admission permanently, cancel every Drain and join its durable settlement.
     /// Pending inbox rows survive; a new runtime can resume them after restart.
     pub async fn shutdown(&self) {
+        if let Some(computer) = self.inner.computer.get() {
+            computer.stop_all();
+        }
         let _shutdown = self.inner.shutdown_lock.lock().await;
         // Durable first: running Workflow Runs come back paused after a restart.
         self.pause_workflow_runs_for_shutdown().await;

@@ -386,6 +386,20 @@ impl Client {
         Ok(parse_events(chunks))
     }
 
+    /// One owned Session event connection. Dropping this stream closes presence;
+    /// unlike `session_events`, no detached reconnect task outlives its consumer.
+    pub async fn session_event_stream(
+        &self,
+        session_id: &str,
+        after: i64,
+    ) -> Result<impl Stream<Item = Event> + use<>, ClientError> {
+        let path = format!(
+            "/sessions/{}/events?after={after}",
+            encode(session_id).replace('/', "%2F")
+        );
+        Ok(parse_events(self.open_stream(&path).await?))
+    }
+
     /// Live events of one team (`/teams/:id/events`): its `team.*` records and its
     /// members' permission and question events.
     pub async fn team_events(

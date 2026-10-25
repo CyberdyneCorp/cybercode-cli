@@ -7,6 +7,7 @@ pub struct State {
     pub session: String,
     pub grant: Option<(String, i64)>,
     pub uncertain: bool,
+    pub supported: bool,
     pending: bool,
     next: Option<Instant>,
 }
@@ -32,6 +33,8 @@ impl State {
         self.pending = false;
         match result {
             Ok(value) => {
+                self.supported = value["data"]["enabled"] == true
+                    && value["data"]["health"]["supported"] == true;
                 self.uncertain = false;
                 self.grant = value["data"]["grant"]["target"]["identity"]
                     .as_str()
@@ -84,5 +87,48 @@ mod tests {
         assert!(state.banner("two").is_none());
         state.apply("one", Err("offline".into()));
         assert!(state.banner("one").unwrap().contains("unknown"));
+    }
+}
+
+/// Own the exact Session stream. A Location-wide TUI stream must not silently
+/// count as attendance for every Session on the host.
+#[derive(Default)]
+pub struct Presence {
+    session: String,
+    task: Option<tokio::task::JoinHandle<()>>,
+}
+impl Presence {
+    pub fn sync(&mut self, client: &cyber_client::Client, session: &Session, enabled: bool) {
+        let id = if enabled { session.id.as_str() } else { "" };
+        if self.session == id {
+            return;
+        }
+        self.session = id.into();
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+        if id.is_empty() {
+            return;
+        }
+        let client = client.at(&session.directory);
+        let id = id.to_owned();
+        let after = session.seq;
+        self.task = Some(tokio::spawn(async move {
+            use futures::StreamExt;
+            loop {
+                if let Ok(stream) = client.session_event_stream(&id, after).await {
+                    let mut stream = Box::pin(stream);
+                    while stream.next().await.is_some() {}
+                }
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        }));
+    }
+}
+impl Drop for Presence {
+    fn drop(&mut self) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
     }
 }

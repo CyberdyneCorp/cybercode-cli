@@ -282,6 +282,7 @@ async fn event_loop(
         ticks: 0,
     };
     let mut team_events = crate::team::Events::default();
+    let mut native_presence = crate::computer::Presence::default();
     let mut refresh = Refresh::default();
     let initial = initial_actions(app, store, opts, open_picker);
     spawn_commands(client, &tx);
@@ -290,6 +291,7 @@ async fn event_loop(
     let mut tick = tokio::time::interval(Duration::from_millis(250));
     query_background(app);
     while !app.quit {
+        native_presence.sync(client, &app.session, app.computer.supported);
         sync_mouse(&mut std::io::stdout(), app.mouse_capture());
         set_title(app);
         app.progress_sync();

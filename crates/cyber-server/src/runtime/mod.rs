@@ -847,6 +847,9 @@ pub(crate) struct Inner {
 
 impl Drop for Inner {
     fn drop(&mut self) {
+        if let Some(computer) = self.computer.get() {
+            computer.stop_all();
+        }
         self.closed.cancel();
     }
 }

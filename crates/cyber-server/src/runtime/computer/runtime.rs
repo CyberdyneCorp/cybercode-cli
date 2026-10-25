@@ -41,8 +41,9 @@ impl Runtime {
     ) -> Result<()> {
         let weak = self.inner.me.clone();
         let attendance = Arc::new(move |session: &str| {
-            weak.upgrade()
-                .is_some_and(|inner| inner.presence.live_session(session))
+            weak.upgrade().is_some_and(|inner| {
+                !inner.closed.is_cancelled() && inner.presence.live_session(session)
+            })
         });
         let computer = Arc::new(Computer::new(
             Arc::clone(&self.inner.store),
