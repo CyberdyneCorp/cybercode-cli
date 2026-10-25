@@ -21,7 +21,7 @@ Status: **controlled live capture and input acceptance passed** on the disposabl
 
 Three focused Chromium dashboard scenarios passed against the frozen built CLI and its embedded assets, including global cross-Session banner, target review/arming, authenticated private PNG rendering under the actual CSP and logout Stop. Native HTTP responses were simulated; the fixture did not call an OS adapter or request consent. The three doctor/feature-list regressions exposed by the first CI run also pass locally.
 
-Independent review identified and fixed reconnecting grants or target reviews, a missing final drag Stop checkpoint, model/agent authority switching during control, and screenshot cleanup that released quota before deleting retained bytes. Regression tests cover stale reviews during blocked target resolution, observed OS revocation/restoration, failed cleanup and a cleanup backlog exceeding 500 rows. Final platform CI results remain a separate merge gate.
+Independent review identified and fixed reconnecting grants or target reviews, a missing final drag Stop checkpoint, model/agent authority switching during control, and screenshot cleanup that released quota before deleting retained bytes. Regression tests cover stale reviews during blocked target resolution, observed OS revocation/restoration, failed cleanup and a cleanup backlog exceeding 500 rows. Final platform CI passed on the merged integration tip; see the merge verification below.
 
 Only `aarch64-apple-darwin` is installed locally. Unsupported-platform execution, other architectures, signed distribution and full workspace verification rely on CI/release acceptance; they are not claimed as locally tested. Test counts are for this change's recorded checks, not current repository-wide totals.
 
@@ -30,6 +30,14 @@ Only `aarch64-apple-darwin` is installed locally. Unsupported-platform execution
 Focused owner-boundary regressions passed: same-UID Unix requests without/wrong credentials return401 before presence/native grants; authenticated clients succeed; a Unix listener without an owner password fails closed. The client Basic-header test, legacy MCP Unix rejection/acceptance and two legacy-registration cases passed. A synthetic legacy socket trap accepted zero connections while stop/status refused the unsafe record.
 
 State-directory registration, an otherwise-approved built-in password read, and actual default/read-only subprocess password reads after replacement passed. Explicit broad-writable-root tests proved protected state cannot be read, overwritten or renamed while an ordinary outside-repository write still succeeds. Credential environment allow/set and known Basic-value aliases were stripped in the dedicated regression. Strict all-target Clippy passed for computer, sandbox, server, tools, app, client and CLI after these changes. These source tests do not replace the frozen-binary physical results below.
+
+## Merge verification (2026-10-25)
+
+PR [#41](https://github.com/CyberdyneCorp/cybercode-cli/pull/41) merged as `9ab0172c` after its exact integration tip `caed26d723bf562f421370e9fc2ed6b7526b61f6` passed [all 16 CI checks](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40203354126). These include Linux/macOS workspace nextest and doctests, native Windows/AppContainer checks, browser/SDK, OpenSpec/inventory and all eight release builds. The integration preserved PR #42's agents directory and added a fullscreen native-warning/Stop regression; its TUI suite passed 535 tests with 3 explicitly ignored. Strict affected Clippy and 98-item OpenSpec validation passed.
+
+The full local OTLP `cargo test` suite reported 19/20 in both parallel and serial invocations, at the shutdown log-count assertion (16 and 14 observed versus 1). The failing case passed alone; the configured process-isolated `cargo nextest` run passed all 20. No origin comparison with main was performed, so these aggregate failures are recorded without calling them pre-existing. Final CI uses the process-isolated runner and passed. This does not imply every local invocation was green.
+
+The macOS live device run still identifies its unchanged frozen executable separately below; no later source binary or other desktop layout is represented as hardware-tested. Signing/distribution and the listed manual hardware gates remain open.
 
 ## Controlled live capture evidence (2026-10-25)
 
