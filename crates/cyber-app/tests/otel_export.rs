@@ -141,7 +141,7 @@ impl Served {
         let stop = Arc::new(Notify::new());
         let serve = ServeOptions {
             port: Some(0),
-            socket: cfg!(unix).then(|| root.join("s.sock")),
+            socket: cfg!(unix).then(|| paths.state.join("s.sock")),
             register: true,
             ..ServeOptions::default()
         };

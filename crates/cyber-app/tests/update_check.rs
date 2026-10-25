@@ -110,7 +110,7 @@ impl Fixture {
         let (ready, address) = tokio::sync::oneshot::channel();
         let options = ServeOptions {
             port: Some(0),
-            socket: cfg!(unix).then(|| self.root.join("s.sock")),
+            socket: cfg!(unix).then(|| app.paths.state.join("s.sock")),
             update: UpdateCheckOptions {
                 current: CURRENT.into(),
                 channel: Channel::Stable,
