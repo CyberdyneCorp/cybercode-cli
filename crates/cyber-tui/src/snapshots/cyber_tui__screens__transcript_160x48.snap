@@ -9,16 +9,16 @@ expression: "render(&mut app, width, height, &opts)"
   This keeps the cache warm:                                                                                      100 tokens · window unknown
                                                                                                                   — spent
   1. Memoization: results are cached
-                                                                                                                  ▼ MCP
-  • avoids recomputation                                                                                          No MCP servers
-                                                                                                                  add one: cyber mcp add
+                                                                                                                  ▼ Sessions & agents
+  • avoids recomputation                                                                                          Reachable Sessions not loaded
+                                                                                                                  Open /agents
     rust
-    fn fib(n: u64) -> u64 { n }                                                                                   LSP
+    fn fib(n: u64) -> u64 { n }                                                                                   ▼ MCP
+                                                                                                                  No MCP servers
+  ▣ Build · main · 11.3s                                                                                          add one: cyber mcp add
+
+                                                                                                                  LSP
                                                                                                                   LSPs will activate as files are read
-  ▣ Build · main · 11.3s
-
-
-
 
 
 
@@ -59,10 +59,6 @@ row 6: 2-4 fg=#6b7a8f bg=#0b0f14
 row 6: 5-16 fg=#d6e4f0 bg=#0b0f14 bold
 row 6: 17-111 fg=#d6e4f0 bg=#0b0f14
 row 6: 112-159 fg=#d6e4f0 bg=#13181d
-row 9: 0-111 fg=#d6e4f0 bg=#0b0f14
-row 9: 112-113 fg=#d6e4f0 bg=#13181d
-row 9: 114-135 fg=#666f77 bg=#13181d
-row 9: 136-159 fg=#d6e4f0 bg=#13181d
 row 11: 0-1 fg=#d6e4f0 bg=#0b0f14
 row 11: 2-3 fg=#d6e4f0 bg=#171c21
 row 11: 4-6 fg=#c792ea bg=#171c21
@@ -81,5 +77,11 @@ row 11: 30-30 fg=#6b7a8f bg=#171c21
 row 11: 31-110 fg=#d6e4f0 bg=#171c21
 row 11: 111-111 fg=#d6e4f0 bg=#0b0f14
 row 11: 112-113 fg=#d6e4f0 bg=#13181d
-row 11: 114-116 fg=#d6e4f0 bg=#13181d bold
-row 11: 117-159 fg=#d6e4f0 bg=#13181d
+row 11: 114-118 fg=#d6e4f0 bg=#13181d bold
+row 11: 119-159 fg=#d6e4f0 bg=#13181d
+row 13: 0-8 fg=#00e5ff bg=#0b0f14
+row 13: 9-23 fg=#6b7a8f bg=#0b0f14
+row 13: 24-111 fg=#d6e4f0 bg=#0b0f14
+row 13: 112-113 fg=#d6e4f0 bg=#13181d
+row 13: 114-135 fg=#666f77 bg=#13181d
+row 13: 136-159 fg=#d6e4f0 bg=#13181d

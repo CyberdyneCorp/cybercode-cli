@@ -9,13 +9,17 @@ expression: screen
   This keeps the cache warm:                                                                                      100 tokens · window unknown
                                                                                                                   — spent
   1. Memoization: results are cached
-                                                                                                                  ▼ MCP
-  • avoids recomputation                                                                                          ● context7 remote Connected · 2 tools
-                                                                                                                  ● deepwiki remote Connecting
-    rust                                                                                                          ● files stdio Failed
-    fn fib(n: u64) -> u64 { n }                                                                                     MCP startup failed; inspect local logs[31m
+                                                                                                                  ▼ Sessions & agents
+  • avoids recomputation                                                                                          Reachable Sessions not loaded
+                                                                                                                  Open /agents
+    rust
+    fn fib(n: u64) -> u64 { n }                                                                                   ▼ MCP
+                                                                                                                  ● context7 remote Connected · 2 tools
+  ▣ Build · main · 11.3s                                                                                          ● deepwiki remote Connecting
+                                                                                                                  ● files stdio Failed
+                                                                                                                    MCP startup failed; inspect local logs[31m
                                                                                                                   ● linear remote Needs auth
-  ▣ Build · main · 11.3s                                                                                            cyber mcp auth linear
+                                                                                                                    cyber mcp auth linear
                                                                                                                   ● old stdio Disabled
                                                                                                                   ● corp remote Blocked
                                                                                                                     blocked by organization policy
@@ -23,10 +27,6 @@ expression: screen
 
                                                                                                                   LSP
                                                                                                                   LSPs will activate as files are read
-
-
-
-
 
 
 

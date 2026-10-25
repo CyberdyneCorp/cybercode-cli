@@ -357,15 +357,18 @@ pub enum Loaded {
 /// Sections that collapse with Enter or Space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Section {
+    Sessions,
     Mcp,
     Files,
     Machine,
 }
 
 /// A row focus can rest on (`<leader>e`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Row {
     Header(Section),
+    Reachable(String),
+    Directory,
     /// A run of the Workflows section; Enter opens it in the monitor.
     Workflow(usize),
     Mcp(usize),
@@ -387,6 +390,35 @@ pub struct WorkflowRow {
 /// Modified files shown before `+N more`.
 pub const FILE_ROWS: usize = 10;
 
+#[derive(Debug, Default)]
+struct DrawnReachable(std::sync::Mutex<Option<Vec<String>>>);
+
+impl Clone for DrawnReachable {
+    fn clone(&self) -> Self {
+        Self(std::sync::Mutex::new(
+            self.0
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone(),
+        ))
+    }
+}
+impl PartialEq for DrawnReachable {
+    fn eq(&self, other: &Self) -> bool {
+        let left = self
+            .0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        let right = other
+            .0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        left == right
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Sidebar {
     pub preference: Preference,
@@ -396,6 +428,10 @@ pub struct Sidebar {
     pub drawer: bool,
     /// The focused row, counted in [`Sidebar::rows`].
     pub focus: Option<usize>,
+    /// Stable identity of a selected discovery row, including one removed since selection.
+    selected_row: Option<Row>,
+    drawn_reachable: DrawnReachable,
+    pub reachable: Vec<String>,
     pub collapsed: BTreeSet<Section>,
     pub mcp: Source<Vec<McpServer>>,
     pub lsp: Source<Vec<LspServer>>,
@@ -484,7 +520,24 @@ impl Sidebar {
 
     /// Focusable rows, top to bottom, as the view draws them.
     pub fn rows(&self) -> Vec<Row> {
-        let mut rows: Vec<Row> = (0..self.workflows.len()).map(Row::Workflow).collect();
+        let mut rows = vec![Row::Header(Section::Sessions)];
+        if !self.collapsed.contains(&Section::Sessions) {
+            let drawn = self
+                .drawn_reachable
+                .0
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            rows.extend(
+                drawn
+                    .as_ref()
+                    .unwrap_or(&self.reachable)
+                    .iter()
+                    .cloned()
+                    .map(Row::Reachable),
+            );
+            rows.push(Row::Directory);
+        }
+        rows.extend((0..self.workflows.len()).map(Row::Workflow));
         // Shown whenever the MCP route answered, so an empty list says how to add one.
         if self.mcp.ready().is_some() {
             rows.push(Row::Header(Section::Mcp));
@@ -522,17 +575,77 @@ impl Sidebar {
     }
 
     pub fn focused(&self) -> Option<Row> {
-        self.rows().get(self.focus?).copied()
+        self.focus?;
+        if let Some(row) = &self.selected_row {
+            return Some(row.clone());
+        }
+        self.rows().get(self.focus?).cloned()
     }
 
     pub fn step(&mut self, down: bool) {
         let last = self.rows().len().saturating_sub(1);
-        let at = self.focus.unwrap_or(0);
-        self.focus = Some(if down {
+        let at = self
+            .focused()
+            .and_then(|selected| self.rows().iter().position(|row| *row == selected))
+            .or(self.focus)
+            .unwrap_or(0);
+        self.select_focus(if down {
             (at + 1).min(last)
         } else {
             at.saturating_sub(1)
         });
+    }
+
+    pub fn select_focus(&mut self, index: usize) {
+        self.focus = Some(index);
+        self.selected_row = self.rows().get(index).cloned();
+    }
+
+    pub fn focus_reachable(&mut self, key: String) {
+        self.focus = Some(
+            self.rows()
+                .iter()
+                .position(|row| *row == Row::Reachable(key.clone()))
+                .unwrap_or(0),
+        );
+        self.selected_row = Some(Row::Reachable(key));
+    }
+
+    pub fn clear_reachable(&mut self) {
+        if matches!(self.selected_row, Some(Row::Reachable(_))) {
+            self.focus = None;
+            self.selected_row = None;
+        }
+        self.reachable.clear();
+        *self
+            .drawn_reachable
+            .0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = None;
+    }
+
+    pub fn set_reachable(&mut self, keys: Vec<String>) {
+        let selected = self.focused();
+        self.reachable = keys;
+        *self
+            .drawn_reachable
+            .0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = None;
+        match selected {
+            Some(Row::Reachable(key)) => self.focus_reachable(key),
+            Some(row) => self.focus = self.rows().iter().position(|entry| *entry == row),
+            None => {}
+        }
+    }
+
+    /// Navigation follows only names present in the last rendered viewport.
+    pub fn set_drawn_reachable(&self, keys: Vec<String>) {
+        *self
+            .drawn_reachable
+            .0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(keys);
     }
 
     pub fn toggle(&mut self, section: Section) {
@@ -673,6 +786,32 @@ pub fn parse_vcs(data: &Value) -> Option<Git> {
 
 /// Sidebar keys and visibility (`<leader>b`, `/sidebar`, `<leader>e`).
 impl crate::app::App {
+    pub(crate) fn sidebar_overview_demand(&self) -> bool {
+        self.overview_visible
+            .load(std::sync::atomic::Ordering::Relaxed)
+            && self.sidebar_visible()
+            && !matches!(
+                self.overlay,
+                crate::app::Overlay::Settings
+                    | crate::app::Overlay::Files
+                    | crate::app::Overlay::Workflows
+                    | crate::app::Overlay::Messages
+                    | crate::app::Overlay::Team
+                    | crate::app::Overlay::Collaboration
+                    | crate::app::Overlay::Agents
+            )
+            && !self.sidebar.collapsed.contains(&Section::Sessions)
+    }
+
+    pub(crate) fn refresh_reachable_rows(&mut self) {
+        let keys = crate::session_overview::project(&self.directory, &self.session.id)
+            .entries
+            .into_iter()
+            .map(|entry| entry.key.clone())
+            .collect();
+        self.sidebar.set_reachable(keys);
+    }
+
     /// The last frame's width, or the terminal's before the first frame.
     fn width(&self) -> u16 {
         match self.frame_width.load(std::sync::atomic::Ordering::Relaxed) {
@@ -720,6 +859,9 @@ impl crate::app::App {
         } else {
             self.sidebar.drawer = !self.sidebar.drawer;
             self.sidebar.focus = self.sidebar.drawer.then_some(0);
+            if self.sidebar.drawer {
+                self.sidebar.select_focus(0);
+            }
         }
     }
 
@@ -736,13 +878,14 @@ impl crate::app::App {
         } else {
             self.sidebar.drawer = true;
         }
-        self.sidebar.focus = Some(0);
+        self.sidebar.select_focus(0);
         self.completion = None;
     }
 
     /// Esc: focus returns to the composer and the drawer closes.
     pub(crate) fn leave_sidebar(&mut self) {
         self.sidebar.focus = None;
+        self.sidebar.selected_row = None;
         self.sidebar.drawer = false;
     }
 
@@ -767,6 +910,8 @@ impl crate::app::App {
     fn open_sidebar_row(&mut self) -> Vec<Action> {
         match self.sidebar.focused() {
             Some(Row::Header(section)) => self.sidebar.toggle(section),
+            Some(Row::Reachable(key)) => return self.open_reachable_agent(Some(&key)),
+            Some(Row::Directory) => return self.open_reachable_agent(None),
             Some(Row::File(index)) => {
                 self.overlay = crate::app::Overlay::FileDiff { index, scroll: 0 }
             }
@@ -830,6 +975,42 @@ impl crate::app::App {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn reachable_focus_keeps_exact_identity_across_reorder_and_removal() {
+        let mut sidebar = Sidebar::default();
+        sidebar.set_reachable(vec!["a".into(), "b".into()]);
+        sidebar.focus_reachable("b".into());
+        sidebar.set_reachable(vec!["b".into(), "a".into()]);
+        assert_eq!(sidebar.focused(), Some(Row::Reachable("b".into())));
+        sidebar.set_reachable(vec!["a".into()]);
+        assert_eq!(
+            sidebar.focused(),
+            Some(Row::Reachable("b".into())),
+            "do not activate replacement row"
+        );
+    }
+
+    #[test]
+    fn overview_poll_requires_actual_expanded_visible_sidebar() {
+        use crate::app::{App, Overlay};
+        let mut app = App::new(Default::default(), Vec::new(), "cyber");
+        app.session.id = "ses_ME".into();
+        assert!(!app.sidebar_overview_demand(), "no rendered demand yet");
+        let _ = crate::screens::render(&mut app, 160, 48, &Default::default());
+        assert!(app.sidebar_overview_demand());
+        app.sidebar.collapsed.insert(Section::Sessions);
+        assert!(!app.sidebar_overview_demand());
+        app.sidebar.collapsed.remove(&Section::Sessions);
+        app.overlay = Overlay::Files;
+        assert!(
+            !app.sidebar_overview_demand(),
+            "full-screen hides sidebar immediately"
+        );
+        app.overlay = Overlay::None;
+        app.sidebar.preference = Preference::Hide;
+        assert!(!app.sidebar_overview_demand());
+    }
 
     /// Regression: Windows Session directories are canonical (`\\?\C:\...`), so the
     /// `~` shortening never matched `USERPROFILE` and the raw verbatim path was shown.
@@ -953,18 +1134,28 @@ mod tests {
             ),
             ..Default::default()
         };
-        assert_eq!(s.rows().len(), 1 + 1 + 1 + FILE_ROWS);
+        assert_eq!(s.rows().len(), 2 + 1 + 1 + 1 + FILE_ROWS);
         s.toggle(Section::Mcp);
         assert_eq!(
-            s.rows()[..2],
-            [Row::Header(Section::Mcp), Row::Header(Section::Files)]
+            s.rows()[..4],
+            [
+                Row::Header(Section::Sessions),
+                Row::Directory,
+                Row::Header(Section::Mcp),
+                Row::Header(Section::Files)
+            ]
         );
-        s.focus = Some(5);
+        s.select_focus(
+            s.rows()
+                .iter()
+                .position(|row| *row == Row::File(3))
+                .unwrap(),
+        );
         s.step(true);
         assert_eq!(s.focused(), Some(Row::File(4)));
         s.toggle(Section::Files);
         s.apply(Loaded::Failed);
-        assert_eq!(s.focus, Some(1), "focus stays on a drawn row");
+        assert_eq!(s.focus, Some(3), "focus stays on a drawn row");
     }
 
     #[test]

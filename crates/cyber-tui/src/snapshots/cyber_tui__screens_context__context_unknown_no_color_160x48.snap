@@ -9,16 +9,16 @@ expression: screen
   This keeps the cache warm:                                                                                      29,470 tokens · window unknown
                                                                                                                   $0.00 spent
   1. Memoization: results are cached
-                                                                                                                  ▼ MCP
-  • avoids recomputation                                                                                          No MCP servers
-                                                                                                                  add one: cyber mcp add
+                                                                                                                  ▼ Sessions & agents
+  • avoids recomputation                                                                                          Reachable Sessions not loaded
+                                                                                                                  Open /agents
     rust
-    fn fib(n: u64) -> u64 { n }                                                                                   LSP
+    fn fib(n: u64) -> u64 { n }                                                                                   ▼ MCP
+                                                                                                                  No MCP servers
+  ▣ Build · Demo Sonnet · 11.3s                                                                                   add one: cyber mcp add
+
+                                                                                                                  LSP
                                                                                                                   LSPs will activate as files are read
-  ▣ Build · Demo Sonnet · 11.3s
-
-
-
 
 
 

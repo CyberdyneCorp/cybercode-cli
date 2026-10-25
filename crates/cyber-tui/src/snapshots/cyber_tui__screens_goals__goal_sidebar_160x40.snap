@@ -9,22 +9,22 @@ expression: screen
   This keeps the cache warm:                                                                                      100 tokens · window unknown
                                                                                                                   — spent
   1. Memoization: results are cached
-                                                                                                                  Goal
-  • avoids recomputation                                                                                          ◎ all call sites compile against the v2 API
-                                                                                                                  active · turn 3/50 · $0.42
-    rust                                                                                                          not met: 2 call sites still use v1
-    fn fib(n: u64) -> u64 { n }                                                                                   +2 queued
+                                                                                                                  ▼ Sessions & agents
+  • avoids recomputation                                                                                          Reachable Sessions not loaded
+                                                                                                                  Open /agents
+    rust
+    fn fib(n: u64) -> u64 { n }                                                                                   Goal
+                                                                                                                  ◎ all call sites compile against the v2 API
+  ▣ Build · main · 11.3s                                                                                          active · turn 3/50 · $0.42
+                                                                                                                  not met: 2 call sites still use v1
+                                                                                                                  +2 queued
 
-  ▣ Build · main · 11.3s                                                                                          ▼ MCP
+                                                                                                                  ▼ MCP
                                                                                                                   No MCP servers
                                                                                                                   add one: cyber mcp add
 
                                                                                                                   LSP
                                                                                                                   LSPs will activate as files are read
-
-
-
-
 
 
 

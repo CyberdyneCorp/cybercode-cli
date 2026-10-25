@@ -487,6 +487,7 @@ pub struct App {
     /// The home directory, shown as `~`.
     pub home: Option<String>,
     /// The last frame's width, so `<leader>b` knows whether it docks or opens a drawer.
+    pub(crate) overview_visible: std::sync::atomic::AtomicBool,
     pub(crate) frame_width: std::sync::atomic::AtomicU16,
     /// The Session or its directory changed: the sidebar reloads.
     pub(crate) sidebar_stale: bool,
@@ -601,6 +602,7 @@ impl App {
             sidebar: Default::default(),
             welcome: Default::default(),
             home: None,
+            overview_visible: Default::default(),
             frame_width: Default::default(),
             sidebar_stale: false,
             settings: Default::default(),
@@ -742,6 +744,8 @@ impl App {
             }
         }
         if session.directory != self.session.directory {
+            self.directory.forget();
+            self.sidebar.clear_reachable();
             self.explorer.forget();
             if matches!(self.overlay, Overlay::Files) {
                 self.overlay = Overlay::None;
@@ -764,6 +768,7 @@ impl App {
         self.messaging = Default::default();
         self.collaboration.forget();
         self.directory.forget();
+        self.sidebar.clear_reachable();
         if matches!(
             self.overlay,
             Overlay::Messages | Overlay::Collaboration | Overlay::Agents
@@ -2221,6 +2226,8 @@ impl App {
     fn apply_event(&mut self, kind: &str, data: &Value) -> Vec<Action> {
         match kind {
             "server.connected" => {
+                self.directory.forget();
+                self.sidebar.clear_reachable();
                 self.sidebar.connection = crate::sidebar::Connection::Connected;
                 let mut actions = vec![Action::Refresh, Action::LoadUpdate];
                 actions.extend(crate::sidebar::Part::ALL.map(Action::LoadSidebar));

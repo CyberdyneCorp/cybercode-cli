@@ -37,6 +37,7 @@ mod recap;
 mod rename;
 mod review;
 mod runner;
+mod session_overview;
 mod settings;
 mod side_chat;
 mod sidebar;

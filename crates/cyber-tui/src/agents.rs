@@ -209,7 +209,10 @@ impl Entry {
         let local =
             kind != Kind::Peer && session_id.starts_with("ses_") && !session_id.contains('@');
         Entry {
-            key: format!("listing:{}", clean(session_id)),
+            key: safe(session_id).map_or_else(
+                || format!("invalid-listing:{session_id:?}"),
+                |id| format!("listing:{id}"),
+            ),
             source: Source::Messaging,
             target: safe(address).or_else(|| safe(session_id)),
             address: clean(address),
@@ -245,7 +248,10 @@ impl Entry {
         };
         let participant = if agent { "agent" } else { "human" };
         Entry {
-            key: format!("hub:{participant}:{}", clean(id)),
+            key: safe(id).map_or_else(
+                || format!("invalid-hub:{participant}:{id:?}"),
+                |id| format!("hub:{participant}:{id}"),
+            ),
             source: Source::Hub,
             address: name.clone(),
             target: None,
@@ -360,6 +366,8 @@ pub struct Fetched {
     pub status: Status,
     /// Hub only: the current member may send (`owner` or `member`).
     pub writable: bool,
+    pub hub_context: Option<String>,
+    pub actor: Option<Value>,
 }
 
 impl Fetched {
@@ -379,6 +387,8 @@ pub struct Loaded {
     pub error: Option<String>,
     pub loading: bool,
     pub writable: bool,
+    request: Option<u64>,
+    last_poll: Option<Instant>,
 }
 
 /// Who a compose editor sends to.
@@ -411,6 +421,7 @@ pub struct Editor {
     /// annotates this editor.
     op: Option<u64>,
     pub error: Option<String>,
+    hub_context: Option<String>,
 }
 
 impl Editor {
@@ -423,6 +434,7 @@ impl Editor {
             busy: false,
             op: None,
             error: None,
+            hub_context: None,
         }
     }
 
@@ -446,11 +458,21 @@ impl Editor {
     }
 }
 
-/// The directory's sources, filter, selection and editor; kept on `App`.
+/// Shared source data/lifetime, independently of either view's filter/editor.
 #[derive(Debug, Default)]
-pub struct Directory {
+pub struct Cache {
     pub messaging: Loaded,
     pub hub: Loaded,
+    generation: u64,
+    context: Option<(String, String)>,
+    hub_context: Option<String>,
+    hub_actor: Option<Value>,
+}
+
+/// One source cache, with directory-only interaction state.
+#[derive(Debug, Default)]
+pub struct Directory {
+    pub cache: Cache,
     pub filter: String,
     pub kind: KindFilter,
     /// The selected row's key, kept across reloads and filters.
@@ -458,13 +480,59 @@ pub struct Directory {
     /// The selected row's index, where the selection lands when its row goes.
     selected_at: usize,
     pub editor: Option<Editor>,
-    generation: u64,
     /// The last action ID handed out.
     ops: u64,
-    last_poll: Option<Instant>,
+}
+
+impl std::ops::Deref for Directory {
+    type Target = Cache;
+    fn deref(&self) -> &Cache {
+        &self.cache
+    }
+}
+impl std::ops::DerefMut for Directory {
+    fn deref_mut(&mut self) -> &mut Cache {
+        &mut self.cache
+    }
 }
 
 impl Directory {
+    fn hub_editor_valid(&self) -> bool {
+        let Some(Editor {
+            kind:
+                EditorKind::Message {
+                    to:
+                        Recipient::Hub {
+                            participant,
+                            project,
+                        },
+                },
+            ..
+        }) = &self.editor
+        else {
+            return true;
+        };
+        self.hub.writable
+            && self
+                .editor
+                .as_ref()
+                .is_some_and(|editor| editor.hub_context == self.hub_context)
+            && self.hub.status == Status::Ready
+            && self.hub.error.is_none()
+            && self.hub.rows.iter().any(|row| {
+                row.participant.as_ref() == Some(participant)
+                    && row.location == Location::Hub(project.clone())
+            })
+    }
+
+    fn clear_interaction(&mut self) {
+        self.filter.clear();
+        self.kind = KindFilter::All;
+        self.selected = None;
+        self.selected_at = 0;
+        self.editor = None;
+    }
+
     pub fn source(&self, source: Source) -> &Loaded {
         match source {
             Source::Messaging => &self.messaging,
@@ -545,7 +613,10 @@ impl Directory {
     pub fn forget(&mut self) {
         let (generation, ops) = (self.generation.wrapping_add(1), self.ops);
         *self = Self {
-            generation,
+            cache: Cache {
+                generation,
+                ..Cache::default()
+            },
             ops,
             ..Self::default()
         };
@@ -598,6 +669,7 @@ pub enum Op {
         participant: Value,
         project: String,
         text: String,
+        expected_actor: Option<Value>,
     },
     /// `POST /messaging/watch` from the attached Session.
     Watch { target: String },
@@ -642,6 +714,7 @@ async fn listing(client: &Client, session: &Session) -> Result<Fetched, String> 
                 rows: rows.map(Entry::from_listing).collect(),
                 status: Status::Ready,
                 writable: false,
+                ..Default::default()
             })
         }
         Err(e) => unavailable(&e).map(Fetched::status).ok_or_else(|| err(e)),
@@ -652,8 +725,7 @@ async fn listing(client: &Client, session: &Session) -> Result<Fetched, String> 
 async fn hub(client: &Client, session: &Session) -> Result<Fetched, String> {
     let mut roster = match crate::collaboration::status(client, session).await {
         Ok(roster) => roster,
-        Err(e) if unavailable(&e).is_some() => return Ok(Fetched::status(Status::Inactive)),
-        Err(e) => return Err(err(*e)),
+        Err(e) => return unavailable(&e).map(Fetched::status).ok_or_else(|| err(*e)),
     };
     if roster.bound().is_none() {
         return Ok(Fetched::status(Status::Inactive));
@@ -664,8 +736,27 @@ async fn hub(client: &Client, session: &Session) -> Result<Fetched, String> {
     Ok(Fetched {
         rows: hub_rows(&roster),
         status: Status::Ready,
-        writable: roster.writable(),
+        writable: roster.writable() && hub_actor(&roster).is_some(),
+        hub_context: Some(hub_context(&roster)),
+        actor: hub_actor(&roster),
     })
+}
+
+fn hub_context(roster: &Snapshot) -> String {
+    json!([
+        roster.bound(),
+        roster.status["account"]["issuer"],
+        roster.status["account"]["sub"],
+        roster.status["current_member"]["id"],
+        roster.status["current_member"]["role"]
+    ])
+    .to_string()
+}
+
+fn hub_actor(roster: &Snapshot) -> Option<Value> {
+    let issuer = roster.status["account"]["issuer"].as_str()?;
+    let subject = roster.status["account"]["sub"].as_str()?;
+    Some(json!({"issuer":issuer,"subject":subject}))
 }
 
 /// The active agents and members of a bound roster, without the signed-in member and
@@ -699,8 +790,12 @@ pub async fn perform_op(client: &Client, session: &Session, job: Job) -> Result<
             participant,
             project,
             text,
+            expected_actor,
         } => {
-            let body = hub_message(session, participant, project, text);
+            let mut body = hub_message(session, participant, project, text);
+            if let Some(actor) = expected_actor {
+                body["expected_actor"] = actor;
+            }
             at.post("/collaboration/messages", body)
                 .await
                 .map(|v| hub_sent(&v["data"]))
@@ -782,20 +877,54 @@ impl App {
     /// `/agents`, the palette entry and `agents_view`.
     pub(crate) fn open_agents(&mut self) -> Vec<Action> {
         self.overlay = Overlay::Agents;
-        self.directory.editor = None;
-        self.agents_request()
+        self.directory.clear_interaction();
+        self.agents_refresh(false)
     }
 
-    /// Read every source again under a new generation; older replies are dropped.
+    /// Explicit refresh may run immediately, but never duplicates a pending source.
     pub(crate) fn agents_request(&mut self) -> Vec<Action> {
+        self.agents_refresh(true)
+    }
+
+    fn agents_sync_context(&mut self) {
+        let context = (self.session.id.clone(), self.session.directory.clone());
+        if self.directory.context.as_ref() != Some(&context) {
+            self.directory.forget();
+            self.sidebar.clear_reachable();
+            self.directory.context = Some(context);
+        }
+    }
+
+    fn agents_refresh(&mut self, immediate: bool) -> Vec<Action> {
+        self.agents_sync_context();
+        if self.session.id.is_empty() {
+            return Vec::new();
+        }
+        let now = Instant::now();
+        let sources: Vec<_> = Source::ALL
+            .into_iter()
+            .filter(|source| {
+                let loaded = self.directory.source(*source);
+                !loaded.loading
+                    && (immediate
+                        || loaded
+                            .last_poll
+                            .is_none_or(|at| now.saturating_duration_since(at) >= POLL))
+            })
+            .collect();
+        if sources.is_empty() {
+            return Vec::new();
+        }
         let d = &mut self.directory;
-        d.generation = d.generation.wrapping_add(1);
-        d.last_poll = Some(Instant::now());
+        d.cache.generation = d.cache.generation.wrapping_add(1);
         let generation = d.generation;
-        Source::ALL
+        sources
             .into_iter()
             .map(|source| {
-                d.source_mut(source).loading = true;
+                let loaded = d.source_mut(source);
+                loaded.loading = true;
+                loaded.last_poll = Some(now);
+                loaded.request = Some(generation);
                 Action::Directory(Request { generation, source })
             })
             .collect()
@@ -810,11 +939,29 @@ impl App {
         source: Source,
         result: Result<Fetched, String>,
     ) {
-        if session_id != self.session.id || generation != self.directory.generation {
+        self.agents_sync_context();
+        if session_id != self.session.id
+            || self.directory.source(source).request != Some(generation)
+        {
             return;
+        }
+        if source == Source::Hub {
+            let context = result
+                .as_ref()
+                .ok()
+                .and_then(|fetched| fetched.hub_context.clone());
+            if context != self.directory.hub_context {
+                self.invalidate_hub_editor();
+            }
+            self.directory.cache.hub_context = context;
+            self.directory.cache.hub_actor = result
+                .as_ref()
+                .ok()
+                .and_then(|fetched| fetched.actor.clone());
         }
         let loaded = self.directory.source_mut(source);
         loaded.loading = false;
+        loaded.request = None;
         match result {
             Ok(fetched) => {
                 loaded.rows = fetched.rows;
@@ -830,7 +977,11 @@ impl App {
                 loaded.error = Some(error);
             }
         }
+        if !self.directory.hub_editor_valid() {
+            self.invalidate_hub_editor();
+        }
         self.directory.anchor();
+        self.refresh_reachable_rows();
     }
 
     /// Action `id` finished: the outcome in a toast, then a refresh. The editor that
@@ -858,20 +1009,59 @@ impl App {
             }
             (Ok(text) | Err(Failure(text)), None) => self.toast(text),
         }
-        if matches!(self.overlay, Overlay::Agents) {
+        if matches!(self.overlay, Overlay::Agents) || self.sidebar_overview_demand() {
             return self.agents_request();
         }
         Vec::new()
     }
 
-    /// Every [`POLL`] while open and no editor is, as long as nothing is loading.
+    fn invalidate_hub_editor(&mut self) {
+        if matches!(
+            self.directory.editor.as_ref().map(|editor| &editor.kind),
+            Some(EditorKind::Message {
+                to: Recipient::Hub { .. }
+            })
+        ) {
+            self.directory.editor = None;
+            self.toast("Hub access changed; review the current participant before composing again");
+        }
+    }
+
+    /// Observed account/project/role changes from People fence older roster reads.
+    pub(crate) fn agents_observe_hub(&mut self, snapshot: Option<&Snapshot>) {
+        let context = snapshot.map(hub_context);
+        if context.is_none() || self.directory.hub_context != context {
+            self.invalidate_hub_editor();
+            self.directory.cache.generation = self.directory.generation.wrapping_add(1);
+            self.directory.cache.hub = Loaded::default();
+            self.directory.cache.hub_context = context;
+            self.directory.cache.hub_actor = snapshot.and_then(hub_actor);
+            self.refresh_reachable_rows();
+        }
+    }
+
+    /// One scheduler serves both visible views; a slow source cannot starve another.
     pub(crate) fn agents_poll(&mut self) -> Vec<Action> {
-        let d = &self.directory;
-        let due = d.last_poll.is_none_or(|at| at.elapsed() >= POLL);
-        if matches!(self.overlay, Overlay::Agents) && d.editor.is_none() && !d.loading() && due {
-            return self.agents_request();
+        self.agents_sync_context();
+        let sidebar = self.sidebar_overview_demand();
+        if matches!(self.overlay, Overlay::Agents) || sidebar {
+            return self.agents_refresh(false);
         }
         Vec::new()
+    }
+
+    pub(crate) fn open_reachable_agent(&mut self, key: Option<&str>) -> Vec<Action> {
+        self.leave_sidebar();
+        self.overlay = Overlay::Agents;
+        self.directory.clear_interaction();
+        if let Some(key) = key {
+            if self.directory.rows().any(|row| row.key == key) {
+                self.directory.selected = Some(key.to_owned());
+            } else {
+                self.toast("The reachable list changed; choose an entry in /agents");
+            }
+        }
+        self.agents_refresh(false)
     }
 
     /// Pasted text goes into an open editor, or into the filter.
@@ -956,6 +1146,7 @@ impl App {
     fn agents_escape(&mut self) {
         if self.directory.filter.is_empty() {
             self.overlay = Overlay::None;
+            self.directory.clear_interaction();
         } else {
             self.agents_filter(String::clear);
         }
@@ -989,7 +1180,9 @@ impl App {
         match compose_target(&row, &self.directory.hub) {
             Ok(to) => {
                 let kind = EditorKind::Message { to };
-                self.directory.editor = Some(Editor::new(kind, &row.address, String::new()));
+                let mut editor = Editor::new(kind, &row.address, String::new());
+                editor.hub_context = self.directory.hub_context.clone();
+                self.directory.editor = Some(editor);
             }
             Err(reason) => self.toast(reason),
         }
@@ -1120,6 +1313,10 @@ impl App {
 
     /// Enter in the editor: send or rename, once.
     fn agents_submit(&mut self) -> Vec<Action> {
+        if !self.directory.hub_editor_valid() {
+            self.invalidate_hub_editor();
+            return Vec::new();
+        }
         let Some(editor) = &mut self.directory.editor else {
             return Vec::new();
         };
@@ -1156,6 +1353,7 @@ impl App {
                 participant: participant.clone(),
                 project: project.clone(),
                 text: editor.input.clone(),
+                expected_actor: self.directory.cache.hub_actor.clone(),
             },
         };
         editor.busy = true;
@@ -1253,6 +1451,7 @@ mod tests {
             rows,
             status: Status::Ready,
             writable: false,
+            ..Default::default()
         };
         app.agents_reply("ses_ME", generation, Source::Messaging, Ok(fetched));
         app.agents_reply(
@@ -1298,6 +1497,28 @@ mod tests {
 
     fn hub_agent(id: &str, name: &str) -> Value {
         json!({"id": id, "name": name, "online": true, "active": true, "owner": "cmem_me"})
+    }
+
+    #[test]
+    fn source_refusals_distinguish_old_server_disabled_feature_and_auth_loss() {
+        let error = |status| ClientError::Api {
+            status,
+            tag: if status == 404 {
+                "RouteNotFoundError"
+            } else {
+                "Unavailable"
+            }
+            .into(),
+            message: "refused".into(),
+            body: Value::Null,
+        };
+        assert_eq!(unavailable(&error(404)), Some(Status::Unsupported));
+        assert_eq!(unavailable(&error(503)), Some(Status::Disabled));
+        assert_eq!(
+            unavailable(&error(403)),
+            None,
+            "authorization failure must clear the roster"
+        );
     }
 
     #[test]
@@ -1557,6 +1778,7 @@ mod tests {
                 participant: json!({"kind": "agent", "id": "cagt_rev"}),
                 project: "web".into(),
                 text: "hello".into(),
+                expected_actor: None,
             }]
         );
         // A viewer cannot.
@@ -1721,22 +1943,262 @@ mod tests {
         assert_eq!(hub_rows(&unpublished).len(), 4);
     }
 
-    /// The poll fires once [`POLL`] has passed with no editor, and not while one is open.
+    fn refresh_hub_as(app: &mut App, subject: &str, role: &str) {
+        let snapshot = Snapshot {
+            status: json!({"enabled":true,"binding":{"project":"web"},
+            "account":{"issuer":"https://issuer.test","sub":subject},
+            "current_member":{"id":subject,"role":role}}),
+            ..Default::default()
+        };
+        let actions = app.agents_request();
+        let generation = actions
+            .iter()
+            .find_map(|action| match action {
+                Action::Directory(Request {
+                    source: Source::Hub,
+                    generation,
+                }) => Some(*generation),
+                _ => None,
+            })
+            .unwrap();
+        let row = Entry::from_hub(
+            &snapshot,
+            &json!({"id":"cagt_target","name":"Target"}),
+            true,
+            "web",
+        );
+        app.agents_reply(
+            "ses_ME",
+            generation,
+            Source::Hub,
+            Ok(Fetched {
+                rows: vec![row],
+                status: Status::Ready,
+                writable: snapshot.writable(),
+                hub_context: Some(hub_context(&snapshot)),
+                actor: hub_actor(&snapshot),
+            }),
+        );
+    }
+
     #[test]
-    fn the_poll_is_due_every_ten_seconds_without_an_editor() {
+    fn passive_account_switch_and_revocation_cannot_send_an_old_hub_draft() {
+        for next in [("member-b", "member"), ("member-a", "viewer")] {
+            let mut app = app();
+            loaded(&mut app, Vec::new());
+            refresh_hub_as(&mut app, "member-a", "member");
+            press(&mut app, KeyCode::Enter);
+            keys(&mut app, "private draft");
+            refresh_hub_as(&mut app, next.0, next.1);
+            assert!(app.directory.editor.is_none());
+            assert!(press(&mut app, KeyCode::Enter).is_empty());
+        }
+        let mut app = app();
+        loaded(&mut app, Vec::new());
+        refresh_hub_as(&mut app, "member-a", "member");
+        press(&mut app, KeyCode::Enter);
+        keys(&mut app, "private draft");
+        app.agents_observe_hub(None);
+        assert!(app.directory.editor.is_none());
+        assert!(press(&mut app, KeyCode::Enter).is_empty());
+    }
+
+    #[test]
+    fn hub_send_captures_reviewed_actor_and_observation_preserves_local_drafts() {
+        let mut app = app();
+        loaded(&mut app, Vec::new());
+        refresh_hub_as(&mut app, "member-a", "member");
+        press(&mut app, KeyCode::Enter);
+        keys(&mut app, "hello");
+        let actions = press(&mut app, KeyCode::Enter);
+        assert!(
+            matches!(&ops(&actions)[0], Op::HubSend { expected_actor:Some(actor), .. }
+            if actor == &json!({"issuer":"https://issuer.test","subject":"member-a"}))
+        );
+        app.directory.editor = Some(Editor::new(
+            EditorKind::Message {
+                to: Recipient::Listing("local".into()),
+            },
+            "Local",
+            "keep".into(),
+        ));
+        app.agents_observe_hub(None);
+        assert_eq!(app.directory.editor.as_ref().unwrap().input, "keep");
+    }
+
+    #[test]
+    fn hub_agents_are_named_remote_entries_while_humans_and_unsafe_ids_are_excluded() {
+        let mut directory = Directory::default();
+        let roster = Snapshot::default();
+        directory.hub.rows = vec![
+            Entry::from_hub(
+                &roster,
+                &json!({"id":"cagt_a","name":"Same","online":true}),
+                true,
+                "project",
+            ),
+            Entry::from_hub(
+                &roster,
+                &json!({"id":"cagt_b","name":"Same","online":false}),
+                true,
+                "project",
+            ),
+            Entry::from_hub(
+                &roster,
+                &json!({"id":"cmem_a","name":"Human"}),
+                false,
+                "project",
+            ),
+            Entry::from_hub(
+                &roster,
+                &json!({"id":"cagt_bad\n","name":"Unsafe"}),
+                true,
+                "project",
+            ),
+        ];
+        let overview = crate::session_overview::project(&directory, "ses_ME");
+        assert_eq!(overview.counts, [0, 0, 2]);
+        assert_eq!(overview.entries.len(), 2);
+        assert_ne!(overview.entries[0].key, overview.entries[1].key);
+        assert_eq!(
+            crate::session_overview::detail(overview.entries[0]),
+            "online · hub:project"
+        );
+    }
+
+    #[test]
+    fn polling_is_per_source_coalesced_and_does_not_freeze_for_an_editor() {
         let mut app = app();
         loaded(&mut app, listing());
-        assert!(app.agents_poll().is_empty(), "not due yet");
-        let overdue = || Instant::now().checked_sub(POLL);
-        app.directory.last_poll = overdue();
-        let polled = app.agents_poll();
-        assert_eq!(polled.len(), 2, "{polled:?}");
-        assert!(polled.iter().all(|a| matches!(a, Action::Directory(_))));
-        loaded(&mut app, listing());
+        assert!(app.agents_poll().is_empty());
         keys(&mut app, "migration");
         press(&mut app, KeyCode::Enter);
-        app.directory.last_poll = overdue();
-        assert!(app.agents_poll().is_empty(), "held back by the editor");
+        app.directory.messaging.last_poll = Instant::now().checked_sub(POLL);
+        let polled = app.agents_poll();
+        assert_eq!(polled.len(), 1, "{polled:?}");
+        assert!(matches!(
+            &polled[0],
+            Action::Directory(Request {
+                source: Source::Messaging,
+                ..
+            })
+        ));
+        assert!(app.agents_poll().is_empty(), "pending read is coalesced");
+        let explicit = app.agents_request();
+        assert_eq!(explicit.len(), 1, "only the other source may refresh");
+        assert!(app.agents_request().is_empty());
+        assert!(
+            app.directory.editor.is_some(),
+            "draft survives passive reads"
+        );
+    }
+
+    #[test]
+    fn closing_directory_reuses_cache_and_sidebar_ignores_its_filter() {
+        let mut app = app();
+        loaded(&mut app, listing());
+        keys(&mut app, "migration");
+        assert_eq!(
+            crate::session_overview::project(&app.directory, "ses_ME").total,
+            6
+        );
+        press(&mut app, KeyCode::Esc); // clear filter
+        press(&mut app, KeyCode::Esc); // close
+        assert_eq!(app.overlay, Overlay::None);
+        assert!(!app.directory.messaging.rows.is_empty());
+        assert!(app.open_agents().is_empty(), "fresh cache is reused");
+        assert!(app.directory.filter.is_empty());
+    }
+
+    #[test]
+    fn slow_source_does_not_starve_other_source_and_old_context_cannot_repopulate() {
+        let mut app = app();
+        let first = app.agents_request();
+        let Action::Directory(first) = &first[0] else {
+            panic!()
+        };
+        let generation = first.generation;
+        app.agents_reply(
+            "ses_ME",
+            generation,
+            Source::Messaging,
+            Ok(Fetched {
+                rows: listing(),
+                status: Status::Ready,
+                writable: false,
+                ..Default::default()
+            }),
+        );
+        app.directory.messaging.last_poll = Instant::now().checked_sub(POLL);
+        let next = app.agents_poll();
+        assert_eq!(next.len(), 1, "slow hub does not block messaging");
+        app.agents_reply(
+            "ses_ME",
+            generation,
+            Source::Hub,
+            Ok(Fetched::status(Status::Inactive)),
+        );
+        assert_eq!(
+            app.directory.hub.status,
+            Status::Inactive,
+            "other wave did not invalidate pending hub"
+        );
+        app.session.directory = "/another-project".into();
+        app.agents_reply(
+            "ses_ME",
+            generation,
+            Source::Messaging,
+            Ok(Fetched {
+                rows: listing(),
+                status: Status::Ready,
+                writable: false,
+                ..Default::default()
+            }),
+        );
+        assert!(app.directory.rows().next().is_none());
+        assert!(app.sidebar.reachable.is_empty());
+    }
+
+    #[test]
+    fn hub_authorization_loss_fences_pending_roster_and_removes_sidebar_identity() {
+        let mut app = app();
+        let actions = app.agents_request();
+        let Action::Directory(request) = &actions[0] else {
+            panic!()
+        };
+        let generation = request.generation;
+        app.directory.hub.rows = listing();
+        app.refresh_reachable_rows();
+        assert!(!app.sidebar.reachable.is_empty());
+        app.agents_observe_hub(None);
+        assert!(app.sidebar.reachable.is_empty());
+        app.agents_reply(
+            "ses_ME",
+            generation,
+            Source::Hub,
+            Ok(Fetched {
+                rows: listing(),
+                status: Status::Ready,
+                writable: true,
+                ..Default::default()
+            }),
+        );
+        assert!(app.directory.hub.rows.is_empty());
+    }
+
+    #[test]
+    fn missing_sidebar_identity_opens_unselected_without_retargeting_or_authority() {
+        let mut app = app();
+        loaded(&mut app, listing());
+        let key = "listing:ses_01MIGR";
+        assert!(app.open_reachable_agent(Some(key)).is_empty());
+        assert_eq!(app.directory.selected.as_deref(), Some(key));
+        assert!(app.directory.editor.is_none());
+        app.directory.messaging.rows.clear();
+        assert!(app.open_reachable_agent(Some(key)).is_empty());
+        assert!(app.directory.selected.is_none());
+        assert!(app.toast.as_ref().unwrap().0.contains("list changed"));
+        assert_eq!(app.session.id, "ses_ME");
     }
 
     /// A Session switch through `set_session` closes `/agents` and resets it.
@@ -1872,6 +2334,17 @@ mod computer_integration_tests {
         assert_eq!(
             app.directory.editor.as_ref().unwrap().input,
             "Keep this draft"
+        );
+        app.overlay = Overlay::None;
+        app.sidebar.focus_reachable("listing:other".into());
+        let screen = crate::screens::render(&mut app, 160, 48, &Default::default());
+        assert!(screen.contains("Computer ARMED"), "{screen}");
+        assert_eq!(
+            app.on_key(KeyEvent::new(
+                KeyCode::Esc,
+                KeyModifiers::CONTROL | KeyModifiers::ALT
+            )),
+            vec![Action::ComputerStop]
         );
     }
 }

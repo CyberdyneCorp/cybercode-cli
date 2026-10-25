@@ -574,3 +574,35 @@ async fn agents_hub_agent_row() {
     assert!(!server.host.runtime.is_running(&hub.session));
     assert!(!server.host.runtime.is_running(&reviewer));
 }
+
+/// Passive sidebar discovery shares the real listing route with `/agents`.
+#[tokio::test]
+async fn sidebar_discovery_reuses_real_directory_data_without_a_second_fetch() {
+    let server = Server::start().await;
+    let owner = server.session().await;
+    let other = located(&server, "Update README examples", &server.root()).await;
+    let child = subagent(&server, &owner, "Check regression tests").await;
+    let mut app = server.load(&owner).await;
+    let first = render(&mut app, 160, 48, &Opts::default());
+    assert!(first.contains("Sessions & agents"));
+    let actions = app.agents_poll();
+    assert_eq!(actions.len(), 2, "one request per existing source");
+    assert!(app.agents_poll().is_empty(), "in-flight reads coalesce");
+    drive(&server, &mut app, actions).await;
+    assert!(app.sidebar.reachable.contains(&format!("listing:{other}")));
+    assert!(app.sidebar.reachable.contains(&format!("listing:{child}")));
+    let screen = render(&mut app, 160, 48, &Opts::default());
+    assert!(screen.contains("Update README examples"), "{screen}");
+    assert!(screen.contains("Check regression tests"), "{screen}");
+    let key = format!("listing:{other}");
+    assert!(
+        app.open_reachable_agent(Some(&key)).is_empty(),
+        "fresh cache is reused"
+    );
+    assert_eq!(
+        app.directory.current().unwrap().session_id.as_deref(),
+        Some(other.as_str())
+    );
+    assert!(app.directory.editor.is_none());
+    assert_eq!(app.session.id, owner, "navigation does not attach");
+}

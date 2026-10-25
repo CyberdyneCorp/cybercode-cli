@@ -9,23 +9,23 @@ expression: screen
   This keeps the cache warm:                                                          100 tokens · window unknown
                                                                                       — spent
   1. Memoization: results are cached
-                                                                                      Goal
-  • avoids recomputation                                                              ◎ all call sites compile against
-                                                                                       the v2 API
-    rust            ┌ Goals · e edit · p pause · r resume · c clear · shift+↑↓ reorder ────────────┐3/50 · $0.42
-    fn fib(n: u64) -│search:                                                                       │l sites still use…
-                    │                                                                              │
+                                                                                      ▼ Sessions & agents
+  • avoids recomputation                                                              Reachable Sessions not loaded
+                                                                                      Open /agents
+    rust            ┌ Goals · e edit · p pause · r resume · c clear · shift+↑↓ reorder ────────────┐
+    fn fib(n: u64) -│search:                                                                       │
+                    │                                                                              │es compile against
   ▣ Build · main · 1│❯ ◎ all call sites compile against the v2 API  current · active · turn 3/50 · │
-                    │  ◎ cargo test passes  queued · pending · turn 0/50 · $0.00                   │
-                    │  ◎ the changelog lists the API change  queued · pending · turn 0/50 · $0.00  │
-                    │  ◎ the parser is split into modules  ended · met · turn 5/50 · $0.90 · evalua│ mcp add
+                    │  ◎ cargo test passes  queued · pending · turn 0/50 · $0.00                   │3/50 · $0.42
+                    │  ◎ the changelog lists the API change  queued · pending · turn 0/50 · $0.00  │l sites still use…
+                    │  ◎ the parser is split into modules  ended · met · turn 5/50 · $0.90 · evalua│
+                    │                                                                              │
+                    │                                                                              │
+                    │                                                                              │
+                    │                                                                              │ mcp add
                     │                                                                              │
                     │                                                                              │
                     │                                                                              │vate as files are
-                    │                                                                              │
-                    │                                                                              │
-                    │                                                                              │
-                    │                                                                              │
                     │                                                                              │
                     │                                                                              │
                     │                                                                              │

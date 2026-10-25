@@ -9,17 +9,17 @@ expression: shown
   This keeps the cache warm:                                                          100 tokens · window unknown
                                                                                       — spent
   1. Memoization: results are cached
-                                                                                      ▼ MCP
-  • avoids recomputation                                                              No MCP servers
-                                                                                      add one: cyber mcp add
+                                                                                      ▼ Sessions & agents
+  • avoids recomputation                                                              Reachable Sessions not loaded
+                                                                                      Open /agents
     rust
-    fn fib(n: u64) -> u64 { n }                                                       LSP
+    fn fib(n: u64) -> u64 { n }                                                       ▼ MCP
+                                                                                      No MCP servers
+  ▣ Build · main · 11.3s                                                              add one: cyber mcp add
+
+› HOLD on                                                                             LSP
                                                                                       LSPs will activate as files are
-  ▣ Build · main · 11.3s                                                              read
-
-› HOLD on
-
-  ✗ Provider turn interrupted
+  ✗ Provider turn interrupted                                                         read
 
   ▣ Build · main · 11.3s · interrupted
 
@@ -46,8 +46,8 @@ row 13: 0-8 fg=#00e5ff bg=#0b0f14
 row 13: 9-23 fg=#6b7a8f bg=#0b0f14
 row 13: 24-83 fg=#d6e4f0 bg=#0b0f14
 row 13: 84-85 fg=#d6e4f0 bg=#13181d
-row 13: 86-89 fg=#6b7a8f bg=#13181d
-row 13: 90-119 fg=#d6e4f0 bg=#13181d
+row 13: 86-107 fg=#666f77 bg=#13181d
+row 13: 108-119 fg=#d6e4f0 bg=#13181d
 row 19: 0-8 fg=#00e5ff bg=#0b0f14
 row 19: 9-26 fg=#6b7a8f bg=#0b0f14
 row 19: 27-37 fg=#ffcc66 bg=#0b0f14

@@ -10,16 +10,16 @@ expression: screen
                                                                                                                           auto-compact pending
   1. Memoization: results are cached                                                                                      $0.00 spent
 
-  • avoids recomputation                                                                                          ▼ MCP
-                                                                                                                  No MCP servers
-    rust                                                                                                          add one: cyber mcp add
+  • avoids recomputation                                                                                          ▼ Sessions & agents
+                                                                                                                  Reachable Sessions not loaded
+    rust                                                                                                          Open /agents
     fn fib(n: u64) -> u64 { n }
+                                                                                                                  ▼ MCP
+  ▣ Build · Demo Sonnet · 11.3s                                                                                   No MCP servers
+                                                                                                                  add one: cyber mcp add
+
                                                                                                                   LSP
-  ▣ Build · Demo Sonnet · 11.3s                                                                                   LSPs will activate as files are read
-
-
-
-
+                                                                                                                  LSPs will activate as files are read
 
 
 

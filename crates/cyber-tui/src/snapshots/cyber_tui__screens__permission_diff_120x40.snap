@@ -9,16 +9,16 @@ expression: shown
   This keeps the cache warm:                                                          100 tokens · window unknown
                                                                                       — spent
   1. Memoization: results are cached
-                                                                                      ▼ MCP
-  • avoids reco┌ Permission: edit ──────────────────────────────────────────────────────────────────────┐
-               │  src/fib.rs                                                                            │add
+                                                                                      ▼ Sessions & agents
+  • avoids reco┌ Permission: edit ──────────────────────────────────────────────────────────────────────┐not loaded
+               │  src/fib.rs                                                                            │
     rust       │                                                                                        │
     fn fib(n: u│  @@ -1 +1 @@                                                                           │
-               │  -fn fib() {}                                                                          │as files are
-  ▣ Build · mai│  +fn fib(n: u64) {}                                                                    │
+               │  -fn fib() {}                                                                          │
+  ▣ Build · mai│  +fn fib(n: u64) {}                                                                    │add
                │                                                                                        │
                │❯ Allow once (y)                                                                        │
-               │  Allow always… (a)                                                                     │
+               │  Allow always… (a)                                                                     │as files are
                │  Reject (n)                                                                            │
                │                                                                                        │
                │                                                                                        │
@@ -48,8 +48,7 @@ row 12: 16-17 fg=#d6e4f0 bg=#171c21
 row 12: 18-29 fg=#ff6b6b bg=#301d21
 row 12: 30-103 fg=#d6e4f0 bg=#171c21
 row 12: 104-104 fg=#00e5ff bg=#171c21
-row 12: 105-117 fg=#6b7a8f bg=#13181d
-row 12: 118-119 fg=#d6e4f0 bg=#13181d
+row 12: 105-119 fg=#d6e4f0 bg=#13181d
 row 13: 0-8 fg=#00e5ff bg=#0b0f14
 row 13: 9-14 fg=#6b7a8f bg=#0b0f14
 row 13: 15-15 fg=#00e5ff bg=#171c21
@@ -57,7 +56,8 @@ row 13: 16-17 fg=#d6e4f0 bg=#171c21
 row 13: 18-35 fg=#7ee787 bg=#1c2f25
 row 13: 36-103 fg=#d6e4f0 bg=#171c21
 row 13: 104-104 fg=#00e5ff bg=#171c21
-row 13: 105-119 fg=#d6e4f0 bg=#13181d
+row 13: 105-107 fg=#666f77 bg=#13181d
+row 13: 108-119 fg=#d6e4f0 bg=#13181d
 row 15: 0-14 fg=#d6e4f0 bg=#0b0f14
 row 15: 15-15 fg=#00e5ff bg=#171c21
 row 15: 16-31 fg=#00e5ff bg=#1f2a3a bold

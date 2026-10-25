@@ -9,19 +9,19 @@ expression: screen
                                                                                       100 tokens · window unknown
   Noted.                                                                              — spent
 
-  ▣ Build · main · 11.3s                                                              Team feature
-               ┌ Permission: bash ──────────────────────────────────────────────────────────────────────┐  ◐ tests
+  ▣ Build · main · 11.3s                                                              ▼ Sessions & agents
+               ┌ Permission: bash ──────────────────────────────────────────────────────────────────────┐not loaded
                │[tests] Allow bash: docker compose up?                                                  │
                │                                                                                        │
                │  docker compose up                                                                     │
-               │                                                                                        │add
+               │                                                                                        │  ◐ tests
                │❯ Allow once (y)                                                                        │
                │  Allow always… (a)                                                                     │
-               │  Reject (n)                                                                            │as files are
+               │  Reject (n)                                                                            │
+               │                                                                                        │add
                │                                                                                        │
                │                                                                                        │
-               │                                                                                        │
-               │                                                                                        │
+               │                                                                                        │as files are
                │                                                                                        │
                │                                                                                        │
                │                                                                                        │

@@ -1,0 +1,53 @@
+---
+source: crates/cyber-tui/src/session_overview.rs
+expression: screen
+---
+
+                                                                                                                  New session
+
+                                                                                                                  Context
+                                                                                                                  $0.00 spent
+
+                                                                                                                  ▼ Sessions & agents
+                                                                                                                  Local Sessions (1)
+                                                                                                                  Update README examples
+                                                                                                                    running · session
+                  ██████╗██╗   ██╗██████╗ ███████╗██████╗      ██████╗ ██████╗ ██████╗ ███████╗                   Team / child agents (1)
+                 ██╔════╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗    ██╔════╝██╔═══██╗██╔══██╗██╔════╝                   Check regression tests
+                 ██║      ╚████╔╝ ██████╔╝█████╗  ██████╔╝    ██║     ██║   ██║██║  ██║█████╗                       running · subagent
+                 ██║       ╚██╔╝  ██╔══██╗██╔══╝  ██╔══██╗    ██║     ██║   ██║██║  ██║██╔══╝                     Remote (1)
+                 ╚██████╗   ██║   ██████╔╝███████╗██║  ██║    ╚██████╗╚██████╔╝██████╔╝███████╗                   Review API contracts
+                  ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝     ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝                     running · peer:studio
+                                                                                                                  Open /agents
+                                            local-first coding agent
+
+
+                        Agent
+                        Model
+                        Mode
+                        Path
+
+
+                        Tips
+                        ctrl+p    command palette
+                        ctrl+x b  show or hide the sidebar
+                        ctrl+x m  switch model
+                        ctrl+x l  sessions
+                        ctrl+x h  keys
+
+
+
+
+
+
+
+
+
+
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃
+┃  ·   ·
+                                                                                         $0.00  ctrl+p commands   ● Connected · Cyber Code
+row 6: 114-132 bold
