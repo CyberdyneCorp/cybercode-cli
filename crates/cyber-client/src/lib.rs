@@ -121,10 +121,22 @@ impl Client {
         }
     }
 
-    /// A client for the server's Unix socket: the server authenticates it by peer
-    /// credentials, so no password is sent.
+    /// An unauthenticated Unix client for public endpoints. Owner operations
+    /// require [`Self::unix_authenticated`] in addition to same-user peer checks.
     #[cfg(unix)]
     pub fn unix(socket: &str) -> Self {
+        Self::unix_with_password(socket, None)
+    }
+
+    /// An owner client for a Unix socket; same-user peer identity alone does not
+    /// distinguish an owner from their sandboxed tools.
+    #[cfg(unix)]
+    pub fn unix_authenticated(socket: &str, password: String) -> Self {
+        Self::unix_with_password(socket, Some(password))
+    }
+
+    #[cfg(unix)]
+    fn unix_with_password(socket: &str, password: Option<String>) -> Self {
         let http = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(5))
             .unix_socket(std::path::PathBuf::from(socket))
@@ -133,7 +145,7 @@ impl Client {
         Self {
             transport: Transport::Http {
                 base: "http://localhost".into(),
-                password: None,
+                password,
                 http,
             },
             directory: None,
@@ -651,6 +663,46 @@ fn encode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn authenticated_unix_client_sends_the_owner_basic_credential() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let temporary = tempfile::tempdir().unwrap();
+        let socket = temporary.path().join("sdk.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        let task = tokio::spawn(async move {
+            let (mut stream, _) = tokio::time::timeout(Duration::from_secs(3), listener.accept())
+                .await
+                .unwrap()
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                let n = tokio::time::timeout(Duration::from_secs(3), stream.read(&mut buffer))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert!(n > 0);
+                request.extend_from_slice(&buffer[..n]);
+                assert!(request.len() < 8192);
+            }
+            let headers = String::from_utf8(request).unwrap();
+            let authorization = headers
+                .lines()
+                .find_map(|line| {
+                    line.split_once(':')
+                        .filter(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+                        .map(|(_, value)| value.trim())
+                })
+                .unwrap();
+            assert_eq!(authorization, "Basic Y3liZXI6dW5peC1maXh0dXJl");
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 13\r\nConnection: close\r\n\r\n{\"data\":true}").await.unwrap();
+        });
+        let client = Client::unix_authenticated(socket.to_str().unwrap(), "unix-fixture".into());
+        assert_eq!(client.get("/owner").await.unwrap()["data"], true);
+        task.await.unwrap();
+    }
 
     #[test]
     fn responses_decode_to_values_or_tagged_errors() {

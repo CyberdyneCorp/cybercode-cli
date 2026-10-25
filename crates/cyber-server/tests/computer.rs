@@ -457,3 +457,165 @@ async fn deleting_session_removes_private_captures_with_retention_disabled() {
     let unrelated = h.session().await;
     assert!(h.runtime.session_info(&unrelated).await.is_ok());
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn same_uid_unix_clients_need_owner_auth_before_presence_or_computer_grants() {
+    let h = Harness::new(Setup::default());
+    let id = h.session().await;
+    let backend = Arc::new(Fake::default());
+    h.runtime
+        .configure_computer_backend(
+            h.dir.path().join("unix-computer"),
+            Arc::new(|| ComputerPolicy {
+                enabled: true,
+                retention_days: 1,
+            }),
+            backend.clone(),
+        )
+        .unwrap();
+    // A custom socket outside the protected state directory must not restore
+    // same-UID owner authority for an otherwise sandboxed process.
+    let socket = h.dir.path().join("custom-owner.sock");
+    let serving = socket.clone();
+    let router = http::router(state(&h, h.runtime.clone()));
+    let task = tokio::spawn(async move {
+        http::serve_unix(router, &serving, std::future::pending())
+            .await
+            .unwrap()
+    });
+    for _ in 0..100 {
+        if socket.exists() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    let client = reqwest::Client::builder()
+        .unix_socket(&socket)
+        .build()
+        .unwrap();
+    assert_eq!(
+        client
+            .get("http://localhost/health")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    for password in [None, Some("wrong-fixture-password")] {
+        for (suffix, body) in [
+            ("interactive-clients", json!({})),
+            ("computer/preview", json!({"app":"test.fixture"})),
+            (
+                "computer/allow",
+                json!({"preview_id":"not-owner-reviewed","confirm":true}),
+            ),
+        ] {
+            let request = client
+                .post(format!("http://localhost/api/v1/sessions/{id}/{suffix}"))
+                .json(&body);
+            let request = match password {
+                Some(password) => request.basic_auth("cyber", Some(password)),
+                None => request,
+            };
+            let denied = request.send().await.unwrap();
+            assert_eq!(denied.status(), 401);
+            assert_eq!(
+                denied.headers()["www-authenticate"],
+                "Basic realm=\"cyber\""
+            );
+        }
+    }
+    assert!(
+        h.runtime
+            .computer()
+            .unwrap()
+            .status(&id)
+            .unwrap()
+            .grant
+            .is_none()
+    );
+    let presence = client
+        .post(format!(
+            "http://localhost/api/v1/sessions/{id}/interactive-clients"
+        ))
+        .basic_auth("cyber", Some("owner-fixture-password"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(presence.status(), 201);
+    let preview = client
+        .post(format!(
+            "http://localhost/api/v1/sessions/{id}/computer/preview"
+        ))
+        .basic_auth("cyber", Some("owner-fixture-password"))
+        .json(&json!({"app":"test.fixture"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(preview.status(), 200);
+    let preview = preview.json::<Value>().await.unwrap();
+    let allowed = client
+        .post(format!(
+            "http://localhost/api/v1/sessions/{id}/computer/allow"
+        ))
+        .basic_auth("cyber", Some("owner-fixture-password"))
+        .json(&json!({"preview_id":preview["data"]["id"],"confirm":true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(allowed.status(), 200);
+    assert_eq!(
+        backend.prompts.load(Ordering::SeqCst),
+        0,
+        "fixture never prompts for native OS consent"
+    );
+    h.runtime.computer_stop(&id);
+    task.abort();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn unix_owner_routes_fail_closed_without_a_configured_password() {
+    let h = Harness::new(Setup::default());
+    let id = h.session().await;
+    let mut configured = state(&h, h.runtime.clone());
+    Arc::get_mut(&mut configured.options).unwrap().password = None;
+    let socket = h.dir.path().join("no-password.sock");
+    let serving = socket.clone();
+    let router = http::router(configured);
+    let task = tokio::spawn(async move {
+        http::serve_unix(router, &serving, std::future::pending())
+            .await
+            .unwrap()
+    });
+    for _ in 0..100 {
+        if socket.exists() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    let client = reqwest::Client::builder()
+        .unix_socket(&socket)
+        .build()
+        .unwrap();
+    for password in [None, Some("arbitrary-fixture-password")] {
+        let request = client.get(format!("http://localhost/api/v1/sessions/{id}"));
+        let request = match password {
+            Some(password) => request.basic_auth("cyber", Some(password)),
+            None => request,
+        };
+        assert_eq!(request.send().await.unwrap().status(), 401);
+    }
+    assert_eq!(
+        client
+            .get("http://localhost/health")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    task.abort();
+}
