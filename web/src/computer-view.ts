@@ -6,7 +6,7 @@ function checkbox(label: string, checked: boolean, action: (value: boolean) => v
 /** Inert text only: native target names never become HTML or executable URLs. */
 export function computerPanel(model: ComputerControls): HTMLElement {
   const section = node("section"); section.className = "authority computer-controls"; section.setAttribute("aria-label", "Native computer controls");
-  const banner = controlBanner(model); if (banner) section.append(banner);
+  const banner = computerBanner(model); if (banner) section.append(banner);
   const details = node("details"); details.open = model.expanded; details.addEventListener("toggle", () => { model.expanded = details.open; }); details.append(node("summary", "Native computer use (experimental)")); section.append(details);
   const report = model.report;
   if (!report) { details.append(node("p", "Native health is unavailable."), button("Refresh native status", () => { void model.refresh(); })); return section; }
@@ -16,7 +16,7 @@ export function computerPanel(model: ComputerControls): HTMLElement {
   if (model.notice) { const notice = node("p", model.notice); notice.setAttribute("role", "status"); details.append(notice); }
   return section;
 }
-function controlBanner(model: ComputerControls): HTMLElement | undefined {
+export function computerBanner(model: ComputerControls): HTMLElement | undefined {
   const active = model.active; if (!active && !model.uncertain) return undefined;
   const banner = node("div"); banner.className = "notice"; banner.setAttribute("role", "alert");
   if (active) { banner.append(node("strong", `Computer ${model.uncertain ? "status unknown" : "ARMED"}: ${active.target.identity}`), node("p", `Session ${active.session_id} · expires ${new Date(active.expires_at).toLocaleTimeString()}`)); }

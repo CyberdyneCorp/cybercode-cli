@@ -1,4 +1,4 @@
-import { test, expect, login, select } from './browser.js';
+import { test, expect, login, select, tab } from './browser.js';
 
 // HTTP routes simulate native state; this suite never requests OS consent,
 // captures a desktop or injects host input.
@@ -34,7 +34,13 @@ test('native global authority, exact review, private preview and logout Stop are
   await controls.getByRole('button',{name:'View authorized capture',exact:true}).click();
   await expect(controls.getByAltText('Authorized private native screenshot')).toHaveJSProperty('naturalWidth',1);expect(frameReads).toBe(1);
   await select(page,'Other Session');await expect(controls.getByRole('alert')).toContainText(first);
+  await select(page,'Native owner');await dashboard.prompt(first,'WRITE_BROWSER:native_modal');await dashboard.waitPending('permissions',first);await tab(page,'Approvals');
+  await page.getByRole('button',{name:'Review saved approval',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'Review saved approval'});await dialog.getByRole('button',{name:'STOP native input',exact:true}).click();
+  await expect(dialog.getByRole('button',{name:'STOP native input',exact:true})).toHaveCount(0);
+  await dialog.getByRole('button',{name:'Cancel',exact:true}).click();
+
   await page.getByRole('button',{name:'Logout',exact:true}).click();await expect(page.getByLabel('Password',{exact:true})).toBeVisible();
-  await expect.poll(()=>writes.filter(write=>write.path.endsWith('/stop')).length).toBe(2);
+  await expect.poll(()=>writes.filter(write=>write.path.endsWith('/stop')).length).toBe(3);
   expect(writes.find(write=>write.path.endsWith('/allow'))?.body).toEqual({preview_id:'cup_review',confirm:true,ttl_seconds:300,acknowledge_unknown:false});
 });
