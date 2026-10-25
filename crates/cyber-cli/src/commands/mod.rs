@@ -5,6 +5,7 @@ pub mod api;
 pub mod attach;
 mod branches;
 pub mod collab;
+pub mod computer;
 pub mod db;
 pub mod debug;
 pub mod doctor;
@@ -113,6 +114,7 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
         Command::Worktree { cmd } => worktrees::run(cmd, &ctx, &cli.global),
         Command::Workflows { cmd } => workflows::run(cmd, &ctx, &cli.global),
         Command::Teams { cmd } => teams::run(cmd, &ctx, &cli.global),
+        Command::Computer { cmd } => computer::run(cmd, &ctx, &cli.global),
         Command::Features { cmd } => features::run(cmd, &ctx, &cli.global),
         Command::Debug { cmd } => debug::run(cmd, &ctx, &cli.global),
         Command::Models(args) => models::run(args, &ctx, &cli.global),

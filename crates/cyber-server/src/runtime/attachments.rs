@@ -680,6 +680,9 @@ impl super::Inner {
         model: &ResolvedModel,
         handle: Option<&Handle>,
     ) {
+        if let Some(computer) = self.computer.get() {
+            computer.project(session_id, messages, model.vision);
+        }
         let referenced = messages
             .iter()
             .flat_map(|m| &m.content)

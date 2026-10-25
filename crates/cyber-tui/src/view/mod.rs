@@ -188,7 +188,8 @@ fn full_screen(f: &mut Frame, app: &App, panel: Rect) {
 /// The unsupported-version warning on the first row of `area`, while the rest keeps at
 /// least three rows; returns the area below it.
 fn banner(f: &mut Frame, app: &App, area: Rect) -> Rect {
-    let Some(text) = &app.update.banner else {
+    let computer_banner = app.computer.banner(&app.session.id);
+    let Some(text) = computer_banner.as_ref().or(app.update.banner.as_ref()) else {
         return area;
     };
     if area.height < 4 {

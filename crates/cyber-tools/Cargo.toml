@@ -11,6 +11,7 @@ publish.workspace = true
 tempfile.workspace = true
 base64 = "0.22"
 cyber-core.workspace = true
+cyber-computer = { path = "../cyber-computer" }
 cyber-store.workspace = true
 cyber-server = { path = "../cyber-server" }
 cyber-llm = { path = "../cyber-llm" }

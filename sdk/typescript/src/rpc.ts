@@ -210,6 +210,7 @@ export class RpcTransport implements Transport {
 
   async call(id: OperationId, params: CallParams, options: RequestOptions = {}): Promise<unknown> {
     const op: OperationSpec = operations[id];
+    if (op.binary) throw new CyberClientError("Transport", "private PNG reads require the authenticated HTTP transport", { permanent: true });
     const idempotencyKey = op.method === "GET" ? undefined : (options.idempotencyKey ?? uuidv7());
     const result = await this.channel.request(id, this.params(op, params, idempotencyKey), options.signal);
     return unwrapBody(op, result);

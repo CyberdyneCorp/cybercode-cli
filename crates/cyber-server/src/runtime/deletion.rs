@@ -27,6 +27,9 @@ impl Runtime {
             self.fence_deletion(session_id, &ids)?;
             ids
         };
+        for id in &ids {
+            self.computer_stop(id);
+        }
         // SessionEnd is observational and never blocks the deletion it reports.
         self.inner.session_end(&handle, "delete").await;
         self.settle_hook_work(&ids).await;

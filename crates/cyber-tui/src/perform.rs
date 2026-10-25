@@ -10,6 +10,10 @@ use crate::model::{Choice, Item, Queued, Request, Session};
 /// Results the runner applies to the App.
 #[derive(Debug, Clone)]
 pub enum Msg {
+    Computer {
+        session_id: String,
+        result: Result<Value, String>,
+    },
     /// The server refused a prompt: the draft and its chips go back to the composer.
     PromptRefused {
         session_id: String,
@@ -896,6 +900,17 @@ pub async fn perform_owned(
             crate::admissions::perform_action(client, action).await
         }
         Action::Refresh => snapshot(client, &session.id).await,
+        Action::ComputerStatus => Ok(Msg::Computer {
+            session_id: session.id.clone(),
+            result: client.get("/tools/computer/health").await.map_err(err),
+        }),
+        Action::ComputerStop => {
+            client
+                .post("/tools/computer/stop", json!({}))
+                .await
+                .map_err(err)?;
+            Ok(Msg::Toast("Native computer control stopped".into()))
+        }
         Action::LoadSidebar(_) | Action::ReconnectMcp(_) => {
             sidebar_action(client, session, action).await
         }

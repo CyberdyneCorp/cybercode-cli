@@ -207,6 +207,11 @@ pub enum Command {
         #[command(subcommand)]
         cmd: crate::commands::teams::TeamsCmd,
     },
+    /// Inspect, set up, arm and stop experimental native computer control.
+    Computer {
+        #[command(subcommand)]
+        cmd: crate::commands::computer::ComputerCmd,
+    },
     /// List the feature registry; enable or disable a feature in config.
     Features {
         #[command(subcommand)]

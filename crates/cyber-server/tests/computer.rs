@@ -1,0 +1,229 @@
+//! Real owner HTTP authorization with a fake native backend; never capture or inject input.
+mod support;
+use cyber_computer::{
+    Error,
+    backend::{Backend, Capture, Health, NativeTarget, Selector},
+    control::InputPermit,
+};
+use cyber_server::{
+    http::{self, AgentInfo, AppState, CommandInfo, HttpOptions, ModelInfo, Services},
+    runtime::{Runtime, ToolDef, TurnContext, computer::ComputerPolicy, presence::Watching},
+};
+use futures::future::BoxFuture;
+use serde_json::{Value, json};
+use std::{
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
+use support::{Harness, Setup};
+struct NoServices;
+impl Services for NoServices {
+    fn models(&self, _: &Path) -> BoxFuture<'_, Result<Vec<ModelInfo>, String>> {
+        Box::pin(async { Ok(vec![]) })
+    }
+    fn default_model(&self, _: &Path) -> Option<String> {
+        Some("test/main".into())
+    }
+    fn agents(&self, _: &Path) -> Vec<AgentInfo> {
+        vec![]
+    }
+    fn tools(&self, _: &TurnContext) -> Vec<ToolDef> {
+        vec![]
+    }
+    fn commands(&self, _: &Path) -> Vec<CommandInfo> {
+        vec![]
+    }
+    fn find_files(&self, _: &Path, _: &str, _: usize) -> Vec<String> {
+        vec![]
+    }
+    fn expand_command(&self, _: &Path, _: &str, _: &str) -> Option<String> {
+        None
+    }
+}
+fn state(h: &Harness, runtime: Runtime) -> AppState {
+    AppState {
+        service: None,
+        runtime,
+        remote_tools: Arc::default(),
+        store: h.store.clone(),
+        services: Arc::new(NoServices),
+        options: Arc::new(HttpOptions {
+            version: "fixture".into(),
+            password: Some("owner-fixture-password".into()),
+            cors_origins: vec![],
+            default_directory: h.repo.clone(),
+            features: vec!["session".into()],
+        }),
+    }
+}
+
+#[derive(Default)]
+struct Fake {
+    prompts: AtomicUsize,
+}
+impl Backend for Fake {
+    fn health(&self, prompt: bool) -> Result<Health, Error> {
+        if prompt {
+            self.prompts.fetch_add(1, Ordering::SeqCst);
+        }
+        Ok(Health {
+            supported: true,
+            platform: "fixture".into(),
+            minimum_version: "fixture".into(),
+            screen_capture: true,
+            accessibility: true,
+            binary: "fixture".into(),
+        })
+    }
+    fn resolve(&self, _: &Selector) -> Result<NativeTarget, Error> {
+        Ok(NativeTarget {
+            identity: "app:test.fixture:42:1:7".into(),
+            app: Some("test.fixture".into()),
+            pid: 42,
+            window: 7,
+            display: 1,
+            launch_ms: 1,
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 100.0,
+            image_width: 100,
+            image_height: 100,
+            rotation: 0,
+        })
+    }
+    fn capture(&self, _: &NativeTarget) -> Result<Capture, Error> {
+        panic!("owner control route must never capture")
+    }
+    fn input(&self, _: &NativeTarget, _: &InputPermit) -> Result<(), Error> {
+        panic!("owner control route must never inject input")
+    }
+}
+#[tokio::test]
+async fn owner_routes_bind_auth_location_exact_review_and_global_stop() {
+    let h = Harness::new(Setup::default());
+    let id = h.session().await;
+    let backend = Arc::new(Fake::default());
+    h.runtime
+        .configure_computer_backend(
+            h.dir.path().join("computer"),
+            Arc::new(|| ComputerPolicy {
+                enabled: true,
+                retention_days: 1,
+            }),
+            backend.clone(),
+        )
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/api/v1", listener.local_addr().unwrap());
+    let task = tokio::spawn(http::serve_tcp(
+        http::router(state(&h, h.runtime.clone())),
+        listener,
+        std::future::pending(),
+    ));
+    let client = reqwest::Client::new();
+    assert_eq!(
+        client
+            .get(format!("{url}/tools/computer/health"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    let owner = || {
+        client
+            .post(format!("{url}/sessions/{id}/computer/preview"))
+            .basic_auth("cyber", Some("owner-fixture-password"))
+            .json(&json!({"app":"test.fixture"}))
+    };
+    assert_eq!(
+        owner()
+            .header("origin", "https://untrusted.fixture")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    assert_eq!(owner().send().await.unwrap().status(), 403); // no actual human Session stream
+    let _presence = h.runtime.attach_client(Watching::Session(id.clone()));
+    assert_eq!(
+        owner()
+            .header("x-cyber-directory", h.dir.path().display().to_string())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    let preview = owner().send().await.unwrap();
+    assert_eq!(preview.status(), 200);
+    assert_eq!(preview.headers()["cache-control"], "no-store");
+    let preview = preview.json::<Value>().await.unwrap();
+    let path = format!("{url}/sessions/{id}/computer/allow");
+    assert_eq!(
+        client
+            .post(&path)
+            .basic_auth("cyber", Some("owner-fixture-password"))
+            .json(&json!({"preview_id":preview["data"]["id"],"confirm":false}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        400
+    );
+    let armed = client
+        .post(&path)
+        .basic_auth("cyber", Some("owner-fixture-password"))
+        .json(&json!({"preview_id":preview["data"]["id"],"confirm":true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(armed.status(), 200);
+    let health = client
+        .get(format!("{url}/tools/computer/health"))
+        .basic_auth("cyber", Some("owner-fixture-password"))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(health["data"]["grant"]["session_id"], id);
+    assert_eq!(
+        client
+            .post(format!("{url}/tools/computer/stop"))
+            .basic_auth("cyber", Some("owner-fixture-password"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        204
+    );
+    assert!(
+        h.runtime
+            .computer()
+            .unwrap()
+            .status(&id)
+            .unwrap()
+            .grant
+            .is_none()
+    );
+    assert_eq!(
+        client
+            .post(format!("{url}/tools/computer/setup"))
+            .basic_auth("cyber", Some("owner-fixture-password"))
+            .json(&json!({"confirm":false}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        400
+    );
+    assert_eq!(backend.prompts.load(Ordering::SeqCst), 0);
+    task.abort();
+}

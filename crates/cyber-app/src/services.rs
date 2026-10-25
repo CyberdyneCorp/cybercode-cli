@@ -78,6 +78,23 @@ impl AppServices {
                 )
             }),
         ));
+        let computer_global = Arc::clone(&global);
+        runtime
+            .configure_computer(
+                paths.data.join("computer"),
+                Arc::new(move || {
+                    let settings = computer_global().ok().and_then(|config| {
+                        cyber_core::config::ComputerSettings::from_global(&config).ok()
+                    });
+                    settings
+                        .map(|settings| cyber_server::runtime::computer::ComputerPolicy {
+                            enabled: settings.enabled,
+                            retention_days: settings.retention_days,
+                        })
+                        .unwrap_or_default()
+                }),
+            )
+            .map_err(|error| error.to_string())?;
         let collaboration = crate::collaboration::Collaboration::new(
             store,
             Arc::clone(&accounts),

@@ -25,6 +25,7 @@ pub const COMMANDS: &[&str] = &[
     "goals",
     "loops",
     "teams",
+    "computer",
     "routines",
     "handoff",
     "teleport",

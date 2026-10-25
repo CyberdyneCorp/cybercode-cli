@@ -8,6 +8,7 @@ mod branches;
 mod catalog;
 mod children;
 pub mod collaboration;
+pub mod computer;
 mod deliveries;
 mod envelope;
 mod error;
@@ -696,6 +697,7 @@ pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router 
     let api = Router::new()
         .merge(sessions::routes())
         .merge(interactive::routes())
+        .merge(computer::routes())
         .merge(export::routes())
         .merge(branches::routes())
         .merge(children::router())

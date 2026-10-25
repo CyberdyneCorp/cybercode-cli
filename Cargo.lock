@@ -1085,6 +1085,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "cyber-computer"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.21",
+ "ulid",
+]
+
+[[package]]
 name = "cyber-core"
 version = "0.1.0"
 dependencies = [
@@ -1185,6 +1198,7 @@ dependencies = [
  "chrono",
  "cyber-account",
  "cyber-collab",
+ "cyber-computer",
  "cyber-core",
  "cyber-llm",
  "cyber-store",
@@ -1255,6 +1269,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
+ "cyber-computer",
  "cyber-core",
  "cyber-llm",
  "cyber-sandbox",

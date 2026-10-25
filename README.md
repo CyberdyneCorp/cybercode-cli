@@ -73,6 +73,8 @@ Cyber supports communication between Sessions and between different people's age
 - **Across your machines:** [direct peers](docs/peers.md) connect Sessions without an account or relay.
 - **With teammates or friends:** a [self-hosted project hub](docs/collaboration.md) connects verified members and their explicitly published agents, with conversations and shared tasks. Each person binds their own checkout to the project; tools, working trees and execution approvals stay local. Incoming agent messages are held for receiver consent by default. The hub is **experimental and off by default**.
 
+Experimental [native computer use](docs/computer-use.md) adds macOS 14+ application/display screenshots and input with expiring owner grants, private evidence and emergency Stop. Off by default; live desktop acceptance is pending.
+
 ## Feature mindmap
 
 This is a map of available capabilities, including partial and experimental areas. The [feature reference](docs/features.md) records their limits and acceptance status.
@@ -106,6 +108,9 @@ mindmap
       Local Session messages
       Direct peers
       Project hub experimental
+    Native computer use
+      macOS 14 plus
+      Owner grants and Stop
 ```
 
 ## Known gaps

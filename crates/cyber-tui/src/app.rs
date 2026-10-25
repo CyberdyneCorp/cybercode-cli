@@ -45,6 +45,8 @@ pub enum Action {
         stop: bool,
     },
     Refresh,
+    ComputerStatus,
+    ComputerStop,
     /// `GET /service/update`: the server's last update check, read on attach.
     LoadUpdate,
     /// Read one sidebar source (`sidebar::Part`).
@@ -513,6 +515,7 @@ pub struct App {
     /// The team view's selection and the way back from an opened teammate.
     pub team: crate::team::TeamState,
     pub collaboration: crate::collaboration::PanelState,
+    pub computer: crate::computer::State,
     /// The Session's current Goal, for the footer.
     pub goals: crate::goals::Goals,
     /// The `/login` dialog.
@@ -609,6 +612,7 @@ impl App {
             loops: Default::default(),
             team: Default::default(),
             collaboration: Default::default(),
+            computer: Default::default(),
             goals: Default::default(),
             login: Default::default(),
             output_styles: Default::default(),
@@ -921,6 +925,13 @@ impl App {
 
     pub fn on_key(&mut self, key: KeyEvent) -> Vec<Action> {
         self.mouse.disarm();
+        if key.code == KeyCode::Esc
+            && key
+                .modifiers
+                .contains(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        {
+            return vec![Action::ComputerStop];
+        }
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && key.code == KeyCode::Char('c')
             && self.composer.is_empty()

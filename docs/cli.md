@@ -51,6 +51,7 @@ cyber [OPTIONS] [COMMAND]
 - [`commands`](#cyber-commands): Inspect slash commands and command discovery diagnostics
 - [`mcp`](#cyber-mcp): Review MCP server definitions, individual server approvals and OAuth credentials
 - [`teams`](#cyber-teams): Agent teams (feature `teams`): list, show, stop and resume teams; list definitions
+- [`computer`](#cyber-computer): Inspect, set up, arm and stop experimental native computer control
 - [`features`](#cyber-features): List the feature registry; enable or disable a feature in config
 - [`workflows`](#cyber-workflows): List saved Workflows; run, inspect and control Workflow Runs
 - [`worktree`](#cyber-worktree): List, remove and prune managed Git worktrees of the current repository
@@ -791,6 +792,77 @@ Team definitions from `.cyber/teams/*.md` (trusted checkouts) and `~/.config/cyb
 ```text
 cyber teams definitions [OPTIONS]
 ```
+
+## `cyber computer`
+
+Inspect, set up, arm and stop experimental native computer control
+
+```text
+cyber computer [OPTIONS] <COMMAND>
+```
+
+**Subcommands:**
+
+- [`status`](#cyber-computer-status): Inspect native OS consent and the running binary; optionally a Session's grant
+- [`setup`](#cyber-computer-setup): Request macOS Screen Recording and Accessibility consent for the running server
+- [`allow`](#cyber-computer-allow): Review and arm one application window or an explicitly selected display
+- [`stop`](#cyber-computer-stop): Immediately revoke native control; without a Session, revoke all host control
+
+## `cyber computer status`
+
+Inspect native OS consent and the running binary; optionally a Session's grant
+
+```text
+cyber computer status [OPTIONS] [SESSION]
+```
+
+**Arguments:**
+
+- `[SESSION]`
+
+## `cyber computer setup`
+
+Request macOS Screen Recording and Accessibility consent for the running server
+
+```text
+cyber computer setup [OPTIONS]
+```
+
+**Options:**
+
+- `--yes`: Explicitly allow the operating system permission prompts.
+
+## `cyber computer allow`
+
+Review and arm one application window or an explicitly selected display
+
+```text
+cyber computer allow [OPTIONS] <SESSION>
+```
+
+**Arguments:**
+
+- `<SESSION>`
+
+**Options:**
+
+- `--app <APP>`: Bundle ID of the frontmost application (for example com.apple.TextEdit)
+- `--display <DISPLAY>`: Native display ID; 0 explicitly selects the main display.
+- `--ttl <TTL>`: Lifetime in seconds (1–900); default 300.
+- `--yes`: Confirm this native scope after reviewing its details printed below.
+- `--acknowledge-unknown`: Acknowledge the reviewed unresolved native operations before rearming.
+
+## `cyber computer stop`
+
+Immediately revoke native control; without a Session, revoke all host control
+
+```text
+cyber computer stop [OPTIONS] [SESSION]
+```
+
+**Arguments:**
+
+- `[SESSION]`
 
 ## `cyber features`
 

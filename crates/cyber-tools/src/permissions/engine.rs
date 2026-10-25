@@ -334,6 +334,8 @@ pub fn defaults(allowed_dirs: &[PathBuf], primary_agent: bool) -> Vec<Rule> {
     // Same-server targets are allowed; a cross-machine address (`name@machine`) asks.
     rules.push(Rule::new(COLLAB_MESSAGE_SEND, "*", Effect::Ask, "default"));
     rules.push(Rule::new(COLLAB_TASK_WRITE, "*", Effect::Ask, "default"));
+    rules.push(Rule::new("computer.capture", "*", Effect::Ask, "default"));
+    rules.push(Rule::new("computer.control", "*", Effect::Ask, "default"));
     rules.push(Rule::new(MESSAGE_SEND, "*", Effect::Allow, "default"));
     rules.push(Rule::new(MESSAGE_SEND, "*@*", Effect::Ask, "default"));
     for dir in allowed_dirs {

@@ -48,7 +48,14 @@ pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
     // Checked before trust gating, which would hold `peers` back without saying why.
     let mut issues: Vec<String> = project
         .iter()
-        .filter_map(|layer| peers::layer_issue(&layer.label, &layer.value))
+        .flat_map(|layer| {
+            [
+                peers::layer_issue(&layer.label, &layer.value),
+                super::computer::layer_issue(&layer.label, &layer.value),
+            ]
+            .into_iter()
+            .flatten()
+        })
         .collect();
     let mut layers = vec![defaults_layer(req)];
     layers.extend(read_global_layers(req)?);
@@ -77,6 +84,7 @@ pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
         }
         if !matches!(scope, Some("default" | "global" | "project")) {
             issues.extend(peers::layer_issue(&layer.label, &layer.value));
+            issues.extend(super::computer::layer_issue(&layer.label, &layer.value));
         }
         if layer.label.starts_with("project:") {
             subst::templates(&layer.value, "", &layer.label, &mut templates);
@@ -93,6 +101,7 @@ pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
         &mut warnings,
     ));
     for (label, mut layer) in cli_layers(req, &mut issues) {
+        issues.extend(super::computer::layer_issue(&label, &layer));
         mcp_serve::strip(&mut layer, &mut warnings);
         if pure {
             strip_external(&mut layer);
@@ -717,6 +726,7 @@ fn apply_profile(
     }
     mcp_serve::strip(&mut overlay, warnings);
     let label = format!("profile:{name}");
+    issues.extend(super::computer::layer_issue(&label, &overlay));
     merge::merge_profile(value, &overlay, &name, sources);
     Some(label)
 }

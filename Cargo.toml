@@ -16,6 +16,7 @@ members = [
     "crates/cyber-cli",
     "crates/cyber-workflow",
     "crates/cyber-install",
+    "crates/cyber-computer",
 ]
 
 [workspace.package]

@@ -338,6 +338,7 @@ async fn on_tick(
     actions.extend(app.machine_poll());
     actions.extend(app.login_poll());
     actions.extend(app.collaboration_poll());
+    actions.extend(app.computer.poll(&app.session, std::time::Instant::now()));
     actions
 }
 
@@ -570,6 +571,7 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
     };
     match msg {
         Msg::AdmissionStarted(_) | Msg::AdmissionUpdated { .. } => {}
+        Msg::Computer { session_id, result } => app.computer.apply(&session_id, result),
         Msg::Snapshot {
             session,
             items,

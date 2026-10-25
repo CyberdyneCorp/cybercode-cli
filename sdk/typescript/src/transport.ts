@@ -58,6 +58,7 @@ export class HttpTransport implements Transport {
       headers.set("content-type", "application/json");
       init.body = JSON.stringify(params.body);
     }
+    if (op.binary) return this.fetchBinary(url, init, options.signal);
     // The same init (and so the same Idempotency-Key) is reused by every retry.
     const response = await this.withRetry(() => this.fetchText(url, init, options.signal), options.signal);
     if (response.status < 200 || response.status >= 300) throw errorFromResponse(response.status, response.text);
@@ -96,6 +97,19 @@ export class HttpTransport implements Transport {
       headers.set("x-cyber-directory", encodeURIComponent(this.directory));
     }
     return headers;
+  }
+
+  private async fetchBinary(url: string, init: RequestInit, signal?: AbortSignal): Promise<Uint8Array> {
+    const timeout = new AbortController();
+    const timer = setTimeout(() => timeout.abort(), this.connection.timeoutMs);
+    try {
+      const response = await this.connection.fetch(url, { ...init, redirect: "error", cache: "no-store", signal: signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal });
+      if (!response.ok) throw errorFromResponse(response.status, await response.text());
+      if (response.headers.get("content-type")?.split(";")[0] !== "image/png" || !response.body) throw new CyberClientError("MalformedResponse", "expected private PNG");
+      const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let length = 0;
+      try { for (;;) { const part = await reader.read(); if (part.done) break; length += part.value.length; if (length > 8 * 1024 * 1024) throw new CyberClientError("MalformedResponse", "private PNG exceeds 8 MiB"); chunks.push(part.value); } } finally { await reader.cancel().catch(() => {}); }
+      const bytes = new Uint8Array(length); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; } return bytes;
+    } finally { clearTimeout(timer); }
   }
 
   private async fetchText(url: string, init: RequestInit, signal: AbortSignal | undefined): Promise<RawResponse> {

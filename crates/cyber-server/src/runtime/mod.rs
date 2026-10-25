@@ -33,6 +33,7 @@ mod client_hooks;
 pub use client_hooks::{ClientHook, ClientHooks};
 mod compaction;
 pub use child_usage::ChildrenUsage;
+pub mod computer;
 mod context;
 mod context_meter;
 mod continuation;
@@ -827,6 +828,7 @@ pub(crate) struct Inner {
     workflow_writers: StdMutex<HashMap<String, Arc<std::sync::atomic::AtomicUsize>>>,
     /// Open live event streams (`goals` → Goal mode safety).
     pub(crate) presence: presence::Presence,
+    computer: std::sync::OnceLock<Arc<computer::Computer>>,
     /// `<state>/workflows`: inline scripts and results larger than 1 MiB.
     workflow_dir: std::sync::OnceLock<PathBuf>,
     /// Prompt attachment blobs (`storage-events` → Attachment storage); a private
@@ -924,6 +926,7 @@ impl Runtime {
             update_status: StdMutex::default(),
             workflow_writers: StdMutex::default(),
             presence: presence::Presence::default(),
+            computer: std::sync::OnceLock::new(),
             workflow_dir: std::sync::OnceLock::new(),
             attachments: std::sync::OnceLock::new(),
             workflow_relaunch: std::sync::OnceLock::new(),
@@ -1833,6 +1836,7 @@ impl Runtime {
     /// Interrupt hook runs: the owner's SubagentStop/JobEnded observe the outcome,
     /// and the canceller may hold the child while it waits for this.
     pub async fn interrupt_for_owner(&self, session_id: &str) -> Result<(), RuntimeError> {
+        self.computer_stop(session_id);
         let (paused, preparation) = self.pause_requested_child_input(session_id).await;
         let activities = self.inner.cancel_idle_activities(session_id);
         {

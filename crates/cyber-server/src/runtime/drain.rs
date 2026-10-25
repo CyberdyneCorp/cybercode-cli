@@ -1171,7 +1171,14 @@ impl Inner {
                 self.bus.publish(live(text, true));
             }
             LlmEvent::ReasoningSignature { signature } => acc.signature = Some(signature),
-            LlmEvent::ToolCallDelta { id, arguments, .. } => {
+            LlmEvent::ToolCallDelta {
+                id,
+                name,
+                arguments,
+            } => {
+                if name.is_empty() || name == "computer" {
+                    return Ok(());
+                }
                 self.bus.publish(LiveEvent::ToolInputDelta {
                     session_id: session_id.into(),
                     call_id: id,
@@ -1185,8 +1192,16 @@ impl Inner {
                     message_id: message_id.into(),
                     call_id: call.id.clone(),
                     name: call.name.clone(),
-                    arguments: call.arguments.clone(),
-                    input: call.input.clone(),
+                    arguments: if call.name == "computer" {
+                        cyber_computer::action::redacted_input(call.input.as_ref()).to_string()
+                    } else {
+                        call.arguments.clone()
+                    },
+                    input: if call.name == "computer" {
+                        Some(cyber_computer::action::redacted_input(call.input.as_ref()))
+                    } else {
+                        call.input.clone()
+                    },
                     retry_safety,
                 };
                 self.commit(handle, vec![event(TOOL_CALLED, &payload)])

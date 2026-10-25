@@ -244,6 +244,16 @@ impl Presence {
             legacy,
         )
     }
+    pub(crate) fn live_session(&self, session: &str) -> bool {
+        let counts = self.lock();
+        counts
+            .open
+            .get(&Watching::Session(session.to_owned()))
+            .is_some_and(|count| *count > 0)
+            || counts.leases.values().any(|lease| {
+                lease.receipt.session_id == session && lease.deadline > tokio::time::Instant::now()
+            })
+    }
     fn lock(&self) -> std::sync::MutexGuard<'_, Counts> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }

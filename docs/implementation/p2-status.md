@@ -1,5 +1,9 @@
 # P2 implementation status
 
+## Native computer use (implementation in progress)
+
+The macOS-first implementation adds compiled ScreenCaptureKit/CoreGraphics capture/input, global-only opt-in, local owner target review, expiring grants, human presence, independent Stop, private frame retention and durable native receipts. CLI/API/model-tool/client surfaces are described in [Native computer use](../computer-use.md). Fake-native tests and native SDK compile checks are separate from real desktop acceptance: live screenshot/input, permissions, display/keyboard layouts and release signing remain pending explicit controlled-device participation. See [tasks](../../openspec/changes/add-native-computer-use/tasks.md).
+
 ## Verified solve (2026-10-23)
 
 The sixth bundled workflow implements clean-base admission, two to four isolated solvers pinned to that commit, host-owned literal-argv checks with durable intents and settlements, and an independent judge forced into Plan mode. Submitted solver subtrees are fenced against further admission. Full-access configuration, extra writable roots and ambient temp access cannot widen solve command writes beyond the candidate boundary. Direct file-tool writes outside it are denied.

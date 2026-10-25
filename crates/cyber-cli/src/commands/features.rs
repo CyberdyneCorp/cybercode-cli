@@ -106,6 +106,11 @@ fn on_off(on: bool) -> &'static str {
 }
 
 fn set(ctx: &Context, name: &str, scope: FeatureScope, on: bool) -> Result<(), CliError> {
+    if name == cyber_core::features::COMPUTER_USE && matches!(scope, FeatureScope::Project) {
+        return Err(CliError::usage(
+            "computer_use is global-only; use --scope user",
+        ));
+    }
     let entry = cyber_core::features::entry(name)
         .ok_or_else(|| CliError::usage(cyber_core::features::unknown(name)))?;
     let path = mcp_config::document(
