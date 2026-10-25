@@ -217,6 +217,12 @@ const BUILTINS: &[(&str, &str, Option<&str>, bool)] = &[
         Some("agents_view"),
         false,
     ),
+    (
+        "sounds",
+        "sound alerts: on or off, pack, volume, events and previews",
+        Some("sounds_view"),
+        false,
+    ),
     ("exit", "quit", None, false),
 ];
 

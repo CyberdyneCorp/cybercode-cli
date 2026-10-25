@@ -367,6 +367,8 @@ pub enum Overlay {
     ConfirmExport(crate::export::Request),
     /// `/output-style`: the listing is `App::output_styles`.
     OutputStyles(crate::output_styles::Picker),
+    /// `/sounds`: the selected row; the settings are `App::sounds`.
+    Sounds(crate::sound::overlay::SoundsView),
 }
 
 /// Text the small model drafts for the user (`vcs-integration` → Commit and PR text
@@ -535,6 +537,10 @@ pub struct App {
     pub watch: crate::workflow_watch::Watch,
     /// `tui.notifications`.
     pub notifications: crate::osc::Notifications,
+    /// `tui.sounds`, the detected player and the throttle.
+    pub sounds: crate::sound::Sounds,
+    /// Permission and question requests already alerted for.
+    pub(crate) input_alerts: crate::sound::alerts::Seen,
     /// Attention notifications written, instead of the terminal.
     #[cfg(test)]
     pub(crate) attention_log: Vec<String>,
@@ -629,6 +635,8 @@ impl App {
             output_styles: Default::default(),
             watch: Default::default(),
             notifications: Default::default(),
+            sounds: Default::default(),
+            input_alerts: Default::default(),
             #[cfg(test)]
             attention_log: Vec::new(),
         }
@@ -1008,6 +1016,7 @@ impl App {
             Overlay::Login => self.login_key(key),
             Overlay::ConfirmExport(_) => self.confirm_export_key(key),
             Overlay::OutputStyles(_) => self.output_styles_key(key),
+            Overlay::Sounds(_) => self.sounds_key(key),
             Overlay::FileDiff { .. } => {
                 self.file_diff_key(key);
                 Vec::new()
@@ -1130,6 +1139,7 @@ impl App {
             "background_command" => return self.move_to_background(),
             "messages_view" => return self.open_messages(),
             "agents_view" => return self.open_agents(),
+            "sounds_view" => self.open_sounds(),
             _ => {}
         }
         Vec::new()
@@ -1835,6 +1845,10 @@ impl App {
             "workflows" => self.open_workflows(),
             "messages" => self.open_messages(),
             "agents" => self.open_agents(),
+            "sounds" => {
+                self.open_sounds();
+                Vec::new()
+            }
             "collab" => self.open_collaboration(),
             "help" => {
                 self.overlay = Overlay::Help;
@@ -2207,6 +2221,7 @@ impl App {
         self.progress.observe(kind, self.now());
         self.title_event(kind, data);
         self.delivery_event(kind, data);
+        self.message_alert(kind, data);
         let mut actions = if kind == "job.ended.1" {
             self.job_ended(data)
         } else if kind.starts_with("workflow.run.") {
@@ -2262,9 +2277,7 @@ impl App {
             }
             "session.idle" => {
                 self.session.running = false;
-                if !self.focused {
-                    self.attention("cyber: the session is idle");
-                }
+                self.alert(crate::sound::Alert::Done, "cyber: the session is idle");
                 // Language servers start as files are read, and the Turn may have changed
                 // the working tree.
                 let mut actions = vec![
@@ -2290,10 +2303,9 @@ impl App {
                 Vec::new()
             }
             "session.error" => {
-                self.toast(format!(
-                    "error: {}",
-                    data["message"].as_str().unwrap_or_default()
-                ));
+                let text = format!("error: {}", data["message"].as_str().unwrap_or_default());
+                self.alert(crate::sound::Alert::Error, &format!("cyber: {text}"));
+                self.toast(text);
                 vec![Action::Refresh]
             }
             k if k.starts_with("session.step.started")

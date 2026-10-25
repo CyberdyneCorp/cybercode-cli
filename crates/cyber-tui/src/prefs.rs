@@ -354,6 +354,12 @@ pub struct Loaded {
     pub notifications: crate::osc::Notifications,
     /// `tui.paste_summary`: large pastes become chips.
     pub paste_summary: bool,
+    /// `tui.sounds` from the global file and `/sounds`, which `/sounds` edits.
+    pub sounds: crate::sound::Settings,
+    /// What the project files turn down.
+    pub sound_limits: crate::sound::Limits,
+    /// The events as the global file alone sets them, which `/sounds` restores.
+    pub sound_global_events: crate::sound::Events,
     /// The Config tab's preferences with their sources.
     pub preferences: Preferences,
 }
@@ -385,6 +391,53 @@ fn paste_summary(settings: &serde_json::Map<String, Value>, warnings: &mut Vec<S
             true
         }
     }
+}
+
+/// `tui.sounds` (`tui` → Sound packs): the global file, then the `/sounds` choices saved
+/// in `kv.json` unless the global file was written after them (as `/theme`), then what
+/// the project files turn down. Custom file paths are read only from the global file.
+fn sounds(
+    store: &LocalStore,
+    layers: &[Layer],
+    home: Option<&Path>,
+    warnings: &mut Vec<String>,
+) -> (
+    crate::sound::Settings,
+    crate::sound::Limits,
+    crate::sound::Events,
+) {
+    use crate::sound::config;
+    let mut settings = crate::sound::Settings::default();
+    let mut limits = crate::sound::Limits::default();
+    let mut written = 0;
+    for layer in layers {
+        let sounds = match layer.settings.get("sounds") {
+            None => continue,
+            Some(Value::Object(sounds)) => sounds,
+            Some(other) => {
+                warnings.push(format!("tui.sounds: unknown value {other}"));
+                continue;
+            }
+        };
+        if layer.origin == Origin::Global {
+            settings = config::global(sounds, home, warnings);
+            written = layer.modified_ms;
+        } else {
+            config::project(sounds, &mut limits, warnings);
+        }
+    }
+    let global_events = settings.events.clone();
+    if let Some((value, at)) = saved(store, "sounds")
+        && written <= at
+    {
+        config::apply_saved(&mut settings, &value);
+    }
+    if limits.volume.is_some_and(|volume| volume > settings.volume) {
+        warnings.push(
+            "a project tui.jsonc can only turn sounds down; ignored tui.sounds.volume".into(),
+        );
+    }
+    (settings, limits, global_events)
 }
 
 /// `tui.statusline.fields`: the known field names it lists, in order.
@@ -491,6 +544,9 @@ pub fn load_with_plugins(
         &mut themes.warnings,
     );
     let paste_summary = paste_summary(&settings, &mut themes.warnings);
+    let home = cyber_core::paths::home_dir(&cyber_core::env::FnEnv(env));
+    let (sounds, sound_limits, sound_global_events) =
+        sounds(store, &layers, home.as_deref(), &mut themes.warnings);
     Loaded {
         theme: preferences.get("theme").to_owned(),
         themes,
@@ -505,6 +561,9 @@ pub fn load_with_plugins(
         explorer_icons,
         notifications,
         paste_summary,
+        sounds,
+        sound_limits,
+        sound_global_events,
         preferences,
     }
 }
@@ -682,5 +741,143 @@ mod tests {
             );
             assert!(refused, "{special}: never rewritten");
         }
+    }
+
+    fn sound_dirs(root: &Path, global: &str, project: &str) -> Vec<PathBuf> {
+        let (config, repo) = (root.join("config"), root.join("repo"));
+        std::fs::create_dir_all(&config).unwrap();
+        std::fs::create_dir_all(repo.join(".cyber")).unwrap();
+        std::fs::write(config.join("tui.jsonc"), global).unwrap();
+        std::fs::write(repo.join(".cyber/tui.jsonc"), project).unwrap();
+        config_dirs(&config, &repo)
+    }
+
+    /// Scenario "Project cannot pick a file": the project's file and `enabled: true` are
+    /// ignored, sounds stay off, and one warning names the ignored keys.
+    #[test]
+    fn a_project_cannot_pick_a_sound_file_or_turn_sounds_on() {
+        use crate::sound::{Alert, Choice};
+        let root = tempfile::tempdir().unwrap();
+        let dirs = sound_dirs(
+            root.path(),
+            r#"{"sounds": {"enabled": false}}"#,
+            r#"{"sounds": {"events": {"input": "/tmp/x.wav"}, "enabled": true}}"#,
+        );
+        let store = LocalStore::new(&root.path().join("state"));
+        let loaded = load(&store, &dirs, &|_: &str| None);
+        assert!(!loaded.sounds.enabled);
+        assert_eq!(loaded.sound_limits, crate::sound::Limits::default());
+        assert_eq!(*loaded.sounds.event(Alert::Input), Choice::On);
+        assert_eq!(
+            loaded.themes.warnings,
+            [
+                "a project tui.jsonc can only turn sounds down; ignored tui.sounds.events.input, tui.sounds.enabled"
+            ]
+        );
+    }
+
+    /// Scenario "Custom file from global config": `~/sounds/done.wav` plays for `done`,
+    /// and the other events keep the pack sounds.
+    #[test]
+    fn a_custom_file_from_the_global_file_plays_for_its_event() {
+        use crate::sound::player::Recorder;
+        use crate::sound::{Alert, Choice, Sounds};
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("home").join("sounds").join("done.wav");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, vec![0u8; 40 * 1024]).unwrap();
+        let dirs = sound_dirs(
+            root.path(),
+            r#"{"sounds": {"events": {"done": "~/sounds/done.wav"}}}"#,
+            "{}",
+        );
+        let store = LocalStore::new(&root.path().join("state"));
+        let home = root.path().join("home").display().to_string();
+        let env = move |name: &str| (name == "HOME").then(|| home.clone());
+        let loaded = load(&store, &dirs, &env);
+        assert!(
+            loaded.themes.warnings.is_empty(),
+            "{:?}",
+            loaded.themes.warnings
+        );
+        assert_eq!(
+            *loaded.sounds.event(Alert::Done),
+            Choice::File(file.clone())
+        );
+        let recorder = Recorder::default();
+        let cache = root.path().join("cache");
+        let mut sounds = Sounds::recording(loaded.sounds, &cache, &recorder);
+        sounds.limits = loaded.sound_limits;
+        let t = std::time::Instant::now();
+        sounds.fire(Alert::Done, false, t);
+        sounds.flush(t);
+        let later = t + crate::sound::THROTTLE;
+        sounds.fire(Alert::Error, false, later);
+        sounds.flush(later);
+        assert_eq!(
+            recorder.played(),
+            [file, cache.join("cyber-error-v1-60.wav")]
+        );
+    }
+
+    #[test]
+    fn a_project_lowers_the_volume_but_never_raises_it_and_unknown_keys_warn() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalStore::new(&root.path().join("state"));
+        let dirs = sound_dirs(
+            root.path(),
+            r#"{"sounds": {"volume": 50, "chime": 1}}"#,
+            r#"{"sounds": {"volume": 30, "events": {"message": false}}}"#,
+        );
+        let loaded = load(&store, &dirs, &|_: &str| None);
+        let effective = loaded.sounds.restricted(&loaded.sound_limits);
+        assert_eq!((loaded.sounds.volume, effective.volume), (50, 30));
+        assert!(!effective.event(crate::sound::Alert::Message).on());
+        assert_eq!(loaded.themes.warnings, ["tui.sounds.chime: unknown key"]);
+
+        let dirs = sound_dirs(
+            root.path(),
+            r#"{"sounds": {"volume": 50}}"#,
+            r#"{"sounds": {"volume": 90}}"#,
+        );
+        let loaded = load(&store, &dirs, &|_: &str| None);
+        assert_eq!(loaded.sounds.restricted(&loaded.sound_limits).volume, 50);
+        assert_eq!(
+            loaded.themes.warnings,
+            ["a project tui.jsonc can only turn sounds down; ignored tui.sounds.volume"]
+        );
+
+        std::fs::write(root.path().join("config/tui.jsonc"), r#"{"sounds": true}"#).unwrap();
+        let loaded = load(&store, &dirs, &|_: &str| None);
+        assert_eq!(
+            loaded.themes.warnings,
+            [
+                "tui.sounds: unknown value true",
+                // The project's 90 is over the default 60.
+                "a project tui.jsonc can only turn sounds down; ignored tui.sounds.volume",
+            ]
+        );
+    }
+
+    /// `/sounds` choices in `kv.json` win over the global file, until it is written again.
+    #[test]
+    fn saved_sound_choices_win_over_the_global_file() {
+        use crate::sound::{Pack, Settings, config};
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalStore::new(&root.path().join("state"));
+        let dirs = sound_dirs(root.path(), r#"{"sounds": {"pack": "soft"}}"#, "{}");
+        let chosen = Settings {
+            pack: Pack::Retro,
+            ..Settings::default()
+        };
+        store.save_preference("sounds", config::saved_value(&chosen));
+        assert_eq!(
+            load(&store, &dirs, &|_: &str| None).sounds.pack,
+            Pack::Retro
+        );
+        let mut prefs = store.get("prefs").unwrap();
+        prefs["sounds"]["saved_ms"] = Value::from(0);
+        store.set("prefs", prefs);
+        assert_eq!(load(&store, &dirs, &|_: &str| None).sounds.pack, Pack::Soft);
     }
 }

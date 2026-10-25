@@ -87,6 +87,12 @@ const DEFAULTS: &[(&str, &str, &str, &str)] = &[
         "reachable Sessions directory",
     ),
     (
+        "global",
+        "sounds_view",
+        "none",
+        "sound alerts: pack, volume, events",
+    ),
+    (
         "composer",
         "history_previous",
         "up",

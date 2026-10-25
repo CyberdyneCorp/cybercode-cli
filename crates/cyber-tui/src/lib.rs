@@ -41,6 +41,7 @@ mod session_overview;
 mod settings;
 mod side_chat;
 mod sidebar;
+mod sound;
 mod store;
 mod switcher;
 mod team;
@@ -102,6 +103,8 @@ mod screens_settings;
 mod screens_side_chat;
 #[cfg(test)]
 mod screens_sidebar;
+#[cfg(test)]
+mod screens_sounds;
 #[cfg(test)]
 mod screens_stats;
 #[cfg(test)]

@@ -77,6 +77,7 @@ const TUI_KEYS: &[&str] = &[
     "notifications",
     "diff_style",
     "paste_summary",
+    "sounds",
 ];
 
 const MODES: &[&str] = &[

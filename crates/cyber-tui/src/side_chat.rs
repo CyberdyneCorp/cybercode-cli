@@ -86,7 +86,8 @@ impl App {
             } else {
                 format!("{title}: {body}")
             };
-            self.attention(&text);
+            // The Session asked to notify: always notified, and it sounds as `done`.
+            self.alert_with(crate::sound::Alert::Done, &text, true);
             self.toast(crate::sidebar::clean(&text));
         } else if kind.starts_with("session.files.sent.") {
             self.toast(received(data));
@@ -130,6 +131,26 @@ fn size(bytes: u64) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// A Session notification is always notified, and sounds as `done` while the
+    /// terminal is unfocused, its OSC 9 without the BEL the sound replaces.
+    #[test]
+    fn a_session_notification_sounds_as_done() {
+        let cache = tempfile::tempdir().unwrap();
+        let recorder = crate::sound::player::Recorder::default();
+        let mut app = App::new(Default::default(), Vec::new(), "cyber");
+        app.sounds = crate::sound::Sounds::recording(Default::default(), cache.path(), &recorder);
+        app.clock = Some(app.started());
+        app.focused = false;
+        app.delivery_event(
+            "session.notification.sent.1",
+            &json!({"title": "Build finished", "body": "all green"}),
+        );
+        app.flush_sounds();
+        assert_eq!(app.attention_log, ["\x1b]9;Build finished: all green\x07"]);
+        assert_eq!(recorder.played().len(), 1);
+        assert!(recorder.played()[0].ends_with("cyber-done-v1-60.wav"));
+    }
 
     #[test]
     fn received_names_sizes_and_caption() {

@@ -1,0 +1,39 @@
+---
+source: crates/cyber-tui/src/screens_sounds.rs
+expression: shown
+---
+ cyber ·                                                                                       idle
+
+            ██████╗██╗   ██╗██████╗ ███████╗██████╗      ██████╗ ██████╗ ██████╗ ███████╗
+           ██╔════╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗    ██╔════╝██╔═══██╗██╔══██╗██╔════╝
+           ██║      ╚████╔╝ ██████╔╝█████╗  ██████╔╝    ██║     ██║   ██║██║  ██║█████╗
+           ██║       ╚██╔╝  ██╔══██╗██╔══╝  ██╔══██╗    ██║     ██║   ██║██║  ██║██╔══╝
+        ┌ Sounds ──────────────────────────────────────────────────────────────────────────┐
+        │› Sounds            on                                                            │
+        │  Pack              [cyber]  soft   retro   bell                                  │
+        │  Volume            60   ■■■■■■···· · 40 in this project                          │
+        │  When              [unfocused]  always                                           │
+        │  input             on            a permission or question is waiting             │
+        │  error             on            a Turn failed                                   │
+        │  workflow_failed   on            a workflow run failed or stopped                │
+        │  done              on            the Session is idle                             │
+        │  workflow          on            a workflow run completed                        │
+        │  message           off           a message arrived or is held                    │
+        │                                                                                  │
+        │  playing through afplay                                                          │
+        │  alerts sound while the terminal is unfocused                                    │
+        │                                                                                  │
+        │  ↑↓ select · space toggle · ←→ change · p preview · esc close                    │
+        └──────────────────────────────────────────────────────────────────────────────────┘
+                  ctrl+x h  keys
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃
+┃  ·   ·
+                                                                             $0.00  ctrl+p commands
+row 7: 0-7 fg=#d6e4f0 bg=#0b0f14
+row 7: 8-8 fg=#00e5ff bg=#171c21
+row 7: 9-90 fg=#00e5ff bg=#1f2a3a bold
+row 7: 91-91 fg=#00e5ff bg=#171c21
+row 7: 92-99 fg=#d6e4f0 bg=#0b0f14
