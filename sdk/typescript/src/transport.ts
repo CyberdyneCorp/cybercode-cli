@@ -103,7 +103,8 @@ export class HttpTransport implements Transport {
     const timeout = new AbortController();
     const timer = setTimeout(() => timeout.abort(), this.connection.timeoutMs);
     try {
-      const response = await this.connection.fetch(url, { ...init, redirect: "error", cache: "no-store", signal: signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal });
+      const request: RequestInit & { cache: "no-store" } = { ...init, redirect: "error", cache: "no-store", signal: signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal };
+      const response = await this.connection.fetch(url, request);
       if (!response.ok) throw errorFromResponse(response.status, await response.text());
       if (response.headers.get("content-type")?.split(";")[0] !== "image/png" || !response.body || Number(response.headers.get("content-length")) > 8 * 1024 * 1024) throw new CyberClientError("MalformedResponse", "expected private PNG");
       const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let length = 0;

@@ -20,6 +20,8 @@ export interface OperationSpec {
   readonly unwrap: boolean;
   /** The response is a `text/event-stream` of `EventEnvelope`s. */
   readonly stream: boolean;
+  /** A private bounded PNG, returned as bytes rather than JSON. */
+  readonly binary?: boolean;
 }
 
 export interface RequestOptions {
@@ -977,6 +979,36 @@ export interface Operations {
     body: S.CompactBody;
     response: void;
   };
+  "v1.session.computerAllow": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: S.Allow;
+    response: S.ComputerGrantView;
+  };
+  "v1.session.computerFrame": {
+    path: { sessionID: string; frameID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: Uint8Array;
+  };
+  "v1.session.computerPreview": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: S.ComputerSelector;
+    response: S.ComputerPreview;
+  };
+  "v1.session.computerStatus": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.ComputerStatus;
+  };
+  "v1.session.computerStop": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: void;
+  };
   "v1.session.context": {
     path: { sessionID: string };
     query: Record<string, never>;
@@ -1429,6 +1461,24 @@ export interface Operations {
     };
     body: undefined;
     response: S.Task[];
+  };
+  "v1.tool.computerHealth": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.ComputerHealthReport;
+  };
+  "v1.tool.computerSetup": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.Setup;
+    response: S.ComputerHealthReport;
+  };
+  "v1.tool.computerStopAll": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: void;
   };
   "v1.tool.list": {
     path: Record<string, never>;
@@ -3289,6 +3339,67 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.session.computerAllow": {
+    tag: "session",
+    name: "computerAllow",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/computer/allow",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.computerFrame": {
+    tag: "session",
+    name: "computerFrame",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/computer/frames/{frameID}",
+    pathParams: ["sessionID", "frameID"],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+    binary: true,
+  },
+  "v1.session.computerPreview": {
+    tag: "session",
+    name: "computerPreview",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/computer/preview",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.computerStatus": {
+    tag: "session",
+    name: "computerStatus",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/computer",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.computerStop": {
+    tag: "session",
+    name: "computerStop",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/computer/stop",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
   "v1.session.context": {
     tag: "session",
     name: "context",
@@ -4129,6 +4240,42 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.tool.computerHealth": {
+    tag: "tool",
+    name: "computerHealth",
+    method: "GET",
+    path: "/api/v1/tools/computer/health",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.tool.computerSetup": {
+    tag: "tool",
+    name: "computerSetup",
+    method: "POST",
+    path: "/api/v1/tools/computer/setup",
+    pathParams: [],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.tool.computerStopAll": {
+    tag: "tool",
+    name: "computerStopAll",
+    method: "POST",
+    path: "/api/v1/tools/computer/stop",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
   "v1.tool.list": {
     tag: "tool",
     name: "list",
@@ -4890,6 +5037,21 @@ export function createGroups(caller: Caller) {
       /** Compact now or at the next Safe Boundary (`POST /api/v1/sessions/{sessionID}/compact`) */
       compact: (sessionID: string, body?: Operations["v1.session.compact"]["body"], options?: RequestOptions): Promise<Operations["v1.session.compact"]["response"]> =>
         caller.call("v1.session.compact", { path: { sessionID }, body }, options),
+      /** Explicit owner arming of a reviewed target (`POST /api/v1/sessions/{sessionID}/computer/allow`) */
+      computerAllow: (sessionID: string, body: Operations["v1.session.computerAllow"]["body"], options?: RequestOptions): Promise<Operations["v1.session.computerAllow"]["response"]> =>
+        caller.call("v1.session.computerAllow", { path: { sessionID }, body }, options),
+      /** Read a private Session-bound PNG capture (`GET /api/v1/sessions/{sessionID}/computer/frames/{frameID}`) */
+      computerFrame: (sessionID: string, frameID: string, options?: RequestOptions): Promise<Operations["v1.session.computerFrame"]["response"]> =>
+        caller.call("v1.session.computerFrame", { path: { sessionID, frameID } }, options),
+      /** Review an exact native target without capture (`POST /api/v1/sessions/{sessionID}/computer/preview`) */
+      computerPreview: (sessionID: string, body: Operations["v1.session.computerPreview"]["body"], options?: RequestOptions): Promise<Operations["v1.session.computerPreview"]["response"]> =>
+        caller.call("v1.session.computerPreview", { path: { sessionID }, body }, options),
+      /** Session native control status (`GET /api/v1/sessions/{sessionID}/computer`) */
+      computerStatus: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.computerStatus"]["response"]> =>
+        caller.call("v1.session.computerStatus", { path: { sessionID } }, options),
+      /** Revoke this Session's native grant (`POST /api/v1/sessions/{sessionID}/computer/stop`) */
+      computerStop: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.computerStop"]["response"]> =>
+        caller.call("v1.session.computerStop", { path: { sessionID } }, options),
       /** Context baseline, summary and task state (`GET /api/v1/sessions/{sessionID}/context`) */
       context: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.context"]["response"]> =>
         caller.call("v1.session.context", { path: { sessionID } }, options),
@@ -5108,6 +5270,15 @@ export function createGroups(caller: Caller) {
         caller.call("v1.teams.tasks", { path: { teamID }, query }, options),
     },
     tool: {
+      /** Native computer readiness without capture (`GET /api/v1/tools/computer/health`) */
+      computerHealth: (options?: RequestOptions): Promise<Operations["v1.tool.computerHealth"]["response"]> =>
+        caller.call("v1.tool.computerHealth", {}, options),
+      /** Explicit owner OS-consent setup (`POST /api/v1/tools/computer/setup`) */
+      computerSetup: (body: Operations["v1.tool.computerSetup"]["body"], options?: RequestOptions): Promise<Operations["v1.tool.computerSetup"]["response"]> =>
+        caller.call("v1.tool.computerSetup", { body }, options),
+      /** Immediately revoke native control (`POST /api/v1/tools/computer/stop`) */
+      computerStopAll: (options?: RequestOptions): Promise<Operations["v1.tool.computerStopAll"]["response"]> =>
+        caller.call("v1.tool.computerStopAll", {}, options),
       /** Tools offered for an agent and mode (`GET /api/v1/tools`) */
       list: (query?: Operations["v1.tool.list"]["query"], options?: RequestOptions): Promise<Operations["v1.tool.list"]["response"]> =>
         caller.call("v1.tool.list", { query }, options),
@@ -5192,6 +5363,17 @@ export function createGroups(caller: Caller) {
 export type Groups = ReturnType<typeof createGroups>;
 
 export const errorTags = [
+  "ComputerUnsupportedPlatformError",
+  "ComputerDisabledError",
+  "ComputerConsentError",
+  "ComputerBusyError",
+  "ComputerStaleFrameError",
+  "ComputerLimitError",
+  "ComputerFrameExpiredError",
+  "ComputerConflictError",
+  "ComputerUnknownOutcomeError",
+  "ComputerStorageError",
+  "ComputerInvalidRequestError",
   "CommandNotFoundError",
   "ConflictError",
   "FeatureDisabledError",
@@ -5231,6 +5413,50 @@ export interface TaggedError<Tag extends string = string> {
 
 function hasTag(err: unknown, tag: string): boolean {
   return typeof err === "object" && err !== null && (err as { tag?: unknown }).tag === tag;
+}
+
+export function isComputerUnsupportedPlatformError(err: unknown): err is TaggedError<"ComputerUnsupportedPlatformError"> {
+  return hasTag(err, "ComputerUnsupportedPlatformError");
+}
+
+export function isComputerDisabledError(err: unknown): err is TaggedError<"ComputerDisabledError"> {
+  return hasTag(err, "ComputerDisabledError");
+}
+
+export function isComputerConsentError(err: unknown): err is TaggedError<"ComputerConsentError"> {
+  return hasTag(err, "ComputerConsentError");
+}
+
+export function isComputerBusyError(err: unknown): err is TaggedError<"ComputerBusyError"> {
+  return hasTag(err, "ComputerBusyError");
+}
+
+export function isComputerStaleFrameError(err: unknown): err is TaggedError<"ComputerStaleFrameError"> {
+  return hasTag(err, "ComputerStaleFrameError");
+}
+
+export function isComputerLimitError(err: unknown): err is TaggedError<"ComputerLimitError"> {
+  return hasTag(err, "ComputerLimitError");
+}
+
+export function isComputerFrameExpiredError(err: unknown): err is TaggedError<"ComputerFrameExpiredError"> {
+  return hasTag(err, "ComputerFrameExpiredError");
+}
+
+export function isComputerConflictError(err: unknown): err is TaggedError<"ComputerConflictError"> {
+  return hasTag(err, "ComputerConflictError");
+}
+
+export function isComputerUnknownOutcomeError(err: unknown): err is TaggedError<"ComputerUnknownOutcomeError"> {
+  return hasTag(err, "ComputerUnknownOutcomeError");
+}
+
+export function isComputerStorageError(err: unknown): err is TaggedError<"ComputerStorageError"> {
+  return hasTag(err, "ComputerStorageError");
+}
+
+export function isComputerInvalidRequestError(err: unknown): err is TaggedError<"ComputerInvalidRequestError"> {
+  return hasTag(err, "ComputerInvalidRequestError");
 }
 
 export function isCommandNotFoundError(err: unknown): err is TaggedError<"CommandNotFoundError"> {

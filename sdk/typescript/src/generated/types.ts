@@ -69,6 +69,13 @@ export type AgentInfo = {
   color?: string | null;
 };
 
+export type Allow = {
+  preview_id: string;
+  confirm: boolean;
+  ttl_seconds?: number | null;
+  acknowledge_unknown?: boolean;
+};
+
 export type AssistantEntry = {
   id: string;
   provider: string;
@@ -375,6 +382,89 @@ export type CompactBody = {
   instructions?: string | null;
 };
 
+export type ComputerFrameInfo = {
+  id: string;
+  session_id: string;
+  grant_id: string;
+  captured_at: number;
+  target: ComputerNativeTarget;
+  sha256: string;
+  bytes: number;
+  created_ms: number;
+};
+
+export type ComputerGrantView = {
+  id: string;
+  session_id: string;
+  target: ComputerTarget;
+  expires_at: number;
+};
+
+export type ComputerHealth = {
+  supported: boolean;
+  platform: string;
+  minimum_version: string;
+  screen_capture: boolean;
+  accessibility: boolean;
+  binary: string;
+};
+
+export type ComputerHealthReport = {
+  enabled: boolean;
+  grant?: ComputerGrantView | null;
+  health: ComputerHealth;
+};
+
+export type ComputerNativeTarget = {
+  identity: string;
+  app?: string | null;
+  pid: number;
+  window: number;
+  display: number;
+  launch_ms: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  image_width: number;
+  image_height: number;
+  rotation: number;
+};
+
+export type ComputerPreview = {
+  id: string;
+  session_id: string;
+  target: ComputerNativeTarget;
+  expires_at: number;
+  unknown_operations: ComputerUnknownOperation[];
+  warning: string;
+};
+
+export type ComputerSelector = {
+  app?: string | null;
+  display?: number | null;
+};
+
+export type ComputerStatus = {
+  enabled: boolean;
+  latest_frame?: ComputerFrameInfo | null;
+  health: ComputerHealth;
+  grant?: ComputerGrantView | null;
+  unknown_operations: ComputerUnknownOperation[];
+};
+
+export type ComputerTarget = {
+  /** Bundle/display identity resolved by the native backend, never by a model. */
+  identity: string;
+};
+
+export type ComputerUnknownOperation = {
+  session_id: string;
+  operation_id: string;
+  action: string;
+  started_ms: number;
+};
+
 /** The configured `output_style` of a Location and the layer that set it. */
 export type Configured = {
   name: string;
@@ -603,6 +693,22 @@ export type Data_ChildSetupInspection = {
 
 export type Data_ChildThreads = {
   data: ChildThreads;
+};
+
+export type Data_ComputerGrantView = {
+  data: ComputerGrantView;
+};
+
+export type Data_ComputerHealthReport = {
+  data: ComputerHealthReport;
+};
+
+export type Data_ComputerPreview = {
+  data: ComputerPreview;
+};
+
+export type Data_ComputerStatus = {
+  data: ComputerStatus;
 };
 
 export type Data_CreatedTeam = {
@@ -3735,6 +3841,10 @@ export type SessionUsage = {
 export type SetMemorySettings = {
   /** `on` loads and writes memory, `readonly` only loads it, `off` neither. */
   state: MemoryState;
+};
+
+export type Setup = {
+  confirm: boolean;
 };
 
 export type SetupRecoveryRequest = {
