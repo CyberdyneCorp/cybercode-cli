@@ -23,10 +23,14 @@ impl ComputerSettings {
             return Err("computer.retention_days must be 0..365".into());
         }
         let enabled = config
-            .pointer("/features/computer_use")
+            .pointer("/policy/features/lock/computer_use")
             .and_then(Value::as_bool)
-            .unwrap_or(false)
-            && config.pointer("/policy/features/lock/computer_use") != Some(&Value::Bool(false));
+            .unwrap_or_else(|| {
+                config
+                    .pointer("/features/computer_use")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            });
         Ok(Self {
             enabled,
             retention_days: days,

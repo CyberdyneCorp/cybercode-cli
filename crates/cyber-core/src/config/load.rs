@@ -290,6 +290,19 @@ pub fn load_global(req: &LoadRequest<'_>) -> Result<Value, ConfigError> {
         &mut sources,
         &mut Vec::new(),
     ));
+    // Native control reads only global configuration. Still apply the OS-managed
+    // feature lock here so that this separate security boundary cannot bypass an
+    // organization disable through its user-only feature resolution.
+    for (label, settings) in managed::read(req.env, &mut Vec::new()).settings {
+        if let Some(lock) = settings.pointer("/features/lock/computer_use") {
+            merge::merge_layer(
+                &mut value,
+                &json!({"policy":{"features":{"lock":{"computer_use":lock}}}}),
+                &label,
+                &mut sources,
+            );
+        }
+    }
     if issues.is_empty() {
         Ok(value)
     } else {
