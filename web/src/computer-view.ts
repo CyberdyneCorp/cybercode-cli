@@ -6,6 +6,7 @@ function checkbox(label: string, checked: boolean, action: (value: boolean) => v
 export function computerPanel(model: ComputerControls): HTMLElement {
   const section = node("section"); section.className = "authority computer-controls"; section.setAttribute("aria-label", "Native computer controls");
   const active = model.active;
+  if (model.uncertain && !active) { const warning = node("div", "Native computer status is unknown. Confirm Stop on the host before continuing."); warning.className = "notice"; warning.setAttribute("role", "alert"); warning.append(button("STOP native input", () => { void model.stop(); })); section.append(warning); }
   if (active) { const banner = node("div"); banner.className = "notice"; banner.setAttribute("role", "alert"); banner.append(node("strong", `Computer ${model.uncertain ? "status unknown" : "ARMED"}: ${active.target.identity}`), node("p", `Session ${active.session_id} · expires ${new Date(active.expires_at).toLocaleTimeString()}`), button("STOP native input", () => { void model.stop(); })); section.append(banner); }
   const details = node("details"); details.append(node("summary", "Native computer use (experimental)")); section.append(details);
   const report = model.report;

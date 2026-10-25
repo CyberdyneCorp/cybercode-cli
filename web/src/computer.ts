@@ -18,7 +18,7 @@ export class ComputerControls {
   reset(): void { this.#generation++; clearTimeout(this.#timer); this.#refreshing = false; this.busy = false; this.preview = undefined; this.reviewed = false; this.acknowledgeUnknown = false; this.uncertain = !!this.report?.grant; this.changed(); }
   clear(): void { this.reset(); this.report = undefined; this.uncertain = false; this.notice = ""; }
   get active(): NativeGrant | undefined { const grant = this.report?.grant; return grant && (grant.expires_at > this.now() || this.uncertain) ? grant : undefined; }
-  get canAllow(): boolean { const context = this.context(); return !!context?.actionable && !!this.preview && this.preview.session_id === context.session && this.preview.expires_at > this.now() && this.reviewed && (!this.preview.unknown_operations.length || this.acknowledgeUnknown) && !this.busy && !this.uncertain; }
+  get canAllow(): boolean { const context = this.context(); return !!this.report?.enabled && !!this.report.health.supported && !!context?.actionable && !!this.preview && this.preview.session_id === context.session && this.preview.expires_at > this.now() && this.reviewed && (!this.preview.unknown_operations.length || this.acknowledgeUnknown) && !this.busy && !this.uncertain; }
   async refresh(): Promise<void> {
     const context = this.context(); if (!context || this.#refreshing) return;
     const generation = this.#generation; this.#refreshing = true;
@@ -47,6 +47,7 @@ export class ComputerControls {
     try { await this.api.request("/tools/computer/stop", { method: "POST", directory: context.directory }); this.report = this.report ? { ...this.report, grant: null } : undefined; this.uncertain = false; this.notice = "Native computer control stopped."; }
     catch { this.uncertain = true; this.notice = "Stop could not be confirmed. Use cyber computer stop on the host; do not assume input stopped."; }
     this.changed();
+    void this.refresh();
   }
   private async mutate(path: string, body: unknown, preview = false): Promise<void> {
     const context = this.context(); if (!context?.actionable || this.busy) return;

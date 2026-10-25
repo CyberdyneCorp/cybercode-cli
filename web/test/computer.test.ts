@@ -17,7 +17,7 @@ test("global host banner exposes another Session's grant; reviews require explic
 });
 test("switches fence delayed review replies and unknown operations require acknowledgement", async (t) => {
  const f = fixture(t); let finish!: (value: unknown) => void; f.hook(path => path.endsWith("/preview") ? new Promise(resolve => { finish = resolve; }) : Promise.resolve({ data: report })); f.model.selector = "fixture"; const task = f.model.reviewTarget(); f.model.reset(); finish({ data: preview }); await task; assert.equal(f.model.preview, undefined);
- f.model.preview = { ...preview, unknown_operations: [{ operation_id: "uncertain", action: "type", started_ms: 1 }] }; f.model.reviewed = true; assert.equal(f.model.canAllow, false); f.model.acknowledgeUnknown = true; assert.equal(f.model.canAllow, true);
+ await f.model.refresh(); f.model.preview = { ...preview, unknown_operations: [{ operation_id: "uncertain", action: "type", started_ms: 1 }] }; f.model.reviewed = true; assert.equal(f.model.canAllow, false); f.model.acknowledgeUnknown = true; assert.equal(f.model.canAllow, true);
 });
 test("Stop stays available during blocked owner actions and uncertain responses never replay", async (t) => {
  const f = fixture(t); await f.model.refresh(); let finish!: (value: unknown) => void; f.hook(path => path.endsWith("/preview") ? new Promise(resolve => { finish = resolve; }) : Promise.resolve({ data: report })); f.model.selector = "fixture"; const task = f.model.reviewTarget(); assert.equal(f.model.busy, true); await f.model.stop(); assert.equal(f.calls.filter(call => call.path.endsWith("/stop")).length, 1); finish({ data: preview }); await task; assert.equal(f.model.preview, undefined);
