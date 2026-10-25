@@ -221,6 +221,123 @@ async fn reachable_sessions_are_listed_over_http() {
     app.app.runtime.interrupt(&docs).await.unwrap();
 }
 
+/// Requirement "Reachable session provenance" on the production App: a team lead lists its
+/// teammate `api` as `teammate`/`api`, and a send to that address delivers; a workflow
+/// agent's child Session carries its run, a plain subagent none; a Session outside the
+/// team still sees the member by its title.
+#[tokio::test]
+async fn reachable_listing_tags_teammates_and_workflow_agents() {
+    use cyber_server::runtime::CreateSession;
+    use cyber_server::runtime::teams::records as team;
+    let temp = tempfile::tempdir().unwrap();
+    let setup = || Setup {
+        database: Some(temp.path().join("cyber.db")),
+        sandbox_policy: support::BASH_SANDBOX,
+        ..Setup::default()
+    };
+    let app = ModeApp::start(setup()).await;
+    let lead = titled(&app, "planner").await;
+    let api = titled(&app, "feature/api").await;
+    let outsider = titled(&app, "outsider").await;
+    let directory = app.repo.display().to_string();
+    append(
+        &app,
+        &lead,
+        team::CREATED,
+        json!({"team_id": "team_1", "name": "feature", "directory": directory}),
+    );
+    for (name, id, role) in [("lead", &lead, "lead"), ("api", &api, "teammate")] {
+        append(
+            &app,
+            &lead,
+            team::MEMBER_SPAWNED,
+            json!({"team_id": "team_1", "name": name, "session_id": id, "role": role,
+                "agent": "build", "isolation": "shared", "owns": []}),
+        );
+    }
+    // The team records went around the runtime; a restart reloads the lead's stream.
+    let app = app.restart(setup()).await;
+    let child = |name: &str, run: Option<&str>| CreateSession {
+        directory: directory.clone(),
+        model: "test/main".into(),
+        parent_id: Some(lead.clone()),
+        subagent_name: Some(name.into()),
+        workflow_run_id: run.map(str::to_owned),
+        ..Default::default()
+    };
+    let runtime = &app.app.runtime;
+    let agent = runtime
+        .create_session(child("reviewer", Some("wfr_listing")))
+        .await
+        .unwrap()
+        .id;
+    let tests = runtime
+        .create_session(child("tests", None))
+        .await
+        .unwrap()
+        .id;
+
+    let listing = |from: String| {
+        let app = &app;
+        async move {
+            let (status, body) = app
+                .send("GET", &format!("/messaging/sessions?from={from}"), None)
+                .await;
+            assert_eq!(status, 200, "{body}");
+            body["data"].as_array().unwrap().clone()
+        }
+    };
+    let entries = listing(lead.clone()).await;
+    let by_id = |entries: &[Value], id: &str| {
+        entries
+            .iter()
+            .find(|e| e["session_id"] == id)
+            .unwrap_or_else(|| panic!("{id} listed: {entries:?}"))
+            .clone()
+    };
+    let teammate = by_id(&entries, &api);
+    assert_eq!(
+        (&teammate["kind"], &teammate["address"], &teammate["name"]),
+        (&json!("teammate"), &json!("api"), &json!("api"))
+    );
+    assert!(teammate.get("workflowRunId").is_none(), "{teammate}");
+    let workflow = by_id(&entries, &agent);
+    assert_eq!(
+        (
+            &workflow["kind"],
+            &workflow["address"],
+            &workflow["workflowRunId"]
+        ),
+        (
+            &json!("subagent"),
+            &json!("reviewer"),
+            &json!("wfr_listing")
+        )
+    );
+    assert!(by_id(&entries, &tests).get("workflowRunId").is_none());
+    assert_eq!(by_id(&entries, &outsider)["kind"], "local");
+
+    let outside = listing(outsider.clone()).await;
+    let member = by_id(&outside, &api);
+    assert_eq!(
+        (&member["kind"], &member["address"]),
+        (&json!("local"), &json!("feature/api"))
+    );
+
+    let (status, body) = send_message(
+        &app,
+        json!({"from": lead, "to": "api", "text": "the schema is merged"}),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(
+        (&body["data"]["outcome"], &body["data"]["to"]["session_id"]),
+        (&json!("delivered"), &json!(api)),
+        "{body}"
+    );
+    settled(&app, &api).await;
+}
+
 /// Requirement "Addressing" on the production App: the App's messaging facade resolves
 /// names in tiers (a subagent shadows a root title; two roots named `migration` are
 /// ambiguous with both IDs; a prefix is not found; `@` addresses need an account), and

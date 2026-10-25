@@ -271,21 +271,7 @@ fn key_lines(app: &App, width: usize) -> Vec<Line<'static>> {
         "r refresh",
         "esc close",
     ];
-    let mut lines = vec![String::from(" ")];
-    for key in keys {
-        let last = lines.last_mut().expect("a line");
-        let sep = if last.trim().is_empty() { "" } else { " · " };
-        if last.width() + sep.len() + key.width() > width && !last.trim().is_empty() {
-            lines.push(format!(" · {key}"));
-        } else {
-            last.push_str(sep);
-            last.push_str(key);
-        }
-    }
-    lines
-        .into_iter()
-        .map(|l| Line::from(Span::raw(l)))
-        .collect()
+    super::key_hints(&keys, width)
 }
 
 /// The sidebar's Team section: `Team feature`, then each member with its status dot

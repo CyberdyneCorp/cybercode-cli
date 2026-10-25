@@ -589,6 +589,10 @@ pub fn help(f: &mut Frame, app: &App, area: Rect) {
         ("/subtask <prompt> · /tasks · /stop", "background tasks"),
         ("/agent · /subagents", "browse child and parent threads"),
         (
+            "/agents",
+            "Sessions reachable from this one: message, watch, open, rename",
+        ),
+        (
             "/btw <question> · /side",
             "side question; not added to the session",
         ),

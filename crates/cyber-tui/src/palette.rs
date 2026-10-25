@@ -211,6 +211,12 @@ const BUILTINS: &[(&str, &str, Option<&str>, bool)] = &[
         Some("messages_view"),
         false,
     ),
+    (
+        "agents",
+        "Sessions this one can message: message, watch, open, rename",
+        Some("agents_view"),
+        false,
+    ),
     ("exit", "quit", None, false),
 ];
 

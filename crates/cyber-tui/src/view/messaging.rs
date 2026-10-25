@@ -337,21 +337,12 @@ pub(super) fn view(f: &mut Frame, app: &App, area: Rect) {
 
 /// `[all] in  out  held`.
 fn filters(app: &App) -> Vec<Span<'static>> {
-    let t = &app.theme;
-    let mut spans = Vec::new();
-    for filter in Filter::ALL {
-        let label = filter.label();
-        if filter == app.messaging.filter {
-            spans.push(Span::styled(format!("[{label}]"), t.selected()));
-        } else {
-            spans.push(Span::styled(
-                format!(" {label} "),
-                Style::default().fg(t.text_muted),
-            ));
-        }
-        spans.push(Span::raw(" "));
-    }
-    spans
+    super::filter_chips(
+        &Filter::ALL,
+        app.messaging.filter,
+        Filter::label,
+        &app.theme,
+    )
 }
 
 /// The rows, the expansion under the selected one, and each row's line.
@@ -504,21 +495,7 @@ fn key_lines(app: &App, width: usize) -> Vec<Line<'static>> {
         keys.push("a accept messages");
     }
     keys.push("esc close");
-    let mut lines = vec![String::from(" ")];
-    for key in keys {
-        let last = lines.last_mut().expect("a line");
-        let sep = if last.trim().is_empty() { "" } else { " · " };
-        if last.width() + sep.len() + key.width() > width && !last.trim().is_empty() {
-            lines.push(format!(" · {key}"));
-        } else {
-            last.push_str(sep);
-            last.push_str(key);
-        }
-    }
-    lines
-        .into_iter()
-        .map(|l| Line::from(Span::raw(l)))
-        .collect()
+    super::key_hints(&keys, width)
 }
 
 #[cfg(test)]

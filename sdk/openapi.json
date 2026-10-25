@@ -10843,6 +10843,13 @@
           "canReceive": {
             "type": "boolean",
             "description": "Whether a message from this caller would be accepted: false for an archived\nSession, where messaging is disabled, and where its inbound decision for this\ncaller is `refuse`."
+          },
+          "workflowRunId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Workflow Run that created this Session: a workflow agent of the caller."
           }
         },
         "required": [

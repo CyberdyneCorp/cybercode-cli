@@ -338,6 +338,7 @@ async fn on_tick(
     actions.extend(app.machine_poll());
     actions.extend(app.login_poll());
     actions.extend(app.collaboration_poll());
+    actions.extend(app.agents_poll());
     actions
 }
 
@@ -735,6 +736,17 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
             generation,
             result,
         } => app.collaboration_reply(&session_id, generation, *result),
+        Msg::Directory {
+            session_id,
+            generation,
+            source,
+            result,
+        } => app.agents_reply(&session_id, generation, source, result),
+        Msg::DirectoryDone {
+            session_id,
+            id,
+            result,
+        } => return app.agents_done(&session_id, id, result),
         Msg::Login(reply) => return app.login_reply(reply),
         Msg::OutputStyle(reply) => return app.output_style_reply(reply),
         Msg::Toast(text) => app.toast(text),

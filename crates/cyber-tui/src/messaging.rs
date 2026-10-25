@@ -251,6 +251,23 @@ pub fn clean(line: &str) -> String {
         .collect()
 }
 
+/// The largest message the messaging and hub routes accept, in UTF-8 bytes.
+pub(crate) const MESSAGE_LIMIT: usize = 16 * 1024;
+
+/// Pasted text for a one-line input: line breaks become spaces, then [`clean`].
+pub(crate) fn clean_line(text: &str) -> String {
+    clean(&text.replace(['\r', '\n'], " "))
+}
+
+/// Push `c` when `input` stays within `limit` UTF-8 bytes; `false` when it would not.
+pub(crate) fn push_within(input: &mut String, c: char, limit: usize) -> bool {
+    let fits = input.len() + c.len_utf8() <= limit;
+    if fits {
+        input.push(c);
+    }
+    fits
+}
+
 /// The `/messages` filter, cycled with Tab.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Filter {
