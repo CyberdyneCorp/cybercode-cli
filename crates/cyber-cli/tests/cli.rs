@@ -1487,7 +1487,9 @@ fn service_stop_uses_registered_http_shutdown() {
     let env = Env::new();
     let mut command = env.command(&["serve", "--register", "--port", "0"]);
     #[cfg(unix)]
-    command.arg("--socket").arg(env.root.join("s.sock"));
+    command
+        .arg("--socket")
+        .arg(env.root.join("cyber-home/state/s.sock"));
     let diagnostic = env.root.join("server-stderr.log");
     let mut server = OwnedService(
         command
@@ -3554,7 +3556,9 @@ fn api_reconciliation_uses_the_registered_service_without_creating_a_job() {
     let env = Env::new();
     let mut command = env.command(&["serve", "--register", "--port", "0"]);
     #[cfg(unix)]
-    command.arg("--socket").arg(env.root.join("r.sock"));
+    command
+        .arg("--socket")
+        .arg(env.root.join("cyber-home/state/r.sock"));
     let mut owned = OwnedService(
         command
             .stdin(Stdio::null())
