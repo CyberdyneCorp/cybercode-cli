@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Capture the README screenshots from the real `cyber` TUI.
 
-The binary runs in a 160×48 pseudo-terminal (pyte as the emulator) against a scripted,
+The binary runs in 160×48 and 100×30 pseudo-terminals (pyte as the emulator) against a scripted,
 local-only OpenAI-compatible model and a local stdio MCP test server, in a temporary
-HOME/CYBER_HOME with a demo project. Nothing reaches the network. Each screen is written
+HOME/CYBER_HOME with a demo project. No external services are contacted. Each screen is written
 as HTML and turned into a PNG with headless Chrome.
 
     python3 -m venv /tmp/cyber-shots && /tmp/cyber-shots/bin/pip install pyte pillow
@@ -14,21 +14,25 @@ database); the machine stats in the sidebar are the fixed MACHINE sample, served
 CYBER_MACHINE_FIXTURE so no screenshot shows the capturing machine.
 """
 import argparse
+import base64
 import os
 import random
 import shutil
+import signal
 import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
 import json
+import ipaddress
 import urllib.request
+import urllib.parse
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "scripts", "screens"))
 try:
-    from term import Tui, html_to_png, to_html  # noqa: E402
+    from term import Tui, html_to_png, to_html, stop_group  # noqa: E402
     from PIL import Image  # noqa: E402
 except ImportError as missing:
     sys.exit(f"{missing}. Install the capture dependencies into a venv first:\n"
@@ -40,6 +44,24 @@ MCP = os.path.join(REPO, "crates", "cyber-app", "tests", "support", "mcp_stdio.p
 COLS, ROWS = 160, 48
 DARK = ("#d6e4f0", "#0b0f14", "0b0b/0f0f/1414")
 LIGHT = ("#1f2933", "#ffffff", "ffff/ffff/ffff")
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, message, headers, new_url):
+        raise RuntimeError("fixture HTTP redirects are refused")
+
+
+HTTP = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+
+
+def loopback_url(value):
+    """Never send a fixture credential to an external address, even through a proxy."""
+    url = urllib.parse.urlparse(value)
+    if (url.scheme not in ("http", "https") or url.username or url.password
+            or url.query or url.fragment or url.path not in ("", "/")
+            or not url.port or not ipaddress.ip_address(url.hostname).is_loopback):
+        raise ValueError("fixture URL must be an explicit loopback HTTP(S) listener")
+    return value.rstrip("/")
+
+
 GB = 1024 ** 3  # the sidebar shows binary gigabytes
 # 12 cores at 23% CPU, 14.2 of 32 GB memory in use, 412 of 926 GB disk in use.
 MACHINE = {"hostname_label": "macOS 15.4", "cores_logical": 12, "cores_physical": 12,
@@ -54,7 +76,8 @@ class Env:
         self.root = os.path.realpath(tempfile.mkdtemp(prefix="cs-", dir="/tmp"))
         self.home, self.cyber_home = f"{self.root}/home", f"{self.root}/cyber-home"
         self.project = f"{self.home}/work/cybercode-cli"
-        self.server = self.provider = None
+        self.server = self.provider = self.peer = None
+        self.tuis = []
 
     def env(self):
         return {"HOME": self.home, "CYBER_HOME": self.cyber_home, "CYBER_MODELS_PATH": f"{self.root}/models.json",
@@ -87,9 +110,9 @@ class Env:
             shutil.copy(os.path.join(REPO, "crates", crate, "src", "lib.rs" if crate != "cyber-cli" else "main.rs"),
                         os.path.join(crates, crate, "src"))
         git = ["git", "-C", self.project, "-c", "user.name=demo", "-c", "user.email=demo@example.com"]
-        subprocess.run(["git", "init", "-q", "-b", "main", self.project], check=True)
-        subprocess.run(git + ["add", "."], check=True)
-        subprocess.run(git + ["commit", "-qm", "Initial import"], check=True)
+        subprocess.run(["git", "init", "-q", "-b", "main", self.project], check=True, env=self.env())
+        subprocess.run(git + ["add", "."], check=True, env=self.env())
+        subprocess.run(git + ["commit", "-qm", "Initial import"], check=True, env=self.env())
 
     def config(self, provider_port, theme="cyber", mode="dark"):
         cfg = f"{self.cyber_home}/config"
@@ -122,7 +145,7 @@ class Env:
     def start_provider(self):
         port_file = f"{self.root}/provider.port"
         self.provider = subprocess.Popen([sys.executable, "-I", os.path.join(REPO, "scripts", "screens", "provider.py"),
-                                          port_file])
+                                          port_file], start_new_session=True, env=self.env())
         for _ in range(200):
             if os.path.exists(port_file) and open(port_file).read():
                 self.provider_port = int(open(port_file).read())
@@ -130,11 +153,57 @@ class Env:
             time.sleep(0.05)
         raise RuntimeError("the scripted provider did not start")
 
+    def api(self, method, path, body=None):
+        """Use the actual owner API, with only this fixture's generated local credential."""
+        with open(f"{self.cyber_home}/state/server.json") as f:
+            registration = json.load(f)
+        with open(f"{self.cyber_home}/state/password") as f:
+            password = f.read().strip()
+        token = base64.b64encode(f"cyber:{password}".encode()).decode()
+        data = None if body is None else json.dumps(body).encode()
+        request = urllib.request.Request(loopback_url(registration["url"]) + "/api/v1" + path, data=data, method=method,
+                                        headers={"content-type": "application/json", "authorization": f"Basic {token}",
+                                                 "x-cyber-directory": self.project})
+        with HTTP.open(request, timeout=20) as response:
+            value = json.load(response)
+        return value.get("data", value)
+
+    def edit_config(self, edit):
+        path = f"{self.cyber_home}/config/cyber.jsonc"
+        with open(path) as f:
+            config = json.load(f)
+        edit(config)
+        with open(path, "w") as f:
+            json.dump(config, f, indent=2)
+
+    def seed_directory(self):
+        """Real local Sessions, a child, and a paired loopback peer on the public routes."""
+        self.peer = Env(self.binary, self.out, self.chrome)
+        self.peer.machine_fixture()
+        self.peer.project_fixture()
+        self.peer.config(self.provider_port)
+        self.peer.edit_config(lambda cfg: cfg.update({"peers": {"machine": "studio", "listen": {"address": "127.0.0.1:0"}}}))
+        self.peer.start_server()
+        self.peer.api("POST", "/sessions", {"mode": "default", "title": "Review API contracts"})
+        invitation = self.peer.api("POST", "/peers/grants", {"name": "demo"})
+        fields = urllib.parse.parse_qs(urllib.parse.urlparse(invitation["code"]).query)
+        remote = {"name": "studio", "url": loopback_url(invitation["listener"]["url"]),
+                  "fingerprint": invitation["listener"]["fingerprint"], "token": fields["t"][0]}
+        self.edit_config(lambda cfg: cfg.update({"peers": {"machine": "demo", "remotes": [remote]}}))
+        current = self.api("POST", "/sessions", {"mode": "default", "title": "Refactor the auth module"})
+        self.api("POST", "/sessions", {"mode": "default", "title": "Update README examples"})
+        self.api("POST", "/sessions", {"mode": "default", "title": "Review API contracts"})
+        child = self.api("POST", "/sessions", {"mode": "default", "title": "Check regression tests", "parent_id": current["id"]})
+        self.sidebar_child = child["id"]
+        self.api("POST", f"/sessions/{child['id']}/prompt", {"parts": [{"type": "text", "text": "GATED SIDEBAR verify regression tests"}]})
+        wait("scripted child reaches its hold", lambda: "SIDEBAR" in self.held(), 20)
+        return current["id"]
+
     def ctl(self, path, body=None):
         data = None if body is None else json.dumps(body).encode()
         req = urllib.request.Request(f"http://127.0.0.1:{self.provider_port}{path}", data=data,
                                      headers={"content-type": "application/json"})
-        return json.loads(urllib.request.urlopen(req, timeout=10).read())
+        return json.loads(HTTP.open(req, timeout=10).read())
 
     def held(self):
         return self.ctl("/ctl/held")["held"]
@@ -146,18 +215,27 @@ class Env:
         self.server_log = open(f"{self.root}/serve.log", "a")
         self.server = subprocess.Popen([self.binary, "serve", "--register", "--port", "0"], env=self.env(),
                                        cwd=self.project, stdin=subprocess.DEVNULL,
-                                       stdout=self.server_log, stderr=self.server_log)
+                                       stdout=self.server_log, stderr=self.server_log, start_new_session=True)
         deadline = time.time() + 40
         while not os.path.exists(registration):
-            if self.server.poll() is not None or time.time() > deadline:
+            if time.time() > deadline:
                 raise RuntimeError(f"cyber serve did not register; see {self.root}/serve.log")
             time.sleep(0.05)
         time.sleep(0.3)
 
+    @staticmethod
+    def stop_process(process):
+        if process is None or process.returncode is not None:
+            return
+        stop_group(process.pid)
+        process.wait(10)
+
     def stop_server(self):
-        if self.server and self.server.poll() is None:
-            self.server.terminate()
-            self.server.wait(30)
+        self.stop_process(self.server)
+        self.server = None
+        if getattr(self, "server_log", None):
+            self.server_log.close()
+
 
     def database(self):
         for base, _, files in os.walk(self.cyber_home):
@@ -191,10 +269,14 @@ class Env:
                                  tokens_out, 0, cache, cache // 20, tokens_in + cache + cache // 20, cost,
                                  self.project))
         with sqlite3.connect(self.database()) as db:
-            db.executemany("INSERT INTO usage_step VALUES (" + ",".join("?" * 20) + ")", rows)
+            columns = ("event_id,session_id,root_id,parent_id,workflow_run_id,agent,purpose,failed,"
+                       "provider,model,started_ms,ended_ms,input_tokens,output_tokens,reasoning_tokens,"
+                       "cache_read_tokens,cache_write_tokens,prompt_tokens,cost,directory")
+            db.executemany(f"INSERT INTO usage_step ({columns}) VALUES (" + ",".join("?" * 20) + ")", rows)
 
-    def launch(self, *args, colors=DARK):
-        tui = Tui([self.binary, *args], self.env(), self.project, COLS, ROWS, background=colors[2])
+    def launch(self, *args, colors=DARK, cols=COLS, rows=ROWS):
+        tui = Tui([self.binary, *args], self.env(), self.project, cols, rows, background=colors[2])
+        self.tuis.append(tui)
         tui.wait_for("ctrl+p", 40)
         tui.pump(1.0)
         return tui
@@ -203,14 +285,31 @@ class Env:
     def shot(self, tui, name, colors=DARK, rows=None):
         path = os.path.join(self.out, name)
         page = to_html(tui.screen, rows, fg=colors[0], bg=colors[1])
-        html_to_png(page, path, self.chrome, width=1340, height=40 + ROWS * 16 if rows is None else 40 + len(rows) * 16)
+        html_to_png(page, path, self.chrome, width=60 + tui.screen.columns * 8,
+                    height=40 + (tui.screen.lines if rows is None else len(rows)) * 16)
         print("wrote", path, flush=True)
         return path
 
     def close(self):
-        self.stop_server()
-        if self.provider:
-            self.provider.terminate()
+        errors = []
+
+        def cleanup(action):
+            try:
+                action()
+            except Exception as error:
+                errors.append(error)
+
+        for tui in self.tuis:
+            cleanup(tui.close)
+        self.tuis.clear()
+        cleanup(self.stop_server)
+        if self.peer:
+            cleanup(self.peer.close)
+            self.peer = None
+        cleanup(lambda: self.stop_process(self.provider))
+        self.provider = None
+        if errors:
+            raise RuntimeError(f"capture cleanup failed; fixture logs remain at {self.root}: {errors}") from errors[0]
         shutil.rmtree(self.root, ignore_errors=True)
 
 
@@ -267,7 +366,8 @@ def capture(env):
     env.seed_usage_history()
     env.start_server()
 
-    tui = env.launch()
+    current = env.seed_directory()
+    tui = env.launch("--resume", current)
     wait("machine stats", lambda: "% idle" in tui.text(), 20, tui=tui)
     tui.pump(1)
     env.shot(tui, "welcome.png")
@@ -277,7 +377,21 @@ def capture(env):
     tui.wait_for("Ready to apply", 30)
     tui.wait_for("Refactor the auth module", 20)
     tui.pump(1.5)
+    tui.wait_for("Sessions & agents", 20)
+    tui.wait_for("peer:studio", 25)
+    listing = env.api("GET", "/messaging/sessions?from=" + current)
+    if "SIDEBAR" not in env.held() or not any(row["session_id"] == env.sidebar_child and row["state"] == "running" for row in listing):
+        raise RuntimeError("the screenshot child is not running at capture")
     env.shot(tui, "transcript-sidebar.png")
+    env.shot(tui, "sessions-sidebar.png")
+
+    narrow = env.launch("--resume", current, cols=100, rows=30)
+    narrow.key("ctrl+x", 0.1)
+    narrow.key("b", 0.5)
+    narrow.wait_for("Sessions & agents", 20)
+    narrow.wait_for("peer:studio", 25)
+    env.shot(narrow, "sessions-sidebar-drawer.png")
+    narrow.close()
 
     command(tui, "/rename")
     tui.wait_for("Rename session", 10)
@@ -323,6 +437,16 @@ def capture(env):
     env.shot(tui, "stats.png")
     tui.key("esc", 1.0)
 
+    tui.close()
+    env.tui_config("cyber-light", "light")
+    light = env.launch("--resume", current, colors=LIGHT)
+    wait("machine stats", lambda: "% idle" in light.text(), 20, tui=light)
+    light.wait_for("peer:studio", 25)
+    env.shot(light, "light.png", colors=LIGHT)
+    light.close()
+    env.tui_config("cyber", "dark")
+    tui = env.launch("--resume", current)
+
     for name, tag, n in (("audit", "A", 12), ("scan", "S", 3), ("tests", "T", 2), ("docs", "D", 2)):
         with open(os.path.join(env.project, f"{name}.js"), "w") as f:
             f.write(fanout(name, tag, n))
@@ -330,8 +454,9 @@ def capture(env):
         if out.returncode != 0:
             raise RuntimeError(f"workflows run {name}: {out.stderr}")
         time.sleep(0.4)
-    wait("agents at the model", lambda: len(env.held()) >= 4, 40, tui=tui)
+    wait("one held agent per running run", lambda: {"A-0", "S-0", "T-0"}.issubset(env.held()), 40, tui=tui)
     for prefix in ("S-0", "A-0", "A-1"):
+        wait(f"held agent {prefix}", lambda: prefix in env.held(), 20, tui=tui)
         env.ctl("/ctl/release", {"tag": prefix})
         tui.pump(0.8)
     command(tui, "/workflows", 3.0)
@@ -345,14 +470,6 @@ def capture(env):
     wait("runs finished", finished, 120, step=1.0, tui=tui)
     tui.close()
 
-    env.tui_config("cyber-light", "light")
-    session = json.loads(env.cyber("sessions", "list", "--format", "json").stdout)
-    first = next(s for s in session if s.get("title") == "Refactor the auth module")
-    light = env.launch("--resume", first["id"], colors=LIGHT)
-    wait("machine stats", lambda: "% idle" in light.text(), 20, tui=light)
-    light.pump(1)
-    env.shot(light, "light.png", colors=LIGHT)
-    light.close()
 
 
 def main():

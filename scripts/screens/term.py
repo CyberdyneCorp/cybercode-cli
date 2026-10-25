@@ -28,6 +28,41 @@ CELL_H = 16  # px; the HTML row height equals the line height, so rows touch wit
 SENTINEL = (255, 0, 255)
 
 
+def _signal_group(pid, sig):
+    try:
+        os.killpg(pid, sig)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # macOS can report EPERM for a group containing only unreaped zombies.
+        # Read process state only; a living member must never be silently ignored.
+        deadline = time.monotonic() + 1
+        observed = []
+        while True:
+            listing = subprocess.check_output(["ps", "-axo", "pgid=,stat="], text=True)
+            states = [line.split()[1] for line in listing.splitlines()
+                      if len(line.split()) == 2 and line.split()[0] == str(pid)]
+            observed.append(states)
+            if not any(not state.startswith("Z") for state in states):
+                print(f"cleanup: capture group {pid} EPERM states {observed}; no live members", flush=True)
+                return False
+            if time.monotonic() >= deadline:
+                raise PermissionError(f"capture group {pid} remains live after signal denial: {observed}")
+            time.sleep(0.05)
+
+
+def stop_group(pid, release=None):
+    """Stop a group while its owned leader is still unreaped and reserves the ID."""
+    signalled = _signal_group(pid, signal.SIGTERM)
+    if release:
+        release()
+    if not signalled:
+        return
+    time.sleep(0.15)
+    _signal_group(pid, signal.SIGKILL)
+
+
 class Screen(pyte.Screen):
     def __init__(self, cols, rows, reply):
         super().__init__(cols, rows)
@@ -94,15 +129,22 @@ class Tui:
         raise TimeoutError(f"{needle!r} never appeared:\n{self.text()}")
 
     def close(self):
+        if self.fd is None:
+            return
+
+        def release_pty():
+            if self.fd is not None:
+                os.close(self.fd)
+                self.fd = None
+
         try:
-            os.kill(self.pid, signal.SIGTERM)
-            for _ in range(50):
-                if os.waitpid(self.pid, os.WNOHANG)[0]:
-                    return
-                self.pump(0.1)
-            os.kill(self.pid, signal.SIGKILL)
+            # A macOS process can remain <exiting> while its PTY master is open.
+            stop_group(self.pid, release=release_pty)
+            os.waitpid(self.pid, 0)
         except (ProcessLookupError, ChildProcessError):
             pass
+        finally:
+            release_pty()
 
 
 def _color(value, default):
@@ -156,10 +198,30 @@ def html_to_png(page, path, chrome, width=1500, height=900):
         src, raw = os.path.join(tmp, "page.html"), os.path.join(tmp, "raw.png")
         with open(src, "w") as f:
             f.write(page)
-        subprocess.run([chrome, "--headless=new", "--disable-gpu", "--hide-scrollbars",
-                        "--force-device-scale-factor=2", f"--window-size={width},{height}",
-                        f"--screenshot={raw}", "file://" + src],
-                       check=True, capture_output=True, timeout=120)
+        with tempfile.TemporaryFile() as log:
+            browser = subprocess.Popen([chrome, "--headless=new", "--disable-gpu", "--hide-scrollbars",
+                                        "--disable-background-networking", "--disable-component-update", "--no-first-run",
+                                        "--disable-crash-reporter", "--disable-breakpad",
+                                        f"--user-data-dir={os.path.join(tmp, 'browser')}",
+                                        "--force-device-scale-factor=2", f"--window-size={width},{height}",
+                                        f"--screenshot={raw}", "file://" + src],
+                                       stdout=log, stderr=log, start_new_session=True,
+                                       env={"HOME": tmp, "PATH": os.environ["PATH"], "LANG": "en_US.UTF-8"})
+            try:
+                deadline = time.monotonic() + 120
+                while True:
+                    try:
+                        with Image.open(raw) as rendered:
+                            rendered.verify()
+                        break
+                    except (OSError, SyntaxError):
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError("headless Chromium did not finish its PNG")
+                        time.sleep(0.05)
+            finally:
+                # Never poll/communicate/wait before the group has been stopped.
+                stop_group(browser.pid)
+                browser.wait(10)
         image = Image.open(raw).convert("RGB")
     box = ImageChops.difference(image, Image.new("RGB", image.size, SENTINEL)).getbbox()
     image = image.crop(box)
