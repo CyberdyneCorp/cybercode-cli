@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import platform
+import signal
 import shlex
 import shutil
 import subprocess
@@ -80,19 +81,21 @@ def unchanged_test(output: Path, temporary: Path, attempts: int) -> tuple[list[d
             shutil.copy2(HIDDEN, workspace / "hidden_test_kv.py")
             started = time.monotonic()
             row = {"attempt": number, "kind": "unchanged_native_test"}
+            process = subprocess.Popen(
+                [sys.executable, "-m", "unittest", "-v", CASE],
+                cwd=workspace,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+                env=dict(os.environ, TMPDIR=str(temporary), PYTHONDONTWRITEBYTECODE="1"),
+            )
             try:
-                result = subprocess.run(
-                    [sys.executable, "-m", "unittest", "-v", CASE],
-                    cwd=workspace,
-                    capture_output=True,
-                    env=dict(os.environ, TMPDIR=str(temporary), PYTHONDONTWRITEBYTECODE="1"),
-                    timeout=min(120, remaining),
-                )
-                row["exit"] = result.returncode
-                stdout, stderr = result.stdout, result.stderr
-            except subprocess.TimeoutExpired as error:
+                stdout, stderr = process.communicate(timeout=min(120, remaining))
+                row["exit"] = process.returncode
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                stdout, stderr = process.communicate()
                 row.update(exit=None, timeout=True)
-                stdout, stderr = error.stdout, error.stderr
             row["seconds"] = round(time.monotonic() - started, 4)
             row["copied_sources_unchanged"] = (
                 digest(workspace / "kv.sh") == digest(REFERENCE)
@@ -140,7 +143,7 @@ def injected_probe(output: Path, temporary: Path) -> dict:
         )
         after = subprocess.run([real_ps, "-p", str(holder)], capture_output=True, timeout=10)
         counter = store / "counter"
-        observed = before.returncode == after.returncode == 0 and result.returncode == 0 and counter.read_bytes() == b"2"
+        observed = before.returncode == after.returncode == 0 and result.returncode == 0 and counter.is_file() and counter.read_bytes() == b"2"
         (output / "injected-probe.stdout.txt").write_text(log_text(result.stdout, temporary))
         (output / "injected-probe.stderr.txt").write_text(log_text(result.stderr, temporary))
         return {
