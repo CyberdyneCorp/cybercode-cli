@@ -1848,8 +1848,7 @@ async fn a_team_over_budget_stops_and_resumes_with_its_context() {
 }
 
 /// `agent-teams` → Team budgets and Shutdown and resume on the production App: a
-/// definition's `budget` wins over `budgets.team`, a reserved team budget is refused and
-/// records nothing; a stop lets a working teammate finish its current Turn (`stopping`),
+/// definition's `budget` wins over `budgets.team`; a stop lets a working teammate finish its current Turn (`stopping`),
 /// starts no other (the next input stays queued), and the team is `stopped` once the
 /// Turn ends; a resume restarts the Drain of a teammate with queued input.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1864,17 +1863,6 @@ async fn a_stop_lets_a_working_teammate_finish_its_turn() {
         |text: &str| cyber_core::teams::parse(text, std::path::Path::new("feature.md"), 6).unwrap();
     let (_, body) = app.create("default").await;
     let lead = body["data"]["id"].as_str().unwrap().to_owned();
-    let reserved = parse(
-        "---\nbudget:\n  max_cost_usd: 1\n  enforcement: reserved\nteammates:\n  - name: api\n    agent: build\n---\n",
-    );
-    let error = app
-        .app
-        .runtime
-        .create_team(&lead, &reserved)
-        .await
-        .unwrap_err();
-    assert!(error.to_string().contains("Reserved"), "{error}");
-    assert!(app.app.runtime.team_membership(&lead).unwrap().is_none());
     let feature = parse(
         "---\nbudget:\n  max_turns: 40\nteammates:\n  - name: api\n    agent: build\n    isolation: shared\n---\n",
     );
@@ -2701,4 +2689,34 @@ async fn a_teammate_whose_setup_fails_leaves_nothing_behind() {
     let members = spawned(&last_output(&app, &lead).await);
     assert_eq!(members["api"]["isolation"], "worktree", "{members:?}");
     assert_eq!(app.app.runtime.team_members(&team.id).unwrap().len(), 2);
+}
+
+/// Reserved enforcement is accepted at creation; provider bounds are checked at dispatch.
+#[tokio::test]
+async fn reserved_team_budget_is_captured_without_dispatching_a_provider() {
+    let app = ModeApp::start(Setup {
+        config: json!({"features":{"teams":true}}),
+        ..Default::default()
+    })
+    .await;
+    let (_, body) = app.create("default").await;
+    let lead = body["data"]["id"].as_str().unwrap();
+    let definition=cyber_core::teams::parse("---\nbudget:\n  max_tokens: 1000\n  enforcement: reserved\nteammates:\n  - name: api\n    agent: build\n---\n",std::path::Path::new("reserved-team.md"),6).unwrap();
+    let (team, members) = app
+        .app
+        .runtime
+        .create_team(lead, &definition)
+        .await
+        .unwrap();
+    assert_eq!(members.len(), 1);
+    let (stored,_) = app.app.runtime.team_membership(lead).unwrap().unwrap();
+    assert_eq!(stored.id,team.id);
+    let created = team_records(&app, lead, "team.created.1");
+    assert_eq!(created[0]["budget"]["enforcement"], "reserved");
+    assert_eq!(created[0]["budget"]["max_tokens"], 1000);
+    app.app.runtime.wait_idle(lead).await;
+    for member in members {
+        app.app.runtime.wait_idle(&member.session_id).await;
+    }
+    assert!(app.model.requests().is_empty());
 }

@@ -748,7 +748,21 @@ async fn max_agents_over_http_rejects_the_next_agent_and_ends_budget_exceeded() 
             Some(json!({"session_id": owner, "script": script, "budget": {"enforcement": "reserved"}})),
         )
         .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let reserved = server
+        .settled_run(body["data"]["id"].as_str().unwrap())
+        .await;
+    assert_eq!(reserved["budget"]["enforcement"], "reserved");
+    assert_ne!(reserved["status"], "completed", "{reserved}");
+    assert!(
+        reserved.to_string().contains("BudgetBoundUnavailable"),
+        "{reserved}"
+    );
+    assert_eq!(
+        model.requests().len(),
+        1,
+        "unsupported strict adapter must not dispatch another request"
+    );
     server.close().await;
 }
 
