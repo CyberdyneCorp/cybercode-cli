@@ -1,0 +1,22 @@
+{
+  "llm": {
+    "cargo_reported_passed": 135,
+    "failed": 0,
+    "live_provider_gate_enabled": false,
+    "note": "One CYBER_LIVE_TESTS-gated test returned without live provider calls; 134 offline tests exercised, including six HTTP fault tests."
+  },
+  "runtime": {
+    "passed": 43,
+    "failed": 0
+  },
+  "clippy": "cyber-llm and cyber-server, all targets, warnings denied: passed",
+  "format": "cargo fmt --all --check: passed",
+  "whitespace": "git diff --check: passed",
+  "openspec": {
+    "passed": 101,
+    "failed": 0
+  },
+  "cli_build": "passed; linker emitted an unwind-table size warning",
+  "pre_fix_reproduction": "Four initial HTTP fixture tests: completed-response/broken-tail test failed with error decoding response body; two diagnostic assertions failed with same generic error; clean EOF test passed.",
+  "native_windows_linux": "not run locally; selected in CI"
+}

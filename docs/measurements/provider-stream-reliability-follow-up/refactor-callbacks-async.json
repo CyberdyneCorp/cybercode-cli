@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "report": "cyber-eval",
+  "harness": {
+    "version": "0.1.0",
+    "git_sha": "ac97d41",
+    "target": "aarch64-apple-darwin"
+  },
+  "manifest": {
+    "id": "suite-coding-hard-v1",
+    "path": "<repo>/eval/manifests/suite-coding-hard-v1.json",
+    "sha256": "sha256:d301df3feb57e8faf2853710e895e15822bd15a13e5cbd1351ed1cfd6fb5483f",
+    "kind": "suite"
+  },
+  "model": {
+    "ref": "chatgpt/gpt-6.1-sol#medium",
+    "provider": "chatgpt",
+    "name": "GPT-6.1-Sol",
+    "context_limit": 500000
+  },
+  "deterministic": false,
+  "started_at": "2026-10-26T03:26:36Z",
+  "finished_at": "2026-10-26T03:30:49Z",
+  "trials_per_task": 1,
+  "options": {
+    "mode": "bypass",
+    "sandbox": "workspace-write",
+    "interactive": false
+  },
+  "summary": {
+    "tasks": 1,
+    "trials": 1,
+    "passed": 1,
+    "success_rate": 1.0,
+    "success_ci95": [
+      0.2065,
+      1.0
+    ],
+    "infrastructure_failures": 0,
+    "human_interventions": 0,
+    "cost_usd": 0.0,
+    "cost_per_success_usd": 0.0,
+    "median_cost_per_successful_task_usd": 0.0,
+    "median_latency_seconds": 251.6,
+    "unpriced": true,
+    "tokens": {
+      "input": 290604,
+      "output": 11348,
+      "reasoning": 514,
+      "cache_read": 64896,
+      "cache_write": 0
+    }
+  },
+  "tasks": [
+    {
+      "id": "refactor-callbacks-async",
+      "tags": [
+        "refactor",
+        "hard",
+        "node",
+        "async",
+        "multi-file"
+      ],
+      "trials": 1,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.0,
+      "median_turns": 21.0
+    }
+  ],
+  "trials": [
+    {
+      "task": "refactor-callbacks-async",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 21,
+      "tool_calls": 20,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 290604,
+        "output": 11348,
+        "reasoning": 514,
+        "cache_read": 64896,
+        "cache_write": 0
+      },
+      "latency_seconds": 251.627358541,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M5V3XSSQK5SCMPD1K3ZHYR7P"
+    }
+  ]
+}

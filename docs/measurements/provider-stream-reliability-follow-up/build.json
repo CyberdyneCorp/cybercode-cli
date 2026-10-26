@@ -1,0 +1,29 @@
+{
+  "revision": "ac97d4104aa9b55bbf3908225e866bbc9ea90dba",
+  "dirty": false,
+  "binaries": {
+    "cyber": "cdd9b8778f693d2139ff139146d04780c68f0c9721c73b3843ee5fc0cfab7faa",
+    "cyber-sandbox-exec": "a00cceffc2a8beda464cf3f9548833da033e18a1828cb6767adc563621a766ed"
+  },
+  "eval_inputs_verified": 505,
+  "model": "chatgpt/gpt-6.1-sol#medium",
+  "trials_per_task": 1,
+  "jobs": 1,
+  "original_results_unchanged": true,
+  "original_build_revision": "3cc90b5f2771525bb90d596ed35867f92fa27030",
+  "sandbox_helper": "unchanged original pilot helper",
+  "environment": "Existing isolated pilot environment reused with shared credential-store locks; no credentials copied",
+  "limitations": [
+    "Two selected tasks only; one follow-up trial per task",
+    "No controlled proof of original failure cause or elimination",
+    "Subscription dollar pricing unavailable",
+    "Same requested model alias; backend weights not pinned"
+  ],
+  "embedded_build": {
+    "name": "cyber",
+    "version": "0.1.0",
+    "channel": "dev",
+    "git_sha": "ac97d41",
+    "target": "aarch64-apple-darwin"
+  }
+}

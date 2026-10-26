@@ -122,6 +122,18 @@ The provider catalog is the Location-scoped registry of LLM providers and models
 - **WHEN** the error reason is `ContextOverflow`
 - **THEN** no retry is attempted and the compaction capability decides what happens next
 
+#### Scenario: HTTP body fails after protocol completion
+- **WHEN** a provider stream has emitted its protocol completion, including final usage
+- **AND** the HTTP body stalls or closes incorrectly afterward
+- **THEN** the completed response remains successful without waiting for the HTTP tail or replaying the request
+
+#### Scenario: Body interruption before protocol completion
+- **WHEN** an HTTP response body fails before protocol completion
+- **THEN** the transport diagnostic identifies the response-stream stage and received body-byte count without adding response content or credentials
+- **AND** failures before assistant output obey the bounded retry policy
+- **AND** partial text, reasoning, tool arguments or completed tool calls prevent automatic replay
+- **AND** completed tool outcomes and interrupted undispatched calls remain settled across restart and explicit continuation
+
 ### Requirement: Prompt caching
 (P0) The system SHALL keep the system prompt baseline and tool definitions byte-stable within a Context Epoch, place provider cache breakpoints after them where the adapter supports explicit caching, and send a cache key derived from the Session ID where the adapter supports keyed caching (for example OpenAI `prompt_cache_key`). `cache: "none"` on a request SHALL disable caching hints.
 

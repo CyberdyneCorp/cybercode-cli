@@ -1,0 +1,27 @@
+{
+  "kind": "selected-task follow-up; original scores unchanged",
+  "results": [
+    {
+      "task": "build-inventory-cli",
+      "passed": true,
+      "infrastructure_failure": false,
+      "latency_seconds": 271.733465125,
+      "stop_reason": "end_turn",
+      "grader_exit": 0,
+      "error": null
+    },
+    {
+      "task": "refactor-callbacks-async",
+      "passed": true,
+      "infrastructure_failure": false,
+      "latency_seconds": 251.627358541,
+      "stop_reason": "end_turn",
+      "grader_exit": 0,
+      "error": null
+    }
+  ],
+  "native_report_sha256": {
+    "build-inventory-cli": "91fee58cbe58dc2b4b3812561da8f42f8f91f28de5df0dd4f057409c3ed8f7b8",
+    "refactor-callbacks-async": "fd65b1d6c8752c70462ae6af251d04f3ee579980a4d5143b1c63cfbb7dae04f2"
+  }
+}

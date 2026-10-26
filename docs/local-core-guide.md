@@ -51,6 +51,12 @@ cargo run -p cyber-server --example session -- openai/gpt-6-luna
 cargo run -p cyber-tools --example agent -- openai/gpt-6-luna path/to/repo "Fix the failing test" accept-edits
 ```
 
+## Provider stream interruptions
+
+Cyber retries retryable provider failures up to four times before assistant output starts. Once text, reasoning or tool input has arrived, a failure preserves the partial response and settles the turn without replaying its request. Completed tool outcomes remain recorded; calls that never dispatched are marked interrupted. Continuing the conversation uses that recorded history.
+
+An HTTP body failure reports `provider response stream interrupted after N body bytes` followed by the credential-redacted transport error. This identifies where the failure happened; it does not identify whether the provider, network or client caused it. A valid protocol completion is final: Cyber retains its result and usage even if the HTTP tail later stalls or closes incorrectly. A stream that ends before protocol completion still fails.
+
 ## Signing in with a ChatGPT subscription
 
 A ChatGPT Plus or Pro plan can pay for OpenAI models instead of an API key:

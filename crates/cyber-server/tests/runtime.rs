@@ -16,6 +16,89 @@ fn admit(text: &str, delivery: Delivery) -> Admission {
     Admission::text(text, delivery)
 }
 
+/// A transport failure after a prior mutation and a newly streamed call must not
+/// replay either Turn. Restart and explicit continuation retain both settlements.
+#[tokio::test]
+async fn transport_failure_preserves_tool_outcomes_without_replaying_actions() {
+    use cyber_llm::adapters::ScriptStep;
+    use cyber_llm::{LlmEvent, ToolCall};
+
+    let partial = vec![
+        ScriptStep::Event(LlmEvent::TextDelta {
+            text: "partially finished".into(),
+        }),
+        ScriptStep::Event(LlmEvent::ToolCallDone(ToolCall {
+            id: "c2".into(),
+            name: "write".into(),
+            arguments: "{}".into(),
+            input: Some(serde_json::json!({})),
+        })),
+        ScriptStep::Error {
+            error: ErrorKind::Transport,
+            message: "injected broken body".into(),
+        },
+    ];
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![tools(&[("c1", "write", "{}")]), partial, text("resumed")],
+        )],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    h.runtime
+        .admit(&id, admit("start", Delivery::Queue))
+        .await
+        .unwrap();
+    h.settle(&id).await;
+    let state = h.state(&id).await;
+    assert_eq!(
+        h.models.requests("test/main").len(),
+        2,
+        "no automatic request replay"
+    );
+    assert_eq!(h.tools.executed_names(), ["write"]);
+    assert_eq!(state.calls["c1"].status, CallStatus::Ok);
+    assert_eq!(state.calls["c2"].status, CallStatus::Interrupted);
+    assert!(
+        state
+            .entries
+            .iter()
+            .any(|e| matches!(e, Entry::Assistant(a) if a.text == "partially finished"))
+    );
+    h.runtime.shutdown().await;
+
+    let restarted = h.restart();
+    restarted.wake(&id).await.unwrap();
+    restarted.wait_idle(&id).await;
+    assert_eq!(
+        h.models.requests("test/main").len(),
+        2,
+        "restart cannot replay a settled failure"
+    );
+    assert_eq!(h.tools.executed_names(), ["write"]);
+
+    restarted
+        .admit(&id, admit("continue", Delivery::Queue))
+        .await
+        .unwrap();
+    restarted.wait_idle(&id).await;
+    let requests = h.models.requests("test/main");
+    assert_eq!(requests.len(), 3);
+    let continued = transcript(&requests[2]);
+    assert!(
+        continued.contains("c1") && continued.contains("c2"),
+        "{continued}"
+    );
+    assert!(continued.contains(INTERRUPTED), "{continued}");
+    assert_eq!(
+        h.tools.executed_names(),
+        ["write"],
+        "continuation retains settled outcomes"
+    );
+    restarted.shutdown().await;
+}
+
 #[tokio::test]
 async fn admitted_prompt_survives_restart_and_runs_on_wake() {
     let h = Harness::new(Setup {

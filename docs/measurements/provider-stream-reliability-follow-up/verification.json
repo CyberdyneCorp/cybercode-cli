@@ -1,0 +1,10 @@
+{
+  "eval_inputs_matching_original": 505,
+  "original_published_pilot_files_unchanged": true,
+  "all_four_original_private_reports_unchanged": true,
+  "follow_up_cli_and_helper_hashes_verified": true,
+  "embedded_revision_matches_clean_build": true,
+  "trial_count": 2,
+  "publication_redactions": "local directory prefixes only",
+  "live_provider_test_gate_enabled": false
+}
