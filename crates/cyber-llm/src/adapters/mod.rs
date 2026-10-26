@@ -267,7 +267,11 @@ impl<D: Decoder> DecodeState<D> {
             }
             Some(Err(e)) => {
                 let secrets: Vec<&str> = self.secrets.iter().map(String::as_str).collect();
-                out.push(Err(LlmError::from_reqwest(&e, &secrets)));
+                let error = LlmError::from_reqwest(&e, &secrets);
+                out.push(Err(LlmError::transport(format!(
+                    "provider response stream interrupted after {} body bytes: {}",
+                    self.response_bytes, error.message,
+                ))));
             }
             None => {
                 if let Some(event) = self.parser.finish() {
@@ -282,8 +286,10 @@ impl<D: Decoder> DecodeState<D> {
 
     fn pop(&mut self) -> Option<Result<LlmEvent, LlmError>> {
         let item = self.queue.pop_front()?;
-        if item.is_err() {
-            // Nothing follows an error.
+        if item.is_err() || matches!(item, Ok(LlmEvent::Finish { .. })) {
+            // Protocol completion is authoritative. Do not wait for the HTTP tail:
+            // it may stall or fail after a complete response and its usage arrived.
+            // Nothing follows a terminal event, including another event in this chunk.
             self.queue.clear();
             self.finished = true;
         }
