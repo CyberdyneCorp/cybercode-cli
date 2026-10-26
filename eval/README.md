@@ -130,6 +130,11 @@ Solve turn/tool totals are null when aggregate counts are unavailable. Subscript
 amounts are lower bounds, not proof of free usage. Current budgets are soft accounting limits;
 reserved enforcement is separate roadmap work.
 
+Blocked/unknown host checks without a verified survivor are infrastructure outcomes. Click's
+catalog uses the `pytest` entry point with `--override-ini pythonpath=src`; the current
+conservative interpreter guard refuses inline imports and `python -m` host checks. The
+scripted reference controls exercise the same authorization path as live solve checks.
+
 Run network-off base/reference/tampering controls with an installed sandbox helper:
 
 ```sh

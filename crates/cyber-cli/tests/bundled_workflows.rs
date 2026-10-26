@@ -450,6 +450,7 @@ fn eval_grades_single_and_host_selected_solve_without_exposing_private_inputs() 
         ("solve", "solve"),
         ("no_recommendation", "solve"),
         ("grader_failure", "solve"),
+        ("verification_blocked", "solve"),
     ] {
         let no_recommendation = scenario == "no_recommendation";
         let mut invocation = manifest.clone();
@@ -459,6 +460,9 @@ fn eval_grades_single_and_host_selected_solve_without_exposing_private_inputs() 
                 "-c",
                 "print('INFRA scripted grader failure');raise SystemExit(2)"
             ]);
+        }
+        if scenario == "verification_blocked" {
+            invocation["tasks"][0]["checks"] = json!([["python3", "-c", "import pytest"]]);
         }
         invocation["tasks"][0]["prompt"] = format!(
             "{} {}",
@@ -524,16 +528,21 @@ fn eval_grades_single_and_host_selected_solve_without_exposing_private_inputs() 
 fn assert_eval_outcome(report: &Value, output: &std::path::Path, strategy: &str, scenario: &str) {
     let no_recommendation = scenario == "no_recommendation";
     let grader_failure = scenario == "grader_failure";
+    let blocked = scenario == "verification_blocked";
     assert_eq!(report["strategy"], strategy);
+    assert_eq!(
+        report["repository_provenance"][0]["budget"]["max_tokens"],
+        100000
+    );
     assert_eq!(report["trials"][0]["trial"], 2);
     assert_eq!(
         report["trials"][0]["passed"],
-        !no_recommendation && !grader_failure,
+        !no_recommendation && !grader_failure && !blocked,
         "{report}"
     );
     assert_eq!(
         report["trials"][0]["infrastructure_failure"],
-        grader_failure
+        grader_failure || blocked
     );
     assert!(
         report["trials"][0]["tokens"]["input"].as_u64().unwrap() > 0,
@@ -555,7 +564,7 @@ fn assert_eval_outcome(report: &Value, output: &std::path::Path, strategy: &str,
     if strategy == "solve" {
         assert_eq!(
             report["trials"][0]["solve"]["result"]["recommended_candidate"],
-            if no_recommendation {
+            if no_recommendation || blocked {
                 Value::Null
             } else {
                 json!("first")

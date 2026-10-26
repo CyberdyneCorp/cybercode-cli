@@ -73,10 +73,9 @@
       "prompt": "Fix Click command short-help abbreviation handling. Only the first paragraph is considered; collapse whitespace and ignore an initial no-rewrap backspace marker. A period ends the sentence only at the end of the paragraph or when the following word does not start with a lowercase character. Thus \"Weigh apples vs. pears.\" stays one sentence, while \"Pick a fruit. 3 remain.\" ends at \"fruit.\". Apply the length limit after finding this sentence. Truncate on whole words with ... without splitting hyphenated words. If even the suffix does not fit, return the whole ...; empty text stays empty. Preserve existing unaffected behavior and update obsolete tests that encode the old period rule.",
       "checks": [
         [
-          "python3",
-          "-I",
-          "-c",
-          "import sys,pytest;sys.path.insert(0,'src');raise SystemExit(pytest.main(sys.argv[1:]))",
+          "pytest",
+          "--override-ini",
+          "pythonpath=src",
           "-q",
           "tests/test_utils/test_make_default_short_help.py"
         ]
@@ -99,10 +98,9 @@
       "prompt": "Make Click's positional-argument help exhaustive when any argument is documented. If at least one Argument has help (including explicit empty help or a deprecation label), the Positional arguments section must list every Argument in declared order, including undocumented ones with an empty description. If none have help, omit that section. Argument.get_help_record must always return its metavar/help tuple; preserve option hidden behavior, variadic/optional metavars, deprecation formatting and unrelated help rendering. Add regression coverage.",
       "checks": [
         [
-          "python3",
-          "-I",
-          "-c",
-          "import sys,pytest;sys.path.insert(0,'src');raise SystemExit(pytest.main(sys.argv[1:]))",
+          "pytest",
+          "--override-ini",
+          "pythonpath=src",
           "-q",
           "tests/test_arguments.py"
         ]

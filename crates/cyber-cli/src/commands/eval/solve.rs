@@ -116,9 +116,16 @@ async fn grade_selected(
     result: &mut TrialResult,
 ) -> Result<(), String> {
     let Some(candidate) = selected(detail)? else {
-        result.infrastructure_failure = false;
-        result.error = None;
-        result.stop_reason = "no_recommendation".into();
+        let blocked = verification_blocked(detail);
+        result.infrastructure_failure = blocked;
+        result.error =
+            blocked.then(|| "host verification blocked; candidate quality not established".into());
+        result.stop_reason = if blocked {
+            "verification_blocked"
+        } else {
+            "no_recommendation"
+        }
+        .into();
         return Ok(());
     };
     let id = candidate["session_id"]
@@ -150,6 +157,24 @@ async fn grade_selected(
         return Err("grading changed selected source".into());
     }
     Ok(())
+}
+
+fn verification_blocked(detail: &Value) -> bool {
+    let Some(candidates) = detail
+        .pointer("/solve_evidence/candidates")
+        .and_then(Value::as_array)
+    else {
+        return false;
+    };
+    let verified = candidates.iter().any(|c| c["host_verified"] == true);
+    !verified
+        && candidates.iter().any(|c| {
+            c["checks"].as_array().is_some_and(|checks| {
+                checks
+                    .iter()
+                    .any(|check| matches!(check["outcome"].as_str(), Some("blocked" | "unknown")))
+            })
+        })
 }
 
 async fn account(client: &cyber_client::Client, session_id: &str, result: &mut TrialResult) {
@@ -306,5 +331,24 @@ mod tests {
         spilled["result"] = Value::Null;
         spilled["result_file"] = "retained.json".into();
         assert!(selected(&spilled).is_err());
+    }
+
+    #[test]
+    fn blocked_checks_are_infrastructure_only_without_a_verified_survivor() {
+        let mut value = detail();
+        value["solve_evidence"]["candidates"][0]["host_verified"] = false.into();
+        value["solve_evidence"]["candidates"][0]["checks"][0]["outcome"] = "blocked".into();
+        assert!(verification_blocked(&value));
+        value["solve_evidence"]["candidates"]
+            .as_array_mut()
+            .unwrap()
+            .push(detail()["solve_evidence"]["candidates"][0].clone());
+        assert!(!verification_blocked(&value));
+        value["solve_evidence"]["candidates"]
+            .as_array_mut()
+            .unwrap()
+            .pop();
+        value["solve_evidence"]["candidates"][0]["checks"][0]["outcome"] = "failed".into();
+        assert!(!verification_blocked(&value));
     }
 }

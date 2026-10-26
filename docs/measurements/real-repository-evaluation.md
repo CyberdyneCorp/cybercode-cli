@@ -35,7 +35,7 @@ On macOS arm64, Rust/Cargo 1.99.1, Python 3.13.5 and pytest 8.3.4:
   exclude ignored source from compiler inputs; and refuse ambient Git templates.
   An additional solve scenario retains completed inference usage and selection evidence when
   the independent grader fails its infrastructure/output contract.
-- Four manifest/source-identity tests, fourteen evaluation unit tests and three Python
+- Four manifest/source-identity tests, fifteen evaluation unit tests and three Python
   source-alias controls passed. CLI/core/tools Clippy passed with warnings denied.
 - All forty original synthetic-suite grader controls passed with Python 3.13 and Node on PATH.
   Initial local invocations exposed an incomplete subprocess PATH; those were corrected before
@@ -51,6 +51,28 @@ The host initially lacked build space. Only old generated Rust object files were
 retaining binaries, source, historical reports and native desktop acceptance artifacts. Free
 space was approximately 15 GiB after the build/control preflight. No live Auth or desktop
 acceptance is part of this benchmark.
+
+## Live-discovered setup defects
+
+The initial frozen harness is commit `b11865a5`. Its Click host checks use an inline Python
+import that the conservative command-removal guard refuses before execution. These are
+infrastructure failures, even though that harness's native report labels them ordinary
+no-recommendation outcomes. Preserve native reports byte-for-byte and identify the reviewed
+classification separately. The runner now recognizes blocked/unknown checks without a
+verified survivor as infrastructure failures and retains their usage.
+
+The corrected catalog invokes `pytest --override-ini pythonpath=src` directly. This checks
+candidate source without an inline interpreter command or installed-package ambiguity.
+Both Click reference fixes passed the actual scripted solve, host checks, judge and independent
+grading path with that command. Earlier failed scripted controls remain excluded diagnostics.
+No command-security policy was weakened. Live corrected-command follow-ups remain pending
+and must be labelled separately rather than replacing original attempts.
+
+New reference-control directories briefly fell outside the initial operator deny list while
+scored runs 11 and 12 were active. They were moved under the existing protected setup root.
+Access cannot be ruled out, so both observations have uncertain environment integrity and
+must not support clean-quality conclusions. Preserve their raw results and report this
+qualification alongside any subsequent controlled diagnostics.
 
 ## Frozen live protocol
 

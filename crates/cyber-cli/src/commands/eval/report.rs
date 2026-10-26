@@ -126,7 +126,9 @@ pub fn build(
         "trials": results.iter().map(TrialResult::json).collect::<Vec<_>>(),
         "repository_provenance": tasks.iter().filter_map(|task| {
             cyber_core::eval::task_fixture(manifest,task).and_then(|f|f.repository.as_ref())
-                .map(|repository|json!({"task":task.id,"repository":repository,"grader_tree_sha256":task.grading.tree_sha256,"checks":task.checks}))
+                .map(|repository|json!({"task":task.id,"repository":repository,"grader_tree_sha256":task.grading.tree_sha256,"checks":task.checks,
+                    "budget":{"max_turns":task.budget.max_turns,"max_tokens":task.budget.max_tokens,"max_cost_usd":task.budget.max_cost_usd,"max_wall_seconds":task.budget.max_wall_seconds},
+                    "timeout_seconds":task.timeout_seconds}))
         }).collect::<Vec<_>>(),
     })
 }
