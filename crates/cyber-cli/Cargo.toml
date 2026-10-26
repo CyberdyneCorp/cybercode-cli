@@ -38,7 +38,9 @@ cyber-server = { path = "../cyber-server" }
 cyber-telemetry = { path = "../cyber-telemetry" }
 base64 = "0.22"
 futures = "0.3"
-reqwest = { version = "0.13", features = ["json"] }
+reqwest = { version = "0.13", features = ["json", "stream"] }
+flate2 = "1"
+tar = { version = "0.4.46", default-features = false }
 ulid.workspace = true
 sha2.workspace = true
 clap.workspace = true
@@ -56,8 +58,6 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 
 [dev-dependencies]
 cyber-install = { path = "../cyber-install", features = ["test-support"] }
-flate2 = "1"
-tar = { version = "0.4.46", default-features = false }
 zip = { version = "8.6", default-features = false, features = ["deflate-flate2"] }
 aws-lc-rs = "1"
 jsonwebtoken = { version = "=10.3.0", default-features = false, features = ["aws_lc_rs"] }

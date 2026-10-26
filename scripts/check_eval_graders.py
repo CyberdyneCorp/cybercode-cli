@@ -32,19 +32,37 @@ ROOT = Path(__file__).resolve().parent.parent
 MANIFESTS = ROOT / "eval" / "manifests"
 SOLUTIONS = ROOT / "eval" / "solutions"
 SKIPPED_NAMES = {"__pycache__", ".DS_Store"}
+SANDBOX_CYBER: Path | None = None
 
 
 def tree_sha256(directory: Path) -> str:
     """Python port of `cyber_core::eval::tree_sha256`."""
     files = sorted(
-        (p.relative_to(directory) for p in directory.rglob("*")
-         if p.is_file() and not SKIPPED_NAMES.intersection(p.relative_to(directory).parts)),
+        (
+            p.relative_to(directory)
+            for p in directory.rglob("*")
+            if (p.is_file() or p.is_symlink())
+            and not SKIPPED_NAMES.intersection(p.relative_to(directory).parts)
+        ),
         key=lambda rel: rel.parts,
     )
     digest = hashlib.sha256()
     for rel in files:
+        path = directory / rel
+        if path.is_symlink():
+            target = path.readlink()
+            if (
+                target.is_absolute()
+                or any(p == ".." or p.lower() == ".git" for p in target.parts)
+                or any(c in str(target) for c in ("\\", ":"))
+            ):
+                raise ValueError("unsafe source alias")
+            digest.update(rel.as_posix().encode() + b"\0link\0" + str(target).encode())
+            continue
         data = (directory / rel).read_bytes()
-        digest.update(rel.as_posix().encode() + b"\0" + str(len(data)).encode() + b"\0" + data)
+        digest.update(
+            rel.as_posix().encode() + b"\0" + str(len(data)).encode() + b"\0" + data
+        )
     return "sha256:" + digest.hexdigest()
 
 
@@ -54,7 +72,9 @@ def snapshot(directory: Path) -> str:
     for path in sorted(directory.rglob("*")):
         rel = path.relative_to(directory).as_posix()
         digest.update(rel.encode() + b"\0")
-        if path.is_file():
+        if path.is_symlink():
+            digest.update(str(path.readlink()).encode())
+        elif path.is_file():
             digest.update(path.read_bytes())
     return digest.hexdigest()
 
@@ -68,6 +88,7 @@ class Task:
     grader_dir: Path
     command: list[str]
     timeout: int
+    repository: bool = False
 
 
 @dataclass
@@ -84,15 +105,18 @@ def load_tasks() -> list[Task]:
         if manifest.get("kind") != "suite":
             continue
         for task in manifest["tasks"]:
-            tasks.append(Task(
-                manifest=path.name,
-                id=task["id"],
-                fixture=ROOT / task["fixture"]["path"],
-                tree_sha256=task["fixture"]["tree_sha256"],
-                grader_dir=ROOT / task["grading"]["grader_dir"],
-                command=task["grading"]["command"],
-                timeout=task["timeout_seconds"],
-            ))
+            tasks.append(
+                Task(
+                    manifest=path.name,
+                    id=task["id"],
+                    fixture=ROOT / task["fixture"]["path"],
+                    tree_sha256=task["fixture"]["tree_sha256"],
+                    grader_dir=ROOT / task["grading"]["grader_dir"],
+                    command=task["grading"]["command"],
+                    timeout=task["timeout_seconds"],
+                    repository=task["fixture"].get("repository") is not None,
+                )
+            )
     return tasks
 
 
@@ -100,14 +124,31 @@ def git(workspace: Path, *args: str) -> None:
     subprocess.run(
         # No background maintenance: it writes into .git after the commit returns, which
         # would look like the grader modifying the workspace.
-        ["git", "-c", "user.name=eval", "-c", "user.email=eval@localhost",
-         "-c", "maintenance.auto=false", "-c", "gc.auto=0", *args],
-        cwd=workspace, check=True, capture_output=True,
+        [
+            "git",
+            "-c",
+            "user.name=eval",
+            "-c",
+            "user.email=eval@localhost",
+            "-c",
+            "maintenance.auto=false",
+            "-c",
+            "gc.auto=0",
+            *args,
+        ],
+        cwd=workspace,
+        check=True,
+        capture_output=True,
     )
 
 
 def prepare_workspace(task: Task, workspace: Path) -> None:
-    shutil.copytree(task.fixture, workspace, ignore=shutil.ignore_patterns(*SKIPPED_NAMES))
+    shutil.copytree(
+        task.fixture,
+        workspace,
+        symlinks=True,
+        ignore=shutil.ignore_patterns(*SKIPPED_NAMES),
+    )
     git(workspace, "init", "-q")
     git(workspace, "add", "-A")
     git(workspace, "commit", "-q", "-m", "fixture")
@@ -116,7 +157,11 @@ def prepare_workspace(task: Task, workspace: Path) -> None:
 def overlay_solution(solution: Path, workspace: Path) -> None:
     deletions = solution / "DELETE"
     for src in solution.rglob("*"):
-        if src.is_file() and src != deletions and not SKIPPED_NAMES.intersection(src.parts):
+        if (
+            src.is_file()
+            and src != deletions
+            and not SKIPPED_NAMES.intersection(src.parts)
+        ):
             dst = workspace / src.relative_to(solution)
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
@@ -132,12 +177,35 @@ def overlay_solution(solution: Path, workspace: Path) -> None:
 def grade(task: Task, workspace: Path, expect_pass: bool, outcome: Outcome) -> None:
     stage = "solution" if expect_pass else "fixture"
     command = [
-        part.replace("{grader_dir}", str(task.grader_dir)).replace("{workspace}", str(workspace))
+        part.replace("{grader_dir}", str(task.grader_dir)).replace(
+            "{workspace}", str(workspace)
+        )
         for part in task.command
     ]
+    if task.repository:
+        if SANDBOX_CYBER is None:
+            outcome.violations.append(
+                "repository controls require --sandbox-cyber; no unconfined fallback"
+            )
+            return
+        command = [
+            str(SANDBOX_CYBER),
+            "--cwd",
+            str(workspace),
+            "--config",
+            "sandbox.network=off",
+            "sandbox",
+            "run",
+            "--policy",
+            "workspace-write",
+            "--",
+            *command,
+        ]
     before = snapshot(workspace)
     try:
-        result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=task.timeout)
+        result = subprocess.run(
+            command, cwd=ROOT, capture_output=True, text=True, timeout=task.timeout
+        )
     except subprocess.TimeoutExpired:
         outcome.violations.append(f"{stage}: grader timed out after {task.timeout}s")
         return
@@ -146,13 +214,19 @@ def grade(task: Task, workspace: Path, expect_pass: bool, outcome: Outcome) -> N
     lines = result.stdout.strip().splitlines()
     verdict = lines[-1] if lines else ""
     if verdict not in ("PASS", "FAIL"):
-        outcome.violations.append(f"{stage}: last stdout line is {verdict!r}, expected PASS or FAIL")
+        outcome.violations.append(
+            f"{stage}: last stdout line is {verdict!r}, expected PASS or FAIL"
+        )
     elif (verdict == "PASS") != (result.returncode == 0):
-        outcome.violations.append(f"{stage}: verdict {verdict} disagrees with exit {result.returncode}")
+        outcome.violations.append(
+            f"{stage}: verdict {verdict} disagrees with exit {result.returncode}"
+        )
     passed = result.returncode == 0
     if passed != expect_pass:
-        outcome.violations.append(f"{stage}: grader {'passed' if passed else 'failed'}, expected "
-                                  f"{'PASS' if expect_pass else 'FAIL'}")
+        outcome.violations.append(
+            f"{stage}: grader {'passed' if passed else 'failed'}, expected "
+            f"{'PASS' if expect_pass else 'FAIL'}"
+        )
     if snapshot(workspace) != before:
         outcome.violations.append(f"{stage}: grader modified the workspace")
 
@@ -163,27 +237,58 @@ def check(task: Task) -> Outcome:
     if not task.fixture.is_dir():
         outcome.violations.append(f"fixture {task.fixture} is missing")
         return outcome
-    if not solution.is_dir():
+    if not solution.is_dir() and not (
+        task.repository and (task.grader_dir / "reference.patch").is_file()
+    ):
         outcome.violations.append(f"solution {solution} is missing")
         return outcome
     actual = tree_sha256(task.fixture)
     if actual != task.tree_sha256:
-        outcome.violations.append(f"tree_sha256 is {actual}, manifest says {task.tree_sha256}")
+        outcome.violations.append(
+            f"tree_sha256 is {actual}, manifest says {task.tree_sha256}"
+        )
     with tempfile.TemporaryDirectory(prefix=f"eval-{task.id}-") as tmp:
         workspace = Path(tmp) / "workspace"
         prepare_workspace(task, workspace)
         grade(task, workspace, expect_pass=False, outcome=outcome)
-        overlay_solution(solution, workspace)
+        if task.repository:
+            tests = workspace / "tests"
+            if tests.is_dir():
+                shutil.rmtree(tests)
+                grade(task, workspace, expect_pass=False, outcome=outcome)
+            shutil.rmtree(workspace)
+            prepare_workspace(task, workspace)
+            git(workspace, "apply", str(task.grader_dir / "reference.patch"))
+        else:
+            overlay_solution(solution, workspace)
         grade(task, workspace, expect_pass=True, outcome=outcome)
     return outcome
 
 
 def main() -> int:
+    global ROOT, MANIFESTS, SOLUTIONS, SANDBOX_CYBER
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=ROOT,
+        help="prepared root containing eval/manifests and eval/graders",
+    )
+    parser.add_argument(
+        "--sandbox-cyber",
+        type=Path,
+        help="cyber executable for network-off real-repository controls",
+    )
     parser.add_argument("--task", action="append", help="only check these task ids")
     parser.add_argument("--jobs", type=int, default=4, help="tasks checked in parallel")
-    parser.add_argument("--verbose", action="store_true", help="print grader output for every task")
+    parser.add_argument(
+        "--verbose", action="store_true", help="print grader output for every task"
+    )
     args = parser.parse_args()
+    ROOT = args.root.resolve()
+    MANIFESTS = ROOT / "eval/manifests"
+    SOLUTIONS = ROOT / "eval/solutions"
+    SANDBOX_CYBER = args.sandbox_cyber.resolve() if args.sandbox_cyber else None
 
     tasks = load_tasks()
     if args.task:
@@ -204,7 +309,9 @@ def main() -> int:
             for log in outcome.logs:
                 print("     " + log.replace("\n", "\n     "))
         failed += bool(outcome.violations)
-    print(f"\n{len(outcomes) - failed}/{len(outcomes)} tasks: grader fails the fixture and passes the solution")
+    print(
+        f"\n{len(outcomes) - failed}/{len(outcomes)} tasks: grader fails the fixture and passes the solution"
+    )
     return 1 if failed else 0
 
 

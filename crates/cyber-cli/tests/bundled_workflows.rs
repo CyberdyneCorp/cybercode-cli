@@ -168,6 +168,10 @@ impl Env {
     /// A committed repository with `a.rs` and `b.rs`, both changed since; every action
     /// is allowed and commands run unsandboxed (the migrate agents commit in worktrees).
     fn new() -> Self {
+        Self::with_reply(reply)
+    }
+
+    fn with_reply(reply: scripted_model::Reply) -> Self {
         let model = scripted_model::ScriptedModel::start(reply);
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
@@ -365,4 +369,188 @@ fn solve_runs_three_real_patches_rejects_a_failed_check_and_reports_a_recommenda
         std::fs::read_to_string(env.repo.join("a.rs")).unwrap(),
         "fn a() {}\n"
     );
+}
+
+fn eval_reply(body: &Value) -> Value {
+    if task(body) == "judge solve" {
+        if body.to_string().contains("EVAL_REJECT_ALL") {
+            return result(
+                json!({"recommended_candidate":null,"rationale":"no candidate merits recommendation","alternatives":["first","second"]}),
+            );
+        }
+        return result(
+            json!({"recommended_candidate":"first","rationale":"passing host checks","alternatives":["second"]}),
+        );
+    }
+    let text = body["messages"].to_string();
+    if text.contains("EVAL_REPAIR_SINGLE") {
+        let path = text
+            .split("PRIVATE_PATH=")
+            .nth(1)
+            .map(|s| {
+                s.chars()
+                    .take_while(|c| *c != '\\' && *c != '"')
+                    .collect::<String>()
+            })
+            .unwrap_or_default();
+        let tool = match last_tool_call(body).as_deref() {
+            Some("probe_read") => {
+                json!({"id":"probe_native","name":"bash","input":{"command":format!("cat '{}'",path.replace('\'',"'\\''"))}})
+            }
+            Some("probe_native") => {
+                json!({"id":"repair","name":"bash","input":{"command":"printf 'fn fixed() {}\\n' > a.rs; printf ignored > ignored.rs"}})
+            }
+            Some("repair") => return json!({"content":"done"}),
+            _ => json!({"id":"probe_read","name":"read","input":{"path":path}}),
+        };
+        return json!({"tool_calls":[{"index":0,"id":tool["id"],"type":"function","function":{"name":tool["name"],"arguments":tool["input"].to_string()}}]});
+    }
+    reply(body)
+}
+
+/// Production-path evaluation: private-input reads fail through file tools and bash;
+/// single and solve grade final source rather than workflow lifecycle completion.
+#[test]
+fn eval_grades_single_and_host_selected_solve_without_exposing_private_inputs() {
+    let env = Env::with_reply(eval_reply);
+    let config_path = env.root.join("cyber/config/cyber.jsonc");
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+    config["sandbox"] = json!({"policy":"workspace-write","network":"off"});
+    std::fs::write(&config_path, config.to_string()).unwrap();
+    let inputs = env.root.join("inputs");
+    let fixture = inputs.join("eval/fixtures/demo");
+    let graders = inputs.join("eval/graders/demo");
+    let manifests = inputs.join("eval/manifests");
+    for dir in [&fixture, &graders, &manifests] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let credentials = env.root.join("home/.ssh/id_ed25519");
+    std::fs::create_dir_all(credentials.parent().unwrap()).unwrap();
+    std::fs::write(&credentials, "SENSITIVE_CREDENTIAL_MARKER").unwrap();
+    std::fs::write(fixture.join("a.rs"), "fn broken() {}\n").unwrap();
+    std::fs::write(fixture.join(".gitignore"), "ignored.rs\n").unwrap();
+    std::fs::write(graders.join("grade.py"),format!("# SENSITIVE_ORACLE_MARKER\nimport pathlib,sys\ntry:\n pathlib.Path({:?}).read_text();blocked=False\nexcept PermissionError:\n blocked=True\nok=blocked and 'fixed' in pathlib.Path(sys.argv[1],'a.rs').read_text() and not pathlib.Path(sys.argv[1],'ignored.rs').exists()\nprint('PASS' if ok else 'FAIL')\nsys.exit(0 if ok else 1)\n",credentials.display().to_string())).unwrap();
+    let manifest = json!({"schema_version":1,"id":"demo","description":"scripted eval","kind":"suite",
+        "harness":{"min_version":"0.1.0","tools":"tools.v1"},"tasks":[{
+        "id":"demo","prompt":format!("EVAL_REPAIR_SINGLE PRIVATE_PATH={}\nRepair the function",graders.join("grade.py").display()),
+        "fixture":{"path":"eval/fixtures/demo","tree_sha256":cyber_core::eval::tree_sha256(&fixture).unwrap(),
+            "environment":{"lock":["python3"]},"repository":{"url":"https://example.invalid/scripted-only",
+            "base_commit":"0".repeat(40),"reference_commit":"1".repeat(40),"archive_sha256":"2".repeat(64),"license":"test fixture"}},
+        "checks":[["grep","-q","fixed","a.rs"]],"budget":{"max_tokens":100000,"max_turns":10,"max_wall_seconds":60},"timeout_seconds":60,
+        "grading":{"grader_dir":"eval/graders/demo","tree_sha256":cyber_core::eval::tree_sha256(&graders).unwrap(),"command":["python3","{grader_dir}/grade.py","{workspace}"]}}]});
+    let path = manifests.join("demo.json");
+    std::fs::write(&path, manifest.to_string()).unwrap();
+    let exe = PathBuf::from(env!("CARGO_BIN_EXE_cyber"));
+    let hostile_template = env.root.join("hostile-template");
+    std::fs::create_dir_all(hostile_template.join("hooks")).unwrap();
+    // Executable templates must never enter a real-repository attempt's Git history.
+    std::fs::write(hostile_template.join("UNEXPECTED_TEMPLATE"), "ambient").unwrap();
+    for (scenario, strategy) in [
+        ("single", "single"),
+        ("solve", "solve"),
+        ("no_recommendation", "solve"),
+    ] {
+        let no_recommendation = scenario == "no_recommendation";
+        let mut invocation = manifest.clone();
+        invocation["tasks"][0]["prompt"] = format!(
+            "{} {}",
+            manifest["tasks"][0]["prompt"].as_str().unwrap(),
+            if no_recommendation {
+                "EVAL_REJECT_ALL"
+            } else {
+                ""
+            }
+        )
+        .into();
+        std::fs::write(&path, invocation.to_string()).unwrap();
+        let output = env.root.join(format!("results-{scenario}"));
+        let ran = Command::new(&exe)
+            .args(["eval", "run"])
+            .arg(&path)
+            .args([
+                "--strategy",
+                strategy,
+                "--model",
+                "test/main",
+                "--trials",
+                "1",
+                "--trial-start",
+                "2",
+                "--jobs",
+                "1",
+                "--keep-workspaces",
+                "--output",
+            ])
+            .arg(&output)
+            .env_clear()
+            .env("HOME", env.root.join("home"))
+            .env("CYBER_HOME", env.root.join("cyber"))
+            .env("CYBER_MODELS_PATH", env.root.join("models.json"))
+            .env("GIT_TEMPLATE_DIR", &hostile_template)
+            .env(
+                "CYBER_SANDBOX_HELPER",
+                exe.with_file_name("cyber-sandbox-exec"),
+            )
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .current_dir(&env.repo)
+            .output()
+            .unwrap();
+        assert!(
+            ran.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&ran.stdout),
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        let report: Value =
+            serde_json::from_slice(&std::fs::read(output.join("report.json")).unwrap()).unwrap();
+        assert_eval_outcome(&report, &output, strategy, no_recommendation);
+    }
+    for request in env._model.requests() {
+        assert!(
+            !request.to_string().contains("SENSITIVE_ORACLE_MARKER"),
+            "hidden source reached a model: {request}"
+        );
+    }
+}
+
+fn assert_eval_outcome(
+    report: &Value,
+    output: &std::path::Path,
+    strategy: &str,
+    no_recommendation: bool,
+) {
+    assert_eq!(report["strategy"], strategy);
+    assert_eq!(report["trials"][0]["trial"], 2);
+    assert_eq!(
+        report["trials"][0]["passed"], !no_recommendation,
+        "{report}"
+    );
+    assert!(
+        report["trials"][0]["tokens"]["input"].as_u64().unwrap() > 0,
+        "usage must survive unsuccessful outcomes: {report}"
+    );
+    if strategy == "single" {
+        let workspace = std::fs::read_dir(output.join("workspaces"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert!(
+            workspace.join("ignored.rs").is_file(),
+            "the ignored source regression must actually be exercised"
+        );
+        assert!(!workspace.join(".git/UNEXPECTED_TEMPLATE").exists());
+    }
+    if strategy == "solve" {
+        assert_eq!(
+            report["trials"][0]["solve"]["result"]["recommended_candidate"],
+            if no_recommendation {
+                Value::Null
+            } else {
+                json!("first")
+            }
+        );
+        assert_eq!(report["trials"][0]["solve"]["usage"]["scope"], "session");
+    }
 }

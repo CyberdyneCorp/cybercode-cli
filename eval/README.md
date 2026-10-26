@@ -9,6 +9,7 @@ Reproducible inputs for `harness-evaluation`. Every manifest in `manifests/` is 
 | `fixtures/` | Task repositories copied into a disposable workspace for each run. Each manifest pins the tree with `tree_sha256`. |
 | `graders/` | Hidden graders. They live outside the fixture, so they are outside every agent-writable root, and they inspect final workspace state rather than the agent's claims. |
 | `solutions/` | Reference solutions for suite tasks, one directory per task id. Never shown to agents; used only to prove the graders. |
+| `repositories/` | Pinned public source catalogs for separate real-repository pilots. Downloads stay outside Git. |
 
 ## Changing a fixture
 
@@ -77,4 +78,65 @@ fixture, grader or solution.
 `<capability>/<Requirement name>`, the fault class, and the test that executes it. Process-kill
 cases are not power-loss simulations; the `fault` field keeps them distinct.
 
-`cyber eval run` executes coding manifests from milestone M0.2, once the scripted provider exists.
+## Real repositories and verified solve
+
+`repositories/real-repositories-v1.json` describes four historical regressions from ripgrep
+(Rust) and Click (Python). It pins full base/fix commits, archive and source hashes, licenses,
+prompts and public check commands. Reference patches, independent tests and license notices
+live in the corresponding `graders/repo-*` directories. This retrospective pilot is separate
+from the twenty-task release baseline. Live results are pending.
+
+Build `cyber` and `cyber-sandbox-exec`, then import into a **new** private directory:
+
+```sh
+cargo build -p cyber-cli -p cyber-sandbox --bins
+cyber eval prepare eval/repositories/real-repositories-v1.json --output /tmp/cyber-repo-inputs
+```
+
+Import downloads HTTPS archives, checks their hashes and base-revision metadata, bounds
+extraction and validates source paths. It retains complete source with fresh base-only Git
+history per attempt. It executes no repository setup commands. Install the catalog's Python,
+pytest and Rust versions, and prefetch the pinned Cargo dependencies before disabling command
+network access. An incomplete cache is a setup failure, not a coding outcome.
+
+Use an isolated global configuration with `sandbox.network: "off"`, no personal hooks or
+instructions, and the intended provider login store. Keep inputs, references, other reports
+and private setup material outside agent-visible roots; configure `sandbox.deny_read` for
+additional private directories. Input roots and current grading reports are automatically
+hidden from model file tools and command execution. Command isolation remains enforced even
+though evaluation mode bypasses interactive permission questions.
+
+```sh
+cyber eval run /tmp/cyber-repo-inputs/eval/manifests/real-repositories-v1.json \
+  --model 'chatgpt/gpt-6.1-sol#medium' --strategy single \
+  --trials 3 --jobs 1 --output /tmp/cyber-repo-single --keep-workspaces
+cyber eval run /tmp/cyber-repo-inputs/eval/manifests/real-repositories-v1.json \
+  --model 'chatgpt/gpt-6.1-sol#medium' --strategy solve \
+  --trials 3 --jobs 1 --output /tmp/cyber-repo-solve --keep-workspaces
+```
+
+`single` remains the default. `solve` runs two independent candidates and a separate judge
+using the requested model. It requires public literal-argv `checks` on each task. Only the
+host-verified recommendation is independently graded; completion without a recommendation
+does not pass. Grading copies tracked and non-ignored source into an isolated network-off
+scratch directory, preserving the candidate and excluding ignored compiler products.
+Windows verification fails closed pending native command isolation (issue #9).
+
+For paired measurements, freeze an interleaved order before the first call and run one task
+at a time with `--task ID --trials 1 --trial-start N`. Retain failures and infrastructure
+outcomes rather than replacing them with retries. Reports add repository/grader provenance,
+selected-source evidence, end-to-end and verification timing, plus scoped solver/judge usage.
+Solve turn/tool totals are null when aggregate counts are unavailable. Subscription dollar
+amounts are lower bounds, not proof of free usage. Current budgets are soft accounting limits;
+reserved enforcement is separate roadmap work.
+
+Run network-off base/reference/tampering controls with an installed sandbox helper:
+
+```sh
+python3 scripts/check_eval_graders.py --root /tmp/cyber-repo-inputs \
+  --sandbox-cyber "$(command -v cyber)" --jobs 1
+```
+
+The [pilot protocol](../openspec/changes/add-real-repository-evaluations/design.md)
+defines the trial counts, budgets, exclusions and interpretation limits. Live calls are opt-in
+and never part of ordinary PR CI. Preserve historical benchmark files unchanged.
