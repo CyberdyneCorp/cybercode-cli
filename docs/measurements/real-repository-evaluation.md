@@ -1,11 +1,28 @@
 # Real-repository evaluation pilot
 
-Status on 2026-10-26: runner implemented and offline controls passing; the 24 live
-single-agent/solve observations are pending. This page contains no measured model-quality result.
+The four-task retrospective pilot completed 24 original attempts and eight separately labelled
+follow-ups on 2026-10-26. It demonstrated the runner, Rust repository tasks and independently
+graded solve selection, and found setup defects. **It does not establish a clean coding-quality
+comparison or a multi-agent advantage.**
 
-The [source catalog](../../eval/repositories/real-repositories-v1.json) contains four historical
-regressions from two public repositories. Sources are complete base snapshots, not small
-synthetic replacements. Each task has three planned single-agent trials and three solve runs.
+| Original strategy | Native passes | Clean verified outcomes after review | Blocked verification | Environment integrity uncertain |
+|---|---:|---:|---:|---:|
+| Single agent | 12/12 | 11/12 | 0 | 1 |
+| Solve, two candidates and independent judge | 6/12 | 5/12 | 6 | 1 |
+
+The eight follow-ups all passed: one single-agent repeat, one Rust solve repeat and six Click
+solve runs with corrected verification commands. They are additional observations, **not
+replacements** for the original attempts. Original raw reports remain unchanged. Neither
+blocked verification nor an uncertain environment proves the model's code incorrect.
+
+[Original summary](real-repository-evaluation/summary.json),
+[original outcome table](real-repository-evaluation/outcomes.csv),
+[follow-up summary](real-repository-evaluation-diagnostics/summary.json), and
+[follow-up outcomes](real-repository-evaluation-diagnostics/outcomes.csv) retain every observation.
+The JSON records distinguish native outcomes from reviewed infrastructure/integrity
+qualifications, source identities, tokens, elapsed time, host receipts and judge selection.
+
+## Tasks and provenance
 
 | Task | Language | Independent behavior |
 |---|---|---|
@@ -14,92 +31,101 @@ synthetic replacements. Each task has three planned single-agent trials and thre
 | `repo-click-short-help` | Python | Sentence boundaries and whole-word short-help truncation. |
 | `repo-click-argument-help` | Python | Exhaustive positional help when any argument is documented. |
 
-Full base and reference SHAs, archive/tree hashes, prompts, dependency/toolchain versions and
-licenses are pinned in the catalog. Reference patches and independent upstream cases stay
-outside candidate roots. The [evaluation guide](../../eval/README.md#real-repositories-and-verified-solve)
-documents import, execution and grader controls.
+These are complete pinned base snapshots from ripgrep and Click. The
+[source catalog](../../eval/repositories/real-repositories-v1.json) records repository URLs,
+base/fix SHAs, archive/source hashes, licenses, prompts and verification commands. Reference
+patches and independent upstream cases stay outside candidate roots. The
+[evaluation guide](../../eval/README.md#real-repositories-and-verified-solve) explains import,
+prerequisites and execution.
 
-## Offline acceptance
+The original cohort uses clean harness commit `b11865a57408c06f2274b9ef1de575209ad1608a`;
+follow-ups use `15bcc43bc4a1fe719adbb0ee38aa4a20220a9b44`. Both executable/helper hashes,
+materialized manifest/grader hashes, predetermined order and limits were frozen before their
+respective first calls. See the [original protocol](real-repository-evaluation/protocol.json),
+[original provenance](real-repository-evaluation/provenance.json),
+[follow-up protocol](real-repository-evaluation-diagnostics/protocol.json), and
+[follow-up provenance](real-repository-evaluation-diagnostics/provenance.json).
 
-On macOS arm64, Rust/Cargo 1.99.1, Python 3.13.5 and pytest 8.3.4:
+## Setup findings and corrections
 
-- All twelve corpus controls passed: untouched base FAIL, reference fix PASS and removed-test
-  tampering FAIL for every task. Caller workspaces remained unchanged.
-- The maintained grader checker passed all four prepared tasks, including its additional
-  deleted-test-directory control.
-- All four reference fixes passed through the actual CLI's independent, network-off grading
-  path with a local scripted provider. These are setup controls, excluded from live outcomes.
-- Seven bundled-workflow integration tests passed. The new cases exercise single-agent,
-  selected solve and no-recommendation outcomes; retain nonzero usage on unsuccessful runs;
-  deny both file-tool and shell reads of hidden inputs; deny grader access to fixture credentials;
-  exclude ignored source from compiler inputs; and refuse ambient Git templates.
-  An additional solve scenario retains completed inference usage and selection evidence when
-  the independent grader fails its infrastructure/output contract.
-- Four manifest/source-identity tests, fifteen evaluation unit tests and three Python
-  source-alias controls passed. CLI/core/tools Clippy passed with warnings denied.
-- All forty original synthetic-suite grader controls passed with Python 3.13 and Node on PATH.
-  Initial local invocations exposed an incomplete subprocess PATH; those were corrected before
-  this passing run, without changing the original fixtures or solutions.
-- Strict OpenSpec validation passed all 102 items.
+The frozen original Click checks used an inline Python import that command authorization
+refused before execution. Six solve runs therefore never reached eligible host verification.
+The original harness labelled them ordinary no-recommendation failures; the reviewed reports
+identify the infrastructure cause without altering the raw reports. The runner now classifies
+blocked/unknown checks without a verified survivor as infrastructure outcomes and preserves
+inference usage and receipts.
 
-Real network source import was exercised against all four pinned GitHub archives. Tests also
-cover digest mismatch, unsafe/duplicate archive paths, hardlinks, alias parents, Git metadata,
-bounded copying and authoritative recommendation checks. Native Linux execution and Windows
-build checks remain for PR CI; native Windows grading explicitly fails closed pending issue #9.
+The corrected catalog invokes `pytest --override-ini pythonpath=src` directly. It tests
+candidate source without installed-package ambiguity or an inline interpreter command. Both
+Click reference fixes passed scripted solve, host checks, judge and independent grading before
+six additional live runs. No command-security policy was weakened. Earlier failed scripted
+controls are setup diagnostics and contribute no live observations.
 
-The host initially lacked build space. Only old generated Rust object files were reclaimed,
-retaining binaries, source, historical reports and native desktop acceptance artifacts. Free
-space was approximately 15 GiB after the build/control preflight. No live Auth or desktop
-acceptance is part of this benchmark.
+New reference-control folders briefly fell outside the original operator deny list while
+runs 11 and 12 were active. They were moved under the existing protected setup root. Access
+cannot be ruled out, so those observations have uncertain integrity and do not support clean
+quality conclusions. Fresh isolated follow-ups passed after correcting the boundary; this does
+not retroactively validate the original two observations.
 
-## Live-discovered setup defects
+The CI reference-concurrency investigation and evaluator environment correction are recorded
+in [CI evidence](real-repository-evaluation/ci-reference-environment.json). Historical fixtures,
+graders, reference solutions, raw pilot reports and native desktop acceptance binaries are
+preserved.
 
-The initial frozen harness is commit `b11865a5`. Its Click host checks use an inline Python
-import that the conservative command-removal guard refuses before execution. These are
-infrastructure failures, even though that harness's native report labels them ordinary
-no-recommendation outcomes. Preserve native reports byte-for-byte and identify the reviewed
-classification separately. The runner now recognizes blocked/unknown checks without a
-verified survivor as infrastructure failures and retains their usage.
+## Offline verification
 
-The corrected catalog invokes `pytest --override-ini pythonpath=src` directly. This checks
-candidate source without an inline interpreter command or installed-package ambiguity.
-Both Click reference fixes passed the actual scripted solve, host checks, judge and independent
-grading path with that command. Earlier failed scripted controls remain excluded diagnostics.
-No command-security policy was weakened. Live corrected-command follow-ups remain pending
-and must be labelled separately rather than replacing original attempts.
+On macOS arm64 with Rust/Cargo 1.99.1, Python 3.13.5 and pytest 8.3.4:
 
-New reference-control directories briefly fell outside the initial operator deny list while
-scored runs 11 and 12 were active. They were moved under the existing protected setup root.
-Access cannot be ruled out, so both observations have uncertain environment integrity and
-must not support clean-quality conclusions. Preserve their raw results and report this
-qualification alongside any subsequent controlled diagnostics.
+- All twelve corpus controls passed: base FAIL, reference PASS and test-removal tampering FAIL
+  for every task, with caller workspaces unchanged.
+- The maintained checker passed all four real-repository tasks and all forty original suite
+  tasks. Four reference fixes passed through actual CLI independent grading, and both Click
+  reference fixes passed actual host solve authorization/check/judge/grading controls.
+- Seven bundled-workflow integration tests pass, including five evaluation scenarios covering
+  single, selected solve, no recommendation, grader infrastructure failure and blocked checks.
+  They cover protected input reads through file tools and bash, grader credential masking,
+  ignored-source exclusion, ambient Git templates and retained usage on unsuccessful outcomes.
+- Fifteen evaluation unit tests, four core manifest/source-identity tests, six Python controls
+  and two generated CLI-reference tests pass. CLI/core/tools Clippy and formatting pass;
+  strict OpenSpec validation passes 102 items.
 
-## Frozen live protocol
+Initial local checker runs exposed incomplete Python/Node subprocess PATH settings; those
+were corrected before the passing controls. Native links emit an `__eh_frame` size warning;
+its origin was not classified. The recorded checks passed despite that warning.
 
-Use `chatgpt/gpt-6.1-sol#medium` for single-agent, both solver candidates and the independent
-read-only judge. Share the existing account and refresh locks. Run one root at a time, with two
-concurrent solvers within solve. For each task in catalog order, trial 1 runs single then solve,
-trial 2 solve then single, and trial 3 single then solve. All 24 root outcomes remain in their
-denominators, including provider/setup failures and timeouts. Diagnostics never replace them.
+Native CI covers Linux/macOS and Windows builds; Windows real-repository grading explicitly
+fails closed pending command-isolation acceptance (issue #9). The real source/hidden-grader
+controls above were performed on macOS; Linux CI's offline fixture tests do not substitute for
+those four repository controls on Linux. No live Auth or desktop acceptance was performed.
 
-Each root gets 1,500,000 accounted tokens and 1,800 seconds. Single-agent execution has 60
-main steps; solve retains its native 20 steps per solver and bounded agent count. These are
-different internal policies. Hidden verification has a separate 300-second capture limit.
-End-to-end timing includes workspace setup and independent verification; native model/workflow
-latency is also retained, with different internal boundaries identified.
+## Limits and interpretation
 
-Freeze the clean harness commit, executable/helper hashes, materialized manifest/grader hashes,
-environment and order before the first provider call. Use isolated configuration and command
-network isolation. Hide private reference archives, historical results and other attempts'
-reports in addition to the runner's automatic current-input/report protections. Locked Rust
-dependencies are prefetched by the operator; agents do not receive network setup privileges.
+All inference roles requested `chatgpt/gpt-6.1-sol#medium` through the same account/store and
+refresh locks, with isolated configuration, command network off, protected inputs and fresh
+base-only Git repositories. One root ran at a time, with two concurrent solvers inside solve.
+The original order alternated strategies by trial as recorded in the protocol.
 
-Preserve raw results privately. Publish reviewed records with private paths removed and no
-credentials or full transcripts. Verify existing pilot artifacts remain byte-identical.
-Report native token classes and attribution uncertainty; subscription dollar totals are
-unpriced lower bounds, not zero-cost execution. Reserved budget enforcement remains priority 3.
+Each root had 1,500,000 accounted tokens and 1,800 seconds. Single-agent execution allowed 60
+main steps; solve used its native 20 steps per solver and bounded agent count. These are
+different internal policies. The bundled workflow also retains its soft dollar ceiling;
+subscription pricing is unavailable, so numeric zero-cost fields are **unpriced lower bounds**,
+not proof of free execution or a strict $5 guarantee. Reserved enforcement is separate work.
 
-These public historical tasks can be present in model training data. Four tasks and three
-trials do not establish superiority, competitor parity, or the twenty-task-per-adapter release
-gate. The [approved design](../../openspec/changes/add-real-repository-evaluations/design.md)
-defines the remaining acceptance work.
+Independent verification has its own 300-second capture limit. End-to-end and verification
+latencies are retained. Some early local validation builds overlapped original observations;
+timings are descriptive and cannot establish a controlled speed comparison. Locked Rust caches
+were prefetched before trials. Only owned old Rust object files and ignored generated build
+products were reclaimed; approximately 15 GiB was free after preflight. Peak per-attempt memory
+was not measured.
+
+Public historical fixes can be present in training data. Four tasks and three repetitions do
+not establish performance on unseen repositories, competitor parity or the twenty-task release
+gate. Wilson intervals in the files describe binary execution outcomes; repeated tasks are not
+independent repository samples. The original setup/integrity issues further prevent a clean
+quality comparison. Full private transcripts and credentials are not published.
+
+The [original verification](real-repository-evaluation/verification.json) and
+[follow-up verification](real-repository-evaluation-diagnostics/verification.json) confirm all
+25 protected historical artifacts remain byte-identical. The
+[approved design](../../openspec/changes/add-real-repository-evaluations/design.md) defines the
+remaining release gates and ordered automation work.

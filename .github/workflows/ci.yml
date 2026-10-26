@@ -187,7 +187,9 @@ jobs:
 
   specs:
     name: OpenSpec
-    runs-on: ubuntu-latest
+    # Freeze the shell-evaluation toolchain: its mkdir exit status is a lock primitive.
+    # Newer runner utility semantics must pass the checker preflight before adoption.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

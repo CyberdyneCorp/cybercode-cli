@@ -1,0 +1,71 @@
+{
+  "frozen_at": "2026-10-26T16:55:00.888011+00:00",
+  "revision": "15bcc43bc4a1fe719adbb0ee38aa4a20220a9b44",
+  "binary_sha256": {
+    "cyber": "6c8834d249c03638ab98aaa5f3dd1c6146a517076c30c4b48ab941c062e748fd",
+    "cyber-sandbox-exec": "de9732762fc489b2bd9aa155d139e5360a480eff55a3cc0c6cc246cf5b97ff4f"
+  },
+  "manifest_sha256": "e0ec341708a66fab351dec586b860f7c4e41a783e8e8bef99377008b265d52de",
+  "catalog_sha256": "84a5d9849350b6f35bf5ae4740901ca0cb948ff0e1922638ce2c5eb27519ab05",
+  "model": "chatgpt/gpt-6.1-sol#medium",
+  "platform": "macOS-26.7-arm64-arm-64bit",
+  "max_tokens": 1500000,
+  "max_wall_seconds": 1800,
+  "root_concurrency": 1,
+  "solve_candidates": 2,
+  "single_main_steps": 60,
+  "solve_solver_steps": 20,
+  "trials": [
+    {
+      "task": "repo-ripgrep-matches-all",
+      "trial": 2,
+      "strategy": "single",
+      "original_index": 12
+    },
+    {
+      "task": "repo-ripgrep-matches-all",
+      "trial": 2,
+      "strategy": "solve",
+      "original_index": 11
+    },
+    {
+      "task": "repo-click-short-help",
+      "trial": 1,
+      "strategy": "solve",
+      "original_index": 6
+    },
+    {
+      "task": "repo-click-argument-help",
+      "trial": 1,
+      "strategy": "solve",
+      "original_index": 8
+    },
+    {
+      "task": "repo-click-short-help",
+      "trial": 2,
+      "strategy": "solve",
+      "original_index": 13
+    },
+    {
+      "task": "repo-click-argument-help",
+      "trial": 2,
+      "strategy": "solve",
+      "original_index": 15
+    },
+    {
+      "task": "repo-click-short-help",
+      "trial": 3,
+      "strategy": "solve",
+      "original_index": 22
+    },
+    {
+      "task": "repo-click-argument-help",
+      "trial": 3,
+      "strategy": "solve",
+      "original_index": 24
+    }
+  ],
+  "cohort": "corrected-command-and-integrity-diagnostics-v1",
+  "interpretation": "Eight additional diagnostics, not replacements for original 24 observations; six correct Click host checks and two repeat environment-integrity-uncertain roots.",
+  "resource_preflight_free_bytes": 15574290432
+}

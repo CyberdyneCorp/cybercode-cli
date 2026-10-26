@@ -79,6 +79,32 @@ def snapshot(directory: Path) -> str:
     return digest.hexdigest()
 
 
+def atomic_mkdir_issue(
+    command: tuple[str, ...] = ("mkdir",), rounds: int = 8
+) -> str | None:
+    """Shell lock controls require exactly one successful directory creator."""
+    try:
+        with tempfile.TemporaryDirectory(prefix="eval-mkdir-") as tmp:
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                for attempt in range(rounds):
+                    target = str(Path(tmp) / f"lock {attempt}")
+
+                    def create(_: int) -> int:
+                        return subprocess.run(
+                            [*command, target], capture_output=True, timeout=10
+                        ).returncode
+
+                    statuses = list(pool.map(create, range(8)))
+                    if statuses.count(0) != 1 or any(s not in (0, 1) for s in statuses):
+                        return (
+                            "evaluation environment: mkdir must report exactly one successful "
+                            f"creator; observed exit codes {statuses}. Use compatible POSIX/GNU tools."
+                        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return f"evaluation environment: mkdir probe failed ({type(error).__name__})"
+    return None
+
+
 @dataclass
 class Task:
     manifest: str
@@ -295,6 +321,9 @@ def main() -> int:
         tasks = [t for t in tasks if t.id in set(args.task)]
     if not tasks:
         print("no suite tasks found")
+        return 1
+    if issue := atomic_mkdir_issue():
+        print(issue)
         return 1
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
         outcomes = list(pool.map(check, tasks))

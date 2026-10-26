@@ -7,7 +7,7 @@
 ## 2. Real source corpus and controls
 
 - [x] 2.1 Pass bounded disk/RAM/toolchain preflight; reclaim only owned regenerable build caches if necessary.
-- [ ] 2.2 Select four real historical tasks across two repositories (at least two Rust); freeze source, license, prompt, setup/dependency and grader provenance before live calls.
+- [x] 2.2 Select four real historical tasks across two repositories (at least two Rust); freeze source, license, prompt, setup/dependency and grader provenance before live calls.
 - [x] 2.3 Implement pinned import/materialization with verified tree identity and base-only fresh Git history, retaining complete usable source and notices.
 - [x] 2.4 Add independent graders/reference fixes; prove base FAIL/reference PASS, upstream regression checks and test-tampering refusal without modifying graded source.
 - [x] 2.5 Validate backward-compatible manifests/provenance, setup failure classification, path boundaries and cache behavior with offline tests.
@@ -16,10 +16,10 @@
 
 - [x] 3.1 Add explicit strategy selection retaining current default behavior; invoke bundled solve with two candidates and a separate judge.
 - [x] 3.2 Bind final grading to authoritative selected-source evidence; reject missing recommendations, invented workflow evidence and post-check source changes.
-- [ ] 3.3 Record complete strategy-specific costs/tokens/uncertainty, check/judge outcomes, failure denominators and actual elapsed time; test partial/infrastructure/timeout outcomes.
-- [ ] 3.4 Freeze trial order, model, shared account/store, budgets and environment; verify no personal hooks/config, grader feedback or future Git objects leak into attempts.
-- [ ] 3.5 Run twelve single trials and twelve separate solve runs, three per task; retain every outcome and separately label any diagnostics.
-- [ ] 3.6 Publish reviewed reports, reproducible provenance, limitations and comparisons while verifying original pilot artifacts remain byte-identical.
+- [x] 3.3 Record complete strategy-specific costs/tokens/uncertainty, check/judge outcomes, failure denominators and actual elapsed time; test partial/infrastructure/timeout outcomes.
+- [x] 3.4 Freeze trial order, model, shared account/store, budgets and environment; verify private boundaries. Original runs 11/12 are quarantined because new control directories briefly fell outside the deny list; eight corrected follow-ups use protected setup roots and remain separately labelled.
+- [x] 3.5 Run twelve single trials and twelve separate solve runs, three per task; retain every outcome and separately label any diagnostics.
+- [x] 3.6 Publish reviewed original 24 reports and eight separate diagnostics, reproducible provenance and limitations. No clean model-quality comparison is established; all 25 protected historical artifacts remain byte-identical.
 - [ ] 3.7 Run relevant Rust tests, format/Clippy, grader controls, strict OpenSpec, documentation checks and substantive code review; deliver green relevant CI and reviewable PRs.
 
 ## 4. Reserved budgets (existing approved scope)

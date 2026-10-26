@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "id": "real-repositories-v1",
+  "description": "Retrospective four-task Rust/Python repository pilot; separate single/solve strategies, three trials per task. Not a stable-release baseline.",
+  "tasks": [
+    {
+      "repository": "BurntSushi/ripgrep",
+      "base_commit": "4c2362d359d9913c7a5e391ccd79cb4da22bc89b",
+      "reference_commit": "7155f6408d370e699795dc75e954635abfaf08a6",
+      "archive_sha256": "38c9b748c857df410fa49a6951c50b0a0325f57936ad08e9af9fe3ab397b7cde",
+      "tree_sha256": "sha256:dfc3beb33534ab07bbe9a28c16378cc9b3067da11ba957fe109385ff0b72859a",
+      "id": "repo-ripgrep-hidden-dot",
+      "license": "MIT OR Unlicense",
+      "lock": [
+        "Rust 1.99.1",
+        "Cargo.lock from pinned upstream source",
+        "Offline Cargo registry prewarmed before trials"
+      ],
+      "prompt": "Fix a Unix hidden-file regression in ripgrep's ignore crate. Real file and directory names that start with a dot must remain hidden by default even if they end in one or several dots (for example .notes., .notes.. and ...). The path components . and .. are not real hidden file names. The hidden(false) override must still include hidden entries and their contents. Preserve visible trailing-dot names and non-UTF-8 Unix file-name behavior. Add regression coverage and preserve unrelated walking behavior. Do not add dependencies or change Cargo.lock.",
+      "checks": [
+        [
+          "cargo",
+          "test",
+          "--offline",
+          "--locked",
+          "-p",
+          "ignore",
+          "--lib"
+        ]
+      ],
+      "grader_dir": "eval/graders/repo-ripgrep-hidden-dot"
+    },
+    {
+      "repository": "BurntSushi/ripgrep",
+      "base_commit": "2c23e39e0215397884834c0d3cd5a1620f468d30",
+      "reference_commit": "f55548ba9f24dda192880d4a3da2b52e90f6e194",
+      "archive_sha256": "6a647ba3c9f3a2415ed672351a0aaed51af1998735060c823dfd0244000dc0bc",
+      "tree_sha256": "sha256:05a688cc3974630a3513d944611f85a2c0c07be63170b94f8d72a0e3739a4fab",
+      "id": "repo-ripgrep-matches-all",
+      "license": "MIT OR Unlicense",
+      "lock": [
+        "Rust 1.99.1",
+        "Cargo.lock from pinned upstream source",
+        "Offline Cargo registry prewarmed before trials"
+      ],
+      "prompt": "Fix GlobSet::matches_all and matches_all_candidate returning false positives when several different glob patterns share an internal matching strategy. The result must be true exactly when EVERY pattern matches the path, including multiple literal, basename, extension, prefix, suffix, required-extension and regex patterns. Empty sets match all paths; duplicate patterns preserve the all-match meaning. Preserve is_match and matches behavior and pattern index mapping. Add regression tests, avoid unnecessary per-call allocation, and do not add dependencies or change Cargo.lock.",
+      "checks": [
+        [
+          "cargo",
+          "test",
+          "--offline",
+          "--locked",
+          "-p",
+          "globset",
+          "--lib"
+        ]
+      ],
+      "grader_dir": "eval/graders/repo-ripgrep-matches-all"
+    },
+    {
+      "repository": "pallets/click",
+      "base_commit": "d036881798e34289a49b18a5c550c7cf687e5a7a",
+      "reference_commit": "70689853e39c30e36eb0d83d586cc914a74db9d3",
+      "archive_sha256": "537badead6cd2119640e83f8e4f59848941ad781c85135aaab2173d6cbb5c66e",
+      "tree_sha256": "sha256:ac98c1c9e974b764eb0751908f76b1c235b97769ba87571326bf835a85fdef98",
+      "id": "repo-click-short-help",
+      "license": "BSD-3-Clause",
+      "lock": [
+        "Python 3.13.5",
+        "pytest 8.3.4",
+        "Dependencies installed before trials; network disabled"
+      ],
+      "prompt": "Fix Click command short-help abbreviation handling. Only the first paragraph is considered; collapse whitespace and ignore an initial no-rewrap backspace marker. A period ends the sentence only at the end of the paragraph or when the following word does not start with a lowercase character. Thus \"Weigh apples vs. pears.\" stays one sentence, while \"Pick a fruit. 3 remain.\" ends at \"fruit.\". Apply the length limit after finding this sentence. Truncate on whole words with ... without splitting hyphenated words. If even the suffix does not fit, return the whole ...; empty text stays empty. Preserve existing unaffected behavior and update obsolete tests that encode the old period rule.",
+      "checks": [
+        [
+          "python3",
+          "-I",
+          "-c",
+          "import sys,pytest;sys.path.insert(0,'src');raise SystemExit(pytest.main(sys.argv[1:]))",
+          "-q",
+          "tests/test_utils/test_make_default_short_help.py"
+        ]
+      ],
+      "grader_dir": "eval/graders/repo-click-short-help"
+    },
+    {
+      "repository": "pallets/click",
+      "base_commit": "70689853e39c30e36eb0d83d586cc914a74db9d3",
+      "reference_commit": "bb695aaecdef95832d167fc1d508921745aa824e",
+      "archive_sha256": "7a909da8e96b3c4a3f30ae03cae6489b823835f67429ca6ceb783ed8cfac83df",
+      "tree_sha256": "sha256:1706fbd2157607a952359759311c7937ce169b80439920b13dd8d12a788fe39e",
+      "id": "repo-click-argument-help",
+      "license": "BSD-3-Clause",
+      "lock": [
+        "Python 3.13.5",
+        "pytest 8.3.4",
+        "Dependencies installed before trials; network disabled"
+      ],
+      "prompt": "Make Click's positional-argument help exhaustive when any argument is documented. If at least one Argument has help (including explicit empty help or a deprecation label), the Positional arguments section must list every Argument in declared order, including undocumented ones with an empty description. If none have help, omit that section. Argument.get_help_record must always return its metavar/help tuple; preserve option hidden behavior, variadic/optional metavars, deprecation formatting and unrelated help rendering. Add regression coverage.",
+      "checks": [
+        [
+          "python3",
+          "-I",
+          "-c",
+          "import sys,pytest;sys.path.insert(0,'src');raise SystemExit(pytest.main(sys.argv[1:]))",
+          "-q",
+          "tests/test_arguments.py"
+        ]
+      ],
+      "grader_dir": "eval/graders/repo-click-argument-help"
+    }
+  ]
+}

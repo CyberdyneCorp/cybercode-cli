@@ -45,5 +45,22 @@ class SourceIdentity(unittest.TestCase):
             self.assertNotEqual(before, graders.snapshot(root))
 
 
+class DirectoryCreationContract(unittest.TestCase):
+    def test_current_utility_has_one_creator(self):
+        self.assertIsNone(graders.atomic_mkdir_issue(rounds=2))
+
+    def test_success_on_already_existing_directory_is_not_a_lock_primitive(self):
+        # Models the observed utility failure without relying on a scheduling race.
+        program = "import pathlib,sys;pathlib.Path(sys.argv[1]).mkdir(exist_ok=True)"
+        issue = graders.atomic_mkdir_issue((sys.executable, "-c", program), rounds=1)
+        self.assertIn("exactly one successful creator", issue)
+
+    def test_missing_utility_is_a_setup_error(self):
+        issue = graders.atomic_mkdir_issue(
+            ("cyber-nonexistent-mkdir-fixture",), rounds=1
+        )
+        self.assertIn("evaluation environment", issue)
+
+
 if __name__ == "__main__":
     unittest.main()

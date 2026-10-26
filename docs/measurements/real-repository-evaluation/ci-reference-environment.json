@@ -1,0 +1,99 @@
+{
+  "reported_failure": {
+    "url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40359386226/job/121700395736",
+    "control": "fix-shell-kv-store reference: concurrent increments with stale lock"
+  },
+  "reproductions": [
+    {
+      "run": 40367979459,
+      "unchanged_attempts_before_failure": 8,
+      "symptom": "rmdir .lock.break: No such file or directory"
+    },
+    {
+      "run": 40368917545,
+      "unchanged_attempts_before_failure": 1,
+      "symptom": "same guard cleanup error under syscall tracing"
+    },
+    {
+      "run": 40374064546,
+      "unchanged_attempts_before_failure": 1,
+      "symptom": "lost increments under syscall tracing"
+    }
+  ],
+  "environment": {
+    "python": "3.14.4",
+    "platform": "Linux",
+    "kernel": "7.0.0-1017-azure",
+    "bash": "GNU bash, version 5.3.9(1)-release (x86_64-pc-linux-gnu)",
+    "source_sha256": {
+      "reference": "df5c137de3c7f4c2c4ca233ab9b9a96c4832d228c63275d0d5e4a8c9c4c90827",
+      "hidden_test": "a63e5269cfea87c557e29a247c85ae0654bb67c090e92cd17183c9ad10a04d36"
+    },
+    "mkdir": {
+      "executable": "/usr/bin/mkdir",
+      "resolved": "/usr/lib/cargo/bin/coreutils/mkdir",
+      "version": "mkdir (uutils coreutils) 0.10.0"
+    },
+    "rmdir": {
+      "executable": "/usr/bin/rmdir",
+      "resolved": "/usr/lib/cargo/bin/coreutils/rmdir",
+      "version": "rmdir (uutils coreutils) 0.10.0"
+    },
+    "rm": {
+      "executable": "/usr/bin/rm",
+      "resolved": "/usr/bin/gnurm",
+      "version": "rm (GNU coreutils) 9.7"
+    },
+    "ps": {
+      "executable": "/usr/bin/ps",
+      "resolved": "/usr/bin/ps",
+      "version": "ps from procps-ng 4.0.4"
+    },
+    "kernel_pid_max": "4194304",
+    "process_limits": [
+      "Max processes             58121                58121                processes "
+    ]
+  },
+  "confirmed_cause": {
+    "utility": "mkdir (uutils coreutils) 0.10.0",
+    "behavior": "Non-parents mkdir receives EEXIST but exits zero; competing processes both claim one lock.",
+    "trace_examples": [
+      {
+        "pid": 2313,
+        "argv": [
+          "mkdir",
+          "<control-temp>/store/.lock"
+        ],
+        "mkdir_result": "EEXIST",
+        "process_exit": 0
+      },
+      {
+        "pid": 2459,
+        "argv": [
+          "mkdir",
+          "<control-temp>/store/.lock"
+        ],
+        "mkdir_result": "EEXIST",
+        "process_exit": 0
+      }
+    ]
+  },
+  "remediation": {
+    "evaluation_runner": "ubuntu-24.04",
+    "capability_preflight": "exactly one successful mkdir creator per concurrent round",
+    "historical_fixtures_graders_solutions_changed": false,
+    "native_platform_runner_labels_changed": false
+  },
+  "validation": {
+    "local_python_regressions_passed": 6,
+    "local_original_grader_controls_passed": 40,
+    "same_local_control_on_main": "PASS",
+    "same_local_control_on_pr": "PASS",
+    "ubuntu_24_04_native_confirmation": "pending",
+    "latest_pr_ci": "pending"
+  },
+  "separate_probe": {
+    "ps_exit_2_live_lock_counterexample_observed": true,
+    "not_claimed_as_reported_ci_failure_cause": true
+  }
+}

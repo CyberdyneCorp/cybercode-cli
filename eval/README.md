@@ -70,7 +70,9 @@ python3 scripts/check_eval_graders.py            # all tasks; --task ID to narro
 For each task it copies the fixture, runs `git init`, requires the grader to FAIL the untouched
 fixture, overlays the solution and requires PASS. It also checks the output contract, that the
 grader left the workspace unchanged, and the manifest's `tree_sha256`. Run it after changing a
-fixture, grader or solution.
+fixture, grader or solution. The checker first verifies that competing `mkdir` commands report
+exactly one successful creator: shell lock controls require that contract. CI pins this
+evaluation job to Ubuntu 24.04; native platform tests continue on their existing runner labels.
 
 ## Recovery cases
 
@@ -84,7 +86,7 @@ cases are not power-loss simulations; the `fault` field keeps them distinct.
 (Rust) and Click (Python). It pins full base/fix commits, archive and source hashes, licenses,
 prompts and public check commands. Reference patches, independent tests and license notices
 live in the corresponding `graders/repo-*` directories. This retrospective pilot is separate
-from the twenty-task release baseline. Live results are pending.
+from the twenty-task release baseline. [Measured outcomes and qualifications](../docs/measurements/real-repository-evaluation.md) retain the original 24 attempts and eight separate follow-ups.
 
 Build `cyber` and `cyber-sandbox-exec`, then import into a **new** private directory:
 
