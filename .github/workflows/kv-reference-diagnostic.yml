@@ -1,0 +1,32 @@
+name: KV reference diagnostic
+
+on:
+  push:
+    branches: [diagnostics/kv-reference-ci]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Exercise unchanged Linux reference controls
+        env:
+          TMPDIR: ${{ runner.temp }}/kv-reference-control-tmp
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: >-
+          python3 scripts/diagnose_kv_reference.py
+          --output "${{ runner.temp }}/kv-reference-diagnostic"
+          --attempts 30
+      - name: Retain bounded diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kv-reference-diagnostic
+          path: ${{ runner.temp }}/kv-reference-diagnostic
+          if-no-files-found: warn
+          retention-days: 7
+
