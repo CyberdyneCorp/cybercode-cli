@@ -573,6 +573,7 @@ impl Controller {
             .await
             .map_err(error)?;
         let state = self.wait_model(&initial, &attempt, &session).await?;
+        self.require_settled_model(&session, &state)?;
         let final_entry = state.entries.iter().rev().find_map(|entry| match entry {
             cyber_server::runtime::Entry::Assistant(a) => Some(a),
             _ => None,
@@ -588,18 +589,6 @@ impl Controller {
             return Err("unattended attempt requires permission or user input".into());
         }
         let usage = self.runtime.job_usage(&session).map_err(error)?;
-        let outstanding = self
-            .runtime
-            .budget_reservations(cyber_server::runtime::ReservationQuery {
-                session_id: Some(session.clone()),
-                open_only: true,
-                limit: Some(1),
-                ..Default::default()
-            })
-            .map_err(error)?;
-        if !outstanding.reservations.is_empty() {
-            return Err("provider usage remains uncertain; inspect reservation evidence".into());
-        }
         let mut current = self.current(&initial.id, &attempt.id)?;
         let id = attempt.id.clone();
         current = self
@@ -696,6 +685,34 @@ impl Controller {
         self.records
             .update(&initial.id, current.revision, now(), move |s| s.pushed(&id))
             .map_err(error)?;
+        Ok(())
+    }
+    fn require_settled_model(
+        &self,
+        session: &str,
+        state: &cyber_server::runtime::SessionState,
+    ) -> Result<(), String> {
+        let outstanding = self
+            .runtime
+            .budget_reservations(cyber_server::runtime::ReservationQuery {
+                session_id: Some(session.to_owned()),
+                open_only: true,
+                limit: Some(1),
+                ..Default::default()
+            })
+            .map_err(error)?;
+        if !outstanding.reservations.is_empty() {
+            return Err("provider usage remains uncertain; inspect reservation evidence".into());
+        }
+        if state.calls.values().any(|call| {
+            matches!(
+                call.status,
+                cyber_server::runtime::CallStatus::Dispatched
+                    | cyber_server::runtime::CallStatus::OutcomeUnknown
+            )
+        }) {
+            return Err("tool outcome remains uncertain; inspect retained Session evidence".into());
+        }
         Ok(())
     }
     async fn wait_model(

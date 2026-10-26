@@ -12,8 +12,8 @@ The implementation was rebased onto main `89bd4e49` (PR49) and the reserved-budg
 | `cargo test -p cyber-server --lib autofix` | 3 passed: concurrent revision claims, binding/dedupe after database reopen and real projection replay, rollback of failed transitions |
 | `cargo test -p cyber-server --test http autofix` | 3 passed: owner authentication/Origin, Location/revision fences, enable key and linked Session validation |
 | `cargo test -p cyber-tools --test autofix_restrictions` | 5 passed: canonical path confinement, metadata/policy/pin protection, no extension tools or hooks, no LSP/formatter side effects |
-| `cargo test -p cyber-app --lib autofix` | 39 passed; four native acceptance cases excluded by their explicit ignore annotations and run separately below |
-| Explicit `cargo test -p cyber-app --lib autofix -- --ignored --test-threads=1` | 4 passed on this macOS host: credential/write confinement; pinned-file rewrite and parent-rename refusal; real offline Rust baseline failure → corrected patch passing pinned tests; controller fix/verify/non-force push to a disposable local Git remote with no repeat |
+| `cargo test -p cyber-app --lib autofix` | 39 passed; five native acceptance cases excluded by their explicit ignore annotations and run separately below |
+| Explicit native acceptance (four-case suite plus a separate fault-injected response case) | 5 passed on this macOS host: credential/write confinement; pinned-file rewrite and parent-rename refusal; real offline Rust baseline failure → corrected patch passing pinned tests; controller fix/verify/non-force push to a disposable local Git remote with no repeat; interrupted response with uncertain usage pauses without another attempt |
 | CLI PR parsing | 3 passed; enable controls preserve argv and require explicit repository/limits |
 | Generated CLI reference | 2 passed after the main merge; `docs/cli.md` matches Clap |
 | TUI auto-fix command parsing | 3 passed |
@@ -32,6 +32,6 @@ Review of the budget prerequisite also corrected immutable channel/MCP attributi
 
 ## Remaining acceptance and limits
 
-GitHub Actions results belong to the current PR head; local checks are not evidence of remote CI success. Live GitHub mutation acceptance remains pending. Linux native verifier acceptance has not been run here; Windows execution explicitly refuses. The feature remains experimental, with fork writes, GitHub App provisioning, hosted Runner failover and general Channels deferred.
+GitHub Actions results belong to the current PR head; local checks are not evidence of remote CI success. Live GitHub mutation acceptance remains pending. Windows CI found an unused Unix-only fixture field; it is now platform-gated without suppressing lint, and the new head must pass CI. Linux native verifier acceptance has not been run here; Windows execution explicitly refuses. The feature remains experimental, with fork writes, GitHub App provisioning, hosted Runner failover and general Channels deferred.
 
 Strict initial production bounds support official stateless text/function OpenAI Responses. ChatGPT/Copilot and other adapters refuse strict mode; these local fixtures do not establish live provider billing or latency. The verifier uses the existing workspace-write sandbox, with known/private credential and IPC paths hidden, rather than a fully hermetic filesystem. Commands must work offline with the available dependencies. Unknown attempts require inspection and a new explicit subscription after disabling the old one; ordinary resume cannot acknowledge uncertain effects.

@@ -96,6 +96,7 @@ struct Fixture {
     _temp: tempfile::TempDir,
     controller: Arc<Controller>,
     model: Arc<ScriptedAdapter>,
+    #[cfg(unix)]
     remote: PathBuf,
     head: String,
 }
@@ -128,6 +129,9 @@ fn git(path: &Path, args: &[&str]) -> String {
 }
 impl Fixture {
     async fn new() -> Self {
+        Self::with_model(script()).await
+    }
+    async fn with_model(model: Arc<ScriptedAdapter>) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
         let work = root.join("project");
@@ -156,7 +160,6 @@ impl Fixture {
             ))
             .unwrap(),
         );
-        let model = script();
         let resolver: Arc<dyn ModelResolver> = Arc::new(Models(model.clone()));
         let runtime = Runtime::new(RuntimeOptions {
             store: store.clone(),
@@ -199,6 +202,7 @@ impl Fixture {
             _temp: temp,
             controller,
             model,
+            #[cfg(unix)]
             remote,
             head,
         }
@@ -513,5 +517,44 @@ async fn queued_subscription_respects_backoff_without_querying_credentials() {
     assert!(f.controller.claim_next().await.unwrap().is_none());
     assert!(f.controller.github.get().is_none());
     assert!(f.model.requests().is_empty());
+    f.controller.runtime.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "controlled native fault-injected stream acceptance; run explicitly"]
+async fn interrupted_response_with_uncertain_usage_never_queues_another_fix() {
+    let model = Arc::new(ScriptedAdapter::new(vec![vec![
+        ScriptStep::Event(LlmEvent::TextDelta {
+            text: "partial fix response".into(),
+        }),
+        ScriptStep::Event(LlmEvent::Usage(Usage {
+            input: 10,
+            output: 3,
+            ..Default::default()
+        })),
+        ScriptStep::Event(LlmEvent::Finish {
+            reason: FinishReason::Stop,
+        }),
+        ScriptStep::Error {
+            error: cyber_llm::ErrorKind::InvalidRequest,
+            message: "fixture connection lost after finish".into(),
+        },
+    ]]));
+    let f = Fixture::with_model(model).await;
+    let server = f
+        .github(Arc::new(std::sync::Mutex::new(f.head.clone())), true)
+        .await;
+    let s = f.claimed();
+    let failure = f.controller.attempt(s.clone()).await.unwrap_err();
+    assert!(failure.contains("usage remains uncertain"), "{failure}");
+    f.controller.record_unknown(&s.id, "afxa_one", &failure);
+    let value = f.controller.records.get(&s.id).unwrap();
+    assert_eq!(value.status, Status::Paused);
+    assert_eq!(value.active().unwrap().stage, Stage::Unknown);
+    assert_eq!(value.failures, 0);
+    assert!(value.queued.is_empty());
+    assert_eq!(f.model.requests().len(), 1);
+    server.abort();
     f.controller.runtime.shutdown().await;
 }
