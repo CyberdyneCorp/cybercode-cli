@@ -39,7 +39,10 @@ def write_json(path: Path, value: object) -> None:
 def log_text(value: str | bytes | None, temporary: Path) -> str:
     raw = value.encode() if isinstance(value, str) else value or b""
     text = raw[:MAX_LOG_BYTES].decode("utf-8", errors="replace")
-    for path, label in [(str(ROOT), "<repository>"), (str(temporary), "<control-temp>")]:
+    for path, label in [
+        (str(ROOT), "<repository>"),
+        (str(temporary), "<control-temp>"),
+    ]:
         text = text.replace(path, label)
     if len(raw) > MAX_LOG_BYTES:
         text += "\n<diagnostic log truncated at 1 MiB>\n"
@@ -47,13 +50,18 @@ def log_text(value: str | bytes | None, temporary: Path) -> str:
 
 
 def environment_metadata() -> dict:
-    bash = subprocess.run(["bash", "--version"], capture_output=True, text=True, timeout=10)
+    bash = subprocess.run(
+        ["bash", "--version"], capture_output=True, text=True, timeout=10
+    )
     metadata = {
         "python": platform.python_version(),
         "platform": platform.system(),
         "kernel": platform.release(),
         "bash": bash.stdout.splitlines()[0] if bash.stdout else "unavailable",
-        "source_sha256": {"reference": digest(REFERENCE), "hidden_test": digest(HIDDEN)},
+        "source_sha256": {
+            "reference": digest(REFERENCE),
+            "hidden_test": digest(HIDDEN),
+        },
     }
     for label, path in [
         ("kernel_pid_max", "/proc/sys/kernel/pid_max"),
@@ -64,11 +72,17 @@ def environment_metadata() -> dict:
             metadata[label] = Path(path).read_text()[:1024].strip()
     limits = Path("/proc/self/limits")
     if limits.is_file():
-        metadata["process_limits"] = [line for line in limits.read_text().splitlines() if line.startswith("Max processes")]
+        metadata["process_limits"] = [
+            line
+            for line in limits.read_text().splitlines()
+            if line.startswith("Max processes")
+        ]
     return metadata
 
 
-def unchanged_test(output: Path, temporary: Path, attempts: int) -> tuple[list[dict], int]:
+def unchanged_test(
+    output: Path, temporary: Path, attempts: int
+) -> tuple[list[dict], int]:
     observations = []
     deadline = time.monotonic() + 600
     for number in range(1, attempts + 1):
@@ -87,7 +101,9 @@ def unchanged_test(output: Path, temporary: Path, attempts: int) -> tuple[list[d
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 start_new_session=True,
-                env=dict(os.environ, TMPDIR=str(temporary), PYTHONDONTWRITEBYTECODE="1"),
+                env=dict(
+                    os.environ, TMPDIR=str(temporary), PYTHONDONTWRITEBYTECODE="1"
+                ),
             )
             try:
                 stdout, stderr = process.communicate(timeout=min(120, remaining))
@@ -97,12 +113,15 @@ def unchanged_test(output: Path, temporary: Path, attempts: int) -> tuple[list[d
                 stdout, stderr = process.communicate()
                 row.update(exit=None, timeout=True)
             row["seconds"] = round(time.monotonic() - started, 4)
-            row["copied_sources_unchanged"] = (
-                digest(workspace / "kv.sh") == digest(REFERENCE)
-                and digest(workspace / "hidden_test_kv.py") == digest(HIDDEN)
+            row["copied_sources_unchanged"] = digest(workspace / "kv.sh") == digest(
+                REFERENCE
+            ) and digest(workspace / "hidden_test_kv.py") == digest(HIDDEN)
+            (output / f"attempt-{number:02d}.stdout.txt").write_text(
+                log_text(stdout, temporary)
             )
-            (output / f"attempt-{number:02d}.stdout.txt").write_text(log_text(stdout, temporary))
-            (output / f"attempt-{number:02d}.stderr.txt").write_text(log_text(stderr, temporary))
+            (output / f"attempt-{number:02d}.stderr.txt").write_text(
+                log_text(stderr, temporary)
+            )
             observations.append(row)
             write_json(output / "native-observations.json", observations)
             print(f"Unchanged native attempt {number}: exit {row['exit']}", flush=True)
@@ -125,27 +144,44 @@ def injected_probe(output: Path, temporary: Path) -> dict:
         real_ps = shutil.which("ps")
         if real_ps is None:
             return {"kind": "injected_ps_status_2", "status": "ps_unavailable"}
-        before = subprocess.run([real_ps, "-p", str(holder)], capture_output=True, timeout=10)
+        before = subprocess.run(
+            [real_ps, "-p", str(holder)], capture_output=True, timeout=10
+        )
         binary = workspace / "bin"
         binary.mkdir()
         shim = binary / "ps"
         shim.write_text(
             "#!/bin/sh\n"
             f'if [ "$#" -eq 2 ] && [ "$1" = -p ] && [ "$2" = {holder} ]; then exit 2; fi\n'
-            f"exec {shlex.quote(real_ps)} \"$@\"\n"
+            f'exec {shlex.quote(real_ps)} "$@"\n'
         )
         shim.chmod(0o700)
         result = subprocess.run(
             ["bash", str(source), "-d", str(store), "incr", "counter", "2"],
             capture_output=True,
             timeout=10,
-            env=dict(os.environ, PATH=str(binary) + os.pathsep + os.environ.get("PATH", ""), KV_LOCK_TIMEOUT="1"),
+            env=dict(
+                os.environ,
+                PATH=str(binary) + os.pathsep + os.environ.get("PATH", ""),
+                KV_LOCK_TIMEOUT="1",
+            ),
         )
-        after = subprocess.run([real_ps, "-p", str(holder)], capture_output=True, timeout=10)
+        after = subprocess.run(
+            [real_ps, "-p", str(holder)], capture_output=True, timeout=10
+        )
         counter = store / "counter"
-        observed = before.returncode == after.returncode == 0 and result.returncode == 0 and counter.is_file() and counter.read_bytes() == b"2"
-        (output / "injected-probe.stdout.txt").write_text(log_text(result.stdout, temporary))
-        (output / "injected-probe.stderr.txt").write_text(log_text(result.stderr, temporary))
+        observed = (
+            before.returncode == after.returncode == 0
+            and result.returncode == 0
+            and counter.is_file()
+            and counter.read_bytes() == b"2"
+        )
+        (output / "injected-probe.stdout.txt").write_text(
+            log_text(result.stdout, temporary)
+        )
+        (output / "injected-probe.stderr.txt").write_text(
+            log_text(result.stderr, temporary)
+        )
         return {
             "kind": "injected_ps_status_2",
             "holder_alive_before_and_after": before.returncode == after.returncode == 0,
@@ -170,14 +206,26 @@ def main() -> int:
     observations, status = unchanged_test(args.output, temporary, args.attempts)
     probe = injected_probe(args.output, temporary)
     write_json(args.output / "injected-probe.json", probe)
-    unchanged = metadata["source_sha256"] == {"reference": digest(REFERENCE), "hidden_test": digest(HIDDEN)}
-    write_json(args.output / "summary.json", {
-        "native_attempts": len(observations),
-        "native_status": "no_failure_observed" if status == 0 else "failure_observed" if status == 1 else "diagnostic_time_limit",
-        "original_sources_unchanged": unchanged,
-        "injected_probe_is_separate_from_native_results": True,
-        "injected_ps_error_counterexample_observed": probe.get("unsafe_live_lock_reclaimed", False),
-    })
+    unchanged = metadata["source_sha256"] == {
+        "reference": digest(REFERENCE),
+        "hidden_test": digest(HIDDEN),
+    }
+    write_json(
+        args.output / "summary.json",
+        {
+            "native_attempts": len(observations),
+            "native_status": (
+                "no_failure_observed"
+                if status == 0
+                else "failure_observed" if status == 1 else "diagnostic_time_limit"
+            ),
+            "original_sources_unchanged": unchanged,
+            "injected_probe_is_separate_from_native_results": True,
+            "injected_ps_error_counterexample_observed": probe.get(
+                "unsafe_live_lock_reclaimed", False
+            ),
+        },
+    )
     return status if unchanged else 2
 
 
