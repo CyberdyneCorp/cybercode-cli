@@ -29,6 +29,8 @@ The first release prioritizes reliable editing, recovery and measurable coding q
 
 ## P0: Local core
 
+**Real-repository evaluation pilot: proposed, not implemented.** [Proposal, design and ordered tasks](openspec/changes/add-real-repository-evaluations/proposal.md) cover four historical tasks from two repositories (at least two Rust), three trials per task, and separately graded single-agent/verified-solve strategies. Original pilot results remain unchanged; this does not close the twenty-task-per-adapter stable-release gate. Follow-on implementation uses the already reviewed reserved-budget, persistent-schedule and transcript-retention designs in [complete-dashboard-and-automation](openspec/changes/complete-dashboard-and-automation/design.md).
+
 **Capabilities:** `workspace-trust`, `harness-evaluation`, `sandbox` (macOS/Linux enforcement, network and credential boundaries), `observability-costs` (usage and budgets), `cli-commands`, `configuration`, `storage-events`, `installation-upgrade`, `provider-catalog`, `provider-credentials`, `session-runtime`, `system-context`, `compaction`, `tool-registry`, `builtin-tools`, `permissions-modes` (rules + `default`/`plan` modes), `snapshots-checkpoints` (snapshot + revert), `agents-subagents` (built-in & custom agents, step limits), `skills-commands` (basics), `mcp` (stdio + HTTP tools), `server-api`, `client-sdk` (TS), `tui` (basics), `exec-mode`.
 
 **Milestones**
