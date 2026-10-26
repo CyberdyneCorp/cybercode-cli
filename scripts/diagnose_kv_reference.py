@@ -81,7 +81,7 @@ def environment_metadata() -> dict:
 
 
 def unchanged_test(
-    output: Path, temporary: Path, attempts: int
+    output: Path, temporary: Path, attempts: int, trace: bool
 ) -> tuple[list[dict], int]:
     observations = []
     deadline = time.monotonic() + 600
@@ -95,8 +95,23 @@ def unchanged_test(
             shutil.copy2(HIDDEN, workspace / "hidden_test_kv.py")
             started = time.monotonic()
             row = {"attempt": number, "kind": "unchanged_native_test"}
+            command = [sys.executable, "-m", "unittest", "-v", CASE]
+            trace_path = workspace / "syscalls.log"
+            if trace:
+                command = [
+                    "strace",
+                    "-f",
+                    "-ttt",
+                    "-s",
+                    "256",
+                    "-e",
+                    "trace=%file,%process",
+                    "-o",
+                    str(trace_path),
+                    *command,
+                ]
             process = subprocess.Popen(
-                [sys.executable, "-m", "unittest", "-v", CASE],
+                command,
                 cwd=workspace,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -126,6 +141,23 @@ def unchanged_test(
             write_json(output / "native-observations.json", observations)
             print(f"Unchanged native attempt {number}: exit {row['exit']}", flush=True)
             if row["exit"] != 0 or not row["copied_sources_unchanged"]:
+                if trace_path.exists():
+                    written = 0
+                    with (output / f"attempt-{number:02d}.lock-trace.txt").open(
+                        "w"
+                    ) as saved:
+                        for line in trace_path.open(errors="replace"):
+                            if (
+                                ".lock" in line
+                                or "execve(" in line
+                                or "exited with" in line
+                            ):
+                                line = log_text(line, temporary)
+                                written += len(line.encode())
+                                if written > 8 * MAX_LOG_BYTES:
+                                    saved.write("<lock trace truncated at 8 MiB>\n")
+                                    break
+                                saved.write(line)
                 return observations, 1
     return observations, 0
 
@@ -195,6 +227,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--attempts", type=int, default=30)
+    parser.add_argument("--trace", action="store_true")
     args = parser.parse_args()
     if not 1 <= args.attempts <= 30:
         parser.error("attempts must be between 1 and 30")
@@ -203,7 +236,9 @@ def main() -> int:
     temporary.mkdir(parents=True, exist_ok=True)
     metadata = environment_metadata()
     write_json(args.output / "environment.json", metadata)
-    observations, status = unchanged_test(args.output, temporary, args.attempts)
+    observations, status = unchanged_test(
+        args.output, temporary, args.attempts, args.trace
+    )
     probe = injected_probe(args.output, temporary)
     write_json(args.output / "injected-probe.json", probe)
     unchanged = metadata["source_sha256"] == {
