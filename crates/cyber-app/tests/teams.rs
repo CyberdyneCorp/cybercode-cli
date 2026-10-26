@@ -2709,8 +2709,8 @@ async fn reserved_team_budget_is_captured_without_dispatching_a_provider() {
         .await
         .unwrap();
     assert_eq!(members.len(), 1);
-    let (stored,_) = app.app.runtime.team_membership(lead).unwrap().unwrap();
-    assert_eq!(stored.id,team.id);
+    let (stored, _) = app.app.runtime.team_membership(lead).unwrap().unwrap();
+    assert_eq!(stored.id, team.id);
     let created = team_records(&app, lead, "team.created.1");
     assert_eq!(created[0]["budget"]["enforcement"], "reserved");
     assert_eq!(created[0]["budget"]["max_tokens"], 1000);
