@@ -317,10 +317,12 @@ pub(super) fn insights(
 
 fn calls(db: &Connection, since_ms: i64) -> rusqlite::Result<Vec<Call>> {
     let mut statement = db.prepare(
-        "SELECT session_id, root_id, workflow_run_id, agent, started_ms, ended_ms, prompt_tokens,
-            input_tokens + output_tokens + reasoning_tokens + cache_read_tokens + cache_write_tokens,
-            cost, directory
-         FROM usage_step WHERE started_ms >= ?1 AND failed = 0",
+        "SELECT session_id, root_id, workflow_run_id, agent, MIN(started_ms), MIN(started_ms)+MAX(MAX(ended_ms-started_ms,0)), MAX(prompt_tokens),
+            SUM(input_tokens + output_tokens + reasoning_tokens + cache_read_tokens + cache_write_tokens),
+            SUM(cost), directory
+         FROM usage_step WHERE started_ms >= ?1
+         GROUP BY COALESCE('reservation:'||reservation_id,'event:'||event_id)
+         HAVING MAX(failed=0)=1",
     )?;
     let n = |r: &rusqlite::Row<'_>, i: usize| r.get::<_, i64>(i).map(|v| v.max(0) as u64);
     statement

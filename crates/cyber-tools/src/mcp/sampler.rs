@@ -204,6 +204,19 @@ async fn execute(
             infer(&guarded, request, &mut observed).await
         } => result,
     };
+    settle_sampling(inv, server, &model, started, &observed, proxy, &guarded).await?;
+    response(host, inv, &model, parsed, &cancel, result?).await
+}
+
+async fn settle_sampling(
+    inv: &Invocation,
+    server: &str,
+    model: &ResolvedModel,
+    started: Instant,
+    observed: &Observed,
+    proxy: Option<Proxy>,
+    guarded: &cyber_server::runtime::GuardedModel,
+) -> Result<(), &'static str> {
     // The owner survives cancellation of stream opening/consumption, so observed
     // reserved usage is durably settled before the tool reports its outcome.
     let flushed = guarded.flush().await;
@@ -215,13 +228,13 @@ async fn execute(
         None => observed.ended,
     };
     if !guarded.reservation_owned() {
-        bill(inv, server, &model, started, &observed).await?;
+        bill(inv, server, model, started, observed).await?;
     }
     flushed.map_err(|_| "Sampling reservation usage settlement failed")?;
     if !settled {
         return Err("Sampling transport completion is unverified");
     }
-    response(host, inv, &model, parsed, &cancel, result?).await
+    Ok(())
 }
 
 async fn response(

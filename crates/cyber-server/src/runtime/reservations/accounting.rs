@@ -219,6 +219,21 @@ pub(super) fn billing(
         cost: delta.cost_microusd.map(|v| v as f64 / 1_000_000.0),
     };
     let mut event = event(AUXILIARY_USAGE, &bill);
+    let raw_origin: String = tx.query_row(
+        "SELECT origin_context FROM budget_reservation WHERE request_id=?1",
+        [&request.request_id],
+        |row| row.get(0),
+    )?;
+    let origin: crate::runtime::usage_origin::StepOrigin = serde_json::from_str(&raw_origin)
+        .map_err(|_| {
+            super::refusal(
+                "invalid",
+                "reserved request origin evidence is corrupt",
+                None,
+            )
+        })?;
+    event.data["origin"] = json!(origin.origin);
+    event.data["mcp_client"] = json!(origin.mcp_client);
     event.causation_id = Some(receipt_id.into());
     event.data["reservation_id"] = request.request_id.clone().into();
     event.data["reservation_receipt_id"] = receipt_id.into();

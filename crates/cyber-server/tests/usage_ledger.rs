@@ -161,7 +161,8 @@ fn downgrade_and_reopen(h: &mut Harness) -> Runtime {
     db.execute_batch(
         "DROP TABLE usage_step; DROP TABLE usage_daily; DROP TABLE usage_backfill;
          DELETE FROM migration
-         WHERE id IN ('20261018000000_usage_ledger', '20261019010000_usage_origin');",
+         WHERE id IN ('20261018000000_usage_ledger', '20261019010000_usage_origin',
+             '20261026050000_usage_reservation_links');",
     )
     .unwrap();
     drop(db);

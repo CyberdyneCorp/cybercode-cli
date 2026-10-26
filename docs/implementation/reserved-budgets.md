@@ -11,7 +11,7 @@ Local checks passed:
 | `cargo test -p cyber-store --test reservations` | 15 passed: atomic concurrent admission, rollback, request identity, uncertain restart, cumulative settlement, owner audit, deadlines and canonical retry holds |
 | `cargo test -p cyber-server --lib runtime::reservations` | 12 passed: inherited/current scopes, missing evidence, all five token classes, reserved receipt-to-canonical turn interleaving, local-midnight partial/unknown/audited settlement and saved scheduled context |
 | Focused native usage folding and signed child receipt tests | 2 passed: linked evidence retained, exact deltas, replay and underflow refusal |
-| `cargo test -p cyber-server --test reserved_budgets` | 7 passed: no-dispatch bounds/pricing, concurrent children, canonical evidence/replay, post-Finish failure, cancellation during opening, deadline and retry turn identity |
+| `cargo test -p cyber-server --test reserved_budgets` | 9 passed: no-dispatch bounds/pricing, concurrent children, canonical evidence/replay, post-Finish failure, cancellation during opening, deadline/retry turn identity and immutable channel/MCP attribution across queued inputs and late settlement |
 | Existing `budgets` and `budget_errors` suites | 13 + 3 passed |
 | HTTP reservation route tests and OpenAPI snapshot | 4 + 1 passed: owner auth, Origin, input envelopes, audit/idempotency, revision fencing and typed evidence |
 | `cargo test -p cyber-core --lib budget::tests` | 2 passed |
@@ -25,6 +25,10 @@ Local checks passed:
 
 The code-review pass identified and corrected missing usage being interpreted as zero, retry turn duplication, the settlement-to-canonical-event turn gap, predispatch deadline cleanup, and masked receipt flush errors. All production dispatch paths found in the server, tool host and standalone Git text service are guarded or explicitly refused where no Session accounting owner exists.
 
-Pending integration checks: combined retention/schedule branch acceptance with real occurrence promotion and late auxiliary launch; dashboard real-server browser acceptance for the new read-only allocation panel; Clippy, broader relevant Rust suites and Linux/Windows CI. No live provider/billing, CyberdyneAuth or native desktop acceptance was run for this change. The SDK's skipped tests were not counted as passes.
+Pending integration checks: combined retention/schedule branch acceptance with real occurrence promotion and late auxiliary launch; dashboard real-server browser acceptance for the new read-only allocation panel; broader relevant Rust suites and Linux/Windows CI. No live provider/billing, CyberdyneAuth or native desktop acceptance was run for this change. The SDK's skipped tests were not counted as passes.
 
 Known limits: raw linked usage receipts remain retained rather than folding away their identity; historical opaque/folded failed accounting fails closed. Full Session deletion after explicit owner release prevents a later public native-accounting correction, although reservation audit records survive. Reserved Team ceilings include the lead. The original soft-mode partial-usage gaps are not retroactively reconstructed.
+
+A follow-up review corrected reservation receipt attribution and cumulative-receipt analytics: provider calls retain their original input origin/MCP client across later foreground input and owner settlement; successful request/Turn counters count each reservation once while token/cost deltas remain additive. Confirmed priced partial receipts remain visible in the per-model cost breakdown even before a finished call exists.
+
+Follow-up verification: reserved-budget integration tests 9/9 and usage-ledger migration tests 6/6 passed. Strict Clippy passed for cyber-server, cyber-store and cyber-tools across all targets; formatting and diff whitespace checks passed. Combined auto-fix branch verification remains separate.

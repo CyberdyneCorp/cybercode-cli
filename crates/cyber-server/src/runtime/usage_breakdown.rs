@@ -84,18 +84,19 @@ const TREE: &str = "WITH RECURSIVE tree(id) AS (
 )";
 
 fn by_model(db: &Connection, id: &str) -> rusqlite::Result<Vec<ModelUsage>> {
+    let finished = super::usage_ledger::FINISHED_CALL;
+    let unpriced = super::usage_ledger::unpriced_call();
     let sql = format!(
         "{TREE}, rows AS (
             SELECT provider, model, input_tokens AS i, output_tokens AS o, reasoning_tokens AS r,
                 cache_read_tokens AS cr, cache_write_tokens AS cw, cost AS c,
-                CASE WHEN cost IS NULL AND failed = 0 THEN 1 ELSE 0 END AS u,
-                CASE WHEN failed = 0 THEN 1 ELSE 0 END AS n
-            FROM usage_step WHERE session_id IN (SELECT id FROM tree)
+                {unpriced} AS u, {finished} AS n, (cost IS NOT NULL) AS p
+            FROM usage_step u WHERE session_id IN (SELECT id FROM tree)
             UNION ALL
             SELECT provider, model, input_tokens, output_tokens, reasoning_tokens,
-                cache_read_tokens, cache_write_tokens, cost, unpriced_steps, steps
+                cache_read_tokens, cache_write_tokens, cost, unpriced_steps, steps, (unpriced_steps < steps)
             FROM usage_daily WHERE root_id = ?1
-        ) SELECT provider, model, SUM(i), SUM(o), SUM(r), SUM(cr), SUM(cw), TOTAL(c), SUM(u), SUM(n)
+        ) SELECT provider, model, SUM(i), SUM(o), SUM(r), SUM(cr), SUM(cw), TOTAL(c), SUM(u), SUM(n), SUM(p)
           FROM rows GROUP BY provider, model HAVING SUM(n) > 0 OR SUM(i)+SUM(o)+SUM(r)+SUM(cr)+SUM(cw)>0 OR TOTAL(c)>0"
     );
     let mut statement = db.prepare(&sql)?;
@@ -120,7 +121,7 @@ fn by_model(db: &Connection, id: &str) -> rusqlite::Result<Vec<ModelUsage>> {
                     + tokens.cache_read
                     + tokens.cache_write,
                 tokens,
-                cost: (unpriced < steps).then_some(r.get::<_, f64>(7)?),
+                cost: (n(10)? > 0).then_some(r.get::<_, f64>(7)?),
                 unpriced_steps: unpriced,
                 steps,
             })
@@ -180,11 +181,14 @@ fn session_spend(db: &Connection, id: &str) -> rusqlite::Result<Option<(String, 
 
 /// Cost, tokens and Turns of every Session on this machine since `since_ms`.
 fn daily_spend(db: &Connection, since_ms: i64) -> rusqlite::Result<[f64; 3]> {
+    let turns = super::usage_ledger::RECORDED_TURN;
     db.query_row(
-        "SELECT TOTAL(cost), COALESCE(SUM(input_tokens + output_tokens + reasoning_tokens
+        &format!(
+            "SELECT TOTAL(cost), COALESCE(SUM(input_tokens + output_tokens + reasoning_tokens
                 + cache_read_tokens + cache_write_tokens), 0),
-            COALESCE(SUM(purpose = 'turn' AND failed = 0), 0)
-         FROM usage_step WHERE ended_ms >= ?1",
+            COALESCE(SUM({turns}), 0)
+         FROM usage_step u WHERE ended_ms >= ?1"
+        ),
         [since_ms],
         |r| {
             Ok([

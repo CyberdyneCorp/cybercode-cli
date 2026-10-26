@@ -13,6 +13,7 @@ pub(in crate::runtime) struct GatedAdapter<'a> {
     resolved: &'a ResolvedModel,
     purpose: &'static str,
     call_id: Option<String>,
+    origin: Option<crate::runtime::usage_origin::StepOrigin>,
     pub(super) ownership: Option<Arc<std::sync::atomic::AtomicBool>>,
     pub(super) failure: Arc<Mutex<Option<RuntimeError>>>,
     pub(super) attempts: Arc<Mutex<Vec<Arc<Attempt>>>>,
@@ -31,6 +32,7 @@ impl<'a> GatedAdapter<'a> {
             resolved,
             purpose,
             call_id: None,
+            origin: None,
             ownership: None,
             failure: Arc::new(Mutex::new(None)),
             attempts: Arc::default(),
@@ -38,6 +40,10 @@ impl<'a> GatedAdapter<'a> {
     }
     pub fn for_call(mut self, id: String) -> Self {
         self.call_id = Some(id);
+        self
+    }
+    pub(super) fn for_origin(mut self, origin: crate::runtime::usage_origin::StepOrigin) -> Self {
+        self.origin = Some(origin);
         self
     }
     pub fn take_error(&self) -> Option<RuntimeError> {
@@ -71,7 +77,17 @@ impl<'a> GatedAdapter<'a> {
         request: LlmRequest,
     ) -> Result<(LlmRequest, Option<Arc<Attempt>>), RuntimeError> {
         self.inner.activate_reserved_budget(self.handle).await?;
-        let info = self.handle.state.lock().await.info.clone();
+        let (info, origin) = {
+            let state = self.handle.state.lock().await;
+            let origin = self.origin.clone().unwrap_or_else(|| {
+                if self.purpose == "turn" {
+                    state.step_origin.clone()
+                } else {
+                    Default::default()
+                }
+            });
+            (state.info.clone(), origin)
+        };
         let handle = self.inner.handle(&info.id).await?;
         let daily = self
             .inner
@@ -128,6 +144,8 @@ impl<'a> GatedAdapter<'a> {
             };
             let admitted=ledger::reserve(tx,&reservation,&scopes,now).map_err(cyber_store::StoreError::from)?;
             if !admitted.new {return Err(refusal("conflict","duplicate request cannot dispatch",None));}
+            let origin = serde_json::to_string(&origin).map_err(|e|refusal("invalid",&e.to_string(),None))?;
+            tx.execute("UPDATE budget_reservation SET origin_context=?2 WHERE request_id=?1",rusqlite::params![reservation.request_id,origin])?;
             Ok((prepared.request,Some(reservation)))
         }).map_err(error)?;
         drop(drains);

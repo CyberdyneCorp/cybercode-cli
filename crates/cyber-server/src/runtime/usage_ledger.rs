@@ -15,6 +15,19 @@ use super::events::{
 };
 use super::{Runtime, RuntimeError};
 
+/// Analytics count one successful provider request, not cumulative receipt updates.
+/// The `u` alias is the raw usage_step row; ordinary legacy rows remain per event.
+pub(super) const FINISHED_CALL: &str = "CASE WHEN u.failed=0 AND (u.reservation_id IS NULL OR NOT EXISTS(
+    SELECT 1 FROM usage_step earlier WHERE earlier.reservation_id=u.reservation_id AND earlier.failed=0
+    AND (earlier.ended_ms<u.ended_ms OR (earlier.ended_ms=u.ended_ms AND earlier.event_id<u.event_id)))) THEN 1 ELSE 0 END";
+pub(super) const RECORDED_TURN: &str = "CASE WHEN u.reservation_id IS NULL THEN (u.purpose='turn' AND u.failed=0)
+    ELSE COALESCE((SELECT json_extract(e.data,'$.reservation_turns_increment') FROM event e WHERE e.id=u.event_id),0) END";
+pub(super) fn unpriced_call() -> String {
+    format!(
+        "CASE WHEN u.cost IS NULL AND ({FINISHED_CALL})=1 AND NOT EXISTS(SELECT 1 FROM budget_reservation r WHERE r.request_id=u.reservation_id AND r.actual_cost_microusd IS NOT NULL) THEN 1 ELSE 0 END"
+    )
+}
+
 /// Events projected per backfill transaction.
 pub(crate) const BACKFILL_BATCH: i64 = 5_000;
 /// The `data_migration` row recorded when the backfill finishes.

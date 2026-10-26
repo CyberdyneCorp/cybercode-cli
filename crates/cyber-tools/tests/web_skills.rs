@@ -339,14 +339,12 @@ async fn webfetch_summary_budget_case(reserved: bool) {
     assert_eq!(summary.requests().len(), usize::from(!reserved));
     assert_eq!(flow.main.requests().len(), 1);
     let state = flow.runtime.state(&id).await.unwrap();
-    assert_eq!(state.totals.usage.input, if reserved { 100 } else { 200 });
-    assert_eq!(state.totals.usage.output, if reserved { 5 } else { 15 });
-    let output = state.calls["call_webfetch"].output.as_ref().unwrap();
-    if reserved {
-        assert!(output.contains("max_tokens"), "{output}");
-    } else {
-        assert!(output.contains("page summary"), "{output}");
-    }
+    let expected_usage = if reserved { (100, 5) } else { (200, 15) };
+    assert_eq!(
+        (state.totals.usage.input, state.totals.usage.output),
+        expected_usage
+    );
+    assert_summary_output(&state.calls["call_webfetch"].output, reserved);
     let events = flow.f.store.read_events(&id, -1, 100).unwrap().events;
     assert_eq!(
         events
@@ -358,4 +356,14 @@ async fn webfetch_summary_budget_case(reserved: bool) {
     if !reserved {
         assert!(events.iter().any(|e| e.kind == "budget.exceeded.1"));
     }
+}
+
+fn assert_summary_output(output: &Option<String>, reserved: bool) {
+    let output = output.as_ref().unwrap();
+    let expected = if reserved {
+        "max_tokens"
+    } else {
+        "page summary"
+    };
+    assert!(output.contains(expected), "{output}");
 }

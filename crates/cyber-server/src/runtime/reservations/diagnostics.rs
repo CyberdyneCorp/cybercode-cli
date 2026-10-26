@@ -330,9 +330,8 @@ impl Runtime {
             let result=ledger::reconcile(tx,&id,&command,chrono::Utc::now().timestamp_millis()).map_err(StoreError::from)?;
             if !result.applied {return Ok((Vec::new(),()));}
             let mut events=Vec::new();
-            if let (Some(delta),Some(actual))=(&result.delta,&result.record.actual) {
-                if let Some(event)=super::accounting::billing(tx,&result.record.request,before.actual.as_ref(),actual,delta,&format!("owner:{}",command.operation_id),0)? {events.push(event);}
-            }
+            if let (Some(delta),Some(actual))=(&result.delta,&result.record.actual)
+                && let Some(event)=super::accounting::billing(tx,&result.record.request,before.actual.as_ref(),actual,delta,&format!("owner:{}",command.operation_id),0)? {events.push(event);}
             events.push(NewEvent::new(RECONCILED,json!({"request_id":id,"operation_id":command.operation_id,"reason":command.reason,"action":command.action})));
             Ok((events,()))
         }).map_err(super::error)?;

@@ -880,6 +880,28 @@ impl Inner {
         result
     }
 
+    async fn fail_opening_step(
+        &self,
+        handle: &Handle,
+        message_id: &str,
+        gated: &super::budget::GatedAdapter<'_>,
+        error: cyber_llm::LlmError,
+    ) -> Result<TurnEnd, RuntimeError> {
+        gated.flush().await?;
+        if let Some(error) = gated.take_error() {
+            self.stop_step(
+                handle,
+                message_id,
+                Accum::empty(),
+                error_kind(&error),
+                &error.to_string(),
+            )
+            .await?;
+            return Err(error);
+        }
+        self.fail_step(handle, message_id, error).await
+    }
+
     async fn turn(
         &self,
         handle: &Handle,
@@ -919,21 +941,7 @@ impl Inner {
                     )
                     .await;
             }
-            Some(Err(e)) => {
-                gated.flush().await?;
-                if let Some(error) = gated.take_error() {
-                    self.stop_step(
-                        handle,
-                        &message_id,
-                        Accum::empty(),
-                        error_kind(&error),
-                        &error.to_string(),
-                    )
-                    .await?;
-                    return Err(error);
-                }
-                return self.fail_step(handle, &message_id, e).await;
-            }
+            Some(Err(e)) => return self.fail_opening_step(handle, &message_id, &gated, e).await,
             Some(Ok(stream)) => stream,
         };
         let consumed = self

@@ -179,10 +179,8 @@ fn discovered_with_schedule(
     include_schedule: bool,
 ) -> Result<BTreeMap<String, Snapshot>, StoreError> {
     let mut all = BTreeMap::new();
-    if include_schedule {
-        if let Some(schedule) = schedules::current(tx, session)? {
-            push(schedule, &mut all);
-        }
+    if include_schedule && let Some(schedule) = schedules::current(tx, session)? {
+        push(schedule, &mut all);
     }
     let mut runs = BTreeSet::new();
     let mut teams = BTreeSet::new();

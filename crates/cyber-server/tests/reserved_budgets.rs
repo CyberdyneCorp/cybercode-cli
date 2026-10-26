@@ -114,6 +114,11 @@ async fn transport_error_after_finish_retains_hold_until_audited_settlement() {
         report.by_model[0].tokens, usage,
         "partial usage remains visible even without a completed call"
     );
+    assert_eq!(
+        report.by_model[0].cost,
+        record.actual.as_ref().unwrap().cost_usd,
+        "known priced partial charges remain visible with zero finished calls"
+    );
     let restarted = h.restart();
     let command = ReservationReconcile {
         operation_id: "owner-tested".into(),
@@ -146,6 +151,55 @@ async fn transport_error_after_finish_retains_hold_until_audited_settlement() {
             .audit
             .len(),
         1
+    );
+    let after = restarted.session_usage_breakdown(&id).await.unwrap();
+    assert_eq!(after.by_model[0].steps, 1);
+    assert!((after.by_model[0].cost.unwrap() - 0.00005).abs() < 1e-12);
+    // A later cumulative complete correction adds its financial delta, not a
+    // second successful provider request or canonical Turn.
+    restarted
+        .reconcile_budget_reservation(
+            &record.request_id,
+            ReservationReconcile {
+                operation_id: "owner-later-correction".into(),
+                expected_revision: result.reservation.revision,
+                reason: "later fixture provider cost correction".into(),
+                action: ReservationAction::Settle {
+                    actual: ReservationActual {
+                        tokens: Some(usage),
+                        turns: 0,
+                        cost_usd: Some(0.00006),
+                        complete: true,
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+    let after = restarted.session_usage_breakdown(&id).await.unwrap();
+    assert_eq!(after.by_model[0].steps, 1);
+    assert!((after.by_model[0].cost.unwrap() - 0.00006).abs() < 1e-12);
+    let stats = restarted
+        .usage_stats(&cyber_server::runtime::StatsRequest {
+            period: cyber_server::runtime::Period::All,
+            project: None,
+            zone: Some("UTC".into()),
+        })
+        .unwrap();
+    assert_eq!(stats.totals.steps, 1);
+    assert_eq!(stats.totals.turns, 0);
+    assert_eq!(stats.models[0].steps, 1);
+    assert_eq!(stats.origins[0].steps, 1);
+    let insights = restarted
+        .usage_insights(&cyber_server::runtime::InsightsRequest {
+            window: cyber_server::runtime::InsightWindow::Day,
+            project: None,
+        })
+        .unwrap();
+    assert_eq!(insights.steps, 1);
+    assert_eq!(
+        insights.total_tokens,
+        usage.input + usage.output + usage.reasoning + usage.cache_read + usage.cache_write
     );
 }
 
@@ -459,4 +513,164 @@ async fn opening_retry_claims_one_canonical_turn_and_keeps_unknown_token_hold() 
     assert_eq!(h.state(&id).await.totals.steps, 1);
     prompt(&h, &id).await;
     assert_eq!(h.models.requests("test/main").len(), 2);
+}
+
+fn record_mcp_input(h: &Harness, session: &str, message: &str) {
+    cyber_store::mcp_serve::record_input(
+        &h.store,
+        &cyber_store::mcp_serve::McpServeInput {
+            message_id: message.into(),
+            session_id: session.into(),
+            mcp_client: "origin-fixture-client".into(),
+            depth: 0,
+            admitted_ms: 1,
+            idempotency_key: None,
+        },
+    )
+    .unwrap();
+}
+async fn origin_prompt(h: &Harness, session: &str, message: &str, source: &str) {
+    let mut input = Admission::text("origin check", Delivery::Queue);
+    input.message_id = Some(message.into());
+    input.source = source.into();
+    h.runtime.admit(session, input).await.unwrap();
+    h.settle(session).await;
+}
+#[tokio::test]
+async fn reserved_receipts_keep_channel_and_mcp_origin_after_later_input_and_reconciliation() {
+    for source in ["channel", "mcp"] {
+        let usage = Usage {
+            input: 20,
+            output: 4,
+            ..Usage::default()
+        };
+        let h = Harness::new(setup(vec![
+            vec![
+                ScriptStep::Event(LlmEvent::Usage(usage)),
+                ScriptStep::Event(LlmEvent::Finish {
+                    reason: FinishReason::Stop,
+                }),
+                ScriptStep::Error {
+                    error: ErrorKind::InvalidRequest,
+                    message: "fixture lost final transport".into(),
+                },
+            ],
+            text("later user turn"),
+        ]));
+        let id = create(&h, None, 2000).await;
+        let message = format!("msg_origin_{source}");
+        if source == "mcp" {
+            record_mcp_input(&h, &id, &message);
+        }
+        origin_prompt(
+            &h,
+            &id,
+            &message,
+            if source == "mcp" {
+                "mcp_prompt"
+            } else {
+                source
+            },
+        )
+        .await;
+        let reservation = h
+            .runtime
+            .budget_reservations(ReservationQuery {
+                session_id: Some(id.clone()),
+                ..Default::default()
+            })
+            .unwrap()
+            .reservations
+            .remove(0);
+        assert_eq!(reservation.state, "uncertain");
+        prompt(&h, &id).await;
+        let restarted = h.restart();
+        restarted
+            .reconcile_budget_reservation(
+                &reservation.request_id,
+                ReservationReconcile {
+                    operation_id: format!("origin-settle-{source}"),
+                    expected_revision: reservation.revision,
+                    reason: "offline fixture receipt confirmed".into(),
+                    action: ReservationAction::Settle {
+                        actual: ReservationActual {
+                            tokens: Some(usage),
+                            turns: 0,
+                            cost_usd: Some(0.001),
+                            complete: true,
+                        },
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        let request = reservation.request_id;
+        let rows=h.store.read(move|db|{
+            let mut q=db.prepare("SELECT origin,mcp_client,SUM(input_tokens),SUM(output_tokens),COUNT(*) FROM usage_step WHERE reservation_id=?1 GROUP BY origin,mcp_client")?;
+            Ok(q.query_map([request],|row|Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?,row.get::<_,i64>(2)?,row.get::<_,i64>(3)?,row.get::<_,i64>(4)?)))?.collect::<Result<Vec<_>,_>>()?)
+        }).unwrap();
+        assert_eq!(
+            rows,
+            vec![(
+                source.to_owned(),
+                (source == "mcp").then(|| "origin-fixture-client".into()),
+                20,
+                4,
+                2
+            )]
+        );
+        let user_rows = h
+            .store
+            .read(move |db| {
+                Ok(db.query_row(
+                    "SELECT COUNT(*) FROM usage_step WHERE session_id=?1 AND origin='user'",
+                    [id],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(
+            user_rows, 1,
+            "the later user turn keeps its own attribution"
+        );
+    }
+}
+#[tokio::test]
+async fn owned_auxiliary_request_uses_its_message_origin_after_a_new_input_is_promoted() {
+    use cyber_llm::{Adapter, collect};
+    use cyber_server::runtime::ModelResolver;
+    let h = Harness::new(setup(vec![
+        text("first MCP"),
+        text("later user"),
+        text("auxiliary result"),
+    ]));
+    let id = create(&h, None, 2000).await;
+    let message = "msg_auxiliary_origin";
+    record_mcp_input(&h, &id, message);
+    // Capture from an admitted queued input before StepStarted is available.
+    let mut input = Admission::text("first MCP", Delivery::Queue);
+    input.message_id = Some(message.into());
+    input.source = "mcp_prompt".into();
+    input.resume = false;
+    h.runtime.admit(&id, input).await.unwrap();
+    let mut asker = h.runtime.operation_asker(&id).await.unwrap();
+    asker.message_id = message.into();
+    let resolved = h.models.resolve("test/main").unwrap();
+    let guarded = asker
+        .guard_model(&resolved, "web_summary", Some("call_owned_origin".into()))
+        .await
+        .unwrap();
+    // First actually drain the queued MCP input, then promote independent user work.
+    h.runtime.resume(&id).await.unwrap();
+    h.settle(&id).await;
+    prompt(&h, &id).await;
+    let stream = guarded.stream(resolved.template.clone()).await.unwrap();
+    let result = collect(stream, |_| {}).await.unwrap();
+    guarded.flush().await.unwrap();
+    assert_eq!(result.text, "auxiliary result");
+    let request = guarded.request_ids().pop().unwrap();
+    let (origin,client,tokens)=h.store.read(move|db|Ok(db.query_row("SELECT origin,mcp_client,SUM(input_tokens+output_tokens) FROM usage_step WHERE reservation_id=?1",[request],|row|Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?,row.get::<_,i64>(2)?)))?)).unwrap();
+    assert_eq!(origin, "mcp");
+    assert_eq!(client.as_deref(), Some("origin-fixture-client"));
+    assert_eq!(tokens, 110);
 }

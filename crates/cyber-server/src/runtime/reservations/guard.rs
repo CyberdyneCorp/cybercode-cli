@@ -13,6 +13,7 @@ pub struct GuardedModel {
     resolved: ResolvedModel,
     purpose: &'static str,
     call_id: Option<String>,
+    origin: crate::runtime::usage_origin::StepOrigin,
     reserved: Arc<std::sync::atomic::AtomicBool>,
     attempts: Arc<Mutex<Vec<Arc<Attempt>>>>,
     failure: Arc<Mutex<Option<RuntimeError>>>,
@@ -53,7 +54,8 @@ impl Adapter for GuardedModel {
     fn stream(&self, request: LlmRequest) -> BoxFuture<'_, Result<EventStream, LlmError>> {
         Box::pin(async move {
             let mut gate =
-                GatedAdapter::new(&self.inner, &self.handle, &self.resolved, self.purpose);
+                GatedAdapter::new(&self.inner, &self.handle, &self.resolved, self.purpose)
+                    .for_origin(self.origin.clone());
             if let Some(id) = &self.call_id {
                 gate = gate.for_call(id.clone());
             }
@@ -74,7 +76,23 @@ impl Asker {
         let inner = self.inner.upgrade().ok_or(RuntimeError::ShuttingDown)?;
         let handle = inner.handle(&self.session_id).await?;
         inner.activate_reserved_budget(&handle).await?;
-        let directory = handle.state.lock().await.info.directory.clone();
+        let (directory, fallback) = {
+            let state = handle.state.lock().await;
+            let running = inner
+                .drains
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .contains_key(&self.session_id);
+            (
+                state.info.directory.clone(),
+                if running {
+                    state.step_origin.clone()
+                } else {
+                    Default::default()
+                },
+            )
+        };
+        let origin = captured_origin(&inner.store, &self.session_id, &self.message_id, fallback)?;
         let daily = inner
             .tools
             .daily_budget(&directory)
@@ -98,9 +116,30 @@ impl Asker {
             resolved: resolved.clone(),
             purpose,
             call_id,
+            origin,
             reserved: Arc::new(std::sync::atomic::AtomicBool::new(reserved)),
             attempts: Arc::default(),
             failure: Arc::default(),
         })
     }
+}
+
+/// A tool's Asker retains its owning message even when a later input is promoted.
+/// Resolve that immutable step rather than borrowing the Session's current origin.
+fn captured_origin(
+    store: &cyber_store::Store,
+    session: &str,
+    message: &str,
+    fallback: crate::runtime::usage_origin::StepOrigin,
+) -> Result<crate::runtime::usage_origin::StepOrigin, RuntimeError> {
+    if message.is_empty() {
+        return Ok(fallback);
+    }
+    let (session, message) = (session.to_owned(), message.to_owned());
+    store
+        .read(move |db| {
+            crate::runtime::usage_origin::recorded_message_origin(db, &session, &message)
+                .map(|origin| origin.unwrap_or_default())
+        })
+        .map_err(RuntimeError::from)
 }

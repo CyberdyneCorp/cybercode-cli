@@ -175,10 +175,15 @@ impl HookPromptRunner<'_> {
             mut owner,
             definition,
         } = admitted;
-        let asker = runtime
+        let mut asker = runtime
             .operation_asker(&event.identity().session_id)
             .await
             .map_err(|error| error.to_string())?;
+        // Runtime-owned message identity also exists for queued/pre-StepStarted hooks.
+        // Preserve it through model dispatch instead of reading later foreground state.
+        if let Some(message) = event.as_json()["message_id"].as_str() {
+            asker.message_id = message.to_owned();
+        }
         let deadline =
             tokio::time::Instant::now() + Duration::from_secs(definition.handler.timeout.into());
         let model = resolve(
@@ -254,16 +259,16 @@ impl HookPromptRunner<'_> {
             Ok(request) => request,
             Err(error) => return error_capture(event, definition, error, true),
         };
-        if let Some((_, _, asker)) = &owner {
-            let check = tokio::select! {
-                biased;
-                _ = cancel.cancelled() => return Capture { report: skipped(true), usage: None, io: None },
-                _ = tokio::time::sleep_until(deadline) => return timeout(event, definition, true),
-                result = asker.check_budget() => result,
-            };
-            if let Err(error) = check {
-                return error_capture(event, definition, error.to_string(), true);
-            }
+        if let Err(capture) = check_prompt_budget(
+            owner.as_ref().map(|(_, _, asker)| *asker),
+            event,
+            definition,
+            deadline,
+            &cancel,
+        )
+        .await
+        {
+            return *capture;
         }
         let proxy = tokio::select! {
             biased;
@@ -293,29 +298,18 @@ impl HookPromptRunner<'_> {
             )
             .await;
         }
-        let guarded = if let Some(asker) = asker {
-            match asker
-                .guard_model(
-                    &model,
-                    "hook_prompt",
-                    event.as_json()["call_id"].as_str().map(str::to_string),
+        let guarded = match guarded_model(asker, &model, event).await {
+            Ok(guarded) => guarded,
+            Err(error) => {
+                return settle_transport(
+                    error_capture(event, definition, error, true),
+                    proxy,
+                    event,
+                    definition,
+                    false,
                 )
-                .await
-            {
-                Ok(guarded) => Some(guarded),
-                Err(error) => {
-                    return settle_transport(
-                        error_capture(event, definition, error.to_string(), true),
-                        proxy,
-                        event,
-                        definition,
-                        false,
-                    )
-                    .await;
-                }
+                .await;
             }
-        } else {
-            None
         };
         self.capture_inference(
             PromptCall {
@@ -360,11 +354,11 @@ impl HookPromptRunner<'_> {
             }
             result = infer(adapter, request, &mut observed) => result,
         };
-        if let Some(guarded) = guarded {
-            if let Err(error) = guarded.flush().await {
-                timed_out = false; // Preserve a billing/admission error in diagnostics.
-                result = Err(error.to_string());
-            }
+        if let Some(guarded) = guarded
+            && let Err(error) = guarded.flush().await
+        {
+            timed_out = false; // Preserve a billing/admission error in diagnostics.
+            result = Err(error.to_string());
         }
         let owned = guarded.is_some_and(GuardedModel::reservation_owned);
         if timed_out {
@@ -682,4 +676,38 @@ fn timeout(event: &HookEvent, definition: &HookDefinition, acknowledged: bool) -
         usage: None,
         io: None,
     }
+}
+
+async fn guarded_model(
+    asker: Option<&cyber_server::runtime::Asker>,
+    model: &ResolvedModel,
+    event: &HookEvent,
+) -> Result<Option<GuardedModel>, String> {
+    let Some(asker) = asker else { return Ok(None) };
+    asker
+        .guard_model(
+            model,
+            "hook_prompt",
+            event.as_json()["call_id"].as_str().map(str::to_string),
+        )
+        .await
+        .map(Some)
+        .map_err(|e| e.to_string())
+}
+
+async fn check_prompt_budget(
+    asker: Option<&cyber_server::runtime::Asker>,
+    event: &HookEvent,
+    definition: &HookDefinition,
+    deadline: tokio::time::Instant,
+    cancel: &CancellationToken,
+) -> Result<(), Box<Capture>> {
+    let Some(asker) = asker else { return Ok(()) };
+    let check = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Err(Box::new(Capture { report: skipped(true), usage: None, io: None })),
+        _ = tokio::time::sleep_until(deadline) => return Err(Box::new(timeout(event, definition, true))),
+        result = asker.check_budget() => result,
+    };
+    check.map_err(|error| Box::new(error_capture(event, definition, error.to_string(), true)))
 }
