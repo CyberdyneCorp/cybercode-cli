@@ -1,3 +1,8 @@
 crates/cyber-tools/tests/goldens/*.txt text eol=lf
 # Signed test blobs: a CRLF checkout on Windows breaks the signature.
 crates/cyber-install/tests/fixtures/* -text
+# Upstream patch context represents an empty line with one space; preserve it verbatim.
+eval/graders/repo-*/reference.patch text eol=lf whitespace=-blank-at-eol
+# Published evaluation inputs retain their pre-call byte hashes on every checkout.
+docs/measurements/real-repository-evaluation*/manifest-frozen.json text eol=lf
+docs/measurements/real-repository-evaluation*/catalog-frozen.json text eol=lf

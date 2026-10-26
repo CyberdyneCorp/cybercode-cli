@@ -16,6 +16,11 @@ pub struct TrialEnv {
     pub model: String,
     pub output: PathBuf,
     pub keep: bool,
+    pub strategy: super::Strategy,
+    #[cfg(not(windows))]
+    pub home: PathBuf,
+    #[cfg(not(windows))]
+    pub private_roots: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -29,6 +34,15 @@ pub struct Tokens {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TrialResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_to_end_seconds: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_seconds: Option<f64>,
+    /// Independent compiler-input tree identity, distinct from solve's host fingerprint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graded_source_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub solve: Option<Value>,
     pub task: String,
     pub trial: u32,
     pub passed: bool,
@@ -49,6 +63,15 @@ pub struct TrialResult {
 }
 
 impl TrialResult {
+    pub(super) fn json(&self) -> Value {
+        let mut value = serde_json::to_value(self).expect("trial serializes");
+        if self.solve.is_some() {
+            value["turns"] = Value::Null;
+            value["tool_calls"] = Value::Null;
+        }
+        value
+    }
+
     pub fn verdict(&self) -> String {
         let outcome = if self.passed {
             "PASS"
@@ -57,14 +80,24 @@ impl TrialResult {
         } else {
             "FAIL"
         };
+        if self.solve.is_some() {
+            return format!(
+                "{outcome} (solve, {:.0}s, {})",
+                self.latency_seconds, self.stop_reason
+            );
+        }
         format!(
             "{outcome} ({} turns, ${:.4}, {:.0}s, {})",
             self.turns, self.cost_usd, self.latency_seconds, self.stop_reason
         )
     }
 
-    fn failed(task: &Task, trial: u32, error: String) -> Self {
+    pub(super) fn failed(task: &Task, trial: u32, error: String) -> Self {
         Self {
+            end_to_end_seconds: None,
+            verification_seconds: None,
+            graded_source_sha256: None,
+            solve: None,
             task: task.id.clone(),
             trial,
             passed: false,
@@ -89,23 +122,62 @@ fn infrastructure(kind: &str) -> bool {
     !matches!(kind, "context_overflow" | "content_policy")
 }
 
+pub(super) fn rules(env: &TrialEnv, task: &Task) -> Value {
+    let mut rules = cyber_core::config::never_ask_rules();
+    if cyber_core::eval::task_fixture(&env.manifest, task).is_some_and(|f| f.repository.is_some()) {
+        for name in [
+            "websearch",
+            "webfetch",
+            "browser",
+            "computer",
+            "send_message",
+            "mcp_*",
+        ] {
+            rules[name] = "deny".into();
+        }
+        if matches!(env.strategy, super::Strategy::Single) {
+            rules["agent"] = "deny".into();
+            rules["workflow"] = "deny".into();
+        }
+    }
+    rules
+}
+
 pub async fn run(env: &TrialEnv, task: &Task, trial: u32) -> TrialResult {
+    let started = Instant::now();
     let workspace = match prepare(env, task, trial) {
         Ok(w) => w,
         Err(e) => return TrialResult::failed(task, trial, format!("workspace setup: {e}")),
     };
-    let mut result = match drive(env, task, trial, &workspace).await {
+    let driven = match env.strategy {
+        super::Strategy::Single => drive(env, task, trial, &workspace).await,
+        super::Strategy::Solve => super::solve::drive(env, task, trial, &workspace).await,
+    };
+    let mut result = match driven {
         Ok(r) => r,
         Err(e) => TrialResult::failed(task, trial, e),
     };
-    if !result.infrastructure_failure {
+    if matches!(env.strategy, super::Strategy::Solve) && result.solve.is_none() {
+        result.solve = Some(json!({"evidence_unavailable":true}));
+        result.unpriced = true;
+    }
+    if !result.infrastructure_failure && matches!(env.strategy, super::Strategy::Single) {
+        let verification = Instant::now();
         grade(env, task, &workspace, &mut result).await;
+        if cyber_core::eval::task_fixture(&env.manifest, task)
+            .is_some_and(|f| f.repository.is_some())
+        {
+            result.verification_seconds = Some(verification.elapsed().as_secs_f64());
+        }
+    }
+    if cyber_core::eval::task_fixture(&env.manifest, task).is_some_and(|f| f.repository.is_some()) {
+        result.end_to_end_seconds = Some(started.elapsed().as_secs_f64());
     }
     let _ = std::fs::write(
         env.output
             .join("trials")
             .join(format!("{}-{trial}.json", task.id)),
-        serde_json::to_string_pretty(&result).unwrap_or_default(),
+        serde_json::to_string_pretty(&result.json()).unwrap_or_default(),
     );
     if !env.keep {
         let _ = std::fs::remove_dir_all(&workspace);
@@ -131,9 +203,14 @@ fn prepare(env: &TrialEnv, task: &Task, trial: u32) -> Result<PathBuf, String> {
     ));
     copy_dir(&env.root.join(&fixture.path), &dir).map_err(|e| e.to_string())?;
     let dir = std::fs::canonicalize(&dir).map_err(|e| e.to_string())?;
+    let add: &[&str] = if fixture.repository.is_some() {
+        &["add", "--force", "-A"]
+    } else {
+        &["add", "-A"]
+    };
     for args in [
         &["init", "-q"][..],
-        &["add", "-A"],
+        add,
         &[
             "-c",
             "user.email=eval@cyber",
@@ -149,7 +226,27 @@ fn prepare(env: &TrialEnv, task: &Task, trial: u32) -> Result<PathBuf, String> {
             "fixture",
         ],
     ] {
-        let ok = std::process::Command::new("git")
+        let mut command = std::process::Command::new("git");
+        if fixture.repository.is_some() {
+            // Build a base-only repository without ambient hooks, filters or templates.
+            for (name, _) in std::env::vars_os() {
+                if name.to_string_lossy().starts_with("GIT_") {
+                    command.env_remove(name);
+                }
+            }
+            command
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_TEMPLATE_DIR", "")
+                .env("GIT_CONFIG_COUNT", "0")
+                .args([
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "-c",
+                    "commit.gpgSign=false",
+                ]);
+        }
+        let ok = command
             .arg("-C")
             .arg(&dir)
             .args(args)
@@ -162,7 +259,11 @@ fn prepare(env: &TrialEnv, task: &Task, trial: u32) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+pub(super) fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+    copy_dir_at(from, to, from)
+}
+
+fn copy_dir_at(from: &Path, to: &Path, root: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(to)?;
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
@@ -171,8 +272,15 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
             continue;
         }
         let target = to.join(&name);
-        if entry.file_type()?.is_dir() {
-            copy_dir(&entry.path(), &target)?;
+        if entry.file_type()?.is_symlink() {
+            let path = entry.path();
+            cyber_core::eval::copy_source_link(
+                &path,
+                &target,
+                path.strip_prefix(root).map_err(std::io::Error::other)?,
+            )?;
+        } else if entry.file_type()?.is_dir() {
+            copy_dir_at(&entry.path(), &target, root)?;
         } else {
             std::fs::copy(entry.path(), &target)?;
         }
@@ -192,7 +300,7 @@ async fn drive(
         "model": env.model,
         "mode": "bypass",
         "title": format!("eval {} #{trial}", task.id),
-        "rules": cyber_core::config::never_ask_rules(),
+        "rules": rules(env, task),
         "max_steps": task.budget.max_turns,
     });
     let created = client
@@ -325,7 +433,11 @@ fn add_usage(r: &mut TrialResult, data: &Value) {
 }
 
 /// Run the hidden grader against the final workspace.
-async fn grade(env: &TrialEnv, task: &Task, workspace: &Path, r: &mut TrialResult) {
+pub(super) async fn grade(env: &TrialEnv, task: &Task, workspace: &Path, r: &mut TrialResult) {
+    if cyber_core::eval::task_fixture(&env.manifest, task).is_some_and(|f| f.repository.is_some()) {
+        super::verification::grade(env, task, workspace, r).await;
+        return;
+    }
     let grader_dir = env.root.join(&task.grading.grader_dir);
     let args: Vec<String> = task
         .grading

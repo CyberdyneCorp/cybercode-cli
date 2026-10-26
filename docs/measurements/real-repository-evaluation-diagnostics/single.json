@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "report": "real-repository-corrected-diagnostics",
+  "strategy": "single",
+  "summary": {
+    "trials": 1,
+    "passed": 1,
+    "infrastructure_failures": 0,
+    "success_ci95_wilson": [
+      0.2065,
+      1
+    ],
+    "known_cost_usd_lower_bound": 0,
+    "unpriced": true,
+    "usage_missing_root_count": 0,
+    "tokens": {
+      "input": 169128,
+      "output": 2193,
+      "reasoning": 456,
+      "cache_read": 31616,
+      "cache_write": 0
+    },
+    "median_end_to_end_seconds": 170.16540175,
+    "per_task": {
+      "repo-ripgrep-matches-all": {
+        "passed": 1,
+        "trials": 1,
+        "infrastructure_failures": 0
+      }
+    }
+  },
+  "trials": [
+    {
+      "original_index": 12,
+      "index": 1,
+      "task": "repo-ripgrep-matches-all",
+      "trial": 2,
+      "strategy": "single",
+      "started_at": "2026-10-26T17:00:36.703949+00:00",
+      "finished_at": "2026-10-26T17:10:58.044170+00:00",
+      "seconds": 174.4229017921025,
+      "exit": 0,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "config_sha256": "a9b596826b4a8851025e91f89329230e56a9f63e4f7c7b0959bc9f114bc9bd3e",
+      "environment_sha256": "c1d3a7d4a33081a6993d034e3fba0aeacbadae5b4aed4698ed9b398d3b38f9f6",
+      "turns": 14,
+      "tool_calls": 13,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 169128,
+        "output": 2193,
+        "reasoning": 456,
+        "cache_read": 31616,
+        "cache_write": 0
+      },
+      "latency_seconds": 165.310849333,
+      "end_to_end_seconds": 170.16540175,
+      "verification_seconds": 4.476904916,
+      "grader_exit": 0,
+      "graded_source_sha256": "sha256:be349d16ec358a7998b72ab78b550ccf9dbaaa37b9158efa56f5462bdf87b9f5",
+      "raw_report_sha256": "53c1083e2be656cd5134497e81e95205567f43e8a3a993cfd9f84f7b02d4d814",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "15bcc43",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null
+    }
+  ]
+}

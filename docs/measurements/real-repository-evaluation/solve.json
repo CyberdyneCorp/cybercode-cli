@@ -1,0 +1,2993 @@
+{
+  "schema_version": 1,
+  "report": "real-repository-retrospective-pilot",
+  "strategy": "solve",
+  "summary": {
+    "trials": 12,
+    "passed": 5,
+    "infrastructure_failures": 7,
+    "success_ci95_wilson": [
+      0.1933,
+      0.6805
+    ],
+    "known_cost_usd_lower_bound": 0,
+    "unpriced": true,
+    "usage_missing_root_count": 0,
+    "tokens": {
+      "input": 3431218,
+      "output": 55446,
+      "reasoning": 8748,
+      "cache_read": 653056,
+      "cache_write": 0
+    },
+    "median_end_to_end_seconds": 163.10185997899998,
+    "per_task": {
+      "repo-ripgrep-hidden-dot": {
+        "passed": 3,
+        "trials": 3,
+        "infrastructure_failures": 0
+      },
+      "repo-ripgrep-matches-all": {
+        "passed": 2,
+        "trials": 3,
+        "infrastructure_failures": 1
+      },
+      "repo-click-short-help": {
+        "passed": 0,
+        "trials": 3,
+        "infrastructure_failures": 3
+      },
+      "repo-click-argument-help": {
+        "passed": 0,
+        "trials": 3,
+        "infrastructure_failures": 3
+      }
+    }
+  },
+  "trials": [
+    {
+      "index": 2,
+      "task": "repo-ripgrep-hidden-dot",
+      "trial": 1,
+      "strategy": "solve",
+      "started_at": "2026-10-26T15:37:36.891519+00:00",
+      "finished_at": "2026-10-26T15:40:24.327112+00:00",
+      "seconds": 167.43205933296122,
+      "exit": 0,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "completed",
+      "config_sha256": "04bd1a4bdb55cb3e25ab8b34704d9e58fb39d8a940d28eb06eed8c8a24b80807",
+      "environment_sha256": "adc8e407e407031109f014f06241615bef4babaa1ff685de08b31d7c5ad69d2d",
+      "turns": null,
+      "tool_calls": null,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 240006,
+        "output": 4931,
+        "reasoning": 474,
+        "cache_read": 51968,
+        "cache_write": 0
+      },
+      "latency_seconds": 161.4421915,
+      "end_to_end_seconds": 166.025626333,
+      "verification_seconds": 4.041490833,
+      "grader_exit": 0,
+      "graded_source_sha256": "sha256:3c7c077dee9d35e20361dceb17a2b5a9c8102f169e7eb0af1daf516b752f377c",
+      "raw_report_sha256": "e7a9beef2c818d38ec37818e0a2f37c12d0e82177aae1a824802aeb9015b3134",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "b11865a",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null,
+      "solve": {
+        "status": "completed",
+        "verification_status": "recommended",
+        "recommended_candidate": "first",
+        "judge_model": "chatgpt/gpt-6.1-sol#medium",
+        "judge_differs_from_solver_models": false,
+        "distinct_solver_models": 1,
+        "candidate_count": 2,
+        "candidates": [
+          {
+            "label": "second",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "source_sha256": "8c662c3354de235a4406796b73ef5304416d3a89767ef2a39c20cbd26b2cee1b",
+            "patch_sha256": "53821e8b40f229b7634aa7611eb2c4d9ee8440d79e14a2d36b88681724081c36",
+            "host_verified": true,
+            "cost_usd": 0.0,
+            "tokens": 110084,
+            "checks": [
+              {
+                "argv": [
+                  "cargo",
+                  "test",
+                  "--offline",
+                  "--locked",
+                  "-p",
+                  "ignore",
+                  "--lib"
+                ],
+                "outcome": "passed",
+                "settled": true,
+                "source_unchanged": true,
+                "exit_code": 0,
+                "started_ms": 1793029172563,
+                "ended_ms": 1793029174066,
+                "environment_sha256": "8f5df09f1b63fe55530519e233af0a12748ad90f648f9cf88cd9219387e64ee5"
+              }
+            ]
+          },
+          {
+            "label": "first",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "source_sha256": "1add7af3b5c81ed8cdedb13be6577c4aae3897a3686c0e535edb87b71bbbcb02",
+            "patch_sha256": "d7e9e4328530b4c6052d0cd1041073c009c5a338bc74ec5ec930d018f12e0ede",
+            "host_verified": true,
+            "cost_usd": 0.0,
+            "tokens": 133402,
+            "checks": [
+              {
+                "argv": [
+                  "cargo",
+                  "test",
+                  "--offline",
+                  "--locked",
+                  "-p",
+                  "ignore",
+                  "--lib"
+                ],
+                "outcome": "passed",
+                "settled": true,
+                "source_unchanged": true,
+                "exit_code": 0,
+                "started_ms": 1793029170265,
+                "ended_ms": 1793029170544,
+                "environment_sha256": "dbe974b0a75e0b7a8136a555dc1aff83accbe0425c9bba18ad0424ee8136a30b"
+              }
+            ]
+          }
+        ],
+        "agents": [
+          {
+            "label": "second",
+            "phase": "Solve",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 110084,
+            "started_ms": 1793029070054,
+            "ended_ms": 1793029158985
+          },
+          {
+            "label": "first",
+            "phase": "Solve",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 133402,
+            "started_ms": 1793029060235,
+            "ended_ms": 1793029168868
+          },
+          {
+            "label": "solve judge",
+            "phase": "Judge",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 53893,
+            "started_ms": 1793029174747,
+            "ended_ms": 1793029218675
+          }
+        ],
+        "judge_recommended_candidate": "first",
+        "usage": {
+          "scope": "session",
+          "id": "ses_01M5WDRC41QRW0KAZ8X9K3NFXT",
+          "own": {
+            "tokens": {
+              "input": 0,
+              "output": 0,
+              "reasoning": 0,
+              "cache_read": 0,
+              "cache_write": 0
+            },
+            "total_tokens": 0,
+            "cost": 0.0,
+            "unpriced_steps": 0,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "descendants": {
+            "tokens": {
+              "input": 240006,
+              "output": 4931,
+              "reasoning": 474,
+              "cache_read": 51968,
+              "cache_write": 0
+            },
+            "total_tokens": 297379,
+            "cost": 0.0,
+            "unpriced_steps": 27,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "total": {
+            "tokens": {
+              "input": 240006,
+              "output": 4931,
+              "reasoning": 474,
+              "cache_read": 51968,
+              "cache_write": 0
+            },
+            "total_tokens": 297379,
+            "cost": 0.0,
+            "unpriced_steps": 27,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "by_model": [
+            {
+              "provider": "chatgpt",
+              "model": "gpt-6.1-sol",
+              "tokens": {
+                "input": 240006,
+                "output": 4931,
+                "reasoning": 474,
+                "cache_read": 51968,
+                "cache_write": 0
+              },
+              "total_tokens": 297379,
+              "cost": null,
+              "unpriced_steps": 27,
+              "steps": 27
+            }
+          ],
+          "api_duration_ms": 206002,
+          "wall_duration_ms": 0,
+          "lines_added": 0,
+          "lines_removed": 0,
+          "budgets": [],
+          "backfilling": false
+        },
+        "usage_unavailable": false,
+        "unknown_inflight_usage_possible": false,
+        "effective_budget": {
+          "max_tokens": 1500000,
+          "max_cost_usd": 5.0,
+          "max_wall_seconds": 1800.0,
+          "enforcement": "soft",
+          "max_agents": 5
+        },
+        "reported_budget_observation": {
+          "soft_ceiling": true,
+          "effective_limits": {
+            "max_tokens": 1500000,
+            "max_cost_usd": 5,
+            "max_wall_seconds": 1800,
+            "enforcement": "soft",
+            "max_agents": 5
+          },
+          "observed": {
+            "spent_tokens": 297379,
+            "spent_cost_usd": 0,
+            "agents_started": 3,
+            "remaining": {
+              "max_agents": 2,
+              "max_cost_usd": 5,
+              "max_tokens": 1202621,
+              "max_wall_seconds": 1640.1100000000001
+            },
+            "unpriced": true,
+            "usage_complete": true,
+            "cost_complete": false
+          },
+          "overshoot_usd": 0,
+          "limitation": "In-flight inference can overshoot; zero or missing price is not proof of free execution."
+        }
+      }
+    },
+    {
+      "index": 4,
+      "task": "repo-ripgrep-matches-all",
+      "trial": 1,
+      "strategy": "solve",
+      "started_at": "2026-10-26T15:43:14.317210+00:00",
+      "finished_at": "2026-10-26T15:47:23.375692+00:00",
+      "seconds": 249.05285133305006,
+      "exit": 0,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "completed",
+      "config_sha256": "e6781c478472db08b1b12924d3fd2e89a8a78cd91c3b07879f39c3e31febe1e6",
+      "environment_sha256": "adc8e407e407031109f014f06241615bef4babaa1ff685de08b31d7c5ad69d2d",
+      "turns": null,
+      "tool_calls": null,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 426451,
+        "output": 5952,
+        "reasoning": 1185,
+        "cache_read": 18944,
+        "cache_write": 0
+      },
+      "latency_seconds": 240.800726125,
+      "end_to_end_seconds": 245.399766083,
+      "verification_seconds": 4.283556666,
+      "grader_exit": 0,
+      "graded_source_sha256": "sha256:9e83c622e439d0cd3cbcad59f27dab9291b71d49e23c265400133b187b41387c",
+      "raw_report_sha256": "48c07b1377cf07aca82245716e6acec59fb28ef82e125397aac79abcdb4b82f9",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "b11865a",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null,
+      "solve": {
+        "status": "completed",
+        "verification_status": "recommended",
+        "recommended_candidate": "second",
+        "judge_model": "chatgpt/gpt-6.1-sol#medium",
+        "judge_differs_from_solver_models": false,
+        "distinct_solver_models": 1,
+        "candidate_count": 2,
+        "candidates": [
+          {
+            "label": "first",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "source_sha256": "237079df5446527e709d16061ae83f0bf79ab8300301d03084deaa2f17b4b399",
+            "patch_sha256": "042688bd0d4f76903f801f001409820cd9e361b98cb86fb5b5559f49a5b3cfbf",
+            "host_verified": true,
+            "cost_usd": 0.0,
+            "tokens": 161288,
+            "checks": [
+              {
+                "argv": [
+                  "cargo",
+                  "test",
+                  "--offline",
+                  "--locked",
+                  "-p",
+                  "globset",
+                  "--lib"
+                ],
+                "outcome": "passed",
+                "settled": true,
+                "source_unchanged": true,
+                "exit_code": 0,
+                "started_ms": 1793029590576,
+                "ended_ms": 1793029592125,
+                "environment_sha256": "30447985c746549ed3dca552bad69017ab98eabb530e6f6fee97121520dde9c0"
+              }
+            ]
+          },
+          {
+            "label": "second",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "source_sha256": "f9f762e9ef63606f213cafd69388cc272b14f7b32fd721759144505cd14b08e5",
+            "patch_sha256": "dccf870636cbeb7e470f8561022996698a5b7acbc98cb9eae96b1ac364e831df",
+            "host_verified": true,
+            "cost_usd": 0.0,
+            "tokens": 238971,
+            "checks": [
+              {
+                "argv": [
+                  "cargo",
+                  "test",
+                  "--offline",
+                  "--locked",
+                  "-p",
+                  "globset",
+                  "--lib"
+                ],
+                "outcome": "passed",
+                "settled": true,
+                "source_unchanged": true,
+                "exit_code": 0,
+                "started_ms": 1793029594084,
+                "ended_ms": 1793029595498,
+                "environment_sha256": "7058ddfc5c8530c9f44329b62735a2a000f17198e255246f2bb4d876447fcba0"
+              }
+            ]
+          }
+        ],
+        "agents": [
+          {
+            "label": "first",
+            "phase": "Solve",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 161288,
+            "started_ms": 1793029399178,
+            "ended_ms": 1793029569967
+          },
+          {
+            "label": "second",
+            "phase": "Solve",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 238971,
+            "started_ms": 1793029409299,
+            "ended_ms": 1793029589215
+          },
+          {
+            "label": "solve judge",
+            "phase": "Judge",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 52273,
+            "started_ms": 1793029596151,
+            "ended_ms": 1793029637556
+          }
+        ],
+        "judge_recommended_candidate": "second",
+        "usage": {
+          "scope": "session",
+          "id": "ses_01M5WE2QM08KYRM96NMYN5XKEJ",
+          "own": {
+            "tokens": {
+              "input": 0,
+              "output": 0,
+              "reasoning": 0,
+              "cache_read": 0,
+              "cache_write": 0
+            },
+            "total_tokens": 0,
+            "cost": 0.0,
+            "unpriced_steps": 0,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "descendants": {
+            "tokens": {
+              "input": 426451,
+              "output": 5952,
+              "reasoning": 1185,
+              "cache_read": 18944,
+              "cache_write": 0
+            },
+            "total_tokens": 452532,
+            "cost": 0.0,
+            "unpriced_steps": 33,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "total": {
+            "tokens": {
+              "input": 426451,
+              "output": 5952,
+              "reasoning": 1185,
+              "cache_read": 18944,
+              "cache_write": 0
+            },
+            "total_tokens": 452532,
+            "cost": 0.0,
+            "unpriced_steps": 33,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "by_model": [
+            {
+              "provider": "chatgpt",
+              "model": "gpt-6.1-sol",
+              "tokens": {
+                "input": 426451,
+                "output": 5952,
+                "reasoning": 1185,
+                "cache_read": 18944,
+                "cache_write": 0
+              },
+              "total_tokens": 452532,
+              "cost": null,
+              "unpriced_steps": 33,
+              "steps": 33
+            }
+          ],
+          "api_duration_ms": 344323,
+          "wall_duration_ms": 0,
+          "lines_added": 0,
+          "lines_removed": 0,
+          "budgets": [],
+          "backfilling": false
+        },
+        "usage_unavailable": false,
+        "unknown_inflight_usage_possible": false,
+        "effective_budget": {
+          "max_tokens": 1500000,
+          "max_cost_usd": 5.0,
+          "max_wall_seconds": 1800.0,
+          "enforcement": "soft",
+          "max_agents": 5
+        },
+        "reported_budget_observation": {
+          "soft_ceiling": true,
+          "effective_limits": {
+            "max_tokens": 1500000,
+            "max_cost_usd": 5,
+            "max_wall_seconds": 1800,
+            "enforcement": "soft",
+            "max_agents": 5
+          },
+          "observed": {
+            "spent_tokens": 452532,
+            "spent_cost_usd": 0,
+            "agents_started": 3,
+            "remaining": {
+              "max_agents": 2,
+              "max_cost_usd": 5,
+              "max_tokens": 1047468,
+              "max_wall_seconds": 1560.241
+            },
+            "unpriced": true,
+            "usage_complete": true,
+            "cost_complete": false
+          },
+          "overshoot_usd": 0,
+          "limitation": "In-flight inference can overshoot; zero or missing price is not proof of free execution."
+        }
+      }
+    },
+    {
+      "index": 6,
+      "task": "repo-click-short-help",
+      "trial": 1,
+      "strategy": "solve",
+      "started_at": "2026-10-26T15:48:58.933975+00:00",
+      "finished_at": "2026-10-26T15:51:19.527198+00:00",
+      "seconds": 140.59457762504462,
+      "exit": 0,
+      "passed": false,
+      "infrastructure_failure": true,
+      "stop_reason": "no_recommendation",
+      "config_sha256": "cac52654d3a4720953191993f38e70e30c11ace1698d303f9ab265dc181eccb6",
+      "environment_sha256": "adc8e407e407031109f014f06241615bef4babaa1ff685de08b31d7c5ad69d2d",
+      "turns": null,
+      "tool_calls": null,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 254349,
+        "output": 3923,
+        "reasoning": 597,
+        "cache_read": 17920,
+        "cache_write": 0
+      },
+      "latency_seconds": 136.882784125,
+      "end_to_end_seconds": 137.148055459,
+      "verification_seconds": 1.2208e-05,
+      "grader_exit": null,
+      "graded_source_sha256": null,
+      "raw_report_sha256": "2f0bc57478f64be4a06ceaac748bb7112f8f12921b19c3b1226e6aa0383ee312",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "b11865a",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null,
+      "native_infrastructure_failure": false,
+      "classification_basis": "host_check_blocked_or_unknown_without_verified_survivor",
+      "solve": {
+        "status": "completed",
+        "verification_status": "no_candidate_passed",
+        "recommended_candidate": null,
+        "judge_model": "chatgpt/gpt-6.1-sol#medium",
+        "judge_differs_from_solver_models": false,
+        "distinct_solver_models": 1,
+        "candidate_count": 2,
+        "candidates": [
+          {
+            "label": "first",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "source_sha256": "6519a7a84e5f7ee925e673878d1e668171ccd24703cf018fbb3919389e7ae716",
+            "patch_sha256": "689a53250f1b7a08d5d9bbad37bce31484aa9bc630fb90a6dc1e0975d88593ae",
+            "host_verified": false,
+            "cost_usd": 0.0,
+            "tokens": 112850,
+            "checks": [
+              {
+                "argv": [
+                  "python3",
+                  "-I",
+                  "-c",
+                  "import sys,pytest;sys.path.insert(0,'src');raise SystemExit(pytest.main(sys.argv[1:]))",
+                  "-q",
+                  "tests/test_utils/test_make_default_short_help.py"
+                ],
+                "outcome": "blocked",
+                "settled": true,
+                "source_unchanged": true,
+                "exit_code": null,
+                "started_ms": 1793029877077,
+                "ended_ms": 1793029877079,
+                "environment_sha256": null
+              }
+            ]
+          },
+          {
+            "label": "second",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "source_sha256": "01d586cb8163686af8865122ba80d4c66e727a975067b6cdd2b9d8c2c52a4c71",
+            "patch_sha256": "20d374c2e8cb44bd5b483d0bd97071b82addf95af54f56236e8f63c30cb6ad75",
+            "host_verified": false,
+            "cost_usd": 0.0,
+            "tokens": 163939,
+            "checks": [
+              {
+                "argv": [
+                  "python3",
+                  "-I",
+                  "-c",
+                  "import sys,pytest;sys.path.insert(0,'src');raise SystemExit(pytest.main(sys.argv[1:]))",
+                  "-q",
+                  "tests/test_utils/test_make_default_short_help.py"
+                ],
+                "outcome": "blocked",
+                "settled": true,
+                "source_unchanged": true,
+                "exit_code": null,
+                "started_ms": 1793029878827,
+                "ended_ms": 1793029878829,
+                "environment_sha256": null
+              }
+            ]
+          }
+        ],
+        "agents": [
+          {
+            "label": "first",
+            "phase": "Solve",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 112850,
+            "started_ms": 1793029743536,
+            "ended_ms": 1793029852363
+          },
+          {
+            "label": "second",
+            "phase": "Solve",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 163939,
+            "started_ms": 1793029753296,
+            "ended_ms": 1793029875822
+          }
+        ],
+        "judge_recommended_candidate": null,
+        "usage": {
+          "scope": "session",
+          "id": "ses_01M5WED7X8J94J28ZYCNCTYSN2",
+          "own": {
+            "tokens": {
+              "input": 0,
+              "output": 0,
+              "reasoning": 0,
+              "cache_read": 0,
+              "cache_write": 0
+            },
+            "total_tokens": 0,
+            "cost": 0.0,
+            "unpriced_steps": 0,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "descendants": {
+            "tokens": {
+              "input": 254349,
+              "output": 3923,
+              "reasoning": 597,
+              "cache_read": 17920,
+              "cache_write": 0
+            },
+            "total_tokens": 276789,
+            "cost": 0.0,
+            "unpriced_steps": 24,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "total": {
+            "tokens": {
+              "input": 254349,
+              "output": 3923,
+              "reasoning": 597,
+              "cache_read": 17920,
+              "cache_write": 0
+            },
+            "total_tokens": 276789,
+            "cost": 0.0,
+            "unpriced_steps": 24,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "by_model": [
+            {
+              "provider": "chatgpt",
+              "model": "gpt-6.1-sol",
+              "tokens": {
+                "input": 254349,
+                "output": 3923,
+                "reasoning": 597,
+                "cache_read": 17920,
+                "cache_write": 0
+              },
+              "total_tokens": 276789,
+              "cost": null,
+              "unpriced_steps": 24,
+              "steps": 24
+            }
+          ],
+          "api_duration_ms": 196983,
+          "wall_duration_ms": 0,
+          "lines_added": 0,
+          "lines_removed": 0,
+          "budgets": [],
+          "backfilling": false
+        },
+        "usage_unavailable": false,
+        "unknown_inflight_usage_possible": false,
+        "effective_budget": {
+          "max_tokens": 1500000,
+          "max_cost_usd": 5.0,
+          "max_wall_seconds": 1800.0,
+          "enforcement": "soft",
+          "max_agents": 5
+        },
+        "reported_budget_observation": {
+          "soft_ceiling": true,
+          "effective_limits": {
+            "max_tokens": 1500000,
+            "max_cost_usd": 5,
+            "max_wall_seconds": 1800,
+            "enforcement": "soft",
+            "max_agents": 5
+          },
+          "observed": {
+            "spent_tokens": 276789,
+            "spent_cost_usd": 0,
+            "agents_started": 2,
+            "remaining": {
+              "max_agents": 3,
+              "max_cost_usd": 5,
+              "max_tokens": 1223211,
+              "max_wall_seconds": 1664.212
+            },
+            "unpriced": true,
+            "usage_complete": true,
+            "cost_complete": false
+          },
+          "overshoot_usd": 0,
+          "limitation": "In-flight inference can overshoot; zero or missing price is not proof of free execution."
+        }
+      }
+    },
+    {
+      "index": 8,
+      "task": "repo-click-argument-help",
+      "trial": 1,
+      "strategy": "solve",
+      "started_at": "2026-10-26T15:53:39.975475+00:00",
+      "finished_at": "2026-10-26T16:11:09.467702+00:00",
+      "seconds": 199.10281808301806,
+      "exit": 0,
+      "passed": false,
+      "infrastructure_failure": true,
+      "stop_reason": "no_recommendation",
+      "config_sha256": "907979972e59c208a8a820a873c092614c8fb805709a12159bc2ff2ba09aabd6",
+      "environment_sha256": "adc8e407e407031109f014f06241615bef4babaa1ff685de08b31d7c5ad69d2d",
+      "turns": null,
+      "tool_calls": null,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 332993,
+        "output": 4177,
+        "reasoning": 520,
+        "cache_read": 83456,
+        "cache_write": 0
+      },
+      "latency_seconds": 197.966363458,
+      "end_to_end_seconds": 198.228544125,
+      "verification_seconds": 1.0209e-05,
+      "grader_exit": null,
+      "graded_source_sha256": null,
+      "raw_report_sha256": "eb7038538dcf331d648b8d6df097b9d28c3a0ca21bc2f573ea37203615330669",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "b11865a",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null,
+      "native_infrastructure_failure": false,
+      "classification_basis": "host_check_blocked_or_unknown_without_verified_survivor",
+      "solve": {
+        "status": "completed",
+        "verification_status": "no_candidate_passed",
+        "recommended_candidate": null,
+        "judge_model": "chatgpt/gpt-6.1-sol#medium",
+        "judge_differs_from_solver_models": false,
+        "distinct_solver_models": 1,
+        "candidate_count": 2,
+        "candidates": [
+          {
+            "label": "first",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "source_sha256": "e2132ee7880aa970c88226960921fb09382fc4a4d79aae4137759a7b3dd4fd2f",
+            "patch_sha256": "d3a816034d50a550eece8ac92b49e352c0fdebf19c43ae467ad6d64497a0d709",
+            "host_verified": false,
+            "cost_usd": 0.0,
+            "tokens": 224470,
+            "checks": [
+              {
+                "argv": [
+                  "python3",
+                  "-I",
+                  "-c",
+                  "import sys,pytest;sys.path.insert(0,'src');raise SystemExit(pytest.main(sys.argv[1:]))",
+                  "-q",
+                  "tests/test_arguments.py"
+                ],
+                "outcome": "blocked",
+                "settled": true,
+                "source_unchanged": true,
+                "exit_code": null,
+                "started_ms": 1793031067004,
+                "ended_ms": 1793031067006,
+                "environment_sha256": null
+              }
+            ]
+          },
+          {
+            "label": "second",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "source_sha256": "02e8209cdb9d37e5f2315c125c71d229b55e4c59b50c46a9efdd13154b85b166",
+            "patch_sha256": "ce7fcabe910517ed4665aa58911a73d9ec48ee93a96c786448ecd582d4df6cae",
+            "host_verified": false,
+            "cost_usd": 0.0,
+            "tokens": 196676,
+            "checks": [
+              {
+                "argv": [
+                  "python3",
+                  "-I",
+                  "-c",
+                  "import sys,pytest;sys.path.insert(0,'src');raise SystemExit(pytest.main(sys.argv[1:]))",
+                  "-q",
+                  "tests/test_arguments.py"
+                ],
+                "outcome": "blocked",
+                "settled": true,
+                "source_unchanged": true,
+                "exit_code": null,
+                "started_ms": 1793031068771,
+                "ended_ms": 1793031068773,
+                "environment_sha256": null
+              }
+            ]
+          }
+        ],
+        "agents": [
+          {
+            "label": "first",
+            "phase": "Solve",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 224470,
+            "started_ms": 1793030022023,
+            "ended_ms": 1793030157708
+          },
+          {
+            "label": "second",
+            "phase": "Solve",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 196676,
+            "started_ms": 1793030031494,
+            "ended_ms": 1793031065721
+          }
+        ],
+        "judge_recommended_candidate": null,
+        "usage": {
+          "scope": "session",
+          "id": "ses_01M5WENQVS4N7QVP8GE4FA4S84",
+          "own": {
+            "tokens": {
+              "input": 0,
+              "output": 0,
+              "reasoning": 0,
+              "cache_read": 0,
+              "cache_write": 0
+            },
+            "total_tokens": 0,
+            "cost": 0.0,
+            "unpriced_steps": 0,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "descendants": {
+            "tokens": {
+              "input": 332993,
+              "output": 4177,
+              "reasoning": 520,
+              "cache_read": 83456,
+              "cache_write": 0
+            },
+            "total_tokens": 421146,
+            "cost": 0.0,
+            "unpriced_steps": 28,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "total": {
+            "tokens": {
+              "input": 332993,
+              "output": 4177,
+              "reasoning": 520,
+              "cache_read": 83456,
+              "cache_write": 0
+            },
+            "total_tokens": 421146,
+            "cost": 0.0,
+            "unpriced_steps": 28,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "by_model": [
+            {
+              "provider": "chatgpt",
+              "model": "gpt-6.1-sol",
+              "tokens": {
+                "input": 332993,
+                "output": 4177,
+                "reasoning": 520,
+                "cache_read": 83456,
+                "cache_write": 0
+              },
+              "total_tokens": 421146,
+              "cost": null,
+              "unpriced_steps": 28,
+              "steps": 28
+            }
+          ],
+          "api_duration_ms": 1127684,
+          "wall_duration_ms": 0,
+          "lines_added": 0,
+          "lines_removed": 0,
+          "budgets": [],
+          "backfilling": false
+        },
+        "usage_unavailable": false,
+        "unknown_inflight_usage_possible": false,
+        "effective_budget": {
+          "max_tokens": 1500000,
+          "max_cost_usd": 5.0,
+          "max_wall_seconds": 1800.0,
+          "enforcement": "soft",
+          "max_agents": 5
+        },
+        "reported_budget_observation": {
+          "soft_ceiling": true,
+          "effective_limits": {
+            "max_tokens": 1500000,
+            "max_cost_usd": 5,
+            "max_wall_seconds": 1800,
+            "enforcement": "soft",
+            "max_agents": 5
+          },
+          "observed": {
+            "spent_tokens": 421146,
+            "spent_cost_usd": 0,
+            "agents_started": 2,
+            "remaining": {
+              "max_agents": 3,
+              "max_cost_usd": 5,
+              "max_tokens": 1078854,
+              "max_wall_seconds": 752.7429999999999
+            },
+            "unpriced": true,
+            "usage_complete": true,
+            "cost_complete": false
+          },
+          "overshoot_usd": 0,
+          "limitation": "In-flight inference can overshoot; zero or missing price is not proof of free execution."
+        }
+      }
+    },
+    {
+      "index": 9,
+      "task": "repo-ripgrep-hidden-dot",
+      "trial": 2,
+      "strategy": "solve",
+      "started_at": "2026-10-26T16:11:10.465032+00:00",
+      "finished_at": "2026-10-26T16:13:54.805539+00:00",
+      "seconds": 164.3378652499523,
+      "exit": 0,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "completed",
+      "config_sha256": "317cffb6f7f17f06af31e644bde3ce3f1d9a71315661328078a9403b259c4479",
+      "environment_sha256": "adc8e407e407031109f014f06241615bef4babaa1ff685de08b31d7c5ad69d2d",
+      "turns": null,
+      "tool_calls": null,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 193528,
+        "output": 3903,
+        "reasoning": 489,
+        "cache_read": 40064,
+        "cache_write": 0
+      },
+      "latency_seconds": 155.982020417,
+      "end_to_end_seconds": 160.178093625,
+      "verification_seconds": 3.8688647080000003,
+      "grader_exit": 0,
+      "graded_source_sha256": "sha256:9f983743713b2c33282215dd02f2a5ae4611dd5b022b797b8eeb56a88962c376",
+      "raw_report_sha256": "f3159ebf4601b3e2092ac1b1d0f31d52d319bd06bccde90d9021332deb271ef3",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "b11865a",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null,
+      "solve": {
+        "status": "completed",
+        "verification_status": "recommended",
+        "recommended_candidate": "second",
+        "judge_model": "chatgpt/gpt-6.1-sol#medium",
+        "judge_differs_from_solver_models": false,
+        "distinct_solver_models": 1,
+        "candidate_count": 2,
+        "candidates": [
+          {
+            "label": "second",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "source_sha256": "c15e9ad85ccc8b2a4442c88923a512a193a80fdd2d628db2a796e0b6b54aa292",
+            "patch_sha256": "c12ae89cb997ed7af2bd9821c3760e873980185aa07821927a03785f9bdb3486",
+            "host_verified": true,
+            "cost_usd": 0.0,
+            "tokens": 90891,
+            "checks": [
+              {
+                "argv": [
+                  "cargo",
+                  "test",
+                  "--offline",
+                  "--locked",
+                  "-p",
+                  "ignore",
+                  "--lib"
+                ],
+                "outcome": "passed",
+                "settled": true,
+                "source_unchanged": true,
+                "exit_code": 0,
+                "started_ms": 1793031172950,
+                "ended_ms": 1793031174425,
+                "environment_sha256": "2d6642a1b7f04b1a3e3bfc9526dc4e41820de6a8c8d7089a06365b7ebe9a95e1"
+              }
+            ]
+          },
+          {
+            "label": "first",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "source_sha256": "11b0febbd4524e4a7bc0f0b574eb4a68de9fcc02e29465d88ba6b7f636fe2d74",
+            "patch_sha256": "07f36707f55453a2d5b227810ffab2078898faf4629883209434c40897da00c9",
+            "host_verified": true,
+            "cost_usd": 0.0,
+            "tokens": 75760,
+            "checks": [
+              {
+                "argv": [
+                  "cargo",
+                  "test",
+                  "--offline",
+                  "--locked",
+                  "-p",
+                  "ignore",
+                  "--lib"
+                ],
+                "outcome": "passed",
+                "settled": true,
+                "source_unchanged": true,
+                "exit_code": 0,
+                "started_ms": 1793031170663,
+                "ended_ms": 1793031170943,
+                "environment_sha256": "0b702f23997375dbb77f4f39c86105d1295232043e0b3046f4575c861752b17a"
+              }
+            ]
+          }
+        ],
+        "agents": [
+          {
+            "label": "second",
+            "phase": "Solve",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 90891,
+            "started_ms": 1793031087986,
+            "ended_ms": 1793031167434
+          },
+          {
+            "label": "first",
+            "phase": "Solve",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 75760,
+            "started_ms": 1793031075900,
+            "ended_ms": 1793031169266
+          },
+          {
+            "label": "solve judge",
+            "phase": "Judge",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 71333,
+            "started_ms": 1793031175099,
+            "ended_ms": 1793031229416
+          }
+        ],
+        "judge_recommended_candidate": "second",
+        "usage": {
+          "scope": "session",
+          "id": "ses_01M5WFNX11XJ5TB9DJYH27QW9P",
+          "own": {
+            "tokens": {
+              "input": 0,
+              "output": 0,
+              "reasoning": 0,
+              "cache_read": 0,
+              "cache_write": 0
+            },
+            "total_tokens": 0,
+            "cost": 0.0,
+            "unpriced_steps": 0,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "descendants": {
+            "tokens": {
+              "input": 193528,
+              "output": 3903,
+              "reasoning": 489,
+              "cache_read": 40064,
+              "cache_write": 0
+            },
+            "total_tokens": 237984,
+            "cost": 0.0,
+            "unpriced_steps": 25,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "total": {
+            "tokens": {
+              "input": 193528,
+              "output": 3903,
+              "reasoning": 489,
+              "cache_read": 40064,
+              "cache_write": 0
+            },
+            "total_tokens": 237984,
+            "cost": 0.0,
+            "unpriced_steps": 25,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "by_model": [
+            {
+              "provider": "chatgpt",
+              "model": "gpt-6.1-sol",
+              "tokens": {
+                "input": 193528,
+                "output": 3903,
+                "reasoning": 489,
+                "cache_read": 40064,
+                "cache_write": 0
+              },
+              "total_tokens": 237984,
+              "cost": null,
+              "unpriced_steps": 25,
+              "steps": 25
+            }
+          ],
+          "api_duration_ms": 191676,
+          "wall_duration_ms": 0,
+          "lines_added": 0,
+          "lines_removed": 0,
+          "budgets": [],
+          "backfilling": false
+        },
+        "usage_unavailable": false,
+        "unknown_inflight_usage_possible": false,
+        "effective_budget": {
+          "max_tokens": 1500000,
+          "max_cost_usd": 5.0,
+          "max_wall_seconds": 1800.0,
+          "enforcement": "soft",
+          "max_agents": 5
+        },
+        "reported_budget_observation": {
+          "soft_ceiling": true,
+          "effective_limits": {
+            "max_tokens": 1500000,
+            "max_cost_usd": 5,
+            "max_wall_seconds": 1800,
+            "enforcement": "soft",
+            "max_agents": 5
+          },
+          "observed": {
+            "spent_tokens": 237984,
+            "spent_cost_usd": 0,
+            "agents_started": 3,
+            "remaining": {
+              "max_agents": 2,
+              "max_cost_usd": 5,
+              "max_tokens": 1262016,
+              "max_wall_seconds": 1645.081
+            },
+            "unpriced": true,
+            "usage_complete": true,
+            "cost_complete": false
+          },
+          "overshoot_usd": 0,
+          "limitation": "In-flight inference can overshoot; zero or missing price is not proof of free execution."
+        }
+      }
+    },
+    {
+      "index": 11,
+      "task": "repo-ripgrep-matches-all",
+      "trial": 2,
+      "strategy": "solve",
+      "started_at": "2026-10-26T16:15:39.444988+00:00",
+      "finished_at": "2026-10-26T16:19:27.479049+00:00",
+      "seconds": 228.02994879207108,
+      "exit": 0,
+      "passed": false,
+      "infrastructure_failure": true,
+      "stop_reason": "completed",
+      "config_sha256": "3be5359f0fa546c46592e480e7d7714fb9bec582d7a70a3c222bbb3e3935b3dc",
+      "environment_sha256": "adc8e407e407031109f014f06241615bef4babaa1ff685de08b31d7c5ad69d2d",
+      "turns": null,
+      "tool_calls": null,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 397106,
+        "output": 5459,
+        "reasoning": 1261,
+        "cache_read": 85632,
+        "cache_write": 0
+      },
+      "latency_seconds": 222.52487325,
+      "end_to_end_seconds": 227.112275542,
+      "verification_seconds": 4.276062875,
+      "grader_exit": 0,
+      "graded_source_sha256": "sha256:729f5feb9babe1c25f522553904b39a4eb2f377e0e707f2e7e8b23587d8224a7",
+      "raw_report_sha256": "50f7fd0a71ac7b88614e95da1ea0373fada9c6e8425d5cf18ad991705add1c35",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "b11865a",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null,
+      "solve": {
+        "status": "completed",
+        "verification_status": "recommended",
+        "recommended_candidate": "first",
+        "judge_model": "chatgpt/gpt-6.1-sol#medium",
+        "judge_differs_from_solver_models": false,
+        "distinct_solver_models": 1,
+        "candidate_count": 2,
+        "candidates": [
+          {
+            "label": "first",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "source_sha256": "f2087ba292aa46898b7e511ec7be93d7e9327a3fa2a77fb3bec34fe6a65def84",
+            "patch_sha256": "6577e265eb6aeda38642426403fbd290e4239210d701b3e0a7ce2bed6f021c8b",
+            "host_verified": true,
+            "cost_usd": 0.0,
+            "tokens": 222460,
+            "checks": [
+              {
+                "argv": [
+                  "cargo",
+                  "test",
+                  "--offline",
+                  "--locked",
+                  "-p",
+                  "globset",
+                  "--lib"
+                ],
+                "outcome": "passed",
+                "settled": true,
+                "source_unchanged": true,
+                "exit_code": 0,
+                "started_ms": 1793031516772,
+                "ended_ms": 1793031519892,
+                "environment_sha256": "ec94247a901b234c7bf09244511b0e28621c54b9c6ea22c86ecd26c63c59e554"
+              }
+            ]
+          },
+          {
+            "label": "second",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "source_sha256": "5252366b5cfb40637afc87259d2b72752040d3e00b205c2ca72b3bb14afb9872",
+            "patch_sha256": "cafbcd3815c0cfcd383b19b9b2b79ee2a12b543ec77a14ad1a3db9d5754cfdb4",
+            "host_verified": true,
+            "cost_usd": 0.0,
+            "tokens": 216510,
+            "checks": [
+              {
+                "argv": [
+                  "cargo",
+                  "test",
+                  "--offline",
+                  "--locked",
+                  "-p",
+                  "globset",
+                  "--lib"
+                ],
+                "outcome": "passed",
+                "settled": true,
+                "source_unchanged": true,
+                "exit_code": 0,
+                "started_ms": 1793031521942,
+                "ended_ms": 1793031523368,
+                "environment_sha256": "2bb36fb08d4ac1f1ec800088b46539c765f65872567e96d3d0a93570a1180cc7"
+              }
+            ]
+          }
+        ],
+        "agents": [
+          {
+            "label": "first",
+            "phase": "Solve",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 222460,
+            "started_ms": 1793031341645,
+            "ended_ms": 1793031493656
+          },
+          {
+            "label": "second",
+            "phase": "Solve",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 216510,
+            "started_ms": 1793031352062,
+            "ended_ms": 1793031515363
+          },
+          {
+            "label": "solve judge",
+            "phase": "Judge",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 50488,
+            "started_ms": 1793031524060,
+            "ended_ms": 1793031561666
+          }
+        ],
+        "judge_recommended_candidate": "first",
+        "usage": {
+          "scope": "session",
+          "id": "ses_01M5WFY0H7R443FJEF8KH5D2D0",
+          "own": {
+            "tokens": {
+              "input": 0,
+              "output": 0,
+              "reasoning": 0,
+              "cache_read": 0,
+              "cache_write": 0
+            },
+            "total_tokens": 0,
+            "cost": 0.0,
+            "unpriced_steps": 0,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "descendants": {
+            "tokens": {
+              "input": 397106,
+              "output": 5459,
+              "reasoning": 1261,
+              "cache_read": 85632,
+              "cache_write": 0
+            },
+            "total_tokens": 489458,
+            "cost": 0.0,
+            "unpriced_steps": 34,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "total": {
+            "tokens": {
+              "input": 397106,
+              "output": 5459,
+              "reasoning": 1261,
+              "cache_read": 85632,
+              "cache_write": 0
+            },
+            "total_tokens": 489458,
+            "cost": 0.0,
+            "unpriced_steps": 34,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "by_model": [
+            {
+              "provider": "chatgpt",
+              "model": "gpt-6.1-sol",
+              "tokens": {
+                "input": 397106,
+                "output": 5459,
+                "reasoning": 1261,
+                "cache_read": 85632,
+                "cache_write": 0
+              },
+              "total_tokens": 489458,
+              "cost": null,
+              "unpriced_steps": 34,
+              "steps": 34
+            }
+          ],
+          "api_duration_ms": 303231,
+          "wall_duration_ms": 0,
+          "lines_added": 0,
+          "lines_removed": 0,
+          "budgets": [],
+          "backfilling": false
+        },
+        "usage_unavailable": false,
+        "unknown_inflight_usage_possible": false,
+        "effective_budget": {
+          "max_tokens": 1500000,
+          "max_cost_usd": 5.0,
+          "max_wall_seconds": 1800.0,
+          "enforcement": "soft",
+          "max_agents": 5
+        },
+        "reported_budget_observation": {
+          "soft_ceiling": true,
+          "effective_limits": {
+            "max_tokens": 1500000,
+            "max_cost_usd": 5,
+            "max_wall_seconds": 1800,
+            "enforcement": "soft",
+            "max_agents": 5
+          },
+          "observed": {
+            "spent_tokens": 489458,
+            "spent_cost_usd": 0,
+            "agents_started": 3,
+            "remaining": {
+              "max_agents": 2,
+              "max_cost_usd": 5,
+              "max_tokens": 1010542,
+              "max_wall_seconds": 1578.541
+            },
+            "unpriced": true,
+            "usage_complete": true,
+            "cost_complete": false
+          },
+          "overshoot_usd": 0,
+          "limitation": "In-flight inference can overshoot; zero or missing price is not proof of free execution."
+        }
+      },
+      "native_passed": true,
+      "native_infrastructure_failure": false,
+      "environment_integrity_unknown": true,
+      "classification_basis": "reference_control_directory_outside_deny_list_during_attempt"
+    },
+    {
+      "index": 13,
+      "task": "repo-click-short-help",
+      "trial": 2,
+      "strategy": "solve",
+      "started_at": "2026-10-26T16:22:32.568525+00:00",
+      "finished_at": "2026-10-26T16:24:33.184193+00:00",
+      "seconds": 120.61333383398596,
+      "exit": 0,
+      "passed": false,
+      "infrastructure_failure": true,
+      "stop_reason": "no_recommendation",
+      "config_sha256": "a9251aeff1cebe24db7f1bfd094dc8d7ad5e31b4e9013186c73031b5cd0834c8",
+      "environment_sha256": "adc8e407e407031109f014f06241615bef4babaa1ff685de08b31d7c5ad69d2d",
+      "turns": null,
+      "tool_calls": null,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 203651,
+        "output": 3626,
+        "reasoning": 339,
+        "cache_read": 43520,
+        "cache_write": 0
+      },
+      "latency_seconds": 119.406451917,
+      "end_to_end_seconds": 119.665436,
+      "verification_seconds": 1.0084e-05,
+      "grader_exit": null,
+      "graded_source_sha256": null,
+      "raw_report_sha256": "bddb78fb5de096c361443014c202366fc49d394bd306aa7de05e4187bcc62b60",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "b11865a",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null,
+      "native_infrastructure_failure": false,
+      "classification_basis": "host_check_blocked_or_unknown_without_verified_survivor",
+      "solve": {
+        "status": "completed",
+        "verification_status": "no_candidate_passed",
+        "recommended_candidate": null,
+        "judge_model": "chatgpt/gpt-6.1-sol#medium",
+        "judge_differs_from_solver_models": false,
+        "distinct_solver_models": 1,
+        "candidate_count": 2,
+        "candidates": [
+          {
+            "label": "first",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "source_sha256": "7f954bcd4a8a0981cee95ffdc77a0af2e888810a87c7995b36a3ebd3a53e868f",
+            "patch_sha256": "5619d3c7631138a9295fdf1d661e762a50afaed4e074408ac6d5a7450434f9b0",
+            "host_verified": false,
+            "cost_usd": 0.0,
+            "tokens": 99537,
+            "checks": [
+              {
+                "argv": [
+                  "python3",
+                  "-I",
+                  "-c",
+                  "import sys,pytest;sys.path.insert(0,'src');raise SystemExit(pytest.main(sys.argv[1:]))",
+                  "-q",
+                  "tests/test_utils/test_make_default_short_help.py"
+                ],
+                "outcome": "blocked",
+                "settled": true,
+                "source_unchanged": true,
+                "exit_code": null,
+                "started_ms": 1793031870662,
+                "ended_ms": 1793031870664,
+                "environment_sha256": null
+              }
+            ]
+          },
+          {
+            "label": "second",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "source_sha256": "d5075036a16f67c526affe804865f8cd16faedf406ba15d22f3bf0153e77dbaf",
+            "patch_sha256": "75fba35541f283f93948909561c77551145bbfc78eab2babfe13a747f22c6b6d",
+            "host_verified": false,
+            "cost_usd": 0.0,
+            "tokens": 151599,
+            "checks": [
+              {
+                "argv": [
+                  "python3",
+                  "-I",
+                  "-c",
+                  "import sys,pytest;sys.path.insert(0,'src');raise SystemExit(pytest.main(sys.argv[1:]))",
+                  "-q",
+                  "tests/test_utils/test_make_default_short_help.py"
+                ],
+                "outcome": "blocked",
+                "settled": true,
+                "source_unchanged": true,
+                "exit_code": null,
+                "started_ms": 1793031872495,
+                "ended_ms": 1793031872497,
+                "environment_sha256": null
+              }
+            ]
+          }
+        ],
+        "agents": [
+          {
+            "label": "first",
+            "phase": "Solve",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 99537,
+            "started_ms": 1793031754738,
+            "ended_ms": 1793031857515
+          },
+          {
+            "label": "second",
+            "phase": "Solve",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 151599,
+            "started_ms": 1793031764393,
+            "ended_ms": 1793031869360
+          }
+        ],
+        "judge_recommended_candidate": null,
+        "usage": {
+          "scope": "session",
+          "id": "ses_01M5WGAKXVFSKCARWWH5E25BW0",
+          "own": {
+            "tokens": {
+              "input": 0,
+              "output": 0,
+              "reasoning": 0,
+              "cache_read": 0,
+              "cache_write": 0
+            },
+            "total_tokens": 0,
+            "cost": 0.0,
+            "unpriced_steps": 0,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "descendants": {
+            "tokens": {
+              "input": 203651,
+              "output": 3626,
+              "reasoning": 339,
+              "cache_read": 43520,
+              "cache_write": 0
+            },
+            "total_tokens": 251136,
+            "cost": 0.0,
+            "unpriced_steps": 24,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "total": {
+            "tokens": {
+              "input": 203651,
+              "output": 3626,
+              "reasoning": 339,
+              "cache_read": 43520,
+              "cache_write": 0
+            },
+            "total_tokens": 251136,
+            "cost": 0.0,
+            "unpriced_steps": 24,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "by_model": [
+            {
+              "provider": "chatgpt",
+              "model": "gpt-6.1-sol",
+              "tokens": {
+                "input": 203651,
+                "output": 3626,
+                "reasoning": 339,
+                "cache_read": 43520,
+                "cache_write": 0
+              },
+              "total_tokens": 251136,
+              "cost": null,
+              "unpriced_steps": 24,
+              "steps": 24
+            }
+          ],
+          "api_duration_ms": 173485,
+          "wall_duration_ms": 0,
+          "lines_added": 0,
+          "lines_removed": 0,
+          "budgets": [],
+          "backfilling": false
+        },
+        "usage_unavailable": false,
+        "unknown_inflight_usage_possible": false,
+        "effective_budget": {
+          "max_tokens": 1500000,
+          "max_cost_usd": 5.0,
+          "max_wall_seconds": 1800.0,
+          "enforcement": "soft",
+          "max_agents": 5
+        },
+        "reported_budget_observation": {
+          "soft_ceiling": true,
+          "effective_limits": {
+            "max_tokens": 1500000,
+            "max_cost_usd": 5,
+            "max_wall_seconds": 1800,
+            "enforcement": "soft",
+            "max_agents": 5
+          },
+          "observed": {
+            "spent_tokens": 251136,
+            "spent_cost_usd": 0,
+            "agents_started": 2,
+            "remaining": {
+              "max_agents": 3,
+              "max_cost_usd": 5,
+              "max_tokens": 1248864,
+              "max_wall_seconds": 1681.736
+            },
+            "unpriced": true,
+            "usage_complete": true,
+            "cost_complete": false
+          },
+          "overshoot_usd": 0,
+          "limitation": "In-flight inference can overshoot; zero or missing price is not proof of free execution."
+        }
+      }
+    },
+    {
+      "index": 15,
+      "task": "repo-click-argument-help",
+      "trial": 2,
+      "strategy": "solve",
+      "started_at": "2026-10-26T16:26:17.845314+00:00",
+      "finished_at": "2026-10-26T16:28:50.052304+00:00",
+      "seconds": 152.2502275829902,
+      "exit": 0,
+      "passed": false,
+      "infrastructure_failure": true,
+      "stop_reason": "no_recommendation",
+      "config_sha256": "f1e47b6fbd1145fa236b8db30c650237142d638643c528ba6276e1dd72380c26",
+      "environment_sha256": "adc8e407e407031109f014f06241615bef4babaa1ff685de08b31d7c5ad69d2d",
+      "turns": null,
+      "tool_calls": null,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 309397,
+        "output": 4947,
+        "reasoning": 788,
+        "cache_read": 59264,
+        "cache_write": 0
+      },
+      "latency_seconds": 151.141722542,
+      "end_to_end_seconds": 151.397602709,
+      "verification_seconds": 1.6e-05,
+      "grader_exit": null,
+      "graded_source_sha256": null,
+      "raw_report_sha256": "8a1ff9d07f5af897e5fdef7300121e085130a9379308413187e9f92ba3e09e69",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "b11865a",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null,
+      "native_infrastructure_failure": false,
+      "classification_basis": "host_check_blocked_or_unknown_without_verified_survivor",
+      "solve": {
+        "status": "completed",
+        "verification_status": "no_candidate_passed",
+        "recommended_candidate": null,
+        "judge_model": "chatgpt/gpt-6.1-sol#medium",
+        "judge_differs_from_solver_models": false,
+        "distinct_solver_models": 1,
+        "candidate_count": 2,
+        "candidates": [
+          {
+            "label": "first",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "source_sha256": "60fd825e7af50017f2f5e448a69596e3629f60917ec267da533c179d6836032a",
+            "patch_sha256": "7630caba82e4de1205ebf54766647519fa1a8e307ac6eb5e8b0cabcc167ce85d",
+            "host_verified": false,
+            "cost_usd": 0.0,
+            "tokens": 189957,
+            "checks": [
+              {
+                "argv": [
+                  "python3",
+                  "-I",
+                  "-c",
+                  "import sys,pytest;sys.path.insert(0,'src');raise SystemExit(pytest.main(sys.argv[1:]))",
+                  "-q",
+                  "tests/test_arguments.py"
+                ],
+                "outcome": "blocked",
+                "settled": true,
+                "source_unchanged": true,
+                "exit_code": null,
+                "started_ms": 1793032127452,
+                "ended_ms": 1793032127454,
+                "environment_sha256": null
+              }
+            ]
+          },
+          {
+            "label": "second",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "source_sha256": "81309e4f73c1c7a7674bddafa4737578ca2c5c53678fe6be934ab7be451eb490",
+            "patch_sha256": "ae263e827178948ad8c44d213729330a9bbc1fba17ef325bcef5d8e10cd0928b",
+            "host_verified": false,
+            "cost_usd": 0.0,
+            "tokens": 184439,
+            "checks": [
+              {
+                "argv": [
+                  "python3",
+                  "-I",
+                  "-c",
+                  "import sys,pytest;sys.path.insert(0,'src');raise SystemExit(pytest.main(sys.argv[1:]))",
+                  "-q",
+                  "tests/test_arguments.py"
+                ],
+                "outcome": "blocked",
+                "settled": true,
+                "source_unchanged": true,
+                "exit_code": null,
+                "started_ms": 1793032129360,
+                "ended_ms": 1793032129362,
+                "environment_sha256": null
+              }
+            ]
+          }
+        ],
+        "agents": [
+          {
+            "label": "first",
+            "phase": "Solve",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 189957,
+            "started_ms": 1793031979918,
+            "ended_ms": 1793032109937
+          },
+          {
+            "label": "second",
+            "phase": "Solve",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 184439,
+            "started_ms": 1793031989421,
+            "ended_ms": 1793032126093
+          }
+        ],
+        "judge_recommended_candidate": null,
+        "usage": {
+          "scope": "session",
+          "id": "ses_01M5WGHFTYKYBXZJHCY06Z6XA5",
+          "own": {
+            "tokens": {
+              "input": 0,
+              "output": 0,
+              "reasoning": 0,
+              "cache_read": 0,
+              "cache_write": 0
+            },
+            "total_tokens": 0,
+            "cost": 0.0,
+            "unpriced_steps": 0,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "descendants": {
+            "tokens": {
+              "input": 309397,
+              "output": 4947,
+              "reasoning": 788,
+              "cache_read": 59264,
+              "cache_write": 0
+            },
+            "total_tokens": 374396,
+            "cost": 0.0,
+            "unpriced_steps": 28,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "total": {
+            "tokens": {
+              "input": 309397,
+              "output": 4947,
+              "reasoning": 788,
+              "cache_read": 59264,
+              "cache_write": 0
+            },
+            "total_tokens": 374396,
+            "cost": 0.0,
+            "unpriced_steps": 28,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "by_model": [
+            {
+              "provider": "chatgpt",
+              "model": "gpt-6.1-sol",
+              "tokens": {
+                "input": 309397,
+                "output": 4947,
+                "reasoning": 788,
+                "cache_read": 59264,
+                "cache_write": 0
+              },
+              "total_tokens": 374396,
+              "cost": null,
+              "unpriced_steps": 28,
+              "steps": 28
+            }
+          ],
+          "api_duration_ms": 228303,
+          "wall_duration_ms": 0,
+          "lines_added": 0,
+          "lines_removed": 0,
+          "budgets": [],
+          "backfilling": false
+        },
+        "usage_unavailable": false,
+        "unknown_inflight_usage_possible": false,
+        "effective_budget": {
+          "max_tokens": 1500000,
+          "max_cost_usd": 5.0,
+          "max_wall_seconds": 1800.0,
+          "enforcement": "soft",
+          "max_agents": 5
+        },
+        "reported_budget_observation": {
+          "soft_ceiling": true,
+          "effective_limits": {
+            "max_tokens": 1500000,
+            "max_cost_usd": 5,
+            "max_wall_seconds": 1800,
+            "enforcement": "soft",
+            "max_agents": 5
+          },
+          "observed": {
+            "spent_tokens": 374396,
+            "spent_cost_usd": 0,
+            "agents_started": 2,
+            "remaining": {
+              "max_agents": 3,
+              "max_cost_usd": 5,
+              "max_tokens": 1125604,
+              "max_wall_seconds": 1650.024
+            },
+            "unpriced": true,
+            "usage_complete": true,
+            "cost_complete": false
+          },
+          "overshoot_usd": 0,
+          "limitation": "In-flight inference can overshoot; zero or missing price is not proof of free execution."
+        }
+      }
+    },
+    {
+      "index": 18,
+      "task": "repo-ripgrep-hidden-dot",
+      "trial": 3,
+      "strategy": "solve",
+      "started_at": "2026-10-26T16:32:48.815421+00:00",
+      "finished_at": "2026-10-26T16:35:51.237503+00:00",
+      "seconds": 182.41995349992067,
+      "exit": 0,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "completed",
+      "config_sha256": "2c0f00a5314cb9cae2c6fe6bab148f2c48289ea51bb81397b0b0a9073668416b",
+      "environment_sha256": "adc8e407e407031109f014f06241615bef4babaa1ff685de08b31d7c5ad69d2d",
+      "turns": null,
+      "tool_calls": null,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 278382,
+        "output": 5074,
+        "reasoning": 547,
+        "cache_read": 52224,
+        "cache_write": 0
+      },
+      "latency_seconds": 177.328548375,
+      "end_to_end_seconds": 181.562252792,
+      "verification_seconds": 3.905651375,
+      "grader_exit": 0,
+      "graded_source_sha256": "sha256:0f051988bff20c0f99fdc42ab76bada9641b7f2f7d65785c09fd7b91d82608a3",
+      "raw_report_sha256": "5d80ebb9999fe5464873a2f24b29265d5be6e062fd8abaee464f464b6be04068",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "b11865a",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null,
+      "solve": {
+        "status": "completed",
+        "verification_status": "recommended",
+        "recommended_candidate": "second",
+        "judge_model": "chatgpt/gpt-6.1-sol#medium",
+        "judge_differs_from_solver_models": false,
+        "distinct_solver_models": 1,
+        "candidate_count": 2,
+        "candidates": [
+          {
+            "label": "first",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "source_sha256": "2d1894aad7d4c09df5db97c77529ffe5c23baf9a97c7cb1813f1984a0c49beb1",
+            "patch_sha256": "e9b5296d6e9d223e7bffed0ad876f69883c5eef1d4c2d0ce6d99ef88ae6aecbc",
+            "host_verified": true,
+            "cost_usd": 0.0,
+            "tokens": 115300,
+            "checks": [
+              {
+                "argv": [
+                  "cargo",
+                  "test",
+                  "--offline",
+                  "--locked",
+                  "-p",
+                  "ignore",
+                  "--lib"
+                ],
+                "outcome": "passed",
+                "settled": true,
+                "source_unchanged": true,
+                "exit_code": 0,
+                "started_ms": 1793032500441,
+                "ended_ms": 1793032501915,
+                "environment_sha256": "b04676e1e10ce4cef76a5d0e1a89e5ea06aa237c016545a0f6324e8d7186e2ad"
+              }
+            ]
+          },
+          {
+            "label": "second",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "source_sha256": "0098d104c4f188814f77b59b11ff41488c2d1817d9478c7bba67074fa1979e37",
+            "patch_sha256": "dc423283fb6ec0f22860d3f1a8f3d6861016bf441e0c5e3feb2656dc45563f4e",
+            "host_verified": true,
+            "cost_usd": 0.0,
+            "tokens": 167973,
+            "checks": [
+              {
+                "argv": [
+                  "cargo",
+                  "test",
+                  "--offline",
+                  "--locked",
+                  "-p",
+                  "ignore",
+                  "--lib"
+                ],
+                "outcome": "passed",
+                "settled": true,
+                "source_unchanged": true,
+                "exit_code": 0,
+                "started_ms": 1793032503995,
+                "ended_ms": 1793032504282,
+                "environment_sha256": "072158c1b5aaf8e1e4e6748ad99aeada3a7a423121d556d5cc648b671f91f14f"
+              }
+            ]
+          }
+        ],
+        "agents": [
+          {
+            "label": "first",
+            "phase": "Solve",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 115300,
+            "started_ms": 1793032370987,
+            "ended_ms": 1793032460069
+          },
+          {
+            "label": "second",
+            "phase": "Solve",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 167973,
+            "started_ms": 1793032381641,
+            "ended_ms": 1793032498998
+          },
+          {
+            "label": "solve judge",
+            "phase": "Judge",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 52954,
+            "started_ms": 1793032504950,
+            "ended_ms": 1793032545760
+          }
+        ],
+        "judge_recommended_candidate": "second",
+        "usage": {
+          "scope": "session",
+          "id": "ses_01M5WGXDQ576G97900XEMPZSXA",
+          "own": {
+            "tokens": {
+              "input": 0,
+              "output": 0,
+              "reasoning": 0,
+              "cache_read": 0,
+              "cache_write": 0
+            },
+            "total_tokens": 0,
+            "cost": 0.0,
+            "unpriced_steps": 0,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "descendants": {
+            "tokens": {
+              "input": 278382,
+              "output": 5074,
+              "reasoning": 547,
+              "cache_read": 52224,
+              "cache_write": 0
+            },
+            "total_tokens": 336227,
+            "cost": 0.0,
+            "unpriced_steps": 29,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "total": {
+            "tokens": {
+              "input": 278382,
+              "output": 5074,
+              "reasoning": 547,
+              "cache_read": 52224,
+              "cache_write": 0
+            },
+            "total_tokens": 336227,
+            "cost": 0.0,
+            "unpriced_steps": 29,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "by_model": [
+            {
+              "provider": "chatgpt",
+              "model": "gpt-6.1-sol",
+              "tokens": {
+                "input": 278382,
+                "output": 5074,
+                "reasoning": 547,
+                "cache_read": 52224,
+                "cache_write": 0
+              },
+              "total_tokens": 336227,
+              "cost": null,
+              "unpriced_steps": 29,
+              "steps": 29
+            }
+          ],
+          "api_duration_ms": 209657,
+          "wall_duration_ms": 0,
+          "lines_added": 0,
+          "lines_removed": 0,
+          "budgets": [],
+          "backfilling": false
+        },
+        "usage_unavailable": false,
+        "unknown_inflight_usage_possible": false,
+        "effective_budget": {
+          "max_tokens": 1500000,
+          "max_cost_usd": 5.0,
+          "max_wall_seconds": 1800.0,
+          "enforcement": "soft",
+          "max_agents": 5
+        },
+        "reported_budget_observation": {
+          "soft_ceiling": true,
+          "effective_limits": {
+            "max_tokens": 1500000,
+            "max_cost_usd": 5,
+            "max_wall_seconds": 1800,
+            "enforcement": "soft",
+            "max_agents": 5
+          },
+          "observed": {
+            "spent_tokens": 336227,
+            "spent_cost_usd": 0,
+            "agents_started": 3,
+            "remaining": {
+              "max_agents": 2,
+              "max_cost_usd": 5,
+              "max_tokens": 1163773,
+              "max_wall_seconds": 1623.778
+            },
+            "unpriced": true,
+            "usage_complete": true,
+            "cost_complete": false
+          },
+          "overshoot_usd": 0,
+          "limitation": "In-flight inference can overshoot; zero or missing price is not proof of free execution."
+        }
+      }
+    },
+    {
+      "index": 20,
+      "task": "repo-ripgrep-matches-all",
+      "trial": 3,
+      "strategy": "solve",
+      "started_at": "2026-10-26T16:38:22.185223+00:00",
+      "finished_at": "2026-10-26T16:42:17.867242+00:00",
+      "seconds": 235.7600749579724,
+      "exit": 0,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "completed",
+      "config_sha256": "ea796cc057c292aa2f5117e782ac242620f7d801f0779acbeaba6177c50420b7",
+      "environment_sha256": "adc8e407e407031109f014f06241615bef4babaa1ff685de08b31d7c5ad69d2d",
+      "turns": null,
+      "tool_calls": null,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 400737,
+        "output": 5493,
+        "reasoning": 1405,
+        "cache_read": 76416,
+        "cache_write": 0
+      },
+      "latency_seconds": 227.786930458,
+      "end_to_end_seconds": 232.307169667,
+      "verification_seconds": 4.206749833,
+      "grader_exit": 0,
+      "graded_source_sha256": "sha256:a114770e6a199928eaf76f67c7c008e4b523bf9292c39cff67725788fdbfe86b",
+      "raw_report_sha256": "a1d451f7065d0fbf492adb7b148009cbf48ccdb463ddee5db9780a4357c1e941",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "b11865a",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null,
+      "solve": {
+        "status": "completed",
+        "verification_status": "recommended",
+        "recommended_candidate": "second",
+        "judge_model": "chatgpt/gpt-6.1-sol#medium",
+        "judge_differs_from_solver_models": false,
+        "distinct_solver_models": 1,
+        "candidate_count": 2,
+        "candidates": [
+          {
+            "label": "first",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "source_sha256": "39ddb5559b480a8c025d0cd97183963d9021a60bb5668c0ab7a041423c9261e7",
+            "patch_sha256": "30aab3e822a0fb923a34b3667555df244300f22523302e8775ca4e3a0bf8a237",
+            "host_verified": true,
+            "cost_usd": 0.0,
+            "tokens": 195136,
+            "checks": [
+              {
+                "argv": [
+                  "cargo",
+                  "test",
+                  "--offline",
+                  "--locked",
+                  "-p",
+                  "globset",
+                  "--lib"
+                ],
+                "outcome": "passed",
+                "settled": true,
+                "source_unchanged": true,
+                "exit_code": 0,
+                "started_ms": 1793032877862,
+                "ended_ms": 1793032879305,
+                "environment_sha256": "6b3edae0914ab6ee1b45d27c57c6e35188fbce09938c86021dd36a51d6b39b45"
+              }
+            ]
+          },
+          {
+            "label": "second",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "source_sha256": "a953bdde323d50823592d132a866d1df58176b938efc9d6496a9d4a13125e35b",
+            "patch_sha256": "5c4261946d4448a3e01114b329c2af42e3b392c63e8bb26b7461c8008741a72b",
+            "host_verified": true,
+            "cost_usd": 0.0,
+            "tokens": 221846,
+            "checks": [
+              {
+                "argv": [
+                  "cargo",
+                  "test",
+                  "--offline",
+                  "--locked",
+                  "-p",
+                  "globset",
+                  "--lib"
+                ],
+                "outcome": "passed",
+                "settled": true,
+                "source_unchanged": true,
+                "exit_code": 0,
+                "started_ms": 1793032881395,
+                "ended_ms": 1793032881643,
+                "environment_sha256": "5993940c4b821aea7ffa3570e1e5e204a99bea4bbee2d00f8476c872ddbb8d83"
+              }
+            ]
+          }
+        ],
+        "agents": [
+          {
+            "label": "first",
+            "phase": "Solve",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 195136,
+            "started_ms": 1793032706960,
+            "ended_ms": 1793032864636
+          },
+          {
+            "label": "second",
+            "phase": "Solve",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 221846,
+            "started_ms": 1793032718473,
+            "ended_ms": 1793032876408
+          },
+          {
+            "label": "solve judge",
+            "phase": "Judge",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 67069,
+            "started_ms": 1793032882321,
+            "ended_ms": 1793032932151
+          }
+        ],
+        "judge_recommended_candidate": "second",
+        "usage": {
+          "scope": "session",
+          "id": "ses_01M5WH7NST7F3QV3YGYQCJSJFA",
+          "own": {
+            "tokens": {
+              "input": 0,
+              "output": 0,
+              "reasoning": 0,
+              "cache_read": 0,
+              "cache_write": 0
+            },
+            "total_tokens": 0,
+            "cost": 0.0,
+            "unpriced_steps": 0,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "descendants": {
+            "tokens": {
+              "input": 400737,
+              "output": 5493,
+              "reasoning": 1405,
+              "cache_read": 76416,
+              "cache_write": 0
+            },
+            "total_tokens": 484051,
+            "cost": 0.0,
+            "unpriced_steps": 34,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "total": {
+            "tokens": {
+              "input": 400737,
+              "output": 5493,
+              "reasoning": 1405,
+              "cache_read": 76416,
+              "cache_write": 0
+            },
+            "total_tokens": 484051,
+            "cost": 0.0,
+            "unpriced_steps": 34,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "by_model": [
+            {
+              "provider": "chatgpt",
+              "model": "gpt-6.1-sol",
+              "tokens": {
+                "input": 400737,
+                "output": 5493,
+                "reasoning": 1405,
+                "cache_read": 76416,
+                "cache_write": 0
+              },
+              "total_tokens": 484051,
+              "cost": null,
+              "unpriced_steps": 34,
+              "steps": 34
+            }
+          ],
+          "api_duration_ms": 322094,
+          "wall_duration_ms": 0,
+          "lines_added": 0,
+          "lines_removed": 0,
+          "budgets": [],
+          "backfilling": false
+        },
+        "usage_unavailable": false,
+        "unknown_inflight_usage_possible": false,
+        "effective_budget": {
+          "max_tokens": 1500000,
+          "max_cost_usd": 5.0,
+          "max_wall_seconds": 1800.0,
+          "enforcement": "soft",
+          "max_agents": 5
+        },
+        "reported_budget_observation": {
+          "soft_ceiling": true,
+          "effective_limits": {
+            "max_tokens": 1500000,
+            "max_cost_usd": 5,
+            "max_wall_seconds": 1800,
+            "enforcement": "soft",
+            "max_agents": 5
+          },
+          "observed": {
+            "spent_tokens": 484051,
+            "spent_cost_usd": 0,
+            "agents_started": 3,
+            "remaining": {
+              "max_agents": 2,
+              "max_cost_usd": 5,
+              "max_tokens": 1015949,
+              "max_wall_seconds": 1573.346
+            },
+            "unpriced": true,
+            "usage_complete": true,
+            "cost_complete": false
+          },
+          "overshoot_usd": 0,
+          "limitation": "In-flight inference can overshoot; zero or missing price is not proof of free execution."
+        }
+      }
+    },
+    {
+      "index": 22,
+      "task": "repo-click-short-help",
+      "trial": 3,
+      "strategy": "solve",
+      "started_at": "2026-10-26T16:43:42.221594+00:00",
+      "finished_at": "2026-10-26T16:45:54.103016+00:00",
+      "seconds": 131.88121220795438,
+      "exit": 0,
+      "passed": false,
+      "infrastructure_failure": true,
+      "stop_reason": "no_recommendation",
+      "config_sha256": "6cdab2c046ae2841e5c2f97e04c8f54cca22107e5b3c3a27f490106c29cef2b1",
+      "environment_sha256": "adc8e407e407031109f014f06241615bef4babaa1ff685de08b31d7c5ad69d2d",
+      "turns": null,
+      "tool_calls": null,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 165337,
+        "output": 3871,
+        "reasoning": 628,
+        "cache_read": 54272,
+        "cache_write": 0
+      },
+      "latency_seconds": 128.028365709,
+      "end_to_end_seconds": 128.289769083,
+      "verification_seconds": 1.1959e-05,
+      "grader_exit": null,
+      "graded_source_sha256": null,
+      "raw_report_sha256": "6996f70274d25fe6c8318befda8e9815d0f5a75751d98c2f9039f6d556793b2a",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "b11865a",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null,
+      "native_infrastructure_failure": false,
+      "classification_basis": "host_check_blocked_or_unknown_without_verified_survivor",
+      "solve": {
+        "status": "completed",
+        "verification_status": "no_candidate_passed",
+        "recommended_candidate": null,
+        "judge_model": "chatgpt/gpt-6.1-sol#medium",
+        "judge_differs_from_solver_models": false,
+        "distinct_solver_models": 1,
+        "candidate_count": 2,
+        "candidates": [
+          {
+            "label": "second",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "source_sha256": "3b67c5f942d47f642c2d087a181ccdf7f0babb5bdf44a4851816a821569c4faf",
+            "patch_sha256": "5596e0d5d8427808268980f8c11b7495d0b07c55404c49675b9a523e28cd26ae",
+            "host_verified": false,
+            "cost_usd": 0.0,
+            "tokens": 104376,
+            "checks": [
+              {
+                "argv": [
+                  "python3",
+                  "-I",
+                  "-c",
+                  "import sys,pytest;sys.path.insert(0,'src');raise SystemExit(pytest.main(sys.argv[1:]))",
+                  "-q",
+                  "tests/test_utils/test_make_default_short_help.py"
+                ],
+                "outcome": "blocked",
+                "settled": true,
+                "source_unchanged": true,
+                "exit_code": null,
+                "started_ms": 1793033153400,
+                "ended_ms": 1793033153402,
+                "environment_sha256": null
+              }
+            ]
+          },
+          {
+            "label": "first",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "source_sha256": "541b47f2d45c81b48c636246c2cc338979c98aa2da5b0becda7581df534eb284",
+            "patch_sha256": "0af106014ca84b4a3f01f01fdb7f4626c4f625f5d156053242f083eb8a6d54a6",
+            "host_verified": false,
+            "cost_usd": 0.0,
+            "tokens": 119732,
+            "checks": [
+              {
+                "argv": [
+                  "python3",
+                  "-I",
+                  "-c",
+                  "import sys,pytest;sys.path.insert(0,'src');raise SystemExit(pytest.main(sys.argv[1:]))",
+                  "-q",
+                  "tests/test_utils/test_make_default_short_help.py"
+                ],
+                "outcome": "blocked",
+                "settled": true,
+                "source_unchanged": true,
+                "exit_code": null,
+                "started_ms": 1793033151499,
+                "ended_ms": 1793033151501,
+                "environment_sha256": null
+              }
+            ]
+          }
+        ],
+        "agents": [
+          {
+            "label": "second",
+            "phase": "Solve",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 104376,
+            "started_ms": 1793033037677,
+            "ended_ms": 1793033148213
+          },
+          {
+            "label": "first",
+            "phase": "Solve",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 119732,
+            "started_ms": 1793033027091,
+            "ended_ms": 1793033150130
+          }
+        ],
+        "judge_recommended_candidate": null,
+        "usage": {
+          "scope": "session",
+          "id": "ses_01M5WHHEDG846FY28P3XB8JTWJ",
+          "own": {
+            "tokens": {
+              "input": 0,
+              "output": 0,
+              "reasoning": 0,
+              "cache_read": 0,
+              "cache_write": 0
+            },
+            "total_tokens": 0,
+            "cost": 0.0,
+            "unpriced_steps": 0,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "descendants": {
+            "tokens": {
+              "input": 165337,
+              "output": 3871,
+              "reasoning": 628,
+              "cache_read": 54272,
+              "cache_write": 0
+            },
+            "total_tokens": 224108,
+            "cost": 0.0,
+            "unpriced_steps": 24,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "total": {
+            "tokens": {
+              "input": 165337,
+              "output": 3871,
+              "reasoning": 628,
+              "cache_read": 54272,
+              "cache_write": 0
+            },
+            "total_tokens": 224108,
+            "cost": 0.0,
+            "unpriced_steps": 24,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "by_model": [
+            {
+              "provider": "chatgpt",
+              "model": "gpt-6.1-sol",
+              "tokens": {
+                "input": 165337,
+                "output": 3871,
+                "reasoning": 628,
+                "cache_read": 54272,
+                "cache_write": 0
+              },
+              "total_tokens": 224108,
+              "cost": null,
+              "unpriced_steps": 24,
+              "steps": 24
+            }
+          ],
+          "api_duration_ms": 192146,
+          "wall_duration_ms": 0,
+          "lines_added": 0,
+          "lines_removed": 0,
+          "budgets": [],
+          "backfilling": false
+        },
+        "usage_unavailable": false,
+        "unknown_inflight_usage_possible": false,
+        "effective_budget": {
+          "max_tokens": 1500000,
+          "max_cost_usd": 5.0,
+          "max_wall_seconds": 1800.0,
+          "enforcement": "soft",
+          "max_agents": 5
+        },
+        "reported_budget_observation": {
+          "soft_ceiling": true,
+          "effective_limits": {
+            "max_tokens": 1500000,
+            "max_cost_usd": 5,
+            "max_wall_seconds": 1800,
+            "enforcement": "soft",
+            "max_agents": 5
+          },
+          "observed": {
+            "spent_tokens": 224108,
+            "spent_cost_usd": 0,
+            "agents_started": 2,
+            "remaining": {
+              "max_agents": 3,
+              "max_cost_usd": 5,
+              "max_tokens": 1275892,
+              "max_wall_seconds": 1673.157
+            },
+            "unpriced": true,
+            "usage_complete": true,
+            "cost_complete": false
+          },
+          "overshoot_usd": 0,
+          "limitation": "In-flight inference can overshoot; zero or missing price is not proof of free execution."
+        }
+      }
+    },
+    {
+      "index": 24,
+      "task": "repo-click-argument-help",
+      "trial": 3,
+      "strategy": "solve",
+      "started_at": "2026-10-26T16:47:49.331429+00:00",
+      "finished_at": "2026-10-26T16:50:06.409375+00:00",
+      "seconds": 137.04700029094238,
+      "exit": 0,
+      "passed": false,
+      "infrastructure_failure": true,
+      "stop_reason": "no_recommendation",
+      "config_sha256": "cb95c49c3822b01a7ece19808638234b037f8e76203c257729da7fe2107bef40",
+      "environment_sha256": "adc8e407e407031109f014f06241615bef4babaa1ff685de08b31d7c5ad69d2d",
+      "turns": null,
+      "tool_calls": null,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 229281,
+        "output": 4090,
+        "reasoning": 515,
+        "cache_read": 69376,
+        "cache_write": 0
+      },
+      "latency_seconds": 135.876523917,
+      "end_to_end_seconds": 136.137756083,
+      "verification_seconds": 1.6542e-05,
+      "grader_exit": null,
+      "graded_source_sha256": null,
+      "raw_report_sha256": "463a1340dec7fbc8330a5d08cdf47b26a7e4e66772da527264cdf4e3e2a3078c",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "b11865a",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null,
+      "native_infrastructure_failure": false,
+      "classification_basis": "host_check_blocked_or_unknown_without_verified_survivor",
+      "solve": {
+        "status": "completed",
+        "verification_status": "no_candidate_passed",
+        "recommended_candidate": null,
+        "judge_model": "chatgpt/gpt-6.1-sol#medium",
+        "judge_differs_from_solver_models": false,
+        "distinct_solver_models": 1,
+        "candidate_count": 2,
+        "candidates": [
+          {
+            "label": "first",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "source_sha256": "58b4abf76b12b46a47d74abdcb1b877677f781d408a5642713f65f0e9cd99a3a",
+            "patch_sha256": "4c6fdd523935eac54449e77717678933441ae0220b7383a713066bfee058fa51",
+            "host_verified": false,
+            "cost_usd": 0.0,
+            "tokens": 156582,
+            "checks": [
+              {
+                "argv": [
+                  "python3",
+                  "-I",
+                  "-c",
+                  "import sys,pytest;sys.path.insert(0,'src');raise SystemExit(pytest.main(sys.argv[1:]))",
+                  "-q",
+                  "tests/test_arguments.py"
+                ],
+                "outcome": "blocked",
+                "settled": true,
+                "source_unchanged": true,
+                "exit_code": null,
+                "started_ms": 1793033403677,
+                "ended_ms": 1793033403679,
+                "environment_sha256": null
+              }
+            ]
+          },
+          {
+            "label": "second",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "source_sha256": "51da271c2171d43ea08ceb4ed2e29c4d95d238a6d360c14b31866dce848d07b6",
+            "patch_sha256": "2c4d22551367ac5292dacc1f1cfec35926f04bfc9fbdea349a6dfb57e985186c",
+            "host_verified": false,
+            "cost_usd": 0.0,
+            "tokens": 146680,
+            "checks": [
+              {
+                "argv": [
+                  "python3",
+                  "-I",
+                  "-c",
+                  "import sys,pytest;sys.path.insert(0,'src');raise SystemExit(pytest.main(sys.argv[1:]))",
+                  "-q",
+                  "tests/test_arguments.py"
+                ],
+                "outcome": "blocked",
+                "settled": true,
+                "source_unchanged": true,
+                "exit_code": null,
+                "started_ms": 1793033405643,
+                "ended_ms": 1793033405645,
+                "environment_sha256": null
+              }
+            ]
+          }
+        ],
+        "agents": [
+          {
+            "label": "first",
+            "phase": "Solve",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 156582,
+            "started_ms": 1793033271462,
+            "ended_ms": 1793033395380
+          },
+          {
+            "label": "second",
+            "phase": "Solve",
+            "model": "chatgpt/gpt-6.1-sol#medium",
+            "status": "completed",
+            "cost": 0.0,
+            "tokens": 146680,
+            "started_ms": 1793033282446,
+            "ended_ms": 1793033402273
+          }
+        ],
+        "judge_recommended_candidate": null,
+        "usage": {
+          "scope": "session",
+          "id": "ses_01M5WHRX256DV7FKT4S53PETD7",
+          "own": {
+            "tokens": {
+              "input": 0,
+              "output": 0,
+              "reasoning": 0,
+              "cache_read": 0,
+              "cache_write": 0
+            },
+            "total_tokens": 0,
+            "cost": 0.0,
+            "unpriced_steps": 0,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "descendants": {
+            "tokens": {
+              "input": 229281,
+              "output": 4090,
+              "reasoning": 515,
+              "cache_read": 69376,
+              "cache_write": 0
+            },
+            "total_tokens": 303262,
+            "cost": 0.0,
+            "unpriced_steps": 27,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "total": {
+            "tokens": {
+              "input": 229281,
+              "output": 4090,
+              "reasoning": 515,
+              "cache_read": 69376,
+              "cache_write": 0
+            },
+            "total_tokens": 303262,
+            "cost": 0.0,
+            "unpriced_steps": 27,
+            "usage_complete": true,
+            "token_classes_complete": true
+          },
+          "by_model": [
+            {
+              "provider": "chatgpt",
+              "model": "gpt-6.1-sol",
+              "tokens": {
+                "input": 229281,
+                "output": 4090,
+                "reasoning": 515,
+                "cache_read": 69376,
+                "cache_write": 0
+              },
+              "total_tokens": 303262,
+              "cost": null,
+              "unpriced_steps": 27,
+              "steps": 27
+            }
+          ],
+          "api_duration_ms": 204251,
+          "wall_duration_ms": 0,
+          "lines_added": 0,
+          "lines_removed": 0,
+          "budgets": [],
+          "backfilling": false
+        },
+        "usage_unavailable": false,
+        "unknown_inflight_usage_possible": false,
+        "effective_budget": {
+          "max_tokens": 1500000,
+          "max_cost_usd": 5.0,
+          "max_wall_seconds": 1800.0,
+          "enforcement": "soft",
+          "max_agents": 5
+        },
+        "reported_budget_observation": {
+          "soft_ceiling": true,
+          "effective_limits": {
+            "max_tokens": 1500000,
+            "max_cost_usd": 5,
+            "max_wall_seconds": 1800,
+            "enforcement": "soft",
+            "max_agents": 5
+          },
+          "observed": {
+            "spent_tokens": 303262,
+            "spent_cost_usd": 0,
+            "agents_started": 2,
+            "remaining": {
+              "max_agents": 3,
+              "max_cost_usd": 5,
+              "max_tokens": 1196738,
+              "max_wall_seconds": 1665.266
+            },
+            "unpriced": true,
+            "usage_complete": true,
+            "cost_complete": false
+          },
+          "overshoot_usd": 0,
+          "limitation": "In-flight inference can overshoot; zero or missing price is not proof of free execution."
+        }
+      }
+    }
+  ]
+}

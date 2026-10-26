@@ -1,0 +1,143 @@
+{
+  "manifest_sha256": "d90ab91a4d8cec4c8836f1bfc192ecad294108adb76f3f86eb04b0a9f692b46b",
+  "tasks": [
+    {
+      "id": "repo-ripgrep-hidden-dot",
+      "fixture_tree_sha256": "sha256:dfc3beb33534ab07bbe9a28c16378cc9b3067da11ba957fe109385ff0b72859a",
+      "repository": {
+        "url": "https://github.com/BurntSushi/ripgrep",
+        "base_commit": "4c2362d359d9913c7a5e391ccd79cb4da22bc89b",
+        "reference_commit": "7155f6408d370e699795dc75e954635abfaf08a6",
+        "archive_sha256": "38c9b748c857df410fa49a6951c50b0a0325f57936ad08e9af9fe3ab397b7cde",
+        "license": "MIT OR Unlicense"
+      },
+      "environment": {
+        "lock": [
+          "Rust 1.99.1",
+          "Cargo.lock from pinned upstream source",
+          "Offline Cargo registry prewarmed before trials"
+        ]
+      },
+      "budget": {
+        "max_tokens": 1500000,
+        "max_turns": 60,
+        "max_wall_seconds": 1800
+      },
+      "grader_tree_sha256": "sha256:00b7a6d631fcd63fdcace2beaec4ca60b10f67b2ad9714bf90c486a932539732",
+      "checks": [
+        [
+          "cargo",
+          "test",
+          "--offline",
+          "--locked",
+          "-p",
+          "ignore",
+          "--lib"
+        ]
+      ]
+    },
+    {
+      "id": "repo-ripgrep-matches-all",
+      "fixture_tree_sha256": "sha256:05a688cc3974630a3513d944611f85a2c0c07be63170b94f8d72a0e3739a4fab",
+      "repository": {
+        "url": "https://github.com/BurntSushi/ripgrep",
+        "base_commit": "2c23e39e0215397884834c0d3cd5a1620f468d30",
+        "reference_commit": "f55548ba9f24dda192880d4a3da2b52e90f6e194",
+        "archive_sha256": "6a647ba3c9f3a2415ed672351a0aaed51af1998735060c823dfd0244000dc0bc",
+        "license": "MIT OR Unlicense"
+      },
+      "environment": {
+        "lock": [
+          "Rust 1.99.1",
+          "Cargo.lock from pinned upstream source",
+          "Offline Cargo registry prewarmed before trials"
+        ]
+      },
+      "budget": {
+        "max_tokens": 1500000,
+        "max_turns": 60,
+        "max_wall_seconds": 1800
+      },
+      "grader_tree_sha256": "sha256:65b17b8897e6cf9dd79b843e22612b1d109da7f1ae0782cf8454951bdd21e5ba",
+      "checks": [
+        [
+          "cargo",
+          "test",
+          "--offline",
+          "--locked",
+          "-p",
+          "globset",
+          "--lib"
+        ]
+      ]
+    },
+    {
+      "id": "repo-click-short-help",
+      "fixture_tree_sha256": "sha256:ac98c1c9e974b764eb0751908f76b1c235b97769ba87571326bf835a85fdef98",
+      "repository": {
+        "url": "https://github.com/pallets/click",
+        "base_commit": "d036881798e34289a49b18a5c550c7cf687e5a7a",
+        "reference_commit": "70689853e39c30e36eb0d83d586cc914a74db9d3",
+        "archive_sha256": "537badead6cd2119640e83f8e4f59848941ad781c85135aaab2173d6cbb5c66e",
+        "license": "BSD-3-Clause"
+      },
+      "environment": {
+        "lock": [
+          "Python 3.13.5",
+          "pytest 8.3.4",
+          "Dependencies installed before trials; network disabled"
+        ]
+      },
+      "budget": {
+        "max_tokens": 1500000,
+        "max_turns": 60,
+        "max_wall_seconds": 1800
+      },
+      "grader_tree_sha256": "sha256:31f02888b55025e8431d56780951c7e6b5a7b6693fbef0764faf47bad8511076",
+      "checks": [
+        [
+          "python3",
+          "-I",
+          "-c",
+          "import sys,pytest;sys.path.insert(0,'src');raise SystemExit(pytest.main(sys.argv[1:]))",
+          "-q",
+          "tests/test_utils/test_make_default_short_help.py"
+        ]
+      ]
+    },
+    {
+      "id": "repo-click-argument-help",
+      "fixture_tree_sha256": "sha256:1706fbd2157607a952359759311c7937ce169b80439920b13dd8d12a788fe39e",
+      "repository": {
+        "url": "https://github.com/pallets/click",
+        "base_commit": "70689853e39c30e36eb0d83d586cc914a74db9d3",
+        "reference_commit": "bb695aaecdef95832d167fc1d508921745aa824e",
+        "archive_sha256": "7a909da8e96b3c4a3f30ae03cae6489b823835f67429ca6ceb783ed8cfac83df",
+        "license": "BSD-3-Clause"
+      },
+      "environment": {
+        "lock": [
+          "Python 3.13.5",
+          "pytest 8.3.4",
+          "Dependencies installed before trials; network disabled"
+        ]
+      },
+      "budget": {
+        "max_tokens": 1500000,
+        "max_turns": 60,
+        "max_wall_seconds": 1800
+      },
+      "grader_tree_sha256": "sha256:75c8dae5557e1c2c13da7fad0d395cc44ec068ac2f356289d8c9a28f5a4ea106",
+      "checks": [
+        [
+          "python3",
+          "-I",
+          "-c",
+          "import sys,pytest;sys.path.insert(0,'src');raise SystemExit(pytest.main(sys.argv[1:]))",
+          "-q",
+          "tests/test_arguments.py"
+        ]
+      ]
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "completed_scored_roots": 24,
+  "unique_identities": 24,
+  "original_pilot_and_acceptance_artifacts_unchanged": true,
+  "protected_file_count": 25,
+  "raw_reports_unchanged": true,
+  "private_paths_and_credential_field_check_passed": true,
+  "frozen_harness_revision": "b11865a57408c06f2274b9ef1de575209ad1608a",
+  "clean_model_quality_comparison_established": false,
+  "audited_infrastructure_classification": true,
+  "uncertain_environment_roots": [
+    11,
+    12
+  ]
+}

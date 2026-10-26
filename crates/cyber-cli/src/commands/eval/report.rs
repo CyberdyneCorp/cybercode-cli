@@ -118,11 +118,18 @@ pub fn build(
             "cost_per_success_usd": if passed == 0 { Value::Null } else { json!(round(cost / passed as f64, 6)) },
             "median_cost_per_successful_task_usd": median(successful_costs).map(|c| round(c, 6)),
             "median_latency_seconds": median(results.iter().map(|r| r.latency_seconds).collect()).map(|s| round(s, 1)),
+            "median_end_to_end_seconds": median(results.iter().filter_map(|r|r.end_to_end_seconds).collect()).map(|s|round(s,1)),
             "unpriced": results.iter().any(|r| r.unpriced),
             "tokens": tokens(&results),
         },
         "tasks": per_task(tasks, &results),
-        "trials": results,
+        "trials": results.iter().map(TrialResult::json).collect::<Vec<_>>(),
+        "repository_provenance": tasks.iter().filter_map(|task| {
+            cyber_core::eval::task_fixture(manifest,task).and_then(|f|f.repository.as_ref())
+                .map(|repository|json!({"task":task.id,"repository":repository,"grader_tree_sha256":task.grading.tree_sha256,"checks":task.checks,
+                    "budget":{"max_turns":task.budget.max_turns,"max_tokens":task.budget.max_tokens,"max_cost_usd":task.budget.max_cost_usd,"max_wall_seconds":task.budget.max_wall_seconds},
+                    "timeout_seconds":task.timeout_seconds}))
+        }).collect::<Vec<_>>(),
     })
 }
 
@@ -154,7 +161,7 @@ fn per_task(tasks: &[Task], results: &[TrialResult]) -> Vec<Value> {
                 "passed": passed,
                 "infrastructure_failures": rs.iter().filter(|r| r.infrastructure_failure).count(),
                 "cost_usd": round(rs.iter().map(|r| r.cost_usd).sum(), 6),
-                "median_turns": median(rs.iter().map(|r| f64::from(r.turns)).collect()),
+                "median_turns": if rs.iter().any(|r|r.solve.is_some()) {None} else {median(rs.iter().map(|r| f64::from(r.turns)).collect())},
             })
         })
         .collect()
@@ -250,6 +257,10 @@ mod tests {
 
     fn trial_with(tokens: super::super::trial::Tokens) -> TrialResult {
         TrialResult {
+            end_to_end_seconds: None,
+            verification_seconds: None,
+            graded_source_sha256: None,
+            solve: None,
             task: "t".into(),
             trial: 1,
             passed: true,
