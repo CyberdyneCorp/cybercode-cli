@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "report": "cyber-eval",
+  "harness": {
+    "version": "0.1.0",
+    "git_sha": "ac97d41",
+    "target": "aarch64-apple-darwin"
+  },
+  "manifest": {
+    "id": "suite-coding-v1",
+    "path": "<repo>/eval/manifests/suite-coding-v1.json",
+    "sha256": "sha256:3744cb61b08b32a57f4b0141526964ae8a18364762e458eaa474447778f48e93",
+    "kind": "suite"
+  },
+  "model": {
+    "ref": "chatgpt/gpt-6.1-sol#medium",
+    "provider": "chatgpt",
+    "name": "GPT-6.1-Sol",
+    "context_limit": 500000
+  },
+  "deterministic": false,
+  "started_at": "2026-10-26T03:21:55Z",
+  "finished_at": "2026-10-26T03:26:35Z",
+  "trials_per_task": 1,
+  "options": {
+    "mode": "bypass",
+    "sandbox": "workspace-write",
+    "interactive": false
+  },
+  "summary": {
+    "tasks": 1,
+    "trials": 1,
+    "passed": 1,
+    "success_rate": 1.0,
+    "success_ci95": [
+      0.2065,
+      1.0
+    ],
+    "infrastructure_failures": 0,
+    "human_interventions": 0,
+    "cost_usd": 0.0,
+    "cost_per_success_usd": 0.0,
+    "median_cost_per_successful_task_usd": 0.0,
+    "median_latency_seconds": 271.7,
+    "unpriced": true,
+    "tokens": {
+      "input": 488824,
+      "output": 9032,
+      "reasoning": 369,
+      "cache_read": 115072,
+      "cache_write": 0
+    }
+  },
+  "tasks": [
+    {
+      "id": "build-inventory-cli",
+      "tags": [
+        "long",
+        "greenfield",
+        "python",
+        "cli"
+      ],
+      "trials": 1,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.0,
+      "median_turns": 25.0
+    }
+  ],
+  "trials": [
+    {
+      "task": "build-inventory-cli",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 25,
+      "tool_calls": 24,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 488824,
+        "output": 9032,
+        "reasoning": 369,
+        "cache_read": 115072,
+        "cache_write": 0
+      },
+      "latency_seconds": 271.733465125,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M5V3N7A8FK58QK91ZYBVA8JY"
+    }
+  ]
+}

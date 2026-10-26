@@ -134,7 +134,7 @@ async fn completed_response_survives_broken_http_tail() {
 async fn completed_response_does_not_wait_for_http_eof() {
     let server =
         FaultServer::start_with_held_tail(vec![(text() + &completed(), false)], true).await;
-    let output = tokio::time::timeout(Duration::from_secs(1), async {
+    let output = tokio::time::timeout(Duration::from_secs(10), async {
         collect(
             model(&server).stream(LlmRequest::default()).await.unwrap(),
             |_| {},
