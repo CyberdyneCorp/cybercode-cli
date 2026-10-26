@@ -1,0 +1,12 @@
+{
+  "version": "0.163.0",
+  "entrypoint_name": "codex.js",
+  "entrypoint_sha256": "61b0194f3bb6534439c8d26a3ed57d0805f84b884588b761795323eeb92fcf70",
+  "packaged_binary_candidates": [
+    {
+      "relative_path": "node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex",
+      "bytes": 249952688,
+      "sha256": "8813367285524ac798dd96d1b071aea30d58708c7226fd236cd275cf1cfdee31"
+    }
+  ]
+}

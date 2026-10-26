@@ -1,0 +1,781 @@
+{
+  "schema_version": 1,
+  "report": "cyber-eval",
+  "harness": {
+    "version": "0.1.0",
+    "git_sha": "3cc90b5",
+    "target": "aarch64-apple-darwin"
+  },
+  "manifest": {
+    "id": "suite-coding-v1",
+    "path": "<repo>/eval/manifests/suite-coding-v1.json",
+    "sha256": "sha256:3744cb61b08b32a57f4b0141526964ae8a18364762e458eaa474447778f48e93",
+    "kind": "suite"
+  },
+  "model": {
+    "ref": "chatgpt/gpt-6.1-sol#medium",
+    "provider": "chatgpt",
+    "name": "GPT-6.1-Sol",
+    "context_limit": 500000
+  },
+  "deterministic": false,
+  "started_at": "2026-10-25T23:51:19Z",
+  "finished_at": "2026-10-26T00:25:23Z",
+  "trials_per_task": 1,
+  "options": {
+    "mode": "bypass",
+    "sandbox": "workspace-write",
+    "interactive": false
+  },
+  "summary": {
+    "tasks": 20,
+    "trials": 20,
+    "passed": 19,
+    "success_rate": 0.95,
+    "success_ci95": [
+      0.7639,
+      0.9911
+    ],
+    "infrastructure_failures": 1,
+    "human_interventions": 0,
+    "cost_usd": 0.0,
+    "cost_per_success_usd": 0.0,
+    "median_cost_per_successful_task_usd": 0.0,
+    "median_latency_seconds": 53.5,
+    "unpriced": true,
+    "tokens": {
+      "input": 879489,
+      "output": 35669,
+      "reasoning": 3248,
+      "cache_read": 349184,
+      "cache_write": 0
+    }
+  },
+  "tasks": [
+    {
+      "id": "fix-slugify",
+      "tags": [
+        "bugfix",
+        "python",
+        "edge-cases"
+      ],
+      "trials": 1,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.0,
+      "median_turns": 9.0
+    },
+    {
+      "id": "fix-moving-average",
+      "tags": [
+        "bugfix",
+        "python",
+        "off-by-one",
+        "multi-file"
+      ],
+      "trials": 1,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.0,
+      "median_turns": 8.0
+    },
+    {
+      "id": "fix-tz-daily-buckets",
+      "tags": [
+        "bugfix",
+        "python",
+        "datetime"
+      ],
+      "trials": 1,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.0,
+      "median_turns": 10.0
+    },
+    {
+      "id": "fix-csv-quoted-fields",
+      "tags": [
+        "bugfix",
+        "node",
+        "parsing",
+        "multi-file"
+      ],
+      "trials": 1,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.0,
+      "median_turns": 10.0
+    },
+    {
+      "id": "fix-mutable-defaults",
+      "tags": [
+        "bugfix",
+        "python",
+        "multi-file"
+      ],
+      "trials": 1,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.0,
+      "median_turns": 8.0
+    },
+    {
+      "id": "fix-async-batch",
+      "tags": [
+        "bugfix",
+        "node",
+        "async",
+        "multi-file"
+      ],
+      "trials": 1,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.0,
+      "median_turns": 9.0
+    },
+    {
+      "id": "fix-stable-sort",
+      "tags": [
+        "bugfix",
+        "node",
+        "sorting"
+      ],
+      "trials": 1,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.0,
+      "median_turns": 11.0
+    },
+    {
+      "id": "fix-money-rounding",
+      "tags": [
+        "bugfix",
+        "python",
+        "money"
+      ],
+      "trials": 1,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.0,
+      "median_turns": 9.0
+    },
+    {
+      "id": "feat-cli-flags",
+      "tags": [
+        "feature",
+        "python",
+        "cli"
+      ],
+      "trials": 1,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.0,
+      "median_turns": 8.0
+    },
+    {
+      "id": "feat-ttl-cache",
+      "tags": [
+        "feature",
+        "python",
+        "caching"
+      ],
+      "trials": 1,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.0,
+      "median_turns": 8.0
+    },
+    {
+      "id": "feat-paginate",
+      "tags": [
+        "feature",
+        "node",
+        "pagination"
+      ],
+      "trials": 1,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.0,
+      "median_turns": 6.0
+    },
+    {
+      "id": "feat-validator-rules",
+      "tags": [
+        "feature",
+        "python",
+        "validation"
+      ],
+      "trials": 1,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.0,
+      "median_turns": 9.0
+    },
+    {
+      "id": "feat-csv-export",
+      "tags": [
+        "feature",
+        "python",
+        "csv"
+      ],
+      "trials": 1,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.0,
+      "median_turns": 10.0
+    },
+    {
+      "id": "refactor-split-function",
+      "tags": [
+        "refactor",
+        "python"
+      ],
+      "trials": 1,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.0,
+      "median_turns": 15.0
+    },
+    {
+      "id": "refactor-rename-api",
+      "tags": [
+        "refactor",
+        "python",
+        "api"
+      ],
+      "trials": 1,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.0,
+      "median_turns": 10.0
+    },
+    {
+      "id": "tests-merge-intervals",
+      "tags": [
+        "tests",
+        "python",
+        "mutation"
+      ],
+      "trials": 1,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.0,
+      "median_turns": 9.0
+    },
+    {
+      "id": "tests-semver-compare",
+      "tags": [
+        "tests",
+        "node",
+        "mutation"
+      ],
+      "trials": 1,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.0,
+      "median_turns": 9.0
+    },
+    {
+      "id": "debug-cross-module",
+      "tags": [
+        "debugging",
+        "python",
+        "multi-file"
+      ],
+      "trials": 1,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.0,
+      "median_turns": 10.0
+    },
+    {
+      "id": "fix-shell-top-ips",
+      "tags": [
+        "shell",
+        "bash",
+        "bugfix"
+      ],
+      "trials": 1,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.0,
+      "median_turns": 12.0
+    },
+    {
+      "id": "build-inventory-cli",
+      "tags": [
+        "long",
+        "greenfield",
+        "python",
+        "cli"
+      ],
+      "trials": 1,
+      "passed": 0,
+      "infrastructure_failures": 1,
+      "cost_usd": 0.0,
+      "median_turns": 3.0
+    }
+  ],
+  "trials": [
+    {
+      "task": "build-inventory-cli",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": true,
+      "stop_reason": "error",
+      "error": "transport: error decoding response body",
+      "turns": 3,
+      "tool_calls": 3,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 8062,
+        "output": 98,
+        "reasoning": 182,
+        "cache_read": 8448,
+        "cache_write": 0
+      },
+      "latency_seconds": 44.479269334,
+      "grader_exit": null,
+      "grader_tail": "",
+      "session_id": "ses_01M5TRN070CE8H3MSSQDPNSFRZ"
+    },
+    {
+      "task": "debug-cross-module",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 10,
+      "tool_calls": 16,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 27999,
+        "output": 955,
+        "reasoning": 255,
+        "cache_read": 24320,
+        "cache_write": 0
+      },
+      "latency_seconds": 56.9285905,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M5TRGWW07R3F3BR13BJK8QE5"
+    },
+    {
+      "task": "feat-cli-flags",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 8,
+      "tool_calls": 9,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 40363,
+        "output": 2089,
+        "reasoning": 123,
+        "cache_read": 23680,
+        "cache_write": 0
+      },
+      "latency_seconds": 54.477171292,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M5TQZS982X6WX126JTAB4HP8"
+    },
+    {
+      "task": "feat-csv-export",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 10,
+      "tool_calls": 11,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 60754,
+        "output": 2241,
+        "reasoning": 136,
+        "cache_read": 22528,
+        "cache_write": 0
+      },
+      "latency_seconds": 60.878545458,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M5TR5VFFV6EPTFZ4KTJ8H4XP"
+    },
+    {
+      "task": "feat-paginate",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 6,
+      "tool_calls": 8,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 16214,
+        "output": 1608,
+        "reasoning": 46,
+        "cache_read": 14208,
+        "cache_write": 0
+      },
+      "latency_seconds": 37.962148958,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M5TR30138C6HXSQPHFWJ9G53"
+    },
+    {
+      "task": "feat-ttl-cache",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 8,
+      "tool_calls": 9,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 30564,
+        "output": 2249,
+        "reasoning": 81,
+        "cache_read": 16896,
+        "cache_write": 0
+      },
+      "latency_seconds": 49.26283475,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M5TR1FNGDMHAZ9ZNFZ1ENH50"
+    },
+    {
+      "task": "feat-validator-rules",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 9,
+      "tool_calls": 10,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 53460,
+        "output": 1800,
+        "reasoning": 147,
+        "cache_read": 19712,
+        "cache_write": 0
+      },
+      "latency_seconds": 55.0809045,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M5TR45EAPWTK92MW9QGPGH9E"
+    },
+    {
+      "task": "fix-async-batch",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 9,
+      "tool_calls": 12,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 39285,
+        "output": 1632,
+        "reasoning": 180,
+        "cache_read": 11264,
+        "cache_write": 0
+      },
+      "latency_seconds": 52.597246708,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M5TQTVJ83999ZV6YZWR4PXQS"
+    },
+    {
+      "task": "fix-csv-quoted-fields",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 10,
+      "tool_calls": 13,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 47467,
+        "output": 1871,
+        "reasoning": 132,
+        "cache_read": 10368,
+        "cache_write": 0
+      },
+      "latency_seconds": 60.122331375,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M5TQQPYM4DNJJDEWJ0KJY7PP"
+    },
+    {
+      "task": "fix-money-rounding",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 9,
+      "tool_calls": 10,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 35654,
+        "output": 1737,
+        "reasoning": 201,
+        "cache_read": 19712,
+        "cache_write": 0
+      },
+      "latency_seconds": 57.879443,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M5TQY0GM5M4HJ1PWQVN8FGR0"
+    },
+    {
+      "task": "fix-moving-average",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 8,
+      "tool_calls": 9,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 38203,
+        "output": 1070,
+        "reasoning": 67,
+        "cache_read": 5632,
+        "cache_write": 0
+      },
+      "latency_seconds": 37.231312667,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M5TQN3TFFB7Q3N3FDK4BHG03"
+    },
+    {
+      "task": "fix-mutable-defaults",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 8,
+      "tool_calls": 10,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 32759,
+        "output": 1601,
+        "reasoning": 36,
+        "cache_read": 11264,
+        "cache_write": 0
+      },
+      "latency_seconds": 42.403343125,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M5TQSHYEHSGEBFXJTXKGXJMV"
+    },
+    {
+      "task": "fix-shell-top-ips",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 12,
+      "tool_calls": 13,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 61424,
+        "output": 1897,
+        "reasoning": 361,
+        "cache_read": 25344,
+        "cache_write": 0
+      },
+      "latency_seconds": 76.040440709,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M5TRJMPJP4407MVZ2QTTSA9S"
+    },
+    {
+      "task": "fix-slugify",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 9,
+      "tool_calls": 10,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 34144,
+        "output": 832,
+        "reasoning": 243,
+        "cache_read": 7296,
+        "cache_write": 0
+      },
+      "latency_seconds": 48.39953525,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M5TQKKN4VDB7X4XD3D2Z547E"
+    },
+    {
+      "task": "fix-stable-sort",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 11,
+      "tool_calls": 10,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 41821,
+        "output": 1301,
+        "reasoning": 53,
+        "cache_read": 14080,
+        "cache_write": 0
+      },
+      "latency_seconds": 49.453027375,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M5TQWFYW0Z0BW6DSQ9MJ86NN"
+    },
+    {
+      "task": "fix-tz-daily-buckets",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 10,
+      "tool_calls": 9,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 51297,
+        "output": 1548,
+        "reasoning": 60,
+        "cache_read": 11264,
+        "cache_write": 0
+      },
+      "latency_seconds": 47.451345375,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M5TQP8D123JQH5JJD0XWFVWT"
+    },
+    {
+      "task": "refactor-rename-api",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 10,
+      "tool_calls": 9,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 33037,
+        "output": 1725,
+        "reasoning": 137,
+        "cache_read": 25344,
+        "cache_write": 0
+      },
+      "latency_seconds": 51.251327042,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M5TRB12422K52NWWX4GE5614"
+    },
+    {
+      "task": "refactor-split-function",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 15,
+      "tool_calls": 15,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 135277,
+        "output": 3671,
+        "reasoning": 572,
+        "cache_read": 33792,
+        "cache_write": 0
+      },
+      "latency_seconds": 107.960619167,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M5TR7Q9Q9K3ZVGMY0NKEVCGM"
+    },
+    {
+      "task": "tests-merge-intervals",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 9,
+      "tool_calls": 8,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 44164,
+        "output": 2561,
+        "reasoning": 110,
+        "cache_read": 27520,
+        "cache_write": 0
+      },
+      "latency_seconds": 66.109582958,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M5TRCKB1R12YQVD5120DEE4W"
+    },
+    {
+      "task": "tests-semver-compare",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 9,
+      "tool_calls": 10,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 47541,
+        "output": 3183,
+        "reasoning": 126,
+        "cache_read": 16512,
+        "cache_write": 0
+      },
+      "latency_seconds": 73.139107584,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M5TREMCRGWKJ59PNRNPSZBNZ"
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "purpose": "Same-model native-harness pilot; not a coding-quality parity claim",
+  "model": "gpt-6.1-sol",
+  "effort": "medium",
+  "trial_count_per_task": 1,
+  "tasks_per_harness": 40,
+  "harnesses": [
+    "Cyber",
+    "Codex CLI"
+  ],
+  "concurrency_per_harness": 1,
+  "max_simultaneous_tasks": 2,
+  "python": "3.13.5",
+  "node": "22.18.0",
+  "hardware": {
+    "cpu": "Apple M2",
+    "logical_cores": 8,
+    "memory_gib": 24,
+    "os": "macOS 26.7"
+  },
+  "source_revision": "3cc90b5f2771525bb90d596ed35867f92fa27030",
+  "manifests": {
+    "suite-coding-v1": "3744cb61b08b32a57f4b0141526964ae8a18364762e458eaa474447778f48e93",
+    "suite-coding-hard-v1": "d301df3feb57e8faf2853710e895e15822bd15a13e5cbd1351ed1cfd6fb5483f"
+  },
+  "grader_preflight": "40/40 broken-fixture FAIL and reference-solution PASS controls",
+  "controls": [
+    "Unmodified prompts, fixtures and hidden graders",
+    "Independent disposable Git workspace per trial",
+    "Normal personal config/hooks/plugins/skills disabled",
+    "Existing credential store reused; no credentials copied",
+    "Tasks require no network or third-party packages; Codex command networking disabled, Cyber uses its native default policy",
+    "No automatic hidden-grader retries or feedback to agents"
+  ],
+  "limitations": [
+    "One trial per task; no strong statistical superiority claim",
+    "Native tool protocols, internal step limits and token-accounting definitions differ",
+    "Subscription dollar price unavailable; no zero-cost claim",
+    "Shared machine also used interactively; runs overlap at one task per harness",
+    "Requested model alias and effort pinned, backend weights not independently pinned",
+    "Existing ChatGPT account/workspace IDs differ between harness logins; no login changed, latency exploratory",
+    "Command network policies differ: Cyber native allowlist proxy vs Codex off; tasks require no network",
+    "Corpus is Python/Node/shell fixtures; Rust and large production-repository performance not measured"
+  ],
+  "same_reported_chatgpt_account_id": false,
+  "command_network_policy": {
+    "Cyber": "native default allowlist proxy",
+    "Codex": "off"
+  },
+  "latency_definitions": {
+    "Cyber": "prompt admission to Session idle",
+    "Codex": "CLI process spawn to process exit, including startup"
+  }
+}

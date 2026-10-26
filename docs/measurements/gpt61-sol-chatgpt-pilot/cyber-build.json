@@ -1,0 +1,8 @@
+{
+  "revision": "3cc90b5f2771525bb90d596ed35867f92fa27030",
+  "dirty": false,
+  "binaries": {
+    "cyber": "4ec6479d921813c9770162a5e5ad9bbf9cf3014c7feff941833b3190643fc411",
+    "cyber-sandbox-exec": "a00cceffc2a8beda464cf3f9548833da033e18a1828cb6767adc563621a766ed"
+  }
+}
