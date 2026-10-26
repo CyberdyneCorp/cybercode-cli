@@ -401,13 +401,13 @@ impl Execution {
             .map_err(|_| "verification scratch unavailable")?;
         let mut launch = self.launch(root)?;
         self.pin_verification_sources(&mut launch, s, root)?;
-        if let Ok(owner) = std::fs::canonicalize(&s.directory) {
-            if owner != root {
-                if root.starts_with(&owner) {
-                    return Err("owner Location overlaps the private attempt root".into());
-                }
-                launch.unreadable.push(owner);
+        if let Ok(owner) = std::fs::canonicalize(&s.directory)
+            && owner != root
+        {
+            if root.starts_with(&owner) {
+                return Err("owner Location overlaps the private attempt root".into());
             }
+            launch.unreadable.push(owner);
         }
         let deadline = verification_deadline(s)?;
         let mut evidence = vec![];
@@ -424,7 +424,7 @@ impl Execution {
                 launch.helper.as_deref(),
                 |command| {
                     command
-                        .current_dir(&root)
+                        .current_dir(root)
                         .env_clear()
                         .envs(env)
                         .envs(&wrapped.env)
@@ -504,10 +504,10 @@ impl Execution {
                 .map(PathBuf::from),
         );
         for key in ["SSH_AUTH_SOCK", "GPG_AGENT_INFO"] {
-            if let Ok(value) = std::env::var(key) {
-                if let Some(path) = value.split(':').next().filter(|s| !s.is_empty()) {
-                    unreadable.push(PathBuf::from(path));
-                }
+            if let Ok(value) = std::env::var(key)
+                && let Some(path) = value.split(':').next().filter(|s| !s.is_empty())
+            {
+                unreadable.push(PathBuf::from(path));
             }
         }
         unreadable.extend(self.private_roots.iter().cloned());

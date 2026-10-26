@@ -3276,6 +3276,13 @@
             "format": "uint64",
             "minimum": 0
           },
+          "github_login": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Owner login observed when enabling; never a credential."
+          },
           "branch": {
             "type": "string"
           },
@@ -3314,6 +3321,14 @@
           "next_poll_ms": {
             "type": "integer",
             "format": "int64"
+          },
+          "backoff_until_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "default": null
           },
           "created_ms": {
             "type": "integer",
@@ -3396,7 +3411,8 @@
           "max_attempts": {
             "type": "integer",
             "format": "uint32",
-            "minimum": 0
+            "minimum": 0,
+            "default": 3
           },
           "max_tokens": {
             "type": "integer",
@@ -3417,7 +3433,6 @@
           "checks",
           "required_ci",
           "verification_paths",
-          "max_attempts",
           "max_tokens",
           "max_seconds"
         ]
@@ -3492,6 +3507,13 @@
               "string",
               "null"
             ]
+          },
+          "candidate_commit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
           },
           "checks": {
             "type": "array",

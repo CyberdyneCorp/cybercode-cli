@@ -130,6 +130,7 @@ export type Attempt = {
   stage: Stage;
   session_id?: string | null;
   commit?: string | null;
+  candidate_commit?: string | null;
   checks: CheckEvidence[];
   tokens?: number | null;
   /** Absent for unpriced or incompletely accounted usage. */
@@ -527,7 +528,7 @@ export type Config = {
   /** Exact CI producer identity: check:<app_id>:<name> or status:<creator_id>:<context>. */
   required_ci: string[];
   verification_paths: string[];
-  max_attempts: number;
+  max_attempts?: number;
   max_tokens: number;
   max_seconds: number;
 };
@@ -4441,6 +4442,8 @@ export type Subscription = {
   directory: string;
   config: Config;
   repository_id: number;
+  /** Owner login observed when enabling; never a credential. */
+  github_login?: string | null;
   branch: string;
   revision: number;
   status: Status;
@@ -4449,6 +4452,7 @@ export type Subscription = {
   queued: Trigger[];
   attempts: Attempt[];
   next_poll_ms: number;
+  backoff_until_ms?: number | null;
   created_ms: number;
   updated_ms: number;
   reason?: string | null;

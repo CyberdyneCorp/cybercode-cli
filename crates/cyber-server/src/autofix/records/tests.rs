@@ -112,9 +112,21 @@ fn binding_and_dedup_survive_reopen_and_projection_rebuild() {
         .unwrap(),
         1
     );
-    db.reproject(&["autofix_session","autofix_subscription"],"autofix.",Arc::new(project)).unwrap();
+    db.reproject(
+        &["autofix_session", "autofix_subscription"],
+        "autofix.",
+        Arc::new(project),
+    )
+    .unwrap();
     assert!(repo.get("afx_test").unwrap().seen.contains("check:1"));
-    assert_eq!(db.read(|c|Ok(c.query_row("SELECT COUNT(*) FROM autofix_session",[],|r|r.get::<_,i64>(0))?)).unwrap(),1);
+    assert_eq!(
+        db.read(|c| Ok(
+            c.query_row("SELECT COUNT(*) FROM autofix_session", [], |r| r
+                .get::<_, i64>(0))?
+        ))
+        .unwrap(),
+        1
+    );
     // Audit event independently contains the capability marker needed by replay.
     assert!(
         db.read_events("afx_test", -1, 100)

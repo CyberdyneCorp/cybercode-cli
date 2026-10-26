@@ -266,7 +266,12 @@ impl Controller {
             .list(None)
             .map_err(error)?
             .into_iter()
-            .find(|s| s.status == Status::Enabled && s.active().is_none() && !s.queued.is_empty() && s.backoff_until_ms.is_none_or(|time|time<=now()))
+            .find(|s| {
+                s.status == Status::Enabled
+                    && s.active().is_none()
+                    && !s.queued.is_empty()
+                    && s.backoff_until_ms.is_none_or(|time| time <= now())
+            })
         else {
             return Ok(None);
         };
@@ -314,7 +319,10 @@ impl Controller {
             .map(|_| value.clone()))
     }
     async fn poll_one(&self, s: Subscription) -> Result<Subscription, String> {
-        let github = self.github().await?;
+        let github=match self.github().await {
+            Ok(github)=>github,
+            Err(reason)=>return self.records.update(&s.id,s.revision,now(),move|s|{s.pause(&reason);s.next_poll_ms=now()+60_000;Ok(())}).map_err(error),
+        };
         if s.status == Status::Exhausted {
             return self.exhaustion_notice(s, github).await;
         }
@@ -323,16 +331,16 @@ impl Controller {
             Err(e) => {
                 let retry = e.retry_after_ms;
                 let retryable = e.retryable;
+                let reason=e.to_string();
                 return self
                     .records
                     .update(&s.id, s.revision, now(), move |v| {
                         v.next_poll_ms = now() + retry;
                         v.backoff_until_ms = Some(v.next_poll_ms);
                         if retryable {
-                            v.reason =
-                                Some("GitHub temporarily unavailable; polling will retry".into())
+                            v.reason=Some(format!("{reason}; polling will retry"))
                         } else {
-                            v.pause("GitHub evidence or authorization unavailable");
+                            v.pause(&reason);
                         }
                         Ok(())
                     })
@@ -451,12 +459,11 @@ impl Controller {
             result=tokio::time::timeout(Duration::from_millis(remaining_ms),self.attempt_body(initial.clone()))=>result.unwrap_or_else(|_|Err("attempt elapsed limit reached; inspect retained evidence".to_owned())),
             _=canceled=>Err("attempt stopped by owner, policy or server shutdown".into()),
         };
-        if result.is_err() {
-            if let Ok(current) = self.records.get(&initial.id)
-                && let Some(session) = current.active().and_then(|a| a.session_id.as_deref())
-            {
-                let _ = self.runtime.interrupt(session).await;
-            }
+        if result.is_err()
+            && let Ok(current) = self.records.get(&initial.id)
+            && let Some(session) = current.active().and_then(|a| a.session_id.as_deref())
+        {
+            let _ = self.runtime.interrupt(session).await;
         }
         result
     }
@@ -556,26 +563,7 @@ impl Controller {
             .admit(&session, admission)
             .await
             .map_err(error)?;
-        let remaining_ms = (attempt.started_ms + i64::from(initial.config.max_seconds) * 1000
-            - now())
-        .max(0) as u64;
-        let deadline = tokio::time::Instant::now() + Duration::from_millis(remaining_ms);
-        loop {
-            tokio::select! {
-                _=self.runtime.shutting_down()=>{let _=self.runtime.interrupt(&session).await;return Err("server shutdown during attempt; inspect retained Session".into())},
-                _=tokio::time::sleep(Duration::from_millis(250))=>{},
-            }
-            if self.current(&initial.id, &attempt.id).is_err()
-                || tokio::time::Instant::now() >= deadline
-            {
-                let _ = self.runtime.interrupt(&session).await;
-                return Err("attempt stopped by owner, policy or elapsed limit".into());
-            }
-            if !self.runtime.is_running(&session) {
-                break;
-            }
-        }
-        let state = self.runtime.state(&session).await.map_err(error)?;
+        let state = self.wait_model(&initial, &attempt, &session).await?;
         let final_entry = state.entries.iter().rev().find_map(|entry| match entry {
             cyber_server::runtime::Entry::Assistant(a) => Some(a),
             _ => None,
@@ -700,6 +688,33 @@ impl Controller {
             .update(&initial.id, current.revision, now(), move |s| s.pushed(&id))
             .map_err(error)?;
         Ok(())
+    }
+    async fn wait_model(
+        &self,
+        initial: &Subscription,
+        attempt: &cyber_core::autofix::Attempt,
+        session: &str,
+    ) -> Result<cyber_server::runtime::SessionState, String> {
+        let remaining_ms = (attempt.started_ms + i64::from(initial.config.max_seconds) * 1000
+            - now())
+        .max(0) as u64;
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(remaining_ms);
+        loop {
+            tokio::select! {
+                _=self.runtime.shutting_down()=>{let _=self.runtime.interrupt(session).await;return Err("server shutdown during attempt; inspect retained Session".into())},
+                _=tokio::time::sleep(Duration::from_millis(250))=>{},
+            }
+            if self.current(&initial.id, &attempt.id).is_err()
+                || tokio::time::Instant::now() >= deadline
+            {
+                let _ = self.runtime.interrupt(session).await;
+                return Err("attempt stopped by owner, policy or elapsed limit".into());
+            }
+            if !self.runtime.is_running(session) {
+                break;
+            }
+        }
+        self.runtime.state(session).await.map_err(error)
     }
     fn fail_retry(
         &self,
