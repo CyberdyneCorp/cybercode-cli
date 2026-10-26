@@ -49,6 +49,9 @@ pub struct PrArgs {
     /// Required CI identity (check:APP_ID:NAME or status:CREATOR_ID:CONTEXT); repeat.
     #[arg(long, value_name = "CI_ID")]
     pub autofix_required_ci: Vec<String>,
+    /// Repository-relative verification sources to protect from edits; repeat.
+    #[arg(long, value_name = "PATH")]
+    pub autofix_verification_path: Vec<String>,
     /// Maximum consecutive failed attempts, 1..10.
     #[arg(long, default_value_t = 3)]
     pub autofix_max_attempts: u32,
@@ -88,6 +91,7 @@ pub fn run(args: PrArgs, ctx: &Context, global: &GlobalArgs) -> Result<(), CliEr
         || args.autofix_model.is_some()
         || !args.autofix_check.is_empty()
         || !args.autofix_required_ci.is_empty()
+        || !args.autofix_verification_path.is_empty()
         || args.autofix_max_tokens.is_some()
         || args.autofix_max_seconds.is_some()
     {
@@ -154,6 +158,7 @@ fn autofix_config(
         model: required(&args.autofix_model, "--autofix-model")?,
         checks,
         required_ci: args.autofix_required_ci.clone(),
+        verification_paths: args.autofix_verification_path.clone(),
         max_attempts: args.autofix_max_attempts,
         max_tokens: args
             .autofix_max_tokens
@@ -342,6 +347,8 @@ mod tests {
             r#"["cargo","test","name with spaces"]"#,
             "--autofix-required-ci",
             "check:9:test",
+            "--autofix-verification-path",
+            "tests",
             "--autofix-max-tokens",
             "1000",
             "--autofix-max-seconds",

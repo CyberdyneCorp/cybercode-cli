@@ -26,6 +26,7 @@ fn subscription() -> Subscription {
             model: "provider/model".into(),
             checks: vec![vec!["cargo".into(), "test".into()]],
             required_ci: vec!["check:9:test".into()],
+            verification_paths: vec!["tests".into()],
             max_attempts: 3,
             max_tokens: 10000,
             max_seconds: 60,
@@ -458,6 +459,85 @@ async fn exhaustion_notice_reconciles_only_owner_marker_without_post() {
             .await
             .iter()
             .any(|(p, _)| p.starts_with("POST"))
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn rate_limits_and_server_failures_are_retryable_observations_but_denials_are_not() {
+    let (g, f, server) = fixture().await;
+    for (path, status, headers, retryable) in [
+        (
+            "/rate",
+            429,
+            vec![("retry-after".into(), "120".into())],
+            true,
+        ),
+        (
+            "/secondary",
+            403,
+            vec![("retry-after".into(), "90".into())],
+            true,
+        ),
+        (
+            "/primary",
+            403,
+            vec![("x-ratelimit-remaining".into(), "0".into())],
+            true,
+        ),
+        ("/server", 503, vec![], true),
+        ("/denied", 403, vec![], false),
+        ("/revoked", 401, vec![], false),
+    ] {
+        reply(
+            &f,
+            path,
+            Reply {
+                status,
+                headers,
+                body: "private diagnostics".into(),
+            },
+        )
+        .await;
+        let error = g.get(path).await.unwrap_err();
+        assert_eq!(error.retryable, retryable, "{path}");
+        assert!(!error.to_string().contains("private"));
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn failed_checks_include_bounded_annotations_without_following_log_urls() {
+    let (g, f, server) = fixture().await;
+    let mut failed = run(1, "test", "failure");
+    failed["output"]["summary"] = "".into();
+    failed["output"]["annotations_count"] = 1.into();
+    json_reply(
+        &f,
+        &format!("/repos/team/repo/commits/{HEAD}/check-runs?filter=latest&per_page=100&page=1"),
+        json!({"total_count":1,"check_runs":[failed]}),
+    )
+    .await;
+    json_reply(
+        &f,
+        &format!("/repos/team/repo/commits/{HEAD}/statuses?per_page=100&page=1"),
+        json!([]),
+    )
+    .await;
+    json_reply(&f,"/repos/team/repo/check-runs/1/annotations?per_page=100&page=1",json!([{"annotation_level":"failure","path":"src/lib.rs","start_line":7,"message":"assertion failed: expected 42"}])).await;
+    let checks = g.checks("team/repo", HEAD).await.unwrap();
+    assert!(
+        checks.triggers[0]
+            .text
+            .contains("src/lib.rs:7: assertion failed: expected 42")
+    );
+    assert_eq!(checks.outcome(&["check:9:test".into()]), CiOutcome::Failure);
+    assert!(
+        f.seen
+            .lock()
+            .await
+            .iter()
+            .all(|(path, _)| !path.contains("/logs"))
     );
     server.abort();
 }

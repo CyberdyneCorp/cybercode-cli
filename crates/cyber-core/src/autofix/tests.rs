@@ -11,6 +11,7 @@ fn subscription() -> Subscription {
             session_id: "ses_owner".into(),
             model: "provider/model".into(),
             checks: vec![vec!["cargo".into(), "test".into()]],
+            verification_paths: vec!["tests".into()],
             required_ci: vec!["check:1:test".into()],
             max_attempts: 3,
             max_tokens: 10000,
@@ -138,5 +139,50 @@ fn reject_unsafe_configuration_and_oversized_feedback() {
     let mut e = event("a");
     e.text = "x".repeat(16385);
     assert!(s.enqueue(vec![e], BASE).is_err());
+    assert!(s.queued.is_empty());
+}
+
+#[test]
+fn disabling_inflight_work_survives_unknown_settlement() {
+    let mut s = subscription();
+    claim(&mut s, "a");
+    intent(&mut s, "a");
+    s.control("disable").unwrap();
+    s.unknown("a", "lost reply").unwrap();
+    assert_eq!(s.status, Status::Disabled);
+    assert!(s.control("pause").is_err());
+    assert!(s.control("resume").is_err());
+    s.pushed("a").unwrap();
+    assert_eq!(s.status, Status::Disabled);
+}
+#[test]
+fn closed_subscription_cannot_be_reopened_by_pause_resume() {
+    let mut s = subscription();
+    s.status = Status::Closed;
+    assert!(s.control("pause").is_err());
+    assert!(s.control("resume").is_err());
+}
+
+#[test]
+fn review_arriving_during_attempt_is_revalidated_after_push_instead_of_lost() {
+    let mut s = subscription();
+    claim(&mut s, "first_failure");
+    let mut review = event("review:42:revision1");
+    review.kind = TriggerKind::Review;
+    s.enqueue(vec![review.clone()], BASE).unwrap();
+    intent(&mut s, "first_failure");
+    s.pushed("first_failure").unwrap();
+    s.ci("first_failure", FIX, true, 1).unwrap();
+    let mut s: Subscription = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+    s.enqueue(vec![], FIX).unwrap();
+    assert!(!s.seen.contains(&review.key));
+    assert!(s.queued.is_empty());
+    // GitHub revalidates the current writer and immutable review revision before re-emission.
+    review.head = FIX.into();
+    s.enqueue(vec![review.clone()], FIX).unwrap();
+    assert!(s.claim("next".into(), FIX, 2).unwrap());
+    assert_eq!(s.active().unwrap().triggers, vec![review.clone()]);
+    let mut s: Subscription = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+    s.enqueue(vec![review], FIX).unwrap();
     assert!(s.queued.is_empty());
 }

@@ -30,6 +30,7 @@ LOCATION_HEADER = "x-cyber-directory"
 IDENT = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
 
 ERROR_TAGS = [
+    "AutofixNotFoundError",
     "ComputerUnsupportedPlatformError", "ComputerDisabledError", "ComputerConsentError",
     "ComputerBusyError", "ComputerStaleFrameError", "ComputerLimitError",
     "ComputerFrameExpiredError", "ComputerConflictError", "ComputerUnknownOutcomeError",

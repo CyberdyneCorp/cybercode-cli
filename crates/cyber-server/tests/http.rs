@@ -4764,6 +4764,7 @@ fn autofix_fixture(h: &Harness) -> cyber_core::autofix::Subscription {
             model: "test/main".into(),
             checks: vec![vec!["cargo".into(), "test".into()]],
             required_ci: vec!["check:9:test".into()],
+            verification_paths: vec!["tests".into()],
             max_attempts: 3,
             max_tokens: 1000,
             max_seconds: 60,

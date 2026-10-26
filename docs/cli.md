@@ -1923,6 +1923,23 @@ cyber pr [OPTIONS] <NUMBER|URL>
 
 - `<NUMBER|URL>`: The pull request number or URL.
 
+**Options:**
+
+- `--autofix`: Enable bounded self-hosted auto-fix without checking out or opening the TUI.
+- `--autofix-status`: Show durable subscription status and attempt evidence.
+- `--autofix-pause`: Pause the subscription; closing the terminal does not pause it.
+- `--autofix-resume`: Resume a paused subscription with no unresolved attempt.
+- `--autofix-off`: Disable the subscription; already dispatched actions are reconciled visibly.
+- `--autofix-repository <OWNER/REPO>`: GitHub owner/repository (also accepted from a github.com PR URL)
+- `--autofix-session <SESSION_ID>`: Existing owner Session in the current Location; required on first enable.
+- `--autofix-model <PROVIDER/MODEL>`: Model for isolated fix attempts; required on first enable.
+- `--autofix-check <JSON_ARGV>`: Pinned verification argv as a JSON array; repeat for multiple checks.
+- `--autofix-required-ci <CI_ID>`: Required CI identity (check:APP_ID:NAME or status:CREATOR_ID:CONTEXT); repeat.
+- `--autofix-verification-path <PATH>`: Repository-relative verification sources to protect from edits; repeat.
+- `--autofix-max-attempts <AUTOFIX_MAX_ATTEMPTS>`: Maximum consecutive failed attempts, 1..10. Default: `3`.
+- `--autofix-max-tokens <TOKENS>`: Enforceable shared token cap per attempt; required on first enable.
+- `--autofix-max-seconds <SECONDS>`: Maximum elapsed seconds per attempt, 1..7200; required on first enable.
+
 ## `cyber git`
 
 Generate commit and pull request text with the small model

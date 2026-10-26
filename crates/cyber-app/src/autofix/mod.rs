@@ -11,15 +11,16 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, OnceCell};
 
+type Worker = (String, String, tokio::task::JoinHandle<()>);
 pub struct Controller {
     runtime: Runtime,
     records: Repository,
     executor: execution::Execution,
     config: Arc<ConfigFn>,
-    resolver: Arc<cyber_server::runtime::CatalogResolver>,
+    resolver: Arc<dyn ModelResolver>,
     github: OnceCell<GitHub>,
     /// One native attempt for this server. Polling and owner controls stay responsive.
-    worker: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    worker: Mutex<Option<Worker>>,
 }
 fn now() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -34,12 +35,19 @@ impl Controller {
         root: PathBuf,
         home: PathBuf,
         config: Arc<ConfigFn>,
-        resolver: Arc<cyber_server::runtime::CatalogResolver>,
+        resolver: Arc<dyn ModelResolver>,
+        private_roots: Vec<PathBuf>,
     ) -> Arc<Self> {
         Arc::new(Self {
             runtime,
             records: Repository::new(store),
-            executor: execution::Execution { root, home },
+            executor: execution::Execution {
+                root,
+                home,
+                private_roots,
+                #[cfg(test)]
+                source_override: None,
+            },
             config,
             resolver,
             github: OnceCell::new(),
@@ -52,7 +60,26 @@ impl Controller {
             .await
             .map_err(error)
     }
+    fn recover(&self) {
+        // A missing live worker cannot prove an earlier model/tool dispatch did not run.
+        if let Ok(values) = self.records.list(None) {
+            for s in values {
+                if let Some(a) = s.active()
+                    && matches!(a.stage, Stage::Claimed | Stage::Running | Stage::Verifying)
+                {
+                    let id = a.id.clone();
+                    let _ = self.records.update(&s.id, s.revision, now(), move |s| {
+                        s.unknown(
+                            &id,
+                            "server restarted during an attempt; inspect retained evidence",
+                        )
+                    });
+                }
+            }
+        }
+    }
     pub fn start(self: &Arc<Self>) {
+        self.recover();
         let weak = Arc::downgrade(self);
         tokio::spawn(async move {
             loop {
@@ -114,10 +141,24 @@ impl Controller {
         if owner.directory != directory {
             return Err("linked Session belongs to another Location".into());
         }
+        if owner.archived {
+            return Err("linked Session is archived; unarchive it before enabling auto-fix".into());
+        }
         let resolved = self.resolver.resolve(&config.model)?;
         // Preflight the adapter's strict contract before recording an enabled subscription.
         // No network dispatch takes place here. Main without reservation support refuses.
         reserved_supported(&resolved)?;
+        let bound = resolved
+            .adapter
+            .prepare_reserved(resolved.template.clone(), resolved.context_limit)
+            .map_err(error)?
+            .bound;
+        if bound.total_tokens > config.max_tokens {
+            return Err(format!(
+                "max_tokens is below this model's conservative per-request bound ({})",
+                bound.total_tokens
+            ));
+        }
         let github = self.github().await?;
         let snapshot = github
             .inspect(&config.repository, config.pr)
@@ -153,125 +194,224 @@ impl Controller {
         if baseline.len() > 4096 {
             return Err("review history exceeds subscription capacity".into());
         }
+        value.github_login = Some(snapshot.viewer);
         value.seen.extend(baseline);
         self.records.create(value).map_err(error)
     }
     async fn tick(self: &Arc<Self>) -> Result<(), String> {
-        let records = self.records.list(None).map_err(error)?;
-        let mut pending = None;
-        for s in records {
-            if matches!(s.status, Status::Closed | Status::Disabled) && s.active().is_none() {
-                continue;
-            }
-            if s.next_poll_ms > now() {
-                continue;
-            }
-            match self.poll_one(s).await {
-                Ok(s) => {
-                    if s.status == Status::Enabled
-                        && s.active().is_some_and(|a| a.stage == Stage::Claimed)
-                    {
-                        pending.get_or_insert(s);
-                    }
-                }
-                Err(e) => cyber_core::log::warn(
-                    "autofix",
-                    "subscription observation failed",
-                    serde_json::json!({"error":e}),
-                ),
-            }
-        }
+        self.poll_due().await?;
         let mut worker = self.worker.lock().await;
-        if worker.as_ref().is_some_and(|h| h.is_finished()) {
-            if let Some(handle) = worker.take() {
-                let _ = handle.await;
-            }
+        if worker.as_ref().is_some_and(|(_, _, h)| h.is_finished())
+            && let Some((subscription, attempt, handle)) = worker.take()
+            && handle.await.is_err()
+        {
+            self.record_unknown(
+                &subscription,
+                &attempt,
+                "auto-fix worker failed; retained attempt requires inspection",
+            );
         }
         if worker.is_none()
-            && let Some(s) = pending
+            && let Some(s) = self.claim_next().await?
         {
             let controller = self.clone();
-            *worker = Some(tokio::spawn(async move {
-                let id = s.id.clone();
-                let attempt = s.active().map(|a| a.id.clone()).unwrap_or_default();
+            let subscription = s.id.clone();
+            let attempt = s.active().ok_or("claimed attempt missing")?.id.clone();
+            let worker_subscription = subscription.clone();
+            let worker_attempt = attempt.clone();
+            let task = tokio::spawn(async move {
                 if let Err(reason) = controller.attempt(s).await {
-                    if let Ok(s) = controller.records.get(&id)
-                        && s.active().is_some_and(|a| a.id == attempt)
-                    {
-                        let _ = controller.records.update(&id, s.revision, now(), move |s| {
-                            s.unknown(&attempt, &reason)
-                        });
-                    }
+                    controller.record_unknown(&worker_subscription, &worker_attempt, &reason);
                 }
-            }));
+            });
+            *worker = Some((subscription, attempt, task));
         }
         Ok(())
     }
+    async fn poll_due(&self) -> Result<(), String> {
+        for s in self.records.list(None).map_err(error)? {
+            if (matches!(s.status, Status::Closed | Status::Disabled) && s.active().is_none())
+                || s.next_poll_ms > now()
+            {
+                continue;
+            }
+            if let Err(e) = self.poll_one(s).await {
+                cyber_core::log::warn(
+                    "autofix",
+                    "subscription observation failed",
+                    serde_json::json!({"error":e}),
+                );
+            }
+        }
+        Ok(())
+    }
+    fn record_unknown(&self, subscription: &str, attempt: &str, reason: &str) {
+        if let Ok(s) = self.records.get(subscription)
+            && s.active().is_some_and(|a| a.id == attempt)
+        {
+            let attempt = attempt.to_owned();
+            let reason = reason.to_owned();
+            let _ = self
+                .records
+                .update(subscription, s.revision, now(), move |s| {
+                    s.unknown(&attempt, &reason)
+                });
+        }
+    }
+    /// Called only after acquiring the sole worker slot. Unrelated queue waiting
+    /// neither consumes an attempt nor starts its elapsed allowance.
+    async fn claim_next(&self) -> Result<Option<Subscription>, String> {
+        let Some(s) = self
+            .records
+            .list(None)
+            .map_err(error)?
+            .into_iter()
+            .find(|s| s.status == Status::Enabled && s.active().is_none() && !s.queued.is_empty() && s.backoff_until_ms.is_none_or(|time|time<=now()))
+        else {
+            return Ok(None);
+        };
+        let snapshot = match self
+            .github()
+            .await?
+            .inspect(&s.config.repository, s.config.pr)
+            .await
+        {
+            Ok(snapshot) => snapshot,
+            Err(failure) => {
+                self.records
+                    .update(&s.id, s.revision, now(), move |s| {
+                        s.next_poll_ms = now() + failure.retry_after_ms;
+                        s.backoff_until_ms = Some(s.next_poll_ms);
+                        if !failure.retryable {
+                            s.pause("GitHub authorization or identity unavailable before dispatch")
+                        }
+                        Ok(())
+                    })
+                    .map_err(error)?;
+                return Ok(None);
+            }
+        };
+        let auth = authorized(&snapshot, Some(&s));
+        let value = self
+            .records
+            .update(&s.id, s.revision, now(), move |s| {
+                if snapshot.closed {
+                    s.status = Status::Closed;
+                    s.reason = Some("PR closed or merged".into());
+                    return Ok(());
+                }
+                if let Err(reason) = auth {
+                    s.pause(&reason);
+                    return Ok(());
+                }
+                s.claim(cyber_core::ids::new_id("afxa"), &snapshot.head, now())?;
+                Ok(())
+            })
+            .map_err(error)?;
+        Ok(value
+            .active()
+            .filter(|a| a.stage == Stage::Claimed)
+            .map(|_| value.clone()))
+    }
     async fn poll_one(&self, s: Subscription) -> Result<Subscription, String> {
         let github = self.github().await?;
+        if s.status == Status::Exhausted {
+            return self.exhaustion_notice(s, github).await;
+        }
         let poll = match github.poll(&s).await {
             Ok(poll) => poll,
             Err(e) => {
                 let retry = e.retry_after_ms;
+                let retryable = e.retryable;
                 return self
                     .records
                     .update(&s.id, s.revision, now(), move |v| {
                         v.next_poll_ms = now() + retry;
-                        v.pause("GitHub evidence or authorization unavailable");
+                        v.backoff_until_ms = Some(v.next_poll_ms);
+                        if retryable {
+                            v.reason =
+                                Some("GitHub temporarily unavailable; polling will retry".into())
+                        } else {
+                            v.pause("GitHub evidence or authorization unavailable");
+                        }
                         Ok(())
                     })
                     .map_err(error);
             }
         };
-        let auth = authorized(&poll.snapshot, Some(&s));
+        let live_worker =
+            self.worker
+                .lock()
+                .await
+                .as_ref()
+                .is_some_and(|(subscription, attempt, handle)| {
+                    subscription == &s.id
+                        && s.active().is_some_and(|a| &a.id == attempt)
+                        && !handle.is_finished()
+                });
         let id = s.id.clone();
         let now = now();
         self.records
             .update(&id, s.revision, now, move |value| {
-                value.next_poll_ms = now + poll.poll_after_ms.clamp(60_000, 3_600_000);
-                if poll.snapshot.closed {
-                    value.status = Status::Closed;
-                    value.reason = Some("PR closed or merged".into());
-                    return Ok(());
-                }
-                if let Err(reason) = auth {
-                    value.pause(&reason);
-                    return Ok(());
-                }
-                if let Some(a) = value.active().cloned() {
-                    match a.stage {
-                        Stage::PushIntent | Stage::Unknown if a.commit.is_some() => {
-                            if a.commit.as_deref() == Some(&poll.snapshot.head) {
-                                value.pushed(&a.id)?;
-                            } else {
-                                value.unknown(
-                                    &a.id,
-                                    "push outcome unresolved or remote head changed",
-                                )?;
-                            }
-                        }
-                        Stage::AwaitingCi => {
-                            if a.commit.as_deref() != Some(&poll.snapshot.head) {
-                                value.pause("PR head changed while awaiting CI");
-                            } else if poll.ci_head == poll.snapshot.head
-                                && poll.ci != CiOutcome::Pending
-                            {
-                                value.ci(
-                                    &a.id,
-                                    &poll.ci_head,
-                                    poll.ci == CiOutcome::Success,
-                                    now,
-                                )?;
-                            }
-                        }
-                        // In-process work is never reclaimed by a poll or lease timeout.
-                        _ => {}
+                observed_poll(value, poll, live_worker, now)
+            })
+            .map_err(error)
+    }
+
+    async fn exhaustion_notice(
+        &self,
+        s: Subscription,
+        github: &GitHub,
+    ) -> Result<Subscription, String> {
+        if s.exhaustion_notice
+            .as_ref()
+            .is_some_and(|id| !id.starts_with("intent:"))
+        {
+            return Ok(s);
+        }
+        let snapshot = github
+            .inspect(&s.config.repository, s.config.pr)
+            .await
+            .map_err(error)?;
+        if snapshot.closed {
+            return self
+                .records
+                .update(&s.id, s.revision, now(), |s| {
+                    s.status = Status::Closed;
+                    s.reason = Some("PR closed or merged".into());
+                    Ok(())
+                })
+                .map_err(error);
+        }
+        authorized(&snapshot, Some(&s))?;
+        if s.exhaustion_notice.is_some() {
+            let found = github.find_notice(&s).await.map_err(error)?;
+            return self
+                .records
+                .update(&s.id, s.revision, now(), move |s| {
+                    s.next_poll_ms = now() + 60_000;
+                    if let Some(id) = found {
+                        s.exhaustion_notice = Some(id)
+                    } else {
+                        s.reason =
+                            Some("exhaustion notice delivery unknown; no automatic repost".into())
                     }
-                }
-                value.enqueue(poll.triggers, &poll.snapshot.head)?;
-                if value.status == Status::Enabled && value.active().is_none() {
-                    value.claim(cyber_core::ids::new_id("afxa"), &poll.snapshot.head, now)?;
-                }
+                    Ok(())
+                })
+                .map_err(error);
+        }
+        let intent = self
+            .records
+            .update(&s.id, s.revision, now(), |s| {
+                s.exhaustion_notice = Some(format!("intent:{}", s.id));
+                s.next_poll_ms = now() + 60_000;
+                Ok(())
+            })
+            .map_err(error)?;
+        let notice = github.publish_notice(&intent).await.map_err(error)?;
+        self.records
+            .update(&intent.id, intent.revision, now(), move |s| {
+                s.exhaustion_notice = Some(notice);
                 Ok(())
             })
             .map_err(error)
@@ -284,13 +424,79 @@ impl Controller {
         Ok(value)
     }
     async fn attempt(&self, initial: Subscription) -> Result<(), String> {
-        let attempt = initial.active().ok_or("missing claimed attempt")?.clone();
+        let attempt = initial.active().ok_or("missing claimed attempt")?;
+        if attempt.stage != Stage::Claimed {
+            return Err("attempt is already dispatched; automatic replay is refused".into());
+        }
+        let id = attempt.id.clone();
+        let current = self.current(&initial.id, &id)?;
+        if current.active().is_none_or(|a| a.stage != Stage::Claimed) {
+            return Err("attempt is already dispatched; automatic replay is refused".into());
+        }
+        let remaining_ms = (attempt.started_ms + i64::from(initial.config.max_seconds) * 1000
+            - now())
+        .max(0) as u64;
+        if remaining_ms == 0 {
+            return Err("attempt elapsed limit already reached".into());
+        }
+        let canceled = async {
+            loop {
+                tokio::select! {_=self.runtime.shutting_down()=>break, _=tokio::time::sleep(Duration::from_millis(250))=>{}}
+                if self.runtime.is_shutting_down() || self.current(&initial.id, &id).is_err() {
+                    break;
+                }
+            }
+        };
+        let result = tokio::select! {
+            result=tokio::time::timeout(Duration::from_millis(remaining_ms),self.attempt_body(initial.clone()))=>result.unwrap_or_else(|_|Err("attempt elapsed limit reached; inspect retained evidence".to_owned())),
+            _=canceled=>Err("attempt stopped by owner, policy or server shutdown".into()),
+        };
+        if result.is_err() {
+            if let Ok(current) = self.records.get(&initial.id)
+                && let Some(session) = current.active().and_then(|a| a.session_id.as_deref())
+            {
+                let _ = self.runtime.interrupt(session).await;
+            }
+        }
+        result
+    }
+    async fn attempt_body(&self, initial: Subscription) -> Result<(), String> {
+        let mut attempt = initial.active().ok_or("missing claimed attempt")?.clone();
         let directory = self
             .executor
             .prepare(&initial, &attempt.id, &attempt.head)
             .await?;
         self.policy(Path::new(&initial.directory))?;
-        let current = self.current(&initial.id, &attempt.id)?;
+        let diagnostics = self.executor.diagnose(&initial, &attempt.id).await?;
+        let mut current = self.current(&initial.id, &attempt.id)?;
+        if !diagnostics.is_empty() {
+            let attempt_id = attempt.id.clone();
+            let head = attempt.head.clone();
+            current = self
+                .records
+                .update(&initial.id, current.revision, now(), move |s| {
+                    let value = s
+                        .attempts
+                        .last_mut()
+                        .filter(|a| a.id == attempt_id && a.stage == Stage::Claimed)
+                        .ok_or("attempt changed during diagnosis")?;
+                    for text in diagnostics {
+                        let key = format!(
+                            "diagnosis:{attempt_id}:{:x}",
+                            sha2::Sha256::digest(text.as_bytes())
+                        );
+                        value.triggers.push(cyber_core::autofix::Trigger {
+                            key,
+                            head: head.clone(),
+                            kind: cyber_core::autofix::TriggerKind::CheckFailure,
+                            text,
+                        });
+                    }
+                    Ok(())
+                })
+                .map_err(error)?;
+            attempt = current.active().ok_or("diagnosed attempt missing")?.clone();
+        }
         let github = self.github().await?;
         let snapshot = github
             .inspect(&current.config.repository, current.config.pr)
@@ -317,8 +523,25 @@ impl Controller {
                 s.running(&id, session_copy)
             })
             .map_err(error)?;
-        self.runtime.create_session(CreateSession{
-            id:Some(session.clone()),directory:directory.to_string_lossy().into_owned(),source_directory:Some(initial.directory.clone()),model:initial.config.model.clone(),agent:Some("build".into()),mode:Some("dont-ask".into()),title:Some(format!("Auto-fix {} #{}",initial.config.repository,initial.config.pr)),max_steps:Some(60),budget:Some(cyber_core::budget::Budget{max_tokens:Some(initial.config.max_tokens),max_wall_seconds:Some(f64::from(initial.config.max_seconds)),enforcement:cyber_core::budget::Enforcement::Reserved,..Default::default()}),rules:Some(serde_json::json!({"*":"deny","read":"allow","edit":"allow","glob":"allow","grep":"allow","list":"allow","external_directory":"deny"})),..Default::default()
+        self.runtime.create_session(CreateSession {
+            id:Some(session.clone()),
+            parent_id:Some(initial.config.session_id.clone()),
+            subagent_name:Some("auto-fix".into()),
+            directory:directory.to_string_lossy().into_owned(),
+            source_directory:Some(initial.directory.clone()),
+            model:initial.config.model.clone(),
+            agent:Some("build".into()),
+            mode:Some("dont-ask".into()),
+            title:Some(format!("Auto-fix {} #{}",initial.config.repository,initial.config.pr)),
+            max_steps:Some(60),
+            budget:Some(cyber_core::budget::Budget {
+                max_tokens:Some(initial.config.max_tokens),
+                max_wall_seconds:Some(f64::from(initial.config.max_seconds)),
+                enforcement:cyber_core::budget::Enforcement::Reserved,
+                ..Default::default()
+            }),
+            rules:Some(serde_json::json!({"*":"deny","read":"allow","edit":"allow","glob":"allow","grep":"allow","list":"allow","external_directory":"deny"})),
+            ..Default::default()
         }).await.map_err(error)?;
         let feedback = serde_json::to_string(&attempt.triggers).map_err(error)?;
         let mut admission = Admission::text(
@@ -333,8 +556,10 @@ impl Controller {
             .admit(&session, admission)
             .await
             .map_err(error)?;
-        let deadline = tokio::time::Instant::now()
-            + Duration::from_secs(u64::from(initial.config.max_seconds));
+        let remaining_ms = (attempt.started_ms + i64::from(initial.config.max_seconds) * 1000
+            - now())
+        .max(0) as u64;
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(remaining_ms);
         loop {
             tokio::select! {
                 _=self.runtime.shutting_down()=>{let _=self.runtime.interrupt(&session).await;return Err("server shutdown during attempt; inspect retained Session".into())},
@@ -351,24 +576,33 @@ impl Controller {
             }
         }
         let state = self.runtime.state(&session).await.map_err(error)?;
-        if state.info.error.is_some() {
+        let final_entry = state.entries.iter().rev().find_map(|entry| match entry {
+            cyber_server::runtime::Entry::Assistant(a) => Some(a),
+            _ => None,
+        });
+        if final_entry.is_none_or(|a| !a.finished || a.error.is_some()) {
             return self.fail_retry(
                 &running,
                 &attempt.id,
                 "fix Session failed or exceeded its budget",
             );
         }
-        if self
-            .runtime
-            .pending_requests(&session)
-            .await
-            .map_err(error)?
-            .len()
-            > 0
-        {
+        if !self.runtime.pending_requests(Some(&session)).is_empty() {
             return Err("unattended attempt requires permission or user input".into());
         }
         let usage = self.runtime.job_usage(&session).map_err(error)?;
+        let outstanding = self
+            .runtime
+            .budget_reservations(cyber_server::runtime::ReservationQuery {
+                session_id: Some(session.clone()),
+                open_only: true,
+                limit: Some(1),
+                ..Default::default()
+            })
+            .map_err(error)?;
+        if !outstanding.reservations.is_empty() {
+            return Err("provider usage remains uncertain; inspect reservation evidence".into());
+        }
         let mut current = self.current(&initial.id, &attempt.id)?;
         let id = attempt.id.clone();
         current = self
@@ -376,24 +610,65 @@ impl Controller {
             .update(&initial.id, current.revision, now(), move |s| {
                 s.verifying(
                     &id,
-                    Some(usage.tokens),
-                    if usage.unpriced_steps == 0 {
-                        Some(usage.cost)
+                    Some(usage.total_tokens()),
+                    if state.totals.unpriced_steps == 0 {
+                        Some(usage.total_cost())
                     } else {
                         None
                     },
                 )
             })
             .map_err(error)?;
-        let commit = match self.executor.commit(&attempt.id, &attempt.head).await {
+        let commit = match self
+            .executor
+            .commit(&current, &attempt.id, &attempt.head)
+            .await
+        {
             Ok(c) => c,
             Err(reason) => return self.fail_retry(&current, &attempt.id, &reason),
         };
-        let checks = match self.executor.checks(&current, &attempt.id).await {
-            Ok(checks) => checks,
+        let id = attempt.id.clone();
+        let candidate = commit.clone();
+        current = self
+            .records
+            .update(&initial.id, current.revision, now(), move |s| {
+                s.attempts
+                    .last_mut()
+                    .filter(|a| a.id == id && a.stage == Stage::Verifying)
+                    .ok_or("attempt changed before verification")?
+                    .candidate_commit = Some(candidate);
+                Ok(())
+            })
+            .map_err(error)?;
+        let (checks, failures) = match self.executor.check_report(&current, &attempt.id).await {
+            Ok(report) => report,
             Err(reason) => return self.fail_retry(&current, &attempt.id, &reason),
         };
         if checks.len() != current.config.checks.len() || checks.iter().any(|e| !e.passed) {
+            let id = attempt.id.clone();
+            current = self
+                .records
+                .update(&initial.id, current.revision, now(), move |s| {
+                    let a = s
+                        .attempts
+                        .last_mut()
+                        .filter(|a| a.id == id)
+                        .ok_or("verification attempt changed")?;
+                    a.checks = checks;
+                    for text in failures {
+                        a.triggers.push(cyber_core::autofix::Trigger {
+                            key: format!(
+                                "verification:{id}:{:x}",
+                                sha2::Sha256::digest(text.as_bytes())
+                            ),
+                            head: a.head.clone(),
+                            kind: cyber_core::autofix::TriggerKind::CheckFailure,
+                            text,
+                        });
+                    }
+                    Ok(())
+                })
+                .map_err(error)?;
             return self.fail_retry(&current, &attempt.id, "pinned verification failed");
         }
         let snapshot = github
@@ -414,7 +689,11 @@ impl Controller {
             })
             .map_err(error)?;
         // This dispatch is performed exactly once. Any error becomes Unknown.
-        self.executor.push(&current, &attempt.id, &commit).await?;
+        let dispatch = self.current(&initial.id, &attempt.id)?;
+        if dispatch.revision != current.revision {
+            return Err("subscription changed before push dispatch".into());
+        }
+        self.executor.push(&dispatch, &attempt.id, &commit).await?;
         let current = self.records.get(&initial.id).map_err(error)?;
         let id = attempt.id.clone();
         self.records
@@ -440,12 +719,16 @@ impl Controller {
                     .clone();
                 s.failed(&id, reason, now())?;
                 if s.status == Status::Enabled {
+                    let mut retry = vec![];
                     for mut event in feedback {
                         event.key = format!(
                             "retry:{id}:{:x}",
                             sha2::Sha256::digest(event.key.as_bytes())
                         );
-                        s.queued.push(event)
+                        retry.push(event);
+                    }
+                    if let Some(head) = retry.first().map(|e| e.head.clone()) {
+                        s.enqueue(retry, &head)?;
                     }
                 }
                 Ok(())
@@ -455,6 +738,56 @@ impl Controller {
     }
 }
 use sha2::Digest;
+fn observed_poll(
+    value: &mut Subscription,
+    poll: github::Poll,
+    live_worker: bool,
+    now: i64,
+) -> Result<(), String> {
+    value.next_poll_ms = now + poll.poll_after_ms.clamp(60_000, 86_400_000);
+    value.backoff_until_ms = None;
+    if poll.snapshot.closed {
+        value.status = Status::Closed;
+        value.reason = Some("PR closed or merged".into());
+        return Ok(());
+    }
+    if let Err(reason) = authorized(&poll.snapshot, Some(value)) {
+        value.pause(&reason);
+        return Ok(());
+    }
+    reconcile_attempt(value, &poll, live_worker, now)?;
+    value.enqueue(poll.triggers, &poll.snapshot.head)
+}
+fn reconcile_attempt(
+    value: &mut Subscription,
+    poll: &github::Poll,
+    live_worker: bool,
+    now: i64,
+) -> Result<(), String> {
+    let Some(a) = value.active().cloned() else {
+        return Ok(());
+    };
+    match a.stage {
+        Stage::PushIntent | Stage::Unknown if a.commit.is_some() && !live_worker => {
+            if a.commit.as_deref() == Some(&poll.snapshot.head) {
+                value.pushed(&a.id)?;
+            } else {
+                value.unknown(&a.id, "push outcome unresolved or remote head changed")?;
+            }
+        }
+        Stage::AwaitingCi => {
+            if a.commit.as_deref() != Some(&poll.snapshot.head) {
+                value.pause("PR head changed while awaiting CI");
+                return Ok(());
+            }
+            if poll.ci_head == poll.snapshot.head && poll.ci != CiOutcome::Pending {
+                value.ci(&a.id, &poll.ci_head, poll.ci == CiOutcome::Success, now)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
 fn authorized(snapshot: &Snapshot, s: Option<&Subscription>) -> Result<(), String> {
     if snapshot.closed {
         return Err("PR is closed".into());
@@ -472,12 +805,21 @@ fn authorized(snapshot: &Snapshot, s: Option<&Subscription>) -> Result<(), Strin
                 .config
                 .repository
                 .eq_ignore_ascii_case(&snapshot.repository)
+            || s.github_login
+                .as_ref()
+                .is_some_and(|login| !login.eq_ignore_ascii_case(&snapshot.viewer))
     }) {
         return Err("PR repository or branch identity changed".into());
     }
     Ok(())
 }
-fn reserved_supported(_model: &cyber_server::runtime::ResolvedModel) -> Result<(), String> {
-    // Replaced by strict adapter preflight when the reserved-budget dependency lands.
-    Err("auto-fix requires the reserved workflow budget implementation; no subscription was enabled".into())
+fn reserved_supported(model: &cyber_server::runtime::ResolvedModel) -> Result<(), String> {
+    model
+        .adapter
+        .prepare_reserved(model.template.clone(), model.context_limit)
+        .map(|_| ())
+        .map_err(error)
 }
+
+#[cfg(test)]
+mod controller_tests;

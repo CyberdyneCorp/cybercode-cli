@@ -112,6 +112,12 @@ impl AppServices {
             host.home_for_autofix(),
             config.clone(),
             resolver.clone(),
+            vec![
+                paths.config.clone(),
+                paths.state.clone(),
+                paths.cache.clone(),
+                paths.tmp.clone(),
+            ],
         );
         autofix.start();
         Ok(Self {

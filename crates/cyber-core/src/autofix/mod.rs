@@ -13,9 +13,14 @@ pub struct Config {
     pub checks: Vec<Vec<String>>,
     /// Exact CI producer identity: check:<app_id>:<name> or status:<creator_id>:<context>.
     pub required_ci: Vec<String>,
+    pub verification_paths: Vec<String>,
+    #[serde(default = "default_attempts")]
     pub max_attempts: u32,
     pub max_tokens: u64,
     pub max_seconds: u32,
+}
+fn default_attempts() -> u32 {
+    3
 }
 impl Config {
     pub fn validate(&self) -> Result<(), String> {
@@ -32,11 +37,16 @@ impl Config {
         {
             return Err("expected GitHub owner/repository".into());
         }
-        if self.pr == 0 || self.session_id.is_empty() || self.model.is_empty() {
+        if self.pr > i64::MAX as u64
+            || self.pr == 0
+            || self.session_id.is_empty()
+            || self.model.is_empty()
+        {
             return Err("PR, linked Session and model are required".into());
         }
         if !(1..=10).contains(&self.max_attempts)
             || self.max_tokens == 0
+            || self.max_tokens > i64::MAX as u64
             || !(1..=7200).contains(&self.max_seconds)
         {
             return Err("expected 1..10 attempts, positive tokens and 1..7200 seconds".into());
@@ -52,12 +62,31 @@ impl Config {
         {
             return Err("one to sixteen bounded verification argv arrays are required".into());
         }
+        if self.verification_paths.is_empty()
+            || self.verification_paths.len() > 128
+            || self.verification_paths.iter().any(|p| {
+                p.is_empty()
+                    || p.len() > 1024
+                    || p.contains(['\\', ':', '\0', '\n', '\r'])
+                    || p.starts_with('/')
+                    || p.split('/').any(|s| s.is_empty() || s == "." || s == "..")
+            })
+        {
+            return Err(
+                "one to 128 normalized repository-relative verification paths are required".into(),
+            );
+        }
         if self.required_ci.is_empty()
             || self.required_ci.len() > 100
-            || self
-                .required_ci
-                .iter()
-                .any(|s| s.len() > 512 || !(s.starts_with("check:") || s.starts_with("status:")))
+            || self.required_ci.iter().any(|s| {
+                let parts = s.splitn(3, ':').collect::<Vec<_>>();
+                s.len() > 512
+                    || s.contains(['\0', '\r', '\n'])
+                    || parts.len() != 3
+                    || !matches!(parts[0], "check" | "status")
+                    || parts[1].parse::<u64>().ok().filter(|n| *n > 0).is_none()
+                    || parts[2].trim().is_empty()
+            })
         {
             return Err("one to one hundred exact CI producer IDs are required".into());
         }
@@ -114,6 +143,8 @@ pub struct Attempt {
     pub stage: Stage,
     pub session_id: Option<String>,
     pub commit: Option<String>,
+    #[serde(default)]
+    pub candidate_commit: Option<String>,
     pub checks: Vec<CheckEvidence>,
     pub tokens: Option<u64>,
     /// Absent for unpriced or incompletely accounted usage.
@@ -128,6 +159,8 @@ pub struct Subscription {
     pub directory: String,
     pub config: Config,
     pub repository_id: u64,
+    /// Owner login observed when enabling; never a credential.
+    pub github_login: Option<String>,
     pub branch: String,
     pub revision: u64,
     pub status: Status,
@@ -136,6 +169,8 @@ pub struct Subscription {
     pub queued: Vec<Trigger>,
     pub attempts: Vec<Attempt>,
     pub next_poll_ms: i64,
+    #[serde(default)]
+    pub backoff_until_ms: Option<i64>,
     pub created_ms: i64,
     pub updated_ms: i64,
     pub reason: Option<String>,
@@ -156,7 +191,8 @@ impl Subscription {
         now: i64,
     ) -> Result<Self, String> {
         config.validate()?;
-        if repository_id == 0
+        if repository_id > i64::MAX as u64
+            || repository_id == 0
             || branch.is_empty()
             || branch.starts_with('-')
             || branch.contains(['\0', '\n', '\r'])
@@ -168,6 +204,7 @@ impl Subscription {
             directory,
             config,
             repository_id,
+            github_login: None,
             branch,
             revision: 1,
             status: Status::Enabled,
@@ -176,6 +213,7 @@ impl Subscription {
             queued: vec![],
             attempts: vec![],
             next_poll_ms: now,
+            backoff_until_ms: None,
             created_ms: now,
             updated_ms: now,
             reason: None,
@@ -193,6 +231,16 @@ impl Subscription {
             .filter(|a| a.id == id && !matches!(a.stage, Stage::Succeeded | Stage::Failed))
             .ok_or_else(|| "attempt changed or already settled".into())
     }
+    fn supersede_stale(&mut self, head: &str) {
+        // Unconsumed reviews need a fresh authorization/content check at the new head.
+        // Release only their dedupe marker; consumed attempt evidence stays immutable.
+        for event in &self.queued {
+            if event.head != head && event.kind == TriggerKind::Review {
+                self.seen.remove(&event.key);
+            }
+        }
+        self.queued.retain(|e| e.head == head);
+    }
     pub fn enqueue(&mut self, events: Vec<Trigger>, head: &str) -> Result<(), String> {
         if self.status != Status::Enabled {
             return Ok(());
@@ -209,14 +257,25 @@ impl Subscription {
                 return Err("invalid or oversized trigger".into());
             }
         }
+        self.supersede_stale(head);
         let fresh = events
             .into_iter()
             .filter(|e| e.head == head && !self.seen.contains(&e.key))
             .collect::<Vec<_>>();
+        let bytes = self.queued.iter().map(|e| e.text.len()).sum::<usize>()
+            + self
+                .attempts
+                .iter()
+                .flat_map(|a| a.triggers.iter())
+                .map(|e| e.text.len())
+                .sum::<usize>()
+            + fresh.iter().map(|e| e.text.len()).sum::<usize>();
+        if bytes > 2 * 1024 * 1024 {
+            return Err("feedback history capacity reached".into());
+        }
         if self.seen.len() + fresh.len() > 4096 || self.queued.len() + fresh.len() > 100 {
             return Err("trigger history capacity reached; owner must replace subscription".into());
         }
-        self.queued.retain(|e| e.head == head);
         for event in fresh {
             if self.seen.insert(event.key.clone()) {
                 self.queued.push(event)
@@ -228,7 +287,7 @@ impl Subscription {
         if self.status != Status::Enabled || self.active().is_some() {
             return Ok(false);
         }
-        self.queued.retain(|e| e.head == head);
+        self.supersede_stale(head);
         if self.queued.is_empty() {
             return Ok(false);
         }
@@ -244,6 +303,7 @@ impl Subscription {
             stage: Stage::Claimed,
             session_id: None,
             commit: None,
+            candidate_commit: None,
             checks: vec![],
             tokens: None,
             cost_usd: None,
@@ -307,6 +367,7 @@ impl Subscription {
         {
             return Err("verified nonempty patch and exact pinned checks required".into());
         }
+        a.candidate_commit = Some(commit.clone());
         a.commit = Some(commit);
         a.checks = checks;
         a.stage = Stage::PushIntent;
@@ -314,6 +375,9 @@ impl Subscription {
     }
     pub fn pushed(&mut self, id: &str) -> Result<(), String> {
         let a = self.active_mut(id)?;
+        if a.stage == Stage::AwaitingCi {
+            return Ok(());
+        }
         if a.stage != Stage::PushIntent && a.stage != Stage::Unknown {
             return Err("no pending push intent".into());
         }
@@ -346,7 +410,7 @@ impl Subscription {
         a.ended_ms = Some(now);
         a.reason = Some(reason);
         self.failures += 1;
-        if self.failures >= self.config.max_attempts {
+        if self.failures >= self.config.max_attempts && self.status == Status::Enabled {
             self.status = Status::Exhausted;
             self.reason = Some("consecutive attempt limit reached".into())
         }
@@ -354,7 +418,14 @@ impl Subscription {
     }
     pub fn unknown(&mut self, id: &str, reason: &str) -> Result<(), String> {
         self.active_mut(id)?.stage = Stage::Unknown;
-        self.pause(reason);
+        if matches!(
+            self.status,
+            Status::Closed | Status::Disabled | Status::Exhausted
+        ) {
+            self.reason = Some(reason.chars().take(500).collect())
+        } else {
+            self.pause(reason);
+        }
         Ok(())
     }
     pub fn pause(&mut self, reason: &str) {
@@ -363,7 +434,15 @@ impl Subscription {
     }
     pub fn control(&mut self, action: &str) -> Result<(), String> {
         match action {
-            "pause" => self.pause("paused by owner"),
+            "pause" => {
+                if matches!(
+                    self.status,
+                    Status::Closed | Status::Disabled | Status::Exhausted
+                ) {
+                    return Err("stopped subscription cannot be paused or resumed".into());
+                }
+                self.pause("paused by owner");
+            }
             "disable" => {
                 self.status = Status::Disabled;
                 self.reason = Some("disabled by owner".into())

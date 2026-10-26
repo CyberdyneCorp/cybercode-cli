@@ -15,7 +15,7 @@ pub enum Request {
     Status { session_id: String },
 }
 fn enable(session: &Session, input: &str) -> Result<Config, String> {
-    let mut value:Value=serde_json::from_str(input).map_err(|_|"Use /autofix on {JSON settings}; include repository, pr, checks, required_ci, max_tokens and max_seconds".to_owned())?;
+    let mut value:Value=serde_json::from_str(input).map_err(|_|"Use /autofix on {JSON settings}; include repository, pr, checks, required_ci, verification_paths, max_tokens and max_seconds".to_owned())?;
     let map = value
         .as_object_mut()
         .ok_or("auto-fix settings must be a JSON object")?;
@@ -138,7 +138,7 @@ mod tests {
     }
     #[test]
     fn enable_binds_current_session_and_preserves_explicit_argv() {
-        let input = r#"on {"repository":"team/repo","pr":3,"checks":[["cargo","test","with spaces"]],"required_ci":["check:9:test"],"max_tokens":1000,"max_seconds":60}"#;
+        let input = r#"on {"repository":"team/repo","pr":3,"checks":[["cargo","test","with spaces"]],"required_ci":["check:9:test"],"verification_paths":["tests"],"max_tokens":1000,"max_seconds":60}"#;
         let Request::Enable(config) = parse(&session(), input).unwrap() else {
             panic!("enable expected")
         };

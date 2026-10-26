@@ -52,12 +52,22 @@ pub struct Poll {
 pub struct Error {
     message: String,
     pub retry_after_ms: i64,
+    /// Safe to retry an observation. Mutations still require receipt reconciliation.
+    pub retryable: bool,
 }
 impl Error {
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
             retry_after_ms: POLL_MS,
+            retryable: false,
+        }
+    }
+    fn network(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            retry_after_ms: POLL_MS,
+            retryable: true,
         }
     }
 }
@@ -89,6 +99,10 @@ pub struct GitHub {
     poll_ms: Arc<std::sync::atomic::AtomicI64>,
 }
 impl GitHub {
+    #[cfg(test)]
+    pub(super) fn fixture(base: String) -> Result<Self, Error> {
+        Self::new("fixture-token".into(), base)
+    }
     /// Uses the owner's github.com login, independently of any provider login.
     pub async fn from_gh() -> Result<Self, Error> {
         let mut child = tokio::process::Command::new("gh")
@@ -185,14 +199,14 @@ impl GitHub {
         if let Some(body) = body {
             request = request.json(&body)
         }
-        let mut response = request.send().await.map_err(|_| {
-            Error::new(
+        let response = request.send().await.map_err(|_| {
+            Error::network(
                 "GitHub request failed or timed out; external mutation outcome may be unknown",
             )
         })?;
         let poll = header_seconds(response.headers(), "x-poll-interval")
             .saturating_mul(1000)
-            .max(POLL_MS);
+            .clamp(POLL_MS, 86_400_000);
         self.poll_ms
             .fetch_max(poll, std::sync::atomic::Ordering::Relaxed);
         if response.status() == StatusCode::NOT_MODIFIED {
@@ -201,72 +215,33 @@ impl GitHub {
                 .ok_or_else(|| Error::new("GitHub returned an uncached conditional response"));
         }
         if !response.status().is_success() {
-            let status = response.status();
-            let mut error = Error::new(format!(
-                "GitHub API refused request (HTTP {})",
-                status.as_u16()
-            ));
-            if status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::FORBIDDEN {
-                let retry = header_seconds(response.headers(), "retry-after");
-                let reset = header_seconds(response.headers(), "x-ratelimit-reset")
-                    .saturating_sub(chrono::Utc::now().timestamp());
-                error.retry_after_ms = retry
-                    .max(reset)
-                    .max(60)
-                    .saturating_mul(1000)
-                    .min(86_400_000);
-            }
-            return Err(error);
+            return Err(http_error(response.status(), response.headers()));
         }
-        if response
-            .content_length()
-            .is_some_and(|size| size > MAX_BODY as u64)
-        {
-            return Err(Error::new("GitHub response exceeds size limit"));
+        let (page, etag) = body_page(response).await?;
+        if method == Method::GET {
+            self.cache_page(path, etag, &page).await;
         }
-        let next = response
-            .headers()
-            .get("link")
-            .and_then(|v| v.to_str().ok())
-            .is_some_and(|s| s.split(',').any(|part| part.contains("rel=\"next\"")));
-        let etag = response
-            .headers()
-            .get("etag")
-            .and_then(|v| v.to_str().ok())
-            .filter(|s| s.len() <= 1024)
-            .map(str::to_owned);
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| Error::new("GitHub response was interrupted"))?
-        {
-            if bytes.len().saturating_add(chunk.len()) > MAX_BODY {
-                return Err(Error::new("GitHub response exceeds size limit"));
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        let value = serde_json::from_slice(&bytes)
-            .map_err(|_| Error::new("GitHub returned invalid JSON"))?;
-        let page = Page { value, next };
-        if method == Method::GET
-            && let Some(etag) = etag
-        {
-            let mut cache = self.cache.lock().await;
-            if cache.len() >= 128 && !cache.contains_key(path) {
-                if let Some(first) = cache.keys().next().cloned() {
-                    cache.remove(&first);
-                }
-            }
-            cache.insert(
-                path.into(),
-                Cached {
-                    etag,
-                    page: page.clone(),
-                },
-            );
-        }
+
         Ok(page)
+    }
+    async fn cache_page(&self, path: &str, etag: Option<String>, page: &Page) {
+        let Some(etag) = etag else {
+            return;
+        };
+        let mut cache = self.cache.lock().await;
+        if cache.len() >= 32
+            && !cache.contains_key(path)
+            && let Some(first) = cache.keys().next().cloned()
+        {
+            cache.remove(&first);
+        }
+        cache.insert(
+            path.into(),
+            Cached {
+                etag,
+                page: page.clone(),
+            },
+        );
     }
     async fn get(&self, path: &str) -> Result<Value, Error> {
         Ok(self.request(Method::GET, path, None).await?.value)
@@ -487,7 +462,42 @@ impl GitHub {
                 None,
             )
             .await?;
-        parse_checks(runs, statuses, head)
+        let mut checks = parse_checks(runs.clone(), statuses, head)?;
+        if checks.triggers.len() > 100 {
+            return Err(Error::new("GitHub failing-check batch exceeds limit"));
+        }
+        for run in runs {
+            let Some(count) = run["output"]["annotations_count"]
+                .as_u64()
+                .filter(|n| *n > 0)
+            else {
+                continue;
+            };
+            let id = number(&run, "id")?;
+            let prefix = format!("check:{id}:");
+            let Some(trigger) = checks
+                .triggers
+                .iter_mut()
+                .find(|t| t.key.starts_with(&prefix))
+            else {
+                continue;
+            };
+            let annotations = self
+                .pages(
+                    &format!("/repos/{repository}/check-runs/{id}/annotations"),
+                    None,
+                )
+                .await?;
+            if annotations.len() < count as usize {
+                return Err(Error::new("GitHub check annotations are incomplete"));
+            }
+            let feedback = annotation_text(&annotations);
+            trigger.text = bounded(
+                &format!("{}\n{}", bounded(&trigger.text, 8192), feedback),
+                16384,
+            );
+        }
+        Ok(checks)
     }
     /// The caller persists a notice intent BEFORE this call. On error it must keep the
     /// outcome unknown and reconcile with `find_notice`; do not call this method again.
@@ -546,6 +556,64 @@ impl GitHub {
         Ok(None)
     }
 }
+fn http_error(status: StatusCode, headers: &reqwest::header::HeaderMap) -> Error {
+    let mut error = Error::new(format!(
+        "GitHub API refused request (HTTP {})",
+        status.as_u16()
+    ));
+    let rate_limited = status == StatusCode::TOO_MANY_REQUESTS
+        || (status == StatusCode::FORBIDDEN
+            && (header_seconds(headers, "retry-after") > 0
+                || headers
+                    .get("x-ratelimit-remaining")
+                    .and_then(|v| v.to_str().ok())
+                    == Some("0")));
+    error.retryable = rate_limited || status.is_server_error();
+    if rate_limited {
+        let retry = header_seconds(headers, "retry-after");
+        let reset = header_seconds(headers, "x-ratelimit-reset")
+            .saturating_sub(chrono::Utc::now().timestamp());
+        error.retry_after_ms = retry
+            .max(reset)
+            .max(60)
+            .saturating_mul(1000)
+            .min(86_400_000);
+    }
+    error
+}
+async fn body_page(mut response: reqwest::Response) -> Result<(Page, Option<String>), Error> {
+    if response
+        .content_length()
+        .is_some_and(|size| size > MAX_BODY as u64)
+    {
+        return Err(Error::new("GitHub response exceeds size limit"));
+    }
+    let next = response
+        .headers()
+        .get("link")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|s| s.split(',').any(|part| part.contains("rel=\"next\"")));
+    let etag = response
+        .headers()
+        .get("etag")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| s.len() <= 1024)
+        .map(str::to_owned);
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| Error::network("GitHub response was interrupted"))?
+    {
+        if bytes.len().saturating_add(chunk.len()) > MAX_BODY {
+            return Err(Error::new("GitHub response exceeds size limit"));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let value =
+        serde_json::from_slice(&bytes).map_err(|_| Error::new("GitHub returned invalid JSON"))?;
+    Ok((Page { value, next }, etag))
+}
 fn header_seconds(headers: &reqwest::header::HeaderMap, key: &str) -> i64 {
     headers
         .get(key)
@@ -570,7 +638,7 @@ fn text<'a>(v: &'a Value, key: &str) -> Result<&'a str, Error> {
 fn number(v: &Value, key: &str) -> Result<u64, Error> {
     v.get(key)
         .and_then(Value::as_u64)
-        .filter(|n| *n > 0)
+        .filter(|n| *n > 0 && *n <= i64::MAX as u64)
         .ok_or_else(|| Error::new("GitHub response is missing required numeric identity"))
 }
 fn validate_repository(repository: &str) -> Result<(), Error> {
@@ -723,6 +791,27 @@ fn parse_checks(runs: Vec<Value>, statuses: Vec<Value>, head: &str) -> Result<Ch
         }
     }
     Ok(result)
+}
+fn annotation_text(annotations: &[Value]) -> String {
+    let mut output = String::new();
+    for annotation in annotations
+        .iter()
+        .filter(|a| a["annotation_level"].as_str() == Some("failure"))
+    {
+        let path = annotation["path"].as_str().unwrap_or("unknown file");
+        let message = annotation["message"]
+            .as_str()
+            .unwrap_or("no failure message");
+        let line = annotation["start_line"].as_u64().unwrap_or(0);
+        output.push_str(&bounded(
+            &format!("\nFailure annotation {path}:{line}: {message}"),
+            4096,
+        ));
+        if output.len() >= 8192 {
+            return bounded(&output, 8192);
+        }
+    }
+    output
 }
 fn combine(a: CiOutcome, b: CiOutcome) -> CiOutcome {
     if a == CiOutcome::Failure || b == CiOutcome::Failure {
