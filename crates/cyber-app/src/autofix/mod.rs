@@ -3,7 +3,9 @@ pub mod execution;
 pub mod github;
 use cyber_core::autofix::{Config, Stage, Status, Subscription};
 use cyber_server::autofix::records::Repository;
-use cyber_server::runtime::{Admission, CreateSession, Delivery, ModelResolver, Runtime};
+use cyber_server::runtime::{
+    Admission, CreateSession, Delivery, ModelResolver, Runtime, WeakRuntime,
+};
 use cyber_tools::ConfigFn;
 use github::{CiOutcome, GitHub, Snapshot};
 use std::path::{Path, PathBuf};
@@ -13,7 +15,7 @@ use tokio::sync::{Mutex, OnceCell};
 
 type Worker = (String, String, tokio::task::JoinHandle<()>);
 pub struct Controller {
-    runtime: Runtime,
+    runtime: WeakRuntime,
     records: Repository,
     executor: execution::Execution,
     config: Arc<ConfigFn>,
@@ -39,7 +41,7 @@ impl Controller {
         private_roots: Vec<PathBuf>,
     ) -> Arc<Self> {
         Arc::new(Self {
-            runtime,
+            runtime: runtime.downgrade(),
             records: Repository::new(store),
             executor: execution::Execution {
                 root,
@@ -53,6 +55,11 @@ impl Controller {
             github: OnceCell::new(),
             worker: Mutex::new(None),
         })
+    }
+    fn runtime(&self) -> Result<Runtime, String> {
+        self.runtime
+            .upgrade()
+            .ok_or_else(|| "auto-fix runtime is no longer available".into())
     }
     async fn github(&self) -> Result<&GitHub, String> {
         self.github
@@ -86,7 +93,11 @@ impl Controller {
                 let Some(controller) = weak.upgrade() else {
                     break;
                 };
-                if controller.runtime.is_shutting_down() {
+                if controller
+                    .runtime
+                    .upgrade()
+                    .is_none_or(|runtime| runtime.is_shutting_down())
+                {
                     break;
                 }
                 if let Err(e) = controller.tick().await {
@@ -96,9 +107,11 @@ impl Controller {
                         serde_json::json!({"error":e}),
                     );
                 }
-                let runtime = controller.runtime.clone();
                 drop(controller);
-                tokio::select! {_=tokio::time::sleep(Duration::from_secs(5))=>{},_=runtime.shutting_down()=>break}
+                // Keep only the weak controller while idle. Owning a Runtime
+                // across this wait retains its host and database after App drop.
+                // The next sweep checks shutdown before doing any work.
+                tokio::time::sleep(Duration::from_secs(5)).await;
             }
         });
     }
@@ -126,18 +139,14 @@ impl Controller {
         config: Config,
         key: String,
     ) -> Result<Subscription, String> {
+        let runtime = self.runtime()?;
         config.validate()?;
         self.policy(&directory)?;
         let directory = std::fs::canonicalize(directory)
             .map_err(|_| "Location unavailable")?
             .to_string_lossy()
             .into_owned();
-        let owner = self
-            .runtime
-            .state(&config.session_id)
-            .await
-            .map_err(error)?
-            .info;
+        let owner = runtime.state(&config.session_id).await.map_err(error)?.info;
         if owner.directory != directory {
             return Err("linked Session belongs to another Location".into());
         }
@@ -441,6 +450,7 @@ impl Controller {
         Ok(value)
     }
     async fn attempt(&self, initial: Subscription) -> Result<(), String> {
+        let runtime = self.runtime()?;
         let attempt = initial.active().ok_or("missing claimed attempt")?;
         if attempt.stage != Stage::Claimed {
             return Err("attempt is already dispatched; automatic replay is refused".into());
@@ -458,8 +468,8 @@ impl Controller {
         }
         let canceled = async {
             loop {
-                tokio::select! {_=self.runtime.shutting_down()=>break, _=tokio::time::sleep(Duration::from_millis(250))=>{}}
-                if self.runtime.is_shutting_down() || self.current(&initial.id, &id).is_err() {
+                tokio::select! {_=runtime.shutting_down()=>break, _=tokio::time::sleep(Duration::from_millis(250))=>{}}
+                if runtime.is_shutting_down() || self.current(&initial.id, &id).is_err() {
                     break;
                 }
             }
@@ -472,11 +482,12 @@ impl Controller {
             && let Ok(current) = self.records.get(&initial.id)
             && let Some(session) = current.active().and_then(|a| a.session_id.as_deref())
         {
-            let _ = self.runtime.interrupt(session).await;
+            let _ = runtime.interrupt(session).await;
         }
         result
     }
     async fn attempt_body(&self, initial: Subscription) -> Result<(), String> {
+        let runtime = self.runtime()?;
         let mut attempt = initial.active().ok_or("missing claimed attempt")?.clone();
         let directory = self
             .executor
@@ -539,7 +550,7 @@ impl Controller {
                 s.running(&id, session_copy)
             })
             .map_err(error)?;
-        self.runtime.create_session(CreateSession {
+        runtime.create_session(CreateSession {
             id:Some(session.clone()),
             parent_id:Some(initial.config.session_id.clone()),
             subagent_name:Some("auto-fix".into()),
@@ -568,10 +579,7 @@ impl Controller {
         );
         admission.message_id = Some(format!("msg_{}", attempt.id));
         admission.source = "channel".into();
-        self.runtime
-            .admit(&session, admission)
-            .await
-            .map_err(error)?;
+        runtime.admit(&session, admission).await.map_err(error)?;
         let state = self.wait_model(&initial, &attempt, &session).await?;
         self.require_settled_model(&session, &state)?;
         let final_entry = state.entries.iter().rev().find_map(|entry| match entry {
@@ -585,10 +593,10 @@ impl Controller {
                 "fix Session failed or exceeded its budget",
             );
         }
-        if !self.runtime.pending_requests(Some(&session)).is_empty() {
+        if !runtime.pending_requests(Some(&session)).is_empty() {
             return Err("unattended attempt requires permission or user input".into());
         }
-        let usage = self.runtime.job_usage(&session).map_err(error)?;
+        let usage = runtime.job_usage(&session).map_err(error)?;
         let mut current = self.current(&initial.id, &attempt.id)?;
         let id = attempt.id.clone();
         current = self
@@ -692,8 +700,8 @@ impl Controller {
         session: &str,
         state: &cyber_server::runtime::SessionState,
     ) -> Result<(), String> {
-        let outstanding = self
-            .runtime
+        let runtime = self.runtime()?;
+        let outstanding = runtime
             .budget_reservations(cyber_server::runtime::ReservationQuery {
                 session_id: Some(session.to_owned()),
                 open_only: true,
@@ -721,26 +729,27 @@ impl Controller {
         attempt: &cyber_core::autofix::Attempt,
         session: &str,
     ) -> Result<cyber_server::runtime::SessionState, String> {
+        let runtime = self.runtime()?;
         let remaining_ms = (attempt.started_ms + i64::from(initial.config.max_seconds) * 1000
             - now())
         .max(0) as u64;
         let deadline = tokio::time::Instant::now() + Duration::from_millis(remaining_ms);
         loop {
             tokio::select! {
-                _=self.runtime.shutting_down()=>{let _=self.runtime.interrupt(session).await;return Err("server shutdown during attempt; inspect retained Session".into())},
+                _=runtime.shutting_down()=>{let _=runtime.interrupt(session).await;return Err("server shutdown during attempt; inspect retained Session".into())},
                 _=tokio::time::sleep(Duration::from_millis(250))=>{},
             }
             if self.current(&initial.id, &attempt.id).is_err()
                 || tokio::time::Instant::now() >= deadline
             {
-                let _ = self.runtime.interrupt(session).await;
+                let _ = runtime.interrupt(session).await;
                 return Err("attempt stopped by owner, policy or elapsed limit".into());
             }
-            if !self.runtime.is_running(session) {
+            if !runtime.is_running(session) {
                 break;
             }
         }
-        self.runtime.state(session).await.map_err(error)
+        runtime.state(session).await.map_err(error)
     }
     fn fail_retry(
         &self,

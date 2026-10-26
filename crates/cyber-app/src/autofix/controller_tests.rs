@@ -95,6 +95,7 @@ fn script() -> Arc<ScriptedAdapter> {
 struct Fixture {
     _temp: tempfile::TempDir,
     controller: Arc<Controller>,
+    runtime: Runtime,
     model: Arc<ScriptedAdapter>,
     #[cfg(unix)]
     remote: PathBuf,
@@ -186,7 +187,7 @@ impl Fixture {
             .await
             .unwrap();
         let mut controller = Controller::new(
-            runtime,
+            runtime.clone(),
             store,
             root.join("attempts"),
             root.join("home"),
@@ -201,6 +202,7 @@ impl Fixture {
         Self {
             _temp: temp,
             controller,
+            runtime,
             model,
             #[cfg(unix)]
             remote,
@@ -296,6 +298,25 @@ impl Fixture {
     }
 }
 #[tokio::test]
+async fn controller_cannot_keep_its_runtime_alive_or_enable_after_owner_disposal() {
+    let f = Fixture::new().await;
+    let runtime = f.runtime.downgrade();
+    let controller = f.controller.clone();
+    let subscription = f.subscription();
+    drop(f);
+    assert!(runtime.upgrade().is_none());
+    let error = controller
+        .enable(
+            subscription.directory.into(),
+            subscription.config,
+            "disposed-owner".into(),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.contains("runtime is no longer available"), "{error}");
+    assert!(controller.github.get().is_none());
+}
+#[tokio::test]
 async fn recovery_marks_interrupted_work_unknown_without_model_dispatch() {
     let f = Fixture::new().await;
     let s = f.claimed();
@@ -310,7 +331,7 @@ async fn recovery_marks_interrupted_work_unknown_without_model_dispatch() {
     assert_eq!(value.status, Status::Paused);
     assert_eq!(value.active().unwrap().stage, Stage::Unknown);
     assert!(f.model.requests().is_empty());
-    f.controller.runtime.shutdown().await;
+    f.runtime.shutdown().await;
 }
 #[tokio::test]
 async fn recovery_keeps_push_intent_for_read_only_reconciliation() {
@@ -338,7 +359,7 @@ async fn recovery_keeps_push_intent_for_read_only_reconciliation() {
         Stage::PushIntent
     );
     assert!(f.model.requests().is_empty());
-    f.controller.runtime.shutdown().await;
+    f.runtime.shutdown().await;
 }
 #[tokio::test]
 async fn revoked_repository_permission_pauses_before_dispatch() {
@@ -351,7 +372,7 @@ async fn revoked_repository_permission_pauses_before_dispatch() {
     assert_eq!(value.status, Status::Paused);
     assert!(f.model.requests().is_empty());
     server.abort();
-    f.controller.runtime.shutdown().await;
+    f.runtime.shutdown().await;
 }
 #[tokio::test]
 async fn lost_push_acknowledgement_reconciles_exact_remote_commit_without_repeat() {
@@ -377,7 +398,7 @@ async fn lost_push_acknowledgement_reconciles_exact_remote_commit_without_repeat
     assert_eq!(value.status, Status::Paused);
     assert!(f.model.requests().is_empty());
     server.abort();
-    f.controller.runtime.shutdown().await;
+    f.runtime.shutdown().await;
 }
 #[cfg(unix)]
 #[tokio::test]
@@ -398,7 +419,7 @@ async fn native_controller_fixes_verifies_and_pushes_only_once() {
     assert!(f.controller.attempt(value).await.is_err());
     assert_eq!(f.model.requests().len(), 2);
     server.abort();
-    f.controller.runtime.shutdown().await;
+    f.runtime.shutdown().await;
 }
 
 #[tokio::test]
@@ -450,7 +471,7 @@ async fn poll_does_not_reconcile_a_live_push_before_or_after_remote_update() {
     worker.await.unwrap();
     assert!(f.model.requests().is_empty());
     server.abort();
-    f.controller.runtime.shutdown().await;
+    f.runtime.shutdown().await;
 }
 
 #[tokio::test]
@@ -495,7 +516,7 @@ async fn another_pr_worker_does_not_consume_a_queued_attempts_time_allowance() {
     assert!(selected.active().unwrap().started_ms + 1000 > now());
     assert!(f.model.requests().is_empty());
     server.abort();
-    f.controller.runtime.shutdown().await;
+    f.runtime.shutdown().await;
 }
 
 #[tokio::test]
@@ -517,7 +538,7 @@ async fn queued_subscription_respects_backoff_without_querying_credentials() {
     assert!(f.controller.claim_next().await.unwrap().is_none());
     assert!(f.controller.github.get().is_none());
     assert!(f.model.requests().is_empty());
-    f.controller.runtime.shutdown().await;
+    f.runtime.shutdown().await;
 }
 
 #[cfg(unix)]
@@ -556,5 +577,5 @@ async fn interrupted_response_with_uncertain_usage_never_queues_another_fix() {
     assert!(value.queued.is_empty());
     assert_eq!(f.model.requests().len(), 1);
     server.abort();
-    f.controller.runtime.shutdown().await;
+    f.runtime.shutdown().await;
 }
