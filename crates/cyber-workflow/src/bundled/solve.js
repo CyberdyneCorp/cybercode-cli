@@ -49,11 +49,18 @@ export default async function solve() {
     judge_model: admission.judge_model,
     judge_differs_from_solver_models: !candidates.some((candidate) => candidate.model.split("#")[0] === admission.judge_model.split("#")[0]),
     distinct_solver_models: admission.distinct_solver_models,
-    budget: { soft_ceiling: true, effective_limits: ctx.run_budget, observed: ctx.budget,
-      overshoot_usd: costOvershoot(),
-      limitation: "In-flight inference can overshoot; zero or missing price is not proof of free execution." },
+    budget: budgetEvidence(),
     merged: false,
   });
+}
+
+function budgetEvidence() {
+  const reserved = !!ctx.run_budget && ctx.run_budget.enforcement === "reserved";
+  return { enforcement: reserved ? "reserved" : "soft", soft_ceiling: !reserved,
+    effective_limits: ctx.run_budget, observed: ctx.budget, overshoot_usd: costOvershoot(),
+    limitation: reserved
+      ? "Requests reserve declared model limits and catalog prices; uncertain requests retain allocation. This is not a provider billing guarantee. Zero or missing price is not proof of free execution."
+      : "In-flight inference can overshoot; zero or missing price is not proof of free execution." };
 }
 
 function solveAttempts(state, candidates) {

@@ -8,9 +8,10 @@ use cyber_core::config::{HookKind, Resolved};
 use cyber_core::hooks::{HookAction, HookDefinition, HookEvent, HookOutcome};
 use cyber_core::trust::{HookInvocationTrust, TrustStore};
 use cyber_llm::catalog::{ModelRole, compute_cost};
-use cyber_llm::{FinishReason, Initiator, LlmEvent, LlmRequest, Message, Usage};
+use cyber_llm::{Adapter, FinishReason, Initiator, LlmEvent, LlmRequest, Message, Usage};
 use cyber_server::runtime::{
-    AuxiliaryUsage, HookExecutionIo, HookExecutionResult, ModelResolver, ResolvedModel, Runtime,
+    AuxiliaryUsage, GuardedModel, HookExecutionIo, HookExecutionResult, ModelResolver,
+    ResolvedModel, Runtime,
 };
 use futures::StreamExt;
 use serde::Deserialize;
@@ -273,6 +274,7 @@ impl HookPromptRunner<'_> {
                 Err(error) => return error_capture(event, definition, error, true),
             },
         };
+        let asker = owner.as_ref().map(|(_, _, asker)| *asker);
         let authorization = self.authorize(pointer, event).and_then(|_| {
             if let Some((owner, runtime, _)) = owner {
                 owner
@@ -291,6 +293,30 @@ impl HookPromptRunner<'_> {
             )
             .await;
         }
+        let guarded = if let Some(asker) = asker {
+            match asker
+                .guard_model(
+                    &model,
+                    "hook_prompt",
+                    event.as_json()["call_id"].as_str().map(str::to_string),
+                )
+                .await
+            {
+                Ok(guarded) => Some(guarded),
+                Err(error) => {
+                    return settle_transport(
+                        error_capture(event, definition, error.to_string(), true),
+                        proxy,
+                        event,
+                        definition,
+                        false,
+                    )
+                    .await;
+                }
+            }
+        } else {
+            None
+        };
         self.capture_inference(
             PromptCall {
                 event,
@@ -301,6 +327,7 @@ impl HookPromptRunner<'_> {
             model,
             request,
             proxy,
+            guarded.as_ref(),
         )
         .await
     }
@@ -311,6 +338,7 @@ impl HookPromptRunner<'_> {
         model: ResolvedModel,
         request: LlmRequest,
         proxy: Option<Proxy>,
+        guarded: Option<&GuardedModel>,
     ) -> Capture {
         let PromptCall {
             event,
@@ -321,16 +349,31 @@ impl HookPromptRunner<'_> {
         let started = Instant::now();
         let mut observed = Observed::default();
         let mut cancelled = false;
-        let result = tokio::select! {
+        let mut timed_out = false;
+        let adapter: &dyn Adapter = guarded.map_or(model.adapter.as_ref(), |guarded| guarded);
+        let mut result = tokio::select! {
             biased;
             _ = cancel.cancelled() => { cancelled = true; Err("prompt hook cancelled; provider completion is unverified".into()) },
             _ = tokio::time::sleep_until(deadline) => {
-                let mut capture = timeout(event, definition, false);
-                capture.usage = billing(&model, event, started, &observed);
-                return settle_transport(capture, proxy, event, definition, false).await;
+                timed_out = true;
+                Err("prompt hook timed out; provider completion is unverified".into())
             }
-            result = infer(&model, request, &mut observed) => result,
+            result = infer(adapter, request, &mut observed) => result,
         };
+        if let Some(guarded) = guarded {
+            if let Err(error) = guarded.flush().await {
+                timed_out = false; // Preserve a billing/admission error in diagnostics.
+                result = Err(error.to_string());
+            }
+        }
+        let owned = guarded.is_some_and(GuardedModel::reservation_owned);
+        if timed_out {
+            let mut capture = timeout(event, definition, false);
+            if !owned {
+                capture.usage = billing(&model, event, started, &observed);
+            }
+            return settle_transport(capture, proxy, event, definition, false).await;
+        }
         let mut capture = match result {
             Ok(text) => {
                 let report = decision(event, &text).unwrap_or_else(|error| {
@@ -351,7 +394,9 @@ impl HookPromptRunner<'_> {
             }
             Err(error) => error_capture(event, definition, error, observed.ended),
         };
-        capture.usage = billing(&model, event, started, &observed);
+        if !owned {
+            capture.usage = billing(&model, event, started, &observed);
+        }
         settle_transport(capture, proxy, event, definition, cancelled).await
     }
 }
@@ -494,15 +539,15 @@ struct Observed {
 }
 
 async fn infer(
-    model: &ResolvedModel,
+    adapter: &dyn Adapter,
     request: LlmRequest,
     observed: &mut Observed,
 ) -> Result<String, String> {
     observed.attempted = true;
-    let mut stream =
-        model.adapter.stream(request).await.map_err(|_| {
-            "prompt hook provider request failed; completion is unverified".to_string()
-        })?;
+    let mut stream = adapter
+        .stream(request)
+        .await
+        .map_err(|_| "prompt hook provider request failed; completion is unverified".to_string())?;
     let mut text = String::new();
     let mut bytes = 0;
     let mut finish = None;

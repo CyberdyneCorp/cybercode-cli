@@ -96,7 +96,7 @@ fn by_model(db: &Connection, id: &str) -> rusqlite::Result<Vec<ModelUsage>> {
                 cache_read_tokens, cache_write_tokens, cost, unpriced_steps, steps
             FROM usage_daily WHERE root_id = ?1
         ) SELECT provider, model, SUM(i), SUM(o), SUM(r), SUM(cr), SUM(cw), TOTAL(c), SUM(u), SUM(n)
-          FROM rows GROUP BY provider, model HAVING SUM(n) > 0"
+          FROM rows GROUP BY provider, model HAVING SUM(n) > 0 OR SUM(i)+SUM(o)+SUM(r)+SUM(cr)+SUM(cw)>0 OR TOTAL(c)>0"
     );
     let mut statement = db.prepare(&sql)?;
     let mut models = statement

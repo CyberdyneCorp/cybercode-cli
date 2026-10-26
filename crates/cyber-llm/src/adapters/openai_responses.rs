@@ -8,9 +8,11 @@ use super::{
     ensure_resolved, parse_json,
 };
 use crate::error::{LlmError, classify_stream_error};
-use crate::json::{deep_merge, force_no_tools, str_at, strip_credentials, u64_at};
+use crate::json::{deep_merge, force_no_tools, str_at, strip_credentials};
 use crate::sse::SseEvent;
 use crate::types::{Content, FinishReason, LlmEvent, LlmRequest, Message, Reasoning, Role, Usage};
+
+mod reservation;
 
 pub struct OpenAiResponsesAdapter {
     pub(super) endpoint: Endpoint,
@@ -27,6 +29,14 @@ impl OpenAiResponsesAdapter {
 }
 
 impl Adapter for OpenAiResponsesAdapter {
+    fn prepare_reserved(
+        &self,
+        request: LlmRequest,
+        context_limit: u64,
+    ) -> Result<crate::reservations::PreparedReservation, crate::reservations::BoundUnavailable>
+    {
+        reservation::prepare(&self.endpoint, request, context_limit)
+    }
     fn with_http_client(
         &self,
         client: reqwest::Client,
@@ -242,7 +252,10 @@ impl ResponsesDecoder {
         for call in self.tools.finish_all() {
             out.push(Ok(LlmEvent::ToolCallDone(call)));
         }
-        out.push(Ok(LlmEvent::Usage(usage_from(&response["usage"]))));
+        // Missing or malformed billing evidence is unknown, never a free receipt.
+        if let Some(usage) = usage_from(&response["usage"]) {
+            out.push(Ok(LlmEvent::Usage(usage)));
+        }
         let reason = match str_at(response, "/incomplete_details/reason") {
             "max_output_tokens" => FinishReason::Length,
             "content_filter" => FinishReason::ContentFilter,
@@ -267,22 +280,54 @@ impl ResponsesDecoder {
     }
 }
 
-fn usage_from(u: &Value) -> Usage {
-    let cached = u64_at(u, "/input_tokens_details/cached_tokens");
-    let reasoning = u64_at(u, "/output_tokens_details/reasoning_tokens");
-    Usage {
-        input: u64_at(u, "/input_tokens").saturating_sub(cached),
-        output: u64_at(u, "/output_tokens").saturating_sub(reasoning),
+fn usage_from(u: &Value) -> Option<Usage> {
+    let input = u.get("input_tokens")?.as_u64()?;
+    let output = u.get("output_tokens")?.as_u64()?;
+    let detail = |group: &str, key: &str| match u.get(group) {
+        None => Some(0),
+        Some(value) => match value.as_object()?.get(key) {
+            None => Some(0),
+            Some(value) => value.as_u64(),
+        },
+    };
+    let cached = detail("input_tokens_details", "cached_tokens")?;
+    let reasoning = detail("output_tokens_details", "reasoning_tokens")?;
+    Some(Usage {
+        input: input.checked_sub(cached)?,
+        output: output.checked_sub(reasoning)?,
         reasoning,
         cache_read: cached,
         cache_write: 0,
-    }
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn completed_missing_or_malformed_usage_never_emits_a_zero_receipt() {
+        for usage in [
+            Value::Null,
+            json!({}),
+            json!({"input_tokens":10}),
+            json!({"input_tokens":"10","output_tokens":2}),
+            json!({"input_tokens":10,"output_tokens":2,"input_tokens_details":{"cached_tokens":11}}),
+            json!({"input_tokens":10,"output_tokens":2,"output_tokens_details":{"reasoning_tokens":"2"}}),
+        ] {
+            let mut decoder = ResponsesDecoder::default();
+            let mut out = Vec::new();
+            decoder.complete(&json!({"usage":usage}), &mut out);
+            assert!(!out.iter().any(|e| matches!(e, Ok(LlmEvent::Usage(_)))));
+            assert!(out.iter().any(|e| matches!(e, Ok(LlmEvent::Finish { .. }))));
+        }
+        assert_eq!(
+            usage_from(&json!({"input_tokens":10,"output_tokens":2}))
+                .unwrap()
+                .input,
+            10
+        );
+    }
     #[test]
     fn documents_become_input_files_with_a_data_url() {
         let request = LlmRequest {

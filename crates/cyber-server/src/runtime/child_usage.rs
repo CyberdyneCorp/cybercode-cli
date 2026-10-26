@@ -44,12 +44,19 @@ pub(super) fn read(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<C
     })
 }
 pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> rusqlite::Result<()> {
+    if event.data["usage_accounted"] == true {
+        return Ok(());
+    }
     let usage = &event.data["usage"];
     let tokens = ["input", "output", "reasoning", "cache_read", "cache_write"]
         .iter()
         .map(|key| usage[*key].as_i64().unwrap_or(0))
         .fold(0i64, i64::saturating_add);
     let cost = event.data["cost"].as_f64();
+    let unpriced = unpriced_increment(event, cost)?;
+    let turns = event.data["reservation_turns_increment"]
+        .as_i64()
+        .unwrap_or_else(|| i64::from(event.kind == super::events::STEP_ENDED));
     let complete = ["input", "output", "reasoning", "cache_read", "cache_write"]
         .iter()
         .all(|field| usage[*field].as_i64().is_some_and(|value| value >= 0));
@@ -80,13 +87,13 @@ pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> rusqlite::Re
                 event.id,
                 cost.unwrap_or(0.0),
                 tokens,
-                i64::from(cost.is_none()),
-                i64::from(event.kind == super::events::STEP_ENDED),
+                unpriced,
+                turns,
                 complete.then(|| classes.to_string())
             ],
         )?;
         if inserted == 1 {
-            tx.execute("UPDATE session SET children_cost=children_cost+?2,children_tokens=children_tokens+?3,
+            let updated = tx.execute("UPDATE session SET children_cost=children_cost+?2,children_tokens=children_tokens+?3,
                 children_unpriced_steps=children_unpriced_steps+?4,
                 children_token_classes_complete=children_token_classes_complete AND ?10,
                 children_token_classes=json_set(children_token_classes,
@@ -95,10 +102,72 @@ pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> rusqlite::Re
                     '$.reasoning',json_extract(children_token_classes,'$.reasoning')+?7,
                     '$.cache_read',json_extract(children_token_classes,'$.cache_read')+?8,
                     '$.cache_write',json_extract(children_token_classes,'$.cache_write')+?9)
-                WHERE id=?1",
-                params![parent,cost.unwrap_or(0.0),tokens,i64::from(cost.is_none()),
+                WHERE id=?1 AND children_unpriced_steps+?4>=0",
+                params![parent,cost.unwrap_or(0.0),tokens,unpriced,
                     classes["input"].as_i64(),classes["output"].as_i64(),classes["reasoning"].as_i64(),classes["cache_read"].as_i64(),classes["cache_write"].as_i64(), i64::from(complete)])?;
+            if updated != 1 {
+                return Err(rusqlite::Error::InvalidParameterName(
+                    "reservation unpriced adjustment would make ancestor total negative".into(),
+                ));
+            }
         }
     }
     Ok(())
+}
+
+fn unpriced_increment(event: &StoredEvent, cost: Option<f64>) -> rusqlite::Result<i64> {
+    let Some(raw) = event.data.get("reservation_unpriced_increment") else {
+        return Ok(i64::from(cost.is_none()));
+    };
+    let value = raw.as_i64().filter(|n| (-1..=1).contains(n));
+    if event.data["reservation_id"].as_str().is_none() || value.is_none() {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "reservation_unpriced_increment requires a linked receipt and -1, 0 or 1".into(),
+        ));
+    }
+    Ok(value.unwrap_or_default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cyber_core::paths::DatabaseLocation;
+    use cyber_store::{EventRegistry, Store, StoreOptions};
+    use serde_json::json;
+
+    #[test]
+    fn signed_unpriced_receipts_resolve_once_and_turns_use_increment() {
+        let store = Store::open(StoreOptions::new(
+            DatabaseLocation::Memory,
+            EventRegistry::default(),
+        ))
+        .unwrap();
+        store.transaction(|tx| {
+            for (id,parent) in [("root",None),("child",Some("root"))] {
+                tx.execute("INSERT INTO session(id,title,directory,agent,model,mode,created_at,updated_at,last_seq,parent_id) VALUES (?1,'x','/r','build','test/main','default',1,1,0,?2)",params![id,parent])?;
+            }
+            let mut event=StoredEvent{id:"partial".into(),aggregate_id:"child".into(),seq:1,kind:super::super::events::AUXILIARY_USAGE.into(),time_ms:1,causation_id:None,
+                data:json!({"reservation_id":"request","reservation_unpriced_increment":1,"reservation_turns_increment":1,"reservation_actual":{"turns":1},"cost":null,"usage":{"input":1,"output":0,"reasoning":0,"cache_read":0,"cache_write":0}})};
+            project(tx,&event)?;
+            event.id="priced".into();
+            event.data["reservation_unpriced_increment"]=json!(-1);
+            event.data["reservation_turns_increment"]=json!(0);
+            event.data["cost"]=json!(0.5);
+            event.data["usage"]["input"]=json!(0);
+            project(tx,&event)?;
+            project(tx,&event)?;
+            let (unknown,turns):(i64,i64)=tx.query_row("SELECT children_unpriced_steps,(SELECT SUM(turns) FROM session_children_charge WHERE parent_id='root') FROM session WHERE id='root'",[],|r|Ok((r.get(0)?,r.get(1)?)))?;
+            assert_eq!((unknown,turns),(0,1));
+            let adjustments:i64=tx.query_row("SELECT SUM(unpriced) FROM session_children_charge",[],|r|r.get(0))?;
+            assert_eq!(adjustments,0);
+            Ok(())
+        }).unwrap();
+        assert!(store.transaction(|tx| {
+            let event=StoredEvent{id:"invalid-negative".into(),aggregate_id:"child".into(),seq:3,kind:super::super::events::AUXILIARY_USAGE.into(),time_ms:3,causation_id:None,
+                data:json!({"reservation_id":"request","reservation_unpriced_increment":-1,"cost":0,"usage":{"input":0,"output":0,"reasoning":0,"cache_read":0,"cache_write":0}})};
+            project(tx,&event)?;
+            Ok(())
+        }).is_err());
+        assert_eq!(store.read(|tx|Ok(tx.query_row("SELECT COUNT(*) FROM session_children_charge WHERE event_id='invalid-negative'",[],|r|r.get::<_,i64>(0))?)).unwrap(),0);
+    }
 }

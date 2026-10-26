@@ -729,6 +729,480 @@
         ],
         "description": "A Location-scoped response."
       },
+      "Data_ReservationPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ReservationPage"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "ReservationPage": {
+        "type": "object",
+        "properties": {
+          "reservations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BudgetReservation"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "reservations"
+        ]
+      },
+      "BudgetReservation": {
+        "type": "object",
+        "properties": {
+          "request_id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "call_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "bound_source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "normalized_sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "deadline_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "estimated": {
+            "$ref": "#/components/schemas/ReservationEstimate"
+          },
+          "actual": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReservationActual"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReservationScope"
+            }
+          },
+          "held_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "held_cost_usd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "overrun_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "overrun_cost_usd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "dispatched_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "updated_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "settled_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "released_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        },
+        "required": [
+          "request_id",
+          "session_id",
+          "provider",
+          "model",
+          "purpose",
+          "state",
+          "revision",
+          "estimated",
+          "scopes",
+          "held_tokens",
+          "overrun_tokens",
+          "created_ms",
+          "updated_ms"
+        ]
+      },
+      "ReservationEstimate": {
+        "type": "object",
+        "properties": {
+          "class_upper": {
+            "$ref": "#/components/schemas/Usage"
+          },
+          "total_tokens_upper": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "turns_upper": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "cost_usd_upper": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        },
+        "required": [
+          "class_upper",
+          "total_tokens_upper",
+          "turns_upper"
+        ]
+      },
+      "Usage": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "output": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "reasoning": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "cache_read": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "cache_write": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "input",
+          "output",
+          "reasoning",
+          "cache_read",
+          "cache_write"
+        ],
+        "description": "Token classes of one step. `input` excludes cache reads and writes; `output` excludes\nreasoning."
+      },
+      "ReservationActual": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tokens": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Usage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "turns": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 0
+          },
+          "cost_usd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "complete": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "complete"
+        ]
+      },
+      "ReservationScope": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "captured_budget": {
+            "$ref": "#/components/schemas/Budget"
+          },
+          "recorded_tokens_at_admission": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "recorded_turns_at_admission": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "recorded_cost_usd_at_admission": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "required": [
+          "id",
+          "captured_budget",
+          "recorded_tokens_at_admission",
+          "recorded_turns_at_admission",
+          "recorded_cost_usd_at_admission"
+        ]
+      },
+      "Budget": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "max_turns": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "max_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "max_cost_usd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "max_wall_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "enforcement": {
+            "$ref": "#/components/schemas/Enforcement",
+            "default": "soft"
+          }
+        }
+      },
+      "Enforcement": {
+        "type": "string",
+        "enum": [
+          "soft",
+          "reserved"
+        ]
+      },
+      "Data_ReservationDetail": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ReservationDetail"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "ReservationDetail": {
+        "type": "object",
+        "properties": {
+          "reservation": {
+            "$ref": "#/components/schemas/BudgetReservation"
+          },
+          "audit": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReservationAudit"
+            }
+          }
+        },
+        "required": [
+          "reservation",
+          "audit"
+        ]
+      },
+      "ReservationAudit": {
+        "type": "object",
+        "properties": {
+          "operation_id": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "owner": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "action": true,
+          "reconciled_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "operation_id",
+          "expected_revision",
+          "owner",
+          "reason",
+          "action",
+          "reconciled_ms"
+        ]
+      },
+      "ReservationReconcile": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "operation_id": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "reason": {
+            "type": "string"
+          },
+          "action": {
+            "$ref": "#/components/schemas/ReservationAction"
+          }
+        },
+        "required": [
+          "operation_id",
+          "expected_revision",
+          "reason",
+          "action"
+        ]
+      },
+      "ReservationAction": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "release"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "actual": {
+                "$ref": "#/components/schemas/ReservationActual"
+              },
+              "kind": {
+                "type": "string",
+                "const": "settle"
+              }
+            },
+            "required": [
+              "kind",
+              "actual"
+            ]
+          }
+        ]
+      },
       "Data_ScopeUsage": {
         "type": "object",
         "properties": {
@@ -883,44 +1357,6 @@
           "usage_complete",
           "token_classes_complete"
         ]
-      },
-      "Usage": {
-        "type": "object",
-        "properties": {
-          "input": {
-            "type": "integer",
-            "format": "uint64",
-            "minimum": 0
-          },
-          "output": {
-            "type": "integer",
-            "format": "uint64",
-            "minimum": 0
-          },
-          "reasoning": {
-            "type": "integer",
-            "format": "uint64",
-            "minimum": 0
-          },
-          "cache_read": {
-            "type": "integer",
-            "format": "uint64",
-            "minimum": 0
-          },
-          "cache_write": {
-            "type": "integer",
-            "format": "uint64",
-            "minimum": 0
-          }
-        },
-        "required": [
-          "input",
-          "output",
-          "reasoning",
-          "cache_read",
-          "cache_write"
-        ],
-        "description": "Token classes of one step. `input` excludes cache reads and writes; `output` excludes\nreasoning."
       },
       "ModelUsage": {
         "type": "object",
@@ -2809,13 +3245,6 @@
         ],
         "description": "A Workflow Run budget: the canonical [`Budget`] plus the workflow-specific `max_agents`,\nserialized as one flat object."
       },
-      "Enforcement": {
-        "type": "string",
-        "enum": [
-          "soft",
-          "reserved"
-        ]
-      },
       "IntegrationSubmit": {
         "type": "object",
         "additionalProperties": false,
@@ -4588,46 +5017,6 @@
           "mode",
           "created_ms"
         ]
-      },
-      "Budget": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "max_turns": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "uint64",
-            "minimum": 0
-          },
-          "max_tokens": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "uint64",
-            "minimum": 0
-          },
-          "max_cost_usd": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double"
-          },
-          "max_wall_seconds": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double"
-          },
-          "enforcement": {
-            "$ref": "#/components/schemas/Enforcement",
-            "default": "soft"
-          }
-        }
       },
       "InboundOverride": {
         "type": "object",
@@ -17482,6 +17871,179 @@
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/budgets/reservations": {
+      "get": {
+        "operationId": "v1.budgets.reservations",
+        "summary": "List durable budget allocations and uncertainty",
+        "tags": [
+          "budgets"
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "scope_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "open_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_ReservationPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/budgets/reservations/{id}": {
+      "get": {
+        "operationId": "v1.budgets.reservation",
+        "summary": "Read a budget allocation, receipts and owner audit",
+        "tags": [
+          "budgets"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_ReservationDetail"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/budgets/reservations/{id}/reconcile": {
+      "post": {
+        "operationId": "v1.budgets.reconcile",
+        "summary": "Audit an owner settlement or release of an inactive allocation",
+        "tags": [
+          "budgets"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_ReservationDetail"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReservationReconcile"
               }
             }
           }

@@ -166,6 +166,9 @@ async fn publish_failure(
 fn error_kind(e: &RuntimeError) -> &'static str {
     match e {
         RuntimeError::BudgetExceeded { .. } => "budget_exceeded",
+        RuntimeError::BudgetUnpriced { .. } => "budget_unpriced",
+        RuntimeError::BudgetBoundUnavailable(_) => "budget_bound_unavailable",
+        RuntimeError::BudgetUncertain { .. } => "budget_uncertain",
         RuntimeError::McpRequired(_) => "mcp_required",
         RuntimeError::ContextBlocked(_) => "context_initialization_blocked",
         RuntimeError::Model(_) => "model",
@@ -893,7 +896,8 @@ impl Inner {
         let resolved = &prepared.model;
         let session_id = request.cache_key.clone().unwrap_or_default();
         let bus = self.bus.clone();
-        let gated = super::budget::GatedAdapter::new(self, handle, resolved.adapter.as_ref());
+        let gated = super::budget::GatedAdapter::new(self, handle, resolved, "turn")
+            .for_call(message_id.clone());
         let opened = tokio::select! {
             _ = cancel.cancelled() => None,
             r = open_with_retry(&gated, &request, &self.options.retry, |attempt, delay, e| {
@@ -904,6 +908,7 @@ impl Inner {
         };
         let stream = match opened {
             None => {
+                gated.flush().await?;
                 return self
                     .stop_step(
                         handle,
@@ -915,6 +920,7 @@ impl Inner {
                     .await;
             }
             Some(Err(e)) => {
+                gated.flush().await?;
                 if let Some(error) = gated.take_error() {
                     self.stop_step(
                         handle,
@@ -930,10 +936,14 @@ impl Inner {
             }
             Some(Ok(stream)) => stream,
         };
-        let acc = match self
+        let consumed = self
             .consume(handle, &message_id, &defs, stream, cancel)
-            .await?
-        {
+            .await;
+        gated.flush().await?;
+        if let Some(error) = gated.take_error() {
+            return Err(error);
+        }
+        let acc = match consumed? {
             Ok(acc) => acc,
             Err(end) => return Ok(end),
         };
@@ -1226,7 +1236,7 @@ impl Inner {
         let finish = acc.finish.clone().unwrap_or(FinishReason::Stop);
         let session_id = {
             let mut state = handle.state.lock().await;
-            events.push(event(
+            let mut ended = event(
                 STEP_ENDED,
                 &StepEnded {
                     message_id: message_id.into(),
@@ -1235,7 +1245,14 @@ impl Inner {
                     cost,
                     origin: state.step_origin.clone(),
                 },
-            ));
+            );
+            super::reservations::mark_for_call(
+                &self.store,
+                &state.info.id,
+                message_id,
+                &mut ended,
+            )?;
+            events.push(ended);
             self.commit_locked(&mut state, events)?;
             state.info.id.clone()
         };
@@ -1278,7 +1295,14 @@ impl Inner {
                 message: e.message.clone(),
                 origin: state.step_origin.clone(),
             };
-            self.commit_locked(&mut state, vec![event(STEP_FAILED, &payload)])?;
+            let mut failed = event(STEP_FAILED, &payload);
+            super::reservations::mark_for_call(
+                &self.store,
+                &state.info.id,
+                message_id,
+                &mut failed,
+            )?;
+            self.commit_locked(&mut state, vec![failed])?;
             state.info.id.clone()
         };
         if e.kind == ErrorKind::ContextOverflow {
@@ -1304,7 +1328,7 @@ impl Inner {
     ) -> Result<TurnEnd, RuntimeError> {
         let mut state = handle.state.lock().await;
         let mut events = content_events(message_id, &acc);
-        events.push(event(
+        let mut failed = event(
             STEP_FAILED,
             &StepFailed {
                 message_id: message_id.into(),
@@ -1312,7 +1336,9 @@ impl Inner {
                 message: message.into(),
                 origin: state.step_origin.clone(),
             },
-        ));
+        );
+        super::reservations::mark_for_call(&self.store, &state.info.id, message_id, &mut failed)?;
+        events.push(failed);
         events.extend(
             state
                 .calls

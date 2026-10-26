@@ -54,7 +54,13 @@ impl Runtime {
             .map_err(RuntimeError::Invalid)?;
         let loop_id = cyber_core::ids::new_id("lop");
         let now = schedule::now_ms();
+        let budget = spec.budget.or(default_budget);
         let created = records::Created {
+            reservation_scope_version: u32::from(
+                budget
+                    .as_ref()
+                    .is_some_and(|b| b.enforcement == cyber_core::budget::Enforcement::Reserved),
+            ),
             loop_id: loop_id.clone(),
             kind: if spec.interval_seconds.is_some() {
                 LoopKind::Interval
@@ -70,7 +76,7 @@ impl Runtime {
                 for_seconds: spec.for_seconds,
                 until: spec.until,
             },
-            budget: spec.budget.or(default_budget),
+            budget,
             iteration_cap: settings.max_iterations,
             created_ms: now,
             next_due_ms: now,

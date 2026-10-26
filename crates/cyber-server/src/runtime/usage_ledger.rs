@@ -60,6 +60,9 @@ fn origin_of(data: &Value) -> (Option<String>, Option<String>) {
 
 /// Write the ledger row of `e`, if it records a model call. Idempotent per event.
 pub(super) fn project(tx: &Connection, e: &StoredEvent) -> rusqlite::Result<()> {
+    if e.data["usage_accounted"] == true {
+        return Ok(());
+    }
     let Some(owner) = owner(tx, &e.aggregate_id)? else {
         return Ok(());
     };
@@ -68,7 +71,7 @@ pub(super) fn project(tx: &Connection, e: &StoredEvent) -> rusqlite::Result<()> 
     };
     let usage = &e.data["usage"];
     let n = |key: &str| usage[key].as_i64().unwrap_or(0).max(0);
-    let cost = if call.failed {
+    let cost = if call.failed && !e.data["usage"].is_object() {
         Some(0.0)
     } else {
         e.data["cost"].as_f64()
@@ -77,9 +80,9 @@ pub(super) fn project(tx: &Connection, e: &StoredEvent) -> rusqlite::Result<()> 
         "INSERT INTO usage_step (event_id, session_id, root_id, parent_id, workflow_run_id, agent,
             purpose, failed, provider, model, started_ms, ended_ms, input_tokens, output_tokens,
             reasoning_tokens, cache_read_tokens, cache_write_tokens, prompt_tokens, cost, directory,
-            origin, mcp_client)
+            origin, mcp_client, reservation_id)
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,
-            COALESCE(?21, 'user'),?22)
+            COALESCE(?21, 'user'),?22,?23)
          ON CONFLICT(event_id) DO NOTHING",
         params![
             e.id,
@@ -106,6 +109,7 @@ pub(super) fn project(tx: &Connection, e: &StoredEvent) -> rusqlite::Result<()> 
             owner.directory,
             call.origin.0,
             call.origin.1,
+            e.data["reservation_id"].as_str(),
         ],
     )?;
     Ok(())
@@ -157,7 +161,7 @@ fn call(tx: &Connection, e: &StoredEvent, owner: &Owner) -> rusqlite::Result<Opt
     let (provider, model) = split(provider, reference.unwrap_or(&owner.model));
     Ok(Some(Call {
         purpose: purpose.into(),
-        failed: false,
+        failed: d["failed"].as_bool().unwrap_or(false),
         provider,
         model,
         agent: None,
@@ -348,7 +352,9 @@ pub(super) fn project_unreached(tx: &Connection, session_id: &str) -> rusqlite::
     events.iter().try_for_each(|event| project(tx, event))
 }
 
-/// Fold rows that ended before `before_ms` into `usage_daily` by UTC day.
+/// Fold ordinary rows before `before_ms` into `usage_daily` by UTC day.
+/// Reservation-linked receipts retain exact identity for late settlement and scope
+/// checks; folding their deltas would lose the ability to resolve unknown billing.
 fn fold(tx: &Transaction<'_>, before_ms: i64) -> rusqlite::Result<usize> {
     tx.execute(
         "INSERT INTO usage_daily (day, root_id, agent, provider, model, origin, directory, steps,
@@ -359,7 +365,7 @@ fn fold(tx: &Transaction<'_>, before_ms: i64) -> rusqlite::Result<usize> {
             SUM(input_tokens), SUM(output_tokens), SUM(reasoning_tokens), SUM(cache_read_tokens),
             SUM(cache_write_tokens), TOTAL(cost), SUM(cost IS NULL), MAX(prompt_tokens),
             SUM(ended_ms - started_ms)
-         FROM usage_step WHERE ended_ms < ?1 GROUP BY 1, 2, 3, 4, 5, 6
+         FROM usage_step WHERE ended_ms < ?1 AND reservation_id IS NULL GROUP BY 1, 2, 3, 4, 5, 6
          ON CONFLICT(day, root_id, agent, provider, model, origin) DO UPDATE SET
             steps = steps + excluded.steps, turns = turns + excluded.turns,
             input_tokens = input_tokens + excluded.input_tokens,
@@ -372,7 +378,10 @@ fn fold(tx: &Transaction<'_>, before_ms: i64) -> rusqlite::Result<usize> {
             api_duration_ms = api_duration_ms + excluded.api_duration_ms",
         [before_ms],
     )?;
-    tx.execute("DELETE FROM usage_step WHERE ended_ms < ?1", [before_ms])
+    tx.execute(
+        "DELETE FROM usage_step WHERE ended_ms < ?1 AND reservation_id IS NULL",
+        [before_ms],
+    )
 }
 
 fn now_ms() -> i64 {
@@ -465,5 +474,31 @@ mod tests {
             ("ollama".into(), "qwen3:8b".into())
         );
         assert_eq!(split(None, "bare"), (String::new(), "bare".into()));
+    }
+    #[test]
+    fn retention_keeps_reserved_receipt_identity_and_folds_ordinary_calls() {
+        use cyber_core::paths::DatabaseLocation;
+        use cyber_store::{EventRegistry, Store, StoreOptions, StoredEvent};
+        use serde_json::json;
+        let store = Store::open(StoreOptions::new(
+            DatabaseLocation::Memory,
+            EventRegistry::default(),
+        ))
+        .unwrap();
+        store.transaction(|tx| {
+            tx.execute("INSERT INTO session(id,title,directory,agent,model,mode,created_at,updated_at,last_seq) VALUES ('root','x','/r','build','test/main','default',1,1,0)",[])?;
+            for (id,reservation) in [("linked",Some("request")),("ordinary",None)] {
+                let event = StoredEvent { id:id.into(),aggregate_id:"root".into(),seq:1,kind:super::AUXILIARY_USAGE.into(),time_ms:10,causation_id:None,
+                    data:json!({"purpose":"title","provider":"test","model":"main","duration_ms":1,"reservation_id":reservation,"usage":{"input":2,"output":0,"reasoning":0,"cache_read":0,"cache_write":0},"cost":null}) };
+                super::project(tx,&event)?;
+            }
+            assert_eq!(super::fold(tx,100)?,1);
+            let link:String=tx.query_row("SELECT reservation_id FROM usage_step",[],|r|r.get(0))?;
+            assert_eq!(link,"request");
+            let folded:i64=tx.query_row("SELECT input_tokens FROM usage_daily",[],|r|r.get(0))?;
+            assert_eq!(folded,2);
+            assert_eq!(super::fold(tx,100)?,0);
+            Ok(())
+        }).unwrap();
     }
 }

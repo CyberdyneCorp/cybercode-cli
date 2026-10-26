@@ -3,7 +3,7 @@ use super::sampling::{SamplingHandler, SamplingRequest};
 use crate::host::{BuiltinHost, Ctx};
 use crate::permissions::Request;
 use cyber_llm::catalog::{ModelRole, compute_cost};
-use cyber_llm::{FinishReason, LlmEvent, LlmRequest, Usage};
+use cyber_llm::{Adapter, FinishReason, LlmEvent, LlmRequest, Usage};
 use cyber_sandbox::proxy::{Endpoint, Proxy};
 use cyber_server::runtime::{AuxiliaryUsage, Invocation, ResolvedModel};
 use futures::{StreamExt, future::BoxFuture};
@@ -179,6 +179,19 @@ async fn execute(
         model.template.max_output_tokens.unwrap_or(4096),
     )?;
     let proxy = transport(&mut model).await?;
+    let guarded = match inv
+        .asker
+        .guard_model(&model, "mcp_sampling", Some(inv.call_id.clone()))
+        .await
+    {
+        Ok(guarded) => guarded,
+        Err(_) => {
+            if let Some(proxy) = proxy {
+                let _ = proxy.shutdown().await;
+            }
+            return Err("Sampling budget admission failed");
+        }
+    };
     let started = Instant::now();
     let mut observed = Observed::default();
     let result = tokio::select! {
@@ -188,9 +201,12 @@ async fn execute(
         result = async {
             authorized(host, inv)?;
             activity.store(true, Ordering::Release);
-            infer(&model, request, &mut observed).await
+            infer(&guarded, request, &mut observed).await
         } => result,
     };
+    // The owner survives cancellation of stream opening/consumption, so observed
+    // reserved usage is durably settled before the tool reports its outcome.
+    let flushed = guarded.flush().await;
     let settled = match proxy {
         Some(proxy) => matches!(
             tokio::time::timeout(Duration::from_secs(2), proxy.shutdown()).await,
@@ -198,7 +214,10 @@ async fn execute(
         ),
         None => observed.ended,
     };
-    bill(inv, server, &model, started, &observed).await?;
+    if !guarded.reservation_owned() {
+        bill(inv, server, &model, started, &observed).await?;
+    }
+    flushed.map_err(|_| "Sampling reservation usage settlement failed")?;
     if !settled {
         return Err("Sampling transport completion is unverified");
     }
@@ -300,13 +319,12 @@ struct Observed {
     usage: Usage,
 }
 async fn infer(
-    model: &ResolvedModel,
+    adapter: &dyn Adapter,
     request: LlmRequest,
     observed: &mut Observed,
 ) -> Result<(String, &'static str), &'static str> {
     observed.attempted = true;
-    let mut stream = model
-        .adapter
+    let mut stream = adapter
         .stream(request)
         .await
         .map_err(|_| "Sampling provider request failed")?;

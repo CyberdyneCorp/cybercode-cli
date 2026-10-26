@@ -190,3 +190,24 @@ test("dashboard wires global native authority without Sessions and sends Stop be
   await until(()=>!!model.computer.active);assert.equal(model.computer.active?.session_id,"ses_other");
   model.logout();const stop=api.calls.find(call=>call.path==="/tools/computer/stop");assert.equal(stop?.options.finishOnLogout,true);assert.equal(api.cleared,1);assert.equal(model.computer.report,undefined);
 });
+
+test("budget allocation evidence is read without blocking approvals and cleared across Session switches", async (t) => {
+  const api = new Fake(); let finish: ((value: unknown) => void) | undefined;
+  api.hook = (path) => path.startsWith("/budgets/reservations?session_id=ses_one") ? new Promise((resolve) => { finish = resolve; }) : undefined;
+  const { model } = await ready(t, api);
+  assert.equal(model.state.cards.length, 1, "slow allocation diagnostics do not block approvals");
+  await until(() => finish !== undefined);
+  await model.selectSession("ses_two");
+  finish!({ data: { reservations: [{ request_id: "old-session", state: "uncertain" }] } });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(model.state.session?.id, "ses_two"); assert.deepEqual(model.state.reservations, []);
+});
+
+test("budget allocation evidence retains uncertainty and declared bounds", async (t) => {
+  const api = new Fake();
+  const allocation = { request_id: "breq_fixture", state: "uncertain", held_tokens: 80, estimated: { total_tokens_upper: 100 } };
+  api.hook = (path) => path.startsWith("/budgets/reservations?") ? Promise.resolve({ data: { reservations: [allocation], next_cursor: null } }) : undefined;
+  const { model } = await ready(t, api);
+  await until(() => model.state.reservations.length === 1);
+  assert.equal(model.state.reservations[0]!.state, "uncertain"); assert.equal(model.state.reservations[0]!.held_tokens, 80);
+});

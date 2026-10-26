@@ -24,11 +24,13 @@
 
 ## 4. Reserved budgets
 
-- [ ] 4.1 Add durable reservation/settlement/uncertainty migrations and atomic scope accounting without changing existing soft behavior.
-- [ ] 4.2 Integrate request bounds and reservations before all provider dispatch paths, including descendants and auxiliary calls; explicitly reject unpriced/unbounded USD requests.
-- [ ] 4.3 Reconcile actual usage once, preserve uncertain post-dispatch allocations across restart, and provide audited owner diagnostics/reconciliation.
-- [ ] 4.4 Test concurrent last-dollar admission, nested/daily scopes, unknown pricing, auxiliary calls, duplicate settlement, cancellation and crashes before/after network dispatch.
-- [ ] 4.5 Update API/SDK/UI budget evidence, estimates/uncertainty and the original workflow reservation task after verification.
+- [x] 4.1 Add durable reservation/settlement/uncertainty migrations and atomic scope accounting without changing existing soft behavior.
+- [x] 4.2 Integrate request bounds and reservations before all provider dispatch paths, including descendants and auxiliary calls; explicitly reject unpriced/unbounded USD requests.
+- [x] 4.3 Reconcile actual usage once, preserve uncertain post-dispatch allocations across restart, and provide audited owner diagnostics/reconciliation.
+- [x] 4.4 Test concurrent last-dollar admission, nested/daily scopes, unknown pricing, auxiliary calls, duplicate settlement, cancellation and crashes before/after network dispatch.
+- [x] 4.5 Update API/SDK/UI budget evidence, estimates/uncertainty and the original workflow reservation task after verification.
+
+Reserved-budget local evidence and explicit adapter/owner limits: [implementation record](../../../docs/implementation/reserved-budgets.md). Combined retention/schedule acceptance and platform CI remain tracked in sections5–6 and8.
 
 ## 5. Finished-agent transcript retention
 

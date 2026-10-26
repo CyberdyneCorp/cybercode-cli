@@ -167,6 +167,11 @@ async fn complete(
     system: &str,
     prompt: String,
 ) -> Result<String, GitTextError> {
+    let daily =
+        cyber_core::budget::Budget::from_config(config, "daily").map_err(GitTextError::Invalid)?;
+    if daily.is_some_and(|budget| budget.enforcement == cyber_core::budget::Enforcement::Reserved) {
+        return Err(GitTextError::Invalid("Reserved daily budgets require Session-owned model dispatch; standalone commit/PR text generation is unsupported".into()));
+    }
     let reference = role_ref(config, ModelRole::Small)
         .ok_or_else(|| GitTextError::Invalid("no small or default model is configured".into()))?;
     let resolved = resolver.resolve(&reference).map_err(GitTextError::Failed)?;
@@ -495,6 +500,22 @@ fn without_trailers(text: &str) -> String {
 mod tests {
     use super::*;
 
+    struct NeverResolve;
+    impl ModelResolver for NeverResolve {
+        fn resolve(&self, _: &str) -> Result<cyber_server::runtime::ResolvedModel, String> {
+            panic!("reserved daily standalone inference must not resolve or dispatch")
+        }
+        fn role(&self, _: ModelRole) -> Option<String> {
+            None
+        }
+    }
+    #[tokio::test]
+    async fn standalone_inference_refuses_reserved_daily_before_resolution() {
+        let result=complete(&NeverResolve,&serde_json::json!({"model":"test/main","budgets":{"daily":{"enforcement":"reserved","max_tokens":1000}}}),"system","prompt".into()).await;
+        assert!(
+            matches!(result,Err(GitTextError::Invalid(message)) if message.contains("Session-owned"))
+        );
+    }
     #[test]
     fn model_trailers_and_fences_are_removed() {
         let raw = "<think>hmm</think>```\nfeat(app): greet\n\nAdds a greeting.\n\nCo-authored-by: Model <m@x.dev>\n```";

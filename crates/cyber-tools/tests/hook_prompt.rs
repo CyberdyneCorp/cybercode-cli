@@ -785,3 +785,97 @@ async fn native_raw_sse_and_error_bodies_are_bounded_before_decoder_buffering() 
         }
     }
 }
+
+#[tokio::test]
+async fn reserved_prompt_hook_is_billed_once_by_its_request_receipt() {
+    let f = Fixture::new(handler());
+    let adapter = Arc::new(ScriptedAdapter::new(vec![script(
+        r#"{"decision":"allow","reason":"safe"}"#,
+    )]));
+    let runtime = runtime(
+        &f.f,
+        Arc::new(Models {
+            adapter: adapter.clone(),
+            evaluator: true,
+            resolved: Mutex::default(),
+        }),
+    );
+    let budget =
+        serde_json::from_value(json!({"max_tokens":1000,"enforcement":"reserved"})).unwrap();
+    let event = session_event(&runtime, &f, Some(budget)).await;
+    let report = f
+        .runner()
+        .run_recorded(&runtime, POINTER, &event, CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(report.outcome, HookOutcome::Ok);
+    assert_eq!(adapter.requests().len(), 1);
+    let session = &event.identity().session_id;
+    let state = runtime.state(session).await.unwrap();
+    assert_eq!(state.totals.usage.input, 100);
+    assert_eq!(state.totals.usage.output, 10);
+    let page = runtime
+        .budget_reservations(cyber_server::runtime::ReservationQuery {
+            session_id: Some(session.clone()),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(page.reservations.len(), 1);
+    assert_eq!(page.reservations[0].purpose, "hook_prompt");
+    assert_eq!(page.reservations[0].state, "settled");
+    let usage = runtime.session_usage(session).unwrap();
+    assert_eq!(usage.own.unpriced_steps, 0);
+    let events = f.f.store.read_events(session, -1, 100).unwrap().events;
+    let billed: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == "usage.recorded.1" && e.data["purpose"] == "hook_prompt")
+        .collect();
+    assert_eq!(billed.len(), 1);
+    assert_eq!(
+        billed[0].data["reservation_id"],
+        page.reservations[0].request_id
+    );
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn reserved_prompt_hook_refusal_never_dispatches_or_creates_legacy_unknown_usage() {
+    let f = Fixture::new(handler());
+    let adapter = Arc::new(ScriptedAdapter::new(vec![script(
+        r#"{"decision":"allow","reason":"safe"}"#,
+    )]));
+    let runtime = runtime(
+        &f.f,
+        Arc::new(Models {
+            adapter: adapter.clone(),
+            evaluator: true,
+            resolved: Mutex::default(),
+        }),
+    );
+    let budget = serde_json::from_value(json!({"max_tokens":1,"enforcement":"reserved"})).unwrap();
+    let event = session_event(&runtime, &f, Some(budget)).await;
+    let report = f
+        .runner()
+        .run_recorded(&runtime, POINTER, &event, CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(report.outcome, HookOutcome::Error);
+    assert!(adapter.requests().is_empty());
+    let session = &event.identity().session_id;
+    let usage = runtime.session_usage(session).unwrap();
+    assert_eq!(usage.own.tokens, Usage::default());
+    assert_eq!(usage.own.unpriced_steps, 0);
+    let events = f.f.store.read_events(session, -1, 100).unwrap().events;
+    assert!(!events.iter().any(|e| e.kind == "usage.recorded.1"));
+    assert!(
+        runtime
+            .budget_reservations(cyber_server::runtime::ReservationQuery {
+                session_id: Some(session.clone()),
+                ..Default::default()
+            })
+            .unwrap()
+            .reservations
+            .is_empty()
+    );
+    runtime.shutdown().await;
+}

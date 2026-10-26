@@ -244,6 +244,14 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         )
         .located()
         .ok::<Located<cyber_core::memory::MemoryDocument>>(g),
+        op("get", "/budgets/reservations", "v1.budgets.reservations", "List durable budget allocations and uncertainty")
+            .query(&["session_id", "scope_id", "open_only", "cursor", "limit"])
+            .ok::<Data<crate::runtime::ReservationPage>>(g),
+        op("get", "/budgets/reservations/{id}", "v1.budgets.reservation", "Read a budget allocation, receipts and owner audit")
+            .ok::<Data<crate::runtime::ReservationDetail>>(g),
+        op("post", "/budgets/reservations/{id}/reconcile", "v1.budgets.reconcile", "Audit an owner settlement or release of an inactive allocation")
+            .body::<crate::runtime::ReservationReconcile>(g)
+            .ok::<Data<crate::runtime::ReservationDetail>>(g),
         op(
             "get",
             "/usage",

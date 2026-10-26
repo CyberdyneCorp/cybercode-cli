@@ -81,6 +81,7 @@ pub struct AgentInference {
 }
 
 /// A model ready to stream.
+#[derive(Clone)]
 pub struct ResolvedModel {
     pub adapter: Arc<dyn Adapter>,
     /// Request template (model ID, reasoning variant, output cap, overlays).

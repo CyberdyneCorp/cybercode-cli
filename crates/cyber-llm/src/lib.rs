@@ -11,6 +11,7 @@ pub mod copilot;
 mod error;
 mod json;
 pub mod limits;
+pub mod reservations;
 mod retry;
 mod sse;
 pub mod subscription;

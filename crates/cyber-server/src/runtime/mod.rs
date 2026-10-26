@@ -22,6 +22,7 @@ pub mod browser_evidence;
 mod budget;
 mod bus;
 mod checkout;
+mod reservations;
 pub use checkout::{BranchCheckout, CheckedOutBranch};
 mod child_ownership;
 mod child_usage;
@@ -211,6 +212,11 @@ pub use requests::{
     Asker, NO_WORKFLOW_APPROVER, PendingKind, PendingRequest, PermissionAsk, PermissionReply,
     Question, QuestionOption, QuestionReply, RequestOrigin, RequestRoute,
 };
+pub use reservations::{
+    BudgetReservation, GuardedModel, ReservationAction, ReservationActual, ReservationAudit,
+    ReservationDetail, ReservationEstimate, ReservationPage, ReservationQuery,
+    ReservationReconcile, ReservationScope,
+};
 pub use view::{INTERRUPTED, UNKNOWN};
 
 use bus::Bus;
@@ -233,6 +239,12 @@ pub enum RuntimeError {
     Invalid(String),
     #[error("BudgetExceededError: scope {scope}: {limit}")]
     BudgetExceeded { scope: String, limit: String },
+    #[error("BudgetUnpricedError: USD reservation for scope {scope} has no price bound")]
+    BudgetUnpriced { scope: String },
+    #[error("BudgetBoundUnavailableError: {0}")]
+    BudgetBoundUnavailable(String),
+    #[error("BudgetUncertainError: scope {scope} has incomplete accounting")]
+    BudgetUncertain { scope: String },
     #[error("ConflictError: {0}")]
     Conflict(String),
     #[error("McpRequiredError: {0}")]
@@ -778,6 +790,7 @@ pub(crate) struct Inner {
     shutdown_lock: Mutex<()>,
     closed: CancellationToken,
     background: StdMutex<Vec<tokio::task::JoinHandle<()>>>,
+    reservation_attempts: StdMutex<HashMap<String, std::sync::Weak<reservations::Attempt>>>,
     jobs: StdMutex<HashMap<String, Arc<jobs::Control>>>,
     job_admission: Arc<Mutex<()>>,
     /// Foreground commands the user may move to the background, by Session.
@@ -905,6 +918,7 @@ impl Runtime {
             shutdown_lock: Mutex::new(()),
             closed: CancellationToken::new(),
             background: StdMutex::default(),
+            reservation_attempts: StdMutex::default(),
             jobs: StdMutex::default(),
             job_admission: Arc::new(Mutex::new(())),
             handoffs: StdMutex::default(),

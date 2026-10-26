@@ -115,7 +115,7 @@ fn read(row: &rusqlite::Row<'_>, id: &str) -> rusqlite::Result<UsageReport> {
         tokens,
         cost: valid_cost(row.get(0)?)?,
         unpriced_steps: counter(row, 6)?,
-        usage_complete: true,
+        usage_complete: !row.get::<_, bool>(13)?,
         token_classes_complete: true,
     };
     let tokens: Usage = serde_json::from_str(&row.get::<_, String>(11)?)
@@ -129,7 +129,7 @@ fn read(row: &rusqlite::Row<'_>, id: &str) -> rusqlite::Result<UsageReport> {
         total_tokens,
         cost: valid_cost(row.get(7)?)?,
         unpriced_steps: counter(row, 9)?,
-        usage_complete: row.get::<_, bool>(10)?,
+        usage_complete: row.get::<_, bool>(10)? && !row.get::<_, bool>(14)?,
         token_classes_complete: row.get::<_, bool>(12)?,
     };
     if descendants.token_classes_complete
@@ -283,7 +283,9 @@ impl Runtime {
         let source = id.to_owned();
         self.inner.store.read(move |db| {
             Ok(db.query_row("SELECT cost,input_tokens,output_tokens,reasoning_tokens,cache_read_tokens,cache_write_tokens,unpriced_steps,
-                children_cost,children_tokens,children_unpriced_steps,children_usage_complete,children_token_classes,children_token_classes_complete
+                children_cost,children_tokens,children_unpriced_steps,children_usage_complete,children_token_classes,children_token_classes_complete,
+                EXISTS(SELECT 1 FROM budget_reservation b WHERE b.session_id=session.id AND b.state='uncertain' AND b.receipt_event_id IS NOT NULL),
+                EXISTS(WITH RECURSIVE tree(id) AS (SELECT id FROM session WHERE parent_id=?1 UNION ALL SELECT s.id FROM session s JOIN tree t ON s.parent_id=t.id) SELECT 1 FROM budget_reservation b WHERE b.session_id IN (SELECT id FROM tree) AND b.state='uncertain' AND b.receipt_event_id IS NOT NULL)
                 FROM session WHERE id=?1", [&source], |row| read(row,&source)).optional()?)
         })?.ok_or_else(|| RuntimeError::SessionNotFound(id.into()))
     }

@@ -192,11 +192,15 @@ impl Runtime {
         } else {
             Vec::new()
         };
+        let budget = effective_budget(request.budget, configured);
         let new = NewGoal {
+            reservation_scope_version: u32::from(
+                budget.enforcement == cyber_core::budget::Enforcement::Reserved,
+            ),
             goal_id: cyber_core::ids::new_id("gol"),
             condition: request.condition.trim().to_owned(),
             check: request.check.filter(|c| !c.trim().is_empty()),
-            budget: effective_budget(request.budget, configured),
+            budget,
             template: request.template,
             created_ms: now_ms(),
         };

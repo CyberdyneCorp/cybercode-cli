@@ -91,6 +91,30 @@ export interface Operations {
     body: undefined;
     response: S.Located_Array_of_AgentInfo;
   };
+  "v1.budgets.reconcile": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: S.ReservationReconcile;
+    response: S.ReservationDetail;
+  };
+  "v1.budgets.reservation": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.ReservationDetail;
+  };
+  "v1.budgets.reservations": {
+    path: Record<string, never>;
+    query: {
+      session_id?: QueryValue;
+      scope_id?: QueryValue;
+      open_only?: QueryValue;
+      cursor?: QueryValue;
+      limit?: QueryValue;
+    };
+    body: undefined;
+    response: S.ReservationPage;
+  };
   "v1.collaboration.claimTask": {
     path: { id: string };
     query: Record<string, never>;
@@ -1774,6 +1798,42 @@ export const operations = {
     body: "none",
     located: true,
     unwrap: false,
+    stream: false,
+  },
+  "v1.budgets.reconcile": {
+    tag: "budgets",
+    name: "reconcile",
+    method: "POST",
+    path: "/api/v1/budgets/reservations/{id}/reconcile",
+    pathParams: ["id"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.budgets.reservation": {
+    tag: "budgets",
+    name: "reservation",
+    method: "GET",
+    path: "/api/v1/budgets/reservations/{id}",
+    pathParams: ["id"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.budgets.reservations": {
+    tag: "budgets",
+    name: "reservations",
+    method: "GET",
+    path: "/api/v1/budgets/reservations",
+    pathParams: [],
+    query: ["session_id", "scope_id", "open_only", "cursor", "limit"],
+    body: "none",
+    located: false,
+    unwrap: true,
     stream: false,
   },
   "v1.collaboration.claimTask": {
@@ -4744,6 +4804,17 @@ export function createGroups(caller: Caller) {
       list: (options?: RequestOptions): Promise<Operations["v1.agent.list"]["response"]> =>
         caller.call("v1.agent.list", {}, options),
     },
+    budgets: {
+      /** Audit an owner settlement or release of an inactive allocation (`POST /api/v1/budgets/reservations/{id}/reconcile`) */
+      reconcile: (id: string, body: Operations["v1.budgets.reconcile"]["body"], options?: RequestOptions): Promise<Operations["v1.budgets.reconcile"]["response"]> =>
+        caller.call("v1.budgets.reconcile", { path: { id }, body }, options),
+      /** Read a budget allocation, receipts and owner audit (`GET /api/v1/budgets/reservations/{id}`) */
+      reservation: (id: string, options?: RequestOptions): Promise<Operations["v1.budgets.reservation"]["response"]> =>
+        caller.call("v1.budgets.reservation", { path: { id } }, options),
+      /** List durable budget allocations and uncertainty (`GET /api/v1/budgets/reservations`) */
+      reservations: (query?: Operations["v1.budgets.reservations"]["query"], options?: RequestOptions): Promise<Operations["v1.budgets.reservations"]["response"]> =>
+        caller.call("v1.budgets.reservations", { query }, options),
+    },
     collaboration: {
       /** Claim a shared task at its expected revision (`POST /api/v1/collaboration/tasks/{id}/claim`) */
       claimTask: (id: string, body: Operations["v1.collaboration.claimTask"]["body"], options?: RequestOptions): Promise<Operations["v1.collaboration.claimTask"]["response"]> =>
@@ -5586,6 +5657,10 @@ export const errorTags = [
   "RewindConflictError",
   "ServiceUnavailableError",
   "BudgetExceededError",
+  "BudgetUnpricedError",
+  "BudgetBoundUnavailableError",
+  "BudgetUncertainError",
+  "BudgetReservationNotFoundError",
   "SessionBusyError",
   "SessionNotFoundError",
   "TaskClaimedError",
@@ -5723,6 +5798,22 @@ export function isServiceUnavailableError(err: unknown): err is TaggedError<"Ser
 
 export function isBudgetExceededError(err: unknown): err is TaggedError<"BudgetExceededError"> {
   return hasTag(err, "BudgetExceededError");
+}
+
+export function isBudgetUnpricedError(err: unknown): err is TaggedError<"BudgetUnpricedError"> {
+  return hasTag(err, "BudgetUnpricedError");
+}
+
+export function isBudgetBoundUnavailableError(err: unknown): err is TaggedError<"BudgetBoundUnavailableError"> {
+  return hasTag(err, "BudgetBoundUnavailableError");
+}
+
+export function isBudgetUncertainError(err: unknown): err is TaggedError<"BudgetUncertainError"> {
+  return hasTag(err, "BudgetUncertainError");
+}
+
+export function isBudgetReservationNotFoundError(err: unknown): err is TaggedError<"BudgetReservationNotFoundError"> {
+  return hasTag(err, "BudgetReservationNotFoundError");
 }
 
 export function isSessionBusyError(err: unknown): err is TaggedError<"SessionBusyError"> {

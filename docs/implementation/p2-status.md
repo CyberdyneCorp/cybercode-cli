@@ -1,5 +1,9 @@
 # P2 implementation status
 
+## Reserved workflow budgets (2026-10-26)
+
+Opt-in reserved enforcement now has durable all-scope admission, request-linked receipts, retained uncertainty, owner reconciliation and dashboard evidence. Supported production bounds currently cover stateless text/function official OpenAI Responses requests; incompatible adapters (including ChatGPT subscription transport) explicitly refuse reserved admission. Soft token/time controls remain available. See the [provider contract and operational limits](../reserved-budgets.md). Earlier dated sections below describe their historical implementation state; this entry supersedes their reserved-budget refusal/gap notes. Focused integration evidence is being finalized before merge; no live billing guarantee or platform acceptance is implied.
+
 ## Native computer use (experimental; controlled macOS acceptance passed)
 
 The macOS-first implementation adds compiled ScreenCaptureKit/CoreGraphics capture/input, global-only opt-in, local owner target review, expiring grants, human presence, independent Stop, private frame retention and durable native receipts. CLI/API/model-tool, TUI banner/Stop and browser owner controls are described in [Native computer use](../computer-use.md). Fake-native tests and native SDK compile checks remain separate from live acceptance. Authorized disposable-window ScreenCaptureKit capture, local vision routing, mouse/Unicode keyboard input, overlay/focus/geometry refusal, reconnect fencing and Stop during drag passed on macOS26.7/arm64. Other layouts, live OS revocation and release signing remain pending; see the [live evidence](../measurements/native-computer-acceptance.md). See [tasks](../../openspec/changes/add-native-computer-use/tasks.md).

@@ -43,6 +43,34 @@ impl ScriptedAdapter {
 }
 
 impl Adapter for ScriptedAdapter {
+    fn prepare_reserved(
+        &self,
+        request: LlmRequest,
+        _context_limit: u64,
+    ) -> Result<crate::reservations::PreparedReservation, crate::reservations::BoundUnavailable>
+    {
+        let turns = self.turns.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut maximum = crate::Usage::default();
+        for turn in turns.iter() {
+            let mut usage = crate::Usage::default();
+            for step in turn {
+                if let ScriptStep::Event(LlmEvent::Usage(value)) = step {
+                    usage = checked_usage(usage, *value)?;
+                }
+            }
+            maximum.input = maximum.input.max(usage.input);
+            maximum.output = maximum.output.max(usage.output);
+            maximum.reasoning = maximum.reasoning.max(usage.reasoning);
+            maximum.cache_read = maximum.cache_read.max(usage.cache_read);
+            maximum.cache_write = maximum.cache_write.max(usage.cache_write);
+        }
+        let bound = crate::reservations::RequestBound::from_usage(
+            maximum,
+            "scripted_finite_fixture_v1",
+            &serde_json::json!({"model":request.model,"classes":maximum}),
+        )?;
+        Ok(crate::reservations::PreparedReservation { request, bound })
+    }
     fn stream(&self, request: LlmRequest) -> BoxFuture<'_, Result<EventStream, LlmError>> {
         self.requests
             .lock()
@@ -69,4 +97,21 @@ impl Adapter for ScriptedAdapter {
             Ok(stream::iter(items).boxed())
         })
     }
+}
+
+fn checked_usage(
+    a: crate::Usage,
+    b: crate::Usage,
+) -> Result<crate::Usage, crate::reservations::BoundUnavailable> {
+    let add = |a: u64, b: u64| {
+        a.checked_add(b)
+            .ok_or_else(|| crate::reservations::unavailable("scripted token bound overflow"))
+    };
+    Ok(crate::Usage {
+        input: add(a.input, b.input)?,
+        output: add(a.output, b.output)?,
+        reasoning: add(a.reasoning, b.reasoning)?,
+        cache_read: add(a.cache_read, b.cache_read)?,
+        cache_write: add(a.cache_write, b.cache_write)?,
+    })
 }

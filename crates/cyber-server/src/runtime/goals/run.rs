@@ -57,12 +57,13 @@ impl Runtime {
             return Ok(false);
         }
         let judgement = evaluate::judge(
-            self.inner.resolver.as_ref(),
+            &self.inner,
+            handle,
             &due.model,
             due.evidence.clone(),
             cancel,
         )
-        .await;
+        .await?;
         self.bill_evaluator(handle, &judgement).await?;
         let (verdict, reason, check) = self.apply_check(handle, &due, &judgement, cancel).await;
         let evaluated = Evaluated {
@@ -148,7 +149,7 @@ impl Runtime {
         handle: &Arc<Handle>,
         judgement: &Judgement,
     ) -> Result<(), RuntimeError> {
-        if judgement.tokens == 0 {
+        if judgement.tokens == 0 || !judgement.reservation_requests.is_empty() {
             return Ok(());
         }
         let usage = AuxiliaryUsage {

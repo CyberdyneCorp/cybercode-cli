@@ -4,7 +4,7 @@
 //! the call's usage is recorded, as for a recap.
 
 use cyber_llm::catalog::compute_cost;
-use cyber_llm::{Content, Message, Role, Usage, collect};
+use cyber_llm::{Adapter, Content, Message, Role, Usage, collect};
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
@@ -73,6 +73,7 @@ impl Inner {
         let mut usage = Usage::default();
         let started = std::time::Instant::now();
         let mut answer = String::new();
+        let gated = super::reservations::GatedAdapter::new(self, &handle, &resolved, "side_chat");
         for step in 0..MAX_STEPS {
             request.tools_disabled = step + 1 == MAX_STEPS;
             request.initiator = Some(if step == 0 {
@@ -80,11 +81,15 @@ impl Inner {
             } else {
                 cyber_llm::Initiator::Agent
             });
-            let stream = resolved.adapter.stream(request.clone()).await;
+            let stream = gated.stream(request.clone()).await;
             let out = match stream {
                 Ok(stream) => collect(stream, |_| {}).await,
                 Err(error) => Err(error),
             };
+            gated.flush().await?;
+            if let Some(error) = gated.take_error() {
+                return Err(error);
+            }
             let out = out.map_err(|e| RuntimeError::Model(e.to_string()))?;
             usage.add(&out.usage);
             answer = out.text.trim().to_string();
@@ -106,8 +111,9 @@ impl Inner {
             cost: compute_cost(resolved.cost.as_ref(), &usage),
             usage,
         };
-        self.commit(&handle, vec![event(AUXILIARY_USAGE, &record)])
-            .await?;
+        let mut billed = event(AUXILIARY_USAGE, &record);
+        super::reservations::mark_accounted(&mut billed, &gated.request_ids());
+        self.commit(&handle, vec![billed]).await?;
         self.observe_budget(&handle).await?;
         if answer.is_empty() {
             return Err(RuntimeError::Model(

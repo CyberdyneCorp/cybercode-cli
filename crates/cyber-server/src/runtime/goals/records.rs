@@ -35,6 +35,8 @@ pub const HISTORY: usize = 50;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NewGoal {
+    #[serde(default)]
+    pub reservation_scope_version: u32,
     pub goal_id: String,
     pub condition: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

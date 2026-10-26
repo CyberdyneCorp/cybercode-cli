@@ -249,7 +249,7 @@ impl Runtime {
 
     /// Record `team.created.1` and the lead's `team.member.spawned.1` on the lead's
     /// stream, with the definition body as a `team_instructions` system message, under
-    /// `budget`; reserved enforcement is refused, never weakened to soft.
+    /// `budget`; reserved enforcement requires request-level atomic admission.
     async fn record_team(
         &self,
         lead: &SessionInfo,

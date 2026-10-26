@@ -95,7 +95,7 @@ impl RunBudget {
     /// `max_wall_seconds`) are a ceiling: each later layer may only lower a limit, a larger
     /// value keeps the current one, and `null` for a limit already set is refused, so
     /// neither a script nor the model can widen what the user configured. Reserved
-    /// enforcement is refused, never weakened to soft.
+    /// enforcement requires bounded provider requests and durable admission.
     pub fn resolve(config: &Value, layers: &[Option<&Value>]) -> Result<Self, String> {
         let mut merged = serde_json::Map::from_iter([
             ("max_agents".to_owned(), Value::from(DEFAULT_MAX_AGENTS)),
@@ -139,12 +139,6 @@ impl RunBudget {
         let mut budget: Budget =
             serde_json::from_value(Value::Object(merged)).map_err(|e| format!("budget: {e}"))?;
         budget.validate().map_err(|e| format!("budget.{e}"))?;
-        if budget.enforcement == Enforcement::Reserved {
-            return Err(
-                "budget.enforcement: reserved run budgets are not available; no soft fallback is applied"
-                    .into(),
-            );
-        }
         budget
             .max_wall_seconds
             .get_or_insert(DEFAULT_RUN_WALL_SECONDS);
@@ -236,7 +230,6 @@ mod tests {
         assert_eq!(text["max_agents"], 4);
         assert_eq!(serde_json::from_value::<RunBudget>(text).unwrap(), layered);
         for bad in [
-            json!({"enforcement": "reserved"}),
             json!({"max_agents": -1}),
             json!({"max_cost_usd": -1}),
             json!({"bogus": 1}),

@@ -2862,3 +2862,7 @@ cyber eval run [OPTIONS] --output <OUTPUT> <MANIFEST>
 - `--task <TASKS>`: Only these task IDs (repeatable)
 - `--jobs <JOBS>`: Trials run at the same time. Default: `4`.
 - `--keep-workspaces`: Keep trial workspaces under <output>/workspaces for inspection.
+
+### Reserved-budget diagnostics
+
+Use `cyber api v1.budgets.reservations --param open_only=true` to inspect held request allocations. Audited owner settlement/release examples and provider limitations are in [Reserved budgets](reserved-budgets.md).

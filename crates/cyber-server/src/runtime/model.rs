@@ -829,12 +829,22 @@ impl SessionState {
             "session.tool.dispatched" => self.on_dispatched(decode(e)?),
             "session.tool.settled" => self.on_settled(decode(e)?),
             "session.step.ended" => {
-                self.on_step_ended(decode(e)?, e.time_ms);
+                self.on_step_ended(decode(e)?, e.time_ms, e.data["usage_accounted"] != true);
                 self.finished_seq = e.seq;
             }
             "usage.recorded" => {
                 let usage: super::events::AuxiliaryUsage = decode(e)?;
+                let before = self.totals.unpriced_steps;
                 self.add_hidden(&usage.usage, usage.cost);
+                if let Some(change) = e.data["reservation_unpriced_increment"].as_i64() {
+                    self.totals.unpriced_steps = before.saturating_add_signed(
+                        i32::try_from(change).unwrap_or(if change < 0 {
+                            i32::MIN
+                        } else {
+                            i32::MAX
+                        }),
+                    );
+                }
             }
             "session.step.failed" => {
                 self.on_step_failed(decode(e)?, e.time_ms);
@@ -979,14 +989,16 @@ impl SessionState {
             }
             "permission.auto_decided" => {
                 let decision: super::auto::AutoDecision = decode(e)?;
-                if let Some(usage) = decision.usage {
+                if let Some(usage) = decision.usage.filter(|_| e.data["usage_accounted"] != true) {
                     self.add_hidden(&usage, decision.cost);
                 }
             }
-            "session.compaction.completed" => self.on_compacted(decode(e)?),
+            "session.compaction.completed" => {
+                self.on_compacted(decode(e)?, e.data["usage_accounted"] != true)
+            }
             "session.title.generated" | "session.renamed" => {
                 let titled: Titled = decode(e)?;
-                if let Some(usage) = titled.usage {
+                if let Some(usage) = titled.usage.filter(|_| e.data["usage_accounted"] != true) {
                     self.add_hidden(&usage, titled.cost);
                 }
                 self.info.title = titled.title;
@@ -1278,7 +1290,7 @@ impl SessionState {
         }
     }
 
-    fn on_step_ended(&mut self, s: StepEnded, time_ms: i64) {
+    fn on_step_ended(&mut self, s: StepEnded, time_ms: i64, account_usage: bool) {
         if let Some(a) = self.assistant(&s.message_id) {
             a.finished = true;
             a.ended_ms = Some(time_ms);
@@ -1290,11 +1302,9 @@ impl SessionState {
             }));
         }
         self.open_step = None;
-        self.totals.usage.add(&s.usage);
         self.totals.steps += 1;
-        match s.cost {
-            Some(cost) => self.totals.cost += cost,
-            None => self.totals.unpriced_steps += 1,
+        if account_usage {
+            self.add_hidden(&s.usage, s.cost);
         }
         self.steps_since_input = self.steps_since_input.saturating_add(1);
         self.user_input_pending = false;
@@ -1318,8 +1328,10 @@ impl SessionState {
         }
     }
 
-    fn on_compacted(&mut self, c: CompactionCompleted) {
-        self.add_hidden(&c.usage, c.cost);
+    fn on_compacted(&mut self, c: CompactionCompleted, account_usage: bool) {
+        if account_usage {
+            self.add_hidden(&c.usage, c.cost);
+        }
         // An empty tail (the newest entry alone exceeded the budget) points past the end.
         let tail_start = match c.tail_start_id.as_str() {
             "" => self.entries.len(),

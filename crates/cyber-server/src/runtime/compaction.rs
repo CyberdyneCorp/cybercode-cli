@@ -271,7 +271,7 @@ impl Inner {
             .summarize(&state, tail, instructions.as_deref(), &model)
             .await
         {
-            Ok((summary, usage, cost)) => {
+            Ok((summary, usage, cost, receipts)) => {
                 let before = self.history_tokens(&state);
                 let after = (summary.len() / 4) as u64
                     + state.entries[tail..]
@@ -294,8 +294,9 @@ impl Inner {
                     cost,
                     model: Some(model.clone()),
                 };
-                self.commit(handle, vec![event(COMPACTION_COMPLETED, &payload)])
-                    .await?;
+                let mut completed = event(COMPACTION_COMPLETED, &payload);
+                super::reservations::mark_accounted(&mut completed, &receipts);
+                self.commit(handle, vec![completed]).await?;
                 self.observe_budget(handle).await?;
                 self.post_compact(handle, trigger, (before, after)).await;
                 Ok(())
@@ -313,7 +314,11 @@ impl Inner {
                 .await?;
                 if matches!(
                     &error,
-                    RuntimeError::BudgetExceeded { .. } | RuntimeError::Store(_)
+                    RuntimeError::BudgetExceeded { .. }
+                        | RuntimeError::BudgetUnpriced { .. }
+                        | RuntimeError::BudgetBoundUnavailable(_)
+                        | RuntimeError::BudgetUncertain { .. }
+                        | RuntimeError::Store(_)
                 ) {
                     Err(error)
                 } else {
@@ -341,7 +346,7 @@ impl Inner {
         tail: usize,
         instructions: Option<&str>,
         model: &str,
-    ) -> Result<(String, cyber_llm::Usage, Option<f64>), RuntimeError> {
+    ) -> Result<(String, cyber_llm::Usage, Option<f64>, Vec<String>), RuntimeError> {
         let resolved = self
             .resolver
             .resolve(model)
@@ -359,7 +364,7 @@ impl Inner {
         request.initiator = Some(cyber_llm::Initiator::Agent);
         let handle = self.handle(&state.info.id).await?;
         self.check_budget(&handle).await?;
-        let gated = super::budget::GatedAdapter::new(self, &handle, resolved.adapter.as_ref());
+        let gated = super::budget::GatedAdapter::new(self, &handle, &resolved, "compaction");
         let stream = open_with_retry(&gated, &request, &self.options.retry, |_, _, _| {})
             .await
             .map_err(|error| {
@@ -367,14 +372,19 @@ impl Inner {
                     .take_error()
                     .unwrap_or_else(|| RuntimeError::Compaction(error.to_string()))
             })?;
-        let out = collect(stream, |_| {})
-            .await
-            .map_err(|e| RuntimeError::Compaction(e.to_string()))?;
+        let result = collect(stream, |_| {}).await;
+        gated.flush().await?;
+        let out = result.map_err(|e| RuntimeError::Compaction(e.to_string()))?;
         if out.text.trim().is_empty() {
             return Err(RuntimeError::Compaction("the summary was empty".into()));
         }
         let cost = compute_cost(resolved.cost.as_ref(), &out.usage);
-        Ok((out.text.trim().to_string(), out.usage, cost))
+        Ok((
+            out.text.trim().to_string(),
+            out.usage,
+            cost,
+            gated.request_ids(),
+        ))
     }
 }
 
