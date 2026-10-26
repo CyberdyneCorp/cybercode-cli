@@ -63,6 +63,20 @@ def environment_metadata() -> dict:
             "hidden_test": digest(HIDDEN),
         },
     }
+    for tool in ["mkdir", "rmdir", "rm", "ps"]:
+        executable = shutil.which(tool)
+        version = subprocess.run(
+            [tool, "--version"], capture_output=True, text=True, timeout=10
+        )
+        metadata[tool] = {
+            "executable": executable,
+            "resolved": str(Path(executable).resolve()) if executable else None,
+            "version": (
+                version.stdout.splitlines()[0]
+                if version.stdout
+                else version.stderr.splitlines()[:1]
+            ),
+        }
     for label, path in [
         ("kernel_pid_max", "/proc/sys/kernel/pid_max"),
         ("cgroup_pids_max", "/sys/fs/cgroup/pids.max"),
@@ -151,6 +165,7 @@ def unchanged_test(
                                 ".lock" in line
                                 or "execve(" in line
                                 or "exited with" in line
+                                or "resumed>" in line
                             ):
                                 line = log_text(line, temporary)
                                 written += len(line.encode())
