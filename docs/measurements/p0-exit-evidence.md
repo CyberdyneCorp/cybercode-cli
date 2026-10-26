@@ -81,3 +81,7 @@ OpenAI and Anthropic live baselines, recovery/trust tests, full backup/verify/re
 ## Validation
 
 `cargo test --workspace`: 326 passed, no failures; the hardware workload probe is ignored by default and run separately. Workspace formatting and Clippy with warnings denied pass. `openspec validate --all --strict`: 56 passed. Spec lint has zero errors. The Python cognitive-complexity analyzer reports a maximum of 9 per function for the startup probe.
+
+## Hosted ChatGPT pilot (2026-10-25–26 UTC)
+
+A separate [pilot using the same requested model](gpt61-sol-chatgpt-pilot.md) ran all 20 standard and 20 hard tasks once in each harness with GPT-6.1 Sol at medium effort. Cyber scored 19/20 standard and 17/20 hard; Codex CLI scored 20/20 and 17/20. Infrastructure failures remain in the denominators. The report preserves task-level outcomes, native usage, the shared table-contract review point and the limits from different account/workspace IDs and native settings. This hosted single-trial comparison does not close the local-model or repeated release-baseline gates above.

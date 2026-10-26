@@ -1,0 +1,52 @@
+{
+  "status": "complete",
+  "summaries": [
+    {
+      "harness": "cyber",
+      "suite": "suite-coding-v1",
+      "attempted": 20,
+      "passed": 19,
+      "infrastructure_failures": 1,
+      "grader_failures": 0,
+      "median_native_latency_seconds": 53.537209000000004,
+      "dollar_cost": null
+    },
+    {
+      "harness": "cyber",
+      "suite": "suite-coding-hard-v1",
+      "attempted": 20,
+      "passed": 17,
+      "infrastructure_failures": 1,
+      "grader_failures": 2,
+      "median_native_latency_seconds": 132.40590214600002,
+      "dollar_cost": null
+    },
+    {
+      "harness": "codex",
+      "suite": "suite-coding-v1",
+      "attempted": 20,
+      "passed": 20,
+      "infrastructure_failures": 0,
+      "grader_failures": 0,
+      "median_native_latency_seconds": 44.53461735451128,
+      "dollar_cost": null
+    },
+    {
+      "harness": "codex",
+      "suite": "suite-coding-hard-v1",
+      "attempted": 20,
+      "passed": 17,
+      "infrastructure_failures": 2,
+      "grader_failures": 1,
+      "median_native_latency_seconds": 155.9627488955157,
+      "dollar_cost": null
+    }
+  ],
+  "original_private_report_sha256": {
+    "cyber-standard.json": "2fe3b0f61947d51d491f3270d57717af6befe0721abe3b3e75d1f275d8a4b0c9",
+    "cyber-hard.json": "fe029e085fdd2c822846f2fcf13531a04a96c703be8437af50aa61acb5fcc665",
+    "codex-standard.json": "65e451531141849e2018759d54853334920c84745f5f557af8424306cbaac209",
+    "codex-hard.json": "c0b767214a9d460089a33273c90eef4f047ca52a189e7cb065f365b340b7a2da"
+  },
+  "published_redactions": "Local directory prefixes only; numeric outcomes unchanged. Raw transcripts, environment and auth files omitted."
+}

@@ -1,0 +1,11 @@
+import json,subprocess,time
+from pathlib import Path
+r=Path('<benchmark-root>');env=json.loads((r/'environment.json').read_text())
+for suite in ['suite-coding-v1','suite-coding-hard-v1']:
+ out=r/'results'/('cyber-'+suite);out.mkdir(parents=True,exist_ok=True)
+ cmd=[str(r/'bin/cyber'),'eval','run','<repo>/eval/manifests/'+suite+'.json','--model','chatgpt/gpt-6.1-sol#medium','--trials','1','--jobs','1','--output',str(out),'--keep-workspaces']
+ (out/'command.json').write_text(json.dumps(cmd,indent=2)+'\n')
+ print('START',suite,flush=True)
+ with open(out/'run.log','w') as log:p=subprocess.run(cmd,env=env,cwd=r/'home',stdout=log,stderr=subprocess.STDOUT)
+ print('END',suite,'exit',p.returncode,flush=True)
+ if p.returncode:break

@@ -1,0 +1,22 @@
+{
+  "task": "fix-unicode-table",
+  "input": {
+    "rows": [],
+    "headers": null,
+    "max_width": 38,
+    "align": [
+      "center",
+      "right",
+      "center",
+      "center"
+    ],
+    "overflow": "wrap"
+  },
+  "observed": {
+    "cyber": "ValueError",
+    "codex": "ValueError"
+  },
+  "oracle": "empty string",
+  "review": "Clarify precedence of the README empty-table rule and per-column alignment validation before using this case as release-quality evidence. No fixture/grader change or score adjustment was made.",
+  "method": "Reproduced on diagnostic copies after both candidates finished; no feedback sent to either candidate."
+}

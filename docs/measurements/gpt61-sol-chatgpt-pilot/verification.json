@@ -1,0 +1,11 @@
+{
+  "completed_scored_attempts": 80,
+  "unique_csv_rows": 80,
+  "eval_input_files_unchanged": 505,
+  "cyber_binary_hashes_unchanged": true,
+  "codex_binary_hashes_unchanged": true,
+  "published_reports_equal_original_except_directory_prefixes": true,
+  "json_and_relative_links_valid": true,
+  "private_content_check_passed": true,
+  "verified_at_utc": "2026-10-26T02:29:47.237628+00:00"
+}

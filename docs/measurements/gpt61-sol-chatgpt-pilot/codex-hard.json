@@ -1,0 +1,466 @@
+{
+  "schema_version": 1,
+  "runner": "one-off Codex CLI benchmark adapter",
+  "codex_version": "0.163.0",
+  "model": "gpt-6.1-sol",
+  "effort": "medium",
+  "suite": "suite-coding-hard-v1",
+  "manifest_sha256": "d301df3feb57e8faf2853710e895e15822bd15a13e5cbd1351ed1cfd6fb5483f",
+  "trials_per_task": 1,
+  "jobs": 1,
+  "started_epoch": 1792974790.3031502,
+  "results": [
+    {
+      "task": "debug-billing-proration",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "exit_code": 0,
+      "latency_seconds": 109.46594570798334,
+      "tokens_reported": {
+        "input_tokens": 274206,
+        "cached_input_tokens": 250624,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 5683,
+        "reasoning_output_tokens": 553
+      },
+      "cost_usd": null,
+      "unpriced": true,
+      "tool_items": 14,
+      "grader_exit": 0,
+      "grader_tail": "PASS\n",
+      "errors": []
+    },
+    {
+      "task": "debug-event-replay",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "exit_code": 0,
+      "latency_seconds": 153.46157849999145,
+      "tokens_reported": {
+        "input_tokens": 365803,
+        "cached_input_tokens": 341248,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 9153,
+        "reasoning_output_tokens": 664
+      },
+      "cost_usd": null,
+      "unpriced": true,
+      "tool_items": 11,
+      "grader_exit": 0,
+      "grader_tail": "PASS\n",
+      "errors": []
+    },
+    {
+      "task": "fix-unicode-table",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "exit_code": 0,
+      "latency_seconds": 113.56502766697668,
+      "tokens_reported": {
+        "input_tokens": 238933,
+        "cached_input_tokens": 221952,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 5301,
+        "reasoning_output_tokens": 596
+      },
+      "cost_usd": null,
+      "unpriced": true,
+      "tool_items": 10,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_tables (hidden_test_termtable.DifferentialTest.test_tables)\nFAIL\n",
+      "errors": []
+    },
+    {
+      "task": "feat-incremental-indexer",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "exit_code": 0,
+      "latency_seconds": 93.72724891698454,
+      "tokens_reported": {
+        "input_tokens": 227583,
+        "cached_input_tokens": 207104,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 5059,
+        "reasoning_output_tokens": 298
+      },
+      "cost_usd": null,
+      "unpriced": true,
+      "tool_items": 9,
+      "grader_exit": 0,
+      "grader_tail": "PASS\n",
+      "errors": []
+    },
+    {
+      "task": "impl-expr-evaluator",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "exit_code": 0,
+      "latency_seconds": 228.17013437498827,
+      "tokens_reported": {
+        "input_tokens": 454070,
+        "cached_input_tokens": 423168,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 14434,
+        "reasoning_output_tokens": 1479
+      },
+      "cost_usd": null,
+      "unpriced": true,
+      "tool_items": 15,
+      "grader_exit": 0,
+      "grader_tail": "PASS\n",
+      "errors": []
+    },
+    {
+      "task": "perf-sessionize",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "exit_code": 0,
+      "latency_seconds": 125.24641833396163,
+      "tokens_reported": {
+        "input_tokens": 295503,
+        "cached_input_tokens": 275840,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 5338,
+        "reasoning_output_tokens": 812
+      },
+      "cost_usd": null,
+      "unpriced": true,
+      "tool_items": 10,
+      "grader_exit": 0,
+      "grader_tail": "PASS\n",
+      "errors": []
+    },
+    {
+      "task": "refactor-exporter-registry",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "exit_code": 0,
+      "latency_seconds": 195.88384024996776,
+      "tokens_reported": {
+        "input_tokens": 538383,
+        "cached_input_tokens": 512896,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 10932,
+        "reasoning_output_tokens": 936
+      },
+      "cost_usd": null,
+      "unpriced": true,
+      "tool_items": 17,
+      "grader_exit": 0,
+      "grader_tail": "PASS\n",
+      "errors": []
+    },
+    {
+      "task": "tests-cron-mutation",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "exit_code": 0,
+      "latency_seconds": 158.46391929103993,
+      "tokens_reported": {
+        "input_tokens": 253791,
+        "cached_input_tokens": 240128,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 7701,
+        "reasoning_output_tokens": 934
+      },
+      "cost_usd": null,
+      "unpriced": true,
+      "tool_items": 10,
+      "grader_exit": 0,
+      "grader_tail": "PASS\n",
+      "errors": []
+    },
+    {
+      "task": "fix-cursor-pagination",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "exit_code": 0,
+      "latency_seconds": 117.27650579193141,
+      "tokens_reported": {
+        "input_tokens": 260097,
+        "cached_input_tokens": 237056,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 6959,
+        "reasoning_output_tokens": 1025
+      },
+      "cost_usd": null,
+      "unpriced": true,
+      "tool_items": 11,
+      "grader_exit": 0,
+      "grader_tail": "PASS\n",
+      "errors": []
+    },
+    {
+      "task": "impl-patch-apply",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "exit_code": 0,
+      "latency_seconds": 121.07417770894244,
+      "tokens_reported": {
+        "input_tokens": 313220,
+        "cached_input_tokens": 294400,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 8392,
+        "reasoning_output_tokens": 465
+      },
+      "cost_usd": null,
+      "unpriced": true,
+      "tool_items": 14,
+      "grader_exit": 0,
+      "grader_tail": "PASS\n",
+      "errors": []
+    },
+    {
+      "task": "impl-dep-resolver",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "exit_code": 0,
+      "latency_seconds": 574.9606322080363,
+      "tokens_reported": {
+        "input_tokens": 344371,
+        "cached_input_tokens": 324224,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 13698,
+        "reasoning_output_tokens": 1638
+      },
+      "cost_usd": null,
+      "unpriced": true,
+      "tool_items": 13,
+      "grader_exit": 0,
+      "grader_tail": "PASS\n",
+      "errors": []
+    },
+    {
+      "task": "impl-template-engine",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "exit_code": 0,
+      "latency_seconds": 132.0777462500846,
+      "tokens_reported": {
+        "input_tokens": 175681,
+        "cached_input_tokens": 159744,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 6888,
+        "reasoning_output_tokens": 507
+      },
+      "cost_usd": null,
+      "unpriced": true,
+      "tool_items": 9,
+      "grader_exit": 0,
+      "grader_tail": "PASS\n",
+      "errors": []
+    },
+    {
+      "task": "perf-leaderboard",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "exit_code": 0,
+      "latency_seconds": 504.57713408290874,
+      "tokens_reported": {
+        "input_tokens": 272403,
+        "cached_input_tokens": 252160,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 8961,
+        "reasoning_output_tokens": 844
+      },
+      "cost_usd": null,
+      "unpriced": true,
+      "tool_items": 12,
+      "grader_exit": 0,
+      "grader_tail": "PASS\n",
+      "errors": []
+    },
+    {
+      "task": "refactor-callbacks-async",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": true,
+      "stop_reason": "error",
+      "exit_code": 1,
+      "latency_seconds": 272.05910270800814,
+      "tokens_reported": null,
+      "cost_usd": null,
+      "unpriced": true,
+      "tool_items": 22,
+      "grader_exit": null,
+      "grader_tail": "",
+      "errors": [
+        {
+          "type": "error",
+          "message": "Selected model is at capacity. Please try a different model."
+        },
+        {
+          "type": "turn.failed",
+          "error": {
+            "message": "Selected model is at capacity. Please try a different model."
+          }
+        }
+      ]
+    },
+    {
+      "task": "tests-lru-mutation",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "exit_code": 0,
+      "latency_seconds": 87.7952553340001,
+      "tokens_reported": {
+        "input_tokens": 127288,
+        "cached_input_tokens": 110336,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 7689,
+        "reasoning_output_tokens": 313
+      },
+      "cost_usd": null,
+      "unpriced": true,
+      "tool_items": 9,
+      "grader_exit": 0,
+      "grader_tail": "PASS\n",
+      "errors": []
+    },
+    {
+      "task": "fix-job-queue",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "exit_code": 0,
+      "latency_seconds": 183.0883641249966,
+      "tokens_reported": {
+        "input_tokens": 252503,
+        "cached_input_tokens": 209024,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 7104,
+        "reasoning_output_tokens": 1388
+      },
+      "cost_usd": null,
+      "unpriced": true,
+      "tool_items": 9,
+      "grader_exit": 0,
+      "grader_tail": "PASS\n",
+      "errors": []
+    },
+    {
+      "task": "fix-shell-log-report",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "exit_code": 0,
+      "latency_seconds": 220.55274604202714,
+      "tokens_reported": {
+        "input_tokens": 224375,
+        "cached_input_tokens": 194688,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 10084,
+        "reasoning_output_tokens": 1226
+      },
+      "cost_usd": null,
+      "unpriced": true,
+      "tool_items": 13,
+      "grader_exit": 0,
+      "grader_tail": "PASS\n",
+      "errors": []
+    },
+    {
+      "task": "fix-shell-kv-store",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "exit_code": 0,
+      "latency_seconds": 548.7376142910216,
+      "tokens_reported": {
+        "input_tokens": 545325,
+        "cached_input_tokens": 517888,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 20764,
+        "reasoning_output_tokens": 4358
+      },
+      "cost_usd": null,
+      "unpriced": true,
+      "tool_items": 15,
+      "grader_exit": 0,
+      "grader_tail": "PASS\n",
+      "errors": []
+    },
+    {
+      "task": "build-ledger-cli",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "exit_code": 0,
+      "latency_seconds": 505.23917887499556,
+      "tokens_reported": {
+        "input_tokens": 859534,
+        "cached_input_tokens": 836224,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 19988,
+        "reasoning_output_tokens": 3195
+      },
+      "cost_usd": null,
+      "unpriced": true,
+      "tool_items": 37,
+      "grader_exit": 0,
+      "grader_tail": "PASS\n",
+      "errors": []
+    },
+    {
+      "task": "build-minimake",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": true,
+      "stop_reason": "error",
+      "exit_code": 1,
+      "latency_seconds": 75.68198945897166,
+      "tokens_reported": null,
+      "cost_usd": null,
+      "unpriced": true,
+      "tool_items": 2,
+      "grader_exit": null,
+      "grader_tail": "",
+      "errors": [
+        {
+          "type": "error",
+          "message": "Selected model is at capacity. Please try a different model."
+        },
+        {
+          "type": "turn.failed",
+          "error": {
+            "message": "Selected model is at capacity. Please try a different model."
+          }
+        }
+      ]
+    }
+  ],
+  "completed_tasks": 20,
+  "planned_tasks": 20
+}

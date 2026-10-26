@@ -1,0 +1,50 @@
+import json,os,shutil,signal,subprocess,time,hashlib
+from pathlib import Path
+R=Path('<benchmark-root>');REPO=Path('<repo>')
+ENV=json.loads((R/'codex-environment.json').read_text());BASE=json.loads((R/'codex-command-base.json').read_text())
+BASE += ['-c','sandbox_workspace_write.exclude_slash_tmp=true']
+
+def stop(p):
+    try:os.killpg(p.pid,signal.SIGTERM)
+    except ProcessLookupError:pass
+    try:p.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        os.killpg(p.pid,signal.SIGKILL);p.wait(timeout=10)
+
+for suite in ['suite-coding-v1','suite-coding-hard-v1']:
+    manifest_path=REPO/'eval/manifests'/f'{suite}.json';manifest=json.loads(manifest_path.read_text())
+    out=R/'results'/f'codex-{suite}';out.mkdir(parents=True,exist_ok=True);(out/'trials').mkdir(exist_ok=True)
+    results=[];started=time.time()
+    for i,task in enumerate(manifest['tasks']):
+        tid=task['id'];workspace=out/'workspaces'/tid;shutil.copytree(REPO/task['fixture']['path'],workspace)
+        env=ENV.copy();tmp=R/'codex-tmp'/tid;tmp.mkdir(parents=True,exist_ok=True);env['TMPDIR']=str(tmp)
+        for args in [['init','-q'],['add','-A'],['-c','user.name=eval','-c','user.email=eval@cyber','-c','maintenance.auto=false','commit','-qm','fixture']]:
+            subprocess.run(['git','-C',str(workspace),*args],env=env,check=True,capture_output=True)
+        cmd=BASE+['--cd',str(workspace),task['prompt']]
+        trial=out/'trials'/tid;trial.mkdir(exist_ok=True);(trial/'command.json').write_text(json.dumps(cmd,indent=2)+'\n')
+        begin=time.monotonic();timed_out=False
+        with open(trial/'events.jsonl','w') as log,open(trial/'stderr.log','w') as err:
+            p=subprocess.Popen(cmd,env=env,cwd=workspace,stdin=subprocess.DEVNULL,stdout=log,stderr=err,start_new_session=True)
+            try:code=p.wait(timeout=min(task['timeout_seconds'],task['budget'].get('max_wall_seconds',task['timeout_seconds'])))
+            except subprocess.TimeoutExpired:timed_out=True;stop(p);code=p.returncode
+        latency=time.monotonic()-begin;events=[]
+        for line in (trial/'events.jsonl').read_text().splitlines():
+            try:events.append(json.loads(line))
+            except json.JSONDecodeError:pass
+        completed=[e for e in events if e.get('type')=='turn.completed'];errors=[e for e in events if e.get('type') in ['turn.failed','error']]
+        infra=(code!=0 and not timed_out) or bool(errors) or (not completed and not timed_out)
+        usage=completed[-1].get('usage') if completed else None
+        result={'task':tid,'trial':1,'passed':False,'infrastructure_failure':infra,'stop_reason':'timeout' if timed_out else 'error' if infra else 'end_turn','exit_code':code,'latency_seconds':latency,'tokens_reported':usage,'cost_usd':None,'unpriced':True,'tool_items':sum(e.get('type')=='item.completed' and e.get('item',{}).get('type') in ['command_execution','file_change','mcp_tool_call'] for e in events),'grader_exit':None,'grader_tail':'','errors':errors}
+        if not infra:
+            gd=REPO/task['grading']['grader_dir'];grade=[a.replace('{grader_dir}',str(gd)).replace('{workspace}',str(workspace)) for a in task['grading']['command']]
+            try:
+                g=subprocess.run(grade,env=ENV,cwd=REPO,capture_output=True,text=True,timeout=task['timeout_seconds'])
+                text=g.stdout+g.stderr;(trial/'grader.log').write_text(text);result.update(passed=g.returncode==0,grader_exit=g.returncode,grader_tail=text[-4000:])
+            except subprocess.TimeoutExpired:result.update(infrastructure_failure=True,grader_tail='grader timeout')
+        (out/'trials'/f'{tid}-1.json').write_text(json.dumps(result,indent=2)+'\n');results.append(result)
+        report={'schema_version':1,'runner':'one-off Codex CLI benchmark adapter','codex_version':'0.163.0','model':'gpt-6.1-sol','effort':'medium','suite':suite,'manifest_sha256':hashlib.sha256(manifest_path.read_bytes()).hexdigest(),'trials_per_task':1,'jobs':1,'started_epoch':started,'results':results,'completed_tasks':len(results),'planned_tasks':len(manifest['tasks'])}
+        (out/'report.json').write_text(json.dumps(report,indent=2)+'\n')
+        print(f'{suite} [{i+1}/{len(manifest["tasks"])}] {tid}: '+('INFRA' if result['infrastructure_failure'] else 'PASS' if result['passed'] else 'FAIL')+f' ({latency:.0f}s)',flush=True)
+        if infra and len(results)<=2:
+            print('Stopping on early infrastructure failure; preserve evidence before continuing.',flush=True);raise SystemExit(2)
+    print('END',suite,'passed',sum(x['passed'] for x in results),'/',len(results),flush=True)

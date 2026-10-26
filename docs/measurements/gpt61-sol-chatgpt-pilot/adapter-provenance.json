@@ -1,0 +1,51 @@
+{
+  "snapshots": {
+    "run-cyber.py": {
+      "measured_source_sha256": "b198f3937ecdd6274f7735973923dd945a8d001f270a3eccb21c55edc49d5e5c",
+      "published_snapshot": "run-cyber.py.txt",
+      "snapshot_sha256": "e377b5b6b8c8788bc2fb2e21ee4020f6d163a22583eb44a12545a81ca3cd5bfb",
+      "redactions": "Two local directory prefixes replaced with placeholders. Snapshot is experiment evidence, not a supported standalone CLI."
+    },
+    "run-codex.py": {
+      "measured_source_sha256": "ddebf7bf9310fe4742c4afb26cb8c4a27b61123415cb7b7882f956977af9fd6a",
+      "published_snapshot": "run-codex.py.txt",
+      "snapshot_sha256": "09fad87be13ca8fa6a57163a3739bd0e5f2de82bea0b9db30e693ec547a69dfe",
+      "redactions": "Two local directory prefixes replaced with placeholders. Snapshot is experiment evidence, not a supported standalone CLI."
+    }
+  },
+  "codex_base_options": [
+    "codex",
+    "exec",
+    "--ignore-user-config",
+    "--ignore-rules",
+    "--ephemeral",
+    "--json",
+    "--color",
+    "never",
+    "--sandbox",
+    "workspace-write",
+    "--model",
+    "gpt-6.1-sol",
+    "-c",
+    "approval_policy=\"never\"",
+    "-c",
+    "model_reasoning_effort=\"medium\"",
+    "-c",
+    "project_doc_max_bytes=0",
+    "-c",
+    "features.apps=false",
+    "-c",
+    "features.plugins=false",
+    "-c",
+    "features.hooks=false",
+    "-c",
+    "features.memories=false",
+    "-c",
+    "web_search=\"disabled\"",
+    "-c",
+    "sandbox_workspace_write.network_access=false",
+    "-c",
+    "skills.config=<all discovered personal skill folders disabled>"
+  ],
+  "disabled_skill_folder_count": 128
+}
