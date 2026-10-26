@@ -493,3 +493,25 @@ async fn another_pr_worker_does_not_consume_a_queued_attempts_time_allowance() {
     server.abort();
     f.controller.runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn queued_subscription_respects_backoff_without_querying_credentials() {
+    let f = Fixture::new().await;
+    let mut s = f.subscription();
+    s.backoff_until_ms = Some(now() + 60_000);
+    s.enqueue(
+        vec![cyber_core::autofix::Trigger {
+            key: "waiting".into(),
+            head: f.head.clone(),
+            kind: cyber_core::autofix::TriggerKind::CheckFailure,
+            text: "queued".into(),
+        }],
+        &f.head,
+    )
+    .unwrap();
+    f.controller.records.create(s).unwrap();
+    assert!(f.controller.claim_next().await.unwrap().is_none());
+    assert!(f.controller.github.get().is_none());
+    assert!(f.model.requests().is_empty());
+    f.controller.runtime.shutdown().await;
+}

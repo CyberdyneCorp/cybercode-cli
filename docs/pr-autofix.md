@@ -2,7 +2,7 @@
 
 PR auto-fix watches an explicitly subscribed GitHub pull request, queues failed CI or new review feedback, and attempts a verified fix in an isolated checkout. It pushes a fix commit to the PR branch and waits for CI on that exact commit. It never merges the PR.
 
-**Development status:** experimental implementation on the auto-fix feature branch; validation and live GitHub acceptance are pending. The broader P3 GitHub App, fork writes and cloud Runner failover remain planned.
+**Development status:** experimental implementation with [local tests and controlled macOS acceptance](implementation/pr-autofix.md). Platform CI is tracked on the current PR; live GitHub mutation acceptance remains pending. The broader P3 GitHub App, fork writes and cloud Runner failover remain planned.
 
 ## Requirements
 
@@ -94,4 +94,4 @@ Pinned verification paths are read-only during verification as well as protected
 
 The verifier uses the existing workspace-write sandbox with known credential stores, broker IPC, custom config/state and sibling attempts hidden. It is not a fully hermetic filesystem and cannot identify arbitrary secrets in arbitrary files. Offline checks may fail when dependencies or hidden user configuration are required.
 
-Live GitHub mutation, platform acceptance and CI evidence must be recorded before treating this feature as merge-ready. See the [OpenSpec tasks](../openspec/changes/implement-pr-autofix-subscriptions/tasks.md).
+Live GitHub mutation acceptance remains pending, so this first release stays experimental. Current CI and local acceptance evidence are recorded separately. See the [OpenSpec tasks](../openspec/changes/implement-pr-autofix-subscriptions/tasks.md).
