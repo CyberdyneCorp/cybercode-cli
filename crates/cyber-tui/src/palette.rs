@@ -89,6 +89,12 @@ const BUILTINS: &[(&str, &str, Option<&str>, bool)] = &[
         true,
     ),
     (
+        "autofix",
+        "bounded PR auto-fix: on {JSON settings}, status, pause, resume, off",
+        None,
+        true,
+    ),
+    (
         "loop",
         "repeat a prompt on an interval (or self-paced); list, stop",
         None,

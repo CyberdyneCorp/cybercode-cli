@@ -46,11 +46,15 @@ pub(crate) fn materialize_tools(
 
 impl ToolHost for AppHost {
     fn open_location(&self, info: &cyber_server::runtime::SessionInfo) {
-        self.builtin.open_location(info);
+        if !self.builtin.is_autofix_session(&info.id) {
+            self.builtin.open_location(info);
+        }
     }
 
     fn refresh_location(&self, info: &cyber_server::runtime::SessionInfo) {
-        self.builtin.refresh_location(info);
+        if !self.builtin.is_autofix_session(&info.id) {
+            self.builtin.refresh_location(info);
+        }
     }
 
     fn wait_for_required_mcp(
@@ -58,6 +62,9 @@ impl ToolHost for AppHost {
         info: &cyber_server::runtime::SessionInfo,
         cancel: CancellationToken,
     ) -> BoxFuture<'_, Result<(), cyber_server::runtime::RuntimeError>> {
+        if self.builtin.is_autofix_session(&info.id) {
+            return Box::pin(async { Ok(()) });
+        }
         self.builtin.wait_for_required_mcp(info, cancel)
     }
 
@@ -266,10 +273,26 @@ impl ToolHost for AppHost {
     }
 
     fn definitions(&self, turn: &TurnContext) -> Vec<ToolDef> {
+        if self.builtin.is_autofix_session(&turn.session_id) {
+            return self
+                .builtin
+                .definitions(turn)
+                .into_iter()
+                .filter(|d| cyber_tools::autofix_allowed_tool(&d.spec.name))
+                .collect();
+        }
         materialize_tools(&self.builtin, &self.remote, turn)
     }
 
     fn execute(&self, call: Invocation, cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome> {
+        if self.builtin.is_autofix_session(&call.session_id) {
+            if !cyber_tools::autofix_allowed_tool(&call.name) {
+                return Box::pin(async {
+                    ToolOutcome::Failed("auto-fix permits file tools only".into())
+                });
+            }
+            return self.builtin.execute(call, cancel);
+        }
         if self.remote.has(&call.name) {
             let Some(definition) = self
                 .remote
@@ -298,6 +321,9 @@ impl ToolHost for AppHost {
         event: cyber_server::runtime::LifecycleHook,
         cancel: CancellationToken,
     ) -> BoxFuture<'_, Result<cyber_server::runtime::LifecycleVerdict, String>> {
+        if self.builtin.is_autofix_session(&event.session_id) {
+            return Box::pin(async { Ok(Default::default()) });
+        }
         self.builtin.lifecycle_hooks(event, cancel)
     }
 
@@ -436,6 +462,9 @@ impl ToolHost for AppHost {
     }
 
     fn context_sources(&self, turn: &TurnContext) -> BTreeMap<String, String> {
+        if self.builtin.is_autofix_session(&turn.session_id) {
+            return BTreeMap::new();
+        }
         self.builtin
             .context_sources_for_tools(turn, &self.definitions(turn))
     }
@@ -444,6 +473,9 @@ impl ToolHost for AppHost {
         &self,
         turn: &TurnContext,
     ) -> BTreeMap<String, cyber_server::runtime::ContextObservation> {
+        if self.builtin.is_autofix_session(&turn.session_id) {
+            return BTreeMap::new();
+        }
         self.builtin
             .context_observations_for_tools(turn, &self.definitions(turn))
     }
@@ -453,6 +485,9 @@ impl ToolHost for AppHost {
         turn: &'a TurnContext,
     ) -> BoxFuture<'a, BTreeMap<String, cyber_server::runtime::ContextObservation>> {
         Box::pin(async move {
+            if self.builtin.is_autofix_session(&turn.session_id) {
+                return BTreeMap::new();
+            }
             self.builtin
                 .context_observations_owned_for_tools(turn, &self.definitions(turn))
                 .await

@@ -15,6 +15,8 @@ mod workflow_prepare;
 mod workflow_publication;
 mod workflow_solve;
 
+pub mod autofix;
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
@@ -641,6 +643,9 @@ impl BuiltinHost {
             Default::default()
         };
         rules.extend(inherited.rules);
+        if self.is_autofix_session(&inv.session_id) {
+            rules.extend(self.autofix_rules(&location));
+        }
         let ownership = inherited.ownership;
         let mut parent_modes = inherited.modes;
         if agent == Some("reviewer") {
@@ -1278,6 +1283,10 @@ impl ToolHost for BuiltinHost {
                 };
             }
             let mut inv = inv;
+            let restricted = self.is_autofix_session(&inv.session_id);
+            if restricted && !autofix::allowed_tool(&inv.name) {
+                return ToolOutcome::Failed("auto-fix permits file tools only".into());
+            }
             if let Err(error) = inv.asker.validate_auto_override(&inv.name, &inv.input) {
                 return ToolOutcome::Failed(error.to_string());
             }
@@ -1304,13 +1313,17 @@ impl ToolHost for BuiltinHost {
                     message
                 });
             }
-            let hook_decision = match self
-                .pre_tool_hooks(&mut inv, &tool.def().spec.input_schema, cancel.clone())
-                .await
-            {
-                Ok(allowed) => allowed,
-                Err(ToolError::Failed(error)) => return ToolOutcome::Failed(error),
-                Err(ToolError::Aborted) => return ToolOutcome::Aborted,
+            let hook_decision = if restricted {
+                None
+            } else {
+                match self
+                    .pre_tool_hooks(&mut inv, &tool.def().spec.input_schema, cancel.clone())
+                    .await
+                {
+                    Ok(allowed) => allowed,
+                    Err(ToolError::Failed(error)) => return ToolOutcome::Failed(error),
+                    Err(ToolError::Aborted) => return ToolOutcome::Aborted,
+                }
             };
             let started = std::time::Instant::now();
             let ctx = match self
@@ -1727,6 +1740,9 @@ impl BuiltinHost {
         outcome: ToolOutcome,
         started: std::time::Instant,
     ) -> ToolOutcome {
+        if self.is_autofix_session(&ctx.inv.session_id) {
+            return outcome;
+        }
         match self
             .post_tool_hooks(ctx.inv, &outcome, started, ctx.cancel.clone())
             .await

@@ -960,6 +960,7 @@ pub async fn perform_owned(
         Action::ComputerStatus
         | Action::ComputerStop
         | Action::Loop(_)
+        | Action::Autofix(_)
         | Action::Goal(_)
         | Action::Workflow(_)
         | Action::Team(_)
@@ -993,6 +994,7 @@ async fn scheduled(client: &Client, session: &Session, action: Action) -> Result
         Action::Export(request) => crate::export::perform(client, request).await,
         Action::LoadUpdate => crate::update::perform(client).await,
         Action::Loop(request) => crate::loops::perform(client, request).await,
+        Action::Autofix(request) => crate::autofix::perform(client, request).await,
         Action::Team(request) => crate::team::perform(client, session, request).await,
         Action::Collaboration(request) => {
             crate::collaboration::perform(client, session, request).await

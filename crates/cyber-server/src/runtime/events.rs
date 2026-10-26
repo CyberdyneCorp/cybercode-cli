@@ -502,6 +502,7 @@ pub fn registry() -> EventRegistry {
                 .map_err(|e| e.to_string())
         })
         .expect("valid messaging override event");
+    crate::autofix::records::register(&mut registry);
     super::branches::register(&mut registry);
     super::budget::register(&mut registry);
     super::reservations::register(&mut registry);

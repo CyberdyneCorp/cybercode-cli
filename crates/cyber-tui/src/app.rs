@@ -200,6 +200,8 @@ pub enum Action {
     Workflow(crate::workflows::Request),
     /// `/loop` (`loops-scheduling`).
     Loop(crate::loops::LoopRequest),
+    /// Owner-only PR auto-fix controls.
+    Autofix(crate::autofix::Request),
     /// `/team`, `/team start|stop|resume` (`agent-teams`).
     Team(crate::team::Request),
     Collaboration(crate::collaboration::Request),
@@ -1749,6 +1751,7 @@ impl App {
         match name {
             "memory" => self.memory_command(args),
             "loop" => self.loop_command(args),
+            "autofix" => self.autofix_command(args),
             "team" => self.team_command(args),
             "goal" => self.goal_command(args),
             "login" => self.login_command(args),

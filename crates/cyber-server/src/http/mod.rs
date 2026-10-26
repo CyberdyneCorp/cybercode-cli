@@ -4,6 +4,7 @@
 //! transport mark each request with a [`Transport`], which decides authentication.
 
 pub mod account;
+pub mod autofix;
 mod branches;
 mod catalog;
 mod children;
@@ -185,6 +186,21 @@ pub struct LocationDefaults {
 
 /// What the server needs beyond the runtime: catalogs and Location-level lookups.
 pub trait Services: Send + Sync {
+    /// Owner opt-in to a self-hosted PR auto-fix subscription.
+    fn autofix_enable(
+        &self,
+        _directory: PathBuf,
+        _config: cyber_core::autofix::Config,
+        _key: String,
+    ) -> BoxFuture<'_, Result<cyber_core::autofix::Subscription, ApiError>> {
+        Box::pin(async {
+            Err(ApiError::service_unavailable(
+                "autofix",
+                "PR auto-fix is unavailable in this host",
+            ))
+        })
+    }
+
     fn collaboration(&self) -> Option<Arc<dyn collaboration::CollaborationService>> {
         None
     }
@@ -717,6 +733,7 @@ pub fn router(state: AppState) -> Router {
 pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router {
     let api = Router::new()
         .merge(sessions::routes())
+        .merge(autofix::routes())
         .merge(interactive::routes())
         .merge(computer::routes())
         .merge(export::routes())

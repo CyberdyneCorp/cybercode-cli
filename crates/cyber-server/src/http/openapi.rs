@@ -370,6 +370,14 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .status(201)
         .body::<super::workflows::StartBody>(g)
         .ok::<Data<crate::runtime::WorkflowRun>>(g),
+        op("get", "/autofix/subscriptions", "v1.autofix.list", "List this Location's durable PR auto-fix subscriptions")
+            .located().ok::<Data<Vec<cyber_core::autofix::Subscription>>>(g),
+        op("post", "/autofix/subscriptions", "v1.autofix.enable", "Opt in to bounded self-hosted PR auto-fix; requires Idempotency-Key")
+            .located().status(201).body::<cyber_core::autofix::Config>(g).ok::<Data<cyber_core::autofix::Subscription>>(g),
+        op("get", "/autofix/subscriptions/{id}", "v1.autofix.show", "Inspect PR auto-fix status, evidence and uncertainty")
+            .located().ok::<Data<cyber_core::autofix::Subscription>>(g),
+        op("post", "/autofix/subscriptions/{id}/control", "v1.autofix.control", "Pause, resume or disable an exact PR auto-fix revision")
+            .located().body::<super::autofix::Control>(g).ok::<Data<cyber_core::autofix::Subscription>>(g),
         op("post", "/workflows/integrations", "v1.workflow.integrationSubmit", "Pin an owner-selected contribution manifest without executing checks")
             .located().status(201).body::<super::integrations::IntegrationSubmit>(g).ok::<Data<crate::runtime::integrations::IntegrationBatch>>(g),
         op("get", "/workflows/integrations", "v1.workflow.integrationList", "List integration batches in this Location")

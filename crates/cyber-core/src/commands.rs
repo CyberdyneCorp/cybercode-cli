@@ -193,6 +193,7 @@ pub fn valid_name(name: &str) -> bool {
 
 /// Built-in slash commands handled by clients or the server.
 pub const BUILTIN: &[(&str, &str)] = &[
+    ("autofix", "Bounded self-hosted PR auto-fix controls"),
     ("compact", "Summarize older history to free context"),
     ("model", "Switch the model"),
     ("mode", "Switch the permission mode"),

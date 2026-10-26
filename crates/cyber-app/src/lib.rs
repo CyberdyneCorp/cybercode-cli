@@ -3,6 +3,7 @@
 //! Background service management, Listener defaults, Local password authentication).
 
 pub mod account;
+pub mod autofix;
 pub mod backup;
 pub mod collaboration;
 pub mod git_text;
