@@ -2841,6 +2841,7 @@ cyber eval [OPTIONS] <COMMAND>
 **Subcommands:**
 
 - [`run`](#cyber-eval-run): Run a coding manifest and write a report
+- [`prepare`](#cyber-eval-prepare): Download verified pinned source trees into a new isolated evaluation root
 
 ## `cyber eval run`
 
@@ -2856,13 +2857,27 @@ cyber eval run [OPTIONS] --output <OUTPUT> <MANIFEST>
 
 **Options:**
 
+- `--strategy <STRATEGY>`: Evaluate one Session or the separately graded bundled solve workflow. Values: `single`, `solve`. Default: `single`.
 - `--output <OUTPUT>`: Directory for report.json, report.md and per-trial logs.
 - `-m, --model <MODEL>`: Model as provider/model[#variant]; required for suites, overrides live manifests.
 - `--trials <TRIALS>`: Trials per task (the release baseline uses 3) Default: `3`.
+- `--trial-start <TRIAL_START>`: First trial identity, for predetermined interleaving across strategies. Default: `1`.
 - `--task <TASKS>`: Only these task IDs (repeatable)
 - `--jobs <JOBS>`: Trials run at the same time. Default: `4`.
 - `--keep-workspaces`: Keep trial workspaces under <output>/workspaces for inspection.
 
-### Reserved-budget diagnostics
+## `cyber eval prepare`
 
-Use `cyber api v1.budgets.reservations --param open_only=true` to inspect held request allocations. Audited owner settlement/release examples and provider limitations are in [Reserved budgets](reserved-budgets.md).
+Download verified pinned source trees into a new isolated evaluation root
+
+```text
+cyber eval prepare [OPTIONS] --output <OUTPUT> <CATALOG>
+```
+
+**Arguments:**
+
+- `<CATALOG>`
+
+**Options:**
+
+- `--output <OUTPUT>`: New directory; existing destinations are refused.

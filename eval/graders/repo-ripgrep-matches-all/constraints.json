@@ -1,0 +1,15 @@
+{
+  "Cargo.toml": "cd4c90231547716fd7a935289d7221376105c8112249cdc38af8075a2171d3d2",
+  "Cargo.lock": "824c6dc0c31b20e45c137255f18ab86cf9b10eef4a761f667b50052317679695",
+  "crates/searcher/Cargo.toml": "561cde7a7a58785749e4e5b2980bc285dfc96eb56f19ea3d929982b66fffcc1c",
+  "crates/globset/Cargo.toml": "f547f7255d0c852dd7589b73e48b071e730a7df911630abb4db70f60ac6a0ff1",
+  "crates/ignore/Cargo.toml": "f881ee7f30d9ca2bef189e6fcddb34ea0d7bd846ffbbb0d5ee22090684318bd5",
+  "crates/printer/Cargo.toml": "6edd8dcf4d1951b322267f2dda06069b39d1c04c202a5593b1d3cb6ea9b7b4ae",
+  "crates/cli/Cargo.toml": "b24e072950632ed43ab628602a8e4202a1e6dde4d62b3da4321692028c05cb16",
+  "crates/regex/Cargo.toml": "2da48951703c48138a063bcfc8cb5d5748f03c7fedf3443ed0d0bfde24a870e9",
+  "crates/matcher/Cargo.toml": "366590fa825704243df0a6a4f85da6b84efb76ba5758bb26406c493520c8c564",
+  "crates/grep/Cargo.toml": "6c23af13f11a36bf47d5ff3173d9ac61b91cd189466ac42305cd79d35c2156da",
+  "crates/pcre2/Cargo.toml": "2f0a5fc3a4a723acc6ec78c8a1194deae098cbf46899d64ecd1bb0fd1c50718a",
+  "fuzz/Cargo.toml": "b8948efb524b815c1311ed06643f72541d5f3366d83bbdad80029ed0dcfcc8ef",
+  "fuzz/Cargo.lock": "b6ee1b9ef968066415e092559b86212ea06150535f6463db9a6b0d4c2aa36ced"
+}

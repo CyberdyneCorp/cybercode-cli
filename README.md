@@ -6,6 +6,8 @@ A model-independent coding agent with a terminal UI, local web dashboard and dur
 
 Coding-quality evidence: [GPT-6.1 Sol / ChatGPT pilot](docs/measurements/gpt61-sol-chatgpt-pilot.md), with measured outcomes and comparison limits; [stream reliability fixes and follow-up](docs/measurements/provider-stream-reliability-follow-up.md).
 
+[Real-repository and solve pilot](docs/measurements/real-repository-evaluation.md): original outcomes and separate follow-ups, with setup issues and comparison limits.
+
 ## Quickstart
 
 Requires **Rust 1.89+**; SQLite is bundled. On Linux, install **bubblewrap** for sandboxed commands (`sudo apt install bubblewrap`).

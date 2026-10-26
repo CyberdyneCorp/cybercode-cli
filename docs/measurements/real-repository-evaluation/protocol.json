@@ -1,0 +1,143 @@
+{
+  "frozen_at": "2026-10-26T15:34:33.718835+00:00",
+  "revision": "b11865a57408c06f2274b9ef1de575209ad1608a",
+  "binary_sha256": {
+    "cyber": "7fef6ef3af39aa84b02dd2626e85f44fd510fa1129ce255d0e8c0a48a9b73337",
+    "python3": "b61c2cbc790b5a005f41d81fec9b931531805697746742a67bcdbde55cabeb75",
+    "python": "b61c2cbc790b5a005f41d81fec9b931531805697746742a67bcdbde55cabeb75",
+    "cyber-sandbox-exec": "de9732762fc489b2bd9aa155d139e5360a480eff55a3cc0c6cc246cf5b97ff4f"
+  },
+  "manifest_sha256": "d90ab91a4d8cec4c8836f1bfc192ecad294108adb76f3f86eb04b0a9f692b46b",
+  "catalog_sha256": "5f3b220c0882fcbadb000a306c2afbf044bb4832b973763d031cbfba25a0b90d",
+  "model": "chatgpt/gpt-6.1-sol#medium",
+  "platform": "macOS-26.7-arm64-arm-64bit",
+  "max_tokens": 1500000,
+  "max_wall_seconds": 1800,
+  "root_concurrency": 1,
+  "solve_candidates": 2,
+  "single_main_steps": 60,
+  "solve_solver_steps": 20,
+  "trials": [
+    {
+      "task": "repo-ripgrep-hidden-dot",
+      "trial": 1,
+      "strategy": "single"
+    },
+    {
+      "task": "repo-ripgrep-hidden-dot",
+      "trial": 1,
+      "strategy": "solve"
+    },
+    {
+      "task": "repo-ripgrep-matches-all",
+      "trial": 1,
+      "strategy": "single"
+    },
+    {
+      "task": "repo-ripgrep-matches-all",
+      "trial": 1,
+      "strategy": "solve"
+    },
+    {
+      "task": "repo-click-short-help",
+      "trial": 1,
+      "strategy": "single"
+    },
+    {
+      "task": "repo-click-short-help",
+      "trial": 1,
+      "strategy": "solve"
+    },
+    {
+      "task": "repo-click-argument-help",
+      "trial": 1,
+      "strategy": "single"
+    },
+    {
+      "task": "repo-click-argument-help",
+      "trial": 1,
+      "strategy": "solve"
+    },
+    {
+      "task": "repo-ripgrep-hidden-dot",
+      "trial": 2,
+      "strategy": "solve"
+    },
+    {
+      "task": "repo-ripgrep-hidden-dot",
+      "trial": 2,
+      "strategy": "single"
+    },
+    {
+      "task": "repo-ripgrep-matches-all",
+      "trial": 2,
+      "strategy": "solve"
+    },
+    {
+      "task": "repo-ripgrep-matches-all",
+      "trial": 2,
+      "strategy": "single"
+    },
+    {
+      "task": "repo-click-short-help",
+      "trial": 2,
+      "strategy": "solve"
+    },
+    {
+      "task": "repo-click-short-help",
+      "trial": 2,
+      "strategy": "single"
+    },
+    {
+      "task": "repo-click-argument-help",
+      "trial": 2,
+      "strategy": "solve"
+    },
+    {
+      "task": "repo-click-argument-help",
+      "trial": 2,
+      "strategy": "single"
+    },
+    {
+      "task": "repo-ripgrep-hidden-dot",
+      "trial": 3,
+      "strategy": "single"
+    },
+    {
+      "task": "repo-ripgrep-hidden-dot",
+      "trial": 3,
+      "strategy": "solve"
+    },
+    {
+      "task": "repo-ripgrep-matches-all",
+      "trial": 3,
+      "strategy": "single"
+    },
+    {
+      "task": "repo-ripgrep-matches-all",
+      "trial": 3,
+      "strategy": "solve"
+    },
+    {
+      "task": "repo-click-short-help",
+      "trial": 3,
+      "strategy": "single"
+    },
+    {
+      "task": "repo-click-short-help",
+      "trial": 3,
+      "strategy": "solve"
+    },
+    {
+      "task": "repo-click-argument-help",
+      "trial": 3,
+      "strategy": "single"
+    },
+    {
+      "task": "repo-click-argument-help",
+      "trial": 3,
+      "strategy": "solve"
+    }
+  ],
+  "resource_preflight_free_bytes": 16318869504
+}

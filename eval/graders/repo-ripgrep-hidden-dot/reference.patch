@@ -1,0 +1,121 @@
+--- a/crates/ignore/src/pathutil.rs
++++ b/crates/ignore/src/pathutil.rs
+@@ -151,15 +151,15 @@
+         let path = path.as_os_str().as_bytes();
+         if path.is_empty() {
+             return None;
+-        } else if path.len() == 1 && path[0] == b'.' {
++        }
++        let last_slash = memrchr(b'/', path).map(|i| i + 1).unwrap_or(0);
++        let name = &path[last_slash..];
++        // Only a final component that is exactly `.` or `..` has no file
++        // name. A real name that merely ends in a `.`, like `.foo.`, does.
++        if name == b"." || name == b".." {
+             return None;
+-        } else if path.last() == Some(&b'.') {
+-            return None;
+-        } else if path.len() >= 2 && &path[path.len() - 2..] == &b".."[..] {
+-            return None;
+-        }
+-        let last_slash = memrchr(b'/', path).map(|i| i + 1).unwrap_or(0);
+-        Some(OsStr::from_bytes(&path[last_slash..]))
++        }
++        Some(OsStr::from_bytes(name))
+     }
+ 
+     #[cfg(not(unix))]
+@@ -169,3 +169,50 @@
+ 
+     imp(path.as_ref())
+ }
++
++#[cfg(test)]
++mod tests {
++    use std::ffi::OsStr;
++    use std::path::Path;
++
++    use super::{file_name, is_hidden_path};
++
++    #[test]
++    fn file_name_basic() {
++        assert_eq!(file_name("a"), Some(OsStr::new("a")));
++        assert_eq!(file_name("a/b"), Some(OsStr::new("b")));
++        assert_eq!(file_name("/a/b.txt"), Some(OsStr::new("b.txt")));
++    }
++
++    // On Windows, `file_name` defers to `std`, which normalizes a trailing
++    // `.` component away, so these only apply to the Unix implementation.
++    #[cfg(unix)]
++    #[test]
++    fn file_name_dot_components() {
++        assert_eq!(file_name(""), None);
++        assert_eq!(file_name("."), None);
++        assert_eq!(file_name(".."), None);
++        assert_eq!(file_name("a/."), None);
++        assert_eq!(file_name("a/.."), None);
++        assert_eq!(file_name("/a/b/.."), None);
++    }
++
++    #[test]
++    fn file_name_trailing_dot() {
++        assert_eq!(file_name("a."), Some(OsStr::new("a.")));
++        assert_eq!(file_name("a/.b."), Some(OsStr::new(".b.")));
++        assert_eq!(file_name("a/..."), Some(OsStr::new("...")));
++        assert_eq!(file_name("a/..b.."), Some(OsStr::new("..b..")));
++    }
++
++    #[test]
++    fn hidden_trailing_dot() {
++        assert!(is_hidden_path(Path::new(".foo")));
++        assert!(is_hidden_path(Path::new("a/.foo.")));
++        assert!(is_hidden_path(Path::new("a/.foo..")));
++        assert!(is_hidden_path(Path::new("a/...")));
++        assert!(!is_hidden_path(Path::new("a/foo.")));
++        assert!(!is_hidden_path(Path::new("a/.")));
++        assert!(!is_hidden_path(Path::new("a/..")));
++    }
++}
+--- a/crates/ignore/src/walk.rs
++++ b/crates/ignore/src/walk.rs
+@@ -2397,6 +2397,41 @@
+         );
+     }
+ 
++    // Names that start with a `.` are hidden, even when they also end in a
++    // `.`. A trailing `.` must not be confused with a `.` or `..` component.
++    //
++    // Windows doesn't allow file names that end in a `.`.
++    #[cfg(unix)]
++    #[test]
++    fn hidden_with_trailing_dot() {
++        let td = tmpdir();
++        wfile(td.path().join("visible."), "");
++        wfile(td.path().join(".hidden"), "");
++        wfile(td.path().join(".hidden."), "");
++        wfile(td.path().join(".hidden.."), "");
++        wfile(td.path().join("..."), "");
++        mkdirp(td.path().join(".dir."));
++        wfile(td.path().join(".dir./inner"), "");
++
++        assert_paths(td.path(), &WalkBuilder::new(td.path()), &["visible."]);
++
++        let mut builder = WalkBuilder::new(td.path());
++        builder.hidden(false);
++        assert_paths(
++            td.path(),
++            &builder,
++            &[
++                ".dir.",
++                ".dir./inner",
++                ".hidden",
++                ".hidden.",
++                ".hidden..",
++                "...",
++                "visible.",
++            ],
++        );
++    }
++
+     #[test]
+     fn gitignore_parent() {
+         let td = tmpdir();

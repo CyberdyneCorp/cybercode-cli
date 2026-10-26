@@ -1,0 +1,79 @@
+{
+  "status": "complete",
+  "model": "chatgpt/gpt-6.1-sol#medium",
+  "strategies": {
+    "single": {
+      "trials": 1,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "success_ci95_wilson": [
+        0.2065,
+        1
+      ],
+      "known_cost_usd_lower_bound": 0,
+      "unpriced": true,
+      "usage_missing_root_count": 0,
+      "tokens": {
+        "input": 169128,
+        "output": 2193,
+        "reasoning": 456,
+        "cache_read": 31616,
+        "cache_write": 0
+      },
+      "median_end_to_end_seconds": 170.16540175,
+      "per_task": {
+        "repo-ripgrep-matches-all": {
+          "passed": 1,
+          "trials": 1,
+          "infrastructure_failures": 0
+        }
+      }
+    },
+    "solve": {
+      "trials": 7,
+      "passed": 7,
+      "infrastructure_failures": 0,
+      "success_ci95_wilson": [
+        0.6457,
+        1
+      ],
+      "known_cost_usd_lower_bound": 0,
+      "unpriced": true,
+      "usage_missing_root_count": 0,
+      "tokens": {
+        "input": 2287796,
+        "output": 34573,
+        "reasoning": 4771,
+        "cache_read": 535552,
+        "cache_write": 0
+      },
+      "median_end_to_end_seconds": 184.396356834,
+      "per_task": {
+        "repo-ripgrep-matches-all": {
+          "passed": 1,
+          "trials": 1,
+          "infrastructure_failures": 0
+        },
+        "repo-click-short-help": {
+          "passed": 3,
+          "trials": 3,
+          "infrastructure_failures": 0
+        },
+        "repo-click-argument-help": {
+          "passed": 3,
+          "trials": 3,
+          "infrastructure_failures": 0
+        }
+      }
+    }
+  },
+  "limitations": [
+    "Four historical tasks, three repetitions per strategy; possible training contamination.",
+    "Model and service backend are not pinned immutable binaries.",
+    "Subscription dollars are unpriced lower bounds; no free-usage or strict dollar guarantee.",
+    "Native soft token/step policies differ across strategies.",
+    "These are eight separately labelled follow-ups, never replacements for original observations; timing is descriptive.",
+    "Missing or interrupted usage remains uncertain; every root stays in its denominator.",
+    "No matched competitor run; not the twenty-task-per-adapter release baseline."
+  ]
+}

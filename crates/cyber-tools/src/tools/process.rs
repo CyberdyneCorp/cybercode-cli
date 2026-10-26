@@ -29,7 +29,9 @@ pub struct Process {
 }
 
 impl Process {
-    pub(crate) async fn spawn(
+    /// Launch an already-authorized, sandbox-wrapped command with native tree ownership.
+    /// Callers must enforce permissions and select the sandbox before calling this port.
+    pub async fn spawn(
         program: &str,
         args: &[String],
         _helper: Option<&Path>,

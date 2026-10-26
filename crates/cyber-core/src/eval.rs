@@ -70,6 +70,19 @@ pub struct Fixture {
     /// `sha256:<hex>` of the fixture tree (see [`tree_sha256`]).
     pub tree_sha256: String,
     pub environment: Environment,
+    /// Source provenance is report metadata, never copied into candidate workspaces.
+    #[serde(default)]
+    pub repository: Option<Repository>,
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Repository {
+    pub url: String,
+    pub base_commit: String,
+    pub reference_commit: String,
+    pub archive_sha256: String,
+    pub license: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -99,6 +112,9 @@ pub struct Task {
     pub budget: Budget,
     pub timeout_seconds: u64,
     pub grading: Grading,
+    /// Public, literal-argv checks available to solvers and the independent judge.
+    #[serde(default)]
+    pub checks: Vec<Vec<String>>,
 }
 
 /// The Budget object of `observability-costs`.
@@ -127,6 +143,8 @@ pub struct Grading {
     pub grader_dir: String,
     /// Command run after the task. `{grader_dir}` and `{workspace}` are substituted.
     pub command: Vec<String>,
+    #[serde(default)]
+    pub tree_sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -271,6 +289,11 @@ fn validate_task(task: &Task, fixture: &Fixture, root: &Path, issues: &mut Vec<S
     if task.grading.command.is_empty() {
         issues.push(format!("task {id}: grading command is empty"));
     }
+    if let Some(expected) = &task.grading.tree_sha256
+        && tree_sha256(&root.join(grader)).as_ref().ok() != Some(expected)
+    {
+        issues.push(format!("task {id}: independent grader tree hash mismatch"));
+    }
 }
 
 fn validate_recovery(manifest: &Manifest, root: &Path, issues: &mut Vec<String>) {
@@ -315,8 +338,17 @@ pub fn tree_sha256(dir: &Path) -> io::Result<String> {
     files.sort();
     let mut hasher = Sha256::new();
     for rel in files {
-        let bytes = std::fs::read(dir.join(&rel))?;
         let name = rel.to_string_lossy().replace('\\', "/");
+        let full = dir.join(&rel);
+        if std::fs::symlink_metadata(&full)?.file_type().is_symlink() {
+            let target = std::fs::read_link(&full)?;
+            validate_source_link(&rel, &target)?;
+            hasher.update(name.as_bytes());
+            hasher.update(b"\0link\0");
+            hasher.update(target.to_string_lossy().as_bytes());
+            continue;
+        }
+        let bytes = std::fs::read(full)?;
         hasher.update(name.as_bytes());
         hasher.update([0]);
         hasher.update(bytes.len().to_string().as_bytes());
@@ -324,6 +356,51 @@ pub fn tree_sha256(dir: &Path) -> io::Result<String> {
         hasher.update(&bytes);
     }
     Ok(format!("sha256:{:x}", hasher.finalize()))
+}
+
+/// Validate a relative source symlink without resolving or following its target.
+pub fn validate_source_link(_relative: &Path, target: &Path) -> io::Result<()> {
+    use std::path::Component;
+    if target.as_os_str().is_empty()
+        || target.is_absolute()
+        || target.to_string_lossy().contains(['\\', ':'])
+    {
+        return Err(io::Error::other("unsafe source link target"));
+    }
+    for component in target.components() {
+        match component {
+            Component::Normal(name) if !name.to_string_lossy().eq_ignore_ascii_case(".git") => {}
+            Component::CurDir => {}
+            // Refuse even lexical in-root parents: symlink chains can reinterpret them.
+            _ => return Err(io::Error::other("source link escapes fixture")),
+        }
+    }
+    Ok(())
+}
+
+/// Preserve validated source aliases rather than following them during fixture copying.
+pub fn copy_source_link(from: &Path, to: &Path, relative: &Path) -> io::Result<()> {
+    let target = std::fs::read_link(from)?;
+    validate_source_link(relative, &target)?;
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, to)
+    }
+    #[cfg(windows)]
+    {
+        if from.is_dir() {
+            std::os::windows::fs::symlink_dir(target, to)
+        } else {
+            std::os::windows::fs::symlink_file(target, to)
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (target, to);
+        Err(io::Error::other(
+            "source links unsupported on this platform",
+        ))
+    }
 }
 
 fn collect_files(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {

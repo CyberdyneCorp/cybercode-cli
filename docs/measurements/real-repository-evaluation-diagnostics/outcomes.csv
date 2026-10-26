@@ -1,0 +1,9 @@
+index,task,trial,strategy,passed,infrastructure_failure,stop_reason,end_to_end_seconds,cost_usd,unpriced
+1,repo-ripgrep-matches-all,2,single,True,False,end_turn,170.16540175,0.0,True
+2,repo-ripgrep-matches-all,2,solve,True,False,completed,211.96617,0.0,True
+3,repo-click-short-help,1,solve,True,False,completed,161.590203042,0.0,True
+4,repo-click-argument-help,1,solve,True,False,completed,195.970656041,0.0,True
+5,repo-click-short-help,2,solve,True,False,completed,167.463523959,0.0,True
+6,repo-click-argument-help,2,solve,True,False,completed,184.396356834,0.0,True
+7,repo-click-short-help,3,solve,True,False,completed,182.077102459,0.0,True
+8,repo-click-argument-help,3,solve,True,False,completed,204.660008959,0.0,True

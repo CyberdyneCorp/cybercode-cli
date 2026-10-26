@@ -1,0 +1,581 @@
+{
+  "schema_version": 1,
+  "report": "real-repository-retrospective-pilot",
+  "strategy": "single",
+  "summary": {
+    "trials": 12,
+    "passed": 11,
+    "infrastructure_failures": 1,
+    "success_ci95_wilson": [
+      0.6461,
+      0.9851
+    ],
+    "known_cost_usd_lower_bound": 0,
+    "unpriced": true,
+    "usage_missing_root_count": 0,
+    "tokens": {
+      "input": 1501015,
+      "output": 24660,
+      "reasoning": 4243,
+      "cache_read": 248960,
+      "cache_write": 0
+    },
+    "median_end_to_end_seconds": 107.69516525,
+    "per_task": {
+      "repo-ripgrep-hidden-dot": {
+        "passed": 3,
+        "trials": 3,
+        "infrastructure_failures": 0
+      },
+      "repo-ripgrep-matches-all": {
+        "passed": 2,
+        "trials": 3,
+        "infrastructure_failures": 1
+      },
+      "repo-click-short-help": {
+        "passed": 3,
+        "trials": 3,
+        "infrastructure_failures": 0
+      },
+      "repo-click-argument-help": {
+        "passed": 3,
+        "trials": 3,
+        "infrastructure_failures": 0
+      }
+    }
+  },
+  "trials": [
+    {
+      "index": 1,
+      "task": "repo-ripgrep-hidden-dot",
+      "trial": 1,
+      "strategy": "single",
+      "started_at": "2026-10-26T15:36:12.623968+00:00",
+      "finished_at": "2026-10-26T15:37:36.201672+00:00",
+      "seconds": 83.57570766704157,
+      "exit": 0,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "config_sha256": "337aba369453f32bb00725c849033690039742081ddc380f98b636d82dd94ab5",
+      "environment_sha256": "adc8e407e407031109f014f06241615bef4babaa1ff685de08b31d7c5ad69d2d",
+      "turns": 8,
+      "tool_calls": 10,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 79741,
+        "output": 1564,
+        "reasoning": 167,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "latency_seconds": 75.792423625,
+      "end_to_end_seconds": 79.983499833,
+      "verification_seconds": 3.865718792,
+      "grader_exit": 0,
+      "graded_source_sha256": "sha256:4809a7039be48deb4cea4a4a973e04df8fad59ba8729d5e1b1d057f65e9c2689",
+      "raw_report_sha256": "fe700192b1fdfc74b8be4bb5d8e542e34f96d0fb767805ef4b32586c7265dc50",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "b11865a",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null
+    },
+    {
+      "index": 3,
+      "task": "repo-ripgrep-matches-all",
+      "trial": 1,
+      "strategy": "single",
+      "started_at": "2026-10-26T15:40:25.404795+00:00",
+      "finished_at": "2026-10-26T15:43:13.630134+00:00",
+      "seconds": 168.22144854208454,
+      "exit": 0,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "config_sha256": "651bd82bbdbf9cb03ab11ce0a361651670a1e6b8e1c3a4e51af5b2569bf02858",
+      "environment_sha256": "adc8e407e407031109f014f06241615bef4babaa1ff685de08b31d7c5ad69d2d",
+      "turns": 15,
+      "tool_calls": 14,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 196024,
+        "output": 2466,
+        "reasoning": 752,
+        "cache_read": 28672,
+        "cache_write": 0
+      },
+      "latency_seconds": 162.826568167,
+      "end_to_end_seconds": 167.269641667,
+      "verification_seconds": 4.124132958,
+      "grader_exit": 0,
+      "graded_source_sha256": "sha256:250a005385fbd63b12e069335701e408636ac52e2daf66c17268d38746a7af73",
+      "raw_report_sha256": "d23fe3da6f6181a2a72fcb5414c509bde683af676380ad14b3debe5c196ec724",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "b11865a",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null
+    },
+    {
+      "index": 5,
+      "task": "repo-click-short-help",
+      "trial": 1,
+      "strategy": "single",
+      "started_at": "2026-10-26T15:47:24.138174+00:00",
+      "finished_at": "2026-10-26T15:48:58.258902+00:00",
+      "seconds": 94.12195233302191,
+      "exit": 0,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "config_sha256": "c45842c0ba746ae45cfcd530e90c406b1d8907f652a6c52a85edaa34b2c4260b",
+      "environment_sha256": "adc8e407e407031109f014f06241615bef4babaa1ff685de08b31d7c5ad69d2d",
+      "turns": 11,
+      "tool_calls": 12,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 97353,
+        "output": 1840,
+        "reasoning": 170,
+        "cache_read": 5120,
+        "cache_write": 0
+      },
+      "latency_seconds": 92.588058417,
+      "end_to_end_seconds": 93.180914958,
+      "verification_seconds": 0.333778208,
+      "grader_exit": 0,
+      "graded_source_sha256": "sha256:c5cfc00106b64f648ea69cc02120057e324885c40bf5eba367dfb2c4330c67a7",
+      "raw_report_sha256": "8c87a49cd80f7893afd1ac5814b97464c75716a68af977ea27720af98bb9851b",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "b11865a",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null
+    },
+    {
+      "index": 7,
+      "task": "repo-click-argument-help",
+      "trial": 1,
+      "strategy": "single",
+      "started_at": "2026-10-26T15:51:20.204089+00:00",
+      "finished_at": "2026-10-26T15:53:39.302431+00:00",
+      "seconds": 139.0954535419587,
+      "exit": 0,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "config_sha256": "76bf42e689f072829164186512f36b04ed736507bb1405f309651442be55706b",
+      "environment_sha256": "adc8e407e407031109f014f06241615bef4babaa1ff685de08b31d7c5ad69d2d",
+      "turns": 12,
+      "tool_calls": 16,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 112518,
+        "output": 2391,
+        "reasoning": 342,
+        "cache_read": 25216,
+        "cache_write": 0
+      },
+      "latency_seconds": 137.549554166,
+      "end_to_end_seconds": 138.227964083,
+      "verification_seconds": 0.424431,
+      "grader_exit": 0,
+      "graded_source_sha256": "sha256:5b7b16308066222bb0ebed048d107a356b53bf4144f672baa4d9a300a49d6546",
+      "raw_report_sha256": "c9b0934b90e92b27c87a4dbcaca0948b0acf77448cc6a0373c80eb0fd84e0f7d",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "b11865a",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null
+    },
+    {
+      "index": 10,
+      "task": "repo-ripgrep-hidden-dot",
+      "trial": 2,
+      "strategy": "single",
+      "started_at": "2026-10-26T16:13:55.555791+00:00",
+      "finished_at": "2026-10-26T16:15:38.735808+00:00",
+      "seconds": 103.17780416703317,
+      "exit": 0,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "config_sha256": "39c0012d5d0395a5455a6b64f3767f775f7456e2f2ce9ad9a853871ef75890f5",
+      "environment_sha256": "adc8e407e407031109f014f06241615bef4babaa1ff685de08b31d7c5ad69d2d",
+      "turns": 11,
+      "tool_calls": 13,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 102638,
+        "output": 2190,
+        "reasoning": 151,
+        "cache_read": 11776,
+        "cache_write": 0
+      },
+      "latency_seconds": 98.4082205,
+      "end_to_end_seconds": 102.267314708,
+      "verification_seconds": 3.538888833,
+      "grader_exit": 0,
+      "graded_source_sha256": "sha256:075ef671a3a44562754131702dc95af7408bb0ca112f853707683a62b6e5e0c8",
+      "raw_report_sha256": "36979fb7f11f71770e65126cb6479922016d1201e6e3567b691c5671acfc9367",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "b11865a",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null
+    },
+    {
+      "index": 12,
+      "task": "repo-ripgrep-matches-all",
+      "trial": 2,
+      "strategy": "single",
+      "started_at": "2026-10-26T16:19:28.526292+00:00",
+      "finished_at": "2026-10-26T16:22:31.580288+00:00",
+      "seconds": 183.05046016699634,
+      "exit": 0,
+      "passed": false,
+      "infrastructure_failure": true,
+      "stop_reason": "end_turn",
+      "config_sha256": "0ca053ee1fd716079adf2bbe6509ba744f13608514291ab20b6acff81ab9b2df",
+      "environment_sha256": "adc8e407e407031109f014f06241615bef4babaa1ff685de08b31d7c5ad69d2d",
+      "turns": 14,
+      "tool_calls": 13,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 185858,
+        "output": 2290,
+        "reasoning": 951,
+        "cache_read": 24960,
+        "cache_write": 0
+      },
+      "latency_seconds": 175.015368083,
+      "end_to_end_seconds": 179.388868584,
+      "verification_seconds": 4.061784,
+      "grader_exit": 0,
+      "graded_source_sha256": "sha256:49ee0874c6396bb9f9f87f31681f5783ea0136ce525128c7d3179d404400d82a",
+      "raw_report_sha256": "9a3ca27429e41d4c6cc3d2585e1eb961e744d5ae290d35e2a6f387653d162f29",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "b11865a",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null,
+      "native_passed": true,
+      "native_infrastructure_failure": false,
+      "environment_integrity_unknown": true,
+      "classification_basis": "reference_control_directory_outside_deny_list_during_attempt"
+    },
+    {
+      "index": 14,
+      "task": "repo-click-short-help",
+      "trial": 2,
+      "strategy": "single",
+      "started_at": "2026-10-26T16:24:33.836661+00:00",
+      "finished_at": "2026-10-26T16:26:17.198518+00:00",
+      "seconds": 103.35997637500986,
+      "exit": 0,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "config_sha256": "13e13f966ae37a88bb5cb628e6efde946af232d881b5c93dc0df1ccc9a713be7",
+      "environment_sha256": "adc8e407e407031109f014f06241615bef4babaa1ff685de08b31d7c5ad69d2d",
+      "turns": 11,
+      "tool_calls": 12,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 115498,
+        "output": 1700,
+        "reasoning": 156,
+        "cache_read": 15360,
+        "cache_write": 0
+      },
+      "latency_seconds": 99.18963725,
+      "end_to_end_seconds": 99.800842208,
+      "verification_seconds": 0.3342085,
+      "grader_exit": 0,
+      "graded_source_sha256": "sha256:181ff0dca08b2cfbb3f90893f6976e7abdf5731cde53a35ab63b1b94b9588ad1",
+      "raw_report_sha256": "6267188640df86ad2e4f84377d6fed2b0e8b54a04781f385cc5988d9f50f520f",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "b11865a",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null
+    },
+    {
+      "index": 16,
+      "task": "repo-click-argument-help",
+      "trial": 2,
+      "strategy": "single",
+      "started_at": "2026-10-26T16:28:51.020639+00:00",
+      "finished_at": "2026-10-26T16:31:01.582382+00:00",
+      "seconds": 130.55985187506303,
+      "exit": 0,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "config_sha256": "9a7a45ba9034a12d1d7fc61c5ceb0bb3629ddda101a3eef0025d772a3ba43ebb",
+      "environment_sha256": "adc8e407e407031109f014f06241615bef4babaa1ff685de08b31d7c5ad69d2d",
+      "turns": 15,
+      "tool_calls": 17,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 157460,
+        "output": 2545,
+        "reasoning": 257,
+        "cache_read": 10240,
+        "cache_write": 0
+      },
+      "latency_seconds": 128.939630625,
+      "end_to_end_seconds": 129.616829875,
+      "verification_seconds": 0.424647334,
+      "grader_exit": 0,
+      "graded_source_sha256": "sha256:9d46b5b645c742a58e7d626b029ce64e5ce1752b3dd9dd66fe4be467d7ec802a",
+      "raw_report_sha256": "ded5d635c435615e8b87f01a32df7bb975f4f6840b941037b17da49ccce8ba42",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "b11865a",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null
+    },
+    {
+      "index": 17,
+      "task": "repo-ripgrep-hidden-dot",
+      "trial": 3,
+      "strategy": "single",
+      "started_at": "2026-10-26T16:31:02.256958+00:00",
+      "finished_at": "2026-10-26T16:32:48.105136+00:00",
+      "seconds": 105.8469253340736,
+      "exit": 0,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "config_sha256": "f11462ac111901afaecf6f555af9b27bc79e607cf8705daf94c8d17785ddb7ce",
+      "environment_sha256": "adc8e407e407031109f014f06241615bef4babaa1ff685de08b31d7c5ad69d2d",
+      "turns": 11,
+      "tool_calls": 13,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 87370,
+        "output": 1953,
+        "reasoning": 356,
+        "cache_read": 18944,
+        "cache_write": 0
+      },
+      "latency_seconds": 98.401957291,
+      "end_to_end_seconds": 102.386302667,
+      "verification_seconds": 3.662303166,
+      "grader_exit": 0,
+      "graded_source_sha256": "sha256:860ba8f6f3b73c3bd5249784ae736336999a5933d3b6ae26751c8b5d08a1d937",
+      "raw_report_sha256": "f3b4eaec7d2e774ac5d969d35cbe3594f9d13b84e881fef06b5f591db7dda8a9",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "b11865a",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null
+    },
+    {
+      "index": 19,
+      "task": "repo-ripgrep-matches-all",
+      "trial": 3,
+      "strategy": "single",
+      "started_at": "2026-10-26T16:35:51.986443+00:00",
+      "finished_at": "2026-10-26T16:38:21.486094+00:00",
+      "seconds": 149.49790554190986,
+      "exit": 0,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "config_sha256": "6557fe132e9b83ccb148d2d2a01edcdc8dcc42c531a502a8a647ea7cebf26968",
+      "environment_sha256": "adc8e407e407031109f014f06241615bef4babaa1ff685de08b31d7c5ad69d2d",
+      "turns": 15,
+      "tool_calls": 14,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 163444,
+        "output": 2305,
+        "reasoning": 642,
+        "cache_read": 43392,
+        "cache_write": 0
+      },
+      "latency_seconds": 144.257391417,
+      "end_to_end_seconds": 148.616535875,
+      "verification_seconds": 4.045386459,
+      "grader_exit": 0,
+      "graded_source_sha256": "sha256:51e528b757487667d3816a9118162ebcfd65e53b2fa3825ecc4204f6631e2093",
+      "raw_report_sha256": "1086b96e6221be743876460af7efe7358afee220f9f89477b0cb2b9b3edac43c",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "b11865a",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null
+    },
+    {
+      "index": 21,
+      "task": "repo-click-short-help",
+      "trial": 3,
+      "strategy": "single",
+      "started_at": "2026-10-26T16:42:18.601999+00:00",
+      "finished_at": "2026-10-26T16:43:41.567261+00:00",
+      "seconds": 82.96511091699358,
+      "exit": 0,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "config_sha256": "288a953f84777aef749fa7cc58c5576fab820ca8b56e4561a3ed27bb42cea8b6",
+      "environment_sha256": "adc8e407e407031109f014f06241615bef4babaa1ff685de08b31d7c5ad69d2d",
+      "turns": 11,
+      "tool_calls": 12,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 73515,
+        "output": 1399,
+        "reasoning": 131,
+        "cache_read": 27904,
+        "cache_write": 0
+      },
+      "latency_seconds": 81.469654041,
+      "end_to_end_seconds": 82.102136125,
+      "verification_seconds": 0.333754167,
+      "grader_exit": 0,
+      "graded_source_sha256": "sha256:6c50dc1b1fb98f0806419c7ccaa646bc5d884d2e8044dbbb669d3032f2267a81",
+      "raw_report_sha256": "e32fd840bcc4c9d9ebcba86bba6271c52e6dfd3cd788800735ae382a16ee1853",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "b11865a",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null
+    },
+    {
+      "index": 23,
+      "task": "repo-click-argument-help",
+      "trial": 3,
+      "strategy": "single",
+      "started_at": "2026-10-26T16:45:54.779232+00:00",
+      "finished_at": "2026-10-26T16:47:48.657815+00:00",
+      "seconds": 113.8783957499545,
+      "exit": 0,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "config_sha256": "ae595e1530e73ca78b16a7ee1e473dd98ec43ab1bc9bd23074653623ea0dd400",
+      "environment_sha256": "adc8e407e407031109f014f06241615bef4babaa1ff685de08b31d7c5ad69d2d",
+      "turns": 15,
+      "tool_calls": 17,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 129596,
+        "output": 2017,
+        "reasoning": 168,
+        "cache_read": 37376,
+        "cache_write": 0
+      },
+      "latency_seconds": 112.3235335,
+      "end_to_end_seconds": 113.004027833,
+      "verification_seconds": 0.427373917,
+      "grader_exit": 0,
+      "graded_source_sha256": "sha256:5b8a409665054aa674b124b1283ac34965f2f422efa24b79534f4cc406c2a9bd",
+      "raw_report_sha256": "02bf6bd83c8a8138693f7c29e5c6edffd173e4c7a4c5c7ae355b4fe10c6d051a",
+      "harness": {
+        "version": "0.1.0",
+        "git_sha": "b11865a",
+        "target": "aarch64-apple-darwin"
+      },
+      "model": {
+        "ref": "chatgpt/gpt-6.1-sol#medium",
+        "provider": "chatgpt",
+        "name": "GPT-6.1-Sol",
+        "context_limit": 500000
+      },
+      "error_kind": null
+    }
+  ]
+}
