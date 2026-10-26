@@ -17,7 +17,9 @@ pub struct TrialEnv {
     pub output: PathBuf,
     pub keep: bool,
     pub strategy: super::Strategy,
+    #[cfg(not(windows))]
     pub home: PathBuf,
+    #[cfg(not(windows))]
     pub private_roots: Vec<PathBuf>,
 }
 

@@ -33,6 +33,8 @@ On macOS arm64, Rust/Cargo 1.99.1, Python 3.13.5 and pytest 8.3.4:
   selected solve and no-recommendation outcomes; retain nonzero usage on unsuccessful runs;
   deny both file-tool and shell reads of hidden inputs; deny grader access to fixture credentials;
   exclude ignored source from compiler inputs; and refuse ambient Git templates.
+  An additional solve scenario retains completed inference usage and selection evidence when
+  the independent grader fails its infrastructure/output contract.
 - Four manifest/source-identity tests, fourteen evaluation unit tests and three Python
   source-alias controls passed. CLI/core/tools Clippy passed with warnings denied.
 - All forty original synthetic-suite grader controls passed with Python 3.13 and Node on PATH.

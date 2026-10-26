@@ -211,7 +211,9 @@ async fn execute(
         output: args.output.clone(),
         keep: args.keep_workspaces,
         strategy: args.strategy,
+        #[cfg(not(windows))]
         home: ctx.home.clone(),
+        #[cfg(not(windows))]
         private_roots: vec![ctx.paths.data.clone(), ctx.paths.config.clone()],
     });
     let results: Vec<trial::TrialResult> = futures::stream::iter(plan.into_iter().enumerate())

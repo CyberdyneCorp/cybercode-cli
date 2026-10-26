@@ -449,9 +449,17 @@ fn eval_grades_single_and_host_selected_solve_without_exposing_private_inputs() 
         ("single", "single"),
         ("solve", "solve"),
         ("no_recommendation", "solve"),
+        ("grader_failure", "solve"),
     ] {
         let no_recommendation = scenario == "no_recommendation";
         let mut invocation = manifest.clone();
+        if scenario == "grader_failure" {
+            invocation["tasks"][0]["grading"]["command"] = json!([
+                "python3",
+                "-c",
+                "print('INFRA scripted grader failure');raise SystemExit(2)"
+            ]);
+        }
         invocation["tasks"][0]["prompt"] = format!(
             "{} {}",
             manifest["tasks"][0]["prompt"].as_str().unwrap(),
@@ -503,7 +511,7 @@ fn eval_grades_single_and_host_selected_solve_without_exposing_private_inputs() 
         );
         let report: Value =
             serde_json::from_slice(&std::fs::read(output.join("report.json")).unwrap()).unwrap();
-        assert_eval_outcome(&report, &output, strategy, no_recommendation);
+        assert_eval_outcome(&report, &output, strategy, scenario);
     }
     for request in env._model.requests() {
         assert!(
@@ -513,17 +521,19 @@ fn eval_grades_single_and_host_selected_solve_without_exposing_private_inputs() 
     }
 }
 
-fn assert_eval_outcome(
-    report: &Value,
-    output: &std::path::Path,
-    strategy: &str,
-    no_recommendation: bool,
-) {
+fn assert_eval_outcome(report: &Value, output: &std::path::Path, strategy: &str, scenario: &str) {
+    let no_recommendation = scenario == "no_recommendation";
+    let grader_failure = scenario == "grader_failure";
     assert_eq!(report["strategy"], strategy);
     assert_eq!(report["trials"][0]["trial"], 2);
     assert_eq!(
-        report["trials"][0]["passed"], !no_recommendation,
+        report["trials"][0]["passed"],
+        !no_recommendation && !grader_failure,
         "{report}"
+    );
+    assert_eq!(
+        report["trials"][0]["infrastructure_failure"],
+        grader_failure
     );
     assert!(
         report["trials"][0]["tokens"]["input"].as_u64().unwrap() > 0,
