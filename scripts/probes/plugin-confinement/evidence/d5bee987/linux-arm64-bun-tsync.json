@@ -1,0 +1,469 @@
+{
+  "recorded_at": "2026-10-27T20:12:28.276Z",
+  "kernel_release": "6.17.0-1022-azure",
+  "sources": [
+    "run.mts",
+    "macos_python.c",
+    "macos_node.c",
+    "native_exec.c",
+    "node_bootstrap.cjs",
+    "fixture.py",
+    "fixture.cjs",
+    "process_policy.h",
+    "linux_filter.h",
+    "linux_exec.c",
+    "linux_initial_exec.h",
+    "fixture_native.c",
+    "macos_exec.c"
+  ],
+  "source_sha256": "503c658fb27147ffa703a8519d092f121eb08e801d8d1e01c046230269d5a311",
+  "platform": "linux",
+  "architecture": "arm64",
+  "runtime": "bun",
+  "version": "1.4.4",
+  "startup_control": {
+    "preload": true,
+    "dotenv": true
+  },
+  "mechanism": "bubblewrap private mounts + Landlock before runtime startup + synchronized seccomp before fixture execution",
+  "limitation": "experimental native mechanisms; macOS uses deprecated Seatbelt API; not production packaging or Windows acceptance",
+  "unsupported_cases": [],
+  "rows": [
+    {
+      "name": "unconfined-control",
+      "flags": {
+        "read": true,
+        "write": true,
+        "shell": true,
+        "unrestricted": true
+      },
+      "observations": {
+        "stdio_tool": true,
+        "package_read": true,
+        "startup_artifacts": false,
+        "scratch_write": true,
+        "scratch_read": true,
+        "project_read": true,
+        "project_list": true,
+        "private_list": true,
+        "private_write": true,
+        "protected_read": true,
+        "protected_write": true,
+        "hardlink_private": true,
+        "cannot_relax": null,
+        "private_read": true,
+        "symlink_private_read": true,
+        "project_write": true,
+        "inherited_descriptor": false,
+        "thread": true,
+        "thread_reads": [
+          true,
+          true
+        ],
+        "thread_shell": true,
+        "shell": true,
+        "native_fork": true,
+        "child_reads": [
+          true,
+          true
+        ],
+        "native_child_reads": [
+          true,
+          true
+        ],
+        "written_project_read": true,
+        "project_rename": true,
+        "proc_root_reads": [
+          true,
+          true
+        ],
+        "proc_init_list": true
+      },
+      "self_exec": true
+    },
+    {
+      "name": "no-capabilities",
+      "flags": {
+        "read": false,
+        "write": false,
+        "shell": false
+      },
+      "observations": {
+        "stdio_tool": true,
+        "package_read": true,
+        "startup_artifacts": false,
+        "scratch_write": true,
+        "scratch_read": true,
+        "project_read": false,
+        "project_list": false,
+        "private_list": false,
+        "private_write": false,
+        "protected_read": false,
+        "protected_write": false,
+        "hardlink_private": false,
+        "cannot_relax": true,
+        "private_read": false,
+        "symlink_private_read": false,
+        "project_write": false,
+        "inherited_descriptor": false,
+        "thread": true,
+        "thread_reads": [
+          false,
+          false
+        ],
+        "thread_shell": false,
+        "shell": false,
+        "native_fork": false,
+        "child_reads": null,
+        "native_child_reads": null,
+        "written_project_read": false,
+        "project_rename": false,
+        "proc_root_reads": [
+          false,
+          false
+        ],
+        "proc_init_list": false
+      },
+      "self_exec": false
+    },
+    {
+      "name": "read-only",
+      "flags": {
+        "read": true,
+        "write": false,
+        "shell": false
+      },
+      "observations": {
+        "stdio_tool": true,
+        "package_read": true,
+        "startup_artifacts": false,
+        "scratch_write": true,
+        "scratch_read": true,
+        "project_read": true,
+        "project_list": true,
+        "private_list": false,
+        "private_write": false,
+        "protected_read": false,
+        "protected_write": false,
+        "hardlink_private": false,
+        "cannot_relax": true,
+        "private_read": false,
+        "symlink_private_read": false,
+        "project_write": false,
+        "inherited_descriptor": false,
+        "thread": true,
+        "thread_reads": [
+          true,
+          false
+        ],
+        "thread_shell": false,
+        "shell": false,
+        "native_fork": false,
+        "child_reads": null,
+        "native_child_reads": null,
+        "written_project_read": false,
+        "project_rename": false,
+        "proc_root_reads": [
+          true,
+          false
+        ],
+        "proc_init_list": false
+      },
+      "self_exec": false
+    },
+    {
+      "name": "write-without-read",
+      "flags": {
+        "read": false,
+        "write": true,
+        "shell": false
+      },
+      "observations": {
+        "stdio_tool": true,
+        "package_read": true,
+        "startup_artifacts": false,
+        "scratch_write": true,
+        "scratch_read": true,
+        "project_read": false,
+        "project_list": false,
+        "private_list": false,
+        "private_write": false,
+        "protected_read": false,
+        "protected_write": false,
+        "hardlink_private": false,
+        "cannot_relax": true,
+        "private_read": false,
+        "symlink_private_read": false,
+        "project_write": true,
+        "inherited_descriptor": false,
+        "thread": true,
+        "thread_reads": [
+          false,
+          false
+        ],
+        "thread_shell": false,
+        "shell": false,
+        "native_fork": false,
+        "child_reads": null,
+        "native_child_reads": null,
+        "written_project_read": false,
+        "project_rename": false,
+        "proc_root_reads": [
+          false,
+          false
+        ],
+        "proc_init_list": false
+      },
+      "self_exec": false
+    },
+    {
+      "name": "shell-without-read",
+      "flags": {
+        "read": false,
+        "write": false,
+        "shell": true
+      },
+      "observations": {
+        "stdio_tool": true,
+        "package_read": true,
+        "startup_artifacts": false,
+        "scratch_write": true,
+        "scratch_read": true,
+        "project_read": false,
+        "project_list": false,
+        "private_list": false,
+        "private_write": false,
+        "protected_read": false,
+        "protected_write": false,
+        "hardlink_private": false,
+        "cannot_relax": true,
+        "private_read": false,
+        "symlink_private_read": false,
+        "project_write": false,
+        "inherited_descriptor": false,
+        "thread": true,
+        "thread_reads": [
+          false,
+          false
+        ],
+        "thread_shell": true,
+        "shell": true,
+        "native_fork": true,
+        "child_reads": [
+          false,
+          false
+        ],
+        "native_child_reads": [
+          false,
+          false
+        ],
+        "written_project_read": false,
+        "project_rename": false,
+        "proc_root_reads": [
+          false,
+          false
+        ],
+        "proc_init_list": false
+      },
+      "self_exec": true
+    },
+    {
+      "name": "read-write-without-shell",
+      "flags": {
+        "read": true,
+        "write": true,
+        "shell": false
+      },
+      "observations": {
+        "stdio_tool": true,
+        "package_read": true,
+        "startup_artifacts": false,
+        "scratch_write": true,
+        "scratch_read": true,
+        "project_read": true,
+        "project_list": true,
+        "private_list": false,
+        "private_write": false,
+        "protected_read": false,
+        "protected_write": false,
+        "hardlink_private": false,
+        "cannot_relax": true,
+        "private_read": false,
+        "symlink_private_read": false,
+        "project_write": true,
+        "inherited_descriptor": false,
+        "thread": true,
+        "thread_reads": [
+          true,
+          false
+        ],
+        "thread_shell": false,
+        "shell": false,
+        "native_fork": false,
+        "child_reads": null,
+        "native_child_reads": null,
+        "written_project_read": true,
+        "project_rename": false,
+        "proc_root_reads": [
+          true,
+          false
+        ],
+        "proc_init_list": false
+      },
+      "self_exec": false
+    },
+    {
+      "name": "read-shell-without-write",
+      "flags": {
+        "read": true,
+        "write": false,
+        "shell": true
+      },
+      "observations": {
+        "stdio_tool": true,
+        "package_read": true,
+        "startup_artifacts": false,
+        "scratch_write": true,
+        "scratch_read": true,
+        "project_read": true,
+        "project_list": true,
+        "private_list": false,
+        "private_write": false,
+        "protected_read": false,
+        "protected_write": false,
+        "hardlink_private": false,
+        "cannot_relax": true,
+        "private_read": false,
+        "symlink_private_read": false,
+        "project_write": false,
+        "inherited_descriptor": false,
+        "thread": true,
+        "thread_reads": [
+          true,
+          false
+        ],
+        "thread_shell": true,
+        "shell": true,
+        "native_fork": true,
+        "child_reads": [
+          true,
+          false
+        ],
+        "native_child_reads": [
+          true,
+          false
+        ],
+        "written_project_read": false,
+        "project_rename": false,
+        "proc_root_reads": [
+          true,
+          false
+        ],
+        "proc_init_list": false
+      },
+      "self_exec": true
+    },
+    {
+      "name": "write-shell-without-read",
+      "flags": {
+        "read": false,
+        "write": true,
+        "shell": true
+      },
+      "observations": {
+        "stdio_tool": true,
+        "package_read": true,
+        "startup_artifacts": false,
+        "scratch_write": true,
+        "scratch_read": true,
+        "project_read": false,
+        "project_list": false,
+        "private_list": false,
+        "private_write": false,
+        "protected_read": false,
+        "protected_write": false,
+        "hardlink_private": false,
+        "cannot_relax": true,
+        "private_read": false,
+        "symlink_private_read": false,
+        "project_write": true,
+        "inherited_descriptor": false,
+        "thread": true,
+        "thread_reads": [
+          false,
+          false
+        ],
+        "thread_shell": true,
+        "shell": true,
+        "native_fork": true,
+        "child_reads": [
+          false,
+          false
+        ],
+        "native_child_reads": [
+          false,
+          false
+        ],
+        "written_project_read": false,
+        "project_rename": false,
+        "proc_root_reads": [
+          false,
+          false
+        ],
+        "proc_init_list": false
+      },
+      "self_exec": true
+    },
+    {
+      "name": "declared-read-write-shell",
+      "flags": {
+        "read": true,
+        "write": true,
+        "shell": true
+      },
+      "observations": {
+        "stdio_tool": true,
+        "package_read": true,
+        "startup_artifacts": false,
+        "scratch_write": true,
+        "scratch_read": true,
+        "project_read": true,
+        "project_list": true,
+        "private_list": false,
+        "private_write": false,
+        "protected_read": false,
+        "protected_write": false,
+        "hardlink_private": false,
+        "cannot_relax": true,
+        "private_read": false,
+        "symlink_private_read": false,
+        "project_write": true,
+        "inherited_descriptor": false,
+        "thread": true,
+        "thread_reads": [
+          true,
+          false
+        ],
+        "thread_shell": true,
+        "shell": true,
+        "native_fork": true,
+        "child_reads": [
+          true,
+          false
+        ],
+        "native_child_reads": [
+          true,
+          false
+        ],
+        "written_project_read": true,
+        "project_rename": false,
+        "proc_root_reads": [
+          true,
+          false
+        ],
+        "proc_init_list": false
+      },
+      "self_exec": true
+    }
+  ]
+}

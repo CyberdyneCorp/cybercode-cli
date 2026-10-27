@@ -24,17 +24,17 @@ another mechanism is impossible. No suitable general native-macOS/no-shell
 mechanism has been demonstrated by this work. It cannot inherit broader exec
 rights just to start successfully.
 
-Bun/Linux's initial-exec candidate aborted during runtime initialization on both
-architectures. A native TSYNC bootstrap candidate and diagnostic tracing are
-being tested independently. Bun/Linux must not be admitted without a complete
-passing native matrix. This review does not waive that verification requirement.
+Bun/Linux initially aborted during runtime initialization. At `d5bee987`, both
+architectures passed complete native initial-exec and TSYNC matrices, with stdio
+tool controls and protected proc-alias tests; exact-source reports are in the
+proof ledger. Production integration acceptance remains required. This evidence
+does not resolve the macOS native/no-shell support decision.
 
 ## Proposed production availability
 
 | Platform | Runtime | Proposal |
 |---|---|---|
-| Linux x86_64/arm64 | Node, Python, Deno, native executable | Admit only after production integration proves the strict native filesystem/exec policy and complete owner boundaries |
-| Linux x86_64/arm64 | Bun | Same contract; admit only after a complete native candidate passes, otherwise report unavailable |
+| Linux x86_64/arm64 | Node, Python, Bun, Deno, native executable | Admit only after production integration proves the strict native filesystem/exec policy and complete owner boundaries |
 | macOS arm64/Intel | Node, Python, Bun, Deno | Native boundary after trusted isolated initialization and before plugin code; admit only after production acceptance |
 | macOS arm64/Intel | Native executable with `shell: true` | Pre-exec native filesystem policy; children retain restrictions; admit only after production acceptance |
 | macOS arm64/Intel | Native executable with `shell: false` | Explicitly unavailable until a separate safe mechanism is proved; do not permit self-exec or change the manifest |

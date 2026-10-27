@@ -81,19 +81,22 @@ be close-on-exec; process success and receipt content are both asserted.
 ## Evidence and limits
 
 The [native evidence ledger](../../../openspec/changes/complete-plugin-hook-runtime/native-proof.md)
-records local results. The dedicated GitHub Actions workflow repeats the matrix
+records local and exact-source native CI results. The dedicated GitHub Actions workflow repeats the matrix
 on macOS arm64/Intel and Ubuntu arm64/x86_64 and retains reports/logs, including failure logs. Merely
 adding that workflow does not prove those CI runs passed.
 
 Apple marks `sandbox_init` deprecated in the command-line SDK's `sandbox.h`, and
 custom profile flags are reserved. Local success is evidence about that host,
 not a maintained distribution/support promise. This probe leaves task 2.1 open.
-Before production integration, remaining work includes Linux native proof,
-explicit Windows availability limits, runtime/package admission and immutable
+Before production integration, remaining work includes the pending native macOS
+no-shell support decision, explicit Windows availability limits, runtime/package admission and immutable
 staging (including pre-existing hard links), protected-state aliases and races,
 trusted startup/dependency resolution, network/secret policy intersections,
 production packaging, crash/revocation tests and actual plugin tool execution.
-Bun, Deno, native plugins and other runtime/OS combinations are unproved.
+The ledger records passing Linux matrices for all five runtimes, passing earlier
+macOS Node/Python/Bun/Deno matrices and the shell-enabled native macOS subset.
+Native macOS no-shell startup remains unproved. Experimental success does not
+close production or platform acceptance.
 
 ## Linux prototype
 

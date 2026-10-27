@@ -230,3 +230,28 @@ stages the trusted bootstrap and native addon in the already admitted read-only
 fixture package for both inspect and exec launches. It does not grant the source
 repository or a temporary ancestor directory. Bun/Linux acceptance remains
 pending the untraced native matrix and all existing positive/negative controls.
+
+## Bun/Linux initial-exec and TSYNC evidence at `d5bee987`
+
+[Run 40574108971](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40574108971)
+passed all ten Linux runtime/architecture jobs. Both Bun 1.4.4 architectures
+passed the untraced initial-exec candidate and the independent TSYNC matrix:
+
+- [x86_64 initial-exec](../../../scripts/probes/plugin-confinement/evidence/d5bee987/linux-x64-bun-initial.json)
+- [arm64 initial-exec](../../../scripts/probes/plugin-confinement/evidence/d5bee987/linux-arm64-bun-initial.json)
+- [x86_64 TSYNC](../../../scripts/probes/plugin-confinement/evidence/d5bee987/linux-x64-bun-tsync.json)
+- [arm64 TSYNC](../../../scripts/probes/plugin-confinement/evidence/d5bee987/linux-arm64-bun-tsync.json)
+
+All four reports bind source digest
+`503c658fb27147ffa703a8519d092f121eb08e801d8d1e01c046230269d5a311`.
+Each contains nine capability/control rows with actual stdio tool dispatch and
+separate self-exec launches. The initial-exec rows also assert immutable filter
+replacement denial with a working unrestricted control. Private proc-root aliases
+remain unable to bypass workspace/private reads, and PID 1 remains masked.
+
+The workflow now requires the generic initial-exec mechanism for Bun as for the
+other Linux runtimes; the successful candidate is no longer an optional
+comparison. The macOS jobs on this source revision remain pending. These results
+resolve the earlier experimental Bun/Linux startup failure; they do not prove
+production confinement, network/secret intersections, immutable package
+admission or the proposed macOS native no-shell availability revision.

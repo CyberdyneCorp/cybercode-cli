@@ -69,19 +69,9 @@ jobs:
             args+=(--executable "$(command -v "$PROOF_RUNTIME")")
           fi
           if [[ "$RUNNER_OS" == Linux ]]; then
-            if [[ "$PROOF_RUNTIME" == bun ]]; then
-              args+=(--trace "$RUNNER_TEMP/proof-trace")
-              # Compare two native enforcement candidates. The initial-exec
-              # experiment already aborted before Bun's bootstrap; its result
-              # cannot count as the required TSYNC bootstrap acceptance below.
-              if node --experimental-strip-types scripts/probes/plugin-confinement/run.mts "${args[@]}" --initial-exec --report "$RUNNER_TEMP/initial-candidate.json" > "$RUNNER_TEMP/initial-candidate.log" 2>&1; then
-                echo 'Initial-exec candidate passed; testing the TSYNC bootstrap independently.'
-              else
-                echo 'Initial-exec candidate failed; retained diagnostics do not count as acceptance.'
-              fi
-            else
-              args+=(--initial-exec)
-            fi
+            # All five runtimes now require the same pre-target-instruction
+            # exec boundary. A diagnostic/traced retry cannot turn failure green.
+            args+=(--initial-exec --trace "$RUNNER_TEMP/proof-trace")
           fi
           node --experimental-strip-types scripts/probes/plugin-confinement/run.mts "${args[@]}" > "$RUNNER_TEMP/proof.log" 2>&1
       - name: Retain exact-source native evidence
@@ -93,8 +83,6 @@ jobs:
             ${{ runner.temp }}/proof.json
             ${{ runner.temp }}/proof.log
             ${{ runner.temp }}/proof-trace/
-            ${{ runner.temp }}/initial-candidate.json
-            ${{ runner.temp }}/initial-candidate.log
           if-no-files-found: error
           retention-days: 14
 
