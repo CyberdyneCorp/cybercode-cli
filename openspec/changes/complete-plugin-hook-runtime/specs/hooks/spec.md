@@ -20,3 +20,8 @@
 - **THEN** old workers cannot append new observations, the acknowledged metadata and allowance survive, and replay does not rerun possible handler effects
 - **AND** a failed observation commit does not consume metadata changes or dispatch allowance
 - **AND** renewing a feedback allowance requires a separate, single-use committed user acknowledgement owned by a live Session at that Location
+
+#### Scenario: Duplicate or stale file observation delivery
+- **WHEN** an observation is delivered twice to a Session or its watcher generation was replaced before handler admission
+- **THEN** the same handler is not run again after a consumed or unknown receipt, and a stale generation cannot admit a new handler
+- **AND** handler admission checks the real source record, eligible path and current Session Location under the single writer, without exposing private provenance in public receipts

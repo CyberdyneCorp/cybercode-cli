@@ -247,3 +247,86 @@ pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), S
     }
     Ok(())
 }
+
+/// Writer-side freshness, eligibility and path proof for real hook admission.
+pub(super) fn verify_hook_source(
+    db: &Connection,
+    directory: &str,
+    observation_id: &str,
+    generation: &str,
+    file_path: &str,
+) -> Result<(), String> {
+    let source: Option<(String, String, String)> = db
+        .query_row(
+            "SELECT aggregate_id,type,data FROM event WHERE id=?1",
+            [observation_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    let (id, kind, data) = source.ok_or("file observation does not exist")?;
+    if kind != records::CHANGED {
+        return Err("hook source is not a file observation".into());
+    }
+    let delta: Delta = decode(&data).map_err(|error| error.to_string())?;
+    delta.validate()?;
+    let current = load(db, &id, i64::MAX)
+        .map_err(|error| error.to_string())?
+        .ok_or("file watch is unavailable")?;
+    if current.state.directory != directory
+        || current.state.generation != generation
+        || delta.generation != generation
+        || !delta.dispatch
+        || delta.renewal.is_some()
+        || !delta.updates.iter().any(|update| update.path == file_path)
+    {
+        return Err("file observation scope, generation or delivery eligibility changed".into());
+    }
+    Ok(())
+}
+
+impl FileWatch {
+    /// Dispatch a committed observation to one real Session, outside lifecycle or
+    /// Session locks. Hook decisions do not alter the observed filesystem result.
+    /// Receipt admission rechecks provenance atomically; duplicate/unknown receipts
+    /// stay consumed, including after restart.
+    pub async fn dispatch_to(
+        &self,
+        observation: &StoredEvent,
+        session_id: &str,
+    ) -> Result<(), RuntimeError> {
+        let runtime = self.runtime()?;
+        if observation.aggregate_id != self.aggregate || observation.kind != records::CHANGED {
+            return Err(RuntimeError::Invalid(
+                "observation belongs to another owner".into(),
+            ));
+        }
+        let delta: Delta = serde_json::from_value(observation.data.clone())
+            .map_err(|error| RuntimeError::Invalid(error.to_string()))?;
+        delta.validate().map_err(RuntimeError::Invalid)?;
+        if !delta.dispatch || delta.generation != self.state.generation || delta.renewal.is_some() {
+            return Err(RuntimeError::Invalid(
+                "observation is not eligible for dispatch".into(),
+            ));
+        }
+        let handle = runtime.inner.handle(session_id).await?;
+        let hooks = {
+            let state = handle.state.lock().await;
+            if state.info.archived || state.info.directory != self.state.directory {
+                return Err(RuntimeError::Invalid(
+                    "observing Session changed Location or is archived".into(),
+                ));
+            }
+            delta.updates.iter().map(|update|super::lifecycle::lifecycle(&state,"FileChanged",update.path.clone(),
+                serde_json::json!({"file_path":update.path,"change":if update.stamp.is_some(){"changed"}else{"removed"},
+                    "observation_id":observation.id,"watch_generation":delta.generation}))).collect::<Vec<_>>()
+        };
+        let mut failure = None;
+        for hook in hooks {
+            if let Err(error) = runtime.inner.owned_lifecycle_hooks(hook).await {
+                failure.get_or_insert(error);
+            }
+        }
+        failure.map_or(Ok(()), |error| Err(RuntimeError::Hook(error)))
+    }
+}

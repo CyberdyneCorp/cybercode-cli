@@ -263,3 +263,162 @@ async fn current_session_projection_cannot_rebind_an_earlier_user_acknowledgemen
             .is_err()
     );
 }
+
+fn file_definition(h: &Harness) -> cyber_core::hooks::HookDefinition {
+    use cyber_core::config::{self, LoadRequest};
+    use cyber_core::hooks::HookCatalog;
+    let env = std::collections::HashMap::from([(
+        "CYBER_HOME".into(),
+        h.dir.path().join("file-hook-config").display().to_string(),
+    )]);
+    let paths = cyber_core::paths::Paths::resolve(&env, h.dir.path());
+    paths.ensure().unwrap();
+    std::fs::write(paths.config.join("cyber.jsonc"),serde_json::json!({"hooks":{"FileChanged":[{"hooks":[{"type":"command","command":"printf reviewed","id":"file-guard"}]}]}}).to_string()).unwrap();
+    let resolved = config::load(&LoadRequest {
+        location: &h.repo,
+        paths: &paths,
+        env: &env,
+        home: h.dir.path(),
+        profile: None,
+        overrides: &[],
+        flags: serde_json::json!({}),
+    })
+    .unwrap();
+    HookCatalog::from_config(&resolved)
+        .unwrap()
+        .definitions
+        .remove(0)
+}
+async fn file_event(
+    h: &Harness,
+    id: &str,
+    observation: &cyber_store::StoredEvent,
+) -> cyber_core::hooks::HookEvent {
+    let info = h.runtime.state(id).await.unwrap().info;
+    let identity = h.runtime.session_envelope(id).await.unwrap().identity(
+        id,
+        &info.directory,
+        &info.agent,
+        &info.mode,
+    );
+    cyber_core::hooks::HookEvent::new("FileChanged",identity,1,serde_json::json!({
+        "observation_id":observation.id,"watch_generation":observation.data["generation"],"file_path":"nested/data"
+    }).as_object().unwrap().clone()).unwrap()
+}
+
+#[tokio::test]
+async fn unknown_file_handler_delivery_remains_consumed_without_reexecution() {
+    use cyber_server::runtime::HookExecutionStatus;
+    let h = Harness::new(Setup::default());
+    let id = h.session().await;
+    let mut watch = h
+        .runtime
+        .claim_file_watch(directory(&h), "root-one".into(), BTreeMap::new())
+        .await
+        .unwrap();
+    let source = watch
+        .record(update(
+            &watch.state().generation,
+            records::FEEDBACK_LIMIT - 1,
+        ))
+        .await
+        .unwrap();
+    let event = file_event(&h, &id, &source).await;
+    let definition = file_definition(&h);
+    let owner = h
+        .runtime
+        .try_start_hook_execution(&event, &definition, false)
+        .await
+        .unwrap()
+        .unwrap();
+    let receipt_id = owner.record().id.clone();
+    drop(owner);
+    assert_eq!(
+        h.runtime.hook_executions(&id, 10).unwrap()[0].status,
+        HookExecutionStatus::Unknown
+    );
+    assert!(
+        h.runtime
+            .try_start_hook_execution(&event, &definition, false)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let restarted = h.restart();
+    assert!(
+        restarted
+            .try_start_hook_execution(&event, &definition, false)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let receipts = restarted.hook_executions(&id, 10).unwrap();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].id, receipt_id);
+    assert_eq!(receipts[0].status, HookExecutionStatus::Unknown);
+}
+
+#[tokio::test]
+async fn stale_observation_generation_cannot_admit_a_new_handler() {
+    let h = Harness::new(Setup::default());
+    let id = h.session().await;
+    let mut old = h
+        .runtime
+        .claim_file_watch(directory(&h), "root-one".into(), BTreeMap::new())
+        .await
+        .unwrap();
+    let source = old
+        .record(update(&old.state().generation, records::FEEDBACK_LIMIT - 1))
+        .await
+        .unwrap();
+    let event = file_event(&h, &id, &source).await;
+    let _new = h
+        .runtime
+        .claim_file_watch(directory(&h), "root-one".into(), BTreeMap::new())
+        .await
+        .unwrap();
+    assert!(
+        h.runtime
+            .try_start_hook_execution(&event, &file_definition(&h), false)
+            .await
+            .is_err()
+    );
+    assert!(h.runtime.hook_executions(&id, 10).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn archived_session_cannot_admit_a_prepared_file_observation() {
+    let h = Harness::new(Setup::default());
+    let id = h.session().await;
+    let mut watch = h
+        .runtime
+        .claim_file_watch(directory(&h), "root-one".into(), BTreeMap::new())
+        .await
+        .unwrap();
+    let source = watch
+        .record(update(
+            &watch.state().generation,
+            records::FEEDBACK_LIMIT - 1,
+        ))
+        .await
+        .unwrap();
+    let event = file_event(&h, &id, &source).await;
+    let seq = h.store.aggregate_seq(&id).unwrap().unwrap();
+    h.store
+        .append(
+            &id,
+            Expected::Seq(seq),
+            vec![NewEvent::new(
+                "session.archived.1",
+                serde_json::json!({"archived":true}),
+            )],
+        )
+        .unwrap();
+    assert!(
+        h.runtime
+            .try_start_hook_execution(&event, &file_definition(&h), false)
+            .await
+            .is_err()
+    );
+    assert!(h.runtime.hook_executions(&id, 10).unwrap().is_empty());
+}

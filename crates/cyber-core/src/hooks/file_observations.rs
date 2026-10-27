@@ -2,6 +2,7 @@
 //! permissions, file contents, or an authenticated writer. Hook effects are owned
 //! separately by the hook receipt machinery and are not replayed with this state.
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -16,6 +17,25 @@ pub const FEEDBACK_LIMIT: u32 = 64;
 /// Mint a generation in the same module that validates its serialized shape.
 pub fn new_generation() -> String {
     ulid::Ulid::new().to_string()
+}
+
+/// A replay-stable receipt ID, retaining the source observation's ULID time.
+/// Source entropy also enters the hash: separate observations in one millisecond
+/// must remain separate deliveries to the same handler.
+pub fn receipt_id(source: &str, scope: &[u8]) -> Result<String, String> {
+    let id = source
+        .strip_prefix("evt_")
+        .ok_or("invalid file observation ID")?
+        .parse::<ulid::Ulid>()
+        .map_err(|_| "invalid file observation ID")?;
+    let mut hash = Sha256::new();
+    hash.update(source.as_bytes());
+    hash.update([0]);
+    hash.update(scope);
+    let digest = hash.finalize();
+    let mut bytes = id.to_bytes();
+    bytes[6..].copy_from_slice(&digest[..10]);
+    Ok(format!("hke_{}", ulid::Ulid::from_bytes(bytes)))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -445,5 +465,31 @@ mod tests {
         let mut replay = Replay::new(state).unwrap();
         assert!(replay.push(&change).is_err());
         assert!(replay.finish().is_err());
+    }
+    #[test]
+    fn observation_receipts_are_stable_but_separate_same_time_sources_and_scopes() {
+        let first = format!("evt_{}", ulid::Ulid::from(1u128));
+        let second = format!("evt_{}", ulid::Ulid::from(2u128));
+        let receipt = receipt_id(&first, b"session/path/handler").unwrap();
+        assert_eq!(
+            receipt_id(&first, b"session/path/handler").unwrap(),
+            receipt
+        );
+        assert_ne!(
+            receipt_id(&second, b"session/path/handler").unwrap(),
+            receipt
+        );
+        assert_ne!(
+            receipt_id(&first, b"other-session/path/handler").unwrap(),
+            receipt
+        );
+        assert!(
+            receipt
+                .strip_prefix("hke_")
+                .unwrap()
+                .parse::<ulid::Ulid>()
+                .is_ok()
+        );
+        assert!(receipt_id("hke_wrong-source", b"scope").is_err());
     }
 }

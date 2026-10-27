@@ -9,6 +9,10 @@ on:
       - crates/cyber-server/src/runtime/mod.rs
       - crates/cyber-server/tests/file_observations.rs
       - crates/cyber-tools/src/file_changes/**
+      - crates/cyber-tools/tests/file_observation_dispatch.rs
+      - crates/cyber-server/src/runtime/file_observation_hooks.rs
+      - crates/cyber-server/src/runtime/hooks.rs
+      - crates/cyber-tools/src/lifecycle_hooks.rs
       - crates/cyber-tools/src/lib.rs
       - crates/cyber-tools/Cargo.toml
       - Cargo.lock
@@ -45,3 +49,5 @@ jobs:
           cargo test --locked -p cyber-tools --lib file_changes::
       - name: Exercise actual durable store and runtime ownership
         run: cargo test --locked -p cyber-server --test file_observations
+      - name: Exercise real scoped HTTP-hook dispatch
+        run: cargo test --locked -p cyber-tools --test file_observation_dispatch

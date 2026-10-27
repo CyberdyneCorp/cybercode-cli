@@ -44,6 +44,7 @@ const DISTINCT_UNAVAILABLE: &[&str] = &[
     "WorktreeRemove",
     "Setup",
     "ConfigChange",
+    "FileChanged",
     "GoalEvaluated",
     "GoalCompleted",
 ];
@@ -72,6 +73,7 @@ const RUNTIME_EVENTS: &[&str] = &[
     "WorkflowRunEnd",
     "Setup",
     "ConfigChange",
+    "FileChanged",
 ];
 
 /// Events whose additional_context the runtime applies: lifecycle context with its

@@ -1,8 +1,8 @@
 # File observation implementation notes
 
 Status: in progress; component and record-model checks passed locally; actual
-store/runtime regressions await CI. The application does not yet emit
-`FileChanged` from these components. Task 5.2 remains open, and this increment
+store/runtime regressions await CI. The native watcher is not yet connected to automatic application dispatch;
+committed observations now have a scoped hook-dispatch port. Task 5.2 remains open, and this increment
 cannot establish the plugin/hook workstream's acceptance.
 
 ## Components under construction
@@ -48,9 +48,10 @@ across generations. Hook-originated input cannot satisfy that proof. The actual
 user-action forwarding and alias-aware owner integration remain pending; this
 port does not create human presence or authorize a callback itself.
 
-Six actual Store/Runtime regressions cover restart fencing, append failure,
+The initial six actual Store/Runtime regressions cover restart fencing, append failure,
 periodic checkpoints, forged scope/credit/metadata checkpoints and single-use
-user renewal and historical Location binding. Their compilation and results must be confirmed in CI. The focused
+user renewal and historical Location binding. These initial six and the native components passed the focused Linux job at
+`c7f73ff3`. Other platforms and the new dispatch regressions remain pending. The focused
 workflow runs pure models, native components and Store/Runtime regressions on
 Linux, macOS and Windows. No platform result is implied by adding that workflow.
 
@@ -98,8 +99,8 @@ caught a missing `cap_fs_ext::DirExt` import and was corrected. Sixteen componen
 tests now cover traversal, native events, reconciliation, overflow, policy
 revocation, scope names and finite feedback allowance on the local macOS host.
 
-The expanded isolated harness passes 30 tests: the 20 native/reconciliation
-component tests, nine pure observation-record tests and the existing ID helper
+The expanded isolated harness passes 31 tests: the 20 native/reconciliation
+component tests, ten pure observation-record tests and the existing ID helper
 regression loaded with them. Isolated Clippy with warnings denied and the
 project cognitive-complexity threshold also passes. These do not establish a
 full application build or acceptance of the actual Store/Runtime regressions.
@@ -115,3 +116,25 @@ without that package dependency. Generation creation now lives in the existing
 core module that owns ULID validation (`11d5d517`); the actual Store/Runtime and
 full platform checks are rerunning. Isolated harness success is not evidence of
 a whole-workspace compile.
+
+## Committed observation dispatch port
+
+`FileWatch::dispatch_to` builds observational FileChanged events for a real,
+non-archived Session at the recorded Location and invokes the existing lifecycle
+executor outside Session/lifecycle locks. Receipt admission carries a private
+observation binding; the single writer verifies the actual source record, path,
+eligibility and current generation before any new handler starts. The binding
+is not part of public receipts or telemetry. Synthetic CLI hook tests keep their
+existing isolated behavior.
+
+Receipt identities are stable for the observation, Session, path and effective
+handler identity. A duplicate delivery remains consumed even when its earlier
+receipt is Unknown. Separate source IDs created in one millisecond remain
+distinct. This adds three actual Store/admission regressions and one real
+BuiltinHost/HTTP-hook flow for two Sessions, path matching, duplicate delivery,
+ignored observational deny and receipt privacy. These tests await CI.
+
+Automatic native actor ownership, canonical/alias-aware membership, user-input
+forwarding/feedback UX, explicit tool/formatter reconciliation and full shutdown/
+restart/overflow application acceptance are still required. No task is closed
+on the strength of a manually dispatched observation.
