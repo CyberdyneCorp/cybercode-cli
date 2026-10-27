@@ -6,11 +6,11 @@ import { spawnSync } from "node:child_process";
 import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { release, tmpdir } from "node:os";
 import { createHash } from "node:crypto";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
-type Runtime = { kind: "python" | "node" | "native"; executable: string; prefix: string; include: string; libdir: string; library?: string; version: string };
+type Runtime = { kind: "python" | "node" | "bun" | "deno" | "native"; executable: string; prefix: string; include: string; libdir: string; library?: string; version: string };
 type Artifacts = { executable: string; addon?: string; landlock?: string; initialExec: boolean };
 type Flags = { read: boolean; write: boolean; shell: boolean; unrestricted?: boolean };
 type Observation = Record<string, boolean | null | boolean[]>;
@@ -42,6 +42,32 @@ function nodeInfo(): Runtime {
   return { kind: "node", executable, prefix, include, libdir: join(prefix, "lib"), version: process.versions.node };
 }
 
+function javascriptInfo(kind: "bun" | "deno", program: string, scratch: string): Runtime {
+  assert(isAbsolute(program), "supply an absolute trusted runtime executable");
+  const executable = realpathSync(program);
+  const line = command(executable, ["--version"], { cwd: scratch, env: { ...environment, HOME: scratch, XDG_CONFIG_HOME: scratch } }).trim().split("\n")[0];
+  return { kind, executable, prefix: dirname(executable), include: nodeInfo().include,
+    libdir: dirname(executable), version: kind === "deno" ? line.split(/\s+/)[1] : line };
+}
+
+function startupControl(root: string, runtime: Runtime) {
+  if (runtime.kind !== "bun") return undefined;
+  const control = join(root, "startup-control");
+  mkdirSync(control, { mode: 0o700 });
+  const paths = fixture(control);
+  const script = 'console.log(JSON.stringify({preload:process.env.CYBER_PROOF_AUTO_PRELOAD==="fixture-only",dotenv:process.env.CYBER_PROOF_AUTO_DOTENV==="fixture-only"}))';
+  const observed = JSON.parse(command(runtime.executable, ["-e", script], {
+    cwd: paths.project, env: { ...environment, HOME: paths.scratch, XDG_CONFIG_HOME: paths.scratch },
+  }));
+  assert.deepEqual(observed, { preload: true, dotenv: true }, "unhardened startup control must actually load both project artifacts");
+  return observed;
+}
+
+function outside(root: string, allowed: string): boolean {
+  const child = relative(realpathSync(allowed), root);
+  return child === ".." || child.startsWith(".." + sep) || isAbsolute(child);
+}
+
 function build(root: string, runtime: Runtime, initialExec: boolean): Artifacts {
   const clang = isLinux ? "/usr/bin/cc" : command("/usr/bin/xcrun", ["--find", "clang"]).trim();
   const platform = isLinux ? [] : ["-isysroot", command("/usr/bin/xcrun", ["--show-sdk-path"]).trim()];
@@ -51,11 +77,11 @@ function build(root: string, runtime: Runtime, initialExec: boolean): Artifacts 
   const landlock = isLinux ? join(root, "landlock-proof") : undefined;
   if (landlock) command(clang, [...warnings, join(source, "linux_exec.c"), "-o", landlock]);
   if (runtime.kind === "native") {
-    command(clang, [...warnings, "-pthread", join(source, "fixture_native.c"), "-o", runtime.executable]);
-    command(clang, [...warnings, join(source, "native_exec.c"), "-o", executable]);
+    command(clang, [...platform, ...warnings, "-pthread", join(source, "fixture_native.c"), "-o", runtime.executable]);
+    command(clang, [...platform, ...warnings, join(source, isLinux ? "native_exec.c" : "macos_exec.c"), "-o", executable]);
     return { executable, landlock, initialExec };
   }
-  if (runtime.kind === "node") {
+  if (runtime.kind !== "python") {
     const addon = join(root, "native.node");
     command(clang, [...platform, ...warnings, join(source, "native_exec.c"), "-o", executable]);
     command(clang, [...platform, ...warnings, ...isLinux ? ["-shared", "-fPIC"] : ["-bundle", "-undefined", "dynamic_lookup"],
@@ -76,12 +102,13 @@ function policy(runtime: Runtime, paths: Record<string, string>, flags: Flags): 
     "(allow signal (target same-sandbox))", "(allow process-info* (target same-sandbox))",
     '(allow file-read* file-write* (literal "/dev/null"))',
     '(allow file-read-data (literal "/"))'];
-  for (const path of ["/System", "/usr/lib", "/bin", "/usr/bin", runtime.libdir, dirname(runtime.executable), paths.package, paths.scratch]) {
+  for (const path of ["/System", "/usr/lib", "/bin", "/usr/bin", runtime.libdir, ...runtime.kind === "native" ? [] : [dirname(runtime.executable)], paths.package, paths.scratch]) {
     lines.push(allow("file-read* file-map-executable", path));
   }
   // Framework Python's libpython symlink points outside LIBDIR to the
   // framework binary. Admit that exact trusted file for descendant startup.
   if (runtime.library) lines.push(`(allow file-read* file-map-executable (literal ${JSON.stringify(runtime.library)}))`);
+  if (runtime.kind === "native") lines.push(`(allow file-read* file-map-executable (literal ${JSON.stringify(runtime.executable)}))`);
   lines.push(allow("file-write*", paths.scratch));
   if (flags.read) lines.push(allow("file-read*", paths.project));
   if (flags.write) lines.push(allow("file-write*", paths.project));
@@ -99,6 +126,9 @@ function fixture(root: string): Record<string, string> {
   paths.protected = join(paths.project, ".owner-private");
   mkdirSync(paths.protected, { mode: 0o700 });
   writeFileSync(join(paths.protected, "data"), "protected temporary fixture", { mode: 0o600 });
+  writeFileSync(join(paths.project, ".env"), "CYBER_PROOF_AUTO_DOTENV=fixture-only\n", { mode: 0o600 });
+  writeFileSync(join(paths.project, "preload.cjs"), 'process.env.CYBER_PROOF_AUTO_PRELOAD="fixture-only";', { mode: 0o600 });
+  writeFileSync(join(paths.project, "bunfig.toml"), `preload = [${JSON.stringify(join(paths.project, "preload.cjs"))}]\n`, { mode: 0o600 });
   for (const file of ["fixture.py", "fixture.cjs"]) copyFileSync(join(source, file), join(paths.package, file));
   for (const path of [join(paths.package, "data"), join(paths.project, "data"), join(paths.private, "data")]) {
     writeFileSync(path, "owned temporary fixture", { mode: 0o600 });
@@ -144,7 +174,7 @@ function observe(artifacts: Artifacts, runtime: Runtime, paths: Record<string, s
   const workerAddon = join(paths.package, "native.node");
   if (artifacts.addon && mode === "inspect") copyFileSync(artifacts.addon, workerAddon);
   const identity = statSync(join(paths.private, "data"), { bigint: true });
-  const input = { initial_exec: artifacts.initialExec, platform: process.platform, runtime: runtime.executable, addon: workerAddon, private_dev: identity.dev.toString(), private_ino: identity.ino.toString(), python: runtime.executable, mode, confined: profile !== "-", package_file: join(paths.package, "data"),
+  const input = { kind: runtime.kind, initial_exec: artifacts.initialExec, platform: process.platform, runtime: runtime.executable, addon: workerAddon, private_dev: identity.dev.toString(), private_ino: identity.ino.toString(), python: runtime.executable, mode, confined: profile !== "-", package_file: join(paths.package, "data"),
     project_file: join(paths.project, "data"), private_file: join(paths.private, "data"),
     scratch_file: join(paths.scratch, "roundtrip"), project_write: join(paths.project, "written"),
     symlink_private: join(paths.package, "escape"), protected_file: join(paths.protected, "data"),
@@ -155,15 +185,19 @@ function observe(artifacts: Artifacts, runtime: Runtime, paths: Record<string, s
     const args = runtime.kind === "python"
       ? [runtime.executable, runtime.prefix, bootstrapProfile, join(paths.package, "fixture.py"), JSON.stringify(input)]
       : runtime.kind === "native"
-        ? [runtime.executable, mode, input.package_file, input.project_file, input.private_file, input.scratch_file,
+        ? [...isLinux ? [] : [profile], runtime.executable, mode, input.package_file, input.project_file, input.private_file, input.scratch_file,
           input.project_write, input.symlink_private, input.protected_file, input.scratch, input.project,
           input.private_dev, input.private_ino, input.confined ? "1" : "0"]
-        : [runtime.executable, join(source, "node_bootstrap.cjs"), artifacts.addon!, bootstrapProfile, join(paths.package, "fixture.cjs"), JSON.stringify(input)];
+        : [runtime.executable, ...runtime.kind === "deno" ? ["run", "-A", "--no-config", "--no-lock", "--node-modules-dir=manual"]
+          : runtime.kind === "bun" ? ["--config=/dev/null", "--no-env-file", "--no-install"] : [],
+          join(source, "node_bootstrap.cjs"), artifacts.addon!, bootstrapProfile, join(paths.package, "fixture.cjs"), JSON.stringify(input)];
     const launch = isLinux && !flags.unrestricted ? linuxLaunch(artifacts, runtime, paths, profile, flags, args) : { program: artifacts.executable, args };
     const stdout = command(launch.program, launch.args,
-      { cwd: paths.cwd, env: { ...environment, ...runtime.kind === "native" ? { CYBER_PROOF_PRIVATE: input.private_file } : {} },
+      { cwd: paths.cwd, env: { ...environment, HOME: paths.scratch, XDG_CONFIG_HOME: join(paths.scratch, "config"), DENO_DIR: join(paths.scratch, "deno-cache"),
+          XDG_CACHE_HOME: join(paths.scratch, "cache"), BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(paths.scratch, "bun-cache"),
+          ...runtime.kind === "native" ? { CYBER_PROOF_PRIVATE: input.private_file } : {} },
         stdio: ["ignore", "pipe", "pipe", "ignore", "ignore", "ignore", "ignore", "ignore", "ignore", inherited] });
-    if (runtime.kind === "node" && mode === "exec" && stdout === "") {
+    if (artifacts.addon && mode === "exec" && stdout === "") {
       return JSON.parse(readFileSync(input.exec_marker, "utf8"));
     }
     return JSON.parse(stdout);
@@ -195,6 +229,7 @@ function check(root: string, artifacts: Artifacts, runtime: Runtime, name: strin
   if (!flags.unrestricted) writeFileSync(profile, isLinux ? `shell=${flags.shell ? 1 : 0}\n` : policy(runtime, paths, flags), { mode: 0o600 });
   const actual = observe(artifacts, runtime, paths, profile, "inspect", flags);
   const expectations = expected(flags);
+  if (artifacts.addon) expectations.startup_artifacts = false;
   if (artifacts.initialExec) expectations.filter_replacement_denied = !flags.unrestricted;
   if (runtime.kind === "native") {
     expectations.constructor_private_read = !!flags.unrestricted;
@@ -208,36 +243,48 @@ function check(root: string, artifacts: Artifacts, runtime: Runtime, name: strin
 
 function main() {
   assert(["darwin", "linux"].includes(process.platform), "native proof requires macOS or Linux; other platforms are unproved");
-  const { values } = parseArgs({ options: { runtime: { type: "string", default: "python" }, python: { type: "string" }, report: { type: "string" }, "initial-exec": { type: "boolean", default: false } } });
-  assert(["python", "node", "native"].includes(values.runtime), "runtime must be python, node or native");
-  const initialExec = values["initial-exec"] || values.runtime === "native";
-  assert(!initialExec || isLinux, "initial-exec/native proof currently requires Linux");
+  const { values } = parseArgs({ options: { runtime: { type: "string", default: "python" }, python: { type: "string" }, executable: { type: "string" }, report: { type: "string" }, "initial-exec": { type: "boolean", default: false } } });
+  assert(["python", "node", "bun", "deno", "native"].includes(values.runtime), "runtime must be python, node, bun, deno or native");
+  if (values.runtime === "bun" || values.runtime === "deno") assert(values.executable, "supply an explicit trusted Bun/Deno executable");
+  const initialExec = values["initial-exec"] || (values.runtime === "native" && isLinux);
+  assert(!initialExec || isLinux, "initial-exec proof currently requires Linux");
   if (values.runtime === "python") assert(values.python, "supply an explicit trusted Python with development headers and dynamic library");
   const root = realpathSync(mkdtempSync(join(tmpdir(), "cyber-plugin-native-proof-")));
   try {
-    const runtime: Runtime = values.runtime === "node" ? nodeInfo() : values.runtime === "native"
+    const runtime: Runtime = values.runtime === "node" ? nodeInfo() : values.runtime === "bun" || values.runtime === "deno"
+      ? javascriptInfo(values.runtime, values.executable!, root) : values.runtime === "native"
       ? { kind: "native", executable: join(root, "native-fixture"), prefix: "/usr", include: "", libdir: "/usr/lib", version: "fixture-v1" }
       : pythonInfo(values.python!);
+    // A runtime installed straight in /tmp must not accidentally admit all
+    // temporary owner fixtures through its directory read grant.
+    for (const allowed of [runtime.prefix, runtime.libdir, ...runtime.kind === "native" ? [] : [dirname(runtime.executable)], ...isLinux ? ["/usr", "/lib", "/bin"] : ["/System", "/usr/lib", "/bin", "/usr/bin"]]) {
+      if (existsSync(allowed)) assert(outside(root, allowed), `runtime read root overlaps private proof fixtures: ${allowed}`);
+    }
     const artifacts = build(root, runtime, initialExec);
-    const rows = [
-      check(root, artifacts, runtime, "unconfined-control", { read: true, write: true, shell: true, unrestricted: true }),
-      check(root, artifacts, runtime, "no-capabilities", { read: false, write: false, shell: false }),
-      check(root, artifacts, runtime, "read-only", { read: true, write: false, shell: false }),
-      check(root, artifacts, runtime, "write-without-read", { read: false, write: true, shell: false }),
-      check(root, artifacts, runtime, "shell-without-read", { read: false, write: false, shell: true }),
-      check(root, artifacts, runtime, "read-write-without-shell", { read: true, write: true, shell: false }),
-      check(root, artifacts, runtime, "read-shell-without-write", { read: true, write: false, shell: true }),
-      check(root, artifacts, runtime, "write-shell-without-read", { read: false, write: true, shell: true }),
-      check(root, artifacts, runtime, "declared-read-write-shell", { read: true, write: true, shell: true }),
+    const startup_control = startupControl(root, runtime);
+    const cases: Array<[string, Flags]> = [
+      ["unconfined-control", { read: true, write: true, shell: true, unrestricted: true }],
+      ["no-capabilities", { read: false, write: false, shell: false }],
+      ["read-only", { read: true, write: false, shell: false }],
+      ["write-without-read", { read: false, write: true, shell: false }],
+      ["shell-without-read", { read: false, write: false, shell: true }],
+      ["read-write-without-shell", { read: true, write: true, shell: false }],
+      ["read-shell-without-write", { read: true, write: false, shell: true }],
+      ["write-shell-without-read", { read: false, write: true, shell: true }],
+      ["declared-read-write-shell", { read: true, write: true, shell: true }],
     ];
+    const unsupported_cases = cases.filter(([, flags]) => runtime.kind === "native" && !isLinux && !flags.shell)
+      .map(([name]) => ({ name, reason: "native macOS shell=false initial-exec mechanism remains unproved; explicit support review required" }));
+    const rows = cases.filter(([name]) => !unsupported_cases.some(item => item.name === name))
+      .map(([name, flags]) => check(root, artifacts, runtime, name, flags));
     const digest = createHash("sha256");
-    const sources = ["run.mts", "macos_python.c", "macos_node.c", "native_exec.c", "node_bootstrap.cjs", "fixture.py", "fixture.cjs", "process_policy.h", "linux_filter.h", "linux_exec.c", "linux_initial_exec.h", "fixture_native.c"];
+    const sources = ["run.mts", "macos_python.c", "macos_node.c", "native_exec.c", "node_bootstrap.cjs", "fixture.py", "fixture.cjs", "process_policy.h", "linux_filter.h", "linux_exec.c", "linux_initial_exec.h", "fixture_native.c", "macos_exec.c"];
     for (const file of sources) {
       digest.update(file + "\0").update(readFileSync(join(source, file)));
     }
-    const report = { recorded_at: new Date().toISOString(), kernel_release: release(), sources, source_sha256: digest.digest("hex"), platform: process.platform, architecture: process.arch, runtime: runtime.kind, version: runtime.version,
+    const report = { recorded_at: new Date().toISOString(), kernel_release: release(), sources, source_sha256: digest.digest("hex"), platform: process.platform, architecture: process.arch, runtime: runtime.kind, version: runtime.version, startup_control,
       mechanism: initialExec ? "bubblewrap private mounts + Landlock/seccomp before first target instruction + one-shot exec admission; closed listener and immutable filter" : isLinux ? "bubblewrap private mounts + Landlock before runtime startup + synchronized seccomp before fixture execution" : "trusted native/runtime bootstrap followed by native sandbox_init before fixture execution",
-      limitation: "experimental native mechanisms; macOS uses deprecated Seatbelt API; not production packaging or Windows acceptance", rows };
+      limitation: "experimental native mechanisms; macOS uses deprecated Seatbelt API; not production packaging or Windows acceptance", unsupported_cases, rows };
     if (values.report) writeFileSync(values.report, JSON.stringify(report, null, 2) + "\n", { mode: 0o600 });
     console.log(JSON.stringify(report, null, 2));
   } finally { rmSync(root, { recursive: true, force: true }); }

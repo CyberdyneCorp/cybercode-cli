@@ -26,9 +26,11 @@ node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runt
 node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime native --report /tmp/native-initial.json
 ```
 
-The native fixture implies `--initial-exec` and is Linux-only. It is an untrusted
-C executable with no confinement bootstrap; its ELF constructor tests private
-reads before `main`. Node headers must be under the selected Node prefix's `include/node`.
+The native fixture implies `--initial-exec` on Linux. On macOS it runs the
+four `shell: true` filesystem combinations and an unrestricted control; the
+four `shell: false` combinations are explicitly reported as unsupported rather
+than passed. It is an untrusted C executable with no confinement bootstrap; its
+ELF/Mach-O constructor tests private reads and forks before `main`. Node headers must be under the selected Node prefix's `include/node`.
 The compiler is discovered through `/usr/bin/xcrun` on macOS; Linux uses `/usr/bin/cc`. No package/runtime is
 downloaded by the probe. Runtime discovery executes the explicitly selected
 trusted interpreter; do not point it at untrusted programs.
@@ -51,8 +53,9 @@ On macOS enforcement is in Seatbelt, with direct C/libc operations used by the f
 there is no filesystem or subprocess API interception. The unrestricted `-`
 profile is a test control, never a permitted production launch mode.
 
-Each runtime runs all eight combinations of `fs.read`, `fs.write` and `shell`,
-plus an unrestricted positive control. Each case launches separate inspection
+Each full runtime matrix runs all eight combinations of `fs.read`, `fs.write`
+and `shell`, plus an unrestricted positive control. The macOS native-executable
+subset reports its four unsupported no-shell combinations explicitly. Each case launches separate inspection
 and interpreter-reexecution processes. Assertions cover:
 
 - Native package reads and private scratch round trips.
@@ -166,3 +169,49 @@ failure tests. It is not an audited production supervisor. Read the kernel's
 and the [Linux API caveats](https://man7.org/linux/man-pages/man2/seccomp_unotify.2.html):
 CONTINUE is unsuitable for inspecting mutable untrusted arguments. The trusted
 pre-exec ordering is essential to this experiment.
+
+## Bun, Deno and startup configuration
+
+Use an absolute trusted runtime executable, with Node's development headers still
+available to compile the Node-API fixture addon:
+
+```sh
+node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime bun --executable /absolute/bun
+node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime deno --executable /absolute/deno
+```
+
+Add `--initial-exec` on Linux. The workflow pins Bun 1.4.4 and Deno 2.9.8.
+Their Node-API support is a way for the fixture to enter native calls; it does
+not implement the security boundary. Deno runs a CJS bootstrap with all language
+permissions and disabled config/lock discovery. Deno's own `Command.outputSync`
+API supplies explicit OS permission errors because its Node-compatible
+`spawnSync` returned an empty object on a denied spawn in local testing. The
+fixture does not interpret unknown spawn results as a successful denial.
+
+Bun launches with `/dev/null` as its config, automatic dotenv loading disabled
+and auto-install disabled. An unhardened control first proves that the dummy
+project's `bunfig.toml` preload and `.env` actually load; every hardened launch
+must then report neither startup artifact. HOME/config/cache directories are
+private scratch. This matters on macOS because runtime initialization precedes
+the native policy call. A project preload must never run with that bootstrap's
+ambient authority. Native re-exec receives the dummy receipt path as an explicit
+argument, avoiding Bun's JS/native environment synchronization difference.
+
+The driver rejects runtime directory read roots that contain its private test
+fixtures. Installing a runtime directly in `/tmp`, then permitting its whole
+parent, must not turn a capability-denial test into broad temporary-file access.
+
+## macOS native executable gap
+
+```sh
+node --experimental-strip-types scripts/probes/plugin-confinement/macos_native_exec.mts --report /tmp/macos-native-gap.json
+```
+
+This experiment isolates two insufficient strategies: a pre-exec no-exec policy
+refuses the initial executable, and an exact-file exec exception permits that
+file to re-exec itself. It deliberately grants broad reads to isolate the exec
+question; it is not a candidate fs.read policy and touches no real private data.
+A successful run means the assertions about these gaps passed, not that no-shell
+native executables are supported. It does not prove all possible mechanisms
+impossible. The native subset exercises `shell: true` only; a support revision
+requires the explicit review in the approved design before integration.

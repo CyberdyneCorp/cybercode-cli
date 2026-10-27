@@ -169,3 +169,29 @@ read-root and protected-state composition, environment/descriptor and network/
 secret intersections, packaged launcher lifecycle and actual plugin acceptance
 remain implementation work. No unsupported combination may silently inherit
 weaker fs.read/shell behavior.
+
+## Remaining runtimes and native macOS boundary
+
+The follow-up prototype adds explicit Bun/Deno executable selection, private
+startup configuration and caches, and native macOS filesystem cases when shell
+is declared. Local macOS arm64 matrices passed for Bun 1.4.4 and Deno 2.9.8. The
+Bun control demonstrated automatic project preload/dotenv loading, which the
+hardened launch disables before native policy admission. Deno command observation
+uses typed native permission errors rather than treating its empty spawnSync
+result as proof of denial. Neither adapter supplies filesystem/process security
+through API interception.
+
+Local native macOS testing passed all four shell-enabled filesystem combinations
+plus the unrestricted control, including constructor reads/forks, write without
+read, protected paths and inherited restrictions. Four no-shell combinations
+remain explicitly unsupported in the report. The separate native-exec experiment
+verified that denying exec prevents the initial launch, while permitting that
+exact file also permits its later self-exec. This is evidence against those two
+strategies, not a claim that every other mechanism is impossible. Native CI on
+both architectures must verify the new combinations and negative experiments.
+
+The original [full CI run](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40539570936)
+at `7ab2f662` also finished with all 16 jobs successful: both Rust jobs, Windows
+build/lint, all platform builds, SDK, dashboard and OpenSpec. Production Rust/SDK
+sources were unchanged from the main baseline. This resolves a remote baseline
+check; the earlier local disk-exhausted compilation is still not a local pass.

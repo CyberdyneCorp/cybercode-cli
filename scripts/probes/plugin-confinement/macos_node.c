@@ -9,12 +9,10 @@
 #include <unistd.h>
 #include "process_policy.h"
 
-static char *argument(napi_env env, napi_callback_info info, size_t maximum) {
-    size_t argc = 1, size = 0;
-    napi_value value;
-    if (napi_get_cb_info(env, info, &argc, &value, NULL, NULL) != napi_ok || argc != 1 ||
-        napi_get_value_string_utf8(env, value, NULL, 0, &size) != napi_ok || size > maximum) {
-        napi_throw_type_error(env, NULL, "one bounded string is required");
+static char *value_text(napi_env env, napi_value value, size_t maximum) {
+    size_t size = 0;
+    if (napi_get_value_string_utf8(env, value, NULL, 0, &size) != napi_ok || size > maximum) {
+        napi_throw_type_error(env, NULL, "bounded strings are required");
         return NULL;
     }
     char *text = calloc(size + 1, 1);
@@ -27,6 +25,16 @@ static char *argument(napi_env env, napi_callback_info info, size_t maximum) {
         return NULL;
     }
     return text;
+}
+
+static char *argument(napi_env env, napi_callback_info info, size_t maximum) {
+    size_t argc = 1;
+    napi_value value;
+    if (napi_get_cb_info(env, info, &argc, &value, NULL, NULL) != napi_ok || argc != 1) {
+        napi_throw_type_error(env, NULL, "one bounded string is required");
+        return NULL;
+    }
+    return value_text(env, value, maximum);
 }
 
 static napi_value boolean(napi_env env, int value) {
@@ -90,10 +98,27 @@ static napi_value native_write(napi_env env, napi_callback_info info) {
 }
 
 static napi_value self_exec(napi_env env, napi_callback_info info) {
-    char *path = argument(env, info, 16384);
+    size_t argc = 3;
+    napi_value values[3];
+    if (napi_get_cb_info(env, info, &argc, values, NULL, NULL) != napi_ok || argc != 3) {
+        napi_throw_type_error(env, NULL, "runtime path, receipt path and runtime kind are required");
+        return NULL;
+    }
+    char *path = value_text(env, values[0], 16384);
     if (path == NULL) return NULL;
-    execl(path, path, "-e", "require(\"node:fs\").writeFileSync(process.env.CYBER_PROOF_MARKER,JSON.stringify({self_exec:true}))", (char *)NULL);
+    char *receipt = value_text(env, values[1], 16384);
+    if (receipt == NULL) { free(path); return NULL; }
+    char *kind = value_text(env, values[2], 16);
+    if (kind == NULL) { free(path); free(receipt); return NULL; }
+    if (strcmp(kind, "deno") == 0) {
+        execl(path, path, "eval", "--no-config", "--no-lock",
+              "import fs from 'node:fs';fs.writeFileSync(Deno.args[0],JSON.stringify({self_exec:true}))", receipt, (char *)NULL);
+    } else {
+        execl(path, path, "-e", "require(\"node:fs\").writeFileSync(process.argv[1],JSON.stringify({self_exec:true}))", receipt, (char *)NULL);
+    }
     free(path);
+    free(receipt);
+    free(kind);
     return boolean(env, 0);
 }
 

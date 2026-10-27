@@ -53,7 +53,10 @@ static int joined(char *out, const char *directory, const char *name) {
 /* No untrusted shell strings: only fixed commands and separate fixture paths. */
 static int child(char *const args[], char *output, size_t size) {
     int channel[2];
-    if (pipe2(channel, O_CLOEXEC) != 0) return -2;
+    if (pipe(channel) != 0) return -2;
+    if (fcntl(channel[0], F_SETFD, FD_CLOEXEC) != 0 || fcntl(channel[1], F_SETFD, FD_CLOEXEC) != 0) {
+        close(channel[0]); close(channel[1]); return -2;
+    }
     pid_t pid = fork();
     if (pid < 0) { close(channel[0]); close(channel[1]); return -1; }
     if (pid == 0) {
@@ -175,7 +178,11 @@ int main(int argc, char **argv) {
     printf("\"child_reads\":%s,\"native_child_reads\":%s,\"cannot_relax\":%s,",
            native_status == -1 ? "null" : child_result, native_children,
            confined ? truth(proof_relax() != 0 && !native_read(private)) : "null");
-    printf("\"constructor_private_read\":%s,\"constructor_fork\":%s,\"filter_replacement_denied\":%s}\n",
-           truth(constructor_read), truth(constructor_fork), truth(proof_replacement_denied()));
+    printf("\"constructor_private_read\":%s,\"constructor_fork\":%s",
+           truth(constructor_read), truth(constructor_fork));
+#ifdef __linux__
+    printf(",\"filter_replacement_denied\":%s", truth(proof_replacement_denied()));
+#endif
+    puts("}");
     return 0;
 }

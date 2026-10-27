@@ -28,12 +28,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-15, macos-15-intel, ubuntu-24.04, ubuntu-24.04-arm]
-        runtime: [node, python]
-        include:
-          - os: ubuntu-24.04
-            runtime: native
-          - os: ubuntu-24.04-arm
-            runtime: native
+        runtime: [node, python, bun, deno, native]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -43,6 +38,14 @@ jobs:
         if: matrix.runtime == 'python'
         with:
           python-version: '3.13'
+      - uses: oven-sh/setup-bun@v2
+        if: matrix.runtime == 'bun'
+        with:
+          bun-version: '1.4.4'
+      - uses: denoland/setup-deno@v2
+        if: matrix.runtime == 'deno'
+        with:
+          deno-version: 'v2.9.8'
       - name: Linux native prerequisites
         if: runner.os == 'Linux'
         run: |
@@ -62,6 +65,9 @@ jobs:
           if [[ "$PROOF_RUNTIME" == python ]]; then
             args+=(--python "$(command -v python3)")
           fi
+          if [[ "$PROOF_RUNTIME" == bun || "$PROOF_RUNTIME" == deno ]]; then
+            args+=(--executable "$(command -v "$PROOF_RUNTIME")")
+          fi
           if [[ "$RUNNER_OS" == Linux ]]; then
             args+=(--initial-exec)
           fi
@@ -71,6 +77,35 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: plugin-proof-${{ matrix.os }}-${{ matrix.runtime }}
+          path: |
+            ${{ runner.temp }}/proof.json
+            ${{ runner.temp }}/proof.log
+          if-no-files-found: error
+          retention-days: 14
+
+  macos-native-gap:
+    name: Native initial-exec gap (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify initial exec denial and literal-rule reexec bypass
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --experimental-strip-types scripts/probes/plugin-confinement/macos_native_exec.mts --report "$RUNNER_TEMP/proof.json" > "$RUNNER_TEMP/proof.log" 2>&1
+      - name: Retain native exec gap evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-exec-gap-${{ matrix.os }}
           path: |
             ${{ runner.temp }}/proof.json
             ${{ runner.temp }}/proof.log
