@@ -51,6 +51,7 @@ mod hook_tests;
 mod hooks;
 mod installation;
 pub use installation::{InstallationNotice, UpdateStatus};
+pub mod file_observations;
 mod lifecycle;
 mod lifecycle_events;
 pub use hook_tests::{

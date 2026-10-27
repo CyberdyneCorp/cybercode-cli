@@ -1,0 +1,47 @@
+name: File observation regression
+on:
+  pull_request:
+    paths:
+      - crates/cyber-core/src/hooks.rs
+      - crates/cyber-core/src/hooks/file_observations.rs
+      - crates/cyber-server/src/runtime/file_observations.rs
+      - crates/cyber-server/src/runtime/events.rs
+      - crates/cyber-server/src/runtime/mod.rs
+      - crates/cyber-server/tests/file_observations.rs
+      - crates/cyber-tools/src/file_changes/**
+      - crates/cyber-tools/src/lib.rs
+      - crates/cyber-tools/Cargo.toml
+      - Cargo.lock
+      - .github/workflows/file-observation-regression.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: file-observation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  regression:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: file-observation
+      - name: Validate bounded observation records
+        run: |
+          cargo test --locked -p cyber-core --lib hooks::file_observations::
+      - name: Exercise actual native hints and safe reconciliation
+        run: |
+          cargo test --locked -p cyber-tools --lib file_changes::
+      - name: Exercise actual durable store and runtime ownership
+        run: cargo test --locked -p cyber-server --test file_observations

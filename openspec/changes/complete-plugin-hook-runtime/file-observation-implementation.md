@@ -1,6 +1,7 @@
 # File observation implementation notes
 
-Status: in progress; component tests only. The application does not yet emit
+Status: in progress; component and record-model checks passed locally; actual
+store/runtime regressions await CI. The application does not yet emit
 `FileChanged` from these components. Task 5.2 remains open, and this increment
 cannot establish the plugin/hook workstream's acceptance.
 
@@ -27,6 +28,28 @@ native hint is not proof of exact write ordering or actor identity.
 Sources: [notify](https://docs.rs/notify/8.2.0/notify/),
 [rescan flag](https://docs.rs/notify/8.2.0/notify/struct.Event.html#method.need_rescan).
 
+## Durable journal increment
+
+`cyber-core::hooks::file_observations` defines bounded checkpoints and deltas.
+`Runtime::claim_file_watch` claims an exclusive generation through exact-sequence
+append; a stale worker cannot advance acknowledged state. The registered single
+writer projector checks Location identity, checkpoint preservation, monotonic
+allowance accounting and bounded replay. An append failure leaves the caller's
+metadata and allowance unchanged. Checkpoints occur at most every 128 deltas;
+replay rebuilds metadata and never returns hook effects to execute again.
+
+A renewal is a separate empty delta. The writer requires a committed user input
+from a live Session at that Location, and rejects a repeated acknowledgement ID
+across generations. Hook-originated input cannot satisfy that proof. The actual
+user-action forwarding and alias-aware owner integration remain pending; this
+port does not create human presence or authorize a callback itself.
+
+Six actual Store/Runtime regressions cover restart fencing, append failure,
+periodic checkpoints, forged scope/credit/metadata checkpoints and single-use
+user renewal and historical Location binding. Their compilation and results must be confirmed in CI. The focused
+workflow runs pure models, native components and Store/Runtime regressions on
+Linux, macOS and Windows. No platform result is implied by adding that workflow.
+
 ## Remaining integration requirements
 
 1. Bind one cancellable watcher generation to a canonical Location and actual
@@ -35,8 +58,8 @@ Sources: [notify](https://docs.rs/notify/8.2.0/notify/),
    reconciliation. Verify the root incarnation and fresh Session scope before
    recording/dispatching. Multiple Sessions must receive only their current
    Location's observations; archived/moved Sessions cannot borrow old watches.
-2. Persist bounded metadata state, observation identities and watcher generations
-   through registered owner events. Advance in-memory state only after durable
+2. The checkpoint/delta journal is implemented with registered owner events;
+   confirm the actual Store regressions and connect it to watcher ownership. Advance in-memory state only after durable
    acknowledgement. A restarted generation must fence the old writer and reconcile
    recorded state, while uncertain hook effects retain Unknown and are not replayed.
 3. Compose exclusions from the existing protected-path rules and owner storage,
@@ -65,7 +88,14 @@ Sources: [notify](https://docs.rs/notify/8.2.0/notify/),
 The source components were loaded by path into a small temporary Cargo harness
 so local tests fit available disk. Its isolated tests and Clippy do not compile
 or verify the full Cyber application. Workspace test registration is present;
-release integration is deliberately still pending. A component regression first
+the native producer integration remains pending. The journal is registered in
+the production runtime, but has no application watcher caller yet. A component regression first
 caught a missing `cap_fs_ext::DirExt` import and was corrected. Sixteen component
 tests now cover traversal, native events, reconciliation, overflow, policy
 revocation, scope names and finite feedback allowance on the local macOS host.
+
+The expanded isolated harness passes 23 tests: the 16 native/reconciliation
+component tests, six pure observation-record tests and the existing ID helper
+regression loaded with them. Isolated Clippy with warnings denied and the
+project cognitive-complexity threshold also passes. These do not establish a
+full application build or acceptance of the actual Store/Runtime regressions.

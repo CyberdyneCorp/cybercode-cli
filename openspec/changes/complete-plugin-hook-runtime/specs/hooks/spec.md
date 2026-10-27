@@ -14,3 +14,9 @@
 #### Scenario: Crash after possible handler mutation
 - **WHEN** a command hook may have changed external state before its outcome was recorded
 - **THEN** recovery retains its unknown status without replaying the command solely to obtain a receipt
+
+#### Scenario: Durable file observation ownership
+- **WHEN** a new watcher generation claims a Location whose metadata and feedback allowance were already recorded
+- **THEN** old workers cannot append new observations, the acknowledged metadata and allowance survive, and replay does not rerun possible handler effects
+- **AND** a failed observation commit does not consume metadata changes or dispatch allowance
+- **AND** renewing a feedback allowance requires a separate, single-use committed user acknowledgement owned by a live Session at that Location

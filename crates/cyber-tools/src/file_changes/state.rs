@@ -4,14 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Stamp {
-    pub length: u64,
-    pub modified_ns: Option<u128>,
-    /// Stable file identity where the platform supplies it. An atomic replacement
-    /// with unchanged size/mtime must still be observable.
-    pub identity: Option<(u64, u64)>,
-}
+pub(super) use cyber_core::hooks::file_observations::Stamp;
 
 #[derive(Debug, Default)]
 pub(super) struct Scan {

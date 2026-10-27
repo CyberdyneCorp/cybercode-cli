@@ -28,7 +28,7 @@ fn stamp(metadata: &Metadata) -> Stamp {
             .modified()
             .ok()
             .and_then(|time| time.into_std().duration_since(UNIX_EPOCH).ok())
-            .map(|time| time.as_nanos()),
+            .and_then(|time| time.as_nanos().try_into().ok()),
         identity,
     }
 }
