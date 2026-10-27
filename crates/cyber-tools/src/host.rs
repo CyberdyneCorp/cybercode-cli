@@ -729,6 +729,10 @@ impl ToolHost for BuiltinHost {
         self.start_browser(info);
     }
 
+    fn user_input_committed(&self, info: &cyber_server::runtime::SessionInfo, event_id: &str) {
+        self.file_observers.acknowledge(self, info, event_id);
+    }
+
     /// Required MCP servers, then every plugin host of the Location and the Session's
     /// browser settling their start.
     fn wait_for_required_mcp(

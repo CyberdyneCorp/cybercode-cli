@@ -77,7 +77,8 @@ Linux, macOS and Windows. No platform result is implied by adding that workflow.
    writes cannot replenish it. Exhaustion must pause handler dispatch visibly
    while retaining bounded observations/reconciliation. Renewal requires a real
    owner-authorized user action; hook/plugin prompts cannot manufacture renewal.
-   The component allowance has no automatic reset; the owner/UX path is pending.
+   The owner now forwards newly committed user input and shows paused/resumed
+   notices; application acceptance of this path is pending.
 6. Reconcile after successful built-in and formatter changes and observe native
    shell/background/external changes. Handle error/unknown tool results without
    fabricating a successful writer receipt. Overflow needs a visible reconciliation
@@ -134,7 +135,7 @@ BuiltinHost/HTTP-hook flow for two Sessions, path matching, duplicate delivery,
 ignored observational deny and receipt privacy. These tests await CI.
 
 The new automatic owner described below awaits application checks. Alias-aware
-Session admission, user-input forwarding/feedback UX, explicit tool/formatter
+Session admission, acceptance of user-input feedback renewal, explicit tool/formatter
 reconciliation and full shutdown/restart/overflow acceptance remain required. No task is closed
 on the strength of a manually dispatched observation.
 
@@ -161,7 +162,7 @@ required follow-up implementation.
 Metadata advances only through acknowledged journal deltas. Deletes precede
 creates in large replacements so batches stay within the retained-file bound.
 Dispatch uses the durable feedback allowance and shows a notice when paused;
-quiet periods do not renew it. User-input forwarding and renewal UX remain open.
+quiet periods do not renew it. The newer committed-input forwarding path is described below and awaits application acceptance.
 Host shutdown cancels and joins observers outside registry locks. File-change
 dispatch now forwards owner cancellation into the existing runner while retaining
 the launched future through cooperative receipt settlement.
@@ -180,3 +181,27 @@ nine Store/Runtime regressions and the manual HTTP-hook dispatch test. macOS
 was still queued when these notes were updated. Those results do not verify
 the newer host integration. Task 5.2 remains open pending the remaining behavior,
 resource/lifecycle regressions, platform checks and substantive review.
+
+
+## Committed user-input renewal
+
+The runtime now forwards a newly committed, hook-checked user prompt to a narrow
+synchronous host notification after releasing the Session lock. A failed/denied
+admission, an exact retry and non-user input do not notify it. The host retains
+only the latest acknowledgement per admitted member Session, under the existing
+256-Session bound. The observer drains that bounded map and submits a separate
+renewal delta; the single writer still verifies the real source event, current
+and historical Location, source=user and single-use identity before restoring
+credit. Hook callbacks cannot refresh the budget by sleeping or sending their
+own source=hook prompts. Paused/resumed notices explain that new user input
+resumes handlers. The automatic feedback test now exercises hook input, real
+user input and exact retries as well as quiet time; that expanded application
+test awaits CI.
+
+The first automatic-owner workspace build at `7e479fed` failed on Linux and
+Windows because an async delivery method retained `&Observation` across an
+await; its native receiver is Send but not Sync. Delivery now retains exclusive
+actor ownership (`&mut self`) rather than making the receiver shared or adding
+an unsafe Sync implementation. SDK/dashboard generation also stopped at that
+same Rust compile error. The corrected application build and tests must rerun;
+no result from the isolated harness establishes this correction's acceptance.

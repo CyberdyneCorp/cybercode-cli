@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use cyber_core::hooks::{
     HookCatalog,
-    file_observations::{self as records, Delta, Update},
+    file_observations::{self as records, Delta, Renewal, Update},
 };
 use cyber_server::runtime::{SessionInfo, file_observations::FileWatch};
 use tokio_util::sync::CancellationToken;
@@ -24,7 +24,23 @@ const MAX_LOCATIONS: usize = 32;
 const MAX_SESSIONS: usize = 256;
 const TICK: Duration = Duration::from_millis(150);
 const RECONCILE: Duration = Duration::from_secs(3);
-type Members = Arc<Mutex<BTreeSet<String>>>;
+#[derive(Default)]
+struct Membership {
+    sessions: BTreeSet<String>,
+    /// Keep only the newest committed acknowledgement per current Session.
+    /// Both maps share the 256-Session bound; input bursts cannot grow a queue.
+    renewals: BTreeMap<String, Renewal>,
+}
+type Members = Arc<Mutex<Membership>>;
+impl Membership {
+    fn remove(&mut self, session: &str) {
+        self.sessions.remove(session);
+        self.renewals.remove(session);
+    }
+    fn is_empty(&self) -> bool {
+        self.sessions.is_empty()
+    }
+}
 
 struct Entry {
     members: Members,
@@ -56,8 +72,8 @@ impl Registry {
 impl Entry {
     fn add(&self, host: &BuiltinHost, session: &str) {
         let mut members = self.members.lock().unwrap_or_else(PoisonError::into_inner);
-        if members.contains(session) || members.len() < MAX_SESSIONS {
-            members.insert(session.into());
+        if members.sessions.contains(session) || members.sessions.len() < MAX_SESSIONS {
+            members.sessions.insert(session.into());
         } else {
             notice(
                 host,
@@ -103,7 +119,10 @@ impl Observers {
             );
             return;
         }
-        let members = Arc::new(Mutex::new(BTreeSet::from([info.id.clone()])));
+        let members = Arc::new(Mutex::new(Membership {
+            sessions: BTreeSet::from([info.id.clone()]),
+            renewals: BTreeMap::new(),
+        }));
         let cancel = CancellationToken::new();
         let weak = host.weak.clone();
         let root = path.clone();
@@ -124,6 +143,29 @@ impl Observers {
                 task,
             },
         );
+    }
+    pub fn acknowledge(&self, host: &BuiltinHost, info: &SessionInfo, event_id: &str) {
+        self.refresh(host, info);
+        let Ok(path) = Path::new(&info.directory).canonicalize() else {
+            return;
+        };
+        let registry = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(entry) = registry.entries.get(&path) else {
+            return;
+        };
+        if entry.cancel.is_cancelled() {
+            return;
+        }
+        let mut members = entry.members.lock().unwrap_or_else(PoisonError::into_inner);
+        if members.sessions.contains(&info.id) {
+            members.renewals.insert(
+                info.id.clone(),
+                Renewal {
+                    session_id: info.id.clone(),
+                    event_id: event_id.into(),
+                },
+            );
+        }
     }
     pub fn remove(&self, session: &str) {
         let registry = self.0.lock().unwrap_or_else(PoisonError::into_inner);
@@ -159,6 +201,7 @@ fn members(members: &Members) -> Vec<String> {
     members
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
+        .sessions
         .iter()
         .cloned()
         .collect()
@@ -296,6 +339,51 @@ impl Observation {
             warned_budget: false,
         })
     }
+    async fn renew(
+        &mut self,
+        host: &BuiltinHost,
+        membership: &Members,
+        cancel: &CancellationToken,
+    ) {
+        let renewals = {
+            let mut members = membership.lock().unwrap_or_else(PoisonError::into_inner);
+            std::mem::take(&mut members.renewals)
+        };
+        for (_, renewal) in renewals {
+            if cancel.is_cancelled() || !self.root.current() {
+                break;
+            }
+            let session = renewal.session_id.clone();
+            let paused = self.warned_budget || self.journal.state().remaining == 0;
+            let result = self
+                .journal
+                .record(Delta {
+                    generation: self.journal.state().generation.clone(),
+                    updates: vec![],
+                    remaining: records::FEEDBACK_LIMIT,
+                    dispatch: false,
+                    renewal: Some(renewal),
+                })
+                .await;
+            match result {
+                Ok(_) => {
+                    self.warned_budget = false;
+                    if paused {
+                        notice(
+                            host,
+                            &session,
+                            "FileChanged handlers resumed after committed user input",
+                        );
+                    }
+                }
+                Err(error) => notice(
+                    host,
+                    &session,
+                    &format!("FileChanged feedback renewal unavailable: {error}"),
+                ),
+            }
+        }
+    }
     async fn reconcile(
         &mut self,
         host: &BuiltinHost,
@@ -347,12 +435,18 @@ impl Observation {
         self.retire_paths(&private, cancel).await?;
         // Deletions first keep replacement batches within the retained-file bound.
         changes.sort_by_key(|change| (!matches!(change.kind, Kind::Removed), change.path.clone()));
-        for batch in changes.chunks(records::MAX_BATCH.min(records::FEEDBACK_LIMIT as usize)) {
-            if cancel.is_cancelled() {
-                break;
-            }
+        let mut pending = changes.as_slice();
+        while !pending.is_empty() && !cancel.is_cancelled() {
+            let remaining = self.journal.state().remaining as usize;
+            let limit = if remaining == 0 {
+                records::MAX_BATCH
+            } else {
+                remaining.min(records::MAX_BATCH)
+            };
+            let (batch, rest) = pending.split_at(pending.len().min(limit));
             self.record_batch(host, sessions, cancel, batch, &files)
                 .await?;
+            pending = rest;
         }
         Ok(())
     }
@@ -458,14 +552,16 @@ impl Observation {
             announce(
                 host,
                 sessions,
-                "FileChanged handlers paused: feedback allowance exhausted; observations continue",
+                "FileChanged handlers paused: feedback allowance exhausted; send new user input to resume. Observations continue",
             );
             self.warned_budget = true;
         }
         Ok(())
     }
+    // Retain exclusive actor ownership across callbacks. The native receiver is
+    // Send, not Sync; no shared Observation reference may span an await.
     async fn deliver(
-        &self,
+        &mut self,
         host: &BuiltinHost,
         sessions: &[String],
         cancel: &CancellationToken,
@@ -518,6 +614,9 @@ async fn run(
         }
         if observer.is_none() {
             observer = start_observation(&host, &path, &directory, &sessions, &mut failure).await;
+        }
+        if let Some(current) = observer.as_mut() {
+            current.renew(&host, &membership, &cancel).await;
         }
         if let Some(current) = observer.as_mut()
             && let Err(error) = current.reconcile(&host, &sessions, &cancel).await

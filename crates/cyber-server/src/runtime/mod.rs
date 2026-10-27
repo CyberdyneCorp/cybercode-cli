@@ -1580,7 +1580,7 @@ impl Runtime {
         let genuine = prompt || admission.source != "hook";
         // Blobs read for `file` parts are removed unless the prompt is admitted.
         let blobs = attachments.blobs;
-        let receipt = {
+        let (receipt, observed_input) = {
             let mut state = handle.state.lock().await;
             state.ensure_worktree_ready()?;
             if let Some(receipt) = existing_receipt(&state, &message_id, &digest)? {
@@ -1615,8 +1615,16 @@ impl Runtime {
             events.extend(extra);
             let stored = self.inner.commit_locked(&mut state, events)?;
             blobs.keep();
-            receipt_for(&state, &message_id, stored[admitted].seq)
+            let observed_input = (prompt && payload.source == "user")
+                .then(|| (state.info.clone(), stored[admitted].id.clone()));
+            (
+                receipt_for(&state, &message_id, stored[admitted].seq),
+                observed_input,
+            )
         };
+        if let Some((info, event_id)) = observed_input {
+            self.inner.tools.user_input_committed(&info, &event_id);
+        }
         if genuine {
             handle
                 .stop_continuations

@@ -225,11 +225,11 @@ async fn native_owner_delivers_external_edits_rename_removal_to_shared_sessions_
 }
 
 #[tokio::test]
-async fn native_owner_exhausts_feedback_without_resetting_after_quiet_time() {
+async fn native_owner_feedback_renews_only_for_new_committed_user_input() {
     let flow = support::flow::Flow::new(vec![], false);
     let recorder = Recorder::start().await;
     automatic_hooks(&flow, &recorder);
-    let _session = flow.session("default").await;
+    let session = flow.session("default").await;
     await_condition("automatic baseline", || {
         journal_count(&flow, records::CHECKPOINT) == 1
     })
@@ -258,6 +258,70 @@ async fn native_owner_exhausts_feedback_without_resetting_after_quiet_time() {
     assert_eq!(
         recorder.seen.lock().unwrap().len(),
         records::FEEDBACK_LIMIT as usize
+    );
+
+    let renewals = || {
+        flow.f
+            .store
+            .read(|db| {
+                Ok(db.query_row(
+        "SELECT COUNT(*) FROM event WHERE type=?1 AND json_type(data,'$.renewal')='object'",
+        [records::CHANGED], |row| row.get::<_, usize>(0))?)
+            })
+            .unwrap()
+    };
+    let mut hook = cyber_server::runtime::Admission::text(
+        "hook input cannot resume observers",
+        cyber_server::runtime::Delivery::Hold,
+    );
+    hook.source = "hook".into();
+    hook.resume = false;
+    flow.runtime.admit(&session, hook).await.unwrap();
+    let before = journal_count(&flow, records::CHANGED);
+    std::fs::write(flow.f.repo.join("after-hook-input"), "still paused").unwrap();
+    await_condition("non-user input keeps observations paused", || {
+        journal_count(&flow, records::CHANGED) > before
+    })
+    .await;
+    assert_eq!(renewals(), 0);
+    assert_eq!(
+        recorder.seen.lock().unwrap().len(),
+        records::FEEDBACK_LIMIT as usize
+    );
+
+    let mut user = cyber_server::runtime::Admission::text(
+        "resume file observers",
+        cyber_server::runtime::Delivery::Hold,
+    );
+    user.resume = false;
+    user.message_id = Some(cyber_core::ids::new_id("msg"));
+    flow.runtime.admit(&session, user.clone()).await.unwrap();
+    await_condition("committed user input renews feedback", || renewals() == 1).await;
+    std::fs::write(flow.f.repo.join("after-user-input"), "resumed").unwrap();
+    await_condition("fresh observation after user action", || {
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["file_path"] == "after-user-input")
+    })
+    .await;
+    flow.runtime.admit(&session, user).await.unwrap();
+    std::fs::write(flow.f.repo.join("after-retry"), "no extra renewal").unwrap();
+    await_condition("post-retry observation", || {
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["file_path"] == "after-retry")
+    })
+    .await;
+    assert_eq!(
+        renewals(),
+        1,
+        "an exact input retry must not enqueue another renewal"
     );
     flow.runtime.shutdown().await;
 }
