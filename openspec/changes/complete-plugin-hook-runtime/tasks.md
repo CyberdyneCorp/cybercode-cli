@@ -28,7 +28,7 @@
 
 ## 5. Missing event producers
 
-- [ ] 5.1 Implement committed `DirectoryAdded`/`CwdChanged`, complete existing `Setup` init/marker semantics and fill proven isolated-child `WorktreeCreate` coverage gaps without moving its pre-effect veto. Isolated-child creation/recreation admission is implemented with regression coverage in `isolated_subagents.rs`; validation remains pending. DirectoryAdded/CwdChanged/Setup and broader event acceptance remain open.
+- [ ] 5.1 Implement committed `DirectoryAdded`/`CwdChanged`, complete existing `Setup` init/marker semantics and fill proven isolated-child `WorktreeCreate` coverage gaps without moving its pre-effect veto. Isolated-child creation/recreation admission is implemented with regression coverage in `isolated_subagents.rs`; at source commit `b5ff9553`, all 16 broad CI jobs and both Linux/macOS before/after regression jobs passed ([broad CI](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40572548204), [regressions](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40572548267)). The parent task remains incomplete. DirectoryAdded/CwdChanged/Setup and broader event acceptance remain open.
 - [ ] 5.2 Implement bounded `FileChanged` observation/reconciliation for tools, formatters, shell/background and external edits, including overflow and self-write loop prevention.
 - [ ] 5.3 Test no false post-effect success for refused/failed/unknown transitions, pre-effect WorktreeCreate veto/no Git mutation, stable event identity, correct scope/order, rename/delete, multiple Sessions, shutdown/restart and unknown handler outcomes.
 
