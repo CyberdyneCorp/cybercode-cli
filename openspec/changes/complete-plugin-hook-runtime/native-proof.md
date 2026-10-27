@@ -128,3 +128,44 @@ read assertion. This tests a route that does not require runtime/native-plugin
 cooperation, while retaining positive startup, threads, native children and
 exec/fork denial controls. See the probe README for ordering and caveats. No
 passing result is claimed for this new mechanism until native CI executes it.
+
+## Verified experimental matrix at `59cae487`
+
+[Native CI run 40548917492](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40548917492)
+completed successfully with all ten jobs. Each job compiled native proof code
+and asserted one unrestricted control plus all eight read/write/shell cases:
+
+| Platform | Architecture | Target | Version | Cases |
+|---|---|---|---|---|
+| darwin | x64 | node | 22.23.2 | 9 passed |
+| darwin | x64 | python | 3.13.15 | 9 passed |
+| darwin | arm64 | node | 22.23.2 | 9 passed |
+| darwin | arm64 | python | 3.13.15 | 9 passed |
+| linux | arm64 | native | fixture-v1 | 9 passed |
+| linux | arm64 | node | 22.23.3 | 9 passed |
+| linux | arm64 | python | 3.13.16 | 9 passed |
+| linux | x64 | native | fixture-v1 | 9 passed |
+| linux | x64 | node | 22.23.4 | 9 passed |
+| linux | x64 | python | 3.13.16 | 9 passed |
+
+Full reports, including source lists, actual observations and timestamps, are
+committed under [evidence/59cae487](../../../scripts/probes/plugin-confinement/evidence/59cae487).
+All ten reports have source digest `a833c04e587d7ff74aa579f7193509892d20e3deb3209746b1b41971eccb91de`.
+This is 90 capability/control cases and 180 primary process launches, plus
+workers, raw forks and native/interpreter children. The native ELF constructor
+read/fork assertions passed, as did the Linux filter-replacement denial tests
+with unrestricted controls that could install a filter. macOS framework Python
+startup also passed on both architectures after the exact library-file grant.
+
+The earlier Linux Node reports at `1226aeb5` are separately retained as
+[x86_64](../../../scripts/probes/plugin-confinement/evidence/linux-x64-node.json)
+and [arm64](../../../scripts/probes/plugin-confinement/evidence/linux-arm64-node.json).
+They prove the earlier TSYNC mechanism, not the later one-shot mechanism.
+
+This closes the experimental runs named in this table, not task 2.1 or production
+security acceptance. Bun/Deno and macOS native combinations still need proof
+or an explicit reviewed support decision. Production package/runtime admission,
+read-root and protected-state composition, environment/descriptor and network/
+secret intersections, packaged launcher lifecycle and actual plugin acceptance
+remain implementation work. No unsupported combination may silently inherit
+weaker fs.read/shell behavior.
