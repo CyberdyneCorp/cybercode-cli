@@ -61,6 +61,50 @@ pub(crate) fn step_origin(store: &Store, state: &SessionState) -> Result<StepOri
     store.read(move |db| Ok(classify(db, &input)?))
 }
 
+/// Recover an input's immutable origin before or after its first step starts.
+/// A known message never borrows attribution from a later foreground input.
+pub(crate) fn recorded_message_origin(
+    db: &Connection,
+    session: &str,
+    message: &str,
+) -> Result<Option<StepOrigin>, StoreError> {
+    let started: Option<String> = db.query_row(
+        "SELECT data FROM event WHERE aggregate_id=?1 AND type='session.step.started.1' AND json_extract(data,'$.message_id')=?2 ORDER BY seq DESC LIMIT 1",
+        params![session,message], |row|row.get(0),
+    ).optional()?;
+    if let Some(started) = started {
+        return serde_json::from_str(&started).map(Some).map_err(|_| {
+            StoreError::Unavailable("reserved request origin evidence is corrupt".into())
+        });
+    }
+    let row: Option<(Option<String>,String)> = db.query_row(
+        "SELECT s.parent_id,i.source FROM session_input i JOIN session s ON s.id=i.session_id WHERE i.session_id=?1 AND i.message_id=?2",
+        params![session,message], |row|Ok((row.get(0)?,row.get(1)?)),
+    ).optional()?;
+    if let Some((parent_id, source)) = row {
+        return Ok(Some(classify(
+            db,
+            &Input {
+                session_id: session.into(),
+                parent_id,
+                message_id: message.into(),
+                source,
+            },
+        )?));
+    }
+    let client: Option<String> = db
+        .query_row(
+            "SELECT mcp_client FROM mcp_serve_input WHERE session_id=?1 AND message_id=?2",
+            params![session, message],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(client.map(|client| StepOrigin {
+        origin: Some("mcp".into()),
+        mcp_client: Some(client),
+    }))
+}
+
 /// MCP input wins over the messaging kinds; any source but `session` is its own origin.
 fn classify(db: &Connection, input: &Input) -> rusqlite::Result<StepOrigin> {
     let mcp: Option<String> = db

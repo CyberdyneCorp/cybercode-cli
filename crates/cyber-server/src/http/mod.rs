@@ -39,6 +39,7 @@ mod prompt_parts;
 pub mod providers;
 mod pty;
 pub mod remote_tools;
+mod reservations;
 pub mod rpc;
 mod serve;
 mod service;
@@ -737,6 +738,7 @@ pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router 
         .merge(account::routes())
         .merge(collaboration::routes())
         .merge(usage::routes())
+        .merge(reservations::routes())
         .merge(vcs::routes())
         .merge(system::routes())
         .merge(telemetry::routes())

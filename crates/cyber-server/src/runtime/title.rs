@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use cyber_llm::catalog::{ModelRole, compute_cost};
-use cyber_llm::{Message, collect};
+use cyber_llm::{Adapter, Message, collect};
 
 use super::events::*;
 use super::model::{Entry, text_of};
@@ -53,16 +53,15 @@ impl Inner {
         request.initiator = Some(cyber_llm::Initiator::Agent);
         self.check_budget(handle).await.map_err(|e| e.to_string())?;
         let started = std::time::Instant::now();
-        let stream = resolved
-            .adapter
-            .stream(request)
-            .await
-            .map_err(|e| e.to_string())?;
-        let out = collect(stream, |_| {}).await.map_err(|e| e.to_string())?;
+        let gated = super::reservations::GatedAdapter::new(self, handle, &resolved, "title");
+        let stream = gated.stream(request).await.map_err(|e| e.to_string())?;
+        let result = collect(stream, |_| {}).await;
+        gated.flush().await.map_err(|e| e.to_string())?;
+        let out = result.map_err(|e| e.to_string())?;
         let title = clean(&out.text);
         let cost = compute_cost(resolved.cost.as_ref(), &out.usage);
         let mut state = handle.state.lock().await;
-        let billing = if title.is_empty() || !state.info.default_title {
+        let mut billing = if title.is_empty() || !state.info.default_title {
             event(
                 AUXILIARY_USAGE,
                 &AuxiliaryUsage {
@@ -86,6 +85,7 @@ impl Inner {
                 },
             )
         };
+        super::reservations::mark_accounted(&mut billing, &gated.request_ids());
         self.commit_locked(&mut state, vec![billing])
             .map_err(|e| e.to_string())?;
         drop(state);

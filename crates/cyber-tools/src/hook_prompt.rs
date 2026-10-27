@@ -8,9 +8,10 @@ use cyber_core::config::{HookKind, Resolved};
 use cyber_core::hooks::{HookAction, HookDefinition, HookEvent, HookOutcome};
 use cyber_core::trust::{HookInvocationTrust, TrustStore};
 use cyber_llm::catalog::{ModelRole, compute_cost};
-use cyber_llm::{FinishReason, Initiator, LlmEvent, LlmRequest, Message, Usage};
+use cyber_llm::{Adapter, FinishReason, Initiator, LlmEvent, LlmRequest, Message, Usage};
 use cyber_server::runtime::{
-    AuxiliaryUsage, HookExecutionIo, HookExecutionResult, ModelResolver, ResolvedModel, Runtime,
+    AuxiliaryUsage, GuardedModel, HookExecutionIo, HookExecutionResult, ModelResolver,
+    ResolvedModel, Runtime,
 };
 use futures::StreamExt;
 use serde::Deserialize;
@@ -174,10 +175,15 @@ impl HookPromptRunner<'_> {
             mut owner,
             definition,
         } = admitted;
-        let asker = runtime
+        let mut asker = runtime
             .operation_asker(&event.identity().session_id)
             .await
             .map_err(|error| error.to_string())?;
+        // Runtime-owned message identity also exists for queued/pre-StepStarted hooks.
+        // Preserve it through model dispatch instead of reading later foreground state.
+        if let Some(message) = event.as_json()["message_id"].as_str() {
+            asker.message_id = message.to_owned();
+        }
         let deadline =
             tokio::time::Instant::now() + Duration::from_secs(definition.handler.timeout.into());
         let model = resolve(
@@ -253,16 +259,16 @@ impl HookPromptRunner<'_> {
             Ok(request) => request,
             Err(error) => return error_capture(event, definition, error, true),
         };
-        if let Some((_, _, asker)) = &owner {
-            let check = tokio::select! {
-                biased;
-                _ = cancel.cancelled() => return Capture { report: skipped(true), usage: None, io: None },
-                _ = tokio::time::sleep_until(deadline) => return timeout(event, definition, true),
-                result = asker.check_budget() => result,
-            };
-            if let Err(error) = check {
-                return error_capture(event, definition, error.to_string(), true);
-            }
+        if let Err(capture) = check_prompt_budget(
+            owner.as_ref().map(|(_, _, asker)| *asker),
+            event,
+            definition,
+            deadline,
+            &cancel,
+        )
+        .await
+        {
+            return *capture;
         }
         let proxy = tokio::select! {
             biased;
@@ -273,6 +279,7 @@ impl HookPromptRunner<'_> {
                 Err(error) => return error_capture(event, definition, error, true),
             },
         };
+        let asker = owner.as_ref().map(|(_, _, asker)| *asker);
         let authorization = self.authorize(pointer, event).and_then(|_| {
             if let Some((owner, runtime, _)) = owner {
                 owner
@@ -291,6 +298,19 @@ impl HookPromptRunner<'_> {
             )
             .await;
         }
+        let guarded = match guarded_model(asker, &model, event).await {
+            Ok(guarded) => guarded,
+            Err(error) => {
+                return settle_transport(
+                    error_capture(event, definition, error, true),
+                    proxy,
+                    event,
+                    definition,
+                    false,
+                )
+                .await;
+            }
+        };
         self.capture_inference(
             PromptCall {
                 event,
@@ -301,6 +321,7 @@ impl HookPromptRunner<'_> {
             model,
             request,
             proxy,
+            guarded.as_ref(),
         )
         .await
     }
@@ -311,6 +332,7 @@ impl HookPromptRunner<'_> {
         model: ResolvedModel,
         request: LlmRequest,
         proxy: Option<Proxy>,
+        guarded: Option<&GuardedModel>,
     ) -> Capture {
         let PromptCall {
             event,
@@ -321,16 +343,31 @@ impl HookPromptRunner<'_> {
         let started = Instant::now();
         let mut observed = Observed::default();
         let mut cancelled = false;
-        let result = tokio::select! {
+        let mut timed_out = false;
+        let adapter: &dyn Adapter = guarded.map_or(model.adapter.as_ref(), |guarded| guarded);
+        let mut result = tokio::select! {
             biased;
             _ = cancel.cancelled() => { cancelled = true; Err("prompt hook cancelled; provider completion is unverified".into()) },
             _ = tokio::time::sleep_until(deadline) => {
-                let mut capture = timeout(event, definition, false);
-                capture.usage = billing(&model, event, started, &observed);
-                return settle_transport(capture, proxy, event, definition, false).await;
+                timed_out = true;
+                Err("prompt hook timed out; provider completion is unverified".into())
             }
-            result = infer(&model, request, &mut observed) => result,
+            result = infer(adapter, request, &mut observed) => result,
         };
+        if let Some(guarded) = guarded
+            && let Err(error) = guarded.flush().await
+        {
+            timed_out = false; // Preserve a billing/admission error in diagnostics.
+            result = Err(error.to_string());
+        }
+        let owned = guarded.is_some_and(GuardedModel::reservation_owned);
+        if timed_out {
+            let mut capture = timeout(event, definition, false);
+            if !owned {
+                capture.usage = billing(&model, event, started, &observed);
+            }
+            return settle_transport(capture, proxy, event, definition, false).await;
+        }
         let mut capture = match result {
             Ok(text) => {
                 let report = decision(event, &text).unwrap_or_else(|error| {
@@ -351,7 +388,9 @@ impl HookPromptRunner<'_> {
             }
             Err(error) => error_capture(event, definition, error, observed.ended),
         };
-        capture.usage = billing(&model, event, started, &observed);
+        if !owned {
+            capture.usage = billing(&model, event, started, &observed);
+        }
         settle_transport(capture, proxy, event, definition, cancelled).await
     }
 }
@@ -494,15 +533,15 @@ struct Observed {
 }
 
 async fn infer(
-    model: &ResolvedModel,
+    adapter: &dyn Adapter,
     request: LlmRequest,
     observed: &mut Observed,
 ) -> Result<String, String> {
     observed.attempted = true;
-    let mut stream =
-        model.adapter.stream(request).await.map_err(|_| {
-            "prompt hook provider request failed; completion is unverified".to_string()
-        })?;
+    let mut stream = adapter
+        .stream(request)
+        .await
+        .map_err(|_| "prompt hook provider request failed; completion is unverified".to_string())?;
     let mut text = String::new();
     let mut bytes = 0;
     let mut finish = None;
@@ -637,4 +676,38 @@ fn timeout(event: &HookEvent, definition: &HookDefinition, acknowledged: bool) -
         usage: None,
         io: None,
     }
+}
+
+async fn guarded_model(
+    asker: Option<&cyber_server::runtime::Asker>,
+    model: &ResolvedModel,
+    event: &HookEvent,
+) -> Result<Option<GuardedModel>, String> {
+    let Some(asker) = asker else { return Ok(None) };
+    asker
+        .guard_model(
+            model,
+            "hook_prompt",
+            event.as_json()["call_id"].as_str().map(str::to_string),
+        )
+        .await
+        .map(Some)
+        .map_err(|e| e.to_string())
+}
+
+async fn check_prompt_budget(
+    asker: Option<&cyber_server::runtime::Asker>,
+    event: &HookEvent,
+    definition: &HookDefinition,
+    deadline: tokio::time::Instant,
+    cancel: &CancellationToken,
+) -> Result<(), Box<Capture>> {
+    let Some(asker) = asker else { return Ok(()) };
+    let check = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Err(Box::new(Capture { report: skipped(true), usage: None, io: None })),
+        _ = tokio::time::sleep_until(deadline) => return Err(Box::new(timeout(event, definition, true))),
+        result = asker.check_budget() => result,
+    };
+    check.map_err(|error| Box::new(error_capture(event, definition, error.to_string(), true)))
 }

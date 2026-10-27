@@ -201,32 +201,30 @@ async fn elapsed_wall_activation_survives_restart_and_does_not_reset_on_input() 
     );
 }
 #[tokio::test]
-async fn reserved_budgets_are_refused_without_a_soft_fallback() {
+async fn reserved_token_bounds_refuse_before_provider_dispatch() {
     let h = Harness::new(setup());
-    let result = h
-        .runtime
-        .create_session(CreateSession {
-            directory: h.repo.display().to_string(),
-            model: "test/main".into(),
-            budget: Some(Budget {
-                max_tokens: Some(10),
-                enforcement: Enforcement::Reserved,
-                ..Default::default()
-            }),
+    let id = create(
+        &h,
+        None,
+        Some(Budget {
+            max_tokens: Some(10),
+            enforcement: Enforcement::Reserved,
             ..Default::default()
-        })
-        .await;
+        }),
+    )
+    .await;
+    prompt(&h, &id).await;
+    assert_eq!(h.models.requests("test/main").len(), 0);
     assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Reserved Session budget enforcement is not available")
-    );
-    assert_eq!(
-        h.runtime.list(&Default::default()).unwrap().sessions.len(),
-        0
+        h.store
+            .read_events(&id, -1, 100)
+            .unwrap()
+            .events
+            .iter()
+            .any(|e| e.kind == "session.step.failed.1")
     );
 }
+
 #[tokio::test]
 async fn incomplete_historical_child_accounting_refuses_provider_dispatch() {
     let h = Harness::new(setup());

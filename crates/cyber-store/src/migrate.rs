@@ -153,6 +153,22 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         id: "20261026011000_computer_deletion",
         sql: include_str!("../migrations/20261026011000_computer_deletion.sql"),
     },
+    Migration {
+        id: "20261026030000_budget_reservations",
+        sql: include_str!("../migrations/20261026030000_budget_reservations.sql"),
+    },
+    Migration {
+        id: "20261026040000_budget_scope_bindings",
+        sql: include_str!("../migrations/20261026040000_budget_scope_bindings.sql"),
+    },
+    Migration {
+        id: "20261026050000_usage_reservation_links",
+        sql: include_str!("../migrations/20261026050000_usage_reservation_links.sql"),
+    },
+    Migration {
+        id: "20261026051000_budget_reservation_origin",
+        sql: include_str!("../migrations/20261026051000_budget_reservation_origin.sql"),
+    },
 ];
 
 pub(crate) enum Outcome {

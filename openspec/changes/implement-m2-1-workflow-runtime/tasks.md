@@ -75,7 +75,7 @@ Increment 2 delivered the runtime core (section 6) ahead of resume, so 3.1 is do
 - [x] 4.13 Run results: the return value (up to 1 MiB, else a file with a preview), and a summary admitted to the starting Session with `delivery: queue` and `source: workflow`.
 - [x] 4.14 Hooks fire for workflow agent tool calls with `workflow_run_id`, plus the workflow hook events.
 - [ ] 4.15 Compaction rules apply to workflow agent Sessions and are reported to the monitor.
-- [ ] 4.16 Follow-up (P2 exit criterion, not M2.1-blocking): `reserved` budget enforcement. `crates/cyber-server/src/runtime/budget.rs` `validate` refuses it today with "Reserved Session budget enforcement is not available"; run budgets ship with `soft`/`hard` enforcement until reservations land.
+- [x] 4.16 Durable reserved provider admission/settlement and audited uncertainty reconciliation implemented under `complete-dashboard-and-automation` tasks4.*. Initial production bounds support official stateless text/function OpenAI Responses; other adapters explicitly refuse, including ChatGPT subscription transport. Existing soft behavior remains the default. See `docs/implementation/reserved-budgets.md` for local evidence and pending combined/platform acceptance.
 
 ## 5. Surfaces (increment 4)
 

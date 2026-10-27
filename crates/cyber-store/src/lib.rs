@@ -13,6 +13,7 @@ mod lock;
 pub mod mcp_serve;
 mod migrate;
 mod query;
+pub mod reservations;
 mod store;
 mod writer;
 

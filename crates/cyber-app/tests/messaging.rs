@@ -227,8 +227,8 @@ async fn reachable_sessions_are_listed_over_http() {
 /// team still sees the member by its title.
 #[tokio::test]
 async fn reachable_listing_tags_teammates_and_workflow_agents() {
-    use cyber_server::runtime::CreateSession;
     use cyber_server::runtime::teams::records as team;
+    use cyber_server::runtime::{CreateSession, StartWorkflowRun};
     let temp = tempfile::tempdir().unwrap();
     let setup = || Setup {
         database: Some(temp.path().join("cyber.db")),
@@ -266,8 +266,27 @@ async fn reachable_listing_tags_teammates_and_workflow_agents() {
         ..Default::default()
     };
     let runtime = &app.app.runtime;
+    // Production children refer to a recorded workflow with durable budget
+    // evidence; a fabricated run ID must not bypass reservation admission.
+    let run = runtime
+        .start_workflow_run(StartWorkflowRun {
+            module: cyber_workflow::WorkflowModule::inline(
+                "export const meta = { name: 'listing', description: 'Session provenance fixture' }; export default async () => null;",
+            )
+            .unwrap(),
+            args: json!({}),
+            session_id: lead.clone(),
+            limits: Default::default(),
+            tiers: Default::default(),
+            budget: cyber_core::budget::RunBudget::resolve(&json!({}), &[]).unwrap(),
+            share: Default::default(),
+            starter: Default::default(),
+            tools: Vec::new(),
+        })
+        .await
+        .unwrap();
     let agent = runtime
-        .create_session(child("reviewer", Some("wfr_listing")))
+        .create_session(child("reviewer", Some(&run.id)))
         .await
         .unwrap()
         .id;
@@ -308,11 +327,7 @@ async fn reachable_listing_tags_teammates_and_workflow_agents() {
             &workflow["address"],
             &workflow["workflowRunId"]
         ),
-        (
-            &json!("subagent"),
-            &json!("reviewer"),
-            &json!("wfr_listing")
-        )
+        (&json!("subagent"), &json!("reviewer"), &json!(run.id))
     );
     assert!(by_id(&entries, &tests).get("workflowRunId").is_none());
     assert_eq!(by_id(&entries, &outsider)["kind"], "local");

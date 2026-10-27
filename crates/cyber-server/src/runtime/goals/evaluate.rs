@@ -8,15 +8,15 @@ use std::time::Duration;
 
 use cyber_core::goals::{MAX_REASON, Verdict};
 use cyber_llm::catalog::{ModelRole, compute_cost};
-use cyber_llm::{FinishReason, LlmEvent, LlmRequest, Message, Usage};
+use cyber_llm::{Adapter, FinishReason, LlmEvent, LlmRequest, Message, Usage};
 use futures::StreamExt;
 use serde::Deserialize;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use super::records::Goal;
-use crate::runtime::host::{ModelResolver, ResolvedModel};
 use crate::runtime::{Entry, SessionState};
+use crate::runtime::{Handle, Inner, RuntimeError};
 
 const TIMEOUT: Duration = Duration::from_secs(60);
 /// Characters per token when bounding the input.
@@ -38,6 +38,7 @@ still missing, since the agent reads it to continue.";
 /// What one evaluation produced; usage is billed whether or not a verdict was parsed.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Judgement {
+    pub reservation_requests: Vec<String>,
     pub verdict: Verdict,
     pub reason: String,
     pub tokens: u64,
@@ -126,23 +127,27 @@ fn latest_turn(state: &SessionState) -> Vec<&Entry> {
 /// Judge `evidence` on the evaluator model: `model_roles.evaluator`, else the small
 /// model, else the Session's own model (`session_model`).
 pub(super) async fn judge(
-    resolver: &dyn ModelResolver,
+    inner: &Inner,
+    handle: &Handle,
     session_model: &str,
     evidence: String,
     cancel: &CancellationToken,
-) -> Judgement {
+) -> Result<Judgement, RuntimeError> {
+    let resolver = inner.resolver.as_ref();
     let reference = resolver
         .role(ModelRole::Evaluator)
         .or_else(|| resolver.role(ModelRole::Small))
         .unwrap_or_else(|| session_model.to_owned());
     if reference.is_empty() {
-        return unjudged("no evaluator model is configured");
+        return Ok(unjudged("no evaluator model is configured"));
     }
     let Ok(resolved) = resolver.resolve(&reference) else {
-        return unjudged("the configured evaluator is unavailable");
+        return Ok(unjudged("the configured evaluator is unavailable"));
     };
     let mut usage = Usage::default();
     let mut outcome = Err("not run".to_string());
+    let gated =
+        crate::runtime::reservations::GatedAdapter::new(inner, handle, &resolved, "goal_evaluator");
     for _ in 0..2 {
         let request = LlmRequest {
             system: vec![SYSTEM.into()],
@@ -153,33 +158,48 @@ pub(super) async fn judge(
         };
         outcome = tokio::select! {
             () = cancel.cancelled() => Err("evaluation cancelled".into()),
-            result = tokio::time::timeout(TIMEOUT, infer(&resolved, request, &mut usage)) => {
+            result = tokio::time::timeout(TIMEOUT, infer(&gated, request, &mut usage)) => {
                 result.unwrap_or_else(|_| Err("the evaluator timed out".into()))
             }
         };
+        gated.flush().await?;
+        if let Some(error) = gated.take_error() {
+            return Err(error);
+        }
         if outcome.is_ok() || cancel.is_cancelled() {
             break;
         }
     }
-    let tokens = usage.input + usage.output + usage.reasoning;
+    let receipts = gated.request_ids();
+    let tokens = usage.input
+        + usage.output
+        + usage.reasoning
+        + if receipts.is_empty() {
+            0
+        } else {
+            usage.cache_read + usage.cache_write
+        };
     let cost = compute_cost(resolved.cost.as_ref(), &usage).unwrap_or(0.0);
-    match outcome {
+    Ok(match outcome {
         Ok(reply) => Judgement {
+            reservation_requests: receipts,
             verdict: reply.verdict,
             reason: clip(&reply.reason),
             tokens,
             cost,
         },
         Err(_) => Judgement {
+            reservation_requests: receipts,
             tokens,
             cost,
             ..unjudged("evaluator returned an invalid verdict")
         },
-    }
+    })
 }
 
 fn unjudged(reason: &str) -> Judgement {
     Judgement {
+        reservation_requests: Vec::new(),
         verdict: Verdict::NotMet,
         reason: reason.into(),
         tokens: 0,
@@ -199,7 +219,7 @@ pub(super) fn clip(reason: &str) -> String {
 }
 
 async fn infer(
-    resolved: &ResolvedModel,
+    adapter: &dyn Adapter,
     mut request: LlmRequest,
     usage: &mut Usage,
 ) -> Result<Reply, String> {
@@ -215,8 +235,7 @@ async fn infer(
             body.remove(key);
         }
     }
-    let mut stream = resolved
-        .adapter
+    let mut stream = adapter
         .stream(request)
         .await
         .map_err(|_| "evaluator request failed".to_string())?;

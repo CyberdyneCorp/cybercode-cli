@@ -155,6 +155,19 @@ impl Runtime {
         if ids.iter().any(|id| drains.contains_key(id)) {
             return Err(RuntimeError::Busy(session_id.into()));
         }
+        let sources = ids.to_vec();
+        let open=self.inner.store.read(move|db|{
+            for id in sources {
+                let open:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM budget_reservation WHERE session_id=?1 AND state IN ('reserved','uncertain'))",[&id],|r|r.get(0))?;
+                if open {return Ok(true);}
+            }
+            Ok(false)
+        })?;
+        if open {
+            return Err(RuntimeError::BudgetUncertain {
+                scope: session_id.into(),
+            });
+        }
         for id in ids {
             drains.insert(
                 id.clone(),

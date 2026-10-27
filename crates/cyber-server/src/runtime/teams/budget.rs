@@ -153,6 +153,11 @@ impl Runtime {
         let Some(budget) = team.budget else {
             return Ok(true);
         };
+        // Reserved membership (including the lead) is checked for every provider
+        // request by the atomic scope collector, not this soft Turn boundary.
+        if budget.enforcement == cyber_core::budget::Enforcement::Reserved {
+            return Ok(true);
+        }
         let spend = self.team_spend(team_id)?.unwrap_or_default();
         let Some(limit) = limits(&budget, &spend.total)
             .into_iter()

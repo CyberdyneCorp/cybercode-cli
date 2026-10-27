@@ -3,14 +3,13 @@
 use std::time::Duration;
 
 use cyber_llm::catalog::{ModelRole, compute_cost};
-use cyber_llm::{FinishReason, LlmEvent, LlmRequest, Message, Usage};
+use cyber_llm::{Adapter, FinishReason, LlmEvent, LlmRequest, Message, Usage};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::events::{AUTO_DECIDED, event};
-use super::host::ResolvedModel;
 use super::requests::Asker;
 use super::{Inner, RuntimeError, view};
 
@@ -50,6 +49,8 @@ pub enum AutoEffect {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutoDecision {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reservation_requests: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reviewed_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -193,8 +194,9 @@ impl Inner {
                     &checkout_root.display().to_string(),
                 )
                 .await?;
-            self.commit(&handle, vec![event(AUTO_DECIDED, &decision)])
-                .await?;
+            let mut recorded = event(AUTO_DECIDED, &decision);
+            super::reservations::mark_accounted(&mut recorded, &decision.reservation_requests);
+            self.commit(&handle, vec![recorded]).await?;
             self.observe_budget(&handle).await?;
             let stop = decision.decision != AutoEffect::Allow;
             result = Some(decision);
@@ -222,6 +224,7 @@ impl Inner {
     ) -> Result<AutoDecision, RuntimeError> {
         let review = stage.review;
         let mut decision = AutoDecision {
+            reservation_requests: Vec::new(),
             reviewed_session_id: stage.ancestor_id.clone(),
             checkout_root: Some(checkout_root.into()),
             call_id: call_id.into(),
@@ -319,12 +322,23 @@ impl Inner {
         }
         let mut usage = Usage::default();
         let mut metered = false;
+        let gated = super::reservations::GatedAdapter::new(self, handle, &resolved, "evaluator")
+            .for_call(decision.call_id.clone());
         let result = tokio::select! {
             _ = cancel.cancelled() => Err("Auto review cancelled".into()),
-            result = tokio::time::timeout(TIMEOUT, infer(&resolved, request, &mut usage, &mut metered)) => {
+            result = tokio::time::timeout(TIMEOUT, infer(&gated, request, &mut usage, &mut metered)) => {
                 result.unwrap_or_else(|_| Err("Evaluator timed out".into()))
             }
         };
+        decision.reservation_requests = gated.request_ids();
+        if let Err(error) = gated.flush().await {
+            decision.reason = error.to_string();
+            return;
+        }
+        if let Some(error) = gated.take_error() {
+            decision.reason = error.to_string();
+            return;
+        }
         if metered {
             decision.usage = Some(usage);
             decision.cost = compute_cost(resolved.cost.as_ref(), &usage);
@@ -343,7 +357,7 @@ impl Inner {
 }
 
 async fn infer(
-    resolved: &ResolvedModel,
+    adapter: &dyn Adapter,
     mut request: LlmRequest,
     usage: &mut Usage,
     metered: &mut bool,
@@ -360,8 +374,7 @@ async fn infer(
             body.remove(key);
         }
     }
-    let mut stream = resolved
-        .adapter
+    let mut stream = adapter
         .stream(request)
         .await
         .map_err(|_| "Evaluator request failed".to_string())?;

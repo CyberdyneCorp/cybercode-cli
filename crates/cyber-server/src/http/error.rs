@@ -180,6 +180,17 @@ impl From<RuntimeError> for ApiError {
             RuntimeError::BudgetExceeded { .. } => {
                 Self::new(StatusCode::CONFLICT, "BudgetExceededError", message)
             }
+            RuntimeError::BudgetUnpriced { .. } => {
+                Self::new(StatusCode::BAD_REQUEST, "BudgetUnpricedError", message)
+            }
+            RuntimeError::BudgetBoundUnavailable(_) => Self::new(
+                StatusCode::BAD_REQUEST,
+                "BudgetBoundUnavailableError",
+                message,
+            ),
+            RuntimeError::BudgetUncertain { .. } => {
+                Self::new(StatusCode::CONFLICT, "BudgetUncertainError", message)
+            }
             RuntimeError::Busy(_) => Self::new(StatusCode::CONFLICT, "SessionBusyError", message),
             RuntimeError::Invalid(m) => Self::invalid(m),
             RuntimeError::Conflict(m) => Self::conflict(m),

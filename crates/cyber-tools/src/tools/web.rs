@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use cyber_llm::catalog::ModelRole;
-use cyber_llm::{Initiator, LlmRequest, Message};
+use cyber_llm::{Adapter, Initiator, LlmRequest, Message};
 use cyber_server::runtime::{RetrySafety, ToolDef};
 use futures::StreamExt;
 use futures::future::BoxFuture;
@@ -195,26 +195,33 @@ async fn summarize(
         .await
         .map_err(|e| failed(e.to_string()))?;
     let started = std::time::Instant::now();
-    let stream = resolved
-        .adapter
-        .stream(request)
-        .await
-        .map_err(|e| failed(format!("Summary failed: {e}")))?;
-    let out = cyber_llm::collect(stream, |_| {})
-        .await
-        .map_err(|e| failed(format!("Summary failed: {e}")))?;
-    ctx.inv
+    let guarded = ctx
+        .inv
         .asker
-        .record_model_usage(cyber_server::runtime::AuxiliaryUsage {
-            provider: resolved.provider.clone(),
-            model: reference,
-            purpose: "webfetch_summary".into(),
-            call_id: Some(ctx.inv.call_id.clone()),
-            duration_ms: started.elapsed().as_millis().min(u64::MAX as u128) as u64,
-            usage: out.usage,
-            cost: cyber_llm::catalog::compute_cost(resolved.cost.as_ref(), &out.usage),
-        })
+        .guard_model(&resolved, "webfetch_summary", Some(ctx.inv.call_id.clone()))
         .await
-        .map_err(|e| failed(e.to_string()))?;
+        .map_err(|e| failed(format!("Summary failed: {e}")))?;
+    let result = async {
+        let stream = guarded.stream(request).await?;
+        cyber_llm::collect(stream, |_| {}).await
+    }
+    .await;
+    guarded.flush().await.map_err(|e| failed(e.to_string()))?;
+    let out = result.map_err(|e| failed(format!("Summary failed: {e}")))?;
+    if !guarded.reservation_owned() {
+        ctx.inv
+            .asker
+            .record_model_usage(cyber_server::runtime::AuxiliaryUsage {
+                provider: resolved.provider.clone(),
+                model: reference,
+                purpose: "webfetch_summary".into(),
+                call_id: Some(ctx.inv.call_id.clone()),
+                duration_ms: started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                usage: out.usage,
+                cost: cyber_llm::catalog::compute_cost(resolved.cost.as_ref(), &out.usage),
+            })
+            .await
+            .map_err(|e| failed(e.to_string()))?;
+    }
     Ok(out.text)
 }

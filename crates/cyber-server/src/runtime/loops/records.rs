@@ -77,6 +77,8 @@ pub struct StopConditions {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Created {
+    #[serde(default)]
+    pub reservation_scope_version: u32,
     pub loop_id: String,
     pub kind: LoopKind,
     pub prompt: String,
@@ -523,6 +525,7 @@ pub(crate) mod tests {
             missed: Missed::Skip,
             stop: StopConditions::default(),
             budget: None,
+            reservation_scope_version: 0,
             iteration_cap: 500,
             created_ms: 0,
             next_due_ms: 0,

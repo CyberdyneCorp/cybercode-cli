@@ -1,5 +1,5 @@
 import { Integrations } from "./integrations.js";
-import type { EventEnvelope, FileDiff, GoalsView, Job, LocationInfo, Message, PendingRequest, RunDetail, Session, SessionRow, WorkflowRunSummary } from "../../sdk/typescript/src/generated/types.js";
+import type { BudgetReservation, ReservationPage, EventEnvelope, FileDiff, GoalsView, Job, LocationInfo, Message, PendingRequest, RunDetail, Session, SessionRow, WorkflowRunSummary } from "../../sdk/typescript/src/generated/types.js";
 import { ApiFault, operationKey, type Port, type RequestOptions } from "./transport.js";
 import { ComputerControls } from "./computer.js";
 import { MessageInbox } from "./inbox.js";
@@ -16,6 +16,7 @@ export interface State {
   authenticated: boolean; authBusy: boolean; retryAt: number; connection: Connection;
   directory: string; location?: LocationInfo | undefined; sessions: SessionRow[]; sessionCursor?: string | undefined;
   session?: Session | undefined; messages: Message[]; messageCursor?: string | undefined; diffs: FileDiff[];
+  reservations: BudgetReservation[]; reservationError: string;
   cards: Card[]; runs: WorkflowRunSummary[]; details: Map<string, RunDetail>; jobs: Job[];
   goals?: GoalsView | undefined; unavailable: Set<string>; lease?: Lease | undefined; notice: string;
   loading: boolean; olderTranscript: boolean; tab: Tab; draft: string; delivery: "steer" | "queue";
@@ -23,7 +24,7 @@ export interface State {
   customs: Map<string, string[]>; command?: Command | undefined; liveText: string; liveMessage?: string | undefined;
   feedbackDraft: string; creation?: { key: string; directory: string; status: "submitting" | "uncertain" } | undefined;
 }
-const initial = (): State => ({ authenticated: false, authBusy: false, retryAt: 0, connection: "authentication required", directory: "", sessions: [], messages: [], diffs: [], cards: [], runs: [], details: new Map(), jobs: [], unavailable: new Set(), notice: "", loading: false, olderTranscript: false, tab: "conversation", draft: "", delivery: "steer", reviewed: false, answers: new Map(), customs: new Map(), liveText: "", feedbackDraft: "" });
+const initial = (): State => ({ authenticated: false, authBusy: false, retryAt: 0, connection: "authentication required", directory: "", sessions: [], messages: [], diffs: [], cards: [], reservations: [], reservationError: "", runs: [], details: new Map(), jobs: [], unavailable: new Set(), notice: "", loading: false, olderTranscript: false, tab: "conversation", draft: "", delivery: "steer", reviewed: false, answers: new Map(), customs: new Map(), liveText: "", feedbackDraft: "" });
 const data = <T>(value: { data: T }): T => value.data;
 export const requestKey = (request: PendingRequest) => `${request.session_id}/${request.id}`;
 export function fingerprint(value: unknown): string {
@@ -105,7 +106,7 @@ export class Dashboard {
     this.state.liveText = ""; this.state.liveMessage = undefined;
     this.releaseLease(); this.stopAttachment();
     const generation = this.#generation; this.jobLog = undefined;
-    this.state.session = undefined; this.state.cards = []; this.state.messages = []; this.state.diffs = []; this.state.runs = []; this.state.jobs = []; this.state.goals = undefined; this.state.directory = directory; this.state.loading = true; this.state.connection = "connecting"; this.emit();
+    this.state.session = undefined; this.state.cards = []; this.state.messages = []; this.state.diffs = []; this.state.runs = []; this.state.reservations = []; this.state.reservationError = ""; this.state.jobs = []; this.state.goals = undefined; this.state.directory = directory; this.state.loading = true; this.state.connection = "connecting"; this.emit();
     try {
       const location = data(await this.api.request<{ data: LocationInfo }>("/location", { directory }));
       if (generation !== this.#generation) return;
@@ -137,7 +138,7 @@ export class Dashboard {
     this.releaseLease(); this.stopAttachment();
     const generation = this.#generation;
     this.jobLog = undefined;
-    this.state.loading = true; this.state.connection = "connecting"; this.state.session = undefined; this.state.diffs = []; this.state.runs = []; this.state.jobs = []; this.state.goals = undefined; this.state.cards = []; this.state.messages = []; this.state.liveText = ""; this.state.liveMessage = undefined; this.state.draft = ""; this.state.command = this.#commands.get(id); this.state.review = undefined; this.state.feedback = undefined; this.state.details.clear(); this.emit();
+    this.state.loading = true; this.state.connection = "connecting"; this.state.session = undefined; this.state.diffs = []; this.state.runs = []; this.state.reservations = []; this.state.reservationError = ""; this.state.jobs = []; this.state.goals = undefined; this.state.cards = []; this.state.messages = []; this.state.liveText = ""; this.state.liveMessage = undefined; this.state.draft = ""; this.state.command = this.#commands.get(id); this.state.review = undefined; this.state.feedback = undefined; this.state.details.clear(); this.emit();
     try {
       const session = data(await this.api.request<{ data: Session }>(`/sessions/${encoded(id)}`, this.options()));
       if (generation !== this.#generation) return;
@@ -221,7 +222,19 @@ export class Dashboard {
     this.reconcileCards([...permissions.data, ...questions.data], generation);
     if (current.data.status !== "running" || this.finishedMessage(this.state.liveMessage)) { this.state.liveText = ""; this.state.liveMessage = undefined; }
     // Optional inbox reads must not delay Session attachment or permission updates.
-    void this.inbox.refresh(); void this.computer.refresh();
+    void this.inbox.refresh(); void this.computer.refresh(); void this.readReservations(session.id, generation);
+    this.emit();
+  }
+  private async readReservations(session: string, generation: number): Promise<void> {
+    try {
+      const result = await this.optional<{ data: ReservationPage }>(`/budgets/reservations?session_id=${encoded(session)}&limit=50`, "Budget reservations", this.options());
+      if (generation !== this.#generation || this.state.session?.id !== session) return;
+      this.state.reservations = result?.data?.reservations ?? [];
+      this.state.reservationError = this.state.unavailable.has("Budget reservations") ? "Budget allocation diagnostics are unavailable on this server." : "";
+    } catch {
+      if (generation !== this.#generation || this.state.session?.id !== session) return;
+      this.state.reservations = []; this.state.reservationError = "Budget allocation evidence could not be refreshed. Reconnect before relying on these limits.";
+    }
     this.emit();
   }
   private async optional<T>(path: string, label: string, options: RequestOptions): Promise<T | undefined> {

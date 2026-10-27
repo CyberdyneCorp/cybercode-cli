@@ -227,13 +227,16 @@ fn row(r: &rusqlite::Row<'_>, when: When) -> rusqlite::Result<Row> {
 
 /// Ledger rows since `since_ms`, grouped by bucket, root, model and directory.
 fn buckets(db: &Connection, since_ms: i64) -> rusqlite::Result<Vec<Row>> {
-    let mut statement = db.prepare(
+    let finished = super::usage_ledger::FINISHED_CALL;
+    let unpriced = super::usage_ledger::unpriced_call();
+    let turns = super::usage_ledger::RECORDED_TURN;
+    let mut statement = db.prepare(&format!(
         "SELECT (started_ms / ?2) * ?2, root_id, provider, model, directory,
-            SUM(failed = 0), SUM(purpose = 'turn' AND failed = 0), SUM(cost IS NULL AND failed = 0),
+            SUM({finished}), SUM({turns}), SUM({unpriced}),
             SUM(input_tokens), SUM(output_tokens), SUM(reasoning_tokens), SUM(cache_read_tokens),
             SUM(cache_write_tokens), TOTAL(cost), origin
-         FROM usage_step WHERE started_ms >= ?1 GROUP BY 1, 2, 3, 4, 5, 15",
-    )?;
+         FROM usage_step u WHERE started_ms >= ?1 GROUP BY 1, 2, 3, 4, 5, 15"
+    ))?;
     statement
         .query_map([since_ms, BUCKET_MS], |r| row(r, When::Bucket(r.get(0)?)))?
         .collect()

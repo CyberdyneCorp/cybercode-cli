@@ -256,9 +256,21 @@ export class View {
     this.nativeStop(dialog);
     dialog.addEventListener("cancel", (event) => { event.preventDefault(); this.model.state.feedback = undefined; this.model.emit(); }); return dialog;
   }
+  private reservations(): HTMLElement {
+    const state = this.model.state;
+    const allocations = node("section", "run-section"); allocations.append(node("h3", "", "Budget allocations"));
+    if (state.reservationError) allocations.append(node("p", "muted", state.reservationError));
+    else if (!state.reservations.length) allocations.append(node("p", "empty-small", "No request reservations for this Session. Soft budgets do not reserve capacity."));
+    for (const allocation of state.reservations) {
+      const card = node("details", "run-card");
+      card.append(node("summary", "", `${allocation.purpose} · ${allocation.state} · ${allocation.held_tokens.toLocaleString()} tokens held`), node("p", "fine-print", "Declared request bounds are scheduling estimates. Uncertain requests keep their remaining allocation until an owner audits the provider outcome."), code(allocation, "Reservation bounds, actual usage and uncertainty")); allocations.append(card);
+    }
+    return allocations;
+  }
   private runs(): HTMLElement {
     const state = this.model.state; const wrap = node("div", "runs"); const disabled = !this.model.actionable || !!state.command;
     wrap.append(heading("IN FLIGHT & RECENT", "Work monitor"), node("p", "fine-print", "Costs are known priced subtotals. Unknown pricing and incomplete usage may add cost; zero does not establish free execution."));
+    wrap.append(this.reservations());
     const workflows = node("section", "run-section"); workflows.append(node("h3", "", "Workflow runs"));
     if (state.unavailable.has("Workflows")) workflows.append(node("p", "muted", "Workflow routes are unavailable on this server."));
     else if (!state.runs.length) workflows.append(node("p", "empty-small", "No workflow runs for this Session."));

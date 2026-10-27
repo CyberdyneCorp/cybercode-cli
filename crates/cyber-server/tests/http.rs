@@ -1996,18 +1996,14 @@ async fn session_detail_and_listing_expose_separate_descendant_billing() {
 }
 
 #[tokio::test]
-async fn session_api_persists_budget_and_refuses_invalid_or_reserved_objects() {
+async fn session_api_persists_budget_and_refuses_invalid_objects() {
     use cyber_server::runtime::{Admission, Delivery};
     let h = Harness::new(Setup {
         scripts: vec![("test/main", vec![text("should not dispatch")])],
         ..Default::default()
     });
     let api = Api::new(&h);
-    for budget in [
-        json!({"max_cost_usd":-1}),
-        json!({"max_cost":1}),
-        json!({"enforcement":"reserved","max_tokens":10}),
-    ] {
+    for budget in [json!({"max_cost_usd":-1}), json!({"max_cost":1})] {
         let (status, _, _) = api
             .call(
                 Method::POST,
@@ -4512,4 +4508,243 @@ async fn telemetry_status_masks_headers() {
     let (status, body) = Api::new(&h).get("/telemetry").await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert_eq!(body["service"], "telemetry");
+}
+
+/// An admitted provider attempt whose process has gone away: durable evidence exists,
+/// but no local adapter or live provider is involved in HTTP reconciliation tests.
+fn inactive_budget_reservation(h: &Harness, session: &str, id: &str) {
+    use cyber_store::reservations::{self as ledger, Estimate, Request, Scope, TokenAmounts};
+    let session = session.to_string();
+    let id = id.to_string();
+    h.store
+        .transaction(move |tx| {
+            let request = Request {
+                request_id: id.clone(),
+                session_id: session.clone(),
+                provider: "test".into(),
+                model: "main".into(),
+                purpose: "turn".into(),
+                call_id: Some("fixture-message".into()),
+                bound_source: Some("declared fixture limits".into()),
+                normalized_sha256: Some("a".repeat(64)),
+                deadline_ms: None,
+                estimate: Estimate {
+                    tokens: TokenAmounts {
+                        input: 10,
+                        ..Default::default()
+                    },
+                    total_tokens: 10,
+                    turns: 1,
+                    cost_microusd: Some(100),
+                },
+            };
+            let scope = Scope {
+                id: session,
+                max_tokens: Some(100),
+                max_turns: Some(10),
+                max_cost_microusd: Some(1000),
+                spent_tokens: 0,
+                spent_turns: 0,
+                spent_cost_microusd: 0,
+                uncertain: false,
+            };
+            ledger::reserve(tx, &request, &[scope], 1)?;
+            ledger::mark_dispatched(tx, &id, 2)?;
+            Ok(())
+        })
+        .unwrap();
+}
+
+#[tokio::test]
+async fn budget_reservation_http_lists_scoped_evidence_and_returns_tagged_not_found() {
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let other = h.session().await;
+    inactive_budget_reservation(&h, &session, "breq_http_one");
+    inactive_budget_reservation(&h, &other, "breq_http_other");
+    let api = Api::new(&h);
+    let (status, list) = api
+        .get(&format!(
+            "/budgets/reservations?session_id={session}&open_only=true"
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    let records = list["data"]["reservations"].as_array().unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["request_id"], "breq_http_one");
+    assert_eq!(records[0]["state"], "uncertain");
+    assert_eq!(records[0]["held_tokens"], 10);
+    assert_eq!(records[0]["bound_source"], "declared fixture limits");
+    assert_eq!(records[0]["normalized_sha256"], "a".repeat(64));
+    let (status, detail) = api.get("/budgets/reservations/breq_http_one").await;
+    assert_eq!(status, StatusCode::OK, "{detail}");
+    assert_eq!(detail["data"]["reservation"], records[0]);
+    assert_eq!(detail["data"]["audit"], json!([]));
+    for (method, path, body) in [
+        (Method::GET, "/budgets/reservations/breq_missing", None),
+        (
+            Method::POST,
+            "/budgets/reservations/breq_missing/reconcile",
+            Some(
+                json!({"operation_id":"missing","expected_revision":1,"reason":"reviewed missing attempt","action":{"kind":"release"}}),
+            ),
+        ),
+    ] {
+        let (status, error, _) = api.call(method, path, body, &[]).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{error}");
+        assert_eq!(error["_tag"], "BudgetReservationNotFoundError");
+    }
+}
+
+#[tokio::test]
+async fn budget_reservation_http_rejects_invalid_query_and_json_in_tagged_envelopes() {
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    inactive_budget_reservation(&h, &session, "breq_http_invalid");
+    let api = Api::new(&h);
+    for query in [
+        "limit=not-a-number",
+        "limit=0",
+        "open_only=maybe",
+        "cursor=%7Bbad",
+        "unknown=true",
+    ] {
+        let (status, error) = api.get(&format!("/budgets/reservations?{query}")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{query}: {error}");
+        assert_eq!(error["_tag"], "InvalidRequestError", "{query}: {error}");
+    }
+    let path = "/budgets/reservations/breq_http_invalid/reconcile";
+    for body in [
+        json!({}),
+        json!({"operation_id":12,"expected_revision":2,"reason":"reviewed","action":{"kind":"release"}}),
+        json!({"operation_id":"invalid","expected_revision":2,"reason":"reviewed","action":{"kind":"release"},"unexpected":true}),
+    ] {
+        let (status, error) = api.post(path, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{error}");
+        assert_eq!(error["_tag"], "InvalidRequestError");
+    }
+    let response = api
+        .client
+        .request(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("http://cyber.internal/api/v1{path}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{broken json"))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let error: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(error["_tag"], "InvalidRequestError");
+    let (_, detail) = api.get("/budgets/reservations/breq_http_invalid").await;
+    assert_eq!(detail["data"]["reservation"]["revision"], 2);
+    assert_eq!(detail["data"]["audit"], json!([]));
+}
+
+#[tokio::test]
+async fn budget_reservation_http_reconcile_is_audited_idempotent_and_revision_fenced() {
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    inactive_budget_reservation(&h, &session, "breq_http_reconcile");
+    let api = Api::new(&h);
+    let path = "/budgets/reservations/breq_http_reconcile/reconcile";
+    let command = json!({"operation_id":"owner-reviewed-release","expected_revision":2,"reason":"provider confirmed no further billing evidence","action":{"kind":"release"}});
+    let (status, released) = api.post(path, command.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{released}");
+    assert_eq!(released["data"]["reservation"]["state"], "released");
+    assert_eq!(released["data"]["reservation"]["revision"], 3);
+    assert_eq!(released["data"]["reservation"]["held_tokens"], 0);
+    let audit = released["data"]["audit"].as_array().unwrap();
+    assert_eq!(audit.len(), 1);
+    assert_eq!(audit[0]["owner"], "authenticated-owner");
+    assert_eq!(audit[0]["reason"], command["reason"]);
+    let seq = h.store.aggregate_seq(&session).unwrap();
+    let (status, replayed) = api.post(path, command.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{replayed}");
+    assert_eq!(replayed, released);
+    assert_eq!(
+        h.store.aggregate_seq(&session).unwrap(),
+        seq,
+        "a lost acknowledgement must not repeat billing or audit events"
+    );
+    let mut stale = command.clone();
+    stale["operation_id"] = json!("another-owner-review");
+    let mut conflict = command;
+    conflict["reason"] = json!("different evidence under a reused operation id");
+    for body in [stale, conflict] {
+        let (status, error) = api.post(path, body).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{error}");
+        assert_eq!(error["_tag"], "ConflictError");
+        assert!(
+            error["message"]
+                .as_str()
+                .is_some_and(|message| !message.is_empty()),
+            "{error}"
+        );
+    }
+    let (_, detail) = api.get("/budgets/reservations/breq_http_reconcile").await;
+    assert_eq!(detail, released);
+    assert_eq!(h.store.aggregate_seq(&session).unwrap(), seq);
+}
+
+#[tokio::test]
+async fn budget_reservation_http_requires_owner_auth_and_checks_origin_before_mutation() {
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    inactive_budget_reservation(&h, &session, "breq_http_guard");
+    let base = tcp(&h, "fixture-owner-password").await;
+    let client = reqwest::Client::new();
+    let command = json!({"operation_id":"guard-reviewed-release","expected_revision":2,"reason":"reviewed inactive attempt","action":{"kind":"release"}});
+    let paths = [
+        "/budgets/reservations",
+        "/budgets/reservations/breq_http_guard",
+        "/budgets/reservations/breq_http_guard/reconcile",
+    ];
+    for path in paths {
+        let request = if path.ends_with("/reconcile") {
+            client.post(format!("{base}{path}")).json(&command)
+        } else {
+            client.get(format!("{base}{path}"))
+        };
+        let denied = request.send().await.unwrap();
+        assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+        assert!(denied.headers().contains_key("www-authenticate"));
+        let error: Value = denied.json().await.unwrap();
+        assert!(error["_tag"].is_string());
+    }
+    let foreign = client
+        .post(format!(
+            "{base}/budgets/reservations/breq_http_guard/reconcile"
+        ))
+        .basic_auth("cyber", Some("fixture-owner-password"))
+        .header("origin", "https://foreign.invalid")
+        .json(&command)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(foreign.status(), StatusCode::FORBIDDEN);
+    let error: Value = foreign.json().await.unwrap();
+    assert_eq!(error["_tag"], "ForbiddenError");
+    let allowed = client
+        .get(format!("{base}/budgets/reservations/breq_http_guard"))
+        .basic_auth("cyber", Some("fixture-owner-password"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(allowed.status(), StatusCode::OK);
+    let detail: Value = allowed.json().await.unwrap();
+    assert_eq!(detail["data"]["reservation"]["state"], "uncertain");
+    assert_eq!(detail["data"]["audit"], json!([]));
+    let released = client
+        .post(format!(
+            "{base}/budgets/reservations/breq_http_guard/reconcile"
+        ))
+        .basic_auth("cyber", Some("fixture-owner-password"))
+        .json(&command)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(released.status(), StatusCode::OK);
 }

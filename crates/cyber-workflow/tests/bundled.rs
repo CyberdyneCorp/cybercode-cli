@@ -704,3 +704,31 @@ fn solve_unsettled_checks_preserve_the_partial_result_exit_contract() {
     assert_eq!(result["recommended_candidate"], Value::Null);
     assert_eq!(host.labels(), ["one", "two"]);
 }
+
+#[test]
+fn solve_report_distinguishes_reserved_request_estimates_from_soft_limits() {
+    let host = Scripted::new(|_, _| Err(budget_exceeded()));
+    let input = RunInput {
+        args: solve_args(),
+        ctx: json!({"run_id":"run_test","run_budget":{"enforcement":"reserved","max_cost_usd":5}}),
+        tools: Vec::new(),
+    };
+    let result = block_on(run(
+        bundled::module("solve").unwrap(),
+        input,
+        Limits::default(),
+        &host,
+    ))
+    .unwrap()
+    .value;
+    assert_eq!(result["budget"]["enforcement"], "reserved");
+    assert_eq!(result["budget"]["soft_ceiling"], false);
+    assert!(
+        result["budget"]["limitation"]
+            .as_str()
+            .unwrap()
+            .contains("not a provider billing guarantee")
+    );
+    let soft = execute("solve", solve_args(), &host).unwrap();
+    assert_eq!(soft["budget"]["soft_ceiling"], true);
+}

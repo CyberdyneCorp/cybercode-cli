@@ -504,6 +504,7 @@ pub fn registry() -> EventRegistry {
         .expect("valid messaging override event");
     super::branches::register(&mut registry);
     super::budget::register(&mut registry);
+    super::reservations::register(&mut registry);
     super::hooks::register(&mut registry);
     super::jobs::register(&mut registry);
     super::delegations::register(&mut registry);
@@ -529,7 +530,8 @@ fn project(tx: &Transaction<'_>, e: &StoredEvent) -> Result<(), String> {
     super::hooks::project(tx, e)?;
     super::auto_statistics::project(tx, e)?;
     super::auto_override::project(tx, e)?;
-    project_event(tx, e).map_err(|err| err.to_string())
+    project_event(tx, e).map_err(|err| err.to_string())?;
+    super::reservations::bind_created(tx, e).map_err(|err| err.to_string())
 }
 
 fn project_event(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()> {
@@ -606,7 +608,7 @@ fn project_runtime(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()
             )?;
         }
         STEP_ENDED | COMPACTION_COMPLETED | AUXILIARY_USAGE => project_usage(tx, e)?,
-        STEP_FAILED => super::usage_ledger::project(tx, e)?,
+        STEP_FAILED if d["usage_accounted"] != true => super::usage_ledger::project(tx, e)?,
         AUTO_DECIDED if d["usage"].is_object() => project_usage(tx, e)?,
         _ => {
             if e.kind == TITLE_GENERATED && d["usage"].is_object() {
@@ -716,9 +718,24 @@ fn project_inbox(tx: &Transaction<'_>, d: &Value) -> rusqlite::Result<()> {
 
 fn project_usage(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()> {
     let (id, d) = (&e.aggregate_id, &e.data);
+    if d["usage_accounted"] == true {
+        return Ok(());
+    }
     let u = &d["usage"];
     let n = |k: &str| u[k].as_i64().unwrap_or(0);
     let cost = d["cost"].as_f64();
+    if let Some(delta) = d["reservation_unpriced_increment"].as_i64() {
+        let old: i64 = tx.query_row(
+            "SELECT unpriced_steps FROM session WHERE id=?1",
+            [id],
+            |row| row.get(0),
+        )?;
+        if !(-1..=1).contains(&delta) || old.checked_add(delta).is_none_or(|next| next < 0) {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "invalid reservation unpriced adjustment".into(),
+            ));
+        }
+    }
     tx.execute(
         "UPDATE session SET cost = cost + ?2, unpriced_steps = unpriced_steps + ?3,
             input_tokens = input_tokens + ?4, output_tokens = output_tokens + ?5,
@@ -728,7 +745,9 @@ fn project_usage(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()> 
         params![
             id,
             cost.unwrap_or(0.0),
-            i64::from(cost.is_none()),
+            d["reservation_unpriced_increment"]
+                .as_i64()
+                .unwrap_or_else(|| i64::from(cost.is_none())),
             n("input"),
             n("output"),
             n("reasoning"),

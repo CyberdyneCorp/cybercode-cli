@@ -92,6 +92,19 @@ impl ApiKind {
 pub trait Adapter: Send + Sync {
     fn stream(&self, request: LlmRequest) -> BoxFuture<'_, Result<EventStream, LlmError>>;
 
+    /// Prepare the exact reservation-mode request and a conservative, credential-free
+    /// envelope. Unsupported protocols refuse; ordinary soft dispatch is unchanged.
+    fn prepare_reserved(
+        &self,
+        _request: LlmRequest,
+        _context_limit: u64,
+    ) -> Result<crate::reservations::PreparedReservation, crate::reservations::BoundUnavailable>
+    {
+        Err(crate::reservations::unavailable(
+            "this adapter cannot establish a bounded normalized request",
+        ))
+    }
+
     /// Clone this protocol adapter onto a caller-owned HTTP transport.
     /// Returning None leaves transport termination unverified on interruption.
     fn with_http_client(

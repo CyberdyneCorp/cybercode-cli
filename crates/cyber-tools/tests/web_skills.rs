@@ -268,6 +268,15 @@ async fn skills_listing_excludes_denied_and_user_only_skills() {
 
 #[tokio::test]
 async fn webfetch_summary_is_billed_and_blocks_the_next_session_provider_turn() {
+    webfetch_summary_budget_case(false).await;
+}
+
+#[tokio::test]
+async fn webfetch_reserved_summary_cannot_dispatch_past_the_remaining_scope_budget() {
+    webfetch_summary_budget_case(true).await;
+}
+
+async fn webfetch_summary_budget_case(reserved: bool) {
     use cyber_llm::adapters::ScriptedAdapter;
     use cyber_llm::catalog::ModelRole;
     use cyber_server::runtime::*;
@@ -300,7 +309,7 @@ async fn webfetch_summary_is_billed_and_blocks_the_next_session_provider_turn() 
     let summary = Arc::new(ScriptedAdapter::new(vec![text("page summary")]));
     fixture.renew_host_with_models(None, Some(Arc::new(Models(summary.clone()))));
     fixture.set_config(
-        json!({"permissions":{"webfetch":"allow"},"budgets":{"session":{"max_tokens":205}}}),
+        json!({"permissions":{"webfetch":"allow"},"budgets":{"session":{"max_tokens":205,"enforcement":if reserved {"reserved"} else {"soft"}}}}),
     );
     let base = serve(|_, _| html("<p>Page evidence</p>")).await;
     let flow = Flow::with(
@@ -327,23 +336,34 @@ async fn webfetch_summary_is_billed_and_blocks_the_next_session_provider_turn() 
     )
     .await
     .unwrap();
-    assert_eq!(summary.requests().len(), 1);
+    assert_eq!(summary.requests().len(), usize::from(!reserved));
     assert_eq!(flow.main.requests().len(), 1);
     let state = flow.runtime.state(&id).await.unwrap();
-    assert_eq!(state.totals.usage.input, 200);
-    assert_eq!(state.totals.usage.output, 15);
-    assert!(
-        state.calls["call_webfetch"]
-            .output
-            .as_ref()
-            .unwrap()
-            .contains("page summary")
+    let expected_usage = if reserved { (100, 5) } else { (200, 15) };
+    assert_eq!(
+        (state.totals.usage.input, state.totals.usage.output),
+        expected_usage
     );
+    assert_summary_output(&state.calls["call_webfetch"].output, reserved);
     let events = flow.f.store.read_events(&id, -1, 100).unwrap().events;
-    assert!(
+    assert_eq!(
         events
             .iter()
-            .any(|e| e.kind == "usage.recorded.1" && e.data["purpose"] == "webfetch_summary")
+            .filter(|e| e.kind == "usage.recorded.1" && e.data["purpose"] == "webfetch_summary")
+            .count(),
+        usize::from(!reserved)
     );
-    assert!(events.iter().any(|e| e.kind == "budget.exceeded.1"));
+    if !reserved {
+        assert!(events.iter().any(|e| e.kind == "budget.exceeded.1"));
+    }
+}
+
+fn assert_summary_output(output: &Option<String>, reserved: bool) {
+    let output = output.as_ref().unwrap();
+    let expected = if reserved {
+        "max_tokens"
+    } else {
+        "page summary"
+    };
+    assert!(output.contains(expected), "{output}");
 }

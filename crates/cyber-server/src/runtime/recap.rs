@@ -3,7 +3,7 @@
 //! durable event, so every client can show it and re-opening never pays twice.
 
 use cyber_llm::catalog::{ModelRole, compute_cost};
-use cyber_llm::{Message, collect};
+use cyber_llm::{Adapter, Message, collect};
 use serde::{Deserialize, Serialize};
 
 use super::events::{AUXILIARY_USAGE, AuxiliaryUsage, RECAP_GENERATED, event};
@@ -147,16 +147,16 @@ impl Inner {
         request.initiator = Some(cyber_llm::Initiator::Agent);
         self.check_budget(&handle).await?;
         let started = std::time::Instant::now();
-        let stream = resolved
-            .adapter
+        let gated = super::reservations::GatedAdapter::new(self, &handle, &resolved, "recap");
+        let stream = gated
             .stream(request)
             .await
             .map_err(|e| RuntimeError::Model(e.to_string()))?;
-        let out = collect(stream, |_| {})
-            .await
-            .map_err(|e| RuntimeError::Model(e.to_string()))?;
+        let result = collect(stream, |_| {}).await;
+        gated.flush().await?;
+        let out = result.map_err(|e| RuntimeError::Model(e.to_string()))?;
         let text = clean(&out.text);
-        let usage = event(
+        let mut usage = event(
             AUXILIARY_USAGE,
             &AuxiliaryUsage {
                 provider: resolved.provider.clone(),
@@ -168,6 +168,7 @@ impl Inner {
                 cost: compute_cost(resolved.cost.as_ref(), &out.usage),
             },
         );
+        super::reservations::mark_accounted(&mut usage, &gated.request_ids());
         let mut events = vec![usage];
         if !text.is_empty() {
             events.push(event(

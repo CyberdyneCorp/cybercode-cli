@@ -16,12 +16,6 @@ pub(super) fn register(registry: &mut EventRegistry) {
 pub(super) fn validate(budget: Option<&Budget>) -> Result<(), RuntimeError> {
     if let Some(budget) = budget {
         budget.validate().map_err(RuntimeError::Invalid)?;
-        if budget.enforcement == Enforcement::Reserved {
-            return Err(RuntimeError::Invalid(
-                "Reserved Session budget enforcement is not available; no soft fallback is applied"
-                    .into(),
-            ));
-        }
     }
     Ok(())
 }
@@ -178,7 +172,7 @@ pub(super) fn check_scope(
         kind: "budget".into(),
         reason: e.to_string(),
     })?;
-    if !scope.complete || budget.enforcement != Enforcement::Soft {
+    if budget.enforcement == Enforcement::Soft && !scope.complete {
         return Ok(Some("unavailable or incomplete budget accounting".into()));
     }
     if scope.activated.is_none() {
@@ -186,6 +180,11 @@ pub(super) fn check_scope(
             ACTIVATED,
             json!({"scope_id":scope.id,"activated_ms":now}),
         ));
+    }
+    // Reserved scopes are admitted atomically by the request ledger. This gate
+    // only activates their durable clock; it must not apply soft history counters.
+    if budget.enforcement == Enforcement::Reserved {
+        return Ok(None);
     }
     let mut blocked = None;
     for limit in limits(&budget, &RunSpend::of(scope, now)) {
@@ -316,6 +315,44 @@ pub(super) fn check_run(
 }
 
 impl Inner {
+    /// Auxiliary calls start reserved Session clocks without changing the historical
+    /// soft-mode dispatch gates or accounting boundaries.
+    pub(crate) async fn activate_reserved_budget(
+        &self,
+        handle: &Handle,
+    ) -> Result<(), RuntimeError> {
+        let mut state = handle.state.lock().await;
+        let source = state.info.id.clone();
+        let id = source.clone();
+        let now = chrono::Utc::now().timestamp_millis();
+        let (stored, ()) =
+            self.store
+                .append_checked(&source, Expected::Seq(state.last_seq), move |tx| {
+                    let mut events = Vec::new();
+                    for scope in scopes(tx, &id)? {
+                        let budget: Budget = serde_json::from_str(&scope.spec).map_err(|e| {
+                            StoreError::Projector {
+                                kind: "budget".into(),
+                                reason: e.to_string(),
+                            }
+                        })?;
+                        if budget.enforcement == Enforcement::Reserved && scope.activated.is_none()
+                        {
+                            events.push(NewEvent::new(
+                                ACTIVATED,
+                                json!({"scope_id":scope.id,"activated_ms":now}),
+                            ));
+                        }
+                    }
+                    Ok((events, ()))
+                })?;
+        for event in &stored {
+            state.apply(event).map_err(RuntimeError::Corrupt)?;
+        }
+        drop(state);
+        self.publish(&stored);
+        Ok(())
+    }
     pub(crate) async fn check_budget(&self, handle: &Handle) -> Result<(), RuntimeError> {
         let mut state = handle.state.lock().await;
         if state.info.budget.is_none() && state.info.parent_id.is_none() {
@@ -350,49 +387,7 @@ impl Inner {
     }
 }
 
-pub(super) struct GatedAdapter<'a> {
-    inner: &'a Inner,
-    handle: &'a Handle,
-    adapter: &'a dyn cyber_llm::Adapter,
-    failure: std::sync::Mutex<Option<RuntimeError>>,
-}
-impl<'a> GatedAdapter<'a> {
-    pub fn new(inner: &'a Inner, handle: &'a Handle, adapter: &'a dyn cyber_llm::Adapter) -> Self {
-        Self {
-            inner,
-            handle,
-            adapter,
-            failure: std::sync::Mutex::new(None),
-        }
-    }
-    pub fn take_error(&self) -> Option<RuntimeError> {
-        self.failure
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take()
-    }
-}
-impl cyber_llm::Adapter for GatedAdapter<'_> {
-    fn stream(
-        &self,
-        request: cyber_llm::LlmRequest,
-    ) -> futures::future::BoxFuture<'_, Result<cyber_llm::EventStream, cyber_llm::LlmError>> {
-        Box::pin(async move {
-            if let Err(error) = self.inner.check_budget(self.handle).await {
-                let message = error.to_string();
-                *self
-                    .failure
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(error);
-                return Err(cyber_llm::LlmError::new(
-                    cyber_llm::ErrorKind::InvalidRequest,
-                    message,
-                ));
-            }
-            self.adapter.stream(request).await
-        })
-    }
-}
+pub(super) use super::reservations::GatedAdapter;
 
 impl super::Asker {
     /// Hidden model calls made by tools obey the same Session and ancestor scopes.

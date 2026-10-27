@@ -223,6 +223,32 @@ export type BudgetLimit = {
   used: number;
 };
 
+export type BudgetReservation = {
+  request_id: string;
+  session_id: string;
+  provider: string;
+  model: string;
+  purpose: string;
+  call_id?: string | null;
+  state: string;
+  revision: number;
+  bound_source?: string | null;
+  normalized_sha256?: string | null;
+  deadline_ms?: number | null;
+  estimated: ReservationEstimate;
+  actual?: ReservationActual | null;
+  scopes: ReservationScope[];
+  held_tokens: number;
+  held_cost_usd?: number | null;
+  overrun_tokens: number;
+  overrun_cost_usd?: number | null;
+  created_ms: number;
+  dispatched_ms?: number | null;
+  updated_ms: number;
+  settled_ms?: number | null;
+  released_ms?: number | null;
+};
+
 export type BudgetScope = "session" | "daily";
 
 /** A Budget that applies to the Session. */
@@ -821,6 +847,14 @@ export type Data_Recap = {
 
 export type Data_Receipt = {
   data: Receipt;
+};
+
+export type Data_ReservationDetail = {
+  data: ReservationDetail;
+};
+
+export type Data_ReservationPage = {
+  data: ReservationPage;
 };
 
 export type Data_RevertState = {
@@ -3434,6 +3468,61 @@ export type RequestOrigin = {
 export type RequestRoute = {
   session_id: string;
   directory: string;
+};
+
+export type ReservationAction = {
+  kind: "release";
+} | {
+  actual: ReservationActual;
+  kind: "settle";
+};
+
+export type ReservationActual = {
+  tokens?: Usage | null;
+  turns?: number;
+  cost_usd?: number | null;
+  complete: boolean;
+};
+
+export type ReservationAudit = {
+  operation_id: string;
+  expected_revision: number;
+  owner: string;
+  reason: string;
+  action: unknown;
+  reconciled_ms: number;
+};
+
+export type ReservationDetail = {
+  reservation: BudgetReservation;
+  audit: ReservationAudit[];
+};
+
+export type ReservationEstimate = {
+  class_upper: Usage;
+  total_tokens_upper: number;
+  turns_upper: number;
+  cost_usd_upper?: number | null;
+};
+
+export type ReservationPage = {
+  reservations: BudgetReservation[];
+  next_cursor?: string | null;
+};
+
+export type ReservationReconcile = {
+  operation_id: string;
+  expected_revision: number;
+  reason: string;
+  action: ReservationAction;
+};
+
+export type ReservationScope = {
+  id: string;
+  captured_budget: Budget;
+  recorded_tokens_at_admission: number;
+  recorded_turns_at_admission: number;
+  recorded_cost_usd_at_admission: number;
 };
 
 export type ResumeBody = {
