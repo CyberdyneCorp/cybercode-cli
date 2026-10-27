@@ -32,3 +32,60 @@ Measures coding quality and recovery behavior with reproducible fixtures, determ
 #### Scenario: Model changed between releases
 - **WHEN** the provider retires the model used by the previous baseline
 - **THEN** the report marks the comparison non-equivalent and requires a new reviewed baseline
+
+### Requirement: Pinned real-repository pilot
+(P0) The system SHALL support real-repository evaluation tasks with upstream repository identity, immutable base revision, verified source tree, license notices, locked setup, task prompt and independent grading provenance. The initial pilot SHALL include four tasks across two repositories, including at least two Rust tasks, with three trials per task and strategy. Reference fixes and later Git objects SHALL remain outside candidate-visible roots. Live execution SHALL require explicit invocation after setup and disk/toolchain checks; it SHALL NOT run in ordinary PR CI.
+
+#### Scenario: Invalid source setup
+- **WHEN** the materialized source or required locked environment does not match its recorded identity
+- **THEN** the task SHALL fail setup before model dispatch
+- **AND** the report SHALL distinguish that infrastructure failure from a graded candidate failure
+
+#### Scenario: Independent grader controls
+- **WHEN** a task enters the frozen pilot
+- **THEN** its untouched base SHALL fail the regression and its reference fix SHALL pass independent and relevant upstream checks
+- **AND** deleting candidate-visible tests SHALL NOT manufacture an independent pass
+
+### Requirement: Separate verified solve evaluation
+(P2) The evaluation runner SHALL retain single-agent execution as its default strategy and offer explicitly selected bundled solve execution. The initial solve pilot SHALL use two independent candidates and an independent read-only judge, three runs per task. The independent grader SHALL inspect the exact selected source after host verification and judge selection, without giving hidden grader feedback to solvers or judge. Missing recommendations SHALL NOT count as task success. Lifecycle completion, candidate success and selected-patch success SHALL be separately reported.
+
+#### Scenario: Workflow completes without a recommendation
+- **WHEN** a solve workflow completes but recommends no candidate
+- **THEN** its task outcome SHALL NOT be a pass
+- **AND** candidate and verification outcomes SHALL remain visible without replacing the selected-patch outcome
+
+#### Scenario: Repeated live pilot reports
+- **WHEN** single-agent and solve trials run against a frozen task set
+- **THEN** reports SHALL retain every attempt, infrastructure failure, strategy, source identity, requested/resolved model metadata, declared budgets, token/pricing uncertainty and timing
+- **AND** reports SHALL keep previous published benchmark results unchanged
+- **AND** the four-task pilot SHALL NOT claim completion of the twenty-task-per-adapter stable-release gate or elimination of intermittent failures
+
+### Requirement: Local core exit evidence
+(P0) The repository SHALL provide checked-in tool golden outputs, repeatable durable admission and writer workload measurements, real-terminal first-frame measurements on named hardware, and build jobs for each supported P0 target.
+
+#### Scenario: Tool catalog grows
+- WHEN a built-in tool is added to the host registry
+- THEN the golden coverage guard SHALL fail until its output fixture is added
+
+#### Scenario: Performance evidence
+- WHEN the opt-in release probes run
+- THEN they SHALL report workload, hardware, latency percentiles and storage measurements without requiring a live provider
+
+#### Scenario: Platform builds
+- WHEN CI runs
+- THEN it SHALL build macOS arm64/x64 and Linux arm64/x64 with both gnu and musl
+
+### Requirement: Complete evaluation token accounting
+(P0) Evaluation trial reports and token budgets SHALL include input, output, reasoning, cache-read and cache-write tokens from completed main steps and successful compactions. Successful compaction cost SHALL contribute to trial cost without incrementing the Turn count. Any unpriced included work SHALL keep the trial marked unpriced. Legacy reports without a reasoning field SHALL remain identifiable by their harness revision and SHALL NOT have missing usage fabricated.
+
+#### Scenario: Compaction exhausts a budget
+- WHEN a successful compaction takes a trial above its declared token or cost budget
+- THEN the evaluation harness SHALL request interruption at that accounting checkpoint without counting compaction as a main Turn
+
+#### Scenario: Reasoning consumes the token allowance
+- WHEN input and output fit the budget but reasoning takes the total above it
+- THEN the trial SHALL report reasoning separately and SHALL request interruption
+
+#### Scenario: Unpriced hidden work
+- WHEN compaction cost is unavailable and a subsequent main step has a known price
+- THEN the trial SHALL remain unpriced and its reported dollar total SHALL be a lower bound

@@ -88,7 +88,7 @@ Agent teams coordinate several full Sessions: a lead plans and assigns work, nam
 - **THEN** the merge stops, the conflicting files are listed, and the lead's worktree stays unchanged
 
 ### Requirement: Team budgets
-(P2) A Team SHALL enforce a Budget (`observability-costs`: `max_turns`, `max_tokens`, `max_cost_usd`, `max_wall_seconds`) across all members, defaulted by `budgets.team`; on exceed, teammates SHALL stop after their current Turn and the lead SHALL be notified with spend per member.
+(P2) A Team SHALL enforce a Budget (`observability-costs`: `max_turns`, `max_tokens`, `max_cost_usd`, `max_wall_seconds`, `enforcement`) across all members, defaulted by `budgets.team`. Soft Team limits SHALL retain the lead admission exemption; reserved Team limits SHALL include the lead and require a supported bounded adapter, as defined by `observability-costs`. On exceed, teammates SHALL stop after their current Turn and the lead SHALL be notified with spend per member.
 
 #### Scenario: Budget exceeded
 - **WHEN** a team with `max_cost_usd: 20` spends $20.10
@@ -139,3 +139,10 @@ Agent teams coordinate several full Sessions: a lead plans and assigns work, nam
 #### Scenario: tmux panes
 - **WHEN** `teams.display` is `tmux` and a team with three teammates starts inside tmux
 - **THEN** three panes open, each attached to one teammate, and they close on `/team stop`
+
+### Requirement: Human-owned project participants
+(P3) A `project-collaboration` project SHALL coordinate independently owned human/agent participants without turning them into P2 teammates under one lead's permissions or budget. An owner MAY explicitly publish its local lead or teammate Session as a project agent; doing so SHALL NOT publish siblings, expose private team state or grant remote team spawning/merging. The project task board SHALL remain distinct from a local Team board unless a user explicitly links a task reference. Organization/friend membership SHALL NOT inherit the local Team's six-teammate limit or grant execution on another member's machine. Remote Runner scheduling and Git-bundle `team_merge` SHALL retain the separate Distributed teammates contract.
+
+#### Scenario: Publish one teammate
+- **WHEN** a member publishes its local `frontend` teammate to a collaboration project
+- **THEN** that Session can use scoped collaboration messages/tasks, while its sibling Sessions, local board, Mode ceiling and budget remain under their current owner

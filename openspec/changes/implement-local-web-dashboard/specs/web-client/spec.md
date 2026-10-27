@@ -9,7 +9,7 @@
 
 #### Scenario: LAN access requires TLS
 - **WHEN** the user runs `cyber web --hostname 0.0.0.0` without TLS configured
-- **THEN** the command fails with `binding a non-loopback address requires server.tls` and exit code 2
+- **THEN** the command fails with `off-loopback web access requires global server.tls.cert and server.tls.key; use HTTPS or an SSH forward to loopback` and exit code 2
 
 #### Scenario: Approve through a private forward
 - **WHEN** the user opens a manually configured SSH-forwarded loopback URL and authenticates with the local password

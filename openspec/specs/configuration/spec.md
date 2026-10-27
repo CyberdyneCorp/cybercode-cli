@@ -17,11 +17,15 @@ Configuration is the set of authored `cyber.json`/`cyber.jsonc` documents and `.
 - **THEN** a warning `unknown config key "colour"` is logged and shown by `cyber doctor`, and loading continues
 
 ### Requirement: Top-level keys
-(P0) The schema SHALL accept the top-level keys `$schema`, `model`, `small_model`, `model_roles`, `fallback_models`, `providers`, `agents`, `default_agent`, `mode`, `permissions`, `sandbox`, `hooks`, `plugins`, `mcp`, `mcp_serve` (MCP serve; global configuration only), `skills`, `commands`, `instructions`, `references`, `memory`, `browser`, `compaction`, `snapshots`, `worktrees`, `lsp`, `formatters`, `tool_output`, `workflows`, `goals`, `teams`, `loops`, `messaging`, `peers`, `remote`, `runners`, `channels`, `account`, `share`, `telemetry`, `budgets`, `policy`, `profiles`, `default_profile`, `shell`, `attachments`, `background`, `tools`, `git`, `ide`, `autofix`, `network`, `storage`, `compat`, `services`, `features`, `experimental` (deprecated alias of `features`) and `autoupdate` (`installation-upgrade`). Collection keys SHALL use plural names, and entries SHALL use `disabled: true` to turn off an inherited entry.
+(P0) The schema SHALL accept the top-level keys `$schema`, `model`, `small_model`, `model_roles`, `fallback_models`, `providers`, `agents`, `default_agent`, `mode`, `output_style` (`system-context` → Output style selection), `permissions`, `sandbox`, `hooks`, `plugins`, `mcp`, `mcp_serve` (MCP serve; global configuration only), `skills`, `commands`, `instructions`, `references`, `memory`, `browser`, `computer`, `compaction`, `snapshots`, `worktrees`, `lsp`, `formatters`, `tool_output`, `workflows`, `goals`, `teams`, `loops`, `messaging`, `peers`, `remote`, `runners`, `channels`, `account`, `share`, `telemetry`, `budgets`, `policy`, `profiles`, `default_profile`, `shell`, `attachments`, `background`, `tools`, `git`, `ide`, `autofix`, `network`, `storage`, `compat`, `services`, `features`, `experimental` (deprecated alias of `features`) and `autoupdate` (`installation-upgrade`). Collection keys SHALL use plural names, and entries SHALL use `disabled: true` to turn off an inherited entry.
 
 #### Scenario: Disabling an inherited MCP server
 - **WHEN** the global config defines `mcp.github` and the project config sets `mcp.github.disabled = true`
 - **THEN** the `github` MCP server is not started for that project
+
+#### Scenario: Invalid output style name
+- **WHEN** `cyber.jsonc` sets `output_style = "Bad Style"`
+- **THEN** validation fails with `ConfigInvalidError` naming `output_style`
 
 ### Requirement: Model roles
 (P0) `model_roles` SHALL map the roles `default`, `small`, `advisor`, `evaluator`, `compaction` and `title` to model refs `provider/model[#variant]`. `model` SHALL be shorthand for `model_roles.default`, and `small_model` for `model_roles.small`. When a role is unset, `title` and `compaction` SHALL fall back to `small`, then `default`; `small` SHALL fall back to `default`; `evaluator` SHALL fall back to `small`, then `default`; `advisor` SHALL be disabled.
@@ -81,13 +85,17 @@ Project layers SHALL pass workspace-trust before activating security-sensitive v
 - workflows from `workflows/*.{js,ts}`
 - hooks from `hooks.jsonc`
 - local plugins from `plugins/*/` (each with a `cyber-plugin.json` manifest)
-- output styles from `styles/*.md`
+- output styles from `output-styles/*.md` (`system-context` → Output style definitions)
 
 Files SHALL be processed in sorted path order. An invalid file SHALL be skipped with a diagnostic and SHALL NOT abort loading.
 
 #### Scenario: Invalid agent file skipped
 - **WHEN** `.cyber/agents/reviewer.md` has malformed YAML frontmatter
 - **THEN** the agent is skipped, a diagnostic names the file, and other agents load
+
+#### Scenario: Output style directory
+- **WHEN** `~/.config/cyber/output-styles/terse.md` and `~/.config/cyber/styles/old.md` exist
+- **THEN** `terse` is an available output style and `old` is not
 
 ### Requirement: Variable substitution
 (P0) String values SHALL support `{env:NAME}` (empty string when unset, or the `{env:NAME:-default}` fallback form) and `{file:path}` (trimmed file contents, path relative to the declaring document; `~/` and absolute paths allowed). A missing `{file:...}` target SHALL produce `ConfigInvalidError`. Substitution SHALL NOT be applied to keys.
@@ -189,3 +197,14 @@ A PATCH that would change a key locked by managed policy SHALL fail with 403 `Po
 #### Scenario: Reference a sibling repository
 - **WHEN** config defines `references: [{ alias: "api-spec", git: { url: "git@github.com:acme/api-spec.git" }, description: "OpenAPI documents" }]`
 - **THEN** the model sees `api-spec` in `<available_references>` and `read` on `@api-spec/openapi.yaml` succeeds without an external-directory prompt
+
+### Requirement: Owner listener TLS settings
+(P1) The configuration SHALL accept `server.tls.cert` and `server.tls.key` as a pair of nonempty absolute PEM file paths, read only from defaults/global user configuration. Project, profile and request overrides SHALL NOT select owner listener certificates or keys. The owner listener SHALL fail to start when its configured certificate/key cannot be loaded or do not match. Off-loopback owner listeners SHALL require TLS; loopback HTTP MAY be used directly or through an operator-managed SSH forward. Client certificate and hostname verification SHALL NOT be disabled. Certificate/private-key provisioning, trust installation, tunnel creation and public exposure remain operator responsibilities.
+
+#### Scenario: Project cannot select owner TLS identity
+- **WHEN** a project defines `server.tls` while the owner starts a listener
+- **THEN** that project's values do not select the owner certificate/key
+
+#### Scenario: Invalid configured identity
+- **WHEN** a global TLS pair is incomplete, relative, unreadable or mismatched
+- **THEN** the owner listener does not start and reports an actionable configuration error

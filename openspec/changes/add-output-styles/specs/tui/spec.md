@@ -16,6 +16,8 @@
 ### Requirement: Settings Config tab
 (P1) The Config tab SHALL list TUI preferences that can be edited in place: `theme`, `theme_mode`, `sidebar`, `recap`, `spinner`, `reasoning`, `diff_style`, `timestamps`, `color` and `accessibility.reduced_motion`. Each row SHALL show the current value and its source (`default`, `global`, `project`, `saved` for `kv.json`, or `session` for a toggle made in this run only, such as Ctrl+T or `/timestamps`). Enter or Space SHALL cycle a value or open its picker. A change SHALL apply immediately and be saved to `~/.local/state/cyber/kv.json` with the time it was saved, and a `tui.jsonc` written after that time SHALL win over it. The tab SHALL also list an `output style` row. It SHALL show the current Session's effective output style and its source (`session`, `config` or `default`), and Enter SHALL open the output style picker. Below the preferences, the tab SHALL show effective core settings (`model`, `small_model`, `mode`, `default_agent`, `output_style`, `budgets`) read-only with their source file, when the server's `config` route is available. Otherwise it SHALL show `Core settings: use cyber config or edit cyber.jsonc`.
 
+With the mouse captured, a click on a preference row SHALL select it, and a second click on it SHALL act as Enter (cycle the value or open its picker).
+
 #### Scenario: Toggle the sidebar from Config
 - **WHEN** the user selects `sidebar` and presses Enter until it reads `hide`
 - **THEN** the sidebar disappears, and the value persists after a restart
@@ -23,3 +25,7 @@
 #### Scenario: Output style from Config
 - **WHEN** the user selects the `output style` row and presses Enter
 - **THEN** the output style picker opens, and choosing `concise` updates the row to `concise (session)`
+
+#### Scenario: Cycle a value by clicking
+- **WHEN** the user clicks the `timestamps` row once and then again
+- **THEN** the first click selects it and the second cycles it to its next value, which is saved

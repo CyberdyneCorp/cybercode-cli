@@ -16,6 +16,8 @@ just sandboxed exec --ephemeral "hello"   # run with a throwaway CYBER_HOME
 just sdk-generate   # regenerate sdk/openapi.json and the TypeScript SDK
 ```
 
+`just ci` covers the recipes listed above; dashboard checks and native platform builds/tests run separately in CI. For documentation validation, use the same OpenSpec version as CI (`npm install -g @fission-ai/openspec@1.13.2`) and run `just specs`. After changing the inventory, inspect the generated ROADMAP diff before committing it.
+
 The raw commands:
 
 Requires Rust 1.89 or newer (edition 2024). SQLite is bundled.

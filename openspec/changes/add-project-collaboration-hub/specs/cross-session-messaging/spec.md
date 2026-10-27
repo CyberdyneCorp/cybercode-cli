@@ -11,6 +11,17 @@
 - **WHEN** a Relay message targets a Session owned by a different `sub` in an org without the policy
 - **THEN** it is refused with reason `cross_account_disabled`
 
+#### Scenario: Teammate address
+- **WHEN** the org policy allows member messaging, `alex` shares their machine `desk` with the org, both machines are approved, and a Session sends to `review@alex/desk`
+- **THEN** the message reaches `alex`'s Session `review` and is held there
+
+#### Scenario: Offline machine
+- **WHEN** a Session sends to `build@workstation` while `workstation` is offline
+- **THEN** the send fails with `MachineUnreachableError { machine: "workstation" }`, nothing is queued, and the sender records `failed / unreachable`
+
+#### Scenario: Peer and machine share a name
+- **WHEN** a configured peer and an approved own machine are both named `desk` and a Session sends to `review@desk`
+- **THEN** the send fails with `AmbiguousAddressError` listing `peer:desk` and `machine:desk`
 
 ## ADDED Requirements
 

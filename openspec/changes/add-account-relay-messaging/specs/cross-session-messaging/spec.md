@@ -1,11 +1,11 @@
 ## MODIFIED Requirements
 
 ### Requirement: Cross-machine transport
-(P3) Account-routed messages to remote Sessions SHALL travel through the Relay over an end-to-end encrypted channel between two machines, authenticated with Cyber Account tokens carrying scopes `cyber:relay` and `cyber:messaging`. Each server SHALL have a long-term X25519 machine key and an ID with prefix `mch_`, and SHALL announce only its ID, public key and protocol version to the Relay. Machine names, Session titles, listings and message text SHALL travel only inside the encrypted channel. These Relay rules SHALL NOT widen own-machine direct-peer grants. Explicit project-hub conversations SHALL use `project-collaboration` membership, scoped identities and local consent instead; a project binding SHALL NOT grant generic remote Session access. By default only machines of the same account (`sub`) SHALL be reachable, addressed as `<session>@<machine>`. Machines of other members of a shared org SHALL be reachable, as `<session>@<member>/<machine>`, only when an org admin sets `policy.messaging.org_members: true`, the member sets `messaging.relay.share_with_org: true`, and both machines approve each other ("Machine trust approval"). A configured peer and an approved machine with the same name SHALL make the bare address fail with `AmbiguousAddressError`. Messages SHALL NOT be stored and forwarded: a target machine that is offline or does not answer within 5 seconds SHALL fail the send with `MachineUnreachableError`.
+(P3) Account-routed messages to remote Sessions through the Relay SHALL travel over that Relay over the end-to-end encrypted machine channel, authenticated with Cyber Account tokens carrying scope `cyber:messaging`. These Relay rules SHALL NOT widen own-machine direct-peer grants. Explicit project-hub conversations SHALL use `project-collaboration` membership, scoped identities and local consent instead; a project binding SHALL NOT grant generic remote Session access. By default only Sessions of the same account (`sub`) SHALL be reachable. Messaging Sessions of other members of a shared org SHALL require `policy.messaging.org_members: true` set by an org admin, plus `allow` rules on both sides.
 
 #### Scenario: Not logged in
 - **WHEN** a Session selects account Relay delivery to `build@workstation` and the server has no Cyber Account
-- **THEN** the send fails with `AccountRequiredError` and `list_sessions` shows no Relay entries
+- **THEN** the send fails with `AccountRequiredError` and `list_sessions` shows no remote entries
 
 #### Scenario: Cross-account blocked
 - **WHEN** a Relay message targets a Session owned by a different `sub` in an org without the policy

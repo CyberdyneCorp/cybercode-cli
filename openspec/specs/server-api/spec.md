@@ -51,7 +51,7 @@ The server API is the single public contract every Cyber Code client uses: the T
 - **THEN** it accepts requests only on the Unix socket and `server.json` has no `url`
 
 ### Requirement: Local password authentication
-(P0) The server SHALL keep a password in `~/.local/state/cyber/password` (mode 0600), generated on first use as 32 random bytes encoded base64url. It SHALL require HTTP Basic credentials (username `cyber`) on TCP and Unix owner API routes, except existing public health/static resources and separately authenticated PTY ticket routes. An `auth_token` query parameter carrying base64 `cyber:<password>` SHALL be accepted only on `GET /api/v1/event`, `GET /api/v1/sessions/:sessionID/events` and PTY connect upgrades, where browsers cannot set headers; on any other route it SHALL be ignored, because query strings reach logs and histories. Unix-socket requests SHALL additionally require peer credentials of the server OS user; same-UID credentials alone SHALL NOT grant owner API access. A Unix listener without a configured owner password SHALL fail closed; trusted in-process Embedded calls MAY bypass local password authentication. `cyber service password [value]` SHALL print or replace the password, restarting the server on replacement.
+(P0) The server SHALL keep a password in `~/.local/state/cyber/password` (mode 0600), generated on first use as 32 random bytes encoded base64url. It SHALL require HTTP Basic credentials (username `cyber`) on TCP and Unix-socket owner API routes except the unauthenticated health route defined by "Health and version". (P1) The embedded dashboard shell/assets at `/` and `/app/*` MAY be public, but SHALL contain no server/Session data or credentials; static fallback SHALL NOT intercept API routes or read arbitrary filesystem paths. No other authentication exemption is introduced by the web client. An `auth_token` query parameter carrying base64 `cyber:<password>` SHALL be accepted only on `GET /api/v1/event`, `GET /api/v1/sessions/:sessionID/events` and PTY connect upgrades, where browsers cannot set headers; on any other route it SHALL be ignored, because query strings reach logs and histories. Unix-socket requests SHALL additionally require peer credentials identifying the server OS user; peer credentials alone SHALL NOT authorize owner API access. A Unix listener without a configured owner password SHALL fail closed. Explicitly trusted in-process Embedded calls MAY bypass local password authentication. `cyber service password [value]` SHALL print or replace the password, restarting the server on replacement.
 
 #### Scenario: Missing credentials
 - **WHEN** a TCP or same-user Unix request arrives without valid Basic credentials or an allowed stream-route `auth_token`
@@ -59,11 +59,19 @@ The server API is the single public contract every Cyber Code client uses: the T
 
 #### Scenario: Same-user socket
 - **WHEN** a process owned by the server's OS user connects over the Unix socket
-- **THEN** the request is rejected without the owner credential and authorized with valid owner Basic credentials
+- **THEN** the request without the owner credential is rejected with `401`; the same request with valid owner Basic credentials is authorized
 
 #### Scenario: Query token rejected on a mutating route
 - **WHEN** `POST /api/v1/sessions?auth_token=...` arrives with no Basic header
 - **THEN** the server responds `401`
+
+#### Scenario: Owner consent cannot be forged by model processes
+- **WHEN** a same-user process connects through the default or an overridden Unix socket without the owner credential and attempts to create interactive presence, review or allow native control
+- **THEN** each request is rejected before any presence or control authority changes
+
+#### Scenario: Private owner authentication storage
+- **WHEN** a model tool or sandboxed child attempts to read the owner's state directory, including a password replaced after bootstrap
+- **THEN** the read is denied even with ordinary read permission or an explicit readable-path grant; owner credentials and their exact environment-value aliases are not inherited through environment allow/set overrides
 
 ### Requirement: Cyber Account bearer authentication
 (P3) The server SHALL accept `Authorization: Bearer <access token>` issued by CyberdyneAuth. It SHALL validate the signature against the JWKS published at the issuer's discovery document (never a hard-coded key or issuer), and SHALL check `exp`, `iss` (equal to the discovery issuer), `aud` (when the `cyber-cli` client opted into audiences), and that `sub` equals the account the server is logged into, or is an org member allowed by `policy`. Discovery and JWKS SHALL be cached for 10 minutes and refetched on an unknown `kid`.
@@ -95,11 +103,15 @@ The server API is the single public contract every Cyber Code client uses: the T
 - **THEN** the request runs against the Location recorded on `ses_1`
 
 ### Requirement: Route groups
-(P0) The server SHALL expose exactly these route groups under `/api/v1`: `health`, `location`, `session`, `message`, `permission`, `question`, `agent`, `model`, `provider`, `credential`, `tool`, `fs`, `pty`, `workflow`, `goal`, `loop`, `job`, `messaging` (cross-session messages), `remote`, `runner`, `routine`, `channel`, `worktree`, `memory`, `lsp`, `formatter`, `usage`, `vcs`, `service` (local service lifecycle), `system` (machine stats), `peer` (peer listener), `peers` (local peer management), `teams` (teams and definitions), `ide`, `policy`, `mcp`, `skill`, `command`, `hook`, `plugin`, `config`, `account`, `oauth` and `event`. Group names are OpenAPI tags and operation-ID prefixes (e.g. `v1.session.prompt`). `/api/v1/files` belongs to `fs`; `/api/v1/team-definitions` belongs to `teams`; `/api/v1/peer/*` is served only on the peer listener. This list is the single registry of route groups; a capability SHALL NOT introduce a route outside these groups without adding the group here. URL paths SHALL use the plural collection form (`/api/v1/sessions/{id}`, `/api/v1/sessions/{id}/messages`, `/api/v1/permissions/requests`, `/api/v1/workflows/runs`, `/api/v1/channels`, `/api/v1/routines`, `/api/v1/runners`, `/api/v1/agents`, `/api/v1/worktrees`, `/api/v1/credentials`, `/api/v1/oauth-attempts`), except singletons and streams (`/api/v1/health`, `/api/v1/config`, `/api/v1/account`, `/api/v1/policy`, `/api/v1/vcs`, `/api/v1/system`, `/api/v1/usage`, `/api/v1/memory`, `/api/v1/lsp`, `/api/v1/formatters`, `/api/v1/ide`, `/api/v1/event`, `/api/v1/fs`, `/api/v1/messaging`, `/api/v1/ws`). A group whose capability belongs to a later phase SHALL respond `503` `ServiceUnavailableError` with `service` naming the group until it is implemented.
+(P0) The server SHALL expose exactly these route groups under `/api/v1`: `health`, `location`, `session`, `message`, `permission`, `question`, `agent`, `model`, `provider`, `credential`, `tool`, `fs`, `pty`, `workflow`, `goal`, `loop`, `job`, `messaging` (cross-session messages), `remote`, `runner`, `routine`, `channel`, `worktree`, `memory`, `lsp`, `formatter`, `usage`, `vcs`, `service` (local service lifecycle), `system` (machine stats), `peer` (peer listener), `peers` (local peer management), `teams` (teams and definitions), `ide`, `policy`, `mcp`, `skill`, `command`, `hook`, `plugin`, `config`, `account`, `oauth`, `telemetry` (OpenTelemetry export status) and `event`. Group names are OpenAPI tags and operation-ID prefixes (e.g. `v1.session.prompt`). `/api/v1/files` belongs to `fs`; `/api/v1/team-definitions` belongs to `teams`; `/api/v1/peer/*` is served only on the peer listener. This list is the single registry of route groups; a capability SHALL NOT introduce a route outside these groups without adding the group here. URL paths SHALL use the plural collection form (`/api/v1/sessions/{id}`, `/api/v1/sessions/{id}/messages`, `/api/v1/permissions/requests`, `/api/v1/workflows/runs`, `/api/v1/channels`, `/api/v1/routines`, `/api/v1/runners`, `/api/v1/agents`, `/api/v1/worktrees`, `/api/v1/credentials`, `/api/v1/oauth-attempts`), except singletons and streams (`/api/v1/health`, `/api/v1/config`, `/api/v1/account`, `/api/v1/policy`, `/api/v1/vcs`, `/api/v1/system`, `/api/v1/usage`, `/api/v1/memory`, `/api/v1/lsp`, `/api/v1/formatters`, `/api/v1/ide`, `/api/v1/event`, `/api/v1/fs`, `/api/v1/messaging`, `/api/v1/telemetry`, `/api/v1/ws`). A group whose capability belongs to a later phase SHALL respond `503` `ServiceUnavailableError` with `service` naming the group until it is implemented.
 
 #### Scenario: Unimplemented group
 - **WHEN** a client calls `GET /api/v1/runners` on a build without runner support
 - **THEN** the server responds `503` with `{ "_tag": "ServiceUnavailableError", "service": "runner" }`
+
+#### Scenario: Telemetry status
+- **WHEN** an owner client calls `GET /api/v1/telemetry` (`v1.telemetry.get`)
+- **THEN** the server returns its OpenTelemetry export status (`observability-costs` → OpenTelemetry configuration), with every header value as `***`
 
 ### Requirement: Session and prompt routes
 (P0) The server SHALL provide `GET|POST /api/v1/sessions`, `GET|PATCH|DELETE /api/v1/sessions/:sessionID`, `POST .../fork`, `POST .../prompt`, `POST .../interrupt`, `POST .../agent`, `POST .../model`, `POST .../mode`, `POST .../compact`, `POST .../rewind`, `POST .../revert/stage|clear|commit`, `GET .../messages`, `GET .../messages/:messageID`, `GET .../inbox`, `PATCH|DELETE .../inbox/:messageID`, `POST .../inbox/:messageID/release`, `POST .../inbox/:messageID/drop`, `GET .../context`, `GET .../diff`, `GET .../history` and `GET .../events`, and (P1) `GET|POST .../recap`. `POST .../prompt` SHALL accept `{ id?, parts, delivery?: "steer"|"queue"|"hold", resume?: boolean }`, durably admit the prompt, and respond `202` with `{ data: Admitted }`. It SHALL wake the Session's Drain unless `resume` is `false` or `delivery` is `hold`. The inbox release and drop routes SHALL be the only way to release or drop any held item, whatever its origin (user, cross-session message, channel event).
@@ -152,7 +164,7 @@ The server API is the single public contract every Cyber Code client uses: the T
 - **THEN** the upgrade is refused with `401`
 
 ### Requirement: Tagged error model
-(P0) Declared failures SHALL be JSON objects tagged by `_tag`, with these statuses: `InvalidRequestError` 400, `InvalidCursorError` 400, `UnauthorizedError` 401, `ForbiddenError` 403, `AccountRequiredError` 403, `EntitlementRequiredError` 402, `NotFoundError` variants 404 (`SessionNotFoundError`, `MessageNotFoundError`, `RunNotFoundError`, `AddressNotFoundError`, …), `ConflictError` 409, `SessionBusyError` 409, `AmbiguousAddressError` 409 with `candidates`, `MessageTooLargeError` 413 with `size` and `limit`, `ReviewTargetError` 422 with `code` (from `v1.command.run`, `vcs-integration` → Local review command), `RateLimitedError` 429 with `retryAfterMs`, `UnknownError` 500 with a `ref` of the form `err_<id>` logged server-side, and `ServiceUnavailableError` 503.
+(P0) Declared failures SHALL be JSON objects tagged by `_tag`, with these statuses: `InvalidRequestError` 400, `InvalidCursorError` 400, `UnauthorizedError` 401, `ForbiddenError` 403, `AccountRequiredError` 403, `EntitlementRequiredError` 402, `NotFoundError` variants 404 (`SessionNotFoundError`, `MessageNotFoundError`, `RunNotFoundError`, `AddressNotFoundError`, …), `ConflictError` 409, `SessionBusyError` 409, `AmbiguousAddressError` 409 with `candidates`, `MessageTooLargeError` 413 with `size` and `limit`, `AttachmentTooLargeError` 413 with `size` and `limit`, `UnsupportedAttachmentError` 415 with `media_type`, `ReviewTargetError` 422 with `code` (from `v1.command.run`, `vcs-integration` → Local review command), `UnsupportedModalityError` 422 with `model` and `modality` (`image` or `pdf`), `RateLimitedError` 429 with `retryAfterMs`, `UnknownError` 500 with a `ref` of the form `err_<id>` logged server-side, and `ServiceUnavailableError` 503.
 
 #### Scenario: Unexpected failure
 - **WHEN** a handler fails with an undeclared error
@@ -161,6 +173,10 @@ The server API is the single public contract every Cyber Code client uses: the T
 #### Scenario: Ambiguous message address
 - **WHEN** a client posts to `/api/v1/messaging/send` with `to: "migration"` and two Sessions have that name
 - **THEN** the response is `409` with `_tag: "AmbiguousAddressError"` and `candidates` listing both Session IDs
+
+#### Scenario: Oversized attachment
+- **WHEN** a client posts a prompt with a 25 MiB PNG
+- **THEN** the response is `413` with `_tag: "AttachmentTooLargeError"`, `limit` 20971520 and the message `Attachment exceeds 20 MiB`
 
 ### Requirement: Pagination
 (P0) List routes SHALL return `{ data, cursor: { previous?, next? } }` with opaque cursors, `limit` 1–200 (default 50) and `order` `asc` or `desc` (default `desc`). A malformed or expired cursor SHALL fail with `InvalidCursorError`.
@@ -282,3 +298,157 @@ The server API is the single public contract every Cyber Code client uses: the T
 #### Scenario: Checkout by label
 - **WHEN** a client posts `{ "label": "fix-a" }` to `.../checkout` on an idle Session
 - **THEN** the path ending at the labeled message's newest tip becomes active and the response names that tip
+
+### Requirement: Interactive browser attachment leases
+(P1) Owner-authenticated `POST /api/v1/sessions/:sessionID/interactive-clients` SHALL create an interactive attachment and return `{ client_id, session_id, expires_at }`. `PUT /api/v1/sessions/:sessionID/interactive-clients/:clientID` SHALL renew only that live attachment and `DELETE` SHALL idempotently release it. Ordinary authentication, Location/Session routing and idempotency SHALL apply. A lease SHALL expire 45 seconds after its last renewal, be renewed by clients every 15 seconds and be invalid after server restart. An expired create receipt SHALL NOT recreate presence on replay; renewing an unknown/expired lease SHALL return 404. A lease SHALL record authority/expiry without credentials, never grant tool permissions, and never clear another client's attachment. When the last interactive attachment disappears, the server SHALL settle pending/future asks under the existing Non-interactive behavior of `permissions-modes`, never approve automatically or cancel unrelated executing tools. Existing descendant-request routing SHALL preserve the child owner when a parent dashboard answers.
+
+#### Scenario: Wrong Session renewal
+- **WHEN** a browser tries to renew its lease through another Session or Location
+- **THEN** the renewal is refused and neither Session's interactive authority changes
+
+#### Scenario: Idempotent create after expiry
+- **WHEN** a POST receipt is retried with its original key after the lease expired
+- **THEN** the original expired receipt is returned without registering a new interactive client
+
+#### Scenario: Restart invalidates presence
+- **WHEN** the server restarts while a browser had a live lease
+- **THEN** the old lease cannot authorize interactive presence and the browser must authenticate and attach again
+
+#### Scenario: Child approval routing
+- **WHEN** a child worktree Session routes a pending permission to a parent with a live browser lease
+- **THEN** the card identifies the child and its reply targets that child's exact request under the existing parent-routing rules
+
+### Requirement: Prompt attachment parts
+(P0) `POST /api/v1/sessions/:sessionID/prompt` SHALL accept `parts` of these types:
+
+- `text { text }`
+- `image { media_type, data, name? }` and `document { media_type, data, name? }`, where `data` is base64
+- `file { path, name? }`, read by the server
+- `attachment { sha256 }`, naming a blob this Session already stores
+
+Any other part type SHALL be refused with `InvalidRequestError`. The route SHALL accept request bodies up to 64 MiB. Each prompt SHALL carry at most 20 media parts.
+
+Media handling:
+
+- **Before admission:** every media part SHALL be decoded, sniffed, size-checked, normalized and stored as `session-runtime` → Attachment normalization and `storage-events` → Attachment storage define. The admitted message SHALL hold `attachment { sha256, media_type, name, size }` references only.
+- **`file` parts:** read through the `read` tool's checks (the agent profile's tools and a loaded skill's tool limits, `external_directory`, the `read` rule, hooks, hidden paths), with asks reaching the attached client. They SHALL be refused on the peer listener.
+- **`attachment` parts:** a `sha256` that this Session does not store SHALL be refused with `InvalidRequestError`.
+- **Message history:** `GET .../messages` SHALL return the references, not the bytes.
+- **Digest:** the admission digest SHALL replace inline `data` with its SHA-256, so a retried request with the same bytes replays the same receipt.
+
+The OpenAPI document SHALL describe the part union and `AttachmentRef`.
+
+#### Scenario: Inline screenshot stored once
+- **WHEN** a client posts a prompt with an 8 MiB base64 PNG `image` part
+- **THEN** the prompt is admitted, the stored event holds an `attachment` reference without base64 data, and the model receives the image
+
+#### Scenario: Unknown part type
+- **WHEN** a client posts a prompt whose parts contain `{ "type": "tool_call", … }`
+- **THEN** the response is `400` `InvalidRequestError` and nothing is admitted
+
+#### Scenario: File part denied
+- **WHEN** an exec Session in `dont-ask` mode receives `file { path: "/etc/shadow" }`
+- **THEN** the response is a permission denial naming the rule or mode, and nothing is read or admitted
+
+#### Scenario: Peer cannot send paths
+- **WHEN** a paired Device posts a prompt with a `file` part through the peer listener
+- **THEN** the request is refused with `InvalidRequestError` and no file is read
+
+#### Scenario: Peer resubmits a stored blob
+- **WHEN** a paired Device posts a prompt with an `attachment` part naming a blob the Session stores (a queued input taken back in `cyber attach`)
+- **THEN** the part passes the peer listener and is handled as on the local API
+
+### Requirement: Media on child and inbox edit routes
+(P0) A subtask's or delegation's `attachments` and an edited queued input's `parts` (`PATCH .../inbox/:messageID`) SHALL take the prompt part union with the same handling, except that `file` parts SHALL be refused. These routes SHALL accept bodies up to 64 MiB. Their media SHALL suit the model of the Session that admits them (the child, or the edited Session), and a refused request SHALL remove the blobs it wrote.
+
+#### Scenario: Delegated PDF stored by reference
+- **WHEN** `cyber exec "@explore read it" --file spec.pdf` delegates to a child whose model takes PDFs
+- **THEN** the child's events hold an `attachment` reference without base64 data; on a model without PDF input the request is refused and nothing is left behind
+
+#### Scenario: Edited input with a mislabelled reference
+- **WHEN** a client edits a queued input with `attachment { sha256, media_type: "application/pdf" }` naming a stored PNG
+- **THEN** the edited input holds an `image/png` reference rebuilt from the blob
+
+### Requirement: Output style routes
+(P0) `POST /api/v1/sessions` SHALL accept an optional `output_style`. `POST /api/v1/sessions/:sessionID/output-style` SHALL accept `{ style: string | null }`, record the switch and respond with the Session. Both SHALL respond `400` `InvalidRequestError` with the reason for an invalid, unknown or held style, and for a Session with a parent. `GET /api/v1/config/output-styles` SHALL be Location-scoped and SHALL return:
+- `styles`, each with `name`, `description`, `origin` (`builtin`, `user` or `project`), and `path` and `shadows` for files;
+- `issues`, each with `path` and `message`;
+- `configured`, the configured name and the layer that set it, or `null`;
+- `effective`, the style a new primary Session there would use.
+
+`PUT /api/v1/config/output-style` SHALL accept `{ style: string | null }` and set `output_style` in the user's global configuration. `null` SHALL set it to `default`. Only built-in and user styles SHALL be accepted, and every other byte of the document SHALL be kept. These operations SHALL be in the OpenAPI document.
+
+#### Scenario: Listing reports a held project style
+- **WHEN** a client calls `GET /api/v1/config/output-styles` for an untrusted checkout with `.cyber/output-styles/reviewer.md`
+- **THEN** `styles` has the four built-ins and the user styles, and `issues` has the trust hold for the project directory
+
+#### Scenario: Global default must not name a project style
+- **WHEN** a client calls `PUT /api/v1/config/output-style` with `{ "style": "reviewer" }` and `reviewer` is defined only by a project
+- **THEN** the server responds `400` and the global configuration is unchanged
+
+### Requirement: Separate project collaboration API authority
+(P3) Hub project/member/participant/message/task/event operations SHALL be served by a distinct collaboration listener and authorization state, documented with listener metadata in OpenAPI and generated SDK groups. They SHALL require validated account or scoped agent credentials and current project/visibility authorization for every request and stream; `x-cyber-directory`, local Session IDs and the local owner's password SHALL NOT authorize them. Local join/bind/publish/inbox integration SHALL remain owner-authenticated on the local API. The hub listener SHALL expose no local Session/tool/file/permission-approval routes. Mutations SHALL use stable operation IDs and expected entity revisions, return matching committed outcomes on retries and reject changed content with the same key. Defaults SHALL bound request bodies to 64 KiB, active connections to 128, requests to 120 per member per minute and 3,000 per project per minute; streams SHALL be bounded and reauthorized. Rate-limit replies SHALL include a retry delay. Unknown/inaccessible project resources SHALL reveal no metadata, while authorized role/revision/replay errors SHALL be typed.
+
+#### Scenario: Access another project's cursor
+- **WHEN** a member supplies a valid event cursor for a project it does not belong to
+- **THEN** the hub refuses access without disclosing its events or snapshot
+
+#### Scenario: Same operation with changed text
+- **WHEN** a caller repeats a committed message operation ID with different text
+- **THEN** the hub returns a conflict and does not replace or duplicate the original message
+
+#### Scenario: Local API through the hub
+- **WHEN** a hub member requests a Session prompt, shell execution or another member's permission approval through the hub listener
+- **THEN** no such local execution route is exposed or authorized
+
+#### Scenario: Revocation races a mutation
+- **WHEN** a member was authorized before its removal but removal commits before its attempted task/message mutation
+- **THEN** authorization is rechecked in the mutation transaction and no later unauthorized mutation or idempotent-result disclosure commits
+
+### Requirement: Private owner socket paths
+(P0) The owner listener SHALL accept custom Unix socket paths only as absolute, non-traversing paths under its protected state directory with an existing non-symlink parent and no symlink leaf. Existing non-socket files SHALL NOT be replaced. First-party clients SHALL reject unsafe legacy socket registrations before transmitting owner credentials. The protected state root SHALL refuse reads, writes and ancestor replacement from ordinary model tools and sandboxed children even when the root is inside an otherwise writable project.
+
+#### Scenario: Model-writable socket path
+- **WHEN** an owner configures a socket in a workspace or through a symlink outside protected state
+- **THEN** startup fails before readiness or socket replacement, with a migration diagnostic
+
+### Requirement: Explicit Session inbox wake
+(P1) The authenticated server SHALL expose POST `/api/v1/sessions/{sessionID}/wake` and generated SDK `session.wake` to dispatch existing promotable inbox input without submitting a duplicate prompt. An idle child SHALL use exclusive execution ownership, verified checkout preparation and a schema-preserving fresh attempt. Held release SHALL atomically convert the existing row and reset its attempt only after preparation succeeds. A completed child without promotable input SHALL retain its result without new inference or checkout recreation.
+
+#### Scenario: Deferred structured child prompt
+- **WHEN** a completed structured child has an existing queued prompt admitted with `resume: false` and the client wakes it
+- **THEN** the server starts a fresh owned attempt, preserves message identity and admission sequence and returns 204
+
+#### Scenario: Held child input with busy result ownership
+- **WHEN** a client releases a held child input while another tool or Job owns its terminal result
+- **THEN** release is refused and both the held row and terminal result remain unchanged
+
+### Requirement: Explicit subtree stop API
+(P1) The authenticated server SHALL expose POST `/api/v1/sessions/{sessionID}/stop-subtree` and generated SDK `session.stopSubtree`. It SHALL return the runtime-owned report with original Session and scope identity, acknowledgement status, problems and receipt persistence. Unknown outcomes SHALL remain explicit successful report responses, never an empty success implying cancellation. The operation SHALL leave admission closed even after local acknowledgement, preserve inbox rows and restrict cancellation to the requested subtree. Ordinary Session interruption SHALL retain its background-child independence. Reopening and reviewed recovery remain separate required contracts.
+
+#### Scenario: Scoped explicit stop
+- **WHEN** a client explicitly stops a child subtree while an unrelated background Job runs
+- **THEN** scoped Jobs settle, unrelated work continues and queued input remains durable
+- **AND** the report retains the requested Session identity and admission remains closed
+
+#### Scenario: Missing acknowledgement
+- **WHEN** held result ownership prevents acknowledgement
+- **THEN** the API and SDK return an Unknown report with problems and persistence evidence
+- **AND** a new stop request may reassess the same closure after ownership settles without reopening admission
+
+#### Scenario: Authentication and identity
+- **WHEN** an unauthenticated caller requests subtree stop
+- **THEN** authentication fails before closure or cancellation
+- **AND** an authenticated request for a missing Session returns the tagged Session-not-found error
+
+### Requirement: Reviewed subtree reopening API
+(P1) Stop reports SHALL return their persisted receipt ID and owned sweep ID when recorded. The authenticated server SHALL expose POST `/api/v1/sessions/{sessionID}/reopen-subtree` and generated SDK `session.reopenSubtree`, taking the reviewed `scope_id` and `stop_receipt_id`. It SHALL perform matched durable/native verification, return the reopening receipt identity and leave queued input undispatched. Stale, Unknown or changed evidence SHALL return a conflict without opening admission. Idempotency replay SHALL preserve the original response without clearing a later close scope.
+
+#### Scenario: Reviewed local stop
+- **WHEN** a client submits the acknowledged stop report's scope and receipt to reopening
+- **THEN** the server verifies current evidence and returns the original identities plus a reopening receipt
+
+#### Scenario: Stale request after another stop
+- **WHEN** an earlier reopening review is submitted after a new close scope exists
+- **THEN** admission stays closed and the request is refused
+- **AND** replaying the original idempotency key returns only the historical response

@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Global flags
-(P0) Every command SHALL accept `--help`/`-h`, `--version`/`-V`, `--model`/`-m <provider/model[#variant]>`, `--agent <name>`, `--mode <default|accept-edits|plan|auto|dont-ask|bypass>`, `--cwd <path>`, `--add-dir <path>` (repeatable; `permissions-modes` → Additional working directories), `--profile <name>`, `--config <key=value>` (repeatable, long form only because `-c` is `--continue`; `configuration` → Command-line overrides), `--features <name,...>`, `--allow <rule>` and `--deny <rule>` (repeatable; Session ruleset entries `action[:resource]`), `--system-prompt <text|@file>` and `--append-system-prompt <text|@file>` (replace or extend the agent's `system` for the new Session), `--mcp-config <file>` (repeatable; adds MCP servers for the Session only, as `editor-integration` does for ACP clients), `--format <table|json|text|stream-json>` (the only output-format flag), `--print-logs`, `--log-level <trace|debug|info|warn|error>` and `--pure`. `--cwd` SHALL be the only working-directory flag. `--pure` SHALL disable external plugins, hooks, channels and MCP servers that are not managed by org policy. Flags SHALL take precedence over environment variables, and environment variables over config.
+(P0) Every command SHALL accept `--help`/`-h`, `--version`/`-V`, `--model`/`-m <provider/model[#variant]>`, `--agent <name>`, `--mode <default|accept-edits|plan|auto|dont-ask|bypass>`, `--cwd <path>`, `--add-dir <path>` (repeatable; `permissions-modes` → Additional working directories), `--profile <name>`, `-c`/`--config <key=value>` (repeatable; `configuration` → Command-line overrides), `--features <name,...>`, `--allow <rule>` and `--deny <rule>` (repeatable; Session ruleset entries `action[:resource]`), `--system-prompt <text|@file>` and `--append-system-prompt <text|@file>` (replace or extend the agent's `system` for the new Session), `--mcp-config <file>` (repeatable; adds MCP servers for the Session only, as `editor-integration` does for ACP clients), `--format <table|json|text|stream-json|md|html>` (the only output-format flag; `md` and `html` are `cyber sessions export` formats, and any other command given `html` SHALL fail with exit code 2), `--print-logs`, `--log-level <trace|debug|info|warn|error>` and `--pure`. `--cwd` SHALL be the only working-directory flag. `--pure` SHALL disable external plugins, hooks, channels and MCP servers that are not managed by org policy. Flags SHALL take precedence over environment variables, and environment variables over config.
 
 #### Scenario: Flag overrides config model
 - **WHEN** `cyber.jsonc` sets `model` to `anthropic/claude-sonnet` and the user runs `cyber exec -m openai/gpt-6 "hi"`
@@ -14,3 +14,7 @@
 #### Scenario: Inline allow rule for CI
 - **WHEN** CI runs `cyber exec --allow "bash:npm test *" --deny "bash:git push *" "fix the tests"`
 - **THEN** `npm test` runs without prompting, `git push` is denied, and both rules appear in the Session ruleset
+
+#### Scenario: HTML format outside export
+- **WHEN** the user runs `cyber sessions list --format html`
+- **THEN** the command fails with exit code 2 and says that `--format html` is only for `cyber sessions export`

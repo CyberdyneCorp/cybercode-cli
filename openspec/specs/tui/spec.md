@@ -79,15 +79,62 @@ Piped stdin SHALL be prepended to `--prompt`. Invalid combinations SHALL fail be
 - **THEN** the composer shows the unsent draft
 
 ### Requirement: Large paste and image input
-(P0) The system SHALL summarize pasted text longer than 1,000 characters or 25 lines as a placeholder chip `[Pasted text #N +L lines]` whose full content is sent on submit, unless `tui.paste_summary` is `false`. The composer SHALL accept images and PDFs from clipboard paste, drag-and-drop file paths, or `@path` mentions, showing them as `[Image #N]` chips. Attachments larger than 20 MiB SHALL be rejected with a toast.
+(P0) The system SHALL summarize pasted text longer than 1,000 characters or 25 lines as a placeholder chip `[Pasted text #N +L lines]` whose full content is sent on submit, unless `tui.paste_summary` is `false`. The composer SHALL accept images (PNG, JPEG, GIF, WebP) and PDFs from:
+
+- **clipboard paste:** the `composer.paste_image` binding reads the system clipboard, because terminals do not send image bytes. It SHALL use a fixed argument vector and no shell.
+- **drag-and-drop:** a bracketed paste whose text is only paths of existing image or PDF files. Paths MAY be quoted, backslash-escaped or `file://` URLs.
+- **`@path` mentions:** an image or PDF picked from the `@` menu or typed as a token.
+
+The composer SHALL show images as `[Image #N]` chips and PDFs as `[PDF #N]` chips.
+
+Chips SHALL behave as follows:
+
+- **Numbering:** chips are numbered per draft.
+- **Deletion:** a chip is deleted as one unit.
+- **Drafts:** a draft SHALL keep its chips.
+- **Submit:** text chips are expanded into the text part. Each media chip keeps its label in the text and adds one attachment part (`server-api` → Prompt attachment parts):
+  - a server-read `file` part for a path, when the server runs on the TUI's machine,
+  - inline bytes for clipboard images, and for paths when the TUI is attached to a peer,
+  - `attachment` for chips restored by rewind.
+- **Commands:** a `/` command, `!` shell or `&` background line also gets its text chips expanded. Media cannot go to these: a line that names an image or PDF chip SHALL be refused with a toast, keeping the draft and its chips.
+
+Attachments larger than `attachments.max_bytes` (default 20 MiB) SHALL be rejected with the toast `Attachment exceeds 20 MiB` and not attached. A prompt the server refuses (size, unsupported type, missing model input, permission) SHALL keep the draft and its chips and show the server's message. The transcript SHALL show media parts as `[Image: <name>]` or `[PDF: <name>]`. Terminal image rendering is not provided.
 
 #### Scenario: Large paste becomes a chip
 - **WHEN** the user pastes 300 lines of log output
 - **THEN** the composer shows `[Pasted text #1 +300 lines]` and the submitted message contains the full 300 lines
 
+#### Scenario: Paste summary disabled
+- **WHEN** `tui.paste_summary` is `false` and the user pastes 300 lines
+- **THEN** the 300 lines are inserted into the composer as text
+
 #### Scenario: Oversized image rejected
 - **WHEN** the user drags in a 25 MiB PNG
 - **THEN** the TUI shows `Attachment exceeds 20 MiB` and does not attach it
+
+#### Scenario: Clipboard screenshot
+- **WHEN** the clipboard holds a PNG screenshot and the user presses Ctrl+V in the composer
+- **THEN** the composer shows `[Image #1]`, and the submitted prompt carries the image as an attachment part
+
+#### Scenario: Empty clipboard
+- **WHEN** the clipboard holds no image and the user presses Ctrl+V
+- **THEN** the TUI shows `No image on the clipboard` and the composer is unchanged
+
+#### Scenario: Dropped file path
+- **WHEN** the terminal pastes `'/Users/me/Desktop/Screen Shot.png'` after a drag-and-drop
+- **THEN** the composer shows `[Image #1]` instead of the path, and submitting sends a `file` part for that path
+
+#### Scenario: PDF mention
+- **WHEN** the user picks `docs/spec.pdf` from the `@` menu and submits `summarize [PDF #1]`
+- **THEN** the prompt carries the PDF as an attachment part
+
+#### Scenario: Chip deleted as a unit
+- **WHEN** the cursor is right after `[Image #1]` and the user presses Backspace
+- **THEN** the whole chip and its image are removed
+
+#### Scenario: Model without image input
+- **WHEN** the Session's model has no image input and the user submits a prompt with `[Image #1]`
+- **THEN** the TUI shows the server's `has no image input` message and the draft keeps the chip
 
 ### Requirement: Mentions and fuzzy search
 (P0) The system SHALL open an autocomplete menu when `@` is typed at a word boundary. The menu SHALL offer, ranked by fuzzy match:
@@ -155,6 +202,8 @@ Queued messages SHALL be listed above the composer in FIFO order. Each SHALL be 
 
 `/timestamps` SHALL toggle per-message timestamps. Tool output over 30 lines SHALL be collapsed to its last 10 lines until expanded. (P1) Diff lines SHALL use the `diff_*` theme tokens with `diff_added_bg` and `diff_removed_bg` backgrounds, and each finished run SHALL end with the Turn footer marker.
 
+(P1) With the mouse captured, a click on a collapsed tool output's hidden-lines row SHALL act as the `tool_details` key (Ctrl+O), and a click on a collapsed `thinking` row SHALL act as the `reasoning_toggle` key (Ctrl+T); neither row is a target while its key is unbound. Links SHALL stay the terminal's to open through OSC 8.
+
 #### Scenario: Split diff on wide terminal
 - **WHEN** an edit completes and the terminal is 200 columns wide with `diff_style` set to `auto`
 - **THEN** the edit card renders a side-by-side diff
@@ -162,6 +211,10 @@ Queued messages SHALL be listed above the composer in FIFO order. Each SHALL be 
 #### Scenario: Long bash output collapsed
 - **WHEN** a bash tool returns 400 lines
 - **THEN** the card shows the last 10 lines and `+390 lines (press o to expand)`
+
+#### Scenario: Click a collapsed tool output
+- **WHEN** a bash card shows its last 10 lines under a hidden-lines row and the user clicks that row
+- **THEN** tool output expands exactly as after Ctrl+O
 
 ### Requirement: Permission prompt
 (P0) The system SHALL show a blocking prompt for each pending permission request of the active Session tree. The prompt SHALL show the tool title, the resources, and a diff preview for edits. It SHALL offer:
@@ -171,6 +224,8 @@ Queued messages SHALL be listed above the composer in FIFO order. Each SHALL be 
 
 Requests SHALL be shown one at a time in arrival order.
 
+(P1) With the mouse captured, a click on **Allow once**, **Allow always…** or **Reject** SHALL only select it. A second click on the same option, with no key pressed between and while the same request is pending, SHALL act as Enter on it. A single click SHALL never reply to a request, and a press that comes within 500 ms of a press made before the request was shown SHALL be absorbed as the rest of that multi-click: it SHALL neither select nor arm an option. The Allow always confirmation step, the rejection feedback and the blocked-call approval SHALL take no clicks.
+
 #### Scenario: Allow always confirmation
 - **WHEN** bash requests `npm run test -- --watch=false` and the user picks Allow always
 - **THEN** the TUI shows `Always allow: bash "npm run test *" (project)` and saves the approval only after the user confirms
@@ -178,6 +233,18 @@ Requests SHALL be shown one at a time in arrival order.
 #### Scenario: Reject with feedback
 - **WHEN** the user rejects an edit and types `use the existing helper instead`
 - **THEN** the reply is `reject` with that message, and the model receives it as a tool error instead of the Drain halting
+
+#### Scenario: A single click cannot grant
+- **WHEN** bash asks to run `rm -rf build` and the user clicks `Allow once` once
+- **THEN** `Allow once` is selected and no reply is sent; a second click on it replies `once`
+
+#### Scenario: A triple click does not answer the prompt it raised
+- **WHEN** the user triple-clicks an explorer file behind an `ask` rule, and the permission request is shown under the pointer after the first press
+- **THEN** the other two presses select nothing and no reply is sent; a later double click on `Allow once` replies `once`
+
+#### Scenario: Armed click does not carry over
+- **WHEN** the user clicks `Allow once` on one request, that request is answered from another client, and the next request appears where the click lands again
+- **THEN** the click only selects `Allow once` on the new request and sends no reply
 
 ### Requirement: Question prompt
 (P0) The system SHALL render `question` tool requests as an inline form:
@@ -187,9 +254,15 @@ Requests SHALL be shown one at a time in arrival order.
 
 Esc SHALL dismiss the request, which halts the Drain as defined in `session-runtime`.
 
+(P1) With the mouse captured, a click on an option or on `Type your own answer` SHALL only move the cursor there, and a second click on the same row SHALL act as Enter on it. A single click SHALL never submit or dismiss the request.
+
 #### Scenario: Multi-question tabs
 - **WHEN** the agent asks two questions, `Database?` and `Auth method?`
 - **THEN** the TUI shows two tabs plus a Review tab and sends both answers together on confirm
+
+#### Scenario: Answer by clicking twice
+- **WHEN** the agent asks `Database?` with `Postgres` and `SQLite` and the user clicks `SQLite` once
+- **THEN** the cursor is on `SQLite` and nothing is sent; a second click submits `SQLite` as Enter would
 
 ### Requirement: Permission mode indicator and cycling
 (P1) The system SHALL always show the Session's permission mode in the footer. Shift+Tab SHALL cycle `default → accept-edits → plan → auto → default` as defined by `permissions-modes`. `bypass` and `dont-ask` SHALL be selectable only from `/mode <name>`, flags or config, and `bypass` only when it is not disabled by org policy, with an explicit confirmation. Mode changes SHALL be recorded as durable Session events.
@@ -254,16 +327,45 @@ The TUI SHALL show the file diff summary (files, +/−) that the choice will app
 
 From the list the user SHALL be able to view full output, attach to a subagent thread, or stop one item. `/stop` SHALL stop all background shell commands after confirmation.
 
+(P1) With the mouse captured, a click SHALL select a row and a second click on it SHALL act as Enter. Stopping stays on its keys.
+
 #### Scenario: Stop one background command
 - **WHEN** the user selects a running `npm run dev` job and presses `x`
 - **THEN** the job is terminated, its status becomes `cancelled`, and the model is notified at the next Safe Boundary
 
+#### Scenario: Open a task's output by clicking
+- **WHEN** `/tasks` lists `npm run dev` and the user clicks its row twice
+- **THEN** the task's output opens as with Enter, and the job keeps running
+
+#### Scenario: Keys of the tasks list
+- **WHEN** the tasks list is open
+- **THEN** `x` SHALL stop the selected item while no filter text is typed (Ctrl+S stops it at any time), and typing otherwise filters the list
+- **AND** Enter SHALL open a subagent's thread, a Workflow Run in the Workflow monitor, or the end of a command's or monitor's log in a scrollable view
+- **AND** Loops SHALL be listed once the P2 `loops-scheduling` capability exists; until then there are none to list
+
+#### Scenario: Background input and Ctrl+B
+- **WHEN** the composer input starts with `&`
+- **THEN** the input mode SHALL read `background shell`, and submitting it SHALL start the rest as a background Job of the Session
+- **WHEN** the user presses Ctrl+B (the rebindable `background_command` binding)
+- **THEN** a running Session's foreground `bash` call SHALL move to the background, and with no Turn running the TUI SHALL say `No command is running` and send nothing
+
 ### Requirement: Subagent threads and side chat
 (P1) The system SHALL provide `/agent` (alias `/subagents`) to switch the view to any running or finished subagent thread of the Session, show its transcript, and send it messages when it is resumable. (P1) `/btw <question>` (alias `/side`) SHALL open an ephemeral overlay chat. The side chat SHALL see the current Session context read-only, SHALL NOT add messages to the main Session, and SHALL be discarded on close unless the user chooses `Insert answer`.
+
+(P1) With the mouse captured, a click in the `/agent` list SHALL select a thread and a second click on it SHALL switch to it as Enter does.
 
 #### Scenario: Side question does not pollute history
 - **WHEN** the user asks `/btw what does the --frozen flag do?` while the main agent works
 - **THEN** the answer appears in an overlay and the main Session history gains no message
+
+#### Scenario: Switch thread by clicking
+- **WHEN** `/agent` lists `review` and `explore` and the user clicks `explore` twice
+- **THEN** the view switches to the `explore` thread
+
+#### Scenario: Overlay keys
+- **WHEN** the side chat overlay shows an answer
+- **THEN** Esc SHALL discard it, and `i` or Enter (`Insert answer`) SHALL close the overlay and insert the answer into the composer for the user to edit and send
+- **AND** a bare `/btw` SHALL only show its usage, and `/btw` SHALL be listed in the palette, the help and `GET /api/v1/commands`
 
 ### Requirement: Agent view
 (P2) The system SHALL provide an agent view, opened by `cyber agents` or Ctrl+A. It SHALL list every Session the server runs, across Locations, in three groups: **Needs input** (pending permission or question), **Working** (Drain active), and **Completed** (idle since the last view). Each row SHALL show name, Location, agent, model, the latest status line or question, cost and elapsed time. A **New task** row SHALL dispatch a background Session from a typed prompt, with optional `--worktree`. Enter SHALL attach to a row; Ctrl+A SHALL detach back to the view without interrupting the Session.
@@ -297,6 +399,8 @@ A running Workflow Run SHALL show a compact progress line above the composer, as
 
 At 80 columns, phase and elapsed time SHALL be dropped. Below 60 columns, each run SHALL take two rows. Screen readers SHALL receive each row as one sentence with every value in words.
 
+(P2) With the mouse captured, a click on a run or an agent row SHALL select it and a second click on it SHALL act as Enter (open the run view, or the agent's transcript). Pause, resume and stop stay on their keys.
+
 #### Scenario: Pause a run
 - **WHEN** the user presses `p` on a running Workflow Run with 6 agents in flight
 - **THEN** no new agents start, in-flight agents finish, and the run shows `paused (6 settling)` and then `paused`
@@ -312,6 +416,10 @@ At 80 columns, phase and elapsed time SHALL be dropped. Below 60 columns, each r
 #### Scenario: Drill into an agent
 - **WHEN** the user presses Enter on `audit` and then `t` on a running verify agent
 - **THEN** the agent's child Session transcript opens and streams, and Esc returns to the `audit` agent tree with the agent still selected
+
+#### Scenario: Open a run by clicking
+- **WHEN** `/workflows` lists `audit` and `fanout` and the user clicks `fanout` twice
+- **THEN** the first click selects `fanout` and the second opens its run view
 
 ### Requirement: Goal and loop indicators
 (P2) The system SHALL show a goal panel (`/goal` with no arguments) with the active Goal, the goal queue, the last evaluator verdict and its reason, Turns and cost used against the goal budget, and actions for edit, pause, resume, clear, and reorder of the queue. While a Goal is active, the footer SHALL show `◎ goal` with a truncated condition. Each active Loop SHALL show `↻ <interval>` with its next run time in the footer and in `/tasks`.
@@ -353,8 +461,10 @@ At 80 columns, phase and elapsed time SHALL be dropped. Below 60 columns, each r
 (P0) The system SHALL merge `tui.keybinds` over the defaults, supporting:
 - a leader key (default Ctrl+X) with a 2,000 ms timeout
 - chord sequences such as `<leader>m`
-- context-scoped bindings for `composer` (`history_previous`, `history_next`, `newline`, `editor`), and (P1) `palette`, `sidebar`, `settings` and `explorer`; `messages`, `picker`, `agent_view` and `permission` have no rebindable actions yet and are reported as unknown contexts
+- context-scoped bindings for `composer` (`history_previous`, `history_next`, `newline`, `editor`, `paste_image`), and (P1) `palette`, `sidebar`, `settings` and `explorer`; `messages`, `picker`, `agent_view` and `permission` have no rebindable actions yet and are reported as unknown contexts
 - disabling a binding with `"none"`
+
+(P0) `composer.paste_image` SHALL default to Ctrl+V, and to Alt+V on Windows, where the terminal takes Ctrl+V for text paste.
 
 (P1) `tui.vim_mode: true` SHALL enable vim normal/insert modes in the composer, also toggled with `/vim`. (P1) The defaults SHALL include `command_palette` (Ctrl+P), `sidebar_toggle` (`<leader>b`), `sidebar_focus` (`<leader>e`), `settings` (`<leader>,`), `file_explorer` (`<leader>o`), `theme_list` (`<leader>s`) and `theme_cycle` (`<leader>t`). Top-level `tui.keybinds` entries SHALL bind global actions, and an object named after a context SHALL bind that context's actions. A binding SHALL never be shown in a hint, the help screen or the palette when it is disabled. A value that does not parse, an unknown action or an unknown context SHALL be reported and leave the default in place.
 
@@ -366,9 +476,13 @@ At 80 columns, phase and elapsed time SHALL be dropped. Below 60 columns, each r
 - **WHEN** `tui.keybinds.command_palette` is `"ctrl+k"`
 - **THEN** Ctrl+K opens the palette and the footer hint reads `ctrl+k commands`
 
+#### Scenario: Rebound image paste
+- **WHEN** `tui.keybinds.composer.paste_image` is `"ctrl+shift+i"` and the clipboard holds an image
+- **THEN** Ctrl+Shift+I attaches it, and Ctrl+V no longer reads the clipboard
+
 ### Requirement: Rendering modes and terminal integration
 (P0) The system SHALL support two rendering modes, selected by `tui.render` (default `fullscreen`, or `--inline`):
-- **fullscreen**: alternate screen with mouse support and stable memory
+- **fullscreen**: alternate screen with mouse support and stable memory. The TUI SHALL capture the mouse unless `tui.mouse` is `off`: a wheel notch SHALL scroll the transcript by 3 lines, or move Up/Down in a panel that scrolls or lists, and prompts and confirmations SHALL ignore the wheel. (P1) The wheel SHALL act on the pane under the pointer: on the main screen it SHALL do nothing over the sidebar and scroll the transcript elsewhere, and in the file explorer it SHALL follow File explorer. (P1) Left clicks SHALL act as Mouse clicks defines. With `tui.mouse: off` the terminal keeps the mouse for its own selection and scrollback, and the TUI SHALL handle neither the wheel nor clicks
 - **inline**: append-only scrollback with a repaintable footer, like Codex and OpenCode mini
 
 The system SHALL copy selections with OSC 52 when the native clipboard is unavailable. It SHALL set the terminal title to `cyber · <session name> · <status>` (configurable by `tui.title.fields`). On exit it SHALL print a summary with tokens, cost and the resume command `cyber -r <name|id>`.
@@ -380,6 +494,18 @@ The system SHALL copy selections with OSC 52 when the native clipboard is unavai
 #### Scenario: Clipboard over SSH
 - **WHEN** the user copies a code block over SSH with no native clipboard available
 - **THEN** the TUI emits an OSC 52 sequence so the local terminal receives the text
+
+#### Scenario: Wheel scrolls the transcript
+- **WHEN** the user turns the mouse wheel up over the fullscreen TUI
+- **THEN** the transcript scrolls back 3 lines per notch and the terminal's own scrollback does not move
+
+#### Scenario: Mouse left to the terminal
+- **WHEN** `tui.mouse` is `off`
+- **THEN** the TUI does not enable mouse reporting and the terminal handles the wheel and selection itself
+
+#### Scenario: Wheel over the sidebar
+- **WHEN** the sidebar is docked and the user turns the wheel over it
+- **THEN** neither the transcript nor the sidebar moves
 
 ### Requirement: Accessibility
 (P1) The system SHALL provide `tui.accessibility.screen_reader: true` (or `CYBER_SCREEN_READER=1`). This mode disables spinners and animations, renders streaming text in whole-sentence chunks, labels every status with words rather than glyphs, and forces inline rendering. `tui.accessibility.reduced_motion` SHALL disable animations independently. Every theme SHALL meet a 4.5:1 contrast ratio for body text against its background, and 3:1 for `text_muted` and for focus indicators. Color SHALL never be the only carrier of meaning: every status dot, meter and heatmap SHALL also have a word, a percentage or a glyph level. Every panel, tab, sidebar row and palette entry SHALL be reachable and operable with the keyboard alone, and the focused element SHALL be marked with reverse video or a `›` marker. In screen-reader mode the sidebar SHALL not be drawn, the Turn footer marker SHALL be emitted as `Turn finished: agent <agent>, model <model>, <duration>`, and the Stats heatmap SHALL be replaced by a sentence such as `Active 265 of 340 days; most active May 20; current streak 14 days`.
@@ -534,8 +660,14 @@ Wrapped list items and quotes SHALL keep their hanging indent. While a message s
 ### Requirement: Command palette
 (P1) The system SHALL open a command palette with the `command_palette` keybinding (default Ctrl+P), and with `/` followed by Tab in an empty composer. It SHALL list every built-in TUI command, custom command, skill and MCP prompt, plus UI actions (toggle sidebar, open settings tabs, switch theme, copy last code block, toggle reasoning). Each row SHALL show the name, a one-line description and the current key binding. A command that declares an argument hint SHALL be typed into the composer as `/name ` instead of run. Names and descriptions from commands, skills and MCP prompts SHALL be shown on one line without control characters. Typing SHALL filter by fuzzy match, Enter SHALL run the selected entry, and Esc SHALL close the palette without side effects.
 
+With the mouse captured, a click SHALL select an entry and a second click on it SHALL run it as Enter does. A click outside the palette SHALL leave it open.
+
 #### Scenario: Open settings from the palette
 - **WHEN** the user presses Ctrl+P, types `usage` and presses Enter
+- **THEN** the Settings panel opens on the Usage tab
+
+#### Scenario: Run an entry by clicking
+- **WHEN** the palette filters to `Settings: Usage` and the user clicks that entry twice
 - **THEN** the Settings panel opens on the Usage tab
 
 ### Requirement: Welcome screen
@@ -572,6 +704,8 @@ The welcome screen SHALL disappear as soon as the first message exists and SHALL
 
 MCP rows SHALL update from `mcp.status.changed.1` and `mcp.tools.changed.1`, Modified files from `session.diff.1`, and LSP and the branch SHALL be re-read when the Session goes idle (language servers start as files are read), all without polling; every section SHALL be re-read when the event stream reconnects. A dropped event stream SHALL be reopened every 2 seconds, with the connection dot yellow while it retries and red after a failed attempt. `<leader>e` SHALL move focus into the sidebar, opening the drawer below 120 columns: Up/Down (and `j`/`k`) move between rows, Enter or Space collapses or expands MCP or Modified files, Enter on a modified file opens its diff, `r` on a failed or `needs_auth` MCP server reconnects it through `POST /api/v1/mcp/{name}/reconnect`, and Esc returns focus to the composer (closing the drawer). These keys SHALL be the `sidebar` context's bindings `sidebar_next`, `sidebar_previous`, `sidebar_select`, `sidebar_reconnect` and `sidebar_close`. The reconnect route SHALL accept a server that settled `failed` only when it retained no native owner, so a failure with unverified ownership stays refused with `409`. All server-provided names, errors, paths and patches SHALL be shown on one line (patches per line) without control characters. Every value SHALL come from public API routes. A section whose source route is unavailable SHALL be omitted, never shown with placeholder values.
 
+(P1) With the mouse captured, a click on a section header (MCP, Modified files, Machine) SHALL focus the sidebar on it and fold or unfold the section as Enter does. A click on another focusable row SHALL focus the sidebar on that row, and a second click on it SHALL act as Enter. A click on the transcript or the composer SHALL return focus to the composer as Esc does, closing the drawer. The wheel SHALL do nothing over the sidebar.
+
 #### Scenario: Wide terminal shows the sidebar
 - **WHEN** the terminal is 160 columns wide and `tui.sidebar` is `auto`
 - **THEN** the sidebar is drawn at 48 columns with Context, MCP, LSP and the `cwd:branch` footer
@@ -603,6 +737,18 @@ MCP rows SHALL update from `mcp.status.changed.1` and `mcp.tools.changed.1`, Mod
 #### Scenario: No language servers yet
 - **WHEN** no language server has started in the Location
 - **THEN** the LSP section reads `LSPs will activate as files are read`
+
+#### Scenario: Fold a section by clicking
+- **WHEN** the MCP section is expanded and the user clicks its `▼ MCP` header
+- **THEN** the section folds to `▶ MCP` and the sidebar has focus on that header
+
+#### Scenario: Click back into the composer
+- **WHEN** the sidebar has focus and the user clicks the composer
+- **THEN** focus returns to the composer and typed keys go to the prompt
+
+#### Scenario: Click a collapsed row while the sidebar has focus
+- **WHEN** the sidebar has focus and the user clicks a tool output's `lines hidden` row
+- **THEN** focus returns to the composer and the tool output expands as Ctrl+O does
 
 ### Requirement: Machine stats
 (P1) Below LSP, the sidebar SHALL show a collapsible `▼ Machine` section about the machine the server runs on, from `GET /api/v1/system`, with the OS label right-aligned in the header. It SHALL have:
@@ -656,6 +802,8 @@ No region SHALL draw outside its area at any size from 40×10 to 300×100. Trunc
 ### Requirement: Settings panel
 (P1) The system SHALL provide a full-screen Settings panel with the tabs Status, Config, Usage and Stats. `/settings` SHALL open the last used tab, and `/status`, `/config`, `/usage` and `/stats` SHALL open their own tab. `/cost` SHALL open the Usage tab scrolled to the Session section. The panel SHALL replace the transcript and composer while open, keep the recap block when one is shown, and draw the tab bar as `Settings  Status  Config  Usage  Stats`, with the active tab in `selection` (reverse video under `NO_COLOR`). Keys: Tab and Shift+Tab or Left and Right switch tabs, `1`–`4` jump to a tab, Up/Down, PageUp/PageDown, Home and End scroll, `r` refreshes, and Esc closes. The bottom row SHALL list the keys of the current tab. Each tab SHALL load its data when it is shown, show `Loading…` until the data arrives, and show a failed request as `Could not load <section>: <error> · r to retry` without closing the panel. A Drain keeps running while the panel is open, and a permission or question request SHALL close the panel and show its prompt.
 
+With the mouse captured, a click on a tab in the tab bar SHALL switch to it as its number key does, and the wheel SHALL scroll as Up/Down do.
+
 #### Scenario: Direct tab command
 - **WHEN** the user types `/stats`
 - **THEN** the Settings panel opens with the Stats tab active
@@ -663,6 +811,10 @@ No region SHALL draw outside its area at any size from 40×10 to 300×100. Trunc
 #### Scenario: Approval interrupts the panel
 - **WHEN** a permission request arrives while the Usage tab is open
 - **THEN** the panel closes and the permission prompt is shown
+
+#### Scenario: Click a tab
+- **WHEN** the Settings panel shows the Status tab and the user clicks `Usage` in the tab bar
+- **THEN** the Usage tab is active and loads its data
 
 ### Requirement: Settings Status tab
 (P1) The Status tab SHALL show, one `label: value` row each:
@@ -683,11 +835,21 @@ It SHALL include sandbox state and Cyber Account state only when the server repo
 - **THEN** the server version reads `0.1.0 (older build)` in the warning color with `restart the service`
 
 ### Requirement: Settings Config tab
-(P1) The Config tab SHALL list TUI preferences that can be edited in place: `theme`, `theme_mode`, `sidebar`, `recap`, `spinner`, `reasoning`, `diff_style`, `timestamps`, `color` and `accessibility.reduced_motion`. Each row SHALL show the current value and its source (`default`, `global`, `project`, `saved` for `kv.json`, or `session` for a toggle made in this run only, such as Ctrl+T or `/timestamps`). Enter or Space SHALL cycle a value or open its picker. A change SHALL apply immediately and be saved to `~/.local/state/cyber/kv.json` with the time it was saved, and a `tui.jsonc` written after that time SHALL win over it. Below the preferences, the tab SHALL show effective core settings (`model`, `small_model`, `mode`, `default_agent`, `budgets`) read-only with their source file, when the server's `config` route is available. Otherwise it SHALL show `Core settings: use cyber config or edit cyber.jsonc`.
+(P1) The Config tab SHALL list TUI preferences that can be edited in place: `theme`, `theme_mode`, `sidebar`, `recap`, `spinner`, `reasoning`, `diff_style`, `timestamps`, `color` and `accessibility.reduced_motion`. Each row SHALL show the current value and its source (`default`, `global`, `project`, `saved` for `kv.json`, or `session` for a toggle made in this run only, such as Ctrl+T or `/timestamps`). Enter or Space SHALL cycle a value or open its picker. A change SHALL apply immediately and be saved to `~/.local/state/cyber/kv.json` with the time it was saved, and a `tui.jsonc` written after that time SHALL win over it. The tab SHALL also list an `output style` row. It SHALL show the current Session's effective output style and its source (`session`, `config` or `default`), and Enter SHALL open the output style picker. Below the preferences, the tab SHALL show effective core settings (`model`, `small_model`, `mode`, `default_agent`, `output_style`, `budgets`) read-only with their source file, when the server's `config` route is available. Otherwise it SHALL show `Core settings: use cyber config or edit cyber.jsonc`.
+
+With the mouse captured, a click on a preference row SHALL select it, and a second click on it SHALL act as Enter (cycle the value or open its picker).
 
 #### Scenario: Toggle the sidebar from Config
 - **WHEN** the user selects `sidebar` and presses Enter until it reads `hide`
 - **THEN** the sidebar disappears, and the value persists after a restart
+
+#### Scenario: Output style from Config
+- **WHEN** the user selects the `output style` row and presses Enter
+- **THEN** the output style picker opens, and choosing `concise` updates the row to `concise (session)`
+
+#### Scenario: Cycle a value by clicking
+- **WHEN** the user clicks the `timestamps` row once and then again
+- **THEN** the first click selects it and the second cycles it to its next value, which is saved
 
 ### Requirement: Settings Usage tab
 (P1) The Usage tab SHALL show the current Session tree (the Session and its descendants), using `GET /api/v1/usage?scope=session` and its breakdown:
@@ -763,9 +925,11 @@ Models SHALL list each model with total tokens, share as a 20-column bar and per
 ### Requirement: File explorer
 (P1) The TUI SHALL provide a file explorer, opened with `/files` or the `file_explorer` binding (default `<leader>o`, that is `ctrl+x o`, because `<leader>e` is `sidebar_focus`) and closed with Esc. It SHALL show the Location's project as a tree in a pane on `surface_alt`: a header bar (`surface`) with `EXPLORER`, the project name and `:branch`, and at the right `✓ clean` in `success` or `N changed` in `warning`; a filter line with a `⌕` placeholder; the tree; and a summary line (`N shown · M hidden · .gitignore`). Root entries SHALL have no guide; each deeper level SHALL add a `│ ` indent guide in `text_subtle`, followed by the fold marker (`▸` collapsed, `▾` expanded). Directory names SHALL be bold in `file_dir` with a trailing `/`, an expanded directory SHALL show its loaded child count, and file names SHALL be colored by kind from their name: `file_doc` (Markdown and text), `file_config` (TOML, JSON, YAML, `justfile` and similar), `file_code` (source files) and `file_dim` (hidden, ignored, lock and generated files). A right-aligned column SHALL show the git status letter and the compact size (`1.2K`) in `text_muted`. The selected row SHALL have an `accent` bar and the `selection` background (reverse video without color). `tui.explorer.icons` (`none` default, `nerd`) SHALL add Nerd Font glyphs before names. The footer SHALL show the explorer keys as chips (the key on a `text_muted` background, then its label), generated from the binding table. Directories SHALL sort before files and SHALL be loaded lazily, one level per expansion, through `GET /api/v1/files`. Each row SHALL show the git status letter (`M` in `warning`, `A` and `?` in `success`, `D` in `error`) from the same VCS data as the sidebar, and a directory SHALL show `M` when any descendant changed. `.gitignore` and `.cyberignore` SHALL apply by default; `.` SHALL toggle hidden and ignored entries, and the footer SHALL count what is hidden. `/` SHALL filter by fuzzy path match across already-loaded and server-searched entries, and `g` SHALL show only changed files.
 
-Enter on a file SHALL open a preview pane to the right, or replace the tree when the terminal is narrower than 100 columns. The preview SHALL have its own header bar with a breadcrumb (`docs › README.md`), the language, line count and size, and the `+N −M` diff summary. A vertical divider SHALL separate it from the tree. Markdown files SHALL be rendered through the transcript's Markdown renderer by default (no OSC 8 links are written from the preview), and `m` SHALL toggle the raw source, shown by a `rendered`/`raw` chip in the header. Source (code, or raw Markdown with markup scopes colored, never one color) SHALL have line numbers, a gutter mark on changed lines and a `│` separator, with syntax highlighting through the same highlighter and theme tokens as code blocks; long lines SHALL soft-wrap with a hanging indent under the gutter. A scrollbar thumb SHALL show the position when the preview is longer than the pane. `←` SHALL fold the selected directory or move to its parent, and `→` SHALL unfold it. `@` SHALL insert the selected path as a file mention in the composer, relative to the Session directory (absolute when the file lies outside it, as when the Location is below the project root), `y` SHALL copy the project-relative path, and `r` SHALL refresh. The explorer SHALL refresh changed rows on file-change and VCS events without collapsing the user's expansion state.
+Enter on a file SHALL open a preview pane to the right, or replace the tree when the terminal is narrower than 100 columns. (P1) The `explorer_focus` binding (default Tab) SHALL move focus between the tree and an open preview, Esc SHALL return focus from the preview to the tree, and the focused pane's header title SHALL be drawn in `accent`. While the preview has focus, Up/Down, PageUp/PageDown and Home SHALL scroll it, and below 100 columns it SHALL replace the tree. The preview SHALL have its own header bar with a breadcrumb (`docs › README.md`), the language, line count and size, and the `+N −M` diff summary. A vertical divider SHALL separate it from the tree. Markdown files SHALL be rendered through the transcript's Markdown renderer by default (no OSC 8 links are written from the preview), and `m` SHALL toggle the raw source, shown by a `rendered`/`raw` chip in the header. Source (code, or raw Markdown with markup scopes colored, never one color) SHALL have line numbers, a gutter mark on changed lines and a `│` separator, with syntax highlighting through the same highlighter and theme tokens as code blocks; long lines SHALL soft-wrap with a hanging indent under the gutter. A scrollbar thumb SHALL show the position when the preview is longer than the pane. `←` SHALL fold the selected directory or move to its parent, and `→` SHALL unfold it. `@` SHALL insert the selected path as a file mention in the composer, relative to the Session directory (absolute when the file lies outside it, as when the Location is below the project root), `y` SHALL copy the project-relative path, and `r` SHALL refresh. The explorer SHALL refresh changed rows on file-change and VCS events without collapsing the user's expansion state.
 
 The explorer SHALL never bypass permissions. Listing SHALL be evaluated as `list` and preview as `read` against the Session's rules for that path. A file whose `read` decision is `ask` SHALL appear dimmed with `⊘ ask to read`, and opening its preview SHALL raise the normal permission request. A file whose decision is `deny` SHALL appear dimmed with `⊘ denied`, with no content. Preview SHALL be capped at 1 MiB and 5,000 lines, with a truncation notice. Binary files SHALL show `binary · <size>`, and symlinks SHALL show their target, never followed outside the project. Displayed file names and content SHALL be sanitized like other untrusted output, so no terminal escape sequence reaches the terminal. Screen readers SHALL get each row as `<name>, directory|file, <status>, level <n>`.
+
+(P1) With the mouse captured, a click on a tree row SHALL select it and act as Enter: a directory row, or its fold marker, folds or unfolds it, and a file row opens its preview (an `ask` file raises the permission request and a `deny` file only shows its notice, as with Enter). A click in the preview SHALL focus it and a click in the tree pane SHALL focus the tree, as `explorer_focus` does. A click on the header's `rendered`/`raw` chip SHALL act as `m`, and a click on a key chip SHALL act as its key. The wheel SHALL act on the pane under the pointer, whichever has focus: over the tree it SHALL move the selection, and over the preview it SHALL scroll the preview by 3 lines per notch.
 
 #### Scenario: Browse and preview
 - **WHEN** the user opens the explorer, expands `crates/cyber-tui/src` and presses Enter on `markdown.rs`
@@ -791,10 +955,28 @@ The explorer SHALL never bypass permissions. Listing SHALL be evaluated as `list
 - **WHEN** a directory lists `src/`, `README.md`, `Cargo.toml`, `main.rs` and `Cargo.lock`
 - **THEN** `src/` is bold in `file_dir`, the files are in `file_doc`, `file_config`, `file_code` and `file_dim`, and root rows start without a guide
 
+#### Scenario: Browse by clicking
+- **WHEN** the user clicks the folded `crates/` row and then the `README.md` row
+- **THEN** `crates/` unfolds, and `README.md` is selected and its preview opens
+
+#### Scenario: Wheel over the preview
+- **WHEN** a long file's preview is open beside the tree and the user turns the wheel down over the preview
+- **THEN** the preview scrolls 3 lines and the tree selection does not move
+
+#### Scenario: Focus the preview
+- **WHEN** a preview is open beside the tree and the user presses Tab, or clicks the preview
+- **THEN** the preview's header title is drawn in `accent` and Down scrolls the preview; Esc returns focus to the tree
+
+#### Scenario: Toggle raw by clicking the chip
+- **WHEN** `docs/README.md` is previewed under a `rendered` chip and the user clicks the chip
+- **THEN** the preview shows the Markdown source and the chip reads `raw`
+
 ### Requirement: Theme switcher
 (P1) `/theme`, the palette action `Theme…` and the Config tab's theme row SHALL open the theme switcher, a two-pane overlay. The left pane SHALL list built-in and custom themes grouped under `DARK` and `LIGHT` by the theme's resolved background luminance. Each row SHALL show the theme name, `current` on the active theme, `custom` on themes loaded from `themes/*.json`, and a swatch of its `accent`, `secondary`, `success`, `warning` and `error` tokens drawn on the theme's own background. Tab SHALL cycle the filter `All · Dark · Light`, and typing SHALL fuzzy-search names. The right pane SHALL show a live preview rendered with the highlighted theme's tokens: the welcome logo gradient, a Markdown heading, a list and a link, a highlighted code block, an added and a removed diff line, success, warning and error status glyphs, a Turn footer marker, and the measured contrast of `text` and `text_muted` against `background` with the WCAG level. Moving the selection SHALL apply the theme to the whole TUI immediately. Enter SHALL keep it and persist it to `kv.json`, `p` (with an empty search, since typing searches) SHALL write `theme` to the `.cyber/tui.jsonc` of the project root, refusing a file with comments rather than rewriting it, and Esc SHALL restore the theme that was active when the switcher opened. The `theme_cycle` binding (default `ctrl+x t`) SHALL switch to the next theme in the current filter without opening the switcher, keep it in `kv.json`, and SHALL announce `Theme: <name>` in the status footer for 2 seconds; `theme_list`, which opens the switcher, moves to `<leader>s`. A permission or question request that replaces the switcher SHALL restore the theme it opened with. Under `NO_COLOR` the switcher SHALL list themes and explain that colors are disabled, with no swatches. A theme whose `text` contrast is below 4.5:1 SHALL show `low contrast` in `warning` in the preview.
 
 The built-in themes SHALL include the existing set plus `cyber-light`, `synthwave-84`, `rose-pine`, `kanagawa`, `ayu-mirage` and `matrix`, each defining every token or deriving it by the documented derivation rules, and each passing the contrast test.
+
+With the mouse captured, a click on a theme row SHALL select it, which previews it as moving the selection does, and a second click on it SHALL keep it as Enter does. A click outside the switcher SHALL neither close it nor restore the previous theme.
 
 #### Scenario: Live preview and revert
 - **WHEN** the user opens `/theme`, moves to `synthwave-84` and presses Esc
@@ -807,6 +989,10 @@ The built-in themes SHALL include the existing set plus `cyber-light`, `synthwav
 #### Scenario: Cycle without the switcher
 - **WHEN** the user presses `ctrl+x t` twice with the filter `Dark`
 - **THEN** the theme moves two dark themes forward and the footer shows `Theme: <name>`
+
+#### Scenario: Preview and keep by clicking
+- **WHEN** the user clicks `rose-pine` once and then again
+- **THEN** the first click previews `rose-pine` and the second keeps it and persists it to `kv.json`
 
 ### Requirement: Nyan progress indicator
 (P1) While the Session is working (a Turn, compaction, a running workflow the user started, or a long tool call), the progress line above the composer SHALL show the activity indicator selected by `tui.spinner`: `nyan` (default), `nyan-tall`, `braille`, `dots` or `off`.
@@ -919,6 +1105,8 @@ While the terminal is unfocused, the same text SHALL be delivered through `tui.n
 
 `/label <name>` SHALL label the active tip, and `/label --clear <name>` SHALL remove a label. When the Session has more than one tip, the header SHALL show `branch <label or short id> (<n> of <total>)`. `/tree` and `/label` SHALL appear in `/help` and in the command palette (**Session tree**, **Label branch**).
 
+With the mouse captured, a click SHALL select a message and a second click on it SHALL act as Enter, with the same idle check.
+
 #### Scenario: Switch branches from the tree
 - **WHEN** the Session has two branches after a rewind and the user selects the inactive one in `/tree` and presses Enter
 - **THEN** the transcript shows that branch's messages and the header shows `branch <id> (1 of 2)`
@@ -926,3 +1114,280 @@ While the terminal is unfocused, the same text SHALL be delivered through `tui.n
 #### Scenario: Busy Session
 - **WHEN** the user presses Enter in `/tree` while a Turn is running
 - **THEN** the TUI reports that the Session must be idle and the active branch does not change
+
+#### Scenario: Check out by clicking
+- **WHEN** the Session is idle and the user clicks the inactive branch's message twice in `/tree`
+- **THEN** that branch is checked out as with Enter
+
+### Requirement: Output style picker
+(P0) `/output-style` and the palette action **Output style…** SHALL open the output style picker, an overlay that lists the styles from `GET /api/v1/config/output-styles` for the Session's Location. Each row SHALL show the name, description and origin (`built-in`, `user` or `project`), with `current` on the Session's effective style and `default` on the configured one. The listing's issues, such as a held project directory, SHALL be shown below the list. Typing SHALL fuzzy-filter names. Enter SHALL switch the current Session. `d` SHALL save the highlighted built-in or user style as the user's default and switch the Session. Esc SHALL close the picker without side effects. `/output-style <name>` SHALL switch without opening the picker, and an unknown or held name SHALL show the server's reason. After a switch the status footer SHALL show `Output style: <name> (next turn)` for 2 seconds. When the Session's selected or configured style is unavailable, the TUI SHALL show the reason once per Session. `/output-style` SHALL be listed in `/help` and in the command palette. A subagent thread SHALL refuse `/output-style`.
+
+#### Scenario: Switch from the picker
+- **WHEN** the user opens `/output-style`, selects `explanatory` and presses Enter
+- **THEN** the Session's output style becomes `explanatory`, the footer shows `Output style: explanatory (next turn)`, and the next request's system prompt ends with that style
+
+#### Scenario: Held project style
+- **WHEN** the user opens the picker in an untrusted checkout that has `.cyber/output-styles/reviewer.md`
+- **THEN** `reviewer` is not listed and the picker shows that project output styles are held until the checkout is trusted
+
+### Requirement: Export command
+(P1) The system SHALL provide `/export [html|md|json] [path]` to export the current Session with the same renderers as `cyber sessions export`. The default format SHALL be `html`. The default path SHALL be `<title-slug>-<short-id>.<ext>` in the Location, where the slug is lowercase ASCII with other characters collapsed to `-`, at most 48 characters. The TUI SHALL ask before overwriting an existing file, SHALL print the written path, and SHALL note that the export contains the full conversation. `/export` SHALL be listed in `/help` and in the command palette (**Export session**).
+
+#### Scenario: Default HTML export
+- **WHEN** the user runs `/export` in a Session titled `Auth refactor` with ID `ses_01M58P862K…`
+- **THEN** `auth-refactor-01m58p86.html` is written in the Location and its path is shown
+
+#### Scenario: Existing file
+- **WHEN** the target file already exists
+- **THEN** the TUI asks before overwriting it and writes nothing if the user declines
+
+### Requirement: Sound alerts
+(P1) The TUI SHALL play a short sound for each alert event:
+- `input`: a permission or question request is waiting;
+- `done`: the Session finished a Drain and is idle, or the Session sent a notification (`session.notification.sent`);
+- `error`: a Turn failed or `session.error` arrived;
+- `workflow`: a watched workflow run completed;
+- `workflow_failed`: a watched workflow run ended any other way: failed, stopped, over its budget, or paused by a restart;
+- `message`: a cross-session message was delivered to or held for the attached Session.
+
+`tui.sounds.when` SHALL be `unfocused` (default: play only while the terminal reports it is unfocused) or `always`.
+
+At most one sound SHALL play every 1.5 seconds. An alert of higher priority, in the order `input`, `error`, `workflow_failed`, `done`, `workflow`, `message`, SHALL replace a waiting lower sound or cut a playing lower one short, and other alerts inside the window SHALL be dropped.
+
+Playing a sound SHALL never block drawing or key handling. Sounds SHALL be played by the platform's own player, run directly and never through a shell:
+- `afplay` on macOS;
+- `pw-play`, `paplay` or `aplay` on Linux;
+- `System.Media.SoundPlayer` through PowerShell on Windows, with the file path passed in an environment variable.
+
+Each player process SHALL have no access to the terminal. It SHALL be killed after 5 seconds, when a newer sound starts, and when the TUI exits, including on SIGHUP and SIGTERM. A player SHALL only be searched for in absolute `PATH` entries.
+
+The system SHALL fall back to the terminal bell when:
+- the pack is `bell`;
+- no player is found, or the player cannot be started;
+- `SSH_CONNECTION` or `SSH_TTY` is set and `tui.sounds.play_over_ssh` is not `true`.
+
+A player that exits with an error SHALL ring the bell for that alert and SHALL be kept for later alerts.
+
+When a sound plays, the bell that `tui.notifications: auto` would write SHALL be left out. The desktop notification SHALL still be sent. At volume 0 no sound SHALL play, and the notification SHALL keep its bell.
+
+`tui.sounds.enabled` SHALL default to `true`, and `tui.sounds.events.<event>: false` SHALL silence one event. The server and `cyber exec` SHALL never play sounds.
+
+#### Scenario: Approval needed while away
+- **WHEN** the terminal is unfocused, sounds use the defaults, and the attached Session asks for permission to run `npm test`
+- **THEN** the `cyber` pack's `input` sound plays once through the detected player, an OSC 9 notification is written, and no BEL is written
+
+#### Scenario: Burst coalesces
+- **WHEN** the terminal is unfocused and a Session goes idle and a message arrives 200 ms apart
+- **THEN** only the `done` sound plays
+
+#### Scenario: Focused terminal stays quiet
+- **WHEN** the terminal is focused, `tui.sounds.when` is `unfocused`, and a Turn finishes
+- **THEN** no sound plays
+
+#### Scenario: SSH session uses the bell
+- **WHEN** `SSH_CONNECTION` is set, `play_over_ssh` is unset, and an `error` alert fires while unfocused
+- **THEN** no player is started and a BEL is written to the terminal
+
+#### Scenario: No player available
+- **WHEN** no supported player is on `PATH` and a `done` alert fires while unfocused
+- **THEN** a BEL is written, and one `info` log line names the reason
+
+### Requirement: Sound packs
+(P1) The system SHALL ship four packs:
+- `cyber` (default): FM chimes;
+- `soft`: sine tones;
+- `retro`: square-wave arpeggios;
+- `bell`: the terminal bell only.
+
+The packs other than `bell` SHALL have a different sound for each of the six events. Their sounds SHALL be synthesized in code, with no audio files bundled, as mono 16-bit 44.1 kHz WAV. Each sound SHALL:
+- last at most 0.9 seconds;
+- peak at or below −1 dBFS;
+- start and end below −40 dBFS over its first and last 2 ms;
+- be byte-identical across runs for the same pack, event, volume and synthesizer version.
+
+Rendered files SHALL be cached under the cache directory, keyed by pack, event, synthesizer version and volume, and written atomically.
+
+`tui.sounds.volume` (0–100, default 60) SHALL scale the rendered samples. `tui.sounds.events.<event>` SHALL also accept:
+- a pack name, to use that pack's sound for the event;
+- an absolute or `~/` path to a regular file of at most 5 MiB with the extension `.wav`, `.aiff`, `.aif`, `.mp3`, `.ogg` or `.oga`.
+
+A path SHALL be honoured only from the global `tui.jsonc`. A rejected or missing file, a file the detected player cannot decode (`aplay` and PowerShell take only `.wav`, `afplay` takes no Ogg), or a file the player fails to play SHALL fall back to the pack's sound with one warning.
+
+A project `tui.jsonc` SHALL only be able to set `sounds.enabled: false`, lower `sounds.volume`, or set an event to `false`. Any other `sounds` value from a project SHALL be ignored with a warning.
+
+#### Scenario: Deterministic, click-free sounds
+- **WHEN** the `retro` `workflow` sound is rendered twice at volume 60
+- **THEN** both files are byte-identical, the peak is at most −1 dBFS, and the first and last 2 ms are below −40 dBFS
+
+#### Scenario: Project cannot pick a file
+- **WHEN** a project `tui.jsonc` sets `sounds.events.input` to `/tmp/x.wav` and `sounds.enabled` to `true` while the global file has `enabled: false`
+- **THEN** sounds stay off, the project values are ignored, and a warning names the ignored keys
+
+#### Scenario: Custom file from global config
+- **WHEN** the global `tui.jsonc` sets `sounds.events.done` to `~/sounds/done.wav`, a 40 KiB regular file
+- **THEN** a `done` alert plays that file, and the other events keep the pack sounds
+
+### Requirement: Sound settings command
+(P1) `/sounds` (also in the command palette, binding `sounds_view`, unbound by default) SHALL open an overlay that:
+- turns sounds on and off;
+- picks the pack;
+- changes the volume in steps of 10;
+- sets `when`;
+- turns each event on and off;
+- previews each event's sound.
+
+A preview SHALL play regardless of focus, `when` and the throttle. The overlay SHALL show the detected player, or the reason the bell fallback is used. Choices SHALL be saved to `kv.json`, where they override the global `tui.jsonc` unless that file was written after them (as `/theme`), and are overridden by the restrictions of a project `tui.jsonc`. Turning an event back on SHALL restore the pack or file the global `tui.jsonc` gives it. Every state SHALL be shown as a word, so the overlay is usable with `NO_COLOR` and in screen-reader mode.
+
+#### Scenario: Pick a pack and preview
+- **WHEN** the user opens `/sounds`, selects `retro`, and presses `p` on the `input` row
+- **THEN** the `retro` `input` sound plays, and `retro` is still selected after the TUI restarts
+
+#### Scenario: Fallback shown
+- **WHEN** `/sounds` is opened over SSH without `play_over_ssh`
+- **THEN** the overlay shows `bell only: SSH session`
+
+### Requirement: Needs-input attention
+(P0) When the attached Session gains a permission or question request, or one is routed to it, that this TUI has not alerted for, the TUI SHALL fire the attention notification of `tui.notifications` with the text `cyber: <session name> needs input`, together with the `input` sound alert. This SHALL happen once per request ID per TUI process, including when a reconnect or snapshot shows the same request again, and it SHALL follow the same focus rule as the `input` sound.
+
+#### Scenario: Permission request notifies once
+- **WHEN** the terminal is unfocused and a permission request appears, then the event stream reconnects and the request is still pending
+- **THEN** exactly one notification `cyber: <session name> needs input` and one `input` sound are produced
+
+### Requirement: Agent directory
+(P1) `/agents` SHALL open a full-screen directory of every Session and agent the attached Session can reach by message. It SHALL also be in the command palette, with the binding `agents_view`, which is unbound by default. The directory SHALL read these sources:
+
+- the messaging listing `GET /api/v1/messaging/sessions?from=<attached Session>`: subagents, teammates, other local Sessions, and direct-peer Sessions (`name@peer`, with `*@peer` for an offline peer);
+- when project collaboration is enabled and the Session is bound to a project, the project's active hub agents and members from the collaboration participants route, except the signed-in member and the agent the attached Session is published as.
+
+**Rows.** Rows SHALL be grouped as **This server**, **Peers** and **Project hub**. Each row SHALL show:
+
+- the address to send to;
+- a kind: `subagent`, `workflow agent`, `teammate`, `session`, `peer`, `hub agent` or `hub member`;
+- a state: `idle`, `running`, `waiting_input` or `offline` (`online` or `offline` for hub agents; a hub member has no presence on the hub and shows `-`), as a glyph and a word;
+- whether it can receive;
+- its Location: the directory, the peer name, or `hub:<project>`.
+
+**Filtering.** Typed characters SHALL filter the rows on address, name, kind and Location. Tab SHALL cycle a kind filter. Esc SHALL clear a non-empty filter before it closes the overlay.
+
+**Selection and refresh.** The selection SHALL be kept by row identity across refreshes. The directory SHALL refresh on open, every 10 seconds while open (not while an editor is open), and after an action.
+
+**Actions.** The selected row SHALL offer:
+
+- **message:** Enter opens a compose editor. A listing row is sent through `POST /api/v1/messaging/send` from the attached Session. A hub row is sent as a direct message through the collaboration messages route. The outcome (`delivered`, `held` or `refused` with its reason) or the error SHALL be shown. An outcome SHALL close or annotate only the editor that submitted it; once that editor is closed, it SHALL be shown as a notice.
+- **watch:** Ctrl+W, through `POST /api/v1/messaging/watch`.
+- **open:** Ctrl+O switches the TUI to a local Session. On a peer row it shows the `cyber attach <session>@<peer>` command.
+- **rename:** Ctrl+R, for local Sessions and subagents only, through the same rename used by `/rename` and the Session picker.
+- **held messages:** Ctrl+G opens `/messages` filtered to held messages.
+
+An action that does not apply to the row SHALL do nothing and say why. The directory SHALL use only the existing routes and SHALL NOT bypass inbound rules, rate limits or permissions.
+
+**Untrusted text.** Every name, address, Location and hub text SHALL be stripped of control and bidi characters before display. A row whose address changes under that cleaning SHALL be sent to by its Session ID or not at all. Peer rows SHALL NOT be offered open-as-local or rename.
+
+**Errors and empty states.** A source that fails SHALL show its error in its group without hiding the other sources:
+
+- messaging disabled for the Location SHALL be shown as disabled (rows that cannot receive, or a disabled line when the listing itself is unavailable);
+- a failed messaging refresh SHALL keep the last rows;
+- a failed hub read SHALL clear the hub rows.
+
+With no reachable rows, the directory SHALL say so and point to peer pairing and `/collab`. Under NO_COLOR, state SHALL be conveyed by glyph and word, and the selection by reverse video. A Session switch SHALL close and reset the directory.
+
+#### Scenario: Local Sessions and a subagent
+- **WHEN** the attached Session has one subagent named `tests`, and a Session titled `migration` runs in another directory on the same server, and the user runs `/agents`
+- **THEN** **This server** lists `tests` as `subagent` and `migration` as `session` with its state and directory, and the attached Session itself is not listed
+
+#### Scenario: Offline peer
+- **WHEN** a configured peer `nas` cannot be reached and the user opens `/agents`
+- **THEN** **Peers** shows `*@nas` as `peer`, `offline`, `closed`, and pressing Enter on it shows that it cannot receive instead of opening the editor
+
+#### Scenario: Message from the directory
+- **WHEN** the user types `migr`, presses Enter on `migration`, writes `schema is merged` and presses Enter
+- **THEN** the message is sent from the attached Session to `migration`, the toast shows `delivered` and the message ID, and the filter still shows only `migration`
+
+#### Scenario: Rename a local Session
+- **WHEN** the user selects an untitled local Session listed by its `ses_` ID, presses Ctrl+R and enters `api-server`
+- **THEN** the Session is renamed, and after the refresh its row's address is `api-server`
+
+#### Scenario: Hub agent
+- **WHEN** collaboration is enabled, the Session is bound to project `web`, and the hub lists an online agent `reviewer`
+- **THEN** **Project hub** shows `reviewer` as `hub agent`, `online`, at `hub:web`; Enter sends a direct hub message to it; and Ctrl+W and Ctrl+R explain that they do not apply
+
+#### Scenario: Crafted peer name
+- **WHEN** a peer lists a Session whose name contains a bidi override and an escape sequence
+- **THEN** the row shows the name without those characters, and actions on it send to the Session ID rather than to the crafted address
+
+### Requirement: Mouse clicks
+(P1) In fullscreen mode with the mouse captured, the TUI SHALL act on left button presses. Releases, drags, the right and middle buttons, and presses with a modifier SHALL be ignored, so a modifier drag stays the terminal's own selection. Click targets SHALL come from the last drawn frame, and a target whose row no longer exists SHALL do nothing. Each target SHALL be one of:
+- a **row** of a list: the pickers (Session, model, mode, `/agent`, `/tasks`, skills, plugins, loops, goals and the others built on the generic picker), the command palette, the output style picker, the theme switcher, the Workflow monitor, `/messages`, `/team`, `/tree`, the Settings Config rows and the options of a permission or question prompt. The first click SHALL select the row and arm it; a click on the armed row SHALL activate it as Enter does, and only when it still shows the item the first click selected: when the list reloads or reorders in between, or the picker is replaced by another kind, the click SHALL only select and arm the row now there. A list scrolled past its height SHALL keep its window until the selection leaves it, so a clicked row stays under the pointer. A double click (a second press on the same target within 500 ms) SHALL therefore select and then activate. The hook views draw no rows to pick (`/hooks` shows one definition at a time, and Enter closes `/hooks history`), so they SHALL take no clicks; the wheel still moves them.
+- a **control**: a Settings tab, a key chip, the explorer's `rendered`/`raw` chip, an explorer tree row, a sidebar section header, or a collapsed transcript row. One click SHALL act as its key does. The second press of a double click on a control (a press on the same control, or at the same cell, within 500 ms) SHALL be ignored, so a double click toggles once.
+- a **pane**: the transcript, the composer, and the explorer's tree and preview. A click SHALL move focus to it as its key does.
+
+Any key press, a change of the open panel, and a new pending request SHALL disarm the armed row. Every click SHALL do only what a key already does in that place, through the same handler, and nothing reachable by the mouse SHALL be unreachable by the keyboard. While a modal panel is open (a picker, the palette, the theme switcher, a prompt, a confirmation, help or a full-screen panel), a click outside it SHALL do nothing and SHALL never close it, and a click inside it on no target SHALL do nothing. Confirmation dialogs (stop background tasks, bypass mode, overwrite an export), the Allow always confirmation step, the rejection feedback and the blocked-call approval SHALL take no clicks. `tui.mouse: off`, inline rendering and screen-reader mode SHALL handle no clicks.
+
+#### Scenario: Second click activates a row
+- **WHEN** the model picker is open and the user clicks `gpt-5` once, then clicks it again
+- **THEN** the first click selects `gpt-5` and the second switches the Session's model to it, as Enter would
+
+#### Scenario: A key between clicks disarms
+- **WHEN** the user clicks a Session row in `/resume`, presses Down and Up, and clicks the same row again
+- **THEN** the second click only selects the row again and nothing is resumed
+
+#### Scenario: Double click on a control toggles once
+- **WHEN** the user double clicks the folded `src/` row in the file explorer
+- **THEN** `src/` unfolds once and stays unfolded
+
+#### Scenario: Click outside a modal panel
+- **WHEN** the command palette is open and the user clicks the transcript beside it
+- **THEN** the palette stays open with the same selection and nothing else changes
+
+#### Scenario: Confirmations take no clicks
+- **WHEN** `Stop all background commands?` is shown and the user clicks on it twice
+- **THEN** nothing is stopped and the confirmation stays until a key answers it
+
+#### Scenario: Mouse off
+- **WHEN** `tui.mouse` is `off` and the terminal still delivers a click on a palette row
+- **THEN** the TUI ignores it
+
+### Requirement: Sidebar reachable Session overview
+(P1) The right sidebar SHALL provide a collapsible, initially expanded Sessions and agents overview after Context. It SHALL show at most six reachable named entries total, grouped as local Sessions, team/child agents and remote Sessions/agents, with actual state, kind and concise provenance. It SHALL use supplied Session titles or advertised agent names/addresses, sanitize external text and truncate by terminal display width. The preview budget SHALL reserve an entry for each nonempty group before filling remaining slots, so local history cannot starve team/remote names. Overflow SHALL link to the existing agent directory. The current Session title SHALL remain in the existing header without a duplicate reachable row. Human hub members and offline peer wildcard records SHALL NOT be counted as discovered Sessions.
+
+#### Scenario: Named local and remote entries
+- **WHEN** the attached Session can reach a local Session, a teammate and a Session on a paired peer
+- **THEN** the sidebar shows their supplied names, actual states and distinct local/team/peer provenance without opening an overlay or inventing a remote connection
+
+#### Scenario: Bounded list and duplicate names
+- **WHEN** more than six entries are reachable and two remote entries have the same title
+- **THEN** the overview renders at most six named entries with truthful total/overflow counts, keeps different identities distinct and exposes their provenance and full details through the directory
+
+#### Scenario: No reachable Session or unavailable source
+- **WHEN** a source is loading, unavailable, disabled, empty or reports an offline peer without Session rows
+- **THEN** the corresponding state is explicit and is not rendered or counted as a fabricated live Session
+
+### Requirement: Shared directory refresh lifetime
+(P1) Sidebar and agent-directory views SHALL use the same authorized source loaders and shared source data. Refresh demand SHALL be coalesced to one read per source per ten-second interval while an expanded visible overview or directory needs it, except an explicit manual refresh. A hidden/collapsed sidebar alone SHALL NOT keep polling. Overlay filters/editors SHALL NOT change the sidebar's unfiltered projection. Source replies SHALL be fenced to the current Session, Location, connection, generation and observed account context; observed hub authorization loss SHALL clear hub rows. Network failures SHALL NOT block UI input or independent native Stop.
+
+#### Scenario: Both views need data
+- **WHEN** the directory is opened while the sidebar has fresh data or a refresh in flight
+- **THEN** it can use that data and coalesces the read rather than starting an independent roster loop
+
+#### Scenario: Context switch while remote data is pending
+- **WHEN** a late peer/hub reply arrives after a Session, server, Location or relevant account context changes
+- **THEN** it cannot repopulate the new context with the old roster or authorize an action under the old identity
+
+#### Scenario: Hub access revoked
+- **WHEN** the shared source observes that the current hub membership is no longer authorized
+- **THEN** hub entries disappear from both views without preserving a stale roster as live data
+
+### Requirement: Sidebar discovery navigation and accessibility
+(P1) The overview SHALL follow sidebar collapse/focus, keyboard and mouse conventions. The section header SHALL toggle collapse; a directory footer or named row SHALL open the existing agent directory, selecting by stable identity when still available. Displaying or activating an overview row SHALL NOT automatically send, watch, rename, create or attach a Session. Navigation SHALL NOT retarget a stale selected index after refresh. Dark, light, NO_COLOR and narrow/drawer rendering SHALL preserve readable labels and existing native-control warning/Stop priority.
+
+#### Scenario: Row changes before activation
+- **WHEN** entries reorder or the focused entry disappears between render and activation
+- **THEN** navigation follows its stable identity or opens the refreshed directory without acting on another row that inherited the index
+
+#### Scenario: Native control while browsing the roster
+- **WHEN** native control is active or uncertain and the sidebar or a busy directory editor has focus
+- **THEN** its warning remains visible and the existing independent Stop shortcut is processed before roster/editor keys
+
+#### Scenario: Accessible compact rendering
+- **WHEN** the terminal uses NO_COLOR or a narrow sidebar drawer
+- **THEN** names and state/source labels remain understandable without color and overflow remains discoverable without hiding connection/footer information

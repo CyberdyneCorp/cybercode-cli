@@ -25,7 +25,7 @@ This list is the single registry of top-level commands; no other spec SHALL intr
 - **THEN** every top-level command above is listed with a one-line description, grouped as Core, Orchestration, Connectivity, Extensibility and Maintenance
 
 ### Requirement: Global flags
-(P0) Every command SHALL accept `--help`/`-h`, `--version`/`-V`, `--model`/`-m <provider/model[#variant]>`, `--agent <name>`, `--mode <default|accept-edits|plan|auto|dont-ask|bypass>`, `--cwd <path>`, `--add-dir <path>` (repeatable; `permissions-modes` → Additional working directories), `--profile <name>`, `-c`/`--config <key=value>` (repeatable; `configuration` → Command-line overrides), `--features <name,...>`, `--allow <rule>` and `--deny <rule>` (repeatable; Session ruleset entries `action[:resource]`), `--system-prompt <text|@file>` and `--append-system-prompt <text|@file>` (replace or extend the agent's `system` for the new Session), `--mcp-config <file>` (repeatable; adds MCP servers for the Session only, as `editor-integration` does for ACP clients), `--format <table|json|text|stream-json>` (the only output-format flag), `--print-logs`, `--log-level <trace|debug|info|warn|error>` and `--pure`. `--cwd` SHALL be the only working-directory flag. `--pure` SHALL disable external plugins, hooks, channels and MCP servers that are not managed by org policy. Flags SHALL take precedence over environment variables, and environment variables over config.
+(P0) Every command SHALL accept `--help`/`-h`, `--version`/`-V`, `--model`/`-m <provider/model[#variant]>`, `--agent <name>`, `--mode <default|accept-edits|plan|auto|dont-ask|bypass>`, `--cwd <path>`, `--add-dir <path>` (repeatable; `permissions-modes` → Additional working directories), `--profile <name>`, `-c`/`--config <key=value>` (repeatable; `configuration` → Command-line overrides), `--features <name,...>`, `--allow <rule>` and `--deny <rule>` (repeatable; Session ruleset entries `action[:resource]`), `--system-prompt <text|@file>` and `--append-system-prompt <text|@file>` (replace or extend the agent's `system` for the new Session), `--mcp-config <file>` (repeatable; adds MCP servers for the Session only, as `editor-integration` does for ACP clients), `--format <table|json|text|stream-json|md|html>` (the only output-format flag; `md` and `html` are `cyber sessions export` formats, and any other command given `html` SHALL fail with exit code 2), `--print-logs`, `--log-level <trace|debug|info|warn|error>` and `--pure`. `--cwd` SHALL be the only working-directory flag. `--pure` SHALL disable external plugins, hooks, channels and MCP servers that are not managed by org policy. Flags SHALL take precedence over environment variables, and environment variables over config.
 
 #### Scenario: Flag overrides config model
 - **WHEN** `cyber.jsonc` sets `model` to `anthropic/claude-sonnet` and the user runs `cyber exec -m openai/gpt-6 "hi"`
@@ -38,6 +38,10 @@ This list is the single registry of top-level commands; no other spec SHALL intr
 #### Scenario: Inline allow rule for CI
 - **WHEN** CI runs `cyber exec --allow "bash:npm test *" --deny "bash:git push *" "fix the tests"`
 - **THEN** `npm test` runs without prompting, `git push` is denied, and both rules appear in the Session ruleset
+
+#### Scenario: HTML format outside export
+- **WHEN** the user runs `cyber sessions list --format html`
+- **THEN** the command fails with exit code 2 and says that `--format html` is only for `cyber sessions export`
 
 ### Requirement: Profiles
 (P0) `--profile <name>` (or `CYBER_PROFILE`) SHALL select a named overlay from the `profiles` object in config, which SHALL be merged above all non-managed config layers. An unknown profile SHALL fail with exit code 2 and list the available profiles.
@@ -276,3 +280,47 @@ A message argument SHALL accept an ID, a unique ID prefix or a label. A busy Ses
 #### Scenario: Export every branch
 - **WHEN** the user runs `cyber sessions export <session> --all-branches` on a Session with two branches
 - **THEN** the document lists the messages of both branches in creation order with `branches: "all"`, and without the flag only the active path with `branches: "active"`
+
+### Requirement: Telemetry status command
+(P1) `cyber telemetry show` SHALL print the running server's telemetry status from `GET /api/v1/telemetry`. For each signal (traces, metrics, logs) it SHALL show:
+
+- whether OpenTelemetry export is on and, when off, why,
+- the effective endpoint (without userinfo or query), protocol and timeout,
+- the header names with every value shown as `***`,
+- the source of each value (`config (<layer>)`, `env (<VARIABLE>)`, `policy (<managed source>)` or `default`),
+- the counters `exported`, `failed` and `dropped`, and the last export error with its time.
+
+It SHALL also show:
+
+- `telemetry.log_prompts` and its source,
+- the configuration values it ignored (project layers),
+- whether the configuration changed since the server started (a restart is required),
+- whether product telemetry is on.
+
+`--format json` SHALL print the same status as JSON. The command SHALL exit 0 whether or not export is on. Header values and Cyber Account identifiers SHALL NOT be printed.
+
+#### Scenario: Masked headers and sources
+- **WHEN** global configuration enables export with `headers: { "authorization": "Bearer abc" }` and `OTEL_EXPORTER_OTLP_PROTOCOL=http/json` is set on the server
+- **THEN** `cyber telemetry show` lists `authorization=***` with source `config`, protocol `http/json` with source `env (OTEL_EXPORTER_OTLP_PROTOCOL)`, and the output contains no `abc`
+
+#### Scenario: Export off by default
+- **WHEN** no telemetry configuration exists and the user runs `cyber telemetry show --format json`
+- **THEN** the JSON has `enabled: false` with a reason, every counter is 0, and the exit code is 0
+
+### Requirement: Project collaboration commands
+(P3) `cyber collab` SHALL expose `serve`, `project create|list|show`, `invite`, `invitations list|revoke`, `applications list|approve|reject`, `join`, `bind`, `members list|set-role|remove`, `publish`, `unpublish`, `messages list|send`, `tasks list|create|claim|update|reconcile`, and `leave`, with explicit project IDs, typed JSON output and the authorization/consent rules of `project-collaboration`. `serve` SHALL accept the trusted issuer, API audience, bootstrap subject, listen address (default `127.0.0.1:4749`) and operator TLS configuration. Local commands SHALL use the owning local server rather than a second untracked runtime. The feature SHALL remain explicitly unavailable until enabled and implemented; parsing a reserved command SHALL NOT create state or pretend it succeeded. Project creation SHALL require an explicit `--organization <org-id>` or `--friends` choice. Invitation/application flows SHALL visibly distinguish internal membership from external guests and securely prompt for any required project join code; they SHALL NOT request another person's Auth MFA code. Human message/task operations SHALL require no LLM request.
+
+#### Scenario: Human posts without an agent
+- **WHEN** an authorized member runs `cyber collab messages send --project <id>` with text
+- **THEN** the hub records that authenticated human author without starting a Session or invoking a model
+
+#### Scenario: Disabled feature
+- **WHEN** a user runs a collaboration mutation while `features.collaboration` is off
+- **THEN** the command reports the disabled capability and creates no membership, publication or message
+
+### Requirement: Computer use owner commands
+(P2) `cyber computer status|setup|allow|stop` SHALL expose native capability/OS-consent health, deliberate OS setup, owner-armed Session/target grants and immediate revocation. It SHALL clearly distinguish disabled, unsupported, missing OS consent, unarmed, active and stopped states. Models and hub agents SHALL NOT call the owner arming path as a substitute for human consent.
+
+#### Scenario: Inspect capability without capturing
+- **WHEN** the owner runs `cyber computer status`
+- **THEN** it reports platform and OS/grant readiness without recording the screen, posting input or prompting for OS consent

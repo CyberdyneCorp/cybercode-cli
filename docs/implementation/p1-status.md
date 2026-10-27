@@ -1,6 +1,6 @@
 # P1 implementation status
 
-Current canonical scope and unmatched acceptance rows are tracked in the [2026-10-22 reconciliation](spec-doc-reconciliation.md). Counts and results in the dated sections below describe their recorded checkpoints; they do not classify every requirement added since then.
+Current canonical scope and unmatched acceptance rows are tracked in the [current reconciliation](spec-doc-reconciliation.md). Counts and results in the dated sections below describe their recorded checkpoints; they do not classify every requirement added since then.
 
 ## P1 CI evidence pass and sign-off plan (2026-10-23)
 

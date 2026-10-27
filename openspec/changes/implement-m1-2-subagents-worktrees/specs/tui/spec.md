@@ -10,9 +10,15 @@
 
 From the list the user SHALL be able to view full output, attach to a subagent thread, or stop one item. `/stop` SHALL stop all background shell commands after confirmation.
 
+(P1) With the mouse captured, a click SHALL select a row and a second click on it SHALL act as Enter. Stopping stays on its keys.
+
 #### Scenario: Stop one background command
 - **WHEN** the user selects a running `npm run dev` job and presses `x`
 - **THEN** the job is terminated, its status becomes `cancelled`, and the model is notified at the next Safe Boundary
+
+#### Scenario: Open a task's output by clicking
+- **WHEN** `/tasks` lists `npm run dev` and the user clicks its row twice
+- **THEN** the task's output opens as with Enter, and the job keeps running
 
 #### Scenario: Keys of the tasks list
 - **WHEN** the tasks list is open
@@ -29,9 +35,15 @@ From the list the user SHALL be able to view full output, attach to a subagent t
 ### Requirement: Subagent threads and side chat
 (P1) The system SHALL provide `/agent` (alias `/subagents`) to switch the view to any running or finished subagent thread of the Session, show its transcript, and send it messages when it is resumable. (P1) `/btw <question>` (alias `/side`) SHALL open an ephemeral overlay chat. The side chat SHALL see the current Session context read-only, SHALL NOT add messages to the main Session, and SHALL be discarded on close unless the user chooses `Insert answer`.
 
+(P1) With the mouse captured, a click in the `/agent` list SHALL select a thread and a second click on it SHALL switch to it as Enter does.
+
 #### Scenario: Side question does not pollute history
 - **WHEN** the user asks `/btw what does the --frozen flag do?` while the main agent works
 - **THEN** the answer appears in an overlay and the main Session history gains no message
+
+#### Scenario: Switch thread by clicking
+- **WHEN** `/agent` lists `review` and `explore` and the user clicks `explore` twice
+- **THEN** the view switches to the `explore` thread
 
 #### Scenario: Overlay keys
 - **WHEN** the side chat overlay shows an answer

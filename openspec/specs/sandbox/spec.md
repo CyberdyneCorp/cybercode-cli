@@ -124,3 +124,29 @@ Confines the processes Cyber Code launches for the model (shell commands, option
 #### Scenario: Clean environment for CI
 - **WHEN** `sandbox.env.mode` is `none` and `set` is `{ "CI": "1" }`
 - **THEN** a sandboxed `env` prints only the five base variables plus `CI=1` and the `CYBER_*` markers
+
+### Requirement: Invocation launch excludes ambient package wildcard authority
+(P1) Default Windows invocation launch SHALL opt out of All Application Packages authority using less-privileged AppContainer creation. It SHALL include only the fixed `registryRead` capability required for system initialization, with no direct-network capability. Suspended launch SHALL verify the exact AppContainer identity and capability SID set before resume, and retain job assignment. Capability derivation, attribute or token-verification failure SHALL fail closed. Ordinary AppContainer creation SHALL be available only as an explicitly enabled test control, without a runtime permission-mode or configuration override.
+
+#### Scenario: Broad package permission cannot widen protected access
+- **WHEN** a fixture grants All Application Packages full access to protected files
+- **THEN** ordinary AppContainer controls prove the allowance works before and after owned-policy cleanup
+- **AND** default invocation launch denies protected writes, deletion, child creation and hidden access while allowing scoped writable access
+
+#### Scenario: Runtime initialization failure is not accepted as network isolation
+- **WHEN** a native launch fixture cannot initialize Winsock or create its required descendant
+- **THEN** the original runtime assertion fails and reports its stage
+- **AND** read-only system registry and own-token access probes include successful host controls without changing ACLs or requesting capabilities beyond the fixed launch policy
+
+#### Scenario: Runtime capability policy is verified before execution
+- **WHEN** a Windows invocation is launched with the fixed system-initialization capability
+- **THEN** its suspended token contains exactly the expected enabled registryRead SID and no other capability SID
+- **AND** missing, unexpected, disabled or oversized capability information refuses resume and cleans up the owned process
+- **AND** runtime modes and configuration cannot widen the capability set
+- **AND** native assertions require working Winsock initialization and descendant creation alongside protected-file and direct-loopback denial
+
+#### Scenario: Correct capability count does not substitute for identity or enabled state
+- **GIVEN** the fixed runtime policy expects one enabled registryRead capability SID
+- **WHEN** capability verification receives one valid enabled internetClient SID or the expected SID with its enabled flag cleared
+- **THEN** both cases SHALL fail verification despite their matching capability count
+- **AND** an enabled Windows-derived registryRead SID SHALL pass the same verifier as a positive control
