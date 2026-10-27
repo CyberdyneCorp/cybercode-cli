@@ -10,8 +10,12 @@ pub(super) use cyber_core::hooks::file_observations::Stamp;
 pub(super) struct Scan {
     pub files: BTreeMap<PathBuf, Stamp>,
     pub directories: BTreeSet<PathBuf>,
+    /// Known names with unproven alias scope. Their absence from `files` is not
+    /// deletion evidence and must not expose a new private metadata stamp.
+    pub suppressed: BTreeSet<PathBuf>,
     /// False for entry limits, cancellation, unreadable directories or traversal
     /// errors. A later complete scan can resolve retained, unseen entries.
+    /// `suppressed` names remain unknown independently of enumeration completeness.
     pub complete: bool,
 }
 
@@ -99,7 +103,9 @@ impl State {
             changes.extend(
                 self.files
                     .keys()
-                    .filter(|path| !scan.files.contains_key(*path))
+                    .filter(|path| {
+                        !scan.files.contains_key(*path) && !scan.suppressed.contains(*path)
+                    })
                     .map(|path| Change {
                         path: path.clone(),
                         kind: Kind::Removed,
@@ -108,6 +114,13 @@ impl State {
         }
         let retained = if scan.complete {
             scan.files.len()
+                + self
+                    .files
+                    .keys()
+                    .filter(|path| {
+                        scan.suppressed.contains(*path) && !scan.files.contains_key(*path)
+                    })
+                    .count()
         } else {
             self.files.len()
                 + scan
@@ -120,10 +133,9 @@ impl State {
             return Reconciled::Overflow;
         }
         if scan.complete {
-            self.files = scan.files;
-        } else {
-            self.files.extend(scan.files);
+            self.files.retain(|path, _| scan.suppressed.contains(path));
         }
+        self.files.extend(scan.files);
         changes.sort_by(|left, right| left.path.cmp(&right.path));
         Reconciled::Changes {
             changes,
@@ -196,6 +208,7 @@ mod tests {
             State::baseline(files(&[("same-size", 1), ("old-name", 2), ("deleted", 3)]));
         let scan = Scan {
             directories: Default::default(),
+            suppressed: Default::default(),
             files: files(&[("same-size", 4), ("new-name", 2)]),
             complete: true,
         };
@@ -231,6 +244,7 @@ mod tests {
         let mut state = State::baseline(files(&[("unreadable/data", 1), ("kept", 2)]));
         let partial = Scan {
             directories: Default::default(),
+            suppressed: Default::default(),
             files: files(&[("kept", 3)]),
             complete: false,
         };
@@ -244,6 +258,7 @@ mod tests {
         assert!(state.files().contains_key(Path::new("unreadable/data")));
         let complete = Scan {
             directories: Default::default(),
+            suppressed: Default::default(),
             files: files(&[("kept", 3)]),
             complete: true,
         };
@@ -265,6 +280,7 @@ mod tests {
         let mut state = State::baseline(original.clone());
         let scan = || Scan {
             directories: Default::default(),
+            suppressed: Default::default(),
             files: files(&[("after", 2)]),
             complete: true,
         };
@@ -289,6 +305,7 @@ mod tests {
             state.reconcile(
                 Scan {
                     directories: Default::default(),
+                    suppressed: Default::default(),
                     files: files(&[("data", 1)]),
                     complete: true
                 },
@@ -322,6 +339,7 @@ mod tests {
         state.restrict(|path| !path.starts_with("private"));
         let scan = Scan {
             directories: Default::default(),
+            suppressed: Default::default(),
             files: files(&[("public", 2)]),
             complete: true,
         };
@@ -339,6 +357,7 @@ mod tests {
         let mut state = State::baseline(files(&[("unseen", 1)]));
         let first = Scan {
             directories: Default::default(),
+            suppressed: Default::default(),
             files: files(&[("new", 2)]),
             complete: false,
         };
@@ -348,6 +367,7 @@ mod tests {
         ));
         let second = Scan {
             directories: Default::default(),
+            suppressed: Default::default(),
             files: files(&[("another", 3)]),
             complete: false,
         };
@@ -365,5 +385,41 @@ mod tests {
             assert!(!relative_path(Path::new(path)), "{path}");
         }
         assert!(relative_path(Path::new("nested/data")));
+    }
+    #[test]
+    fn unproven_aliases_retain_prior_stamps_without_synthetic_deletions() {
+        let original = files(&[("alias", 1), ("deleted", 2), ("public", 3)]);
+        let mut state = State::baseline(original.clone());
+        let actual = state.reconcile(
+            Scan {
+                files: files(&[("public", 4)]),
+                directories: Default::default(),
+                suppressed: BTreeSet::from([PathBuf::from("alias")]),
+                complete: true,
+            },
+            &BTreeSet::from([PathBuf::from("alias")]),
+            3,
+        );
+        assert_eq!(
+            actual,
+            Reconciled::Changes {
+                changes: vec![
+                    Change {
+                        path: "deleted".into(),
+                        kind: Kind::Removed
+                    },
+                    Change {
+                        path: "public".into(),
+                        kind: Kind::Modified
+                    },
+                ],
+                complete: true
+            }
+        );
+        assert_eq!(
+            state.files()[Path::new("alias")],
+            original[Path::new("alias")]
+        );
+        assert_eq!(state.files().len(), 2);
     }
 }

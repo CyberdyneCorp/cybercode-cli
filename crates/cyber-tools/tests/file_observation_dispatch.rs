@@ -14,6 +14,9 @@ struct Recorder {
 }
 impl Recorder {
     async fn start() -> Self {
+        Self::with_gate(None).await
+    }
+    async fn with_gate(gate: Option<Arc<tokio::sync::Notify>>) -> Self {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/hook", listener.local_addr().unwrap());
@@ -21,8 +24,10 @@ impl Recorder {
             let seen=Arc::clone(&seen);
             move |axum::Json(event):axum::Json<Value>| {
                 let seen=Arc::clone(&seen);
+                let gate=gate.clone();
                 async move {
                     seen.lock().unwrap().push(event);
+                    if let Some(gate) = gate { gate.notified().await; }
                     axum::Json(json!({"decision":"deny","reason":"observation cannot veto a committed write"}))
                 }
             }
@@ -485,4 +490,139 @@ fn initialize_project(path: &std::path::Path, remote: &str) {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+#[tokio::test]
+async fn hard_link_scope_allows_owned_aliases_and_suppresses_private_state_aliases() {
+    let flow = support::flow::Flow::new(vec![], false);
+    let recorder = Recorder::start().await;
+    automatic_hooks(&flow, &recorder);
+    flow.f.write("owned-original", "public");
+    std::fs::hard_link(
+        flow.f.repo.join("owned-original"),
+        flow.f.repo.join("owned-alias"),
+    )
+    .unwrap();
+    flow.f.write("ambiguous-alias", "public");
+    let private = flow.f.dir.path().join("tmp/private-state");
+    std::fs::create_dir_all(private.parent().unwrap()).unwrap();
+    std::fs::write(&private, "private metadata must not reach hook observers").unwrap();
+    let _session = flow.session("default").await;
+    await_condition("hard-link baseline", || {
+        journal_count(&flow, records::CHECKPOINT) == 1
+    })
+    .await;
+    std::fs::write(flow.f.repo.join("owned-original"), "public modification").unwrap();
+    await_condition("both in-scope aliases observed", || {
+        let events = recorder.seen.lock().unwrap();
+        ["owned-original", "owned-alias"]
+            .iter()
+            .all(|path| events.iter().any(|event| event["file_path"] == *path))
+    })
+    .await;
+    let prepared = private.with_file_name("prepared-alias");
+    std::fs::hard_link(&private, &prepared).unwrap();
+    std::fs::rename(&prepared, flow.f.repo.join("ambiguous-alias")).unwrap();
+    std::fs::write(&private, "changed private metadata outside the Location").unwrap();
+    std::fs::write(flow.f.repo.join("after-alias-marker"), "public marker").unwrap();
+    await_condition("reconciliation after private alias replacement", || {
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["file_path"] == "after-alias-marker")
+    })
+    .await;
+    assert!(
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|event| event["file_path"] != "ambiguous-alias")
+    );
+    let leaked = flow.f.store.read(|db| Ok(db.query_row(
+        "SELECT COUNT(*) FROM event e, json_each(e.data,'$.updates') u WHERE e.type=?1 AND json_extract(u.value,'$.path')='ambiguous-alias'",
+        [records::CHANGED], |row| row.get::<_, i64>(0))?)).unwrap();
+    assert_eq!(
+        leaked, 0,
+        "uncertain alias metadata must not be journalled or reported as deletion"
+    );
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn shutdown_settles_a_held_observer_callback_and_restart_does_not_replay_it() {
+    let mut flow = support::flow::Flow::new(vec![], false);
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let recorder = Recorder::with_gate(Some(Arc::clone(&gate))).await;
+    automatic_hooks(&flow, &recorder);
+    let session = flow.session("default").await;
+    await_condition("held-callback baseline", || {
+        journal_count(&flow, records::CHECKPOINT) == 1
+    })
+    .await;
+    std::fs::write(flow.f.repo.join("held-trigger"), "observed").unwrap();
+    await_condition("handler entered before shutdown", || {
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["file_path"] == "held-trigger")
+    })
+    .await;
+    tokio::time::timeout(Duration::from_secs(15), flow.runtime.shutdown())
+        .await
+        .expect("shutdown must cancel and settle the launched callback");
+    let receipts = flow.runtime.hook_executions(&session, 100).unwrap();
+    assert_eq!(receipts.len(), 1);
+    assert!(
+        receipts
+            .iter()
+            .all(|record| record.status != cyber_server::runtime::HookExecutionStatus::Running)
+    );
+    let consumed = receipts[0].id.clone();
+    gate.notify_waiters();
+    flow.restart_default_runtime().await;
+    automatic_hooks(&flow, &recorder);
+    flow.runtime.wake(&session).await.unwrap();
+    flow.runtime.wait_idle(&session).await;
+    await_condition("restarted watcher generation", || {
+        journal_count(&flow, records::CHECKPOINT) == 2
+    })
+    .await;
+    std::fs::write(flow.f.repo.join("fresh-after-restart"), "new observation").unwrap();
+    await_condition("restarted owner is live", || {
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["file_path"] == "fresh-after-restart")
+    })
+    .await;
+    assert_eq!(
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| event["file_path"] == "held-trigger")
+            .count(),
+        1,
+        "restart must not replay an already consumed observation"
+    );
+    assert!(
+        flow.runtime
+            .hook_executions(&session, 100)
+            .unwrap()
+            .iter()
+            .any(|record| record.id == consumed)
+    );
+    tokio::time::timeout(Duration::from_secs(15), flow.runtime.shutdown())
+        .await
+        .expect("restarted observer must also settle its callback");
+    gate.notify_waiters();
 }

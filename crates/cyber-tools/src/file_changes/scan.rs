@@ -4,7 +4,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::UNIX_EPOCH;
 
-use super::state::{Scan, Stamp};
+use super::{
+    links::{self, Aliases},
+    state::{Scan, Stamp},
+};
 use cap_fs_ext::DirExt;
 use cap_std::fs::{Dir, Metadata};
 
@@ -15,13 +18,7 @@ pub(super) struct Limits {
 }
 
 fn stamp(metadata: &Metadata) -> Stamp {
-    #[cfg(unix)]
-    let identity = {
-        use cap_std::fs::MetadataExt;
-        Some((metadata.dev(), metadata.ino()))
-    };
-    #[cfg(not(unix))]
-    let identity = None;
+    let identity = links::identity(metadata);
     Stamp {
         length: metadata.len(),
         modified_ns: metadata
@@ -50,6 +47,7 @@ pub(super) fn scan(
     out.directories.insert(PathBuf::new());
     let mut pending = vec![(root, PathBuf::new(), 0usize)];
     let mut inspected = 0usize;
+    let mut aliases = Aliases::default();
     while let Some((directory, relative, depth)) = pending.pop() {
         let Ok(entries) = directory.entries() else {
             out.complete = false;
@@ -58,7 +56,7 @@ pub(super) fn scan(
         for entry in entries {
             if cancelled.load(Ordering::Acquire) || inspected >= limits.entries {
                 out.complete = false;
-                return out;
+                return finish(out, aliases);
             }
             inspected += 1;
             let Ok(entry) = entry else {
@@ -98,11 +96,18 @@ pub(super) fn scan(
                     Err(_) => out.complete = false,
                 }
             } else if metadata.is_file() {
+                aliases.observe(&path, &metadata);
                 out.files.insert(path, stamp(&metadata));
             }
         }
     }
-    out
+    finish(out, aliases)
+}
+
+fn finish(mut scan: Scan, aliases: Aliases) -> Scan {
+    scan.suppressed = aliases.unproven();
+    scan.files.retain(|path, _| !scan.suppressed.contains(path));
+    scan
 }
 
 #[cfg(test)]
@@ -230,5 +235,68 @@ mod tests {
         );
         assert_eq!(actual.directories.len(), 3);
         assert_eq!(actual.files[Path::new("nested/deep/data")].length, 8);
+    }
+    #[test]
+    fn fully_accounted_in_scope_hard_links_remain_observable() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join("nested")).unwrap();
+        std::fs::write(temp.path().join("original"), "public").unwrap();
+        std::fs::hard_link(
+            temp.path().join("original"),
+            temp.path().join("nested/alias"),
+        )
+        .unwrap();
+        let actual = scan(
+            &root(temp.path()),
+            &|_| false,
+            &limits(),
+            &AtomicBool::new(false),
+        );
+        assert!(actual.complete);
+        assert!(actual.suppressed.is_empty());
+        assert_eq!(actual.files.len(), 2);
+        assert_eq!(
+            actual.files[Path::new("original")].identity,
+            actual.files[Path::new("nested/alias")].identity
+        );
+    }
+    #[test]
+    fn aliases_of_excluded_or_outside_files_do_not_publish_private_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join("private")).unwrap();
+        std::fs::write(temp.path().join("private/state"), "private metadata").unwrap();
+        std::fs::hard_link(temp.path().join("private/state"), temp.path().join("alias")).unwrap();
+        let actual = scan(
+            &root(temp.path()),
+            &|path| path.starts_with("private"),
+            &limits(),
+            &AtomicBool::new(false),
+        );
+        assert!(
+            actual.complete,
+            "permitted directory enumeration is complete"
+        );
+        assert!(actual.files.is_empty());
+        assert_eq!(
+            actual.suppressed,
+            std::collections::BTreeSet::from([PathBuf::from("alias")])
+        );
+    }
+    #[test]
+    fn bounded_traversal_finalizes_alias_scope_before_returning_partial_evidence() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("first"), "public").unwrap();
+        std::fs::hard_link(temp.path().join("first"), temp.path().join("second")).unwrap();
+        let mut bound = limits();
+        bound.entries = 1;
+        let actual = scan(
+            &root(temp.path()),
+            &|_| false,
+            &bound,
+            &AtomicBool::new(false),
+        );
+        assert!(!actual.complete);
+        assert!(actual.files.is_empty());
+        assert_eq!(actual.suppressed.len(), 1);
     }
 }

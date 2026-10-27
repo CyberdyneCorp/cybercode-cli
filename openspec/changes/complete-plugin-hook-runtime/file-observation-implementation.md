@@ -273,3 +273,36 @@ state now owns startup, renewal and reconciliation in one `tick` method;
 the outer loop owns weak-host lifetime, pacing and cancellation. The configured
 Clippy checks must verify the refactor; isolated component Clippy does not load
 the full owner.
+
+
+## Scoped hard links and cancellation/restart coverage
+
+The scanner now groups permitted regular entries by filesystem identity and
+reported link count. Fully accounted in-Location hard links remain observable;
+entries with an unaccounted, excluded or inconsistent alias are suppressed before
+metadata enters the journal. Every bounded/cancelled traversal finalizes these
+checks before returning. Suppressed names have independent uncertainty: previous
+stamps survive without a synthetic deletion while ordinary, completely scanned
+names can still produce real changes. Coverage notices report this uncertainty.
+This avoids a blanket refusal of ordinary in-Location hard links. Links extending
+outside the permitted scan are unproved; the observer does not inventory private
+or outside trees to turn them into an authorization proof.
+
+The local source harness passes 42 tests and Clippy with warnings denied at
+threshold 15, including new complete/partial hard-link scans, excluded-state
+aliases, changing link counts during inventory and retained-stamp behavior. Windows file stamps now also retain the
+identity supplied by cap-fs-ext metadata queries. A new application test checks
+ordinary linked files, replacing a previously public path with an alias of
+private temporary state, and absence of that alias from hook/journal deltas.
+A held HTTP callback test adds shutdown/receipt settlement and reopening without
+old-observation replay. These newer application tests await CI; local harness
+success does not verify them.
+
+At `653aeba5`, both the Linux and Windows focused workflows passed all existing
+application scenarios, including the corrected Windows root sharing, project
+identity replacement and scripted write/edit flows. Windows workspace Clippy,
+SDK/dashboard checks and all six Linux/Windows cross builds were also successful
+when checked; Linux full tests and the native Windows build were still running,
+and macOS jobs were queued. These results precede the newer hard-link and held-
+callback tests. Alias-aware Session admission, actual formatter-process and
+remaining lifecycle/resource/overflow acceptance still keep task 5.2 open.

@@ -442,6 +442,7 @@ impl Observation {
         let native_complete = self
             .native
             .update_directories(&scan.directories, scan.complete);
+        let suppressed = !scan.suppressed.is_empty();
         let files = names(&scan);
         let baseline = self
             .journal
@@ -459,7 +460,11 @@ impl Observation {
         ) else {
             return Err("bounded metadata state cannot reconcile this tree".into());
         };
-        self.coverage_notice(host, sessions, native_complete && complete && !hint.rescan);
+        self.coverage_notice(
+            host,
+            sessions,
+            native_complete && complete && !hint.rescan && !suppressed,
+        );
         // A newly protected path is forgotten durably without disclosing an
         // observational deletion to handlers or spending their allowance.
         let (private, mut changes): (Vec<_>, Vec<_>) = changes

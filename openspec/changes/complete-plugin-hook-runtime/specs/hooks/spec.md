@@ -36,3 +36,14 @@
 - **WHEN** an observed Location path is replaced by a different repository root
 - **THEN** its fresh watcher generation resolves current project identity rather than using the previous root's cached hook envelope
 - **AND** an older in-flight identity resolution cannot repopulate the current cache
+
+
+#### Scenario: Scoped hard-link observations
+- **WHEN** all reported aliases of a file are accounted for among permitted entries of a bounded scan
+- **THEN** its in-Location aliases remain observable
+- **AND** a file with unaccounted, excluded or inconsistent aliases is omitted from new metadata observations, with partial coverage reported and prior stamps retained without a synthetic deletion
+
+#### Scenario: Observer cancellation and restart
+- **WHEN** shutdown cancels a launched file observer callback and the Session is subsequently reopened
+- **THEN** the local callback owner settles before the observer is joined, its durable receipt remains available, and the old observation is not replayed solely to obtain another result
+- **AND** the reopened Location can receive a fresh observation with its preserved feedback accounting
