@@ -94,8 +94,14 @@ caught a missing `cap_fs_ext::DirExt` import and was corrected. Sixteen componen
 tests now cover traversal, native events, reconciliation, overflow, policy
 revocation, scope names and finite feedback allowance on the local macOS host.
 
-The expanded isolated harness passes 23 tests: the 16 native/reconciliation
-component tests, six pure observation-record tests and the existing ID helper
+The expanded isolated harness passes 26 tests: the 16 native/reconciliation
+component tests, nine pure observation-record tests and the existing ID helper
 regression loaded with them. Isolated Clippy with warnings denied and the
 project cognitive-complexity threshold also passes. These do not establish a
 full application build or acceptance of the actual Store/Runtime regressions.
+
+A local debug-only model probe with 5,000 files and 128 deltas measured 2.065 s
+for clone-and-validate-per-delta replay. The incremental private replay builder
+measured 77.821 ms for that same workload. It enforces byte bounds at each fold
+and poisons a failed candidate so partial state cannot escape. This sample
+measures the model algorithm, not end-to-end SQLite or application latency.

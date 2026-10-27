@@ -115,9 +115,7 @@ impl Checkpoint {
         Ok(())
     }
 
-    /// Prepare a candidate state without changing the acknowledged state. The
-    /// owner installs the candidate only after the corresponding append succeeds.
-    pub fn apply(&self, delta: &Delta) -> Result<Self, String> {
+    fn check_delta(&self, delta: &Delta) -> Result<(), String> {
         delta.validate()?;
         if delta.generation != self.generation {
             return Err("stale file watcher generation".into());
@@ -133,6 +131,13 @@ impl Checkpoint {
         if delta.remaining != expected {
             return Err("invalid file watcher feedback accounting".into());
         }
+        Ok(())
+    }
+
+    /// Prepare a candidate state without changing the acknowledged state. The
+    /// owner installs the candidate only after the corresponding append succeeds.
+    pub fn apply(&self, delta: &Delta) -> Result<Self, String> {
+        self.check_delta(delta)?;
         let mut next = self.clone();
         for update in &delta.updates {
             match &update.stamp {
@@ -149,6 +154,88 @@ impl Checkpoint {
         next.remaining = delta.remaining;
         next.validate()?;
         Ok(next)
+    }
+}
+
+/// A private replay candidate: failed folds poison it, and no partially rebuilt
+/// state can escape. Entry byte accounting enforces the same JSON bound at each
+/// step without cloning/serializing the entire file map for every old delta.
+pub struct Replay {
+    state: Option<Checkpoint>,
+    entries_bytes: usize,
+}
+
+fn entry_bytes(path: &str, stamp: &Stamp) -> Result<usize, String> {
+    // A two-element tuple encodes as [key,value]. Removing its brackets leaves
+    // exactly the byte length of the map's key:value entry (comma vs colon).
+    serde_json::to_vec(&(path, stamp))
+        .map(|bytes| bytes.len() - 2)
+        .map_err(|error| error.to_string())
+}
+
+impl Replay {
+    pub fn new(state: Checkpoint) -> Result<Self, String> {
+        state.validate()?;
+        let entries_bytes = state.files.iter().try_fold(0usize, |sum, (path, stamp)| {
+            entry_bytes(path, stamp).map(|bytes| sum + bytes)
+        })?;
+        Ok(Self {
+            state: Some(state),
+            entries_bytes,
+        })
+    }
+
+    pub fn push(&mut self, delta: &Delta) -> Result<(), String> {
+        let mut state = self
+            .state
+            .take()
+            .ok_or("file observation replay is poisoned")?;
+        state.check_delta(delta)?;
+        let mut bytes = self.entries_bytes;
+        for update in &delta.updates {
+            if let Some(previous) = state.files.get(&update.path) {
+                bytes -= entry_bytes(&update.path, previous)?;
+            }
+            match &update.stamp {
+                Some(stamp) => {
+                    bytes += entry_bytes(&update.path, stamp)?;
+                    state.files.insert(update.path.clone(), stamp.clone());
+                }
+                None => {
+                    if state.files.remove(&update.path).is_none() {
+                        return Err("file deletion lacks a recorded preimage".into());
+                    }
+                }
+            }
+        }
+        state.remaining = delta.remaining;
+        let header = Checkpoint {
+            files: BTreeMap::new(),
+            directory: state.directory.clone(),
+            root_identity: state.root_identity.clone(),
+            generation: state.generation.clone(),
+            remaining: state.remaining,
+        };
+        let header_bytes = serde_json::to_vec(&header)
+            .map_err(|error| error.to_string())?
+            .len();
+        if state.files.len() > MAX_FILES
+            || header_bytes + bytes + state.files.len().saturating_sub(1) > MAX_RECORD_BYTES
+        {
+            return Err("file observation replay exceeds state bound".into());
+        }
+        self.entries_bytes = bytes;
+        self.state = Some(state);
+        Ok(())
+    }
+
+    pub fn finish(mut self) -> Result<Checkpoint, String> {
+        let state = self
+            .state
+            .take()
+            .ok_or("file observation replay is poisoned")?;
+        state.validate()?;
+        Ok(state)
     }
 }
 
@@ -297,5 +384,61 @@ mod tests {
         change.dispatch = false;
         change.remaining = FEEDBACK_LIMIT;
         assert_eq!(state.apply(&change).unwrap().remaining, FEEDBACK_LIMIT);
+    }
+    #[test]
+    fn replay_matches_acknowledged_folds_for_escaped_unicode_names() {
+        let state = checkpoint();
+        let mut change = delta(&state);
+        change.updates[0].path = "nested/quote\"-🔧".into();
+        let expected = state.apply(&change).unwrap();
+        let mut replay = Replay::new(state).unwrap();
+        replay.push(&change).unwrap();
+        assert_eq!(replay.finish().unwrap(), expected);
+    }
+
+    #[test]
+    fn replay_failure_poison_cannot_publish_a_partial_state() {
+        let state = checkpoint();
+        let valid = delta(&state);
+        let mut invalid = valid.clone();
+        invalid.generation = ulid::Ulid::new().to_string();
+        let mut replay = Replay::new(state).unwrap();
+        assert!(replay.push(&invalid).is_err());
+        assert!(replay.push(&valid).is_err());
+        assert!(replay.finish().is_err());
+    }
+
+    #[test]
+    fn incremental_replay_enforces_the_full_serialized_byte_bound() {
+        let mut state = checkpoint();
+        let stamp = Stamp {
+            length: 1,
+            modified_ns: Some(1),
+            identity: None,
+        };
+        let path = |index| format!("{}{:04}", "dir/".repeat(1000), index);
+        let unit = entry_bytes(&path(0), &stamp).unwrap() + 1;
+        let header = serde_json::to_vec(&state).unwrap().len();
+        let count = (MAX_RECORD_BYTES - header) / unit - 1;
+        for index in 0..count {
+            state.files.insert(path(index), stamp.clone());
+        }
+        state.validate().unwrap();
+        let change = Delta {
+            generation: state.generation.clone(),
+            updates: (count..count + 3)
+                .map(|index| Update {
+                    path: path(index),
+                    stamp: Some(stamp.clone()),
+                })
+                .collect(),
+            remaining: FEEDBACK_LIMIT,
+            dispatch: false,
+            renewal: None,
+        };
+        assert!(state.apply(&change).is_err());
+        let mut replay = Replay::new(state).unwrap();
+        assert!(replay.push(&change).is_err());
+        assert!(replay.finish().is_err());
     }
 }

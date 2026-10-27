@@ -4,7 +4,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use super::{Runtime, RuntimeError, WeakRuntime};
-use cyber_core::hooks::file_observations::{self as records, Checkpoint, Delta, Renewal, Stamp};
+use cyber_core::hooks::file_observations::{
+    self as records, Checkpoint, Delta, Renewal, Replay, Stamp,
+};
 use cyber_store::{EventRegistry, Expected, NewEvent, Store, StoreError, StoredEvent};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use sha2::{Digest, Sha256};
@@ -44,7 +46,7 @@ fn load(db: &Connection, id: &str, before: i64) -> Result<Option<Recorded>, Stor
     let Some((mut sequence, data)) = checkpoint else {
         return Ok(None);
     };
-    let mut state: Checkpoint = decode(&data)?;
+    let state: Checkpoint = decode(&data)?;
     state.validate().map_err(corrupt)?;
     if aggregate(&state.directory) != id {
         return Err(corrupt("file observation aggregate differs from Location"));
@@ -60,6 +62,7 @@ fn load(db: &Connection, id: &str, before: i64) -> Result<Option<Recorded>, Stor
             ))
         },
     )?;
+    let mut replay = Replay::new(state).map_err(corrupt)?;
     for (index, row) in rows.enumerate() {
         let (seq, kind, data) = row?;
         if index >= records::MAX_REPLAY || seq != sequence + 1 || kind != records::CHANGED {
@@ -67,9 +70,10 @@ fn load(db: &Connection, id: &str, before: i64) -> Result<Option<Recorded>, Stor
                 "file observation replay bound or sequence exceeded",
             ));
         }
-        state = state.apply(&decode::<Delta>(&data)?).map_err(corrupt)?;
+        replay.push(&decode::<Delta>(&data)?).map_err(corrupt)?;
         sequence = seq;
     }
+    let state = replay.finish().map_err(corrupt)?;
     Ok(Some(Recorded { state, sequence }))
 }
 
