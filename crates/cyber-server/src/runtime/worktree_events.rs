@@ -28,32 +28,37 @@ struct DeferredCwd {
 }
 
 impl super::Inner {
-    pub(super) async fn after_worktree_owner<T>(
+    pub(super) fn after_worktree_owner<T>(
         &self,
         work: impl std::future::Future<Output = T>,
-    ) -> T {
-        if DEFERRED_CWD
-            .try_with(|pending| Arc::ptr_eq(&pending.borrow().owner, &self.lifecycle))
-            .unwrap_or(false)
-        {
-            return work.await;
+    ) -> impl std::future::Future<Output = T> {
+        // Box before constructing the returned future: generic worktree flows
+        // otherwise retain their large state machine in every ownership frame.
+        let work = Box::pin(work);
+        async move {
+            if DEFERRED_CWD
+                .try_with(|pending| Arc::ptr_eq(&pending.borrow().owner, &self.lifecycle))
+                .unwrap_or(false)
+            {
+                return work.await;
+            }
+            let pending = RefCell::new(DeferredCwd {
+                owner: Arc::clone(&self.lifecycle),
+                hooks: Vec::new(),
+            });
+            let (result, hooks) = DEFERRED_CWD
+                .scope(pending, async {
+                    let result = work.await;
+                    let hooks = DEFERRED_CWD
+                        .with(|pending| std::mem::take(&mut pending.borrow_mut().hooks));
+                    (result, hooks)
+                })
+                .await;
+            for hook in hooks {
+                self.observe_lifecycle(hook).await;
+            }
+            result
         }
-        let pending = RefCell::new(DeferredCwd {
-            owner: Arc::clone(&self.lifecycle),
-            hooks: Vec::new(),
-        });
-        let (result, hooks) = DEFERRED_CWD
-            .scope(pending, async {
-                let result = work.await;
-                let hooks =
-                    DEFERRED_CWD.with(|pending| std::mem::take(&mut pending.borrow_mut().hooks));
-                (result, hooks)
-            })
-            .await;
-        for hook in hooks {
-            self.observe_lifecycle(hook).await;
-        }
-        result
     }
 
     pub(super) async fn observe_cwd(&self, hook: super::host::LifecycleHook) {
