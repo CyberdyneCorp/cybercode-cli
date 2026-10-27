@@ -222,3 +222,11 @@ read-only metadata inside mandatory private PID/proc isolation, masks PID 1 and
 that `/proc/self/root` cannot bypass workspace/private reads. No successful
 Bun/Linux result is claimed yet. Existing confinement assertions remain required;
 there is no ordinary-sandbox fallback or permission-based widening.
+
+The `ace76b81` Bun/Linux candidate progressed past the prior runtime abort on
+both architectures, but then failed module loading: opening the bootstrap file
+succeeded while opening its source directory returned EACCES. The follow-up
+stages the trusted bootstrap and native addon in the already admitted read-only
+fixture package for both inspect and exec launches. It does not grant the source
+repository or a temporary ancestor directory. Bun/Linux acceptance remains
+pending the untraced native matrix and all existing positive/negative controls.

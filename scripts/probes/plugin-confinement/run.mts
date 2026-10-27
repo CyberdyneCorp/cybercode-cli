@@ -129,7 +129,10 @@ function fixture(root: string): Record<string, string> {
   writeFileSync(join(paths.project, ".env"), "CYBER_PROOF_AUTO_DOTENV=fixture-only\n", { mode: 0o600 });
   writeFileSync(join(paths.project, "preload.cjs"), 'process.env.CYBER_PROOF_AUTO_PRELOAD="fixture-only";', { mode: 0o600 });
   writeFileSync(join(paths.project, "bunfig.toml"), `preload = [${JSON.stringify(join(paths.project, "preload.cjs"))}]\n`, { mode: 0o600 });
-  for (const file of ["fixture.py", "fixture.cjs"]) copyFileSync(join(source, file), join(paths.package, file));
+  // Runtime module loaders may open the entrypoint's directory as well as
+  // the file. Stage the trusted bootstrap in the already admitted read-only
+  // package instead of granting access to the repository containing it.
+  for (const file of ["fixture.py", "fixture.cjs", "node_bootstrap.cjs"]) copyFileSync(join(source, file), join(paths.package, file));
   for (const path of [join(paths.package, "data"), join(paths.project, "data"), join(paths.private, "data")]) {
     writeFileSync(path, "owned temporary fixture", { mode: 0o600 });
   }
@@ -145,7 +148,7 @@ function linuxLaunch(artifacts: Artifacts, runtime: Runtime, paths: Record<strin
   };
   for (const path of ["/usr", "/lib", "/lib64", "/bin", "/etc/ld.so.cache", "/etc/localtime", "/etc/ssl/openssl.cnf",
     "/dev/null", "/dev/urandom", "/dev/random", runtime.prefix, paths.package, paths.scratch,
-    artifacts.executable, runtime.executable, artifacts.addon, join(source, "node_bootstrap.cjs"), profile]) {
+    artifacts.executable, runtime.executable, profile]) {
     if (path) grant("R", path);
   }
   if (runtime.kind === "bun") {
@@ -185,7 +188,7 @@ function linuxLaunch(artifacts: Artifacts, runtime: Runtime, paths: Record<strin
 
 function observe(artifacts: Artifacts, runtime: Runtime, paths: Record<string, string>, profile: string, mode: string, flags: Flags): Observation {
   const workerAddon = join(paths.package, "native.node");
-  if (artifacts.addon && mode === "inspect") copyFileSync(artifacts.addon, workerAddon);
+  if (artifacts.addon) copyFileSync(artifacts.addon, workerAddon);
   const identity = statSync(join(paths.private, "data"), { bigint: true });
   const input = { kind: runtime.kind, initial_exec: artifacts.initialExec, platform: process.platform, runtime: runtime.executable, addon: workerAddon, private_dev: identity.dev.toString(), private_ino: identity.ino.toString(), python: runtime.executable, mode, confined: profile !== "-", package_file: join(paths.package, "data"),
     project_file: join(paths.project, "data"), private_file: join(paths.private, "data"),
@@ -203,7 +206,7 @@ function observe(artifacts: Artifacts, runtime: Runtime, paths: Record<string, s
           input.private_dev, input.private_ino, input.confined ? "1" : "0"]
         : [runtime.executable, ...runtime.kind === "deno" ? ["run", "-A", "--no-config", "--no-lock", "--node-modules-dir=manual"]
           : runtime.kind === "bun" ? ["--config=/dev/null", "--no-env-file", "--no-install"] : [],
-          join(source, "node_bootstrap.cjs"), artifacts.addon!, bootstrapProfile, join(paths.package, "fixture.cjs"), JSON.stringify(input)];
+          join(paths.package, "node_bootstrap.cjs"), workerAddon, bootstrapProfile, join(paths.package, "fixture.cjs"), JSON.stringify(input)];
     const launch = isLinux && !flags.unrestricted ? linuxLaunch(artifacts, runtime, paths, profile, flags, args) : { program: artifacts.executable, args };
     const options = { cwd: paths.cwd, env: { ...environment, HOME: paths.scratch, XDG_CONFIG_HOME: join(paths.scratch, "config"), DENO_DIR: join(paths.scratch, "deno-cache"),
           XDG_CACHE_HOME: join(paths.scratch, "cache"), BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(paths.scratch, "bun-cache"),
