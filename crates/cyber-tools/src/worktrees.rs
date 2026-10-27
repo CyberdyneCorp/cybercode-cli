@@ -782,18 +782,20 @@ impl BuiltinHost {
             .await
             .map_err(io::Error::other)?;
         let owned_cancel = cancel.child_token();
+        // Keep setup state out of the generic ownership wrappers' inline future;
+        // nested delegation otherwise exhausts native thread stacks.
         let result = runtime
             .own_session_worktree_setup(
                 &inv.session_id,
                 owned_cancel.clone(),
-                self.setup_worktree_authorized(
+                Box::pin(self.setup_worktree_authorized(
                     inv,
                     owned_cancel,
                     repository,
                     managed,
                     &sink,
                     admission,
-                ),
+                )),
             )
             .await;
         if let Err(error) = &result {
