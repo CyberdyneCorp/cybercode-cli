@@ -237,3 +237,21 @@ an actual Linux failure, records it, then rethrows the original untraced failure
 A traced retry never counts as an acceptance pass. Traces contain only this
 probe's dummy fixtures and sanitized launch arguments. The workflow retains both
 the initial candidate's output and the independent bootstrap matrix's result.
+
+## Bun/Linux metadata candidate
+
+The retained strace showed `/proc/self/cgroup` and other process/system metadata
+reads denied immediately before Bun aborted, including in the independent TSYNC
+bootstrap attempt. The next candidate admits read-only private procfs and selected
+public cgroup/CPU metadata. It requires the existing private PID namespace,
+masks its init process (`/proc/1`) and `/proc/sys`, and makes the initial-exec
+supervisor non-dumpable before any target code runs. It never uses host procfs
+as a fallback. Filesystem reads through `/proc/self/root` are checked against the
+same workspace/private expectations, and listing the masked init process must
+fail with an unrestricted positive control. These tests are pending native CI.
+
+This is not a production read-root policy: immutable runtime/package admission,
+bootstrap/protected-path overlap, all privileged-helper lifecycle/failure cases
+and the complete owner/network/secret intersection still require integration
+and acceptance. A metadata startup requirement must not become broad access to
+owner files, parent descriptors or another plugin's state.

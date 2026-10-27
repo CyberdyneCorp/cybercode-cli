@@ -116,6 +116,9 @@ static int initial_exec_boundary(int shell) {
     pid_t supervisor = fork();
     if (supervisor < 0) { close(channel[0]); close(channel[1]); return -1; }
     if (supervisor == 0) {
+        // Even with a runtime's private-proc read roots, untrusted target code
+        // must not inspect the supervisor's memory, environment or listener.
+        if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0) _exit(2);
         close(channel[0]);
         close(STDIN_FILENO);
         close(STDOUT_FILENO);

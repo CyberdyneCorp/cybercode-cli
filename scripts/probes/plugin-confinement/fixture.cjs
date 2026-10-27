@@ -136,6 +136,10 @@ async function inspect() {
   };
   observations.project_rename = renameProject();
   if (c.initial_exec) observations.filter_replacement_denied = native.replacementDenied();
+  if (c.platform === "linux" && c.kind === "bun") {
+    observations.proc_root_reads = [native.read("/proc/self/root" + c.project_file), native.read("/proc/self/root" + c.private_file)];
+    observations.proc_init_list = canList("/proc/1");
+  }
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: observations }));
 }
 

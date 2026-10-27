@@ -148,6 +148,14 @@ function linuxLaunch(artifacts: Artifacts, runtime: Runtime, paths: Record<strin
     artifacts.executable, runtime.executable, artifacts.addon, join(source, "node_bootstrap.cjs"), profile]) {
     if (path) grant("R", path);
   }
+  if (runtime.kind === "bun") {
+    // Bun/JSC inspects its own cgroup and mappings during initialization.
+    // This procfs is in a mandatory private PID namespace; PID 1 is masked
+    // below, and the initial-exec supervisor is non-dumpable. Never substitute
+    // host procfs or admit arbitrary filesystem paths through proc aliases.
+    for (const path of ["/proc", "/sys/fs/cgroup", "/sys/devices/system/cpu/online",
+      "/sys/kernel/mm/transparent_hugepage/enabled"]) grant("R", path);
+  }
   grant("W", "/dev/null");
   grant("W", paths.scratch);
   if (flags.read) grant("R", paths.project);
@@ -162,6 +170,11 @@ function linuxLaunch(artifacts: Artifacts, runtime: Runtime, paths: Record<strin
   // workspace ancestor is writable/readable. Landlock grants are additive.
   for (const privatePath of [paths.private, paths.protected]) {
     bubblewrap.push("--perms", "000", "--tmpfs", privatePath, "--remount-ro", privatePath);
+  }
+  if (runtime.kind === "bun") {
+    for (const privatePath of ["/proc/1", "/proc/sys"]) {
+      bubblewrap.push("--perms", "000", "--tmpfs", privatePath, "--remount-ro", privatePath);
+    }
   }
   const direct = artifacts.initialExec && runtime.kind !== "python";
   bubblewrap.push("--chdir", paths.cwd, "--", artifacts.landlock!, policyPath);
@@ -249,6 +262,10 @@ function check(root: string, artifacts: Artifacts, runtime: Runtime, name: strin
   const actual = observe(artifacts, runtime, paths, profile, "inspect", flags);
   const expectations = expected(flags);
   if (artifacts.addon) expectations.startup_artifacts = false;
+  if (isLinux && runtime.kind === "bun") {
+    expectations.proc_root_reads = [flags.read, !!flags.unrestricted];
+    expectations.proc_init_list = !!flags.unrestricted;
+  }
   if (artifacts.initialExec) expectations.filter_replacement_denied = !flags.unrestricted;
   if (runtime.kind === "native") {
     expectations.constructor_private_read = !!flags.unrestricted;

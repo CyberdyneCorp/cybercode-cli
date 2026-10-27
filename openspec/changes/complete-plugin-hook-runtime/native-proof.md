@@ -211,3 +211,14 @@ retains a diagnostic strace attempt without accepting a traced result, and tests
 Bun/Linux's native TSYNC bootstrap independently. All five macOS runtime
 fixtures passed local tool round trips (the native executable subset still has
 four explicit unsupported no-shell cases). New native CI results are pending.
+
+## Bun/Linux diagnostic follow-up
+
+The retained `728db0f4` diagnostics show that both initial-exec and TSYNC
+candidates abort after denied private process metadata reads, with
+`/proc/self/cgroup` immediately preceding SIGABRT. The next candidate tests
+read-only metadata inside mandatory private PID/proc isolation, masks PID 1 and
+`/proc/sys`, marks the trusted initial-exec supervisor non-dumpable, and asserts
+that `/proc/self/root` cannot bypass workspace/private reads. No successful
+Bun/Linux result is claimed yet. Existing confinement assertions remain required;
+there is no ordinary-sandbox fallback or permission-based widening.
