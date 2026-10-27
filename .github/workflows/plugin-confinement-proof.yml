@@ -15,6 +15,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: plugin-confinement-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   native:
     name: Native proof (${{ matrix.os }}, ${{ matrix.runtime }})
@@ -25,6 +29,11 @@ jobs:
       matrix:
         os: [macos-15, macos-15-intel, ubuntu-24.04, ubuntu-24.04-arm]
         runtime: [node, python]
+        include:
+          - os: ubuntu-24.04
+            runtime: native
+          - os: ubuntu-24.04-arm
+            runtime: native
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -52,6 +61,9 @@ jobs:
           args=(--runtime "$PROOF_RUNTIME" --report "$RUNNER_TEMP/proof.json")
           if [[ "$PROOF_RUNTIME" == python ]]; then
             args+=(--python "$(command -v python3)")
+          fi
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            args+=(--initial-exec)
           fi
           node --experimental-strip-types scripts/probes/plugin-confinement/run.mts "${args[@]}" > "$RUNNER_TEMP/proof.log" 2>&1
       - name: Retain exact-source native evidence

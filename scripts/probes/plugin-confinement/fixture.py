@@ -150,6 +150,19 @@ def native_fork():
     return os.waitpid(pid, 0)[1] == 0
 
 
+def filter_replacement_denied():
+    if libc.prctl(38, 1, 0, 0, 0) != 0:  # PR_SET_NO_NEW_PRIVS
+        raise RuntimeError("could not prepare seccomp replacement control")
+    class Filter(ctypes.Structure):
+        _fields_ = [("code", ctypes.c_ushort), ("jt", ctypes.c_ubyte),
+                    ("jf", ctypes.c_ubyte), ("value", ctypes.c_uint32)]
+    class Program(ctypes.Structure):
+        _fields_ = [("length", ctypes.c_ushort), ("filter", ctypes.POINTER(Filter))]
+    instruction = Filter(6, 0, 0, 0x7fff0000)  # BPF_RET|BPF_K, SECCOMP_RET_ALLOW
+    program = Program(1, ctypes.pointer(instruction))
+    return libc.prctl(22, 2, ctypes.byref(program), 0, 0) < 0
+
+
 def inspect():
     thread_result = []
     worker = threading.Thread(target=lambda: thread_result.append([
@@ -189,6 +202,8 @@ def inspect():
     }
     observations["written_project_read"] = native_read(case["project_write"])
     observations["project_rename"] = rename_project()
+    if case["initial_exec"]:
+        observations["filter_replacement_denied"] = filter_replacement_denied()
     print(json.dumps(observations, sort_keys=True))
 
 

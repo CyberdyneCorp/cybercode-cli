@@ -33,14 +33,33 @@
     BPF_JUMP(BPF_JMP | BPF_JGE | BPF_K, 0x40000000U, 0, 1), \
     BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS)
 
-static int proof_filter(struct sock_filter *instructions, size_t count) {
+#define PROOF_ESCAPE_DENIALS \
+    PROOF_DENY(SYS_ptrace), \
+    PROOF_DENY(SYS_process_vm_readv), \
+    PROOF_DENY(SYS_process_vm_writev), \
+    PROOF_DENY(SYS_pidfd_getfd), \
+    PROOF_DENY(SYS_open_by_handle_at), \
+    PROOF_DENY(SYS_bpf), \
+    PROOF_DENY(SYS_userfaultfd), \
+    PROOF_DENY(SYS_io_uring_setup), \
+    PROOF_DENY(SYS_mount), \
+    PROOF_DENY(SYS_umount2), \
+    PROOF_DENY(SYS_pivot_root), \
+    PROOF_DENY(SYS_move_mount), \
+    PROOF_DENY(SYS_open_tree), \
+    PROOF_DENY(SYS_fsopen), \
+    PROOF_DENY(SYS_fsmount), \
+    PROOF_DENY(SYS_setns), \
+    PROOF_DENY(SYS_unshare)
+
+static inline int proof_filter(struct sock_filter *instructions, size_t count) {
     struct sock_fprog program = { .len = (unsigned short)count, .filter = instructions };
     /* Positive returns identify an unsynchronized thread and are failures too. */
     return syscall(SYS_seccomp, SECCOMP_SET_MODE_FILTER,
                    SECCOMP_FILTER_FLAG_TSYNC, &program) == 0 ? 0 : -1;
 }
 
-static int proof_apply(const char *profile) {
+static inline int proof_apply(const char *profile) {
     int shell;
     if (strcmp(profile, "shell=0\n") == 0) shell = 0;
     else if (strcmp(profile, "shell=1\n") == 0) shell = 1;
@@ -48,23 +67,7 @@ static int proof_apply(const char *profile) {
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) return -1;
     struct sock_filter boundary[] = {
         PROOF_ARCH_CHECK,
-        PROOF_DENY(SYS_ptrace),
-        PROOF_DENY(SYS_process_vm_readv),
-        PROOF_DENY(SYS_process_vm_writev),
-        PROOF_DENY(SYS_pidfd_getfd),
-        PROOF_DENY(SYS_open_by_handle_at),
-        PROOF_DENY(SYS_bpf),
-        PROOF_DENY(SYS_userfaultfd),
-        PROOF_DENY(SYS_io_uring_setup),
-        PROOF_DENY(SYS_mount),
-        PROOF_DENY(SYS_umount2),
-        PROOF_DENY(SYS_pivot_root),
-        PROOF_DENY(SYS_move_mount),
-        PROOF_DENY(SYS_open_tree),
-        PROOF_DENY(SYS_fsopen),
-        PROOF_DENY(SYS_fsmount),
-        PROOF_DENY(SYS_setns),
-        PROOF_DENY(SYS_unshare),
+        PROOF_ESCAPE_DENIALS,
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
     };
     if (proof_filter(boundary, sizeof(boundary) / sizeof(boundary[0])) != 0) return -1;

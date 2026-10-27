@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+#include "linux_initial_exec.h"
 
 #define READ_RIGHTS (LANDLOCK_ACCESS_FS_EXECUTE | LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR)
 #define WRITE_RIGHTS (LANDLOCK_ACCESS_FS_WRITE_FILE | LANDLOCK_ACCESS_FS_REMOVE_DIR | LANDLOCK_ACCESS_FS_REMOVE_FILE | \
@@ -79,12 +80,22 @@ done:
 }
 
 int main(int argc, char **argv) {
-    if (argc < 3 || argv[2][0] != '/') return 2;
+    if (argc < 3) return 2;
+    int target = 2, initial = -1;
+    if (argc > 3 && (strcmp(argv[2], "--initial-shell=0") == 0 || strcmp(argv[2], "--initial-shell=1") == 0)) {
+        initial = strcmp(argv[2], "--initial-shell=1") == 0;
+        target = 3;
+    }
+    if (argv[target][0] != '/') return 2;
     if (confine(argv[1]) != 0) { perror("native Landlock admission failed"); return 2; }
     int limit = getdtablesize();
     if (limit < 3) return 2;
     for (int fd = 3; fd < limit; fd++) close(fd);
-    execv(argv[2], argv + 2);
+    if (initial >= 0 && initial_exec_boundary(initial) != 0) {
+        perror("native initial-exec policy admission failed");
+        return 2;
+    }
+    execv(argv[target], argv + target);
     perror("native initial runtime exec failed");
     return 2;
 }

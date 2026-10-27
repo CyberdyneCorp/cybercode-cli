@@ -102,6 +102,7 @@ async function inspect() {
     written_project_read: native.read(c.project_write),
   };
   observations.project_rename = renameProject();
+  if (c.initial_exec) observations.filter_replacement_denied = native.replacementDenied();
   process.stdout.write(JSON.stringify(observations));
 }
 

@@ -18,7 +18,17 @@ Python must have an embeddable `libpythonMAJOR.MINOR.dylib` on macOS or
 `libpythonMAJOR.MINOR.so` on Linux under its reported `LIBDIR`; framework-only
 and static-only installations are not supported by this probe. The resolved
 shared-library target receives an exact file read grant, including framework
-binaries outside `LIBDIR`. Node headers must be under the selected Node prefix's `include/node`.
+binaries outside `LIBDIR`. For the Linux initial-exec proof, also run:
+
+```sh
+node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime node --initial-exec --report /tmp/node-initial.json
+node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime python --python /absolute/trusted/python3 --initial-exec --report /tmp/python-initial.json
+node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime native --report /tmp/native-initial.json
+```
+
+The native fixture implies `--initial-exec` and is Linux-only. It is an untrusted
+C executable with no confinement bootstrap; its ELF constructor tests private
+reads before `main`. Node headers must be under the selected Node prefix's `include/node`.
 The compiler is discovered through `/usr/bin/xcrun` on macOS; Linux uses `/usr/bin/cc`. No package/runtime is
 downloaded by the probe. Runtime discovery executes the explicitly selected
 trusted interpreter; do not point it at untrusted programs.
@@ -119,3 +129,40 @@ must precede runtime threads and why seccomp is only one sandbox component:
 
 [Landlock](https://docs.kernel.org/userspace-api/landlock.html),
 [seccomp filtering](https://docs.kernel.org/userspace-api/seccomp_filter.html).
+
+## Linux initial-exec extension
+
+`--initial-exec` moves execution filtering into the single-threaded native
+launcher before the target's first instruction. Landlock remains installed
+before exec. When shell is false, `linux_initial_exec.h` transfers a seccomp
+NEW_LISTENER descriptor to a trusted short-lived supervisor over a private
+socketpair. It validates one notification's live ID, PID, syscall ABI and execve
+operation, continues exactly that initial exec, closes the last listener, and
+exits. Later execve calls receive ENOSYS; execveat and process forks are denied,
+while thread-sharing clone and libc's clone3 fallback remain available.
+
+This does not authorize syscalls from untrusted code based on pointer contents.
+The only continuation occurs while the immutable trusted launcher is still
+running, before any target/plugin initializer. There are no plugin handlers,
+concurrent launcher threads or signal handlers that may rewrite arguments.
+No later notification is continued, even if one is queued before listener close.
+The filter rejects seccomp and prctl(PR_SET_SECCOMP) replacement, because a new
+USER_NOTIF filter could otherwise attach an attacker-owned listener. The fixtures
+attempt policy replacement with positive unrestricted controls. Without this
+replacement guard, a one-shot listener is not sufficient enforcement.
+
+Node/Python skip their late native policy call in this mode; fixture code cannot
+provide enforcement. The native fixture additionally proves startup without
+runtime cooperation and checks private access from an ELF constructor. These
+cases run on both Linux CI architectures. The previous TSYNC bootstrap proof is
+still available without `--initial-exec` for comparison; its historical evidence
+must not be reattributed to the new mechanism.
+
+The prototype's supervisor lifecycle (including reaping, early target failure,
+cancellation and descriptor transfer), immutable target admission, startup
+signals and packaging still require production integration and adversarial
+failure tests. It is not an audited production supervisor. Read the kernel's
+[user notification contract](https://docs.kernel.org/userspace-api/seccomp_filter.html)
+and the [Linux API caveats](https://man7.org/linux/man-pages/man2/seccomp_unotify.2.html):
+CONTINUE is unsuitable for inspecting mutable untrusted arguments. The trusted
+pre-exec ordering is essential to this experiment.

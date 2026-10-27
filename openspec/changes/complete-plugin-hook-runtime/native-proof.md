@@ -113,3 +113,18 @@ exact system configuration file when present, preserving its configuration
 rather than disabling OpenSSL settings or granting all of `/etc/ssl`. A Node
 Linux rerun is required. This failure does not contradict the independently
 observed Python results and does not establish Node/Linux support.
+
+## Linux initial-exec mechanism under test
+
+At `1226aeb5`, [run 40546015851](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40546015851)
+passed all nine capability cases for both Node and Python on both Linux
+architectures. The exact OpenSSL configuration grant resolved Node startup.
+These results concern the earlier Landlock + late TSYNC bootstrap mechanism.
+
+The next experiment installs the execution filter before the target's first
+instruction using single-use initial-exec notification admission with policy
+replacement blocked. It adds an untrusted native executable and a constructor
+read assertion. This tests a route that does not require runtime/native-plugin
+cooperation, while retaining positive startup, threads, native children and
+exec/fork denial controls. See the probe README for ordering and caveats. No
+passing result is claimed for this new mechanism until native CI executes it.

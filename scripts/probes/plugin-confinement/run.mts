@@ -10,8 +10,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
-type Runtime = { kind: "python" | "node"; executable: string; prefix: string; include: string; libdir: string; library?: string; version: string };
-type Artifacts = { executable: string; addon?: string; landlock?: string };
+type Runtime = { kind: "python" | "node" | "native"; executable: string; prefix: string; include: string; libdir: string; library?: string; version: string };
+type Artifacts = { executable: string; addon?: string; landlock?: string; initialExec: boolean };
 type Flags = { read: boolean; write: boolean; shell: boolean; unrestricted?: boolean };
 type Observation = Record<string, boolean | null | boolean[]>;
 const source = dirname(fileURLToPath(import.meta.url));
@@ -42,7 +42,7 @@ function nodeInfo(): Runtime {
   return { kind: "node", executable, prefix, include, libdir: join(prefix, "lib"), version: process.versions.node };
 }
 
-function build(root: string, runtime: Runtime): Artifacts {
+function build(root: string, runtime: Runtime, initialExec: boolean): Artifacts {
   const clang = isLinux ? "/usr/bin/cc" : command("/usr/bin/xcrun", ["--find", "clang"]).trim();
   const platform = isLinux ? [] : ["-isysroot", command("/usr/bin/xcrun", ["--show-sdk-path"]).trim()];
   const warnings = ["-O1", "-Wall", "-Wextra", "-Werror", ...isLinux ? [] : ["-Wno-error=deprecated-declarations"]];
@@ -50,17 +50,22 @@ function build(root: string, runtime: Runtime): Artifacts {
   const executable = join(root, "native-proof");
   const landlock = isLinux ? join(root, "landlock-proof") : undefined;
   if (landlock) command(clang, [...warnings, join(source, "linux_exec.c"), "-o", landlock]);
+  if (runtime.kind === "native") {
+    command(clang, [...warnings, "-pthread", join(source, "fixture_native.c"), "-o", runtime.executable]);
+    command(clang, [...warnings, join(source, "native_exec.c"), "-o", executable]);
+    return { executable, landlock, initialExec };
+  }
   if (runtime.kind === "node") {
     const addon = join(root, "native.node");
     command(clang, [...platform, ...warnings, join(source, "native_exec.c"), "-o", executable]);
     command(clang, [...platform, ...warnings, ...isLinux ? ["-shared", "-fPIC"] : ["-bundle", "-undefined", "dynamic_lookup"],
       `-I${runtime.include}`, join(source, "macos_node.c"), "-o", addon]);
-    return { executable, addon, landlock };
+    return { executable, addon, landlock, initialExec };
   }
   command(clang, [...platform, ...warnings,
     `-I${runtime.include}`, join(source, "macos_python.c"), join(runtime.libdir, `libpython${major}.${minor}.${isLinux ? "so" : "dylib"}`),
     `-Wl,-rpath,${runtime.libdir}`, "-o", executable]);
-  return { executable, landlock };
+  return { executable, landlock, initialExec };
 }
 
 function policy(runtime: Runtime, paths: Record<string, string>, flags: Flags): string {
@@ -110,7 +115,7 @@ function linuxLaunch(artifacts: Artifacts, runtime: Runtime, paths: Record<strin
   };
   for (const path of ["/usr", "/lib", "/lib64", "/bin", "/etc/ld.so.cache", "/etc/localtime", "/etc/ssl/openssl.cnf",
     "/dev/null", "/dev/urandom", "/dev/random", runtime.prefix, paths.package, paths.scratch,
-    artifacts.executable, artifacts.addon, join(source, "node_bootstrap.cjs"), profile]) {
+    artifacts.executable, runtime.executable, artifacts.addon, join(source, "node_bootstrap.cjs"), profile]) {
     if (path) grant("R", path);
   }
   grant("W", "/dev/null");
@@ -128,7 +133,10 @@ function linuxLaunch(artifacts: Artifacts, runtime: Runtime, paths: Record<strin
   for (const privatePath of [paths.private, paths.protected]) {
     bubblewrap.push("--perms", "000", "--tmpfs", privatePath, "--remount-ro", privatePath);
   }
-  bubblewrap.push("--chdir", paths.cwd, "--", artifacts.landlock!, policyPath, artifacts.executable, ...args);
+  const direct = artifacts.initialExec && runtime.kind !== "python";
+  bubblewrap.push("--chdir", paths.cwd, "--", artifacts.landlock!, policyPath);
+  if (artifacts.initialExec) bubblewrap.push(`--initial-shell=${flags.shell ? 1 : 0}`);
+  bubblewrap.push(direct ? runtime.executable : artifacts.executable, ...direct ? args.slice(1) : args);
   return { program: "/usr/bin/bwrap", args: bubblewrap };
 }
 
@@ -136,19 +144,25 @@ function observe(artifacts: Artifacts, runtime: Runtime, paths: Record<string, s
   const workerAddon = join(paths.package, "native.node");
   if (artifacts.addon && mode === "inspect") copyFileSync(artifacts.addon, workerAddon);
   const identity = statSync(join(paths.private, "data"), { bigint: true });
-  const input = { platform: process.platform, runtime: runtime.executable, addon: workerAddon, private_dev: identity.dev.toString(), private_ino: identity.ino.toString(), python: runtime.executable, mode, confined: profile !== "-", package_file: join(paths.package, "data"),
+  const input = { initial_exec: artifacts.initialExec, platform: process.platform, runtime: runtime.executable, addon: workerAddon, private_dev: identity.dev.toString(), private_ino: identity.ino.toString(), python: runtime.executable, mode, confined: profile !== "-", package_file: join(paths.package, "data"),
     project_file: join(paths.project, "data"), private_file: join(paths.private, "data"),
     scratch_file: join(paths.scratch, "roundtrip"), project_write: join(paths.project, "written"),
     symlink_private: join(paths.package, "escape"), protected_file: join(paths.protected, "data"),
     scratch: paths.scratch, project: paths.project, exec_marker: join(paths.scratch, "exec-receipt.json") };
   const inherited = openSync(input.private_file, "r");
   try {
+    const bootstrapProfile = artifacts.initialExec ? "-" : profile;
     const args = runtime.kind === "python"
-      ? [runtime.executable, runtime.prefix, profile, join(paths.package, "fixture.py"), JSON.stringify(input)]
-      : [runtime.executable, join(source, "node_bootstrap.cjs"), artifacts.addon!, profile, join(paths.package, "fixture.cjs"), JSON.stringify(input)];
+      ? [runtime.executable, runtime.prefix, bootstrapProfile, join(paths.package, "fixture.py"), JSON.stringify(input)]
+      : runtime.kind === "native"
+        ? [runtime.executable, mode, input.package_file, input.project_file, input.private_file, input.scratch_file,
+          input.project_write, input.symlink_private, input.protected_file, input.scratch, input.project,
+          input.private_dev, input.private_ino, input.confined ? "1" : "0"]
+        : [runtime.executable, join(source, "node_bootstrap.cjs"), artifacts.addon!, bootstrapProfile, join(paths.package, "fixture.cjs"), JSON.stringify(input)];
     const launch = isLinux && !flags.unrestricted ? linuxLaunch(artifacts, runtime, paths, profile, flags, args) : { program: artifacts.executable, args };
     const stdout = command(launch.program, launch.args,
-      { cwd: paths.cwd, stdio: ["ignore", "pipe", "pipe", "ignore", "ignore", "ignore", "ignore", "ignore", "ignore", inherited] });
+      { cwd: paths.cwd, env: { ...environment, ...runtime.kind === "native" ? { CYBER_PROOF_PRIVATE: input.private_file } : {} },
+        stdio: ["ignore", "pipe", "pipe", "ignore", "ignore", "ignore", "ignore", "ignore", "ignore", inherited] });
     if (runtime.kind === "node" && mode === "exec" && stdout === "") {
       return JSON.parse(readFileSync(input.exec_marker, "utf8"));
     }
@@ -180,7 +194,13 @@ function check(root: string, artifacts: Artifacts, runtime: Runtime, name: strin
   const profile = flags.unrestricted ? "-" : join(directory, "policy.sb");
   if (!flags.unrestricted) writeFileSync(profile, isLinux ? `shell=${flags.shell ? 1 : 0}\n` : policy(runtime, paths, flags), { mode: 0o600 });
   const actual = observe(artifacts, runtime, paths, profile, "inspect", flags);
-  assert.deepEqual(actual, expected(flags), `${name}: capability boundary differs`);
+  const expectations = expected(flags);
+  if (artifacts.initialExec) expectations.filter_replacement_denied = !flags.unrestricted;
+  if (runtime.kind === "native") {
+    expectations.constructor_private_read = !!flags.unrestricted;
+    expectations.constructor_fork = flags.shell;
+  }
+  assert.deepEqual(actual, expectations, `${name}: capability boundary differs`);
   const execution = observe(artifacts, runtime, paths, profile, "exec", flags);
   assert.deepEqual(execution, { self_exec: flags.shell }, `${name}: interpreter exec boundary differs`);
   return { name, flags, observations: actual, self_exec: execution.self_exec };
@@ -188,13 +208,17 @@ function check(root: string, artifacts: Artifacts, runtime: Runtime, name: strin
 
 function main() {
   assert(["darwin", "linux"].includes(process.platform), "native proof requires macOS or Linux; other platforms are unproved");
-  const { values } = parseArgs({ options: { runtime: { type: "string", default: "python" }, python: { type: "string" }, report: { type: "string" } } });
-  assert(["python", "node"].includes(values.runtime), "runtime must be python or node");
+  const { values } = parseArgs({ options: { runtime: { type: "string", default: "python" }, python: { type: "string" }, report: { type: "string" }, "initial-exec": { type: "boolean", default: false } } });
+  assert(["python", "node", "native"].includes(values.runtime), "runtime must be python, node or native");
+  const initialExec = values["initial-exec"] || values.runtime === "native";
+  assert(!initialExec || isLinux, "initial-exec/native proof currently requires Linux");
   if (values.runtime === "python") assert(values.python, "supply an explicit trusted Python with development headers and dynamic library");
-  const runtime = values.runtime === "node" ? nodeInfo() : pythonInfo(values.python!);
   const root = realpathSync(mkdtempSync(join(tmpdir(), "cyber-plugin-native-proof-")));
   try {
-    const artifacts = build(root, runtime);
+    const runtime: Runtime = values.runtime === "node" ? nodeInfo() : values.runtime === "native"
+      ? { kind: "native", executable: join(root, "native-fixture"), prefix: "/usr", include: "", libdir: "/usr/lib", version: "fixture-v1" }
+      : pythonInfo(values.python!);
+    const artifacts = build(root, runtime, initialExec);
     const rows = [
       check(root, artifacts, runtime, "unconfined-control", { read: true, write: true, shell: true, unrestricted: true }),
       check(root, artifacts, runtime, "no-capabilities", { read: false, write: false, shell: false }),
@@ -207,12 +231,12 @@ function main() {
       check(root, artifacts, runtime, "declared-read-write-shell", { read: true, write: true, shell: true }),
     ];
     const digest = createHash("sha256");
-    const sources = ["run.mts", "macos_python.c", "macos_node.c", "native_exec.c", "node_bootstrap.cjs", "fixture.py", "fixture.cjs", "process_policy.h", "linux_filter.h", "linux_exec.c"];
+    const sources = ["run.mts", "macos_python.c", "macos_node.c", "native_exec.c", "node_bootstrap.cjs", "fixture.py", "fixture.cjs", "process_policy.h", "linux_filter.h", "linux_exec.c", "linux_initial_exec.h", "fixture_native.c"];
     for (const file of sources) {
       digest.update(file + "\0").update(readFileSync(join(source, file)));
     }
     const report = { recorded_at: new Date().toISOString(), kernel_release: release(), sources, source_sha256: digest.digest("hex"), platform: process.platform, architecture: process.arch, runtime: runtime.kind, version: runtime.version,
-      mechanism: isLinux ? "bubblewrap private mounts + Landlock before runtime startup + synchronized seccomp before fixture execution" : "trusted native/runtime bootstrap followed by native sandbox_init before fixture execution",
+      mechanism: initialExec ? "bubblewrap private mounts + Landlock/seccomp before first target instruction + one-shot exec admission; closed listener and immutable filter" : isLinux ? "bubblewrap private mounts + Landlock before runtime startup + synchronized seccomp before fixture execution" : "trusted native/runtime bootstrap followed by native sandbox_init before fixture execution",
       limitation: "experimental native mechanisms; macOS uses deprecated Seatbelt API; not production packaging or Windows acceptance", rows };
     if (values.report) writeFileSync(values.report, JSON.stringify(report, null, 2) + "\n", { mode: 0o600 });
     console.log(JSON.stringify(report, null, 2));

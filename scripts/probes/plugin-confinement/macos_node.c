@@ -63,6 +63,11 @@ static napi_value relax(napi_env env, napi_callback_info info) {
     return boolean(env, proof_relax() == 0);
 }
 
+static napi_value replacement_denied(napi_env env, napi_callback_info info) {
+    (void)info;
+    return boolean(env, proof_replacement_denied());
+}
+
 static napi_value native_fork(napi_env env, napi_callback_info info) {
     (void)info;
     pid_t pid = fork();
@@ -100,8 +105,9 @@ static napi_value initialize(napi_env env, napi_value exports) {
         {"selfExec", NULL, self_exec, NULL, NULL, NULL, napi_default, NULL},
         {"relax", NULL, relax, NULL, NULL, NULL, napi_default, NULL},
         {"fork", NULL, native_fork, NULL, NULL, NULL, napi_default, NULL},
+        {"replacementDenied", NULL, replacement_denied, NULL, NULL, NULL, napi_default, NULL},
     };
-    if (napi_define_properties(env, exports, 6, properties) != napi_ok) return NULL;
+    if (napi_define_properties(env, exports, 7, properties) != napi_ok) return NULL;
     return exports;
 }
 
