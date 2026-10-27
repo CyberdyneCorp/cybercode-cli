@@ -37,3 +37,37 @@ After the failed build was confirmed terminal and no Cargo/rustc processes remai
 ## Review boundary
 
 Both workstreams await explicit user review of proposal/design/tasks. The early native enforcement prototype remains an approved-implementation task, not an already demonstrated design. This planning PR must not be treated as permission to implement or as closure of the larger extensibility milestone.
+
+## Implementation inventory follow-up (2026-10-27)
+
+At implementation commit `1226aeb5`, production Rust/SDK sources still match
+`79b4171f`; the proof increments do not implement host protocol contributions.
+The following source findings guide the next increments rather than close task
+1.4 or any production acceptance task:
+
+| Boundary | Actual path | Required follow-up |
+|---|---|---|
+| Root/team/Goal worktree creation | `worktrees/child.rs::create_root_worktree_session` delegates to `worktrees.rs::create_worktree_session_owned`, which calls `admit_worktree_creation` before `own_worktree_setup` | Preserve existing permission then pre-effect WorktreeCreate veto and shutdown-lock ordering |
+| Isolated child/workflow creation | `create_child_worktree` calls `own_worktree_setup(create_child_checkout(...))`; `create_child_checkout` checks worktree/delegation permission and directly creates Git state, without `worktree_create_hooks` | Add the missing veto before Git effects; move any hook admission outside the shutdown-admission guard so nested admission cannot deadlock |
+| Removed isolated-child recreation | `resume_child_worktree_authorized` invokes the same `create_child_checkout` under `own_worktree_setup` | Apply the same pre-effect hook path for real recreation; retained checkout reuse must not claim a new creation |
+| Location changes | Runtime reducers apply durable `session.worktree.entered`, `session.worktree.exited`, `session.worktree.rebound`; `names.rs::rebind_child_worktree` commits a new directory | Attach CwdChanged observation to committed transitions, not reducer replay or prepared effects |
+| Setup | `Runtime::create_session_with` calls `Inner::setup` after admitted creation returns first=true; `lifecycle.rs::setup` dispatches `Setup` | Explicit init/marker and crash/concurrency semantics still required; do not duplicate first-root behavior |
+| DirectoryAdded/FileChanged | Workspace-wide Rust search finds event declarations, matcher/test payload handling and FileChanged CLI tests, without a production emitter located | Implement committed authorized directory additions and bounded mutation/external observation; declaration/CLI test support is not a producer |
+| Contributions | `plugin_host/mod.rs::initialized` accepts tools and warns/ignores runtime hooks/providers/catalogTransforms; `Live` stores connection/tools/start time | Add generation-owned registrations, validation, atomic replacement/revocation and late-result fences |
+| Prompt ownership | `Entry::calls` maps tool call IDs only to Askers; handler capability-checks but refuses session/prompt | Durable generation/Session/Location invocation ownership and normal inbox admission, without actor-lock recursion |
+| SDK | `server.ts` handles hook calls/provider streams but always initializes `catalogTransforms: []`; tool context has no prompt callback API | Add transform and callback contracts with matching owner dispatch/cancellation tests |
+
+Existing regression anchors: `cyber-tools/tests/worktree_setup.rs` includes the
+WorktreeCreate veto/no-Git-effects test and a shutdown-admission test for the
+ordinary creation path. `cyber-app/tests/plugins.rs` covers forwarding, crashes,
+disable, network intersections, protocol mismatch, deferred tools, settings and
+secret scoping, but does not prove new runtime hooks/providers/transforms/prompt
+admission. New isolated-child veto/recreation/deadlock tests must run through
+those actual child paths, rather than only unit-testing the hook dispatcher.
+
+[CI run 40539570936](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40539570936)
+at proof commit `7ab2f662` reports the full Linux Rust job, TypeScript SDK and
+OpenSpec jobs successful. This is PR CI on unchanged production sources, not a
+claim that the earlier local main-branch disk failure passed or a newly added
+behavior is accepted. Remaining job/native results must be inspected before
+completing the baseline or delivery gates.
