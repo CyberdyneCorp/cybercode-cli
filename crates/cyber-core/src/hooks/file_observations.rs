@@ -13,6 +13,11 @@ pub const MAX_RECORD_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_REPLAY: usize = 128;
 pub const FEEDBACK_LIMIT: u32 = 64;
 
+/// Mint a generation in the same module that validates its serialized shape.
+pub fn new_generation() -> String {
+    ulid::Ulid::new().to_string()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Stamp {
@@ -289,7 +294,7 @@ mod tests {
                 .display()
                 .to_string(),
             root_identity: "fixture-root".into(),
-            generation: ulid::Ulid::new().to_string(),
+            generation: new_generation(),
             files: BTreeMap::new(),
             remaining: FEEDBACK_LIMIT,
         }
@@ -323,7 +328,7 @@ mod tests {
     fn restarted_checkpoint_cannot_reset_credit_or_admit_old_worker() {
         let old = checkpoint();
         let mut next = old.apply(&delta(&old)).unwrap();
-        next.generation = ulid::Ulid::new().to_string();
+        next.generation = new_generation();
         assert!(next.follows(&old.apply(&delta(&old)).unwrap()).is_ok());
         assert!(next.apply(&delta(&old)).unwrap_err().contains("stale"));
         next.remaining = FEEDBACK_LIMIT;
@@ -401,7 +406,7 @@ mod tests {
         let state = checkpoint();
         let valid = delta(&state);
         let mut invalid = valid.clone();
-        invalid.generation = ulid::Ulid::new().to_string();
+        invalid.generation = new_generation();
         let mut replay = Replay::new(state).unwrap();
         assert!(replay.push(&invalid).is_err());
         assert!(replay.push(&valid).is_err());

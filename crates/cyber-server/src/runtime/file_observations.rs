@@ -101,7 +101,7 @@ impl Runtime {
         let state = Checkpoint {
             directory,
             root_identity,
-            generation: ulid::Ulid::new().to_string(),
+            generation: records::new_generation(),
             files,
             remaining: previous
                 .as_ref()
