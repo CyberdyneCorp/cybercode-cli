@@ -2547,8 +2547,28 @@ impl Drop for CwdRecorder {
 }
 
 #[cfg(unix)]
+fn cwd_history(flow: &support::flow::Flow, id: &str) -> Vec<cyber_store::StoredEvent> {
+    let mut events = Vec::new();
+    let mut after = -1;
+    loop {
+        let page = flow
+            .f
+            .store
+            .read_events(id, after, cyber_store::MAX_PAGE_LIMIT)
+            .unwrap();
+        if let Some(last) = page.events.last() {
+            after = last.seq;
+        }
+        events.extend(page.events);
+        if !page.has_more {
+            return events;
+        }
+    }
+}
+
+#[cfg(unix)]
 fn assert_cwd_transition(flow: &support::flow::Flow, id: &str, hook: &serde_json::Value) {
-    let events = flow.f.store.read_events(id, -1, 1000).unwrap().events;
+    let events = cwd_history(flow, id);
     let transition = events
         .iter()
         .find(|event| hook["transition_id"] == event.id)
@@ -2650,7 +2670,7 @@ async fn cwd_changed_idle_exit_is_committed_once_and_replay_is_silent() {
         assert_cwd_transition(&flow, &id, event);
     }
     assert!(events.iter().all(|event| event["session_id"] != unrelated));
-    let before = flow.f.store.read_events(&id, -1, 1000).unwrap().events;
+    let before = cwd_history(&flow, &id);
     flow.restart_default_runtime().await;
     recorder.attach(&flow);
     let state = flow.runtime.state(&id).await.unwrap();
@@ -2667,10 +2687,7 @@ async fn cwd_changed_idle_exit_is_committed_once_and_replay_is_silent() {
         events,
         "loading durable history must not replay handlers"
     );
-    assert_eq!(
-        flow.f.store.read_events(&id, -1, 1000).unwrap().events,
-        before
-    );
+    assert_eq!(cwd_history(&flow, &id), before);
 }
 
 #[cfg(unix)]
