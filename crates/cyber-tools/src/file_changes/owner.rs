@@ -292,14 +292,18 @@ impl BuiltinHost {
                 ]
             })
             .collect();
+        let mut trees = vec![
+            self.opts.tool_output_dir.clone(),
+            self.opts.temp_dir.clone(),
+            self.opts.global_config_dir.clone(),
+        ];
+        if let Some(private) = self.observation_private_roots.get() {
+            trees.extend(private.iter().cloned());
+        }
         Exclusions::new(
             path,
             &self.opts.home,
-            vec![
-                self.opts.tool_output_dir.clone(),
-                self.opts.temp_dir.clone(),
-                self.opts.global_config_dir.clone(),
-            ],
+            trees,
             files,
             crate::permissions::is_protected,
         )

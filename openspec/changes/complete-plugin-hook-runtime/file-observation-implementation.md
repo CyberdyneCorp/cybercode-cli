@@ -306,3 +306,29 @@ when checked; Linux full tests and the native Windows build were still running,
 and macOS jobs were queued. These results precede the newer hard-link and held-
 callback tests. Alias-aware Session admission, actual formatter-process and
 remaining lifecycle/resource/overflow acceptance still keep task 5.2 open.
+
+
+## Real application notification forwarding
+
+The full Linux and Windows workspace suites at `653aeba5` failed the existing
+AppHost forwarding regression: the new `user_input_committed` ToolHost method
+was not forwarded to BuiltinHost. The dedicated lower-level observer tests did
+not exercise that facade. AppHost now forwards it, and a new real App/runtime
+regression requires a committed held user prompt to produce a durable watcher
+renewal after an observed edit. The focused platform workflow now runs both
+forwarding checks. These full-application corrections await CI; the earlier
+lower-level suite success is not proof of application forwarding.
+
+The focused `653aeba5` workflow subsequently completed successfully on macOS as
+well as Linux and Windows. That verifies the earlier five application scenarios
+on all three platforms, not the newer hard-link and held-callback tests.
+
+
+The real application also now supplies all owner data/configuration/state/cache/
+temporary roots to BuiltinHost before opening Locations. Inferring the data root
+from the tool-output parent would incorrectly exclude some embedding checkouts;
+the trusted owner supplies the roots explicitly instead. Canonical aliases are
+covered by the existing exclusion adapter. The App forwarding regression places
+all five storage roots beneath its Location and checks that their marker metadata
+enters neither the baseline nor deltas, while public observation and held-input
+renewal still proceed. This application privacy/wiring regression awaits CI.

@@ -766,6 +766,7 @@ fn app_host_forwards_every_tool_host_method() {
         "permission_effect",
         "resolve_prompt_resources",
         "take_hook_effects",
+        "user_input_committed",
         "team_editor",
         "team_settings",
         "create_team_session",
@@ -900,4 +901,90 @@ async fn base_prompt_follows_the_model_family() {
     assert!(last.starts_with("Agent instructions.\n\n"), "{last}");
     assert!(!last.contains("You are Cyber Code"), "{last}");
     app.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn app_host_forwards_committed_user_input_to_file_observer() {
+    use cyber_core::hooks::file_observations as records;
+    let scratch = tempfile::tempdir().unwrap();
+    let app = application(scratch.path()).await;
+    // Owner state intentionally lives below this Location, exercising the
+    // production storage exclusions as well as the facade notification.
+    let project = scratch.path().canonicalize().unwrap();
+    // No handler matches the marker: the test exercises the real runtime/host
+    // bridge and journal without launching a command or making a model call.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    std::fs::write(app.paths.config.join("cyber.json"), json!({"hooks":{"FileChanged":[{
+        "matcher":"never-observed", "hooks":[{"type":"http", "url":format!("http://{}/unused", listener.local_addr().unwrap())}]
+    }]}}).to_string()).unwrap();
+    let private_roots = [
+        &app.paths.data,
+        &app.paths.config,
+        &app.paths.state,
+        &app.paths.cache,
+        &app.paths.tmp,
+    ];
+    for root in private_roots {
+        std::fs::write(
+            root.join("observer-private-state"),
+            "initial private metadata",
+        )
+        .unwrap();
+    }
+    let session = app
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: project.display().to_string(),
+            model: "test/unavailable".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    wait_for_observer_record(&app, records::CHECKPOINT, false).await;
+    for root in private_roots {
+        std::fs::write(
+            root.join("observer-private-state"),
+            "changed private metadata must remain excluded",
+        )
+        .unwrap();
+    }
+    std::fs::write(project.join("observer-marker"), "changed").unwrap();
+    wait_for_observer_record(&app, records::CHANGED, false).await;
+    let mut input = cyber_server::runtime::Admission::text(
+        "resume observers",
+        cyber_server::runtime::Delivery::Hold,
+    );
+    input.resume = false;
+    app.runtime.admit(&session.id, input).await.unwrap();
+    wait_for_observer_record(&app, records::CHANGED, true).await;
+    let private: i64 = app.store.read(|db| Ok(db.query_row(
+        "SELECT COUNT(*) FROM event e, json_each(e.data,'$.updates') u WHERE e.type=?1 AND json_extract(u.value,'$.path') LIKE '%/observer-private-state'",
+        [records::CHANGED], |row| row.get(0))?)).unwrap();
+    assert_eq!(
+        private, 0,
+        "nested owner state must not enter observation deltas"
+    );
+    let baselines: i64 = app.store.read(|db| Ok(db.query_row(
+        "SELECT COUNT(*) FROM event e, json_each(e.data,'$.files') f WHERE e.type=?1 AND f.key LIKE '%/observer-private-state'",
+        [records::CHECKPOINT], |row| row.get(0))?)).unwrap();
+    assert_eq!(
+        baselines, 0,
+        "nested owner state must not enter observer baselines"
+    );
+    app.runtime.shutdown().await;
+}
+
+async fn wait_for_observer_record(app: &App, kind: &'static str, renewal: bool) {
+    tokio::time::timeout(HOOK_WAIT, async {
+        loop {
+            let count: i64 = app.store.read(move |db| {
+                let query = if renewal {
+                    "SELECT COUNT(*) FROM event WHERE type=?1 AND json_type(data,'$.renewal')='object'"
+                } else { "SELECT COUNT(*) FROM event WHERE type=?1" };
+                Ok(db.query_row(query, [kind], |row| row.get(0))?)
+            }).unwrap();
+            if count > 0 { break; }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    }).await.expect("application observer notification did not reach its durable journal");
 }

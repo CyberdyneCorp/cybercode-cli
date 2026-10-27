@@ -14,6 +14,9 @@ on:
       - crates/cyber-server/src/runtime/hooks.rs
       - crates/cyber-tools/src/lifecycle_hooks.rs
       - crates/cyber-tools/src/host.rs
+      - crates/cyber-app/src/lib.rs
+      - crates/cyber-app/src/host.rs
+      - crates/cyber-app/src/host/tests.rs
       - crates/cyber-server/src/runtime/lifecycle.rs
       - crates/cyber-server/src/runtime/host.rs
       - crates/cyber-server/src/runtime/lifecycle_events.rs
@@ -57,3 +60,5 @@ jobs:
         run: cargo test --locked -p cyber-server --test file_observations
       - name: Exercise real scoped HTTP-hook dispatch
         run: cargo test --locked -p cyber-tools --test file_observation_dispatch
+      - name: Verify application host forwards observation notifications
+        run: cargo test --locked -p cyber-app --lib host::tests::app_host_forwards_

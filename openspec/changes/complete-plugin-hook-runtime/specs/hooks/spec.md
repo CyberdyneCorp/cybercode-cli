@@ -47,3 +47,9 @@
 - **WHEN** shutdown cancels a launched file observer callback and the Session is subsequently reopened
 - **THEN** the local callback owner settles before the observer is joined, its durable receipt remains available, and the old observation is not replayed solely to obtain another result
 - **AND** the reopened Location can receive a fresh observation with its preserved feedback accounting
+
+
+#### Scenario: Owner storage nested under a Location
+- **WHEN** owner data, configuration, state, cache or temporary roots lie below an observed Location
+- **THEN** owner-supplied private roots and their canonical aliases are excluded before traversing those subtrees, from both initial metadata and subsequent deltas
+- **AND** ordinary project observations and committed user-input renewal continue through the real application host

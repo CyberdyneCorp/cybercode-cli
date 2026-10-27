@@ -72,6 +72,7 @@ pub struct BuiltinHost {
     pub(crate) opts: HostOptions,
     tools: Vec<Box<dyn Tool>>,
     file_observers: crate::file_changes::Observers,
+    pub(crate) observation_private_roots: OnceLock<Vec<PathBuf>>,
     reads: Mutex<HashMap<String, HashSet<PathBuf>>>,
     locks: Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
     runtime: OnceLock<WeakRuntime>,
@@ -180,6 +181,7 @@ impl BuiltinHost {
             opts,
             tools: tools::all(),
             file_observers: Default::default(),
+            observation_private_roots: OnceLock::new(),
             reads: Mutex::default(),
             locks: Mutex::default(),
             runtime: OnceLock::new(),
@@ -198,6 +200,14 @@ impl BuiltinHost {
             remote_skills: OnceLock::new(),
             client_hooks: OnceLock::new(),
         })
+    }
+
+    /// Trusted owner storage roots, attached before opening Locations. These
+    /// augment built-in protection even when application state is in a checkout.
+    pub fn attach_observation_private_roots(&self, roots: Vec<PathBuf>) -> Result<(), String> {
+        self.observation_private_roots
+            .set(roots)
+            .map_err(|_| "file observation private roots already attached".into())
     }
 
     pub(crate) fn observe_file_change(&self, location: &Path, path: &Path) {
