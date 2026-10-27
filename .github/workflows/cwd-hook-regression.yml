@@ -1,0 +1,87 @@
+name: Committed Location hook regression
+
+on:
+  pull_request:
+    paths:
+      - crates/cyber-server/src/runtime/worktree_events.rs
+      - crates/cyber-server/src/runtime/worktree_output.rs
+      - crates/cyber-server/src/runtime/names.rs
+      - crates/cyber-tools/src/lifecycle_hooks.rs
+      - crates/cyber-tools/tests/worktree_setup.rs
+      - .github/workflows/cwd-hook-regression.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cwd-hook-regression-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cwd-hook-regression
+      - name: Linux native prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.*
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - run: cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec
+      - name: Verify the Location regression fails against unchanged base production sources
+        env:
+          BASE_SOURCE: ${{ github.event.pull_request.base.sha || 'origin/main' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            crates/cyber-server/src/runtime/worktree_events.rs
+            crates/cyber-server/src/runtime/worktree_output.rs
+            crates/cyber-server/src/runtime/names.rs
+            crates/cyber-tools/src/lifecycle_hooks.rs
+          )
+          restore() {
+            for path in "${files[@]}"; do cp "$RUNNER_TEMP/$(basename "$path")" "$path"; done
+          }
+          for path in "${files[@]}"; do cp "$path" "$RUNNER_TEMP/$(basename "$path")"; done
+          trap restore EXIT
+          for path in "${files[@]}"; do git show "$BASE_SOURCE:$path" > "$path"; done
+          if cargo test --locked -p cyber-tools --test worktree_setup cwd_changed_hooks_observe_committed_enter_and_exit_only -- --exact > "$RUNNER_TEMP/base-regression.log" 2>&1; then
+            echo 'Regression unexpectedly passed on the unchanged base.'
+            exit 1
+          fi
+          python3 - <<'PY'
+          import os,re
+          from pathlib import Path
+          log=Path(os.environ['RUNNER_TEMP'],'base-regression.log').read_text()
+          assert re.search(r'^test cwd_changed_hooks_observe_committed_enter_and_exit_only \.\.\. FAILED$',log,re.M), log[-8000:]
+          assert 'left: 0' in log and 'right: 2' in log, log[-8000:]
+          PY
+      - name: Run actual worktree flows with the fix
+        run: cargo test --locked -p cyber-tools --test worktree_setup
+      - name: Preserve before/after regression evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cwd-hook-regression-${{ matrix.os }}
+          path: ${{ runner.temp }}/base-regression.log
+          if-no-files-found: error
+          retention-days: 14

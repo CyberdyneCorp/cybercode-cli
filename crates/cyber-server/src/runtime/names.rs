@@ -289,22 +289,26 @@ impl Runtime {
         let result = {
             let mut state = handle.state.lock().await;
             self.check_rebind(owner, &state, from, to).and_then(|()| {
-                self.inner
-                    .commit_locked(
-                        &mut state,
-                        vec![event(
-                            WORKTREE_REBOUND,
-                            &Rebound {
-                                from: from.clone(),
-                                to: to.clone(),
-                            },
-                        )],
-                    )
-                    .map(|_| ())
+                let stored = self.inner.commit_locked(
+                    &mut state,
+                    vec![event(
+                        WORKTREE_REBOUND,
+                        &Rebound {
+                            from: from.clone(),
+                            to: to.clone(),
+                        },
+                    )],
+                )?;
+                Ok(super::worktree_events::cwd_hook(&state, &stored))
             })
         };
         lease.settle().map_err(RuntimeError::Invalid)?;
-        result
+        let hook = result?;
+        drop(_admission);
+        if let Some(hook) = hook {
+            self.inner.observe_cwd(hook).await;
+        }
+        Ok(())
     }
 
     fn check_rebind(

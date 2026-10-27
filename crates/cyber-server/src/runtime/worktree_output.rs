@@ -54,10 +54,14 @@ impl Runtime {
         cancel: tokio_util::sync::CancellationToken,
         work: impl std::future::Future<Output = io::Result<T>>,
     ) -> io::Result<T> {
-        let _admission = self.inner.open().await.map_err(io::Error::other)?;
-        self.settle_worktree_setup(cancel, work)
+        self.inner
+            .after_worktree_owner(async {
+                let _admission = self.inner.open().await.map_err(io::Error::other)?;
+                self.settle_worktree_setup(cancel, work)
+                    .await
+                    .unwrap_or_else(setup_unacknowledged)
+            })
             .await
-            .unwrap_or_else(setup_unacknowledged)
     }
 
     /// Fence Session setup before its repository lock, retaining unknown activity
@@ -68,38 +72,42 @@ impl Runtime {
         cancel: tokio_util::sync::CancellationToken,
         work: impl std::future::Future<Output = io::Result<T>>,
     ) -> io::Result<T> {
-        let _admission = self.inner.open().await.map_err(io::Error::other)?;
-        let handle = self
-            .inner
-            .handle(session_id)
-            .await
-            .map_err(io::Error::other)?;
-        let authority = self
-            .capture_child_admission(session_id)
-            .map_err(io::Error::other)?;
-        let owned_cancel = cancel.clone();
-        let result = self
-            .settle_worktree_setup(cancel, async {
-                self.inner
-                    .with_setup_location(
-                        &handle,
-                        owned_cancel.clone(),
-                        async {
-                            authority.verify(self, session_id)?;
-                            Ok(authority.scope(owned_cancel, work).await)
-                        },
-                        true,
-                    )
+        self.inner
+            .after_worktree_owner(async {
+                let _admission = self.inner.open().await.map_err(io::Error::other)?;
+                let handle = self
+                    .inner
+                    .handle(session_id)
                     .await
-                    .map_err(io::Error::other)?
+                    .map_err(io::Error::other)?;
+                let authority = self
+                    .capture_child_admission(session_id)
+                    .map_err(io::Error::other)?;
+                let owned_cancel = cancel.clone();
+                let result = self
+                    .settle_worktree_setup(cancel, async {
+                        self.inner
+                            .with_setup_location(
+                                &handle,
+                                owned_cancel.clone(),
+                                async {
+                                    authority.verify(self, session_id)?;
+                                    Ok(authority.scope(owned_cancel, work).await)
+                                },
+                                true,
+                            )
+                            .await
+                            .map_err(io::Error::other)?
+                    })
+                    .await;
+                if result.is_none() {
+                    handle
+                        .location_uncertain
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+                result.unwrap_or_else(setup_unacknowledged)
             })
-            .await;
-        if result.is_none() {
-            handle
-                .location_uncertain
-                .store(true, std::sync::atomic::Ordering::SeqCst);
-        }
-        result.unwrap_or_else(setup_unacknowledged)
+            .await
     }
 
     async fn settle_worktree_setup<T>(

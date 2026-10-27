@@ -2,7 +2,9 @@
 //! Session relocation of `enter_worktree`/`exit_worktree` (`worktrees` → Enter and
 //! exit tools).
 
+use std::cell::RefCell;
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use cyber_core::worktrees::Managed;
@@ -14,10 +16,90 @@ use super::{CallStatus, LiveEvent, Runtime, RuntimeError, SessionState};
 pub const ENTERED: &str = "session.worktree.entered.1";
 pub const EXITED: &str = "session.worktree.exited.1";
 
+tokio::task_local! {
+    /// A management operation can move idle Sessions while holding shutdown
+    /// admission. Its observations run only after that outer owner settles.
+    static DEFERRED_CWD: RefCell<DeferredCwd>;
+}
+
+struct DeferredCwd {
+    owner: Arc<tokio::sync::RwLock<()>>,
+    hooks: Vec<super::host::LifecycleHook>,
+}
+
+impl super::Inner {
+    pub(super) async fn after_worktree_owner<T>(
+        &self,
+        work: impl std::future::Future<Output = T>,
+    ) -> T {
+        if DEFERRED_CWD
+            .try_with(|pending| Arc::ptr_eq(&pending.borrow().owner, &self.lifecycle))
+            .unwrap_or(false)
+        {
+            return work.await;
+        }
+        let pending = RefCell::new(DeferredCwd {
+            owner: Arc::clone(&self.lifecycle),
+            hooks: Vec::new(),
+        });
+        let (result, hooks) = DEFERRED_CWD
+            .scope(pending, async {
+                let result = work.await;
+                let hooks =
+                    DEFERRED_CWD.with(|pending| std::mem::take(&mut pending.borrow_mut().hooks));
+                (result, hooks)
+            })
+            .await;
+        for hook in hooks {
+            self.observe_lifecycle(hook).await;
+        }
+        result
+    }
+
+    pub(super) async fn observe_cwd(&self, hook: super::host::LifecycleHook) {
+        let mut hook = Some(hook);
+        let _ = DEFERRED_CWD.try_with(|pending| {
+            let mut pending = pending.borrow_mut();
+            if Arc::ptr_eq(&pending.owner, &self.lifecycle) {
+                pending.hooks.push(hook.take().unwrap());
+            }
+        });
+        if let Some(hook) = hook {
+            self.observe_lifecycle(hook).await;
+        }
+    }
+}
+
 /// Event kinds that move a Session to another Location; each carries `to.path`
 /// and `from.path`.
 pub fn relocates(kind: &str) -> bool {
     matches!(kind, "session.worktree.rebound.1" | ENTERED | EXITED)
+}
+
+/// Capture only an acknowledged effective path transition, from its committed
+/// record and the resulting Session identity. Replay never invokes this producer.
+pub(super) fn cwd_hook(
+    state: &SessionState,
+    stored: &[cyber_store::StoredEvent],
+) -> Option<super::host::LifecycleHook> {
+    let transition = stored.iter().find(|event| relocates(&event.kind))?;
+    let from = transition.data["from"]["path"].as_str()?;
+    let to = transition.data["to"]["path"].as_str()?;
+    if from == to {
+        return None;
+    }
+    Some(super::lifecycle::lifecycle(
+        state,
+        "CwdChanged",
+        to.into(),
+        serde_json::json!({
+            "previous_directory": from,
+            "directory": to,
+            "transition_id": transition.id,
+            "transition_sequence": transition.seq,
+            "transition": transition.kind,
+        }),
+    ))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -254,6 +336,7 @@ impl Runtime {
         }
         let ids = [id.to_owned()];
         self.fence_deletion(id, &ids)?;
+        let mut hook = None;
         let exited = {
             let mut state = handle.state.lock().await;
             match state.entered_worktree.as_deref().cloned() {
@@ -269,12 +352,17 @@ impl Runtime {
                             },
                         },
                     );
-                    self.inner.commit_locked(&mut state, vec![event])?;
+                    let stored = self.inner.commit_locked(&mut state, vec![event])?;
+                    hook = cwd_hook(&state, &stored);
                     Ok(Some((from, WorktreeExit { origin, created })))
                 }),
             }
         };
         self.lift_deletion_fence(&ids);
+        drop(_admission);
+        if let Some(hook) = hook {
+            self.inner.observe_cwd(hook).await;
+        }
         exited
     }
 
@@ -314,19 +402,28 @@ impl Runtime {
         }
         let committed = {
             let mut state = handle.state.lock().await;
-            events(&state)
-                .and_then(|events| self.inner.commit_locked(&mut state, events).map(|_| ()))
+            events(&state).and_then(|events| {
+                let stored = self.inner.commit_locked(&mut state, events)?;
+                Ok(cwd_hook(&state, &stored))
+            })
         };
-        if let Err(error) = committed {
-            let _ = lease.settle();
-            return Err(error);
-        }
+        let hook = match committed {
+            Ok(hook) => hook,
+            Err(error) => {
+                let _ = lease.settle();
+                return Err(error);
+            }
+        };
         // The earlier Location's work is settled: this call runs alone.
         if let Some(previous) = handle.replace_lease(lease)
             && let Err(error) = previous.settle()
         {
             handle.location_uncertain.store(true, Ordering::SeqCst);
             return Err(RuntimeError::Invalid(error));
+        }
+        drop(_admission);
+        if let Some(hook) = hook {
+            self.inner.observe_cwd(hook).await;
         }
         Ok(())
     }

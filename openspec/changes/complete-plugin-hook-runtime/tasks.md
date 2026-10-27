@@ -2,7 +2,7 @@
 
 - [x] 1.1 Inspect canonical plugin/hook contracts, SDK protocol, host confinement and explicit unsupported paths at `097b6278`.
 - [x] 1.2 Draft the proposal, design, supplemental scenarios and ordered implementation tasks.
-- [ ] 1.3 Review proposal/design/tasks with the user before security-sensitive or capability implementation. Record approved scope and platform/runtime decisions.
+- [x] 1.3 Review proposal/design/tasks with the user before security-sensitive or capability implementation. Record approved scope and platform/runtime decisions. Approved on 2026-10-27: the user requested implementation of merged PRs #53/#54 and resumed that goal. Explicit native proof/support-revision gates still apply.
 - [ ] 1.4 Inventory actual producers and protocol operations; map existing tests and stale parent tasks. Run relevant unchanged-main baseline checks and record outcomes. Source findings and the failed Rust compile/SDK results are recorded in [baseline.md](baseline.md); this task remains open for a passing native baseline.
 
 ## 2. Native capability enforcement
@@ -28,7 +28,7 @@
 
 ## 5. Missing event producers
 
-- [ ] 5.1 Implement committed `DirectoryAdded`/`CwdChanged`, complete existing `Setup` init/marker semantics and fill proven isolated-child `WorktreeCreate` coverage gaps without moving its pre-effect veto.
+- [ ] 5.1 Partial implementation: committed `CwdChanged` producer for effective enter/exit and changed-path child rebind, with durable transition identity, observational outcomes, deferred dispatch outside worktree ownership and no reducer/restart replay. Native regression/CI validation is pending. Other requirements in this task remain open. Implement committed `DirectoryAdded`/`CwdChanged`, complete existing `Setup` init/marker semantics and fill proven isolated-child `WorktreeCreate` coverage gaps without moving its pre-effect veto.
 - [ ] 5.2 Implement bounded `FileChanged` observation/reconciliation for tools, formatters, shell/background and external edits, including overflow and self-write loop prevention.
 - [ ] 5.3 Test no false post-effect success for refused/failed/unknown transitions, pre-effect WorktreeCreate veto/no Git mutation, stable event identity, correct scope/order, rename/delete, multiple Sessions, shutdown/restart and unknown handler outcomes.
 
