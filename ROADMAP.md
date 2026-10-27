@@ -85,6 +85,8 @@ The [current inventory](docs/implementation/spec-doc-reconciliation.md) contains
 
 **Sound alerts (`tui`, P1): Status: implemented** (change [`add-sound-alerts`](openspec/changes/add-sound-alerts/proposal.md); the check on real hardware remains). Six distinct alert sounds: input needed, done, error, workflow completed, workflow failed, and message. They play while the terminal is unfocused. There are four packs synthesized in code (`cyber`, `soft`, `retro` and `bell`), played through the OS player (`afplay`, `pw-play`/`paplay`/`aplay`, PowerShell), with a terminal-bell fallback over SSH or when no player is found. `/sounds` picks the pack and volume, toggles events and previews each sound. It also closes the gap where a permission or question request raised no attention notification. No native audio dependency.
 
+**Proposed binary hex editor (P1):** [`add-binary-hex-editor`](openspec/changes/add-binary-hex-editor/proposal.md) extends the current file explorer with paged hex/ASCII inspection, staged byte edits, review/undo/recovery and a bounded model-facing binary tool. Specification only; implementation awaits review and scheduling after the existing Plugins/hooks and Daily coding workstreams. It does not imply that `/files` already provides a general manual text editor.
+
 ## P2: Autonomy & orchestration (flagship)
 
 **Capabilities:** `workflows` (including automatic orchestration), `goals`, `loops-scheduling`, `agent-teams` (behind feature `teams`), `cross-session-messaging` (direct peers), `tui` (agent view, workflow monitor, goal panel), `background-tasks` (`notify`, `send_file`), `skills-commands` (bundled `batch`, `review`, `audit`), `exec-mode` (`--goal`, `--workflow`).
