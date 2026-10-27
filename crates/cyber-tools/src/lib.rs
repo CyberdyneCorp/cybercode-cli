@@ -5,6 +5,8 @@ mod auto_permissions;
 pub mod bash_analysis;
 mod browser;
 mod budget;
+#[cfg(test)]
+mod file_changes;
 mod hook_async;
 mod hook_authority;
 mod hook_client;
