@@ -79,8 +79,8 @@ mode-000 tmpfs mounts. The same capability matrix adds direct native fork checks
 See the probe README for the exact mechanisms, prerequisites and limits.
 
 Local macOS arm64 Python/Node reruns of the shared sources passed all nine cases,
-including direct native fork. Linux runtime results are pending; no Linux pass
-or production integration is claimed. Historical committed reports above remain
+including direct native fork. The first native Linux Python results are recorded
+below; Node/Linux and production integration still require acceptance. Historical committed reports above remain
 bound to commit `7ab2f662`, rather than being silently reattributed to new sources.
 
 The initial CI run at `7ab2f662` passed Node on macOS arm64 and Intel, while both
@@ -89,3 +89,27 @@ framework binary outside `LIBDIR`; dyld refused that missing read root in
 `shell-without-read`. The policy now grants the exact resolved trusted library
 file, rather than broadening all of `/Library`. The rerun must establish this
 fix on both macOS architectures; local Anaconda results do not prove it.
+
+## First Linux native results
+
+[Native CI run 40545245707](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40545245707),
+commit `70c059d3`, passed Python on both Linux architectures:
+
+| Architecture | Kernel | CPython | Capability cases |
+|---|---|---|---|
+| x64 | 6.17.0-1022-azure | 3.13.16 | 9 passed |
+| arm64 | 7.0.0-1017-azure | 3.13.17 | 9 passed |
+
+Full source-bound observations:
+[x86_64](../../../scripts/probes/plugin-confinement/evidence/linux-x64-python.json),
+[arm64](../../../scripts/probes/plugin-confinement/evidence/linux-arm64-python.json).
+These are native process tests, not cross-compilation. All expected positive and
+denial assertions passed, including writes without reads, worker reads/spawns,
+raw fork, direct re-exec, protected mount masks and inherited child restrictions.
+
+Node on both Linux architectures failed during initial OpenSSL startup because
+`/etc/ssl/openssl.cnf` was not among the read roots. The proof now grants that
+exact system configuration file when present, preserving its configuration
+rather than disabling OpenSSL settings or granting all of `/etc/ssl`. A Node
+Linux rerun is required. This failure does not contradict the independently
+observed Python results and does not establish Node/Linux support.

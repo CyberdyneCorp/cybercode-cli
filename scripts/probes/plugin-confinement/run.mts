@@ -108,7 +108,7 @@ function linuxLaunch(artifacts: Artifacts, runtime: Runtime, paths: Record<strin
     assert(path.startsWith("/") && path !== "/" && !/[\t\n\r\0]/.test(path), "bounded absolute native proof root required");
     if (existsSync(path)) grants.push(`${right}\t${path}`);
   };
-  for (const path of ["/usr", "/lib", "/lib64", "/bin", "/etc/ld.so.cache", "/etc/localtime",
+  for (const path of ["/usr", "/lib", "/lib64", "/bin", "/etc/ld.so.cache", "/etc/localtime", "/etc/ssl/openssl.cnf",
     "/dev/null", "/dev/urandom", "/dev/random", runtime.prefix, paths.package, paths.scratch,
     artifacts.executable, artifacts.addon, join(source, "node_bootstrap.cjs"), profile]) {
     if (path) grant("R", path);

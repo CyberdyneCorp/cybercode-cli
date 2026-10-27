@@ -108,7 +108,9 @@ here always isolate networking; declared network/proxy support is not proved.
 ABI 3 is mandatory because truncation must be controlled independently of reads.
 There is no weaker fallback if Landlock, TSYNC or namespace setup fails. `fs.write`
 grants write/truncate/create/remove rights without read-file/read-directory
-rights. Broad trusted runtime/system roots are experimental: their admission,
+rights. The exact system OpenSSL config file `/etc/ssl/openssl.cnf` is readable when
+present for Node initialization; other private files under `/etc/ssl` are not
+thereby admitted. Broad trusted runtime/system roots are experimental: their admission,
 containment and overlap with owner/workspace data still require production review.
 
 Linux code must pass the real native CI matrix; merely compiling or checking
