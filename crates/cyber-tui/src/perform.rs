@@ -960,6 +960,7 @@ pub async fn perform_owned(
         Action::ComputerStatus
         | Action::ComputerStop
         | Action::Loop(_)
+        | Action::Autofix(_)
         | Action::Goal(_)
         | Action::Workflow(_)
         | Action::Team(_)
@@ -986,25 +987,31 @@ pub async fn perform_owned(
 /// and the update check; and the branch tree (`/tree`, `/label`).
 async fn scheduled(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
     match action {
+        Action::Loop(request) => crate::loops::perform(client, request).await,
+        Action::Autofix(request) => crate::autofix::perform(client, request).await,
+        Action::Team(request) => crate::team::perform(client, session, request).await,
+        Action::Goal(request) => crate::goals::perform(client, request).await,
+        Action::Workflow(request) => Ok(Msg::Workflow(
+            crate::workflows::perform(client, request).await,
+        )),
+        other => module_command(client, session, other).await,
+    }
+}
+async fn module_command(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
+    match action {
         Action::ComputerStatus | Action::ComputerStop => {
             crate::computer::perform(client, session, action).await
         }
         Action::Branch(request) => crate::branches::perform(client, session, request).await,
         Action::Export(request) => crate::export::perform(client, request).await,
         Action::LoadUpdate => crate::update::perform(client).await,
-        Action::Loop(request) => crate::loops::perform(client, request).await,
-        Action::Team(request) => crate::team::perform(client, session, request).await,
         Action::Collaboration(request) => {
             crate::collaboration::perform(client, session, request).await
         }
         Action::Directory(request) => crate::agents::perform(client, session, request).await,
         Action::DirectoryOp(job) => crate::agents::perform_op(client, session, job).await,
-        Action::Goal(request) => crate::goals::perform(client, request).await,
         Action::Login(request) => crate::login::perform(client, request).await,
         Action::OutputStyle(request) => crate::output_styles::perform(client, request).await,
-        Action::Workflow(request) => Ok(Msg::Workflow(
-            crate::workflows::perform(client, request).await,
-        )),
         _ => Ok(Msg::Done),
     }
 }

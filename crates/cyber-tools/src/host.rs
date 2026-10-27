@@ -15,6 +15,8 @@ mod workflow_prepare;
 mod workflow_publication;
 mod workflow_solve;
 
+pub mod autofix;
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
@@ -641,6 +643,9 @@ impl BuiltinHost {
             Default::default()
         };
         rules.extend(inherited.rules);
+        if self.is_autofix_session(&inv.session_id) {
+            rules.extend(self.autofix_rules(&location));
+        }
         let ownership = inherited.ownership;
         let mut parent_modes = inherited.modes;
         if agent == Some("reviewer") {
@@ -748,6 +753,9 @@ impl ToolHost for BuiltinHost {
         event: cyber_server::runtime::LifecycleHook,
         cancel: CancellationToken,
     ) -> BoxFuture<'_, Result<cyber_server::runtime::LifecycleVerdict, String>> {
+        if self.is_autofix_session(&event.session_id) {
+            return Box::pin(async { Ok(Default::default()) });
+        }
         Box::pin(self.runtime_lifecycle_hooks(event, cancel))
     }
 
@@ -1158,6 +1166,30 @@ impl ToolHost for BuiltinHost {
             return Vec::new();
         };
         let mode = Mode::parse(&turn.mode);
+        if self.is_autofix_session(&turn.session_id) {
+            let tools = self
+                .tools
+                .iter()
+                .map(|tool| tool.def())
+                .filter(|definition| autofix::allowed_tool(&definition.spec.name))
+                .filter(|definition| {
+                    offered(
+                        &definition.spec.name,
+                        turn.prefers_apply_patch,
+                        mode,
+                        definition.retry_safety,
+                    )
+                })
+                .filter(|definition| {
+                    !fully_denied_scoped(
+                        &rules,
+                        tools::action_of(&definition.spec.name),
+                        &definition.spec.name,
+                    )
+                })
+                .collect();
+            return self.filter_agent_tools(turn, tools);
+        }
         let resources = std::cell::OnceCell::new();
         let messaging = std::cell::OnceCell::new();
         let mut tools: Vec<_> = self
@@ -1278,6 +1310,10 @@ impl ToolHost for BuiltinHost {
                 };
             }
             let mut inv = inv;
+            let restricted = self.is_autofix_session(&inv.session_id);
+            if restricted && !autofix::allowed_tool(&inv.name) {
+                return ToolOutcome::Failed("auto-fix permits file tools only".into());
+            }
             if let Err(error) = inv.asker.validate_auto_override(&inv.name, &inv.input) {
                 return ToolOutcome::Failed(error.to_string());
             }
@@ -1304,17 +1340,30 @@ impl ToolHost for BuiltinHost {
                     message
                 });
             }
-            let hook_decision = match self
-                .pre_tool_hooks(&mut inv, &tool.def().spec.input_schema, cancel.clone())
-                .await
-            {
-                Ok(allowed) => allowed,
-                Err(ToolError::Failed(error)) => return ToolOutcome::Failed(error),
-                Err(ToolError::Aborted) => return ToolOutcome::Aborted,
+            let hook_decision = if restricted {
+                None
+            } else {
+                match self
+                    .pre_tool_hooks(&mut inv, &tool.def().spec.input_schema, cancel.clone())
+                    .await
+                {
+                    Ok(allowed) => allowed,
+                    Err(ToolError::Failed(error)) => return ToolOutcome::Failed(error),
+                    Err(ToolError::Aborted) => return ToolOutcome::Aborted,
+                }
             };
             let started = std::time::Instant::now();
             let ctx = match self
-                .call_ctx(&inv, hook_decision, cancel.clone(), DenialHooks::armed())
+                .call_ctx(
+                    &inv,
+                    hook_decision,
+                    cancel.clone(),
+                    if restricted {
+                        DenialHooks::default()
+                    } else {
+                        DenialHooks::armed()
+                    },
+                )
                 .await
             {
                 Ok(ctx) => ctx,
@@ -1727,6 +1776,9 @@ impl BuiltinHost {
         outcome: ToolOutcome,
         started: std::time::Instant,
     ) -> ToolOutcome {
+        if self.is_autofix_session(&ctx.inv.session_id) {
+            return outcome;
+        }
         match self
             .post_tool_hooks(ctx.inv, &outcome, started, ctx.cancel.clone())
             .await
@@ -1835,6 +1887,11 @@ impl Ctx<'_> {
 
     /// Ask for `external_directory` for any path whose canonical form leaves the Location.
     pub async fn check_external(&self, paths: &[PathBuf]) -> Result<(), ToolError> {
+        if self.host.is_autofix_session(&self.inv.session_id) {
+            self.host
+                .autofix_paths(&self.inv.session_id, &self.location, paths, false)
+                .map_err(ToolError::Failed)?;
+        }
         let location =
             std::fs::canonicalize(&self.location).unwrap_or_else(|_| self.location.clone());
         let mut dirs: Vec<String> = Vec::new();
@@ -1885,6 +1942,12 @@ impl Ctx<'_> {
         mut metadata: Value,
     ) -> Result<(), ToolError> {
         req.tool = Some(self.inv.name.clone());
+        let restricted = self.host.is_autofix_session(&self.inv.session_id);
+        if restricted {
+            self.host
+                .autofix_paths(&self.inv.session_id, &self.location, &req.mutates, true)
+                .map_err(ToolError::Failed)?;
+        }
         if self
             .host
             .solve_isolation(&self.inv.session_id)
@@ -1908,6 +1971,15 @@ impl Ctx<'_> {
         let decision = self.policy.decide(&req);
         if let Decision::Deny(reason) = decision {
             return Err(self.denied(&req, "rule", deny_message(&reason)).await);
+        }
+        if restricted {
+            if decision == Decision::Ask || self.policy.forces_classifier(&req) {
+                return Err(ToolError::Failed(
+                    "auto-fix requires owner approval; unattended permission requests are paused"
+                        .into(),
+                ));
+            }
+            return Ok(());
         }
         if self.hook_decision == Some(cyber_core::hooks::HookAction::Ask) {
             // Force the manual route without skipping current/ancestor auto blocks.
@@ -1944,6 +2016,9 @@ impl Ctx<'_> {
     /// The denial error, after PermissionDenied hooks on an armed attempt; a merged
     /// `retry` is kept for the caller, never applied here.
     async fn denied(&self, req: &Request, source: &str, message: String) -> ToolError {
+        if self.host.is_autofix_session(&self.inv.session_id) {
+            return ToolError::Failed(message);
+        }
         if !self
             .denial
             .armed

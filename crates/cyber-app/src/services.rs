@@ -20,6 +20,7 @@ pub type HookReviewFn =
 pub type GlobalConfigFn = dyn Fn() -> Result<serde_json::Value, String> + Send + Sync;
 
 pub struct AppServices {
+    autofix: Arc<crate::autofix::Controller>,
     resolver: Arc<CatalogResolver>,
     host: Arc<BuiltinHost>,
     remote: Arc<RemoteTools>,
@@ -96,15 +97,31 @@ impl AppServices {
             )
             .map_err(|error| error.to_string())?;
         let collaboration = crate::collaboration::Collaboration::new(
-            store,
+            store.clone(),
             Arc::clone(&accounts),
-            runtime,
+            runtime.clone(),
             default_directory,
             Arc::clone(&global),
             paths.data.clone(),
         )?;
         host.attach_collaboration(Arc::clone(&collaboration) as _)?;
+        let autofix = crate::autofix::Controller::new(
+            runtime.clone(),
+            store.clone(),
+            paths.data.join("autofix"),
+            host.home_for_autofix(),
+            config.clone(),
+            resolver.clone(),
+            vec![
+                paths.config.clone(),
+                paths.state.clone(),
+                paths.cache.clone(),
+                paths.tmp.clone(),
+            ],
+        );
+        autofix.start();
         Ok(Self {
+            autofix,
             accounts,
             collaboration,
             global,
@@ -130,6 +147,20 @@ impl AppServices {
 use cyber_core::commands::BUILTIN as BUILTIN_COMMANDS;
 
 impl Services for AppServices {
+    fn autofix_enable(
+        &self,
+        directory: PathBuf,
+        config: cyber_core::autofix::Config,
+        key: String,
+    ) -> BoxFuture<'_, Result<cyber_core::autofix::Subscription, cyber_server::http::ApiError>>
+    {
+        Box::pin(async move {
+            self.autofix
+                .enable(directory, config, key)
+                .await
+                .map_err(cyber_server::http::ApiError::invalid)
+        })
+    }
     fn collaboration(
         &self,
     ) -> Option<Arc<dyn cyber_server::http::collaboration::CollaborationService>> {

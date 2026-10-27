@@ -14,6 +14,7 @@ pub mod hook_mcp;
 pub mod hook_prompt;
 mod hook_reports;
 mod host;
+pub use host::autofix::allowed_tool as autofix_allowed_tool;
 mod lifecycle_hooks;
 pub mod lsp;
 pub mod mcp;

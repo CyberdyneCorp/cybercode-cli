@@ -78,6 +78,8 @@ The server owns execution and stores state in SQLite, so work can outlive a term
 
 For independent patch attempts, host-recorded tests and a separate read-only judge, start with the [verified `solve` workflow](docs/verified-workflows.md). Candidate patches remain available for human review; nothing is merged automatically. To combine complementary commits, use the [verified integration queue](docs/verified-integrations.md): submit a dependency manifest, test the combined patch, review independent advice, then explicitly publish a branch and PR.
 
+Experimental [PR auto-fix subscriptions](docs/pr-autofix.md) provide bounded CI/review monitoring, isolated verified fixes and safe pushes on a running self-hosted server. [Local and macOS acceptance](docs/implementation/pr-autofix.md) passed; live GitHub acceptance, cloud failover and fork writes remain pending. Strict mode currently requires the official OpenAI Responses adapter.
+
 Experimental [native computer use](docs/computer-use.md) adds macOS 14+ application/display screenshots and input with expiring owner grants, CLI/browser owner controls, private evidence and emergency Stop. Off by default; controlled macOS capture, input and Stop acceptance passed. Other layouts and signed distribution remain release checks.
 
 ## Sessions and people working together

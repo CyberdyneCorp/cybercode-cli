@@ -123,6 +123,23 @@ export type AttachmentRef = {
   original?: string | null;
 };
 
+export type Attempt = {
+  id: string;
+  head: string;
+  triggers: Trigger[];
+  stage: Stage;
+  session_id?: string | null;
+  commit?: string | null;
+  candidate_commit?: string | null;
+  checks: CheckEvidence[];
+  tokens?: number | null;
+  /** Absent for unpriced or incompletely accounted usage. */
+  cost_usd?: number | null;
+  started_ms: number;
+  ended_ms?: number | null;
+  reason?: string | null;
+};
+
 export type AutoOverrideReceipt = {
   id: string;
   decision_id: string;
@@ -289,6 +306,12 @@ export type Capabilities = {
 export type Check = {
   argv: string[];
   timeout_seconds?: number;
+};
+
+export type CheckEvidence = {
+  argv: string[];
+  passed: boolean;
+  output_digest: string;
 };
 
 /** The `check` that ran after a `met` verdict. */
@@ -496,6 +519,20 @@ export type ComputerUnknownOperation = {
   started_ms: number;
 };
 
+export type Config = {
+  repository: string;
+  pr: number;
+  session_id: string;
+  model: string;
+  checks: Array<string[]>;
+  /** Exact CI producer identity: check:<app_id>:<name> or status:<creator_id>:<context>. */
+  required_ci: string[];
+  verification_paths: string[];
+  max_attempts?: number;
+  max_tokens: number;
+  max_seconds: number;
+};
+
 /** The configured `output_style` of a Location and the layer that set it. */
 export type Configured = {
   name: string;
@@ -570,6 +607,12 @@ export type Contribution = {
   commit: string;
   depends_on?: string[];
   hub?: HubReference | null;
+};
+
+export type Control = {
+  expected_revision: number;
+  /** `pause`, `resume` or `disable`. */
+  action: string;
 };
 
 export type CreateBody = {
@@ -703,6 +746,10 @@ export type Data_Array_of_ReachableSession = {
 
 export type Data_Array_of_RemoteReach = {
   data: RemoteReach[];
+};
+
+export type Data_Array_of_Subscription = {
+  data: Subscription[];
 };
 
 export type Data_Array_of_Task = {
@@ -899,6 +946,10 @@ export type Data_ShellResult = {
 
 export type Data_SideAnswer = {
   data: SideAnswer;
+};
+
+export type Data_Subscription = {
+  data: Subscription;
 };
 
 export type Data_SubtreeReopenReport = {
@@ -4239,6 +4290,8 @@ export type SpawnedMember = {
   branch?: string | null;
 };
 
+export type Stage = "claimed" | "running" | "verifying" | "push_intent" | "awaiting_ci" | "succeeded" | "failed" | "unknown";
+
 export type StartBody = {
   /** The owner Session: agents become its children and run under its Mode. */
   session_id: string;
@@ -4321,6 +4374,8 @@ export type StatsTotals = {
   sessions: number;
 };
 
+export type Status = "enabled" | "paused" | "exhausted" | "closed" | "disabled";
+
 export type StopAccepted = {
   id: string;
   stopping: boolean;
@@ -4380,6 +4435,28 @@ export type SubagentShare = {
   /** Share (0–1) of the window total. */
   share: number;
   amount: number;
+};
+
+export type Subscription = {
+  id: string;
+  directory: string;
+  config: Config;
+  repository_id: number;
+  /** Owner login observed when enabling; never a credential. */
+  github_login?: string | null;
+  branch: string;
+  revision: number;
+  status: Status;
+  failures: number;
+  seen: string[];
+  queued: Trigger[];
+  attempts: Attempt[];
+  next_poll_ms: number;
+  backoff_until_ms?: number | null;
+  created_ms: number;
+  updated_ms: number;
+  reason?: string | null;
+  exhaustion_notice?: string | null;
 };
 
 export type SubtaskBody = {
@@ -4594,6 +4671,16 @@ export type Totals = {
   unpriced_steps: number;
   steps: number;
 };
+
+export type Trigger = {
+  key: string;
+  head: string;
+  kind: TriggerKind;
+  /** Untrusted, bounded feedback; never instructions granting authority. */
+  text: string;
+};
+
+export type TriggerKind = "check_failure" | "review";
 
 export type UpdateBody = {
   title?: string | null;

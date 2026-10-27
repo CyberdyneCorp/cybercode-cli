@@ -232,6 +232,8 @@ async fn dropping_an_idle_or_stopped_application_releases_its_host_and_database(
     for stopped in [false, true] {
         let tmp = tempfile::tempdir().unwrap();
         let application = app(tmp.path()).await;
+        // Let weak background pollers enter their idle wait before disposal.
+        tokio::task::yield_now().await;
         let host = Arc::downgrade(&application.host);
         let store = Arc::downgrade(&application.store);
         if stopped {

@@ -59,7 +59,8 @@ impl Tool for Read {
             }
             ctx.host.mark_read(&ctx.inv.session_id, &path);
             ctx.note_skill_path(&path);
-            if let Some(locations) = ctx.host.lsp.get()
+            if !ctx.host.is_autofix_session(&ctx.inv.session_id)
+                && let Some(locations) = ctx.host.lsp.get()
                 && bytes.len() <= crate::lsp::MAX_DOCUMENT_BYTES
                 && let Ok(content) = std::str::from_utf8(&bytes)
                 && let Some(origin) = origin

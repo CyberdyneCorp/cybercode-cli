@@ -91,6 +91,30 @@ export interface Operations {
     body: undefined;
     response: S.Located_Array_of_AgentInfo;
   };
+  "v1.autofix.control": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: S.Control;
+    response: S.Subscription;
+  };
+  "v1.autofix.enable": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.Config;
+    response: S.Subscription;
+  };
+  "v1.autofix.list": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Subscription[];
+  };
+  "v1.autofix.show": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Subscription;
+  };
   "v1.budgets.reconcile": {
     path: { id: string };
     query: Record<string, never>;
@@ -1798,6 +1822,54 @@ export const operations = {
     body: "none",
     located: true,
     unwrap: false,
+    stream: false,
+  },
+  "v1.autofix.control": {
+    tag: "autofix",
+    name: "control",
+    method: "POST",
+    path: "/api/v1/autofix/subscriptions/{id}/control",
+    pathParams: ["id"],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.autofix.enable": {
+    tag: "autofix",
+    name: "enable",
+    method: "POST",
+    path: "/api/v1/autofix/subscriptions",
+    pathParams: [],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.autofix.list": {
+    tag: "autofix",
+    name: "list",
+    method: "GET",
+    path: "/api/v1/autofix/subscriptions",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.autofix.show": {
+    tag: "autofix",
+    name: "show",
+    method: "GET",
+    path: "/api/v1/autofix/subscriptions/{id}",
+    pathParams: ["id"],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: true,
     stream: false,
   },
   "v1.budgets.reconcile": {
@@ -4804,6 +4876,20 @@ export function createGroups(caller: Caller) {
       list: (options?: RequestOptions): Promise<Operations["v1.agent.list"]["response"]> =>
         caller.call("v1.agent.list", {}, options),
     },
+    autofix: {
+      /** Pause, resume or disable an exact PR auto-fix revision (`POST /api/v1/autofix/subscriptions/{id}/control`) */
+      control: (id: string, body: Operations["v1.autofix.control"]["body"], options?: RequestOptions): Promise<Operations["v1.autofix.control"]["response"]> =>
+        caller.call("v1.autofix.control", { path: { id }, body }, options),
+      /** Opt in to bounded self-hosted PR auto-fix; requires Idempotency-Key (`POST /api/v1/autofix/subscriptions`) */
+      enable: (body: Operations["v1.autofix.enable"]["body"], options?: RequestOptions): Promise<Operations["v1.autofix.enable"]["response"]> =>
+        caller.call("v1.autofix.enable", { body }, options),
+      /** List this Location's durable PR auto-fix subscriptions (`GET /api/v1/autofix/subscriptions`) */
+      list: (options?: RequestOptions): Promise<Operations["v1.autofix.list"]["response"]> =>
+        caller.call("v1.autofix.list", {}, options),
+      /** Inspect PR auto-fix status, evidence and uncertainty (`GET /api/v1/autofix/subscriptions/{id}`) */
+      show: (id: string, options?: RequestOptions): Promise<Operations["v1.autofix.show"]["response"]> =>
+        caller.call("v1.autofix.show", { path: { id } }, options),
+    },
     budgets: {
       /** Audit an owner settlement or release of an inactive allocation (`POST /api/v1/budgets/reservations/{id}/reconcile`) */
       reconcile: (id: string, body: Operations["v1.budgets.reconcile"]["body"], options?: RequestOptions): Promise<Operations["v1.budgets.reconcile"]["response"]> =>
@@ -5628,6 +5714,7 @@ export function createGroups(caller: Caller) {
 export type Groups = ReturnType<typeof createGroups>;
 
 export const errorTags = [
+  "AutofixNotFoundError",
   "ComputerUnsupportedPlatformError",
   "ComputerDisabledError",
   "ComputerConsentError",
@@ -5682,6 +5769,10 @@ export interface TaggedError<Tag extends string = string> {
 
 function hasTag(err: unknown, tag: string): boolean {
   return typeof err === "object" && err !== null && (err as { tag?: unknown }).tag === tag;
+}
+
+export function isAutofixNotFoundError(err: unknown): err is TaggedError<"AutofixNotFoundError"> {
+  return hasTag(err, "AutofixNotFoundError");
 }
 
 export function isComputerUnsupportedPlatformError(err: unknown): err is TaggedError<"ComputerUnsupportedPlatformError"> {

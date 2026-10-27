@@ -4748,3 +4748,137 @@ async fn budget_reservation_http_requires_owner_auth_and_checks_origin_before_mu
         .unwrap();
     assert_eq!(released.status(), StatusCode::OK);
 }
+
+fn autofix_fixture(h: &Harness) -> cyber_core::autofix::Subscription {
+    let directory = std::fs::canonicalize(&h.repo)
+        .unwrap()
+        .display()
+        .to_string();
+    let subscription = cyber_core::autofix::Subscription::new(
+        "afx_http_fixture".into(),
+        directory,
+        cyber_core::autofix::Config {
+            repository: "team/repo".into(),
+            pr: 3,
+            session_id: "ses_owner".into(),
+            model: "test/main".into(),
+            checks: vec![vec!["cargo".into(), "test".into()]],
+            required_ci: vec!["check:9:test".into()],
+            verification_paths: vec!["tests".into()],
+            max_attempts: 3,
+            max_tokens: 1000,
+            max_seconds: 60,
+        },
+        42,
+        "fix".into(),
+        0,
+    )
+    .unwrap();
+    cyber_server::autofix::records::Repository::new(h.store.clone())
+        .create(subscription)
+        .unwrap()
+}
+#[tokio::test]
+async fn autofix_controls_are_location_scoped_and_revision_fenced() {
+    let h = Harness::new(Setup::default());
+    let api = Api::new(&h);
+    let original = autofix_fixture(&h);
+    let (status, body) = api.get("/autofix/subscriptions").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"][0]["id"], original.id);
+    let path = format!("/autofix/subscriptions/{}/control", original.id);
+    let (status, body) = api
+        .post(&path, json!({"expected_revision":1,"action":"pause"}))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["revision"], 2);
+    assert_eq!(body["data"]["status"], "paused");
+    let (status, _) = api
+        .post(&path, json!({"expected_revision":1,"action":"disable"}))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let other = tempfile::tempdir().unwrap();
+    let other = other.path().display().to_string();
+    let (status, _, _) = api
+        .call(
+            Method::GET,
+            &format!("/autofix/subscriptions/{}", original.id),
+            None,
+            &[("x-cyber-directory", &other)],
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = api
+        .post(&path, json!({"expected_revision":2,"action":"push"}))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+#[tokio::test]
+async fn autofix_enable_requires_key_and_matching_linked_session() {
+    let h = Harness::new(Setup::default());
+    let api = Api::new(&h);
+    let subscription = autofix_fixture(&h);
+    let config = serde_json::to_value(&subscription.config).unwrap();
+    let (status, body) = api.post("/autofix/subscriptions", config.clone()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let (status, _, _) = api
+        .call(
+            Method::POST,
+            "/autofix/subscriptions",
+            Some(config),
+            &[("idempotency-key", "test-enable")],
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, session) = api.post("/sessions", json!({})).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let mut config = subscription.config;
+    config.session_id = session["data"]["id"].as_str().unwrap().into();
+    let (status, body, _) = api
+        .call(
+            Method::POST,
+            "/autofix/subscriptions",
+            Some(serde_json::to_value(config).unwrap()),
+            &[("idempotency-key", "test-unsupported")],
+        )
+        .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+}
+#[tokio::test]
+async fn autofix_owner_auth_and_origin_guard_apply_to_all_controls() {
+    use tower::ServiceExt;
+    let h = Harness::new(Setup::default());
+    let subscription = autofix_fixture(&h);
+    let router = http::router(state(&h, Some("owner-secret")));
+    let request = Request::builder()
+        .uri("http://localhost/api/v1/autofix/subscriptions")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        router.clone().oneshot(request).await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri(format!(
+            "http://localhost/api/v1/autofix/subscriptions/{}/control",
+            subscription.id
+        ))
+        .header("origin", "https://attacker.invalid")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            "{\"expected_revision\":1,\"action\":\"disable\"}",
+        ))
+        .unwrap();
+    assert_eq!(
+        router.oneshot(request).await.unwrap().status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        cyber_server::autofix::records::Repository::new(h.store.clone())
+            .get(&subscription.id)
+            .unwrap()
+            .revision,
+        1
+    );
+}

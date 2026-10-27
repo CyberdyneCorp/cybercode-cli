@@ -901,3 +901,84 @@ async fn base_prompt_follows_the_model_family() {
     assert!(!last.contains("You are Cyber Code"), "{last}");
     app.runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn autofix_markers_prevent_registered_file_tool_shadowing_and_nonfile_dispatch() {
+    let scratch = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(scratch.path()).unwrap();
+    let app = application(&root).await;
+    let config = cyber_core::autofix::Config {
+        repository: "team/repo".into(),
+        pr: 3,
+        session_id: "ses_owner".into(),
+        model: "test/main".into(),
+        checks: vec![vec!["cargo".into(), "test".into()]],
+        required_ci: vec!["check:9:test".into()],
+        verification_paths: vec!["tests".into()],
+        max_attempts: 3,
+        max_tokens: 1000,
+        max_seconds: 60,
+    };
+    let s = cyber_core::autofix::Subscription::new(
+        "afx_apphost".into(),
+        root.display().to_string(),
+        config,
+        42,
+        "fix".into(),
+        0,
+    )
+    .unwrap();
+    cyber_server::autofix::records::Repository::new(app.store.clone())
+        .create(s)
+        .unwrap();
+    let directory = root.display().to_string();
+    app.store.transaction(move|tx|{tx.execute("INSERT INTO autofix_session(session_id,subscription_id,attempt_id,directory) VALUES('ses_restricted','afx_apphost','attempt1',?1)",[directory])?;Ok(())}).unwrap();
+    let host = AppHost {
+        builtin: app.host.clone(),
+        remote: app.state.remote_tools.clone(),
+        peers: Arc::new(|_| Ok(None)),
+        peer_names: Arc::new(|| Ok(vec![])),
+    };
+    let turn = TurnContext {
+        session_id: "ses_restricted".into(),
+        directory: root.display().to_string(),
+        agent: "build".into(),
+        mode: "bypass".into(),
+        prefers_apply_patch: false,
+        rules: json!(null),
+        worktree: Default::default(),
+    };
+    let (out, mut frames) = mpsc::channel(4);
+    host.remote
+        .register(
+            host.remote.owner(),
+            out,
+            &json!({"name":"read","input":{"type":"object"}}),
+            &[],
+        )
+        .unwrap();
+    std::fs::write(root.join("safe.txt"), "native contents").unwrap();
+    let definitions = host.definitions(&turn);
+    assert!(
+        definitions
+            .iter()
+            .all(|d| cyber_tools::autofix_allowed_tool(&d.spec.name))
+    );
+    let read = definitions.iter().find(|d| d.spec.name == "read").unwrap();
+    assert!(read.registration.is_none());
+    let mut call = invocation(&turn);
+    call.name = "read".into();
+    call.input = json!({"path":"safe.txt"});
+    call.registration = host.remote.definitions()[0].registration.clone();
+    let outcome = host.execute(call, CancellationToken::new()).await;
+    assert!(matches!(outcome,ToolOutcome::Ok(text) if text.contains("native contents")));
+    assert_eq!(frames.try_recv(), Err(mpsc::error::TryRecvError::Empty));
+    let mut call = invocation(&turn);
+    call.name = "bash".into();
+    call.input = json!({"command":"touch should-not-exist"});
+    assert!(matches!(
+        host.execute(call, CancellationToken::new()).await,
+        ToolOutcome::Failed(_)
+    ));
+    assert!(!root.join("should-not-exist").exists());
+}

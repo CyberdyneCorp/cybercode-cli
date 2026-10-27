@@ -50,7 +50,7 @@ ROUTE_TO_GROUP = {
     "formatters": "formatter", "usage": "usage", "vcs": "vcs", "ide": "ide", "policy": "policy",
     "mcp": "mcp", "skills": "skill", "commands": "command", "hooks": "hook", "plugins": "plugin",
     "config": "config", "account": "account", "event": "event", "health": "health",
-    "openapi": "health", "ws": "event", "orgs": "account",
+    "openapi": "health", "autofix": "autofix", "ws": "event", "orgs": "account",
     "service": "service", "system": "system", "files": "fs",
     "peer": "peer", "peers": "peers", "teams": "teams", "team-definitions": "teams",
     "telemetry": "telemetry",

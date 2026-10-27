@@ -3,6 +3,9 @@ use cyber_core::config::LspSettings;
 use std::{path::Path, sync::atomic::Ordering, time::Duration};
 
 pub(crate) fn capture(ctx: &Ctx<'_>, path: &Path) -> Option<ReadOrigin> {
+    if ctx.host.is_autofix_session(&ctx.inv.session_id) {
+        return None;
+    }
     ctx.host.lsp.get()?;
     let settings = LspSettings::from_config(&ctx.host.config_for(&ctx.location)).ok()?;
     if !settings.enabled {
@@ -17,6 +20,9 @@ pub(crate) async fn feedback(
     bytes: &[u8],
     origin: Option<ReadOrigin>,
 ) -> String {
+    if ctx.host.is_autofix_session(&ctx.inv.session_id) {
+        return String::new();
+    }
     let (formatted, formatting) = super::formatters::apply(ctx, path, bytes).await;
     let diagnostics = diagnostics(ctx, path, &formatted, origin).await;
     format!("{formatting}{diagnostics}")

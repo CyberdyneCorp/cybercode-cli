@@ -4,6 +4,7 @@ mod admissions;
 mod agents;
 mod app;
 mod attachments;
+mod autofix;
 pub mod books;
 mod branches;
 mod children;

@@ -3245,6 +3245,390 @@
         ],
         "description": "A Workflow Run budget: the canonical [`Budget`] plus the workflow-specific `max_agents`,\nserialized as one flat object."
       },
+      "Data_Array_of_Subscription": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Subscription"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "Subscription": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "config": {
+            "$ref": "#/components/schemas/Config"
+          },
+          "repository_id": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "github_login": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Owner login observed when enabling; never a credential."
+          },
+          "branch": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status"
+          },
+          "failures": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "seen": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string"
+            }
+          },
+          "queued": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Trigger"
+            }
+          },
+          "attempts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Attempt"
+            }
+          },
+          "next_poll_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "backoff_until_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "default": null
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "updated_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exhaustion_notice": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "directory",
+          "config",
+          "repository_id",
+          "branch",
+          "revision",
+          "status",
+          "failures",
+          "seen",
+          "queued",
+          "attempts",
+          "next_poll_ms",
+          "created_ms",
+          "updated_ms"
+        ]
+      },
+      "Config": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "repository": {
+            "type": "string"
+          },
+          "pr": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required_ci": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Exact CI producer identity: check:<app_id>:<name> or status:<creator_id>:<context>."
+          },
+          "verification_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "max_attempts": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 3
+          },
+          "max_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "max_seconds": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "repository",
+          "pr",
+          "session_id",
+          "model",
+          "checks",
+          "required_ci",
+          "verification_paths",
+          "max_tokens",
+          "max_seconds"
+        ]
+      },
+      "Status": {
+        "type": "string",
+        "enum": [
+          "enabled",
+          "paused",
+          "exhausted",
+          "closed",
+          "disabled"
+        ]
+      },
+      "Trigger": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "head": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/TriggerKind"
+          },
+          "text": {
+            "type": "string",
+            "description": "Untrusted, bounded feedback; never instructions granting authority."
+          }
+        },
+        "required": [
+          "key",
+          "head",
+          "kind",
+          "text"
+        ]
+      },
+      "TriggerKind": {
+        "type": "string",
+        "enum": [
+          "check_failure",
+          "review"
+        ]
+      },
+      "Attempt": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "head": {
+            "type": "string"
+          },
+          "triggers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Trigger"
+            }
+          },
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "commit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "candidate_commit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CheckEvidence"
+            }
+          },
+          "tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "cost_usd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Absent for unpriced or incompletely accounted usage."
+          },
+          "started_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "ended_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "head",
+          "triggers",
+          "stage",
+          "checks",
+          "started_ms"
+        ]
+      },
+      "Stage": {
+        "type": "string",
+        "enum": [
+          "claimed",
+          "running",
+          "verifying",
+          "push_intent",
+          "awaiting_ci",
+          "succeeded",
+          "failed",
+          "unknown"
+        ]
+      },
+      "CheckEvidence": {
+        "type": "object",
+        "properties": {
+          "argv": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "output_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "argv",
+          "passed",
+          "output_digest"
+        ]
+      },
+      "Data_Subscription": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Subscription"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "Control": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "action": {
+            "type": "string",
+            "description": "`pause`, `resume` or `disable`."
+          }
+        },
+        "required": [
+          "expected_revision",
+          "action"
+        ]
+      },
       "IntegrationSubmit": {
         "type": "object",
         "additionalProperties": false,
@@ -18878,6 +19262,252 @@
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/autofix/subscriptions": {
+      "get": {
+        "operationId": "v1.autofix.list",
+        "summary": "List this Location's durable PR auto-fix subscriptions",
+        "tags": [
+          "autofix"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_Subscription"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "v1.autofix.enable",
+        "summary": "Opt in to bounded self-hosted PR auto-fix; requires Idempotency-Key",
+        "tags": [
+          "autofix"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Subscription"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Config"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/autofix/subscriptions/{id}": {
+      "get": {
+        "operationId": "v1.autofix.show",
+        "summary": "Inspect PR auto-fix status, evidence and uncertainty",
+        "tags": [
+          "autofix"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Subscription"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/autofix/subscriptions/{id}/control": {
+      "post": {
+        "operationId": "v1.autofix.control",
+        "summary": "Pause, resume or disable an exact PR auto-fix revision",
+        "tags": [
+          "autofix"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Subscription"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Control"
               }
             }
           }
