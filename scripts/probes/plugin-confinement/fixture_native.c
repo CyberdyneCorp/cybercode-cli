@@ -133,6 +133,9 @@ int main(int argc, char **argv) {
         return 0;
     }
     if (strcmp(argv[1], "inspect") != 0) return 2;
+    char packet[4097];
+    const char *request = "{\"jsonrpc\":\"2.0\",\"id\":\"native-proof\",\"method\":\"tool/execute\",\"params\":{\"name\":\"native-probe\",\"input\":{}}}\n";
+    if (fgets(packet, sizeof(packet), stdin) == NULL || strcmp(packet, request) != 0) return 2;
     const char *package = argv[2], *project = argv[3], *private = argv[4], *scratch = argv[5];
     const char *written = argv[6], *symlink = argv[7], *protected = argv[8];
     const char *scratch_dir = argv[9], *project_dir = argv[10];
@@ -163,7 +166,7 @@ int main(int argc, char **argv) {
         snprintf(native_children, sizeof(native_children), "[%s,%s]", truth(cat_read == 0), truth(cat_secret == 0));
     }
     int confined = strcmp(argv[13], "1") == 0;
-    printf("{\"package_read\":%s,\"scratch_write\":%s,\"scratch_read\":%s,",
+    printf("{\"jsonrpc\":\"2.0\",\"id\":\"native-proof\",\"result\":{\"stdio_tool\":true,\"package_read\":%s,\"scratch_write\":%s,\"scratch_read\":%s,",
            truth(native_read(package)), truth(scratch_write), truth(native_read(scratch)));
     printf("\"project_read\":%s,\"project_list\":%s,\"project_write\":%s,\"written_project_read\":%s,",
            truth(native_read(project)), truth(list(project_dir)), truth(project_write), truth(native_read(written)));
@@ -183,6 +186,6 @@ int main(int argc, char **argv) {
 #ifdef __linux__
     printf(",\"filter_replacement_denied\":%s", truth(proof_replacement_denied()));
 #endif
-    puts("}");
+    puts("}}");
     return 0;
 }

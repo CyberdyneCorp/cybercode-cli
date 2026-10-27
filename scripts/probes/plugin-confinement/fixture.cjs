@@ -104,7 +104,13 @@ async function thread() {
 }
 
 async function inspect() {
+  const input = fs.readFileSync(0, "utf8");
+  if (Buffer.byteLength(input) > 4096) throw new Error("bounded tool request required");
+  const request = JSON.parse(input);
+  if (request.jsonrpc !== "2.0" || request.id !== "native-proof" || request.method !== "tool/execute" ||
+      request.params?.name !== "native-probe") throw new Error("invalid native tool request");
   const observations = {
+    stdio_tool: true,
     package_read: native.read(c.package_file),
     startup_artifacts: process.env.CYBER_PROOF_AUTO_PRELOAD !== undefined || process.env.CYBER_PROOF_AUTO_DOTENV !== undefined,
     scratch_write: native.write(c.scratch_file),
@@ -130,7 +136,7 @@ async function inspect() {
   };
   observations.project_rename = renameProject();
   if (c.initial_exec) observations.filter_replacement_denied = native.replacementDenied();
-  process.stdout.write(JSON.stringify(observations));
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: observations }));
 }
 
 if (c.mode === "exec") {

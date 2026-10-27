@@ -164,6 +164,13 @@ def filter_replacement_denied():
 
 
 def inspect():
+    packet = sys.stdin.read(4097)
+    if len(packet) > 4096:
+        raise RuntimeError("bounded tool request required")
+    request = json.loads(packet)
+    if (request.get("jsonrpc") != "2.0" or request.get("id") != "native-proof" or
+            request.get("method") != "tool/execute" or request.get("params", {}).get("name") != "native-probe"):
+        raise RuntimeError("invalid native tool request")
     thread_result = []
     worker = threading.Thread(target=lambda: thread_result.append([
         [native_read(case["project_file"]), native_read(case["private_file"])], spawn_shell()]))
@@ -177,6 +184,7 @@ def inspect():
     except OSError:
         pass
     observations = {
+        "stdio_tool": True,
         "package_read": native_read(case["package_file"]),
         "scratch_write": native_write(case["scratch_file"]),
         "scratch_read": native_read(case["scratch_file"]),
@@ -204,7 +212,7 @@ def inspect():
     observations["project_rename"] = rename_project()
     if case["initial_exec"]:
         observations["filter_replacement_denied"] = filter_replacement_denied()
-    print(json.dumps(observations, sort_keys=True))
+    print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": observations}, sort_keys=True))
 
 
 if case["mode"] == "exec":

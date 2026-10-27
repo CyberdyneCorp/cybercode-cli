@@ -195,3 +195,19 @@ at `7ab2f662` also finished with all 16 jobs successful: both Rust jobs, Windows
 build/lint, all platform builds, SDK, dashboard and OpenSpec. Production Rust/SDK
 sources were unchanged from the main baseline. This resolves a remote baseline
 check; the earlier local disk-exhausted compilation is still not a local pass.
+
+## Runtime extension CI observations at `3c8efc33`
+
+[Run 40553987420](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40553987420)
+passed all Deno platform/architecture combinations, both macOS Bun matrices,
+both shell-enabled macOS native subsets, both macOS native exec-gap experiments,
+and the existing Node/Python/Linux-native matrices. Bun 1.4.4 aborted at Linux
+runtime initialization under the initial-exec candidate on both architectures;
+no Bun/Linux pass is implied. This is an observed experimental failure, not a
+claim about the project's prior baseline or a filed upstream bug.
+
+The follow-up adds actual stdin/stdout JSON-RPC tool dispatch to every matrix,
+retains a diagnostic strace attempt without accepting a traced result, and tests
+Bun/Linux's native TSYNC bootstrap independently. All five macOS runtime
+fixtures passed local tool round trips (the native executable subset still has
+four explicit unsupported no-shell cases). New native CI results are pending.

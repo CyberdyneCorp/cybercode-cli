@@ -6,12 +6,12 @@ import { spawnSync } from "node:child_process";
 import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { release, tmpdir } from "node:os";
 import { createHash } from "node:crypto";
-import { dirname, isAbsolute, join, relative, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 type Runtime = { kind: "python" | "node" | "bun" | "deno" | "native"; executable: string; prefix: string; include: string; libdir: string; library?: string; version: string };
-type Artifacts = { executable: string; addon?: string; landlock?: string; initialExec: boolean };
+type Artifacts = { executable: string; addon?: string; landlock?: string; initialExec: boolean; trace?: string };
 type Flags = { read: boolean; write: boolean; shell: boolean; unrestricted?: boolean };
 type Observation = Record<string, boolean | null | boolean[]>;
 const source = dirname(fileURLToPath(import.meta.url));
@@ -192,21 +192,40 @@ function observe(artifacts: Artifacts, runtime: Runtime, paths: Record<string, s
           : runtime.kind === "bun" ? ["--config=/dev/null", "--no-env-file", "--no-install"] : [],
           join(source, "node_bootstrap.cjs"), artifacts.addon!, bootstrapProfile, join(paths.package, "fixture.cjs"), JSON.stringify(input)];
     const launch = isLinux && !flags.unrestricted ? linuxLaunch(artifacts, runtime, paths, profile, flags, args) : { program: artifacts.executable, args };
-    const stdout = command(launch.program, launch.args,
-      { cwd: paths.cwd, env: { ...environment, HOME: paths.scratch, XDG_CONFIG_HOME: join(paths.scratch, "config"), DENO_DIR: join(paths.scratch, "deno-cache"),
+    const options = { cwd: paths.cwd, env: { ...environment, HOME: paths.scratch, XDG_CONFIG_HOME: join(paths.scratch, "config"), DENO_DIR: join(paths.scratch, "deno-cache"),
           XDG_CACHE_HOME: join(paths.scratch, "cache"), BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(paths.scratch, "bun-cache"),
           ...runtime.kind === "native" ? { CYBER_PROOF_PRIVATE: input.private_file } : {} },
-        stdio: ["ignore", "pipe", "pipe", "ignore", "ignore", "ignore", "ignore", "ignore", "ignore", inherited] });
+        ...mode === "inspect" ? { input: JSON.stringify({ jsonrpc: "2.0", id: "native-proof", method: "tool/execute", params: { name: "native-probe", input: {} } }) + "\n" } : {},
+        stdio: [mode === "inspect" ? "pipe" : "ignore", "pipe", "pipe", "ignore", "ignore", "ignore", "ignore", "ignore", "ignore", inherited] };
+    let stdout: string;
+    try { stdout = command(launch.program, launch.args, options); }
+    catch (error) {
+      if (isLinux && artifacts.trace && !flags.unrestricted) {
+        mkdirSync(artifacts.trace, { recursive: true, mode: 0o700 });
+        const filename = join(artifacts.trace, `${basename(dirname(profile))}-${mode}`);
+        const traced = spawnSync("/usr/bin/strace", ["-f", "-qq", "-e", "trace=%file,%process,prctl,seccomp", "-o", filename + ".strace", launch.program, ...launch.args],
+          { ...options, encoding: "utf8", env: options.env, timeout: 30_000, maxBuffer: 1024 * 1024 } as Parameters<typeof spawnSync>[2]);
+        writeFileSync(filename + ".result.txt", `diagnostic retry only; original untraced failure remains fatal\nstatus=${traced.status}; signal=${traced.signal}; error=${traced.error?.message ?? ""}\n${traced.stderr ?? ""}\n${traced.stdout ?? ""}`, { mode: 0o600 });
+      }
+      throw error;
+    }
     if (artifacts.addon && mode === "exec" && stdout === "") {
       return JSON.parse(readFileSync(input.exec_marker, "utf8"));
     }
-    return JSON.parse(stdout);
+    const response = JSON.parse(stdout);
+    if (mode === "inspect") {
+      assert.equal(response.jsonrpc, "2.0", "native host must return a JSON-RPC response");
+      assert.equal(response.id, "native-proof", "native host must preserve request identity");
+      assert(!("error" in response), "native tool execution must succeed");
+      return response.result;
+    }
+    return response;
   } finally { closeSync(inherited); }
 }
 
 function expected(flags: Flags): Observation {
   const unrestricted = !!flags.unrestricted;
-  return { package_read: true, scratch_write: true, scratch_read: true, project_read: flags.read,
+  return { stdio_tool: true, package_read: true, scratch_write: true, scratch_read: true, project_read: flags.read,
     private_read: unrestricted, private_list: unrestricted, private_write: unrestricted,
     project_list: flags.read, cannot_relax: unrestricted ? null : true,
     protected_read: unrestricted, protected_write: unrestricted,
@@ -243,7 +262,7 @@ function check(root: string, artifacts: Artifacts, runtime: Runtime, name: strin
 
 function main() {
   assert(["darwin", "linux"].includes(process.platform), "native proof requires macOS or Linux; other platforms are unproved");
-  const { values } = parseArgs({ options: { runtime: { type: "string", default: "python" }, python: { type: "string" }, executable: { type: "string" }, report: { type: "string" }, "initial-exec": { type: "boolean", default: false } } });
+  const { values } = parseArgs({ options: { runtime: { type: "string", default: "python" }, python: { type: "string" }, executable: { type: "string" }, report: { type: "string" }, trace: { type: "string" }, "initial-exec": { type: "boolean", default: false } } });
   assert(["python", "node", "bun", "deno", "native"].includes(values.runtime), "runtime must be python, node, bun, deno or native");
   if (values.runtime === "bun" || values.runtime === "deno") assert(values.executable, "supply an explicit trusted Bun/Deno executable");
   const initialExec = values["initial-exec"] || (values.runtime === "native" && isLinux);
@@ -260,7 +279,7 @@ function main() {
     for (const allowed of [runtime.prefix, runtime.libdir, ...runtime.kind === "native" ? [] : [dirname(runtime.executable)], ...isLinux ? ["/usr", "/lib", "/bin"] : ["/System", "/usr/lib", "/bin", "/usr/bin"]]) {
       if (existsSync(allowed)) assert(outside(root, allowed), `runtime read root overlaps private proof fixtures: ${allowed}`);
     }
-    const artifacts = build(root, runtime, initialExec);
+    const artifacts = { ...build(root, runtime, initialExec), trace: values.trace };
     const startup_control = startupControl(root, runtime);
     const cases: Array<[string, Flags]> = [
       ["unconfined-control", { read: true, write: true, shell: true, unrestricted: true }],

@@ -215,3 +215,25 @@ A successful run means the assertions about these gaps passed, not that no-shell
 native executables are supported. It does not prove all possible mechanisms
 impossible. The native subset exercises `shell: true` only; a support revision
 requires the explicit review in the approved design before integration.
+
+## Stdio tool control and Linux Bun comparison
+
+Inspection now consumes a bounded JSON-RPC `tool/execute` request from stdin and
+returns a matching JSON-RPC response on stdout. This proves the confined fixture
+can execute the native probe through a real tool request, even without filesystem
+or process capabilities. It does not replace production App/server acceptance,
+generation ownership or Session admission tests.
+
+Bun 1.4.4 aborted during Linux initialization under the generic initial-exec
+candidate on both CI architectures. The next workflow compares that candidate
+with the native TSYNC bootstrap independently. The latter still installs
+Landlock before runtime startup and applies a synchronized native execution
+filter before any untrusted fixture code; it does not intercept runtime APIs.
+Only a complete successful matrix can establish that candidate's behavior.
+There is no production launch fallback or weakened capability contract here.
+
+`--trace /absolute/diagnostic-directory` performs a separate strace retry after
+an actual Linux failure, records it, then rethrows the original untraced failure.
+A traced retry never counts as an acceptance pass. Traces contain only this
+probe's dummy fixtures and sanitized launch arguments. The workflow retains both
+the initial candidate's output and the independent bootstrap matrix's result.
