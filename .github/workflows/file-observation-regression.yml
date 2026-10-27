@@ -13,6 +13,9 @@ on:
       - crates/cyber-server/src/runtime/file_observation_hooks.rs
       - crates/cyber-server/src/runtime/hooks.rs
       - crates/cyber-tools/src/lifecycle_hooks.rs
+      - crates/cyber-tools/src/host.rs
+      - crates/cyber-server/src/runtime/lifecycle.rs
+      - crates/cyber-tools/src/tool_hooks.rs
       - crates/cyber-tools/src/lib.rs
       - crates/cyber-tools/Cargo.toml
       - Cargo.lock

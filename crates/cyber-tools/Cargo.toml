@@ -50,6 +50,7 @@ tree-sitter-powershell = "0.26.4"
 notify = "=8.2.0"
 cap-std = "4.0"
 cap-fs-ext = "4.0"
+same-file = "1.0"
 
 [dev-dependencies]
 axum = "0.8"

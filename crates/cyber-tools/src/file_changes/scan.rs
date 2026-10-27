@@ -74,7 +74,10 @@ pub(super) fn scan(
                 out.complete = false;
                 continue;
             };
-            if text.len() > limits.path_bytes {
+            let name = text.replace(std::path::MAIN_SEPARATOR, "/");
+            if text.len() > limits.path_bytes
+                || !cyber_core::hooks::file_observations::relative_name(&name)
+            {
                 out.complete = false;
                 continue;
             }
@@ -185,6 +188,22 @@ mod tests {
             &root(temp.path()),
             &|_| false,
             &bound,
+            &AtomicBool::new(false),
+        );
+        assert!(!actual.complete);
+        assert!(actual.files.is_empty());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn unsupported_names_are_not_reinterpreted_as_nested_or_stream_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        for name in ["a\\b", "a:b"] {
+            std::fs::write(temp.path().join(name), "opaque").unwrap();
+        }
+        let actual = scan(
+            &root(temp.path()),
+            &|_| false,
+            &limits(),
             &AtomicBool::new(false),
         );
         assert!(!actual.complete);

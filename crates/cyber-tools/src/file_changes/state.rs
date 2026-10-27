@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 pub(super) use cyber_core::hooks::file_observations::Stamp;
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(super) struct Scan {
     pub files: BTreeMap<PathBuf, Stamp>,
     pub directories: BTreeSet<PathBuf>,
@@ -50,21 +50,34 @@ impl State {
         Self { files }
     }
 
+    #[cfg(test)]
     pub fn files(&self) -> &BTreeMap<PathBuf, Stamp> {
         &self.files
     }
 
     /// A newly protected path is no longer observable. Forgetting its old stamp
     /// must not disclose a synthetic deletion when the next scan omits it.
+    #[cfg(test)]
     pub fn restrict(&mut self, permitted: impl Fn(&Path) -> bool) {
         self.files.retain(|path, _| permitted(path));
     }
 
+    #[cfg(test)]
     pub fn reconcile(
         &mut self,
         scan: Scan,
         notified: &BTreeSet<PathBuf>,
         limit: usize,
+    ) -> Reconciled {
+        self.reconcile_bounded(scan, notified, limit, limit)
+    }
+
+    pub fn reconcile_bounded(
+        &mut self,
+        scan: Scan,
+        notified: &BTreeSet<PathBuf>,
+        files_limit: usize,
+        changes_limit: usize,
     ) -> Reconciled {
         let mut changes = Vec::new();
         for (path, stamp) in &scan.files {
@@ -103,7 +116,7 @@ impl State {
                     .filter(|path| !self.files.contains_key(*path))
                     .count()
         };
-        if changes.len() > limit || retained > limit {
+        if changes.len() > changes_limit || retained > files_limit {
             return Reconciled::Overflow;
         }
         if scan.complete {
@@ -123,11 +136,13 @@ impl State {
 /// cannot evade the feedback bound by sleeping between writes. Only the owner of
 /// a real user acknowledgement may replenish it. Exhaustion pauses handlers, not
 /// recording/reconciliation, and must be visible to the user.
+#[cfg(test)]
 #[derive(Debug)]
 pub(super) struct DispatchBudget {
     remaining: usize,
 }
 
+#[cfg(test)]
 impl DispatchBudget {
     pub fn new(remaining: usize) -> Self {
         Self { remaining }

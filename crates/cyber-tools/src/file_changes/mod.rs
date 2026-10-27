@@ -1,5 +1,7 @@
-//! File observation components. Runtime ownership and durable dispatch integration
-//! are in progress; these components do not yet produce application hook events.
+//! Bounded host-owned file observation and durable observational hook dispatch.
 mod native;
+mod owner;
+mod root;
 mod scan;
 mod state;
+pub(crate) use owner::Observers;

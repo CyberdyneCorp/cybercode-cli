@@ -346,7 +346,7 @@ impl BuiltinHost {
 
     /// Definitions of the live client registrations that apply to `session_id`: those of
     /// the clients owning it or an ancestor, in registration order.
-    async fn client_definitions(&self, session_id: &str) -> Vec<HookDefinition> {
+    pub(crate) async fn client_definitions(&self, session_id: &str) -> Vec<HookDefinition> {
         let (Some(hooks), Some(runtime)) = (self.client_hooks.get(), self.runtime()) else {
             return Vec::new();
         };

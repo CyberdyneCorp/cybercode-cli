@@ -42,6 +42,11 @@ async fn committed_observation_dispatch_is_scoped_deduplicated_and_observational
     let flow = support::flow::Flow::new(vec![], false);
     let first = flow.session("default").await;
     let second = flow.session("default").await;
+    // Isolate the manual journal/dispatch port from the automatic native owner.
+    // The real Sessions stay live; only host watcher membership is detached.
+    for session in [&first, &second] {
+        cyber_server::runtime::ToolHost::end_session(&*flow.f.host, session).await;
+    }
     let recorder = Recorder::start().await;
     flow.f.global_hooks(
         json!({"FileChanged":[{"matcher":"nested/*","paths":["nested/**"],"hooks":[{
@@ -76,6 +81,13 @@ async fn committed_observation_dispatch_is_scoped_deduplicated_and_observational
         })
         .await
         .unwrap();
+    let cancelled = tokio_util::sync::CancellationToken::new();
+    cancelled.cancel();
+    watch
+        .dispatch_to_cancellable(&source, &first, cancelled)
+        .await
+        .unwrap();
+    assert!(flow.runtime.hook_executions(&first, 10).unwrap().is_empty());
     tokio::time::timeout(Duration::from_secs(20), async {
         watch.dispatch_to(&source, &first).await.unwrap();
         watch.dispatch_to(&source, &first).await.unwrap();
@@ -117,4 +129,190 @@ async fn committed_observation_dispatch_is_scoped_deduplicated_and_observational
         flow.requests("test/main").is_empty(),
         "observations must not infer through a model"
     );
+}
+
+async fn await_condition(label: &str, predicate: impl Fn() -> bool) {
+    tokio::time::timeout(Duration::from_secs(45), async {
+        while !predicate() {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for {label}"));
+}
+fn journal_count(flow: &support::flow::Flow, kind: &'static str) -> usize {
+    flow.f
+        .store
+        .read(move |db| {
+            Ok(
+                db.query_row("SELECT COUNT(*) FROM event WHERE type=?1", [kind], |row| {
+                    row.get(0)
+                })?,
+            )
+        })
+        .unwrap()
+}
+fn automatic_hooks(flow: &support::flow::Flow, recorder: &Recorder) {
+    flow.f.global_hooks(json!({"FileChanged":[{"hooks":[{
+        "type":"http", "id":"native-observer", "url":recorder.url, "fail_closed":true
+    }]}]}));
+}
+
+#[tokio::test]
+async fn native_owner_delivers_external_edits_rename_removal_to_shared_sessions_and_joins() {
+    let flow = support::flow::Flow::new(vec![], false);
+    let recorder = Recorder::start().await;
+    automatic_hooks(&flow, &recorder);
+    let first = flow.session("default").await;
+    let second = flow.session("default").await;
+    await_condition("automatic watcher checkpoint", || {
+        journal_count(&flow, records::CHECKPOINT) == 1
+    })
+    .await;
+    let has = |session: &str, path: &str, change: &str| {
+        recorder.seen.lock().unwrap().iter().any(|event| {
+            event["session_id"] == session
+                && event["file_path"] == path
+                && event["change"] == change
+        })
+    };
+    std::fs::write(flow.f.repo.join("external"), "first").unwrap();
+    await_condition("both real Session observations", || {
+        has(&first, "external", "changed") && has(&second, "external", "changed")
+    })
+    .await;
+    std::fs::rename(flow.f.repo.join("external"), flow.f.repo.join("renamed")).unwrap();
+    await_condition("rename reconciliation", || {
+        has(&first, "external", "removed") && has(&second, "renamed", "changed")
+    })
+    .await;
+    std::fs::remove_file(flow.f.repo.join("renamed")).unwrap();
+    await_condition("external removal", || {
+        has(&first, "renamed", "removed") && has(&second, "renamed", "removed")
+    })
+    .await;
+    std::fs::write(flow.f.repo.join(".git/private"), "secret").unwrap();
+    std::fs::write(flow.f.repo.join("marker"), "after protected write").unwrap();
+    await_condition("post-exclusion marker", || {
+        has(&first, "marker", "changed") && has(&second, "marker", "changed")
+    })
+    .await;
+    let events = recorder.seen.lock().unwrap().clone();
+    assert!(
+        events
+            .iter()
+            .all(|event| !event["file_path"].as_str().unwrap().starts_with(".git/"))
+    );
+    assert_eq!(
+        journal_count(&flow, records::CHECKPOINT),
+        1,
+        "Sessions must share one journal writer"
+    );
+    assert!(events.iter().any(|a| {
+        a["session_id"] == first
+            && events
+                .iter()
+                .any(|b| b["session_id"] == second && a["observation_id"] == b["observation_id"])
+    }));
+    tokio::time::timeout(Duration::from_secs(20), flow.runtime.shutdown())
+        .await
+        .expect("shutdown must join automatic observers");
+    let settled = recorder.seen.lock().unwrap().len();
+    std::fs::write(flow.f.repo.join("after-shutdown"), "not delivered").unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(recorder.seen.lock().unwrap().len(), settled);
+    assert!(flow.requests("test/main").is_empty());
+}
+
+#[tokio::test]
+async fn native_owner_exhausts_feedback_without_resetting_after_quiet_time() {
+    let flow = support::flow::Flow::new(vec![], false);
+    let recorder = Recorder::start().await;
+    automatic_hooks(&flow, &recorder);
+    let _session = flow.session("default").await;
+    await_condition("automatic baseline", || {
+        journal_count(&flow, records::CHECKPOINT) == 1
+    })
+    .await;
+    for index in 0..70 {
+        std::fs::write(flow.f.repo.join(format!("file-{index:02}")), "external").unwrap();
+    }
+    let suppressed = || {
+        flow.f.store.read(|db| Ok(db.query_row("SELECT COUNT(*) FROM event WHERE type=?1 AND json_extract(data,'$.dispatch')=0 AND json_array_length(json_extract(data,'$.updates'))>0", [records::CHANGED], |row| row.get::<_, usize>(0))?)).unwrap()
+    };
+    await_condition("feedback pause with continued recording", || {
+        suppressed() > 0
+    })
+    .await;
+    await_condition("all admitted handlers settled", || {
+        recorder.seen.lock().unwrap().len() == records::FEEDBACK_LIMIT as usize
+    })
+    .await;
+    let before = journal_count(&flow, records::CHANGED);
+    tokio::time::sleep(Duration::from_millis(3300)).await;
+    std::fs::write(flow.f.repo.join("after-quiet"), "still paused").unwrap();
+    await_condition("paused watcher keeps recording", || {
+        journal_count(&flow, records::CHANGED) > before
+    })
+    .await;
+    assert_eq!(
+        recorder.seen.lock().unwrap().len(),
+        records::FEEDBACK_LIMIT as usize
+    );
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn native_owner_rebinds_after_root_replacement_and_ignores_the_old_directory() {
+    let flow = support::flow::Flow::new(vec![], false);
+    let recorder = Recorder::start().await;
+    automatic_hooks(&flow, &recorder);
+    let session = flow.session("default").await;
+    await_condition("original root baseline", || {
+        journal_count(&flow, records::CHECKPOINT) == 1
+    })
+    .await;
+    std::fs::write(flow.f.repo.join("before"), "original").unwrap();
+    await_condition("original observation", || {
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["file_path"] == "before")
+    })
+    .await;
+    let old_generation = recorder.seen.lock().unwrap()[0]["watch_generation"].clone();
+    let retired = flow.f.repo.with_file_name("retired-repo");
+    std::fs::rename(&flow.f.repo, &retired).unwrap();
+    std::fs::create_dir(&flow.f.repo).unwrap();
+    std::fs::write(flow.f.repo.join("baseline"), "replacement baseline").unwrap();
+    await_condition("replacement generation", || {
+        journal_count(&flow, records::CHECKPOINT) == 2
+    })
+    .await;
+    std::fs::write(retired.join("retired-only"), "must not dispatch").unwrap();
+    std::fs::write(flow.f.repo.join("replacement"), "current root").unwrap();
+    await_condition("replacement observation", || {
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["file_path"] == "replacement" && event["session_id"] == session)
+    })
+    .await;
+    let events = recorder.seen.lock().unwrap().clone();
+    assert!(
+        events
+            .iter()
+            .all(|event| event["file_path"] != "retired-only")
+    );
+    assert!(
+        events
+            .iter()
+            .filter(|event| event["file_path"] == "replacement")
+            .all(|event| event["watch_generation"] != old_generation)
+    );
+    flow.runtime.shutdown().await;
 }

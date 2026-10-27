@@ -295,6 +295,22 @@ impl FileWatch {
         observation: &StoredEvent,
         session_id: &str,
     ) -> Result<(), RuntimeError> {
+        self.dispatch_to_cancellable(
+            observation,
+            session_id,
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+    }
+
+    /// Stop starting new handlers on owner cancellation; settle every launched
+    /// handler through the existing cooperative receipt machinery.
+    pub async fn dispatch_to_cancellable(
+        &self,
+        observation: &StoredEvent,
+        session_id: &str,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<(), RuntimeError> {
         let runtime = self.runtime()?;
         if observation.aggregate_id != self.aggregate || observation.kind != records::CHANGED {
             return Err(RuntimeError::Invalid(
@@ -323,7 +339,14 @@ impl FileWatch {
         };
         let mut failure = None;
         for hook in hooks {
-            if let Err(error) = runtime.inner.owned_lifecycle_hooks(hook).await {
+            if cancel.is_cancelled() {
+                break;
+            }
+            if let Err(error) = runtime
+                .inner
+                .owned_lifecycle_hooks_cancelled(hook, Some(cancel.clone()))
+                .await
+            {
                 failure.get_or_insert(error);
             }
         }

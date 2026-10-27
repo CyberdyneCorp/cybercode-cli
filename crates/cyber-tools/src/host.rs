@@ -71,6 +71,7 @@ pub struct BuiltinHost {
     pub(crate) weak: std::sync::Weak<Self>,
     pub(crate) opts: HostOptions,
     tools: Vec<Box<dyn Tool>>,
+    file_observers: crate::file_changes::Observers,
     reads: Mutex<HashMap<String, HashSet<PathBuf>>>,
     locks: Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
     runtime: OnceLock<WeakRuntime>,
@@ -178,6 +179,7 @@ impl BuiltinHost {
             lsp: OnceLock::new(),
             opts,
             tools: tools::all(),
+            file_observers: Default::default(),
             reads: Mutex::default(),
             locks: Mutex::default(),
             runtime: OnceLock::new(),
@@ -714,12 +716,14 @@ impl BuiltinHost {
 
 impl ToolHost for BuiltinHost {
     fn open_location(&self, info: &cyber_server::runtime::SessionInfo) {
+        self.file_observers.refresh(self, info);
         self.start_mcp(info);
         self.reconcile_plugins(&info.directory, true);
         self.start_browser(info);
     }
 
     fn refresh_location(&self, info: &cyber_server::runtime::SessionInfo) {
+        self.file_observers.refresh(self, info);
         self.refresh_mcp(info);
         self.reconcile_plugins(&info.directory, false);
         self.start_browser(info);
@@ -826,6 +830,7 @@ impl ToolHost for BuiltinHost {
                 }
             };
             tokio::join!(
+                self.file_observers.shutdown(),
                 self.shutdown_mcp(),
                 lsp,
                 self.shutdown_plugins(),
@@ -836,6 +841,7 @@ impl ToolHost for BuiltinHost {
 
     fn end_session(&self, session_id: &str) -> BoxFuture<'_, ()> {
         let session_id = session_id.to_string();
+        self.file_observers.remove(&session_id);
         Box::pin(async move { self.end_browser_session(&session_id).await })
     }
     /// A config that fails to load turns `CLAUDE.md` off rather than on: `config_for`'s
