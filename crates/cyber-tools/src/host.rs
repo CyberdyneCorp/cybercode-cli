@@ -200,6 +200,10 @@ impl BuiltinHost {
         })
     }
 
+    pub(crate) fn observe_file_change(&self, location: &Path, path: &Path) {
+        self.file_observers.changed(location, path);
+    }
+
     /// Every built-in tool name, offered or not, and the runtime's `return_result`.
     pub(crate) fn builtin_tool_names(&self) -> std::collections::BTreeSet<String> {
         let mut names: std::collections::BTreeSet<String> =

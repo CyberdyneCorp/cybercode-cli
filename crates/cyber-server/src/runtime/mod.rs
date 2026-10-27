@@ -716,7 +716,8 @@ pub(crate) struct Handle {
     /// Consecutive Stop-hook continuations, reset for each new Drain and user admission.
     pub stop_continuations: std::sync::atomic::AtomicUsize,
     /// Hook envelope identity captured for the Session's current directory.
-    pub envelope: StdMutex<Option<(String, SessionEnvelope)>>,
+    pub envelope: StdMutex<Option<(String, u64, SessionEnvelope)>>,
+    pub envelope_epoch: std::sync::atomic::AtomicU64,
     /// Tagged context from background hooks, committed at the next Safe Boundary.
     pub pending_hook_context: StdMutex<Vec<String>>,
     /// Drain-owned lifecycle hooks in flight; a cancelled boundary waits for them.
@@ -2456,6 +2457,7 @@ impl Inner {
             auto_blocks: Mutex::new(0),
             stop_continuations: std::sync::atomic::AtomicUsize::new(0),
             envelope: StdMutex::default(),
+            envelope_epoch: std::sync::atomic::AtomicU64::new(0),
             pending_hook_context: StdMutex::default(),
             drain_hooks: Default::default(),
             drain_hooks_settled: Notify::new(),

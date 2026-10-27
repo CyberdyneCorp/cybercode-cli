@@ -229,3 +229,47 @@ requested `usize`, which rusqlite does not decode from SQLite. Those test
 queries now use SQLite's supported `i64` count representation. The application
 scenarios still require execution; compilation of the owner and narrow suite
 success do not establish their behavior.
+
+
+## Explicit mutation hints and root identity follow-up
+
+Successful built-in write/edit/notebook and patch feedback paths now notify the
+observer after formatter settlement. Patch removal notifies it even when language
+services are disabled. These are metadata reconciliation hints, not claims that
+a named tool or formatter wrote the observed result. The same bounded hint set
+coalesces native and explicit names: at most 1,024 paths, with overflow requiring
+reconciliation. A source regression checks that bound, duplicate coalescing and
+invalid-name rejection. A full host unit regression checks Location scoping and
+shutdown; a new scripted-runtime application regression covers write/edit without
+language services. Actual formatter-process acceptance remains required.
+
+Claiming a replacement root also invalidates loaded Sessions' cached project
+envelopes at that directory. An epoch on the cache prevents an earlier resolution
+from refilling the current cache after invalidation. The root-replacement
+application test now initializes two real Git repositories with different origins
+and requires the replacement's hook to carry its new project ID.
+
+At `9c2b9838`, the entire focused Linux suite passed, including all four automatic/
+manual HTTP application tests, user-input renewal, quiet-time feedback bounds,
+shared Sessions, nested external edits and root replacement/shutdown. Windows
+passed the core models but its root component regression failed when renaming a
+pinned directory (sharing violation). Its observer directory handle now explicitly
+allows read/write/delete sharing while remaining read-only and refusing a reparse
+point. This preserves identity checks while allowing normal root replacement;
+Windows must rerun the failing regression and remaining application suite. The
+notify backend already opens its own watcher handle with delete sharing.
+
+The newer explicit-hint, cache-epoch and Windows-sharing revision has not yet
+passed application CI. The local isolated harness passes 37 tests and Clippy with
+warnings denied at threshold 15; it includes the new bounded hint regression,
+not the full host owner or cache-epoch application tests. Alias-aware admission,
+private hard-link handling and remaining resource/lifecycle/restart/overflow
+acceptance still prevent closing task 5.2.
+
+
+Broad Linux/Windows Clippy at `9c2b9838` also measured the owning loop at 18,
+above the configured complexity limit of 15. The per-iteration observation
+state now owns startup, renewal and reconciliation in one `tick` method;
+the outer loop owns weak-host lifetime, pacing and cancellation. The configured
+Clippy checks must verify the refactor; isolated component Clippy does not load
+the full owner.

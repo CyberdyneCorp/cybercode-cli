@@ -98,6 +98,9 @@ impl Runtime {
             .as_ref()
             .filter(|row| row.state.root_identity == root_identity)
             .map_or(baseline, |row| row.state.files.clone());
+        let replaced = previous
+            .as_ref()
+            .is_none_or(|row| row.state.root_identity != root_identity);
         let state = Checkpoint {
             directory,
             root_identity,
@@ -117,6 +120,9 @@ impl Runtime {
                     .map_err(|error| RuntimeError::Invalid(error.to_string()))?,
             )],
         )?;
+        if replaced {
+            self.invalidate_observed_location(&state.directory).await;
+        }
         Ok(FileWatch {
             runtime: self.downgrade(),
             store: Arc::clone(&self.inner.store),
@@ -125,6 +131,29 @@ impl Runtime {
             since_checkpoint: 0,
             state,
         })
+    }
+
+    async fn invalidate_observed_location(&self, directory: &str) {
+        let handles: Vec<_> = self
+            .inner
+            .sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .cloned()
+            .collect();
+        for handle in handles {
+            if handle.state.lock().await.info.directory != directory {
+                continue;
+            }
+            handle
+                .envelope_epoch
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            *handle
+                .envelope
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        }
     }
 }
 

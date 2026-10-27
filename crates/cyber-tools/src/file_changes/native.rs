@@ -22,6 +22,38 @@ pub(super) struct Hints {
     pub rescan: bool,
 }
 
+impl Hints {
+    /// A coalesced native/tool hint set has its own bound, independently of the
+    /// native callback queue and the metadata inventory.
+    pub fn record(&mut self, relative: &Path) {
+        let valid = relative_path(relative)
+            && relative.to_str().is_some_and(|name| {
+                name.len() <= PATH_BYTES
+                    && cyber_core::hooks::file_observations::relative_name(
+                        &name.replace(std::path::MAIN_SEPARATOR, "/"),
+                    )
+            });
+        if !valid {
+            self.rescan = true;
+            return;
+        }
+        if self.paths.contains(relative) {
+            return;
+        }
+        if self.paths.len() >= 1024 {
+            self.rescan = true;
+            return;
+        }
+        self.paths.insert(relative.to_path_buf());
+    }
+    pub fn merge(&mut self, other: Self) {
+        self.rescan |= other.rescan;
+        for path in other.paths {
+            self.record(&path);
+        }
+    }
+}
+
 pub(super) struct Native {
     // Drop stops native observation before its receiver is disposed.
     watcher: RecommendedWatcher,
@@ -186,6 +218,22 @@ impl Native {
 mod tests {
     use super::*;
     use std::time::Instant;
+
+    #[test]
+    fn coalesced_tool_and_native_hints_stay_bounded_and_signal_lost_names() {
+        let mut hints = Hints::default();
+        for index in 0..1100 {
+            hints.record(Path::new(&format!("file-{index}")));
+        }
+        assert_eq!(hints.paths.len(), 1024);
+        assert!(hints.rescan);
+        hints.merge(Hints {
+            paths: BTreeSet::from([PathBuf::from("../private"), PathBuf::from("file-1")]),
+            rescan: false,
+        });
+        assert_eq!(hints.paths.len(), 1024);
+        assert!(!hints.paths.contains(Path::new("../private")));
+    }
 
     #[test]
     fn queue_loss_is_reported_even_without_another_successful_callback() {

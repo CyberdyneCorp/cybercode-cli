@@ -13,7 +13,7 @@ use cyber_server::runtime::{SessionInfo, file_observations::FileWatch};
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    native::Native,
+    native::{Hints, Native},
     root::{Exclusions, Root},
     scan::{self, Limits},
     state::{Change, Kind, Reconciled, Scan, State},
@@ -30,6 +30,7 @@ struct Membership {
     /// Keep only the newest committed acknowledgement per current Session.
     /// Both maps share the 256-Session bound; input bursts cannot grow a queue.
     renewals: BTreeMap<String, Renewal>,
+    explicit: Hints,
 }
 type Members = Arc<Mutex<Membership>>;
 impl Membership {
@@ -122,6 +123,7 @@ impl Observers {
         let members = Arc::new(Mutex::new(Membership {
             sessions: BTreeSet::from([info.id.clone()]),
             renewals: BTreeMap::new(),
+            explicit: Hints::default(),
         }));
         let cancel = CancellationToken::new();
         let weak = host.weak.clone();
@@ -143,6 +145,32 @@ impl Observers {
                 task,
             },
         );
+    }
+    /// Successful file/formatter mutations contribute hints, never a writer claim
+    /// or a permission. The pinned metadata scan still decides what actually exists.
+    pub fn changed(&self, location: &Path, path: &Path) {
+        let Ok(root) = location.canonicalize() else {
+            return;
+        };
+        let Ok(relative) = path
+            .strip_prefix(location)
+            .or_else(|_| path.strip_prefix(&root))
+        else {
+            return;
+        };
+        let registry = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(entry) = registry.entries.get(&root) else {
+            return;
+        };
+        if entry.cancel.is_cancelled() {
+            return;
+        }
+        entry
+            .members
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .explicit
+            .record(relative);
     }
     pub fn acknowledge(&self, host: &BuiltinHost, info: &SessionInfo, event_id: &str) {
         self.refresh(host, info);
@@ -388,12 +416,17 @@ impl Observation {
         &mut self,
         host: &BuiltinHost,
         sessions: &[String],
+        membership: &Members,
         cancel: &CancellationToken,
     ) -> Result<(), String> {
         if !self.root.current() {
             return Err("Location root incarnation changed".into());
         }
-        let hint = self.hints();
+        let mut hint = self.hints();
+        hint.merge({
+            let mut members = membership.lock().unwrap_or_else(PoisonError::into_inner);
+            std::mem::take(&mut members.explicit)
+        });
         if hint.paths.is_empty() && !hint.rescan && self.last_scan.elapsed() < RECONCILE {
             return Ok(());
         }
@@ -492,8 +525,7 @@ impl Observation {
             if next.paths.is_empty() && !next.rescan {
                 break;
             }
-            hint.paths.extend(next.paths);
-            hint.rescan |= next.rescan;
+            hint.merge(next);
         }
         hint
     }
@@ -590,6 +622,50 @@ impl Observation {
     }
 }
 
+#[derive(Default)]
+struct RunState {
+    observer: Option<Observation>,
+    failure: Option<String>,
+}
+impl RunState {
+    async fn tick(
+        &mut self,
+        host: &BuiltinHost,
+        path: &Path,
+        directory: &str,
+        membership: &Members,
+        cancel: &CancellationToken,
+    ) -> bool {
+        let sessions = members(membership);
+        if sessions.is_empty() {
+            return false;
+        }
+        if !host.observes_files(directory, &sessions).await {
+            self.observer = None;
+            return true;
+        }
+        if self.observer.is_none() {
+            self.observer =
+                start_observation(host, path, directory, &sessions, &mut self.failure).await;
+        }
+        let Some(current) = self.observer.as_mut() else {
+            return true;
+        };
+        current.renew(host, membership, cancel).await;
+        if let Err(error) = current.reconcile(host, &sessions, membership, cancel).await {
+            announce(
+                host,
+                &sessions,
+                &format!("FileChanged generation stopped: {error}"),
+            );
+            // A replacement gets a new fenced baseline after bounded backoff.
+            self.observer = None;
+            tokio::select! { _ = cancel.cancelled() => return false, _ = tokio::time::sleep(RECONCILE) => {} }
+        }
+        true
+    }
+}
+
 async fn run(
     host: Weak<BuiltinHost>,
     path: PathBuf,
@@ -597,38 +673,17 @@ async fn run(
     membership: Members,
     cancel: CancellationToken,
 ) {
-    let mut observer: Option<Observation> = None;
-    let mut failure = None;
+    let mut state = RunState::default();
     loop {
         tokio::select! { _ = cancel.cancelled() => break, _ = tokio::time::sleep(TICK) => {} }
         let Some(host) = host.upgrade() else {
             break;
         };
-        let sessions = members(&membership);
-        if sessions.is_empty() {
-            break;
-        }
-        if !host.observes_files(&directory, &sessions).await {
-            observer = None;
-            continue;
-        }
-        if observer.is_none() {
-            observer = start_observation(&host, &path, &directory, &sessions, &mut failure).await;
-        }
-        if let Some(current) = observer.as_mut() {
-            current.renew(&host, &membership, &cancel).await;
-        }
-        if let Some(current) = observer.as_mut()
-            && let Err(error) = current.reconcile(&host, &sessions, &cancel).await
+        if !state
+            .tick(&host, &path, &directory, &membership, &cancel)
+            .await
         {
-            announce(
-                &host,
-                &sessions,
-                &format!("FileChanged generation stopped: {error}"),
-            );
-            // A replacement gets a new fenced baseline on the next iteration.
-            observer = None;
-            tokio::select! { _ = cancel.cancelled() => break, _ = tokio::time::sleep(RECONCILE) => {} }
+            break;
         }
     }
 }
@@ -656,5 +711,59 @@ async fn start_observation(
             }
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn explicit_mutations_are_scoped_coalesced_bounded_and_closed_with_the_owner() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let membership = Arc::new(Mutex::new(Membership::default()));
+        let cancel = CancellationToken::new();
+        let owner = cancel.clone();
+        let task = tokio::spawn(async move { owner.cancelled().await });
+        let observers = Observers(Mutex::new(Registry {
+            entries: BTreeMap::from([(
+                root.clone(),
+                Entry {
+                    members: Arc::clone(&membership),
+                    cancel,
+                    task,
+                },
+            )]),
+            closed: false,
+        }));
+        observers.changed(&root, &root.join("nested/file"));
+        observers.changed(&root, &root.join("nested/file"));
+        observers.changed(&root, &root.parent().unwrap().join("outside"));
+        {
+            let members = membership.lock().unwrap();
+            assert_eq!(
+                members.explicit.paths,
+                BTreeSet::from([PathBuf::from("nested/file")])
+            );
+        }
+        for index in 0..1100 {
+            observers.changed(&root, &root.join(format!("file-{index}")));
+        }
+        {
+            let members = membership.lock().unwrap();
+            assert_eq!(members.explicit.paths.len(), 1024);
+            assert!(members.explicit.rescan);
+        }
+        observers.shutdown().await;
+        observers.changed(&root, &root.join("after-shutdown"));
+        assert!(
+            !membership
+                .lock()
+                .unwrap()
+                .explicit
+                .paths
+                .contains(Path::new("after-shutdown"))
+        );
     }
 }

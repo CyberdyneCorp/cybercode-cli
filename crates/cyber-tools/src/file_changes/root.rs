@@ -23,10 +23,38 @@ impl Hasher for IdentityHash {
         self.0.update(bytes);
     }
 }
+#[cfg(not(windows))]
+fn open_directory(path: &Path) -> io::Result<Dir> {
+    Dir::open_ambient_dir(path, cap_std::ambient_authority())
+}
+
+#[cfg(windows)]
+fn open_directory(path: &Path) -> io::Result<Dir> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
+    // An observer retains identity, not an exclusive pathname lease. In
+    // particular it must not prevent a worktree/editor from renaming this root.
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(io::Error::other(
+            "observation root is not a regular directory",
+        ));
+    }
+    Ok(Dir::from_std_file(file))
+}
+
 impl Root {
     pub fn open(path: &Path) -> io::Result<Self> {
         let path = path.canonicalize()?;
-        let directory = Dir::open_ambient_dir(&path, cap_std::ambient_authority())?;
+        let directory = open_directory(&path)?;
         let handle = Handle::from_file(directory.try_clone()?.into_std_file())?;
         let mut hash = IdentityHash(Sha256::new());
         handle.hash(&mut hash);

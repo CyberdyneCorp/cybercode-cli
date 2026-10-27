@@ -339,6 +339,7 @@ async fn native_owner_rebinds_after_root_replacement_and_ignores_the_old_directo
     let flow = support::flow::Flow::new(vec![], false);
     let recorder = Recorder::start().await;
     automatic_hooks(&flow, &recorder);
+    initialize_project(&flow.f.repo, "https://example.test/old-project.git");
     let session = flow.session("default").await;
     await_condition("original root baseline", || {
         journal_count(&flow, records::CHECKPOINT) == 1
@@ -358,6 +359,8 @@ async fn native_owner_rebinds_after_root_replacement_and_ignores_the_old_directo
     let retired = flow.f.repo.with_file_name("retired-repo");
     std::fs::rename(&flow.f.repo, &retired).unwrap();
     std::fs::create_dir(&flow.f.repo).unwrap();
+    initialize_project(&flow.f.repo, "https://example.test/new-project.git");
+    let replacement_project = cyber_core::project::identify(&flow.f.repo).id;
     std::fs::write(flow.f.repo.join("baseline"), "replacement baseline").unwrap();
     await_condition("replacement generation", || {
         journal_count(&flow, records::CHECKPOINT) == 2
@@ -386,5 +389,100 @@ async fn native_owner_rebinds_after_root_replacement_and_ignores_the_old_directo
             .filter(|event| event["file_path"] == "replacement")
             .all(|event| event["watch_generation"] != old_generation)
     );
+    let replacement_events: Vec<_> = events
+        .iter()
+        .filter(|event| event["file_path"] == "replacement")
+        .collect();
+    assert!(
+        replacement_events
+            .iter()
+            .all(|event| event["project_id"] == replacement_project)
+    );
+    assert!(
+        events
+            .iter()
+            .filter(|event| event["file_path"] == "before")
+            .all(|event| event["project_id"] != replacement_project)
+    );
     flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn builtin_write_and_edit_produce_observations_without_language_services() {
+    let flow = support::flow::Flow::new(
+        vec![
+            support::flow::call(
+                "write-call",
+                "write",
+                json!({"path":"nested/tool.txt", "content":"first"}),
+            ),
+            support::flow::text("written"),
+            support::flow::call(
+                "edit-call",
+                "edit",
+                json!({"path":"nested/tool.txt", "old_string":"first", "new_string":"other"}),
+            ),
+            support::flow::text("edited"),
+        ],
+        false,
+    );
+    let recorder = Recorder::start().await;
+    automatic_hooks(&flow, &recorder);
+    let disabled: serde_json::Map<String, Value> = cyber_core::intelligence::builtin_formatters()
+        .into_iter()
+        .map(|formatter| (formatter.id, json!({"disabled":true})))
+        .collect();
+    flow.f.set_config(json!({"formatters":disabled}));
+    let session = flow.session("bypass").await;
+    await_condition("tool observation baseline", || {
+        journal_count(&flow, records::CHECKPOINT) == 1
+    })
+    .await;
+    flow.prompt(&session, "write the fixture file").await;
+    flow.settle(&session).await;
+    await_condition("built-in write observation", || {
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["file_path"] == "nested/tool.txt")
+    })
+    .await;
+    let before = recorder.seen.lock().unwrap().len();
+    flow.prompt(&session, "edit the fixture file").await;
+    flow.settle(&session).await;
+    await_condition("same-length built-in edit observation", || {
+        recorder.seen.lock().unwrap().len() > before
+    })
+    .await;
+    assert_eq!(flow.f.read("nested/tool.txt"), "other");
+    assert!(
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|event| event.get("writer").is_none())
+    );
+    flow.runtime.shutdown().await;
+}
+
+fn initialize_project(path: &std::path::Path, remote: &str) {
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "remote.origin.url", remote],
+    ] {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }

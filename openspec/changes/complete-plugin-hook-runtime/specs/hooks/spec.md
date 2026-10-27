@@ -25,3 +25,14 @@
 - **WHEN** an observation is delivered twice to a Session or its watcher generation was replaced before handler admission
 - **THEN** the same handler is not run again after a consumed or unknown receipt, and a stale generation cannot admit a new handler
 - **AND** handler admission checks the real source record, eligible path and current Session Location under the single writer, without exposing private provenance in public receipts
+
+
+#### Scenario: Tool and formatter observation hints
+- **WHEN** an authorized built-in file mutation and its formatter settlement finish
+- **THEN** bounded, coalesced hints cause metadata reconciliation even without language services, without claiming writer identity or bypassing scope checks
+- **AND** invalid paths or coalescing overflow request reconciliation without retaining an unbounded set of names
+
+#### Scenario: Replacement root identity
+- **WHEN** an observed Location path is replaced by a different repository root
+- **THEN** its fresh watcher generation resolves current project identity rather than using the previous root's cached hook envelope
+- **AND** an older in-flight identity resolution cannot repopulate the current cache

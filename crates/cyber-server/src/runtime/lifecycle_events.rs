@@ -25,8 +25,12 @@ use super::{Handle, Inner, Runtime, RuntimeError};
 
 impl Inner {
     /// The Session's project identity, resolved off the async runtime once per
-    /// Location and cached on its handle; a rebound Location resolves again.
+    /// Location incarnation and cached on its handle; rebinding or replacing the
+    /// watched root invalidates the cache. An old resolution cannot refill it.
     pub(crate) async fn envelope(&self, handle: &Handle) -> SessionEnvelope {
+        let epoch = handle
+            .envelope_epoch
+            .load(std::sync::atomic::Ordering::Acquire);
         let (directory, parent_session_id, workflow_run_id) = {
             let state = handle.state.lock().await;
             (
@@ -35,12 +39,13 @@ impl Inner {
                 state.info.workflow_run_id.clone(),
             )
         };
-        if let Some((cached, envelope)) = handle
+        if let Some((cached, cached_epoch, envelope)) = handle
             .envelope
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .as_ref()
             && *cached == directory
+            && *cached_epoch == epoch
         {
             return envelope.clone();
         }
@@ -65,10 +70,17 @@ impl Inner {
             parent_session_id,
             workflow_run_id,
         };
-        *handle
+        let mut cache = handle
             .envelope
             .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some((directory, envelope.clone()));
+            .unwrap_or_else(PoisonError::into_inner);
+        if handle
+            .envelope_epoch
+            .load(std::sync::atomic::Ordering::Acquire)
+            == epoch
+        {
+            *cache = Some((directory, epoch, envelope.clone()));
+        }
         envelope
     }
 
