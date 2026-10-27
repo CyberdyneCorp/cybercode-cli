@@ -1,0 +1,30 @@
+## ADDED Requirements
+
+### Requirement: Restricted plugin process capabilities
+(P1) Plugin bootstrap and descendants SHALL run under a native capability intersection that separately enforces reviewed runtime/package reads, private scratch, declared Location reads, declared writes, subprocess execution, network and secrets. `fs.write` SHALL NOT imply broad project read access. Without `fs.read`, native runtime APIs SHALL NOT read Location or arbitrary home content; without `shell`, the host SHALL NOT launch another shell, native executable or interpreter copy after its reviewed bootstrap. Permission callbacks SHALL NOT widen manifest capabilities. Protected owner credentials and private artifacts SHALL remain hidden even with filesystem capabilities. A platform/runtime without proven enforcement SHALL refuse startup explicitly rather than run with broader authority.
+
+#### Scenario: Runtime bypass is denied
+- **WHEN** a plugin without `fs.read` or `shell` tries a native file read and direct subprocess creation rather than a plugin helper API
+- **THEN** the native boundary refuses both operations while the supported host can still initialize and execute an otherwise permitted tool
+
+#### Scenario: Declared subprocess inherits restrictions
+- **WHEN** a plugin with `shell` launches a child without Location read or network capability
+- **THEN** the child cannot gain those capabilities through the host's broader Session Mode, inherited descriptors or environment
+
+### Requirement: Runtime contribution generation ownership
+(P1) Runtime hooks, providers and catalog transforms SHALL be validated and owned by plugin identity, digest, Location and host generation. Revocation SHALL remove only that generation before later dispatch, and stale results SHALL NOT restore it. Runtime hooks SHALL follow ordinary plugin hook scope and managed-only policy. Provider streams SHALL use normal usage/cancellation paths and SHALL NOT supply trusted reserved bounds by declaration alone. Catalog transforms SHALL be bounded and ordered, preserve policy/configuration ceilings and leave the previous valid view intact on failure.
+
+#### Scenario: Disabled host completes late
+- **WHEN** a disabled plugin returns an old provider result or catalog transform
+- **THEN** no contribution is republished and its invocation retains its actual settlement or unknown status
+
+### Requirement: Scoped plugin prompt callbacks
+(P1) A `session/prompt` callback SHALL require its capability and a live core-issued invocation context bound to plugin generation, Session and Location. It SHALL use durable ordinary inbox admission with a retained operation identity, Mode/trust/permission/budget/recursion ceilings and truthful non-interactive behavior. A callback SHALL NOT create human presence or grant authority over unrelated Sessions. Nested callback admission SHALL NOT wait under a lock required by the receiving actor.
+
+#### Scenario: Lost callback acknowledgement
+- **WHEN** the host retries an admitted prompt with the same authorized operation identity
+- **THEN** it receives the existing admission rather than creating another prompt or model run
+
+#### Scenario: Background host selects another Session
+- **WHEN** a plugin sends a callback without a live invocation context or targets an unrelated Session
+- **THEN** the core refuses it without admission, inference or an approval bypass
