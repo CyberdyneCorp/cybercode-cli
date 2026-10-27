@@ -218,3 +218,14 @@ the expanded isolated source harness now passes 36 tests and Clippy at threshold
 15. The automatic external-edit application test now uses newly created nested
 directories, so CI must also verify that this works through native observation
 and HTTP-hook delivery. Application verification is still pending.
+
+
+## Application compilation follow-up
+
+At `0a6461a1`, Linux compiled the automatic owner and passed all 25 observer
+component tests and all nine actual Store/Runtime regressions. The HTTP
+application test binary then failed to compile because three count queries
+requested `usize`, which rusqlite does not decode from SQLite. Those test
+queries now use SQLite's supported `i64` count representation. The application
+scenarios still require execution; compilation of the owner and narrow suite
+success do not establish their behavior.

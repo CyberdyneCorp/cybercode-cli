@@ -140,7 +140,7 @@ async fn await_condition(label: &str, predicate: impl Fn() -> bool) {
     .await
     .unwrap_or_else(|_| panic!("timed out waiting for {label}"));
 }
-fn journal_count(flow: &support::flow::Flow, kind: &'static str) -> usize {
+fn journal_count(flow: &support::flow::Flow, kind: &'static str) -> i64 {
     flow.f
         .store
         .read(move |db| {
@@ -246,7 +246,7 @@ async fn native_owner_feedback_renews_only_for_new_committed_user_input() {
         std::fs::write(flow.f.repo.join(format!("file-{index:02}")), "external").unwrap();
     }
     let suppressed = || {
-        flow.f.store.read(|db| Ok(db.query_row("SELECT COUNT(*) FROM event WHERE type=?1 AND json_extract(data,'$.dispatch')=0 AND json_array_length(json_extract(data,'$.updates'))>0", [records::CHANGED], |row| row.get::<_, usize>(0))?)).unwrap()
+        flow.f.store.read(|db| Ok(db.query_row("SELECT COUNT(*) FROM event WHERE type=?1 AND json_extract(data,'$.dispatch')=0 AND json_array_length(json_extract(data,'$.updates'))>0", [records::CHANGED], |row| row.get::<_, i64>(0))?)).unwrap()
     };
     await_condition("feedback pause with continued recording", || {
         suppressed() > 0
@@ -274,7 +274,7 @@ async fn native_owner_feedback_renews_only_for_new_committed_user_input() {
             .read(|db| {
                 Ok(db.query_row(
         "SELECT COUNT(*) FROM event WHERE type=?1 AND json_type(data,'$.renewal')='object'",
-        [records::CHANGED], |row| row.get::<_, usize>(0))?)
+        [records::CHANGED], |row| row.get::<_, i64>(0))?)
             })
             .unwrap()
     };
