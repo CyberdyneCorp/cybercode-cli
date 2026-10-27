@@ -7,7 +7,7 @@ context: |
   These specs describe the TARGET product, including implemented contracts and planned requirements;
   synchronization does not imply implementation or acceptance. Consult docs/features.md and the
   dated acceptance evidence for shipped behavior and remaining scope. Each requirement carries a
-  roadmap phase tag (P0..P4) defined in ROADMAP.md; read ../README.md for the architecture and glossary first.
+  roadmap phase tag (P0..P4) defined in ROADMAP.md; read README.md and docs/local-core-guide.md for the architecture and terminology first.
   Stack: Rust core (tokio) shipped as one static binary `cyber`; TypeScript SDK (@cyber-code/sdk) and
   plugin kit (@cyber-code/plugin). Plugins run out-of-process over JSON-RPC 2.0 (stdio); workflow scripts
   run in an embedded QuickJS sandbox. Server-first: every client (TUI, exec, IDE, web, mobile) talks to the
@@ -16,12 +16,12 @@ context: |
   multi-instance hosted control-plane state. See docs/decisions/0001-storage-architecture.md.
   P0 includes workspace trust and harness evaluation; external tool outcomes can be unknown after a crash.
   Identity: CyberdyneAuth (https://github.com/CyberdyneCorp/CyberdyneAuth) via OIDC authorization-code + PKCE.
-  Local single-machine use MUST never require an account; hosted features (relay, cross-machine messaging,
-  hosted runners, sharing, org policy) require it.
+  Local single-machine use MUST never require an account; account-gated services (relay, hosted runners, sharing, org policy, collaboration hub) require it.
+  Direct-peer cross-machine messaging and private dashboard access do not require an account.
   Names: binary `cyber`, project dir `.cyber/`, config `cyber.json`/`cyber.jsonc`, global `~/.config/cyber`,
   data `~/.local/share/cyber`, state `~/.local/state/cyber`, cache `~/.cache/cyber`, env prefix `CYBER_`.
   Config keys, CLI flags, HTTP routes, event types, the plugin JSON-RPC protocol and SDK are public contracts.
-  Use the README glossary terms verbatim (Session, Location, Turn, Drain, Admitted Prompt, Context Epoch,
+  Use the local-core-guide glossary terms verbatim (Session, Location, Turn, Drain, Admitted Prompt, Context Epoch,
   Workflow Run, Goal, Loop, Routine, Runner, Relay, Device, Channel, Mode).
 
 rules:

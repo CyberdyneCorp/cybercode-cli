@@ -26,7 +26,7 @@
 ## ADDED Requirements
 
 ### Requirement: Private owner socket paths
-The owner listener SHALL accept custom Unix socket paths only as absolute, non-traversing paths under its protected state directory with an existing non-symlink parent and no symlink leaf. Existing non-socket files SHALL NOT be replaced. First-party clients SHALL reject unsafe legacy socket registrations before transmitting owner credentials. The protected state root SHALL refuse reads, writes and ancestor replacement from ordinary model tools and sandboxed children even when the root is inside an otherwise writable project.
+(P0) The owner listener SHALL accept custom Unix socket paths only as absolute, non-traversing paths under its protected state directory with an existing non-symlink parent and no symlink leaf. Existing non-socket files SHALL NOT be replaced. First-party clients SHALL reject unsafe legacy socket registrations before transmitting owner credentials. The protected state root SHALL refuse reads, writes and ancestor replacement from ordinary model tools and sandboxed children even when the root is inside an otherwise writable project.
 
 #### Scenario: Model-writable socket path
 - **WHEN** an owner configures a socket in a workspace or through a symlink outside protected state

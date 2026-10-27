@@ -1,13 +1,13 @@
 ## MODIFIED Requirements
 
 ### Requirement: OpenTelemetry export
-(P1) When OpenTelemetry export is enabled (OpenTelemetry configuration), the server SHALL export OTLP over `http/protobuf`, `http/json` or `grpc`, as `telemetry.otel.protocol` and the `OTEL_*` variables select, to the effective endpoint with the effective headers. Only the background server process (`cyber serve`) SHALL export. Clients of it SHALL NOT export, so each served Session is exported once. In-process runs (`cyber exec --embedded` and `--ephemeral`, `cyber tui --embedded`, `cyber serve --stdio`, `cyber eval` and skill commands) SHALL NOT export their Sessions, even with export enabled. The export SHALL be produced by one exporter that observes the runtime's event stream. It SHALL contain:
+(P1) When OpenTelemetry export is enabled (OpenTelemetry configuration), the server SHALL export OTLP over `http/protobuf`, `http/json` or `grpc`, as `telemetry.otel.protocol` and the `OTEL_*` variables select, to the effective endpoint with the effective headers. Only the background server process (`cyber serve`) SHALL export. Clients of it SHALL NOT export, so each served Session is exported once. In-process runs (`cyber exec --embedded` and `--ephemeral`, `cyber --embedded`, `cyber serve --stdio`, `cyber eval` and skill commands) SHALL NOT export their Sessions, even with export enabled. The export SHALL be produced by one exporter that observes the runtime's event stream. It SHALL contain:
 
 - **Metrics** (counters):
   - `cyber.token.usage` by token class (`input`, `output`, `reasoning`, `cache_read`, `cache_write`) and model,
   - `cyber.cost.usage` in USD, where unpriced steps add nothing,
 
-  both over every model call the usage ledger bills (steps, auxiliary calls, generated titles, compactions and auto-mode reviews), so they agree with `cyber usage`,
+  both over every model call the usage ledger bills (steps, auxiliary calls, generated titles, compactions and auto-mode reviews), so they agree with the durable usage ledger,
   - `cyber.turn.count` by outcome,
   - `cyber.tool.calls` by tool and outcome,
   - `cyber.tool.errors` by tool,

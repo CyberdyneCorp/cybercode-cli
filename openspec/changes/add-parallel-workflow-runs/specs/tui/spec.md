@@ -68,6 +68,8 @@ A running Workflow Run SHALL show a compact progress line above the composer, as
 
 At 80 columns, phase and elapsed time SHALL be dropped. Below 60 columns, each run SHALL take two rows. Screen readers SHALL receive each row as one sentence with every value in words.
 
+(P2) With the mouse captured, a click on a run or an agent row SHALL select it and a second click on it SHALL act as Enter (open the run view, or the agent's transcript). Pause, resume and stop stay on their keys.
+
 #### Scenario: Pause a run
 - **WHEN** the user presses `p` on a running Workflow Run with 6 agents in flight
 - **THEN** no new agents start, in-flight agents finish, and the run shows `paused (6 settling)` and then `paused`
@@ -83,3 +85,7 @@ At 80 columns, phase and elapsed time SHALL be dropped. Below 60 columns, each r
 #### Scenario: Drill into an agent
 - **WHEN** the user presses Enter on `audit` and then `t` on a running verify agent
 - **THEN** the agent's child Session transcript opens and streams, and Esc returns to the `audit` agent tree with the agent still selected
+
+#### Scenario: Open a run by clicking
+- **WHEN** `/workflows` lists `audit` and `fanout` and the user clicks `fanout` twice
+- **THEN** the first click selects `fanout` and the second opens its run view

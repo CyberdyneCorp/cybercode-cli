@@ -95,8 +95,14 @@ Wrapped list items and quotes SHALL keep their hanging indent. While a message s
 ### Requirement: Command palette
 (P1) The system SHALL open a command palette with the `command_palette` keybinding (default Ctrl+P), and with `/` followed by Tab in an empty composer. It SHALL list every built-in TUI command, custom command, skill and MCP prompt, plus UI actions (toggle sidebar, open settings tabs, switch theme, copy last code block, toggle reasoning). Each row SHALL show the name, a one-line description and the current key binding. A command that declares an argument hint SHALL be typed into the composer as `/name ` instead of run. Names and descriptions from commands, skills and MCP prompts SHALL be shown on one line without control characters. Typing SHALL filter by fuzzy match, Enter SHALL run the selected entry, and Esc SHALL close the palette without side effects.
 
+With the mouse captured, a click SHALL select an entry and a second click on it SHALL run it as Enter does. A click outside the palette SHALL leave it open.
+
 #### Scenario: Open settings from the palette
 - **WHEN** the user presses Ctrl+P, types `usage` and presses Enter
+- **THEN** the Settings panel opens on the Usage tab
+
+#### Scenario: Run an entry by clicking
+- **WHEN** the palette filters to `Settings: Usage` and the user clicks that entry twice
 - **THEN** the Settings panel opens on the Usage tab
 
 ### Requirement: Welcome screen
@@ -133,6 +139,8 @@ The welcome screen SHALL disappear as soon as the first message exists and SHALL
 
 MCP rows SHALL update from `mcp.status.changed.1` and `mcp.tools.changed.1`, Modified files from `session.diff.1`, and LSP and the branch SHALL be re-read when the Session goes idle (language servers start as files are read), all without polling; every section SHALL be re-read when the event stream reconnects. A dropped event stream SHALL be reopened every 2 seconds, with the connection dot yellow while it retries and red after a failed attempt. `<leader>e` SHALL move focus into the sidebar, opening the drawer below 120 columns: Up/Down (and `j`/`k`) move between rows, Enter or Space collapses or expands MCP or Modified files, Enter on a modified file opens its diff, `r` on a failed or `needs_auth` MCP server reconnects it through `POST /api/v1/mcp/{name}/reconnect`, and Esc returns focus to the composer (closing the drawer). These keys SHALL be the `sidebar` context's bindings `sidebar_next`, `sidebar_previous`, `sidebar_select`, `sidebar_reconnect` and `sidebar_close`. The reconnect route SHALL accept a server that settled `failed` only when it retained no native owner, so a failure with unverified ownership stays refused with `409`. All server-provided names, errors, paths and patches SHALL be shown on one line (patches per line) without control characters. Every value SHALL come from public API routes. A section whose source route is unavailable SHALL be omitted, never shown with placeholder values.
 
+(P1) With the mouse captured, a click on a section header (MCP, Modified files, Machine) SHALL focus the sidebar on it and fold or unfold the section as Enter does. A click on another focusable row SHALL focus the sidebar on that row, and a second click on it SHALL act as Enter. A click on the transcript or the composer SHALL return focus to the composer as Esc does, closing the drawer. The wheel SHALL do nothing over the sidebar.
+
 #### Scenario: Wide terminal shows the sidebar
 - **WHEN** the terminal is 160 columns wide and `tui.sidebar` is `auto`
 - **THEN** the sidebar is drawn at 48 columns with Context, MCP, LSP and the `cwd:branch` footer
@@ -164,6 +172,18 @@ MCP rows SHALL update from `mcp.status.changed.1` and `mcp.tools.changed.1`, Mod
 #### Scenario: No language servers yet
 - **WHEN** no language server has started in the Location
 - **THEN** the LSP section reads `LSPs will activate as files are read`
+
+#### Scenario: Fold a section by clicking
+- **WHEN** the MCP section is expanded and the user clicks its `▼ MCP` header
+- **THEN** the section folds to `▶ MCP` and the sidebar has focus on that header
+
+#### Scenario: Click back into the composer
+- **WHEN** the sidebar has focus and the user clicks the composer
+- **THEN** focus returns to the composer and typed keys go to the prompt
+
+#### Scenario: Click a collapsed row while the sidebar has focus
+- **WHEN** the sidebar has focus and the user clicks a tool output's `lines hidden` row
+- **THEN** focus returns to the composer and the tool output expands as Ctrl+O does
 
 ### Requirement: Machine stats
 (P1) Below LSP, the sidebar SHALL show a collapsible `▼ Machine` section about the machine the server runs on, from `GET /api/v1/system`, with the OS label right-aligned in the header. It SHALL have:
@@ -217,6 +237,8 @@ No region SHALL draw outside its area at any size from 40×10 to 300×100. Trunc
 ### Requirement: Settings panel
 (P1) The system SHALL provide a full-screen Settings panel with the tabs Status, Config, Usage and Stats. `/settings` SHALL open the last used tab, and `/status`, `/config`, `/usage` and `/stats` SHALL open their own tab. `/cost` SHALL open the Usage tab scrolled to the Session section. The panel SHALL replace the transcript and composer while open, keep the recap block when one is shown, and draw the tab bar as `Settings  Status  Config  Usage  Stats`, with the active tab in `selection` (reverse video under `NO_COLOR`). Keys: Tab and Shift+Tab or Left and Right switch tabs, `1`–`4` jump to a tab, Up/Down, PageUp/PageDown, Home and End scroll, `r` refreshes, and Esc closes. The bottom row SHALL list the keys of the current tab. Each tab SHALL load its data when it is shown, show `Loading…` until the data arrives, and show a failed request as `Could not load <section>: <error> · r to retry` without closing the panel. A Drain keeps running while the panel is open, and a permission or question request SHALL close the panel and show its prompt.
 
+With the mouse captured, a click on a tab in the tab bar SHALL switch to it as its number key does, and the wheel SHALL scroll as Up/Down do.
+
 #### Scenario: Direct tab command
 - **WHEN** the user types `/stats`
 - **THEN** the Settings panel opens with the Stats tab active
@@ -224,6 +246,10 @@ No region SHALL draw outside its area at any size from 40×10 to 300×100. Trunc
 #### Scenario: Approval interrupts the panel
 - **WHEN** a permission request arrives while the Usage tab is open
 - **THEN** the panel closes and the permission prompt is shown
+
+#### Scenario: Click a tab
+- **WHEN** the Settings panel shows the Status tab and the user clicks `Usage` in the tab bar
+- **THEN** the Usage tab is active and loads its data
 
 ### Requirement: Settings Status tab
 (P1) The Status tab SHALL show, one `label: value` row each:
@@ -244,11 +270,21 @@ It SHALL include sandbox state and Cyber Account state only when the server repo
 - **THEN** the server version reads `0.1.0 (older build)` in the warning color with `restart the service`
 
 ### Requirement: Settings Config tab
-(P1) The Config tab SHALL list TUI preferences that can be edited in place: `theme`, `theme_mode`, `sidebar`, `recap`, `spinner`, `reasoning`, `diff_style`, `timestamps`, `color` and `accessibility.reduced_motion`. Each row SHALL show the current value and its source (`default`, `global`, `project`, `saved` for `kv.json`, or `session` for a toggle made in this run only, such as Ctrl+T or `/timestamps`). Enter or Space SHALL cycle a value or open its picker. A change SHALL apply immediately and be saved to `~/.local/state/cyber/kv.json` with the time it was saved, and a `tui.jsonc` written after that time SHALL win over it. Below the preferences, the tab SHALL show effective core settings (`model`, `small_model`, `mode`, `default_agent`, `budgets`) read-only with their source file, when the server's `config` route is available. Otherwise it SHALL show `Core settings: use cyber config or edit cyber.jsonc`.
+(P1) The Config tab SHALL list TUI preferences that can be edited in place: `theme`, `theme_mode`, `sidebar`, `recap`, `spinner`, `reasoning`, `diff_style`, `timestamps`, `color` and `accessibility.reduced_motion`. Each row SHALL show the current value and its source (`default`, `global`, `project`, `saved` for `kv.json`, or `session` for a toggle made in this run only, such as Ctrl+T or `/timestamps`). Enter or Space SHALL cycle a value or open its picker. A change SHALL apply immediately and be saved to `~/.local/state/cyber/kv.json` with the time it was saved, and a `tui.jsonc` written after that time SHALL win over it. The tab SHALL also list an `output style` row. It SHALL show the current Session's effective output style and its source (`session`, `config` or `default`), and Enter SHALL open the output style picker. Below the preferences, the tab SHALL show effective core settings (`model`, `small_model`, `mode`, `default_agent`, `output_style`, `budgets`) read-only with their source file, when the server's `config` route is available. Otherwise it SHALL show `Core settings: use cyber config or edit cyber.jsonc`.
+
+With the mouse captured, a click on a preference row SHALL select it, and a second click on it SHALL act as Enter (cycle the value or open its picker).
 
 #### Scenario: Toggle the sidebar from Config
 - **WHEN** the user selects `sidebar` and presses Enter until it reads `hide`
 - **THEN** the sidebar disappears, and the value persists after a restart
+
+#### Scenario: Output style from Config
+- **WHEN** the user selects the `output style` row and presses Enter
+- **THEN** the output style picker opens, and choosing `concise` updates the row to `concise (session)`
+
+#### Scenario: Cycle a value by clicking
+- **WHEN** the user clicks the `timestamps` row once and then again
+- **THEN** the first click selects it and the second cycles it to its next value, which is saved
 
 ### Requirement: Settings Usage tab
 (P1) The Usage tab SHALL show the current Session tree (the Session and its descendants), using `GET /api/v1/usage?scope=session` and its breakdown:
@@ -324,9 +360,11 @@ Models SHALL list each model with total tokens, share as a 20-column bar and per
 ### Requirement: File explorer
 (P1) The TUI SHALL provide a file explorer, opened with `/files` or the `file_explorer` binding (default `<leader>o`, that is `ctrl+x o`, because `<leader>e` is `sidebar_focus`) and closed with Esc. It SHALL show the Location's project as a tree in a pane on `surface_alt`: a header bar (`surface`) with `EXPLORER`, the project name and `:branch`, and at the right `✓ clean` in `success` or `N changed` in `warning`; a filter line with a `⌕` placeholder; the tree; and a summary line (`N shown · M hidden · .gitignore`). Root entries SHALL have no guide; each deeper level SHALL add a `│ ` indent guide in `text_subtle`, followed by the fold marker (`▸` collapsed, `▾` expanded). Directory names SHALL be bold in `file_dir` with a trailing `/`, an expanded directory SHALL show its loaded child count, and file names SHALL be colored by kind from their name: `file_doc` (Markdown and text), `file_config` (TOML, JSON, YAML, `justfile` and similar), `file_code` (source files) and `file_dim` (hidden, ignored, lock and generated files). A right-aligned column SHALL show the git status letter and the compact size (`1.2K`) in `text_muted`. The selected row SHALL have an `accent` bar and the `selection` background (reverse video without color). `tui.explorer.icons` (`none` default, `nerd`) SHALL add Nerd Font glyphs before names. The footer SHALL show the explorer keys as chips (the key on a `text_muted` background, then its label), generated from the binding table. Directories SHALL sort before files and SHALL be loaded lazily, one level per expansion, through `GET /api/v1/files`. Each row SHALL show the git status letter (`M` in `warning`, `A` and `?` in `success`, `D` in `error`) from the same VCS data as the sidebar, and a directory SHALL show `M` when any descendant changed. `.gitignore` and `.cyberignore` SHALL apply by default; `.` SHALL toggle hidden and ignored entries, and the footer SHALL count what is hidden. `/` SHALL filter by fuzzy path match across already-loaded and server-searched entries, and `g` SHALL show only changed files.
 
-Enter on a file SHALL open a preview pane to the right, or replace the tree when the terminal is narrower than 100 columns. The preview SHALL have its own header bar with a breadcrumb (`docs › README.md`), the language, line count and size, and the `+N −M` diff summary. A vertical divider SHALL separate it from the tree. Markdown files SHALL be rendered through the transcript's Markdown renderer by default (no OSC 8 links are written from the preview), and `m` SHALL toggle the raw source, shown by a `rendered`/`raw` chip in the header. Source (code, or raw Markdown with markup scopes colored, never one color) SHALL have line numbers, a gutter mark on changed lines and a `│` separator, with syntax highlighting through the same highlighter and theme tokens as code blocks; long lines SHALL soft-wrap with a hanging indent under the gutter. A scrollbar thumb SHALL show the position when the preview is longer than the pane. `←` SHALL fold the selected directory or move to its parent, and `→` SHALL unfold it. `@` SHALL insert the selected path as a file mention in the composer, relative to the Session directory (absolute when the file lies outside it, as when the Location is below the project root), `y` SHALL copy the project-relative path, and `r` SHALL refresh. The explorer SHALL refresh changed rows on file-change and VCS events without collapsing the user's expansion state.
+Enter on a file SHALL open a preview pane to the right, or replace the tree when the terminal is narrower than 100 columns. (P1) The `explorer_focus` binding (default Tab) SHALL move focus between the tree and an open preview, Esc SHALL return focus from the preview to the tree, and the focused pane's header title SHALL be drawn in `accent`. While the preview has focus, Up/Down, PageUp/PageDown and Home SHALL scroll it, and below 100 columns it SHALL replace the tree. The preview SHALL have its own header bar with a breadcrumb (`docs › README.md`), the language, line count and size, and the `+N −M` diff summary. A vertical divider SHALL separate it from the tree. Markdown files SHALL be rendered through the transcript's Markdown renderer by default (no OSC 8 links are written from the preview), and `m` SHALL toggle the raw source, shown by a `rendered`/`raw` chip in the header. Source (code, or raw Markdown with markup scopes colored, never one color) SHALL have line numbers, a gutter mark on changed lines and a `│` separator, with syntax highlighting through the same highlighter and theme tokens as code blocks; long lines SHALL soft-wrap with a hanging indent under the gutter. A scrollbar thumb SHALL show the position when the preview is longer than the pane. `←` SHALL fold the selected directory or move to its parent, and `→` SHALL unfold it. `@` SHALL insert the selected path as a file mention in the composer, relative to the Session directory (absolute when the file lies outside it, as when the Location is below the project root), `y` SHALL copy the project-relative path, and `r` SHALL refresh. The explorer SHALL refresh changed rows on file-change and VCS events without collapsing the user's expansion state.
 
 The explorer SHALL never bypass permissions. Listing SHALL be evaluated as `list` and preview as `read` against the Session's rules for that path. A file whose `read` decision is `ask` SHALL appear dimmed with `⊘ ask to read`, and opening its preview SHALL raise the normal permission request. A file whose decision is `deny` SHALL appear dimmed with `⊘ denied`, with no content. Preview SHALL be capped at 1 MiB and 5,000 lines, with a truncation notice. Binary files SHALL show `binary · <size>`, and symlinks SHALL show their target, never followed outside the project. Displayed file names and content SHALL be sanitized like other untrusted output, so no terminal escape sequence reaches the terminal. Screen readers SHALL get each row as `<name>, directory|file, <status>, level <n>`.
+
+(P1) With the mouse captured, a click on a tree row SHALL select it and act as Enter: a directory row, or its fold marker, folds or unfolds it, and a file row opens its preview (an `ask` file raises the permission request and a `deny` file only shows its notice, as with Enter). A click in the preview SHALL focus it and a click in the tree pane SHALL focus the tree, as `explorer_focus` does. A click on the header's `rendered`/`raw` chip SHALL act as `m`, and a click on a key chip SHALL act as its key. The wheel SHALL act on the pane under the pointer, whichever has focus: over the tree it SHALL move the selection, and over the preview it SHALL scroll the preview by 3 lines per notch.
 
 #### Scenario: Browse and preview
 - **WHEN** the user opens the explorer, expands `crates/cyber-tui/src` and presses Enter on `markdown.rs`
@@ -352,10 +390,28 @@ The explorer SHALL never bypass permissions. Listing SHALL be evaluated as `list
 - **WHEN** a directory lists `src/`, `README.md`, `Cargo.toml`, `main.rs` and `Cargo.lock`
 - **THEN** `src/` is bold in `file_dir`, the files are in `file_doc`, `file_config`, `file_code` and `file_dim`, and root rows start without a guide
 
+#### Scenario: Browse by clicking
+- **WHEN** the user clicks the folded `crates/` row and then the `README.md` row
+- **THEN** `crates/` unfolds, and `README.md` is selected and its preview opens
+
+#### Scenario: Wheel over the preview
+- **WHEN** a long file's preview is open beside the tree and the user turns the wheel down over the preview
+- **THEN** the preview scrolls 3 lines and the tree selection does not move
+
+#### Scenario: Focus the preview
+- **WHEN** a preview is open beside the tree and the user presses Tab, or clicks the preview
+- **THEN** the preview's header title is drawn in `accent` and Down scrolls the preview; Esc returns focus to the tree
+
+#### Scenario: Toggle raw by clicking the chip
+- **WHEN** `docs/README.md` is previewed under a `rendered` chip and the user clicks the chip
+- **THEN** the preview shows the Markdown source and the chip reads `raw`
+
 ### Requirement: Theme switcher
 (P1) `/theme`, the palette action `Theme…` and the Config tab's theme row SHALL open the theme switcher, a two-pane overlay. The left pane SHALL list built-in and custom themes grouped under `DARK` and `LIGHT` by the theme's resolved background luminance. Each row SHALL show the theme name, `current` on the active theme, `custom` on themes loaded from `themes/*.json`, and a swatch of its `accent`, `secondary`, `success`, `warning` and `error` tokens drawn on the theme's own background. Tab SHALL cycle the filter `All · Dark · Light`, and typing SHALL fuzzy-search names. The right pane SHALL show a live preview rendered with the highlighted theme's tokens: the welcome logo gradient, a Markdown heading, a list and a link, a highlighted code block, an added and a removed diff line, success, warning and error status glyphs, a Turn footer marker, and the measured contrast of `text` and `text_muted` against `background` with the WCAG level. Moving the selection SHALL apply the theme to the whole TUI immediately. Enter SHALL keep it and persist it to `kv.json`, `p` (with an empty search, since typing searches) SHALL write `theme` to the `.cyber/tui.jsonc` of the project root, refusing a file with comments rather than rewriting it, and Esc SHALL restore the theme that was active when the switcher opened. The `theme_cycle` binding (default `ctrl+x t`) SHALL switch to the next theme in the current filter without opening the switcher, keep it in `kv.json`, and SHALL announce `Theme: <name>` in the status footer for 2 seconds; `theme_list`, which opens the switcher, moves to `<leader>s`. A permission or question request that replaces the switcher SHALL restore the theme it opened with. Under `NO_COLOR` the switcher SHALL list themes and explain that colors are disabled, with no swatches. A theme whose `text` contrast is below 4.5:1 SHALL show `low contrast` in `warning` in the preview.
 
 The built-in themes SHALL include the existing set plus `cyber-light`, `synthwave-84`, `rose-pine`, `kanagawa`, `ayu-mirage` and `matrix`, each defining every token or deriving it by the documented derivation rules, and each passing the contrast test.
+
+With the mouse captured, a click on a theme row SHALL select it, which previews it as moving the selection does, and a second click on it SHALL keep it as Enter does. A click outside the switcher SHALL neither close it nor restore the previous theme.
 
 #### Scenario: Live preview and revert
 - **WHEN** the user opens `/theme`, moves to `synthwave-84` and presses Esc
@@ -368,6 +424,10 @@ The built-in themes SHALL include the existing set plus `cyber-light`, `synthwav
 #### Scenario: Cycle without the switcher
 - **WHEN** the user presses `ctrl+x t` twice with the filter `Dark`
 - **THEN** the theme moves two dark themes forward and the footer shows `Theme: <name>`
+
+#### Scenario: Preview and keep by clicking
+- **WHEN** the user clicks `rose-pine` once and then again
+- **THEN** the first click previews `rose-pine` and the second keeps it and persists it to `kv.json`
 
 ### Requirement: Nyan progress indicator
 (P1) While the Session is working (a Turn, compaction, a running workflow the user started, or a long tool call), the progress line above the composer SHALL show the activity indicator selected by `tui.spinner`: `nyan` (default), `nyan-tall`, `braille`, `dots` or `off`.
@@ -411,6 +471,8 @@ Frames SHALL advance at no more than 12 per second, only while working, with not
 
 `/timestamps` SHALL toggle per-message timestamps. Tool output over 30 lines SHALL be collapsed to its last 10 lines until expanded. (P1) Diff lines SHALL use the `diff_*` theme tokens with `diff_added_bg` and `diff_removed_bg` backgrounds, and each finished run SHALL end with the Turn footer marker.
 
+(P1) With the mouse captured, a click on a collapsed tool output's hidden-lines row SHALL act as the `tool_details` key (Ctrl+O), and a click on a collapsed `thinking` row SHALL act as the `reasoning_toggle` key (Ctrl+T); neither row is a target while its key is unbound. Links SHALL stay the terminal's to open through OSC 8.
+
 #### Scenario: Split diff on wide terminal
 - **WHEN** an edit completes and the terminal is 200 columns wide with `diff_style` set to `auto`
 - **THEN** the edit card renders a side-by-side diff
@@ -418,6 +480,10 @@ Frames SHALL advance at no more than 12 per second, only while working, with not
 #### Scenario: Long bash output collapsed
 - **WHEN** a bash tool returns 400 lines
 - **THEN** the card shows the last 10 lines and `+390 lines (press o to expand)`
+
+#### Scenario: Click a collapsed tool output
+- **WHEN** a bash card shows its last 10 lines under a hidden-lines row and the user clicks that row
+- **THEN** tool output expands exactly as after Ctrl+O
 
 ### Requirement: Shell, slash and memory input modes
 (P0) The system SHALL treat input starting with `!` as a user shell command. It SHALL run in the Location with the configured shell, and its output SHALL be recorded in the Session as user-provided context. Input starting with `/` SHALL open slash-command autocomplete over built-in TUI commands, custom commands, skills and MCP prompts (fuzzy, maximum 12 results). (P1) In the slash-command menu, Tab and Enter SHALL accept the selected entry, except that Enter SHALL run the command when the typed name already equals the selected entry. (P1) Input starting with `#` SHALL offer to save the remaining text as a memory entry in project or user scope, as defined in `memory`.
@@ -460,8 +526,10 @@ Frames SHALL advance at no more than 12 per second, only while working, with not
 (P0) The system SHALL merge `tui.keybinds` over the defaults, supporting:
 - a leader key (default Ctrl+X) with a 2,000 ms timeout
 - chord sequences such as `<leader>m`
-- context-scoped bindings for `composer` (`history_previous`, `history_next`, `newline`, `editor`), and (P1) `palette`, `sidebar`, `settings` and `explorer`; `messages`, `picker`, `agent_view` and `permission` have no rebindable actions yet and are reported as unknown contexts
+- context-scoped bindings for `composer` (`history_previous`, `history_next`, `newline`, `editor`, `paste_image`), and (P1) `palette`, `sidebar`, `settings` and `explorer`; `messages`, `picker`, `agent_view` and `permission` have no rebindable actions yet and are reported as unknown contexts
 - disabling a binding with `"none"`
+
+(P0) `composer.paste_image` SHALL default to Ctrl+V, and to Alt+V on Windows, where the terminal takes Ctrl+V for text paste.
 
 (P1) `tui.vim_mode: true` SHALL enable vim normal/insert modes in the composer, also toggled with `/vim`. (P1) The defaults SHALL include `command_palette` (Ctrl+P), `sidebar_toggle` (`<leader>b`), `sidebar_focus` (`<leader>e`), `settings` (`<leader>,`), `file_explorer` (`<leader>o`), `theme_list` (`<leader>s`) and `theme_cycle` (`<leader>t`). Top-level `tui.keybinds` entries SHALL bind global actions, and an object named after a context SHALL bind that context's actions. A binding SHALL never be shown in a hint, the help screen or the palette when it is disabled. A value that does not parse, an unknown action or an unknown context SHALL be reported and leave the default in place.
 
@@ -472,6 +540,10 @@ Frames SHALL advance at no more than 12 per second, only while working, with not
 #### Scenario: Rebound palette updates the footer hint
 - **WHEN** `tui.keybinds.command_palette` is `"ctrl+k"`
 - **THEN** Ctrl+K opens the palette and the footer hint reads `ctrl+k commands`
+
+#### Scenario: Rebound image paste
+- **WHEN** `tui.keybinds.composer.paste_image` is `"ctrl+shift+i"` and the clipboard holds an image
+- **THEN** Ctrl+Shift+I attaches it, and Ctrl+V no longer reads the clipboard
 
 ### Requirement: Accessibility
 (P1) The system SHALL provide `tui.accessibility.screen_reader: true` (or `CYBER_SCREEN_READER=1`). This mode disables spinners and animations, renders streaming text in whole-sentence chunks, labels every status with words rather than glyphs, and forces inline rendering. `tui.accessibility.reduced_motion` SHALL disable animations independently. Every theme SHALL meet a 4.5:1 contrast ratio for body text against its background, and 3:1 for `text_muted` and for focus indicators. Color SHALL never be the only carrier of meaning: every status dot, meter and heatmap SHALL also have a word, a percentage or a glyph level. Every panel, tab, sidebar row and palette entry SHALL be reachable and operable with the keyboard alone, and the focused element SHALL be marked with reverse video or a `›` marker. In screen-reader mode the sidebar SHALL not be drawn, the Turn footer marker SHALL be emitted as `Turn finished: agent <agent>, model <model>, <duration>`, and the Stats heatmap SHALL be replaced by a sentence such as `Active 265 of 340 days; most active May 20; current streak 14 days`.

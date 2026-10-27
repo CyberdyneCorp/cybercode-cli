@@ -153,3 +153,14 @@ The Tool Registry is the single way locally executed tools are represented, regi
 #### Scenario: PR created before crash
 - **WHEN** a create-PR call succeeds remotely and the server crashes before settlement
 - **THEN** resume records an unknown outcome, queries for the PR using the operation evidence, and does not blindly create a second PR
+
+### Requirement: Scope-aware deferred materialization
+(P1) Deferred materialization SHALL use explicit registration scope rather than name prefixes, after precedence and visibility filtering. The sole threshold SHALL be tool_output.deferred_threshold_tokens, default 10000, measured as four Unicode characters per estimated token with rounding up. Unloaded MCP/plugin tools SHALL be partitioned only when the total strictly exceeds the threshold; loaded selections, builtins and Session registrations SHALL retain full definitions. Deferred summaries SHALL contain only names and one-line descriptions and SHALL NOT disclose parameter schemas or registration capabilities.
+
+#### Scenario: Client with MCP-looking name
+- **WHEN** a higher Session client tool is named mcp__shared__read and the definition threshold is exceeded
+- **THEN** its actual Session scope SHALL preserve its full definition without revealing a lower MCP registration
+
+#### Scenario: Threshold and loaded selection
+- **WHEN** an already effective catalog exceeds the configured threshold and a Session has loaded one MCP name
+- **THEN** that name SHALL retain its full definition while other unloaded MCP/plugin schemas remain deferred

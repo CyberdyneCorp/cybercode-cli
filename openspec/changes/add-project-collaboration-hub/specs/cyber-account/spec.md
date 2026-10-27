@@ -7,7 +7,6 @@
 - **WHEN** the issuer's `scopes_supported` lacks `cyber:runner`
 - **THEN** login proceeds without it, warns `issuer does not support scope cyber:runner; hosted runners will be unavailable`, and `cyber --cloud` later fails with `MissingScopeError`
 
-
 ### Requirement: ID token and access token validation
 (P3) The CLI SHALL validate the ID token's signature against `jwks_uri` using the algorithm advertised there, plus `iss`, `aud` (= client_id), `exp`, `iat` (60 seconds of clock skew allowed) and `nonce`. Services that receive access tokens (Relay, Runners, Share, Routines, collaboration hub) SHALL validate signature, `iss` and `exp`. They SHALL check `aud` when the client has an access-token audience configured, and the required scope. The collaboration hub SHALL always require its configured access-token audience and `cyber:collaborate`; an ID token or access token without that audience SHALL NOT authorize project access. For immediate revocation checks they SHALL use RFC 7662 introspection with a service token, cached for at most 60 seconds.
 
@@ -31,9 +30,8 @@
 - **WHEN** discovery advertises `device_authorization_endpoint`
 - **THEN** `cyber login --no-browser` prints `Go to <verification_uri> and enter code ABCD-EFGH` and polls the token endpoint, honoring `interval` and `slow_down`
 
-
 ### Requirement: Recent authentication login
-Login requested for recent authentication SHALL use PKCE with `prompt=login` and `max_age=900`, including headless clients when a device grant is advertised. The verified ID token SHALL contain `auth_time` no later than the current time and no older than 900 seconds. Missing or stale authentication time SHALL fail with `StepUpRequiredError`; refresh SHALL NOT renew authentication time.
+(P3) Login requested for recent authentication SHALL use PKCE with `prompt=login` and `max_age=900`, including headless clients when a device grant is advertised. The verified ID token SHALL contain `auth_time` no later than the current time and no older than 900 seconds. Missing or stale authentication time SHALL fail with `StepUpRequiredError`; refresh SHALL NOT renew authentication time.
 
 #### Scenario: Issuer ignores authentication freshness
 - **WHEN** recent-authentication login returns a signed ID token without a current `auth_time`

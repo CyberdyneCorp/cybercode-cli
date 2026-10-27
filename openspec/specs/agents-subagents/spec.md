@@ -213,3 +213,196 @@ Agents are named profiles (system prompt, model, mode, tools, permissions, step 
 #### Scenario: Offload a long test run
 - **WHEN** the model spawns `general` with `isolation: "remote"`, `runner: "ci-pool"` and `background: true`
 - **THEN** the child runs on the pool, and when it finishes the parent receives a queued handback with its result, branch and `runner: "ci-pool"`
+
+### Requirement: Requested child inbox handoff
+(P1) Requested queued child input SHALL continue in FIFO order through fresh schema-preserving attempts after the preceding result owner finishes collection. Foreground tool output and background Job result and billing SHALL preserve their original attempt. Handoff SHALL use exclusive child ownership and verified checkout preparation, retain original inbox identity and edited content, and recheck pending wake intent before committing the next attempt. `resume: false` and historical input without wake intent SHALL remain deferred. Interruption SHALL durably clear automatic intent without deleting pending input, permitting a later explicit wake. Runtime shutdown SHALL join owned handoff preparation tasks.
+
+#### Scenario: Foreground structured result followed by queued prompts
+- **WHEN** two requested prompts are queued while a foreground structured child runs
+- **THEN** the foreground tool receives its original result before the queued prompts run as separate attempts in admission order
+
+#### Scenario: Background result billing precedes handoff
+- **WHEN** a background structured child has requested queued input when its Job completes
+- **THEN** the Job persists its original result and usage before a new attempt adds usage to the child
+
+#### Scenario: Interrupted queued input remains deferred
+- **WHEN** a child is interrupted with requested pending input and the server restarts
+- **THEN** the input remains pending without automatic inference until an explicit wake
+
+### Requirement: Child continuation preparation ownership
+(P1) Existing-child preparation for public prompts, wake, held release and automatic handoff SHALL retain exclusive execution ownership through native acknowledgement and admission. Caller disposal SHALL cancel preparation without releasing ownership early. Child interruption SHALL record a durable pause boundary, cancel registered preparation and await bounded acknowledgement; preparation registration and admission SHALL reject an older boundary. A late successful result after cancellation SHALL NOT admit input, release held input or start inference. Unacknowledged or panicked preparation SHALL retain unknown recovery evidence and refuse execution after restart. Shutdown SHALL cancel and join owned native preparation.
+
+#### Scenario: Interrupt native setup before new input
+- **WHEN** interruption occurs while existing-child checkout setup is running
+- **THEN** setup is cancelled and acknowledged, the prior inbox is preserved and neither late setup effects nor new inference occur
+
+#### Scenario: Disposed caller with delayed acknowledgement
+- **WHEN** the caller disappears while preparation is running and the host delays its cancellation acknowledgement
+- **THEN** execution ownership remains held until the owned preparation settles
+
+#### Scenario: Unacknowledged preparation after restart
+- **WHEN** preparation fails to acknowledge cancellation or panics and the server restarts
+- **THEN** durable unknown evidence refuses prompt, wake and resume pending recovery
+
+### Requirement: Captured child launch authority
+(P1) Child launches SHALL capture source and ancestor authority before approval, concurrency waiting and native preparation. Ordinary interruption SHALL invalidate outstanding launches sourced by the interrupted Session without invalidating independent background-child launches. A durable subtree admission fence SHALL invalidate outstanding launches from every descendant. Child creation SHALL recheck the captured identities and boundaries in its writer transaction and refuse stale authority without creating a Session. Missing or cyclic ancestry and foreign runtime authority SHALL be refused.
+
+#### Scenario: Cancel between preflight and writer commit
+- **WHEN** a source interruption commits after a child creation preflight but before its writer transaction
+- **THEN** the writer refuses stale authority and creates neither child history nor a Session projection
+
+#### Scenario: Background independence and subtree fencing
+- **WHEN** a parent Drain is interrupted while an independent background child holds launch authority
+- **THEN** the child authority remains valid until an explicit subtree admission fence commits for an ancestor
+
+### Requirement: Delegation callback authority
+(P1) Explicit user delegation and owned child-preparation callbacks SHALL retain their original source/ancestor authority and caller cancellation through host awaits. A delayed callback SHALL NOT recapture fresh authority after cancellation. Nested callback work SHALL retain the original source boundary until execution handoff; independent child Drains SHALL NOT inherit that callback scope. Durable reservation/launch markers, callback-owned input and resumed attempts, and background Job registration SHALL recheck captured boundaries in the single writer transaction. A refused pre-launch request SHALL remain Reserved and settle Cancelled; terminal cancellation evidence SHALL remain writable after authority is fenced.
+
+#### Scenario: Delayed user host callback
+- **WHEN** the source is interrupted or an ancestor subtree boundary commits before the host dispatches a delegated child
+- **THEN** neither a child, input nor a Job is created using newly captured authority
+
+#### Scenario: Cancelled callback owner
+- **WHEN** a caller cancels while its host delays acknowledgement
+- **THEN** callback-local admission refuses further child effects and a durable pre-launch reservation settles Cancelled
+
+#### Scenario: Nested callback and independent child
+- **WHEN** a callback creates a child before source interruption and attempts nested work afterward
+- **THEN** nested callback admission refuses the old source boundary while subsequent independent child work retains ordinary background semantics
+
+#### Scenario: Ancestor fence during child preparation
+- **WHEN** an ancestor admission fence commits while public child preparation is awaiting its host
+- **THEN** late success cannot reset the result, release held input, admit a prompt or infer using the older authority
+
+#### Scenario: Job registered before delayed reply
+- **WHEN** a background Job registers before ordinary parent interruption while its delegation reply remains delayed
+- **THEN** ordinary parent interruption does not cancel the registered Job and its terminal admission receipt remains writable
+
+#### Scenario: Staged conversation changes before refused input
+- **WHEN** a fenced callback attempts admission into a Session with a staged conversation revert
+- **THEN** admission refuses before committing that revert and preserves the prior history and staged state
+
+#### Scenario: Revoked request during Location admission
+- **WHEN** a durable request is cancelled after child creation preflight while its Location claim waits
+- **THEN** the writer checks the request's current pending authority and rolls back child creation without registering a Job
+
+#### Scenario: Missing admission owner at launch marker
+- **WHEN** a Reserved admission has lost its live actor through restart or failure
+- **THEN** a launch-marker call refuses before advancing the record and preserves Unknown lookup and reviewed cancellation semantics
+
+### Requirement: Owned legacy subtask callback
+(P1) Direct user subtask requests SHALL share the tracked durable callback owner with explicit delegation. Caller disposal SHALL cancel the request without disposing the host before native acknowledgement. Caller cancellation SHALL invalidate durable request authority. Callback-owned Job delivery SHALL require caller acceptance; disposed or cancelled delivery SHALL stop only the verified owned Job and await settlement. Accepted delivery SHALL transfer ownership to the independent Job. Hosts without the launch-marker contract SHALL retain conservative post-launch uncertainty.
+
+#### Scenario: Disposed direct request before native acknowledgement
+- **WHEN** a direct subtask caller disappears while its host delays cancellation acknowledgement
+- **THEN** the host remains tracked until acknowledgement and cannot create new child work under revoked authority
+
+#### Scenario: Accepted Job remains independent
+- **WHEN** a direct subtask returns an accepted Job and its former caller token is later cancelled
+- **THEN** the registered Job keeps running
+
+#### Scenario: Rejected handoff without cancellation acknowledgement
+- **WHEN** a rejected or cancelled direct handoff returns a recorded Running Job without a live cancellation owner
+- **THEN** the request records Unknown with the verified Job identity and a cancelled caller receives a cancellation acknowledgement error
+
+### Requirement: Durable subtree admission closure
+(P1) An owned subtree cancellation SHALL close admission durably while its actors settle. Fresh capture and unbound writer admission SHALL check every ancestor closure. Admission SHALL check the target child as well as the source parent. Generation-only fences SHALL NOT reopen a closed scope. New input, release/reset, child or Job registration, Step/tool dispatch, compaction and new idle native work SHALL refuse closed ancestry. Terminal effect/cancellation receipts SHALL remain writable. Restart SHALL preserve closed admission until verified sweep settlement or reviewed recovery. The durable close primitive SHALL NOT imply completed actor cancellation.
+
+#### Scenario: Fresh request during closed sweep
+- **WHEN** a root or descendant receives fresh work after the scope is durably closed
+- **THEN** capture and the writer refuse it without projecting input, children or Jobs
+
+#### Scenario: Parent outside closed child scope
+- **WHEN** an open parent tries to register a Job targeting a closed child
+- **THEN** the writer refuses the target handoff and rolls back Job registration
+
+#### Scenario: Closure survives restart and another generation fence
+- **WHEN** the runtime restarts or a generation-only fence is added after scope closure
+- **THEN** new descendant work remains refused
+
+#### Scenario: Shell effect already started before closure
+- **WHEN** an already-owned native shell finishes after admission closes
+- **THEN** its internal output receipt remains durable without waking inference or permitting new prompt admission
+
+### Requirement: Owned bounded subtree stop
+(P1) Explicit subtree stop SHALL close admission before taking its descendant snapshot and SHALL retain the sweep after caller disposal. It SHALL signal all known scoped Drains, preparations, callback admissions, idle native operations and Jobs before waiting for any actor; Job target ownership SHALL count independently of its parent. Inbox pause intent SHALL remain durable and preserve rows. Acknowledgement SHALL be bounded and SHALL depend on terminal actor/effect evidence, not caller disposal. Missing owners, native uncertainty and held child-result ownership SHALL retain closed admission and a durable Unknown report. A local acknowledgement report SHALL NOT imply verified reopening or complete cross-process ownership.
+
+#### Scenario: Concurrent scoped actors
+- **WHEN** several descendant actors and parent-owned Jobs are active during subtree stop
+- **THEN** all receive cancellation before the sweep waits and unrelated actors remain active
+
+#### Scenario: Disposed sweep caller
+- **WHEN** the caller disappears after admission closes
+- **THEN** the tracked sweep continues to write its bounded settlement report
+
+#### Scenario: Idle native operation lacks acknowledgement
+- **WHEN** a scoped shell or maintenance operation is disposed or fails to acknowledge cancellation
+- **THEN** its durable pending/unknown receipt prevents successful acknowledgement and admission stays closed
+
+### Requirement: Durable child result ownership and target authority
+(P1) Child result ownership SHALL be exclusive across runtimes sharing the database, and acquisition SHALL verify the target belongs to the declared parent. Acquisition SHALL persist original source authority and, for existing children, the original target identity and cancellation boundaries before callbacks or native preparation. The writer SHALL refuse a closed target independently of supplied bindings. Callback work and resumed admission SHALL retain this original authority through awaits and writer settlement. Existing-child continuation SHALL be sourced by the child so ordinary parent interruption does not revoke independent child work; an explicit subtree fence SHALL revoke it. Session setup SHALL capture source/target authority before Location admission and recheck it before each new native command, including after asynchronous sandbox preparation. Owner release SHALL revoke callback authority while preserving terminal release evidence after closure. A held or orphaned durable owner SHALL prevent subtree acknowledgement; releasing result ownership SHALL NOT itself prove native effects acknowledged.
+
+#### Scenario: Another runtime holds the result owner
+- **WHEN** a child owner belongs to another runtime or has not released before restart
+- **THEN** another claim is refused and subtree stop records Unknown until ownership is acknowledged or recovered
+
+#### Scenario: Target fence during parent callback
+- **WHEN** the parent remains open but its originally claimed child is fenced while a callback waits
+- **THEN** native preparation and child admission refuse the original target authority instead of capturing a fresh boundary
+
+#### Scenario: Owner disposal after closure
+- **WHEN** a child result owner is released after its source or target closes
+- **THEN** its release receipt is durable and retained callback authority cannot launch additional work
+
+
+#### Scenario: Setup admission waits across a target boundary
+- **WHEN** target authority changes while a setup Location claim waits or between setup commands
+- **THEN** the next effect is refused with original captured authority and a not-dispatched command receipt when journaled
+
+#### Scenario: Independent child continuation
+- **WHEN** the parent Drain is interrupted during child-sourced continuation
+- **THEN** the child retains its authority until its own interruption or an explicit ancestor subtree fence
+
+### Requirement: Retained native settlement proof
+(P1) Verified admission reopening SHALL hold native Location ownership through the database commit that consumes its settlement evidence. A managed Location host SHALL explicitly support retained settlement; consuming settlement that releases ownership SHALL NOT be accepted as retained proof. A retained proof SHALL record acknowledged settlement while keeping the original native lock until disposal. Unsupported hosts and failed settlement SHALL refuse proof. This primitive SHALL NOT reopen admission or replace actor/effect audits.
+
+#### Scenario: Native lock held after settlement
+- **WHEN** a checkout lease records settlement for a retained proof
+- **THEN** another native claimant cannot acquire its activity record until the proof is dropped
+- **AND** the settled record remains durable after release
+
+#### Scenario: Host without retained settlement
+- **WHEN** a managed host implements only consuming settlement
+- **THEN** retained proof is refused without silently invoking consuming settlement
+
+#### Scenario: Retained host guard disposal
+- **WHEN** a host supplies retained acknowledged ownership
+- **THEN** the runtime preserves that guard until proof disposal
+- **AND** unmanaged Locations require no managed checkout lock
+
+### Requirement: Matched verified subtree reopening
+(P1) Explicit reopening SHALL require the current close scope and latest persisted Acknowledged stop receipt. It SHALL replay fresh durable Session state, refuse open Steps, unsettled tool outcomes, pending preparation, running Jobs and unresolved delegation, idle or result ownership. Native Location identity and retained settlement proof SHALL remain held through the writer commit. The writer SHALL recheck the descendant identities, Session revisions and scoped ownership evidence atomically; changed evidence SHALL refuse reopening. Only the matching scope SHALL reopen. Existing captured authority SHALL remain revoked, independently closed descendants SHALL remain closed and reopening SHALL NOT dispatch preserved input automatically. Unknown receipts require settlement or reviewed recovery, not reopening.
+
+#### Scenario: Matched acknowledged reopening
+- **WHEN** the reviewed close scope and latest acknowledged receipt still match and fresh actor/native evidence is settled
+- **THEN** the writer records reopening, retains input and allows fresh admission
+- **AND** captured authority from before the stop remains invalid across restart
+
+#### Scenario: Stale review or changed evidence
+- **WHEN** the receipt is Unknown, belongs to another scope, is superseded or actor evidence changes during native verification
+- **THEN** reopening is refused and admission stays closed
+
+#### Scenario: Nested scopes and repeated stops
+- **WHEN** an acknowledged ancestor scope reopens while a descendant has its own closed scope
+- **THEN** the descendant remains closed
+- **AND** a later stop creates a new close scope that an earlier reopening request cannot clear
+
+#### Scenario: Owned sweep still pending
+- **WHEN** another stop sweep has a durable start without its own terminal receipt, including after process loss
+- **THEN** an earlier acknowledged observation SHALL NOT authorize reopening
+- **AND** sweep settlement SHALL bind the original sweep and active close owner
+
+#### Scenario: Callback crosses to an unrelated Session
+- **WHEN** a callback captures authority for an unrelated Session before its original source hands off ownership
+- **THEN** the callback and its writer submissions retain the original source boundaries
+- **AND** stop and reopening audits retain the original operation scope after terminal records remove admission bindings

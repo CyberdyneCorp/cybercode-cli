@@ -99,3 +99,93 @@ Gives parallel Sessions, subagents and Workflow agents their own git checkouts s
 #### Scenario: Kept worktree announced
 - **WHEN** a dirty worktree is kept on Session exit
 - **THEN** `worktree.kept.1` is published with its path and branch
+
+### Requirement: Managed creation ownership
+(P1) Managed Git worktree creation SHALL hold the shared repository lock, resolve a commit base and record pending ownership before invoking creation through the runtime's sandboxed Git execution port. It SHALL refuse unowned existing paths and preserve pending creation artifacts on failure or cancellation. Reuse SHALL verify the common repository and branch without resetting user edits.
+
+#### Scenario: Interrupted creation remains recoverable
+- **WHEN** Git creation fails after pending ownership is recorded
+- **THEN** the pending record and any resulting path or branch remain available for recovery
+- **AND** a later request does not blindly repeat checkout
+
+#### Scenario: Unowned target is preserved
+- **WHEN** the requested worktree target exists without managed ownership
+- **THEN** creation fails before mutation and its contents remain unchanged
+
+#### Scenario: Windows canonical path reaches Git safely
+- **WHEN** Rust resolves a managed worktree root to a Windows verbatim drive path
+- **THEN** only the explicit Git argument is converted to an equivalent supported spelling, with command-local long-path support
+- **AND** canonical ownership remains unchanged and ambiguous path components fail before branch creation
+- **AND** Windows process creation uses a short launch directory while Git selects the requested directory explicitly, without broadening sandbox access
+- **AND** long linked targets use verified metadata and an explicit checkout destination without an early long-directory change
+
+#### Scenario: Linked metadata no longer points back to the owned worktree
+- **WHEN** the metadata directory's `gitdir` backpointer no longer resolves to the owned worktree's regular `.git` marker
+- **THEN** creation verification or reuse fails without accepting the redirected repository
+- **AND** existing user files remain unchanged
+
+#### Scenario: Initial checkout does not overwrite a concurrent file
+- **WHEN** a file appears in the fresh worktree after registration but before initial checkout
+- **THEN** checkout fails without overwriting that file
+- **AND** pending ownership remains available for recovery
+
+#### Scenario: Creation permission and read-only admission
+- **WHEN** worktree creation is denied, its token is already cancelled, or the sandbox policy is read-only
+- **THEN** the runtime refuses before reserving ownership or creating the target
+- **AND** creation uses the persisted source Session's mode and rules rather than invocation overrides
+
+#### Scenario: Git creation scope is distinct from setup scope
+- **WHEN** managed Git creation runs with workspace-write policy
+- **THEN** only shared repository metadata, the reserved target, managed temporary/output directories and explicitly configured writable roots are writable
+- **AND** ordinary source checkout files and unrelated sibling worktrees are not implicitly writable
+- **AND** setup receives its normal protected-path policy without the Git metadata provisioning grants
+
+### Requirement: Explicit child setup recovery
+(P1) Clients SHALL inspect a pending isolated child's setup journal through its direct parent and explicitly authorize retry of a command with an acknowledged nonzero or signal exit or a verified preparation failure before process launch against the reviewed recipe digest and journal revision. Successful commands SHALL not rerun. Recovery SHALL verify current native ownership, hold child execution and checkout leases, retain source trust and current deny/sandbox ceilings, and clear setup-pending only after complete setup. Pending unknown outcomes and recorded execution errors without an acknowledged exit SHALL not authorize retry or settlement by this operation. A dispatch revision SHALL prevent a stale acknowledgement from settling a newer attempt.
+
+#### Scenario: Retry a reviewed settled failure
+- **GIVEN** an isolated child is setup-pending after an acknowledged failed exit
+- **WHEN** its parent client submits the reviewed recipe digest, journal revision, failed index and a nonempty reason
+- **THEN** a durable retry authorization preserves the prior result and permits one fresh attempt at that failed step
+- **AND** prior successful commands replay without side effects and subsequent commands run in order
+- **AND** completion clears the exact child's setup gate without starting inference
+
+#### Scenario: Retry a command that failed before launch
+- **WHEN** sandbox command preparation fails before the setup process launch boundary
+- **THEN** the journal SHALL record a distinct not-dispatched result with its diagnostic
+- **AND** an explicit retry against the reviewed recipe and revision SHALL preserve earlier successes and authorize one new attempt
+- **AND** errors from process launch or later execution and historical undifferentiated failures SHALL remain fenced as uncertain outcomes
+
+#### Scenario: Refuse stale or unsafe recovery
+- **WHEN** the reviewed recipe or revision changes, the child is not owned by the parent, a command outcome is unknown, or native ownership/activity is uncertain
+- **THEN** recovery refuses before command dispatch or readiness acknowledgement
+- **AND** user files, earlier results and setup-pending state remain intact
+
+### Requirement: Worktree Location stream continuity
+(P1) When a durable worktree rebound changes a Session's Location, its Session stream SHALL continue using the same aggregate cursor and SHALL label replay/live envelopes with the Location at each event's sequence. Instance streams SHALL deliver the rebound to subscribers at both previous and new Locations, then route subsequent events to the new Location. Stream gaps and reconnects SHALL recover Location from durable history. TUI actions SHALL use the current Session Location, including immediately after an observed rebound.
+
+#### Scenario: Attached client observes relocation
+- **WHEN** an isolated child rebounds to a recreated checkout at a different path
+- **THEN** old and new Location subscribers each receive the same rebound identity and its new Location
+- **AND** subsequent events use the new Location and do not leak to the old Location stream
+- **AND** the Session stream keeps its aggregate sequence without duplicate durable events
+
+#### Scenario: Reconnect across a Location change
+- **WHEN** a client reconnects before or after a rebound event using its last durable cursor
+- **THEN** replay labels earlier events with their original Location and later events with the rebound Location
+- **AND** historical payloads remain unchanged
+
+#### Scenario: TUI acts after rebinding
+- **WHEN** the active Session receives a valid worktree rebound
+- **THEN** its directory updates immediately and a server refresh is requested
+- **AND** subsequent located requests and local attachment paths use the new directory
+
+#### Scenario: Uncached deletion preserves other subscriptions
+- **WHEN** an all-scope instance stream first observes a Session through its deletion notification
+- **THEN** it delivers deletion with an unknown Location omitted
+- **AND** unrelated Session events continue on that connection
+
+#### Scenario: Cached canonical Location remains stable
+- **WHEN** a Session's source directory alias disappears after its instance stream has resolved that Location
+- **THEN** cached routing remains at the resolved canonical Location until a durable binding change
+- **AND** ordinary notifications do not recanonicalize the path on every event

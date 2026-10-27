@@ -1,8 +1,8 @@
 # P1 acceptance audit
 
-## Current scope (2026-10-22)
+## Current scope (2026-10-27)
 
-The tables and sign-offs below are a historical 214-requirement acceptance snapshot, not the current canonical inventory. After contract synchronization and the editor deferral, the canonical specs contain **270 P1 requirements**. Of those, **213** have a matching capability/name row in the historical plan; **57** need explicit classification against their full current clauses. A name match does not revalidate expanded clauses or carry acceptance across platforms. See the [current inventory and reconciliation](spec-doc-reconciliation.md) for the complete counts and unmatched requirements. No new acceptance is claimed by the documentation sync.
+The tables and sign-offs below are a historical 214-requirement acceptance snapshot, not the current canonical inventory. After contract synchronization and the editor deferral, the canonical specs contain **338 P1 requirements**. Of those, **213** have a matching capability/name row in the historical plan; **125** need explicit classification against their full current clauses. A name match does not revalidate expanded clauses or carry acceptance across platforms. See the [current inventory and reconciliation](spec-doc-reconciliation.md) for the complete counts and unmatched requirements. No new acceptance is claimed by the documentation sync.
 
 ## Corrections (2026-10-17)
 

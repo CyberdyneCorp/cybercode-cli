@@ -149,15 +149,27 @@ Cross-session messaging lets one Cyber Code session send short text messages to 
 - **THEN** no Relay or account is required
 
 ### Requirement: Cross-machine transport
-(P3) Messages to remote Sessions SHALL travel through the Relay over the end-to-end encrypted machine channel, authenticated with Cyber Account tokens carrying scope `cyber:messaging`. By default only Sessions of the same account (`sub`) SHALL be reachable. Messaging Sessions of other members of a shared org SHALL require `policy.messaging.org_members: true` set by an org admin, plus `allow` rules on both sides.
+(P3) Account-routed messages to remote Sessions through the Relay SHALL travel over that Relay over the end-to-end encrypted machine channel, authenticated with Cyber Account tokens carrying scope `cyber:messaging`. These Relay rules SHALL NOT widen own-machine direct-peer grants. Explicit project-hub conversations SHALL use `project-collaboration` membership, scoped identities and local consent instead; a project binding SHALL NOT grant generic remote Session access. By default only Sessions of the same account (`sub`) SHALL be reachable. Messaging Sessions of other members of a shared org SHALL require `policy.messaging.org_members: true` set by an org admin, plus `allow` rules on both sides.
 
 #### Scenario: Not logged in
-- **WHEN** a Session addresses `build@workstation` and the server has no Cyber Account
+- **WHEN** a Session selects account Relay delivery to `build@workstation` and the server has no Cyber Account
 - **THEN** the send fails with `AccountRequiredError` and `list_sessions` shows no remote entries
 
 #### Scenario: Cross-account blocked
-- **WHEN** a message targets a Session owned by a different `sub` in an org without the policy
+- **WHEN** a Relay message targets a Session owned by a different `sub` in an org without the policy
 - **THEN** it is refused with reason `cross_account_disabled`
+
+#### Scenario: Teammate address
+- **WHEN** the org policy allows member messaging, `alex` shares their machine `desk` with the org, both machines are approved, and a Session sends to `review@alex/desk`
+- **THEN** the message reaches `alex`'s Session `review` and is held there
+
+#### Scenario: Offline machine
+- **WHEN** a Session sends to `build@workstation` while `workstation` is offline
+- **THEN** the send fails with `MachineUnreachableError { machine: "workstation" }`, nothing is queued, and the sender records `failed / unreachable`
+
+#### Scenario: Peer and machine share a name
+- **WHEN** a configured peer and an approved own machine are both named `desk` and a Session sends to `review@desk`
+- **THEN** the send fails with `AmbiguousAddressError` listing `peer:desk` and `machine:desk`
 
 ### Requirement: Non-interactive sessions
 (P1) A `cyber exec` Session SHALL default to `messaging.inbound: refuse` unless `--accept-messages` is passed. `cyber exec` SHALL apply this by creating its Session with the Session-level inbound override `refuse` and reason `non_interactive`; a Session it reuses SHALL keep its policy, with a warning, while a Session it forks (`--fork`) SHALL take this run's policy (the override, or none with `--accept-messages`). Held messages in Sessions with no attached client SHALL remain held until a client attaches or the Session ends, at which point they SHALL be dropped and the senders notified. Deleting a Session SHALL drop its held messages and notify their senders with reason `session_deleted` before the Session's records are removed.
@@ -334,3 +346,30 @@ Cross-session messaging lets one Cyber Code session send short text messages to 
 #### Scenario: Attach without approval
 - **WHEN** nobody answers the `remote.attach` request within 2 minutes
 - **THEN** the attach fails with `PermissionDeniedError` and no Session data is sent
+
+### Requirement: Project collaboration message integration
+(P3) Project-hub agent messages SHALL enter through a separately identified collaboration transport, with hub/project/message and authenticated human/agent identities retained in durable inbox records. Existing local and direct-peer addressing SHALL keep their semantics. Model-supplied text or sender fields SHALL NOT manufacture project identity, membership or a human author. The local connector SHALL enforce `project-collaboration` authorization and revalidate held-message release, while preserving messaging disable switches, non-interactive refusal, untrusted-input framing, chain/recursion limits and local permissions. Human-to-human hub conversation SHALL not require a local model Turn.
+
+#### Scenario: Local messaging disabled
+- **WHEN** the receiving runtime has messaging disabled and a hub targets one of its published agents
+- **THEN** no model prompt is admitted and the hub receives an explicit refusal rather than a false delivery claim
+
+#### Scenario: Existing own-machine peer
+- **WHEN** an existing authorized direct-peer send is performed without a Cyber Account
+- **THEN** it retains its current behavior and acquires no cross-person project authority
+
+### Requirement: Reachable session provenance
+(P1) In the reachable Session listing (`GET /api/v1/messaging/sessions`, `list_sessions` and `cyber messages list --reachable`):
+
+- a member of the caller's team SHALL be listed with `kind: "teammate"`. Its `address` SHALL be its member name when that name resolves to it from the caller.
+- an entry for a Session that a workflow run created SHALL include `workflowRunId`.
+
+Other entries SHALL be unchanged, and both additions SHALL be optional for readers, so an older client still reads the listing.
+
+#### Scenario: Teammate is tagged
+- **WHEN** a team lead lists reachable Sessions while its teammate `api` runs
+- **THEN** the teammate's entry has `kind: "teammate"` and `address: "api"`, and sending to `api` reaches it
+
+#### Scenario: Workflow agent is tagged
+- **WHEN** a Session that owns a running workflow run lists reachable Sessions and the listing includes the run's agent Sessions
+- **THEN** each of those entries carries a `workflowRunId` equal to the run's ID, and entries for Sessions no workflow run created carry none
