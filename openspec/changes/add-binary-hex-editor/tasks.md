@@ -2,7 +2,7 @@
 
 - [x] 1.1 Verify PR #53 merged; inspect current explorer/preview, project file admission, text tools and snapshot contracts at `d36388d6`.
 - [x] 1.2 Draft proposal, byte-service/save design, UX wireframes, testable capability deltas and phased tasks.
-- [ ] 1.3 Review the new extension with the user before implementation: manual plus model scope, resize behavior, resource limits, exact offset representation, native save guarantees and scheduling after existing workstreams.
+- [x] 1.3 Review the new extension with the user before implementation: manual plus model scope, resize behavior, resource limits, exact offset representation, native save guarantees and scheduling after existing workstreams. Approved on 2026-10-27: after PRs #53/#54 merged, the user explicitly requested implementation of both merged plans and then instructed goal resume. Native proof, baseline and acceptance gates remain required.
 - [ ] 1.4 Record the approved native support/storage matrix and relevant unchanged-main baseline; align the accepted Daily coding snapshot and Plugins/hooks FileChanged contracts.
 
 ## 2. Byte service and native storage proof

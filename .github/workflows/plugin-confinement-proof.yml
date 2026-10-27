@@ -1,0 +1,57 @@
+name: Plugin confinement proof
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - scripts/probes/plugin-confinement/**
+      - .github/workflows/plugin-confinement-proof.yml
+  push:
+    branches: [main]
+    paths:
+      - scripts/probes/plugin-confinement/**
+      - .github/workflows/plugin-confinement-proof.yml
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: Native proof (${{ matrix.os }}, ${{ matrix.runtime }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+        runtime: [node, python]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        if: matrix.runtime == 'python'
+        with:
+          python-version: '3.13'
+      - name: Run native capability matrix
+        env:
+          PROOF_RUNTIME: ${{ matrix.runtime }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(--runtime "$PROOF_RUNTIME" --report "$RUNNER_TEMP/proof.json")
+          if [[ "$PROOF_RUNTIME" == python ]]; then
+            args+=(--python "$(command -v python3)")
+          fi
+          node --experimental-strip-types scripts/probes/plugin-confinement/run.mts "${args[@]}" > "$RUNNER_TEMP/proof.log" 2>&1
+      - name: Retain exact-source native evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-proof-${{ matrix.os }}-${{ matrix.runtime }}
+          path: |
+            ${{ runner.temp }}/proof.json
+            ${{ runner.temp }}/proof.log
+          if-no-files-found: error
+          retention-days: 14
