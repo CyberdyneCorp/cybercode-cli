@@ -50,6 +50,11 @@ def can_list(path):
 def cannot_relax():
     if not case["confined"]:
         return None
+    if case["platform"] == "linux":
+        # Linux forbids disabling installed seccomp filters. This direct libc
+        # call tests the native primitive rather than a language API guard.
+        result = libc.prctl(22, 0, 0, 0, 0)  # PR_SET_SECCOMP, SECCOMP_MODE_DISABLED
+        return result != 0 and not native_read(case["private_file"])
     apply = libc.sandbox_init
     apply.argtypes = [ctypes.c_char_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_void_p)]
     apply.restype = ctypes.c_int
@@ -135,6 +140,16 @@ def native_child_reads():
     return results
 
 
+def native_fork():
+    # Child does no runtime work after fork; leave directly through libc.
+    pid = libc.fork()
+    if pid < 0:
+        return False
+    if pid == 0:
+        libc._exit(0)
+    return os.waitpid(pid, 0)[1] == 0
+
+
 def inspect():
     thread_result = []
     worker = threading.Thread(target=lambda: thread_result.append([
@@ -168,6 +183,7 @@ def inspect():
         "thread_reads": thread_result[0][0] if thread_result else None,
         "thread_shell": thread_result[0][1] if thread_result else None,
         "shell": spawn_shell(),
+        "native_fork": native_fork(),
         "child_reads": child_reads(),
         "native_child_reads": native_child_reads(),
     }

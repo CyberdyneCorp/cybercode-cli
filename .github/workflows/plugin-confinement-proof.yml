@@ -16,14 +16,14 @@ permissions:
   contents: read
 
 jobs:
-  macos:
+  native:
     name: Native proof (${{ matrix.os }}, ${{ matrix.runtime }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, macos-15-intel]
+        os: [macos-15, macos-15-intel, ubuntu-24.04, ubuntu-24.04-arm]
         runtime: [node, python]
     steps:
       - uses: actions/checkout@v4
@@ -34,6 +34,15 @@ jobs:
         if: matrix.runtime == 'python'
         with:
           python-version: '3.13'
+      - name: Linux native prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.*
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap linux-libc-dev
+          # Match the project's native sandbox test setup; failed namespace
+          # admission remains a test failure, never an unconfined fallback.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - name: Run native capability matrix
         env:
           PROOF_RUNTIME: ${{ matrix.runtime }}

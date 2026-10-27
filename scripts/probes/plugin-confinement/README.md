@@ -4,25 +4,29 @@ This is the executable early proof for task 2.1 of
 [`complete-plugin-hook-runtime`](../../../openspec/changes/complete-plugin-hook-runtime/tasks.md).
 It does not change the production plugin launcher or establish its security.
 
-Run from the repository root on macOS with Node 22.18 or later, Xcode command-line
-tools, and the selected runtime's development headers:
+Run from the repository root with Node 22.18 or later and the selected runtime's
+development headers. macOS needs Xcode command-line tools. Linux needs a native
+x86_64 or little-endian arm64 compiler, Landlock ABI >= 3, seccomp TSYNC,
+bubblewrap with unprivileged namespaces and `--disable-userns` support:
 
 ```sh
 node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime node --report /tmp/node-proof.json
 node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime python --python /absolute/trusted/python3 --report /tmp/python-proof.json
 ```
 
-Python must have an embeddable `libpythonMAJOR.MINOR.dylib` under its reported
-`LIBDIR`; framework-only and static-only installations are not supported by this
-probe. Node headers must be under the selected Node prefix's `include/node`.
-The compiler is discovered through `/usr/bin/xcrun`. No package/runtime is
+Python must have an embeddable `libpythonMAJOR.MINOR.dylib` on macOS or
+`libpythonMAJOR.MINOR.so` on Linux under its reported `LIBDIR`; framework-only
+and static-only installations are not supported by this probe. The resolved
+shared-library target receives an exact file read grant, including framework
+binaries outside `LIBDIR`. Node headers must be under the selected Node prefix's `include/node`.
+The compiler is discovered through `/usr/bin/xcrun` on macOS; Linux uses `/usr/bin/cc`. No package/runtime is
 downloaded by the probe. Runtime discovery executes the explicitly selected
 trusted interpreter; do not point it at untrusted programs.
 
 The driver builds into a private temporary directory, constructs dummy package,
 workspace, owner-private and scratch fixtures, runs assertions, and removes those
 directories in `finally`. It clears ambient environment variables. Reports contain
-runtime/platform versions, a timestamp, a digest of the seven executable proof
+runtime/platform versions, a timestamp, a digest and ordered list of the executable proof
 sources, and actual observations. A failure exits nonzero and does not produce a
 new success report. Use a fresh report destination or check its timestamp and
 digest before treating an existing report as evidence.
@@ -33,7 +37,7 @@ digest before treating an existing report as evidence.
 modules. `native_exec.c` closes inherited non-stdio descriptors before starting
 Node; `node_bootstrap.cjs` loads trusted built-ins and the `macos_node.c` native
 addon. Each bootstrap calls native `sandbox_init` before executing fixture code.
-Enforcement is in Seatbelt, with direct C/libc operations used by the fixtures;
+On macOS enforcement is in Seatbelt, with direct C/libc operations used by the fixtures;
 there is no filesystem or subprocess API interception. The unrestricted `-`
 profile is a test control, never a permitted production launch mode.
 
@@ -49,7 +53,7 @@ and interpreter-reexecution processes. Assertions cover:
 - Removal of an inherited descriptor referring to the dummy private file.
 - A worker thread performing native workspace/private reads and attempting a
   shell spawn under the same restrictions.
-- Direct shell spawning, native `/bin/cat` children, interpreter children with
+- Direct native fork, shell spawning, native `/bin/cat` children, interpreter children with
   inherited read restrictions, and native interpreter re-execution.
 - Failure to relax an already installed policy.
 
@@ -65,7 +69,7 @@ be close-on-exec; process success and receipt content are both asserted.
 
 The [native evidence ledger](../../../openspec/changes/complete-plugin-hook-runtime/native-proof.md)
 records local results. The dedicated GitHub Actions workflow repeats the matrix
-on macOS arm64 and Intel and retains reports/logs, including failure logs. Merely
+on macOS arm64/Intel and Ubuntu arm64/x86_64 and retains reports/logs, including failure logs. Merely
 adding that workflow does not prove those CI runs passed.
 
 Apple marks `sandbox_init` deprecated in the command-line SDK's `sandbox.h`, and
@@ -78,10 +82,38 @@ trusted startup/dependency resolution, network/secret policy intersections,
 production packaging, crash/revocation tests and actual plugin tool execution.
 Bun, Deno, native plugins and other runtime/OS combinations are unproved.
 
-Linux investigation must account for both native filesystem and execution
-restrictions. The kernel documents that Landlock restricts the calling thread
-and future children; existing runtime threads need deliberate treatment.
-Seccomp filtering is a component rather than a complete sandbox. These are
-design inputs, not implemented or accepted Linux support:
+## Linux prototype
+
+The historical `macos_python.c` and `macos_node.c` filenames now build for either
+platform via `process_policy.h`. On Linux the outer bubblewrap namespace has a
+read-only host root, approved writable overlays, private PID/network/IPC/UTS/user
+namespaces, disabled nested user namespaces and no retained capabilities. It
+mounts mode-000 read-only empty tmpfs directories over protected subtrees;
+Landlock grants are additive and cannot subtract an exception beneath an allowed
+workspace. The real owner files remain outside that mount view.
+
+`linux_exec.c` installs the Landlock read/write allowlist **before initial exec
+and runtime thread creation**, then closes non-stdio descriptors and starts only
+the trusted runtime/bootstrap. The initialized bootstrap installs `linux_filter.h`
+with mandatory `SECCOMP_FILTER_FLAG_TSYNC` before fixture code. This covers
+already-created Node runtime threads as well as subsequent workers. When shell
+is disabled, execve/execveat/fork/vfork are denied; clone requires thread-sharing
+flags and clone3 returns ENOSYS so libc can fall back for pthread startup.
+Native ABI checks refuse alternate syscall architectures. Both shell settings
+also deny ptrace, cross-process memory/descriptor access, io_uring setup,
+namespace/mount mutation and selected kernel escape surfaces. These are proof
+inputs, not a comprehensive audited syscall policy. Linux network namespaces
+here always isolate networking; declared network/proxy support is not proved.
+
+ABI 3 is mandatory because truncation must be controlled independently of reads.
+There is no weaker fallback if Landlock, TSYNC or namespace setup fails. `fs.write`
+grants write/truncate/create/remove rights without read-file/read-directory
+rights. Broad trusted runtime/system roots are experimental: their admission,
+containment and overlap with owner/workspace data still require production review.
+
+Linux code must pass the real native CI matrix; merely compiling or checking
+macOS does not establish Linux acceptance. The kernel documents why Landlock
+must precede runtime threads and why seccomp is only one sandbox component:
+
 [Landlock](https://docs.kernel.org/userspace-api/landlock.html),
 [seccomp filtering](https://docs.kernel.org/userspace-api/seccomp_filter.html).

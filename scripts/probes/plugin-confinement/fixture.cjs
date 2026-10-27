@@ -19,8 +19,7 @@ function inheritedDescriptor() {
 
 function cannotRelax() {
   if (!c.confined) return null;
-  try { native.apply("(version 1)(allow default)"); return false; }
-  catch { return !native.read(c.private_file); }
+  return !native.relax() && !native.read(c.private_file);
 }
 
 function hardlinkPrivate() {
@@ -97,6 +96,7 @@ async function inspect() {
     inherited_descriptor: inheritedDescriptor(),
     ...await thread(),
     shell: shell(),
+    native_fork: native.fork(),
     child_reads: childReads(),
     native_child_reads: nativeChildReads(),
     written_project_read: native.read(c.project_write),

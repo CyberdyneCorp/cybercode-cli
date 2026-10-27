@@ -1,11 +1,13 @@
 /* Test-only Node-API bootstrap. The core never loads this into its own process. */
 #include <node_api.h>
+#include <errno.h>
 #include <fcntl.h>
-#include <sandbox.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <unistd.h>
+#include "process_policy.h"
 
 static char *argument(napi_env env, napi_callback_info info, size_t maximum) {
     size_t argc = 1, size = 0;
@@ -36,12 +38,10 @@ static napi_value boolean(napi_env env, int value) {
 static napi_value apply(napi_env env, napi_callback_info info) {
     char *profile = argument(env, info, 65536);
     if (profile == NULL) return NULL;
-    char *error = NULL;
-    int result = sandbox_init(profile, 0, &error);
+    int result = proof_apply(profile);
     free(profile);
-    sandbox_free_error(error);
     if (result != 0) {
-        napi_throw_error(env, NULL, "Seatbelt admission failed");
+        napi_throw_error(env, NULL, "native execution policy admission failed");
         return NULL;
     }
     return boolean(env, 1);
@@ -56,6 +56,22 @@ static napi_value native_read(napi_env env, napi_callback_info info) {
     int success = fd >= 0 && read(fd, &byte, 1) == 1;
     if (fd >= 0) close(fd);
     return boolean(env, success);
+}
+
+static napi_value relax(napi_env env, napi_callback_info info) {
+    (void)info;
+    return boolean(env, proof_relax() == 0);
+}
+
+static napi_value native_fork(napi_env env, napi_callback_info info) {
+    (void)info;
+    pid_t pid = fork();
+    if (pid < 0) return boolean(env, 0);
+    if (pid == 0) _exit(0);
+    int status;
+    pid_t waited;
+    do { waited = waitpid(pid, &status, 0); } while (waited < 0 && errno == EINTR);
+    return boolean(env, waited == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0);
 }
 
 static napi_value native_write(napi_env env, napi_callback_info info) {
@@ -82,8 +98,10 @@ static napi_value initialize(napi_env env, napi_value exports) {
         {"read", NULL, native_read, NULL, NULL, NULL, napi_default, NULL},
         {"write", NULL, native_write, NULL, NULL, NULL, napi_default, NULL},
         {"selfExec", NULL, self_exec, NULL, NULL, NULL, napi_default, NULL},
+        {"relax", NULL, relax, NULL, NULL, NULL, napi_default, NULL},
+        {"fork", NULL, native_fork, NULL, NULL, NULL, napi_default, NULL},
     };
-    if (napi_define_properties(env, exports, 4, properties) != napi_ok) return NULL;
+    if (napi_define_properties(env, exports, 6, properties) != napi_ok) return NULL;
     return exports;
 }
 

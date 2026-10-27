@@ -5,12 +5,12 @@
 #include <Python.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <sandbox.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "process_policy.h"
 
 static char *profile_text(const char *path) {
     int fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
@@ -76,20 +76,18 @@ int main(int argc, char **argv) {
         return 2;
     }
     int limit = getdtablesize();
+    if (limit < 3) { free(profile); return 2; }
     for (int fd = 3; fd < limit; fd++) close(fd);
     if (initialize(argv) != 0) { free(profile); return 2; }
     if (profile != NULL) {
-        char *error = NULL;
         /* This legacy API/custom-profile mechanism is deprecated in the SDK.
          * A successful probe is current-host evidence, not a support promise. */
-        int result = sandbox_init(profile, 0, &error);
+        int result = proof_apply(profile);
         free(profile);
         if (result != 0) {
-            fprintf(stderr, "Seatbelt admission failed: %s\n", error ? error : "unknown");
-            sandbox_free_error(error);
+            fprintf(stderr, "native execution policy admission failed\n");
             return 2;
         }
-        sandbox_free_error(error);
     }
     FILE *fixture = fopen(argv[4], "rb");
     if (fixture == NULL) { perror("fixture"); return 2; }

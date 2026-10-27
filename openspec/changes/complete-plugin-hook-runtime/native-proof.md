@@ -12,7 +12,8 @@ unrestricted positive control plus all eight read/write/shell combinations.
 Each case runs inspection and direct native interpreter re-execution in separate
 processes (36 primary launches across both runtimes, plus workers and children).
 
-Exact proof-source SHA-256 (ordered filename, NUL, file bytes as in `run.mts`):
+Historical proof at commit `7ab2f662` (before Linux extension), SHA-256
+(ordered filename, NUL, file bytes as in that commit's `run.mts`):
 `33d0d660bb6748bb4f4d86d3c25dd64b42979f1402cd86559bcc66adcdbf6a10`.
 
 Full observed outcomes and timestamps:
@@ -68,3 +69,23 @@ under `-Wall -Wextra -Werror` (the known deprecated API warning is explicitly
 excluded from error promotion). Rust/application checks are still required;
 this proof adds no production Rust changes and does not convert the recorded
 out-of-space baseline build failure into a pass.
+
+## Linux extension under validation
+
+The Linux prototype now installs Landlock before runtime exec/thread creation,
+then a synchronized execution filter before fixture code, inside bubblewrap's
+private mount/PID/network boundary. Protected subtrees are hidden with read-only
+mode-000 tmpfs mounts. The same capability matrix adds direct native fork checks.
+See the probe README for the exact mechanisms, prerequisites and limits.
+
+Local macOS arm64 Python/Node reruns of the shared sources passed all nine cases,
+including direct native fork. Linux runtime results are pending; no Linux pass
+or production integration is claimed. Historical committed reports above remain
+bound to commit `7ab2f662`, rather than being silently reattributed to new sources.
+
+The initial CI run at `7ab2f662` passed Node on macOS arm64 and Intel, while both
+Python jobs failed: framework Python's `libpython` symlink resolves to the
+framework binary outside `LIBDIR`; dyld refused that missing read root in
+`shell-without-read`. The policy now grants the exact resolved trusted library
+file, rather than broadening all of `/Library`. The rerun must establish this
+fix on both macOS architectures; local Anaconda results do not prove it.
