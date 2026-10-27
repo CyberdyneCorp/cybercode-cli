@@ -74,9 +74,9 @@ pub(super) fn scan(
                 out.complete = false;
                 continue;
             };
-            let name = text.replace(std::path::MAIN_SEPARATOR, "/");
+            let relative_name = text.replace(std::path::MAIN_SEPARATOR, "/");
             if text.len() > limits.path_bytes
-                || !cyber_core::hooks::file_observations::relative_name(&name)
+                || !cyber_core::hooks::file_observations::relative_name(&relative_name)
             {
                 out.complete = false;
                 continue;
@@ -208,5 +208,27 @@ mod tests {
         );
         assert!(!actual.complete);
         assert!(actual.files.is_empty());
+    }
+    #[test]
+    fn nested_metadata_uses_each_entry_name_relative_to_its_pinned_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("nested/deep")).unwrap();
+        std::fs::write(temp.path().join("nested/deep/data"), "observed").unwrap();
+        let actual = scan(
+            &root(temp.path()),
+            &|_| false,
+            &limits(),
+            &AtomicBool::new(false),
+        );
+        assert!(
+            actual.complete,
+            "valid nested entries must not appear unreadable"
+        );
+        assert_eq!(
+            actual.files.keys().collect::<Vec<_>>(),
+            vec![Path::new("nested/deep/data")]
+        );
+        assert_eq!(actual.directories.len(), 3);
+        assert_eq!(actual.files[Path::new("nested/deep/data")].length, 8);
     }
 }

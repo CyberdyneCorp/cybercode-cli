@@ -176,19 +176,27 @@ async fn native_owner_delivers_external_edits_rename_removal_to_shared_sessions_
                 && event["change"] == change
         })
     };
-    std::fs::write(flow.f.repo.join("external"), "first").unwrap();
+    std::fs::create_dir_all(flow.f.repo.join("nested/deep")).unwrap();
+    std::fs::write(flow.f.repo.join("nested/deep/external"), "first").unwrap();
     await_condition("both real Session observations", || {
-        has(&first, "external", "changed") && has(&second, "external", "changed")
+        has(&first, "nested/deep/external", "changed")
+            && has(&second, "nested/deep/external", "changed")
     })
     .await;
-    std::fs::rename(flow.f.repo.join("external"), flow.f.repo.join("renamed")).unwrap();
+    std::fs::rename(
+        flow.f.repo.join("nested/deep/external"),
+        flow.f.repo.join("nested/deep/renamed"),
+    )
+    .unwrap();
     await_condition("rename reconciliation", || {
-        has(&first, "external", "removed") && has(&second, "renamed", "changed")
+        has(&first, "nested/deep/external", "removed")
+            && has(&second, "nested/deep/renamed", "changed")
     })
     .await;
-    std::fs::remove_file(flow.f.repo.join("renamed")).unwrap();
+    std::fs::remove_file(flow.f.repo.join("nested/deep/renamed")).unwrap();
     await_condition("external removal", || {
-        has(&first, "renamed", "removed") && has(&second, "renamed", "removed")
+        has(&first, "nested/deep/renamed", "removed")
+            && has(&second, "nested/deep/renamed", "removed")
     })
     .await;
     std::fs::write(flow.f.repo.join(".git/private"), "secret").unwrap();

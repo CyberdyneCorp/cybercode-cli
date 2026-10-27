@@ -205,3 +205,16 @@ actor ownership (`&mut self`) rather than making the receiver shared or adding
 an unsafe Sync implementation. SDK/dashboard generation also stopped at that
 same Rust compile error. The corrected application build and tests must rerun;
 no result from the isolated harness establishes this correction's acceptance.
+
+
+## Nested scanner regression
+
+A new actual-source regression reproduced failed nested traversal: validating a
+normalized relative name had shadowed the entry's basename, so metadata lookup
+inside a pinned child directory mistakenly repeated its parent components.
+Validation now keeps a separate normalized name, and metadata/open-directory
+operations retain the original basename. The regression failed before the fix;
+the expanded isolated source harness now passes 36 tests and Clippy at threshold
+15. The automatic external-edit application test now uses newly created nested
+directories, so CI must also verify that this works through native observation
+and HTTP-hook delivery. Application verification is still pending.
