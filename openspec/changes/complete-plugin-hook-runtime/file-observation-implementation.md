@@ -10,7 +10,11 @@ cannot establish the plugin/hook workstream's acceptance.
 - `cyber-tools/src/file_changes/native.rs`: native notify 8.2.0 hints, with a
   bounded synchronous queue, at most 128 relative paths per retained hint and
   4,096 bytes per path. Queue loss, oversized payloads and backend rescan flags
-  request reconciliation. Access-only events do not masquerade as writes.
+  request reconciliation. Native registrations are non-recursive and capped at
+  256 directories supplied by the no-follow scanner. Incomplete scans preserve
+  existing coverage; limit/registration failures report partial coverage through
+  the rescan flag. Deleted registrations release their slots. Access-only events
+  do not masquerade as writes.
 - `scan.rs`: metadata-only traversal through pinned cap-std directories and
   `open_dir_nofollow`, with entry, depth, path and cancellation bounds. It opens
   no file contents and follows neither directory nor file symlinks. Exclusion
@@ -53,9 +57,9 @@ Linux, macOS and Windows. No platform result is implied by adding that workflow.
 ## Remaining integration requirements
 
 1. Bind one cancellable watcher generation to a canonical Location and actual
-   runtime ownership. Native recursive registration can still span a large tree;
-   production must bound watch registrations or fail visibly and retain bounded
-   reconciliation. Verify the root incarnation and fresh Session scope before
+   runtime ownership. The native registration component now has a per-Location bound;
+   the owner still needs a global Location/task bound and visible partial-coverage
+   diagnostics with bounded reconciliation. Verify the root incarnation and fresh Session scope before
    recording/dispatching. Multiple Sessions must receive only their current
    Location's observations; archived/moved Sessions cannot borrow old watches.
 2. The checkpoint/delta journal is implemented with registered owner events;
@@ -94,7 +98,7 @@ caught a missing `cap_fs_ext::DirExt` import and was corrected. Sixteen componen
 tests now cover traversal, native events, reconciliation, overflow, policy
 revocation, scope names and finite feedback allowance on the local macOS host.
 
-The expanded isolated harness passes 26 tests: the 16 native/reconciliation
+The expanded isolated harness passes 30 tests: the 20 native/reconciliation
 component tests, nine pure observation-record tests and the existing ID helper
 regression loaded with them. Isolated Clippy with warnings denied and the
 project cognitive-complexity threshold also passes. These do not establish a
@@ -105,3 +109,9 @@ for clone-and-validate-per-delta replay. The incremental private replay builder
 measured 77.821 ms for that same workload. It enforces byte bounds at each fold
 and poisons a failed candidate so partial state cannot escape. This sample
 measures the model algorithm, not end-to-end SQLite or application latency.
+
+Full workspace CI at `90a57da8` caught a direct `ulid` reference in the server
+without that package dependency. Generation creation now lives in the existing
+core module that owns ULID validation (`11d5d517`); the actual Store/Runtime and
+full platform checks are rerunning. Isolated harness success is not evidence of
+a whole-workspace compile.

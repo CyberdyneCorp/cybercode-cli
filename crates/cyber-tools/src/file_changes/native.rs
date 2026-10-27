@@ -14,6 +14,7 @@ use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 const PATHS_PER_HINT: usize = 128;
 const PATH_BYTES: usize = 4096;
+const MAX_DIRECTORIES: usize = 256;
 
 #[derive(Debug, Default)]
 pub(super) struct Hints {
@@ -23,7 +24,10 @@ pub(super) struct Hints {
 
 pub(super) struct Native {
     // Drop stops native observation before its receiver is disposed.
-    _watcher: RecommendedWatcher,
+    watcher: RecommendedWatcher,
+    root: PathBuf,
+    directories: BTreeSet<PathBuf>,
+    directory_limit: usize,
     receiver: Receiver<Hints>,
     overflow: Arc<AtomicBool>,
 }
@@ -74,6 +78,15 @@ fn enqueue(
 
 impl Native {
     pub fn start(root: &Path, capacity: usize) -> notify::Result<Self> {
+        Self::with_limit(root, capacity, MAX_DIRECTORIES)
+    }
+
+    fn with_limit(root: &Path, capacity: usize, directory_limit: usize) -> notify::Result<Self> {
+        if !(1..=MAX_DIRECTORIES).contains(&directory_limit) {
+            return Err(notify::Error::generic(
+                "file watch directory limit is invalid",
+            ));
+        }
         if !(1..=1024).contains(&capacity) {
             return Err(notify::Error::generic(
                 "file observation queue capacity must be 1..=1024",
@@ -88,12 +101,76 @@ impl Native {
             move |event| enqueue(&watch_root, &sender, &lost, event),
             Config::default().with_follow_symlinks(false),
         )?;
-        watcher.watch(&root, RecursiveMode::Recursive)?;
+        watcher.watch(&root, RecursiveMode::NonRecursive)?;
         Ok(Self {
-            _watcher: watcher,
+            watcher,
+            root,
+            directories: BTreeSet::from([PathBuf::new()]),
+            directory_limit,
             receiver,
             overflow,
         })
+    }
+
+    /// Register only directories actually reached by the no-follow scanner.
+    /// An incomplete scan retains existing registrations: missing evidence must
+    /// not silently remove nested coverage. False means visible partial coverage
+    /// and reconciliation are required; it never increases the resource bound.
+    pub fn update_directories(&mut self, scanned: &BTreeSet<PathBuf>, complete_scan: bool) -> bool {
+        let mut complete = complete_scan;
+        if complete_scan {
+            let removed: Vec<_> = self
+                .directories
+                .iter()
+                .filter(|path| !path.as_os_str().is_empty() && !scanned.contains(*path))
+                .cloned()
+                .collect();
+            for path in removed {
+                let absent = match self.watcher.unwatch(&self.root.join(&path)) {
+                    Ok(()) => true,
+                    Err(error) => matches!(&error.kind, notify::ErrorKind::WatchNotFound),
+                };
+                if absent {
+                    self.directories.remove(&path);
+                } else {
+                    complete = false;
+                }
+            }
+        }
+        for relative in scanned {
+            if self.directories.contains(relative) {
+                continue;
+            }
+            if self.directories.len() >= self.directory_limit {
+                complete = false;
+                break;
+            }
+            if !relative_path(relative) {
+                complete = false;
+                continue;
+            }
+            let path = self.root.join(relative);
+            // Do not intentionally register a symlink alias, even one pointing
+            // back inside the root. The owning actor must also verify pinned-root
+            // identity and current Session scope before effects.
+            if path.canonicalize().ok().as_ref() != Some(&path) {
+                complete = false;
+                continue;
+            }
+            if self
+                .watcher
+                .watch(&path, RecursiveMode::NonRecursive)
+                .is_ok()
+            {
+                self.directories.insert(relative.clone());
+            } else {
+                complete = false;
+            }
+        }
+        if !complete {
+            self.overflow.store(true, Ordering::Release);
+        }
+        complete
     }
 
     /// At most one bounded hint is consumed per call. The owner coalesces under
@@ -194,5 +271,107 @@ mod tests {
             assert!(!paths.contains(Path::new("escape/hidden")), "{paths:?}");
             assert!(!paths.contains(Path::new("hidden")), "{paths:?}");
         }
+    }
+    #[test]
+    fn registrations_are_bounded_and_partial_scans_preserve_existing_coverage() {
+        let temp = tempfile::tempdir().unwrap();
+        for name in ["a", "b", "c"] {
+            std::fs::create_dir(temp.path().join(name)).unwrap();
+        }
+        let mut native = Native::with_limit(temp.path(), 32, 2).unwrap();
+        let scanned = BTreeSet::from([PathBuf::new(), PathBuf::from("a"), PathBuf::from("b")]);
+        assert!(!native.update_directories(&scanned, true));
+        assert_eq!(native.directories.len(), 2);
+        assert!(native.receive(Duration::from_millis(1)).rescan);
+        assert!(!native.update_directories(&BTreeSet::new(), false));
+        assert!(native.directories.contains(Path::new("a")));
+        assert!(
+            native.update_directories(&BTreeSet::from([PathBuf::new(), PathBuf::from("c")]), true)
+        );
+        assert!(!native.directories.contains(Path::new("a")));
+        assert!(native.directories.contains(Path::new("c")));
+    }
+
+    #[test]
+    fn registered_nested_directory_delivers_actual_native_changes() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join("nested")).unwrap();
+        let mut native = Native::start(temp.path(), 32).unwrap();
+        assert!(native.update_directories(
+            &BTreeSet::from([PathBuf::new(), PathBuf::from("nested")]),
+            true
+        ));
+        std::fs::write(temp.path().join("nested/data"), "changed").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut found = false;
+        while Instant::now() < deadline {
+            if native
+                .receive(Duration::from_millis(100))
+                .paths
+                .contains(Path::new("nested/data"))
+            {
+                found = true;
+                break;
+            }
+        }
+        assert!(
+            found,
+            "registered nested watch must deliver a native change"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_registration_refuses_scoped_symlink_aliases() {
+        let temp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), temp.path().join("escape")).unwrap();
+        let mut native = Native::start(temp.path(), 32).unwrap();
+        assert!(!native.update_directories(
+            &BTreeSet::from([PathBuf::new(), PathBuf::from("escape")]),
+            true
+        ));
+        assert_eq!(native.directories.len(), 1);
+    }
+    #[test]
+    fn deleted_native_watch_releases_its_registration_slot() {
+        let temp = tempfile::tempdir().unwrap();
+        for name in ["old", "new"] {
+            std::fs::create_dir(temp.path().join(name)).unwrap();
+        }
+        let mut native = Native::with_limit(temp.path(), 32, 2).unwrap();
+        assert!(native.update_directories(
+            &BTreeSet::from([PathBuf::new(), PathBuf::from("old")]),
+            true
+        ));
+        std::fs::remove_dir(temp.path().join("old")).unwrap();
+        // Let the actual backend consume its deletion/automatic removal before
+        // reconciling our registrations. A known absent watch releases capacity.
+        for _ in 0..3 {
+            native.receive(Duration::from_millis(50));
+        }
+        assert!(native.update_directories(
+            &BTreeSet::from([PathBuf::new(), PathBuf::from("new")]),
+            true
+        ));
+        assert_eq!(native.directories.len(), 2);
+        assert!(!native.directories.contains(Path::new("old")));
+        std::fs::write(temp.path().join("new/data"), "new scope").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut found = false;
+        while Instant::now() < deadline {
+            if native
+                .receive(Duration::from_millis(100))
+                .paths
+                .contains(Path::new("new/data"))
+            {
+                found = true;
+                break;
+            }
+        }
+        assert!(
+            found,
+            "a released slot must admit a functioning replacement watch"
+        );
     }
 }

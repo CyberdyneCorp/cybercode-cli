@@ -47,6 +47,7 @@ pub(super) fn scan(
         out.complete = false;
         return out;
     };
+    out.directories.insert(PathBuf::new());
     let mut pending = vec![(root, PathBuf::new(), 0usize)];
     let mut inspected = 0usize;
     while let Some((directory, relative, depth)) = pending.pop() {
@@ -87,7 +88,10 @@ pub(super) fn scan(
                     continue;
                 }
                 match directory.open_dir_nofollow(&name) {
-                    Ok(child) => pending.push((child, path, depth + 1)),
+                    Ok(child) => {
+                        out.directories.insert(path.clone());
+                        pending.push((child, path, depth + 1));
+                    }
                     Err(_) => out.complete = false,
                 }
             } else if metadata.is_file() {
@@ -125,6 +129,7 @@ mod tests {
             &AtomicBool::new(false),
         );
         assert!(actual.complete);
+        assert!(!actual.directories.contains(Path::new("private")));
         assert_eq!(
             actual.files.keys().collect::<Vec<_>>(),
             vec![Path::new("public")]

@@ -9,6 +9,7 @@ pub(super) use cyber_core::hooks::file_observations::Stamp;
 #[derive(Debug, Default)]
 pub(super) struct Scan {
     pub files: BTreeMap<PathBuf, Stamp>,
+    pub directories: BTreeSet<PathBuf>,
     /// False for entry limits, cancellation, unreadable directories or traversal
     /// errors. A later complete scan can resolve retained, unseen entries.
     pub complete: bool,
@@ -179,6 +180,7 @@ mod tests {
         let mut state =
             State::baseline(files(&[("same-size", 1), ("old-name", 2), ("deleted", 3)]));
         let scan = Scan {
+            directories: Default::default(),
             files: files(&[("same-size", 4), ("new-name", 2)]),
             complete: true,
         };
@@ -213,6 +215,7 @@ mod tests {
     fn incomplete_traversal_preserves_unseen_entries_until_complete_reconciliation() {
         let mut state = State::baseline(files(&[("unreadable/data", 1), ("kept", 2)]));
         let partial = Scan {
+            directories: Default::default(),
             files: files(&[("kept", 3)]),
             complete: false,
         };
@@ -225,6 +228,7 @@ mod tests {
         ));
         assert!(state.files().contains_key(Path::new("unreadable/data")));
         let complete = Scan {
+            directories: Default::default(),
             files: files(&[("kept", 3)]),
             complete: true,
         };
@@ -245,6 +249,7 @@ mod tests {
         let original = files(&[("before", 1)]);
         let mut state = State::baseline(original.clone());
         let scan = || Scan {
+            directories: Default::default(),
             files: files(&[("after", 2)]),
             complete: true,
         };
@@ -268,6 +273,7 @@ mod tests {
         assert_eq!(
             state.reconcile(
                 Scan {
+                    directories: Default::default(),
                     files: files(&[("data", 1)]),
                     complete: true
                 },
@@ -300,6 +306,7 @@ mod tests {
         let mut state = State::baseline(files(&[("private/data", 1), ("public", 2)]));
         state.restrict(|path| !path.starts_with("private"));
         let scan = Scan {
+            directories: Default::default(),
             files: files(&[("public", 2)]),
             complete: true,
         };
@@ -316,6 +323,7 @@ mod tests {
     fn repeated_partial_scans_cannot_grow_retained_state_without_bound() {
         let mut state = State::baseline(files(&[("unseen", 1)]));
         let first = Scan {
+            directories: Default::default(),
             files: files(&[("new", 2)]),
             complete: false,
         };
@@ -324,6 +332,7 @@ mod tests {
             Reconciled::Changes { .. }
         ));
         let second = Scan {
+            directories: Default::default(),
             files: files(&[("another", 3)]),
             complete: false,
         };
