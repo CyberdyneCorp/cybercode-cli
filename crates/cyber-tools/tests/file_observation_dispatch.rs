@@ -851,8 +851,21 @@ async fn approve_observation_commands(
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
         })
-        .await
-        .expect("native fixture command must request its individual approval");
+        .await;
+        let pending = match pending {
+            Ok(pending) => pending,
+            Err(_) => {
+                let state = flow.runtime.state(session).await.unwrap();
+                let outputs: Vec<_> = state
+                    .calls
+                    .iter()
+                    .map(|(id, call)| (id, &call.output))
+                    .collect();
+                panic!(
+                    "native fixture command did not request approval; tool outputs: {outputs:?}"
+                );
+            }
+        };
         let PendingKind::Permission(ask) = &pending.kind else {
             panic!("expected native command confirmation")
         };
@@ -886,15 +899,17 @@ async fn native_foreground_and_background_shell_writes_are_observed_after_the_tu
     );
     let recorder = Recorder::start().await;
     automatic_hooks(&flow, &recorder);
-    let session = flow.session("bypass").await;
+    let session = flow
+        .session(if cfg!(windows) { "default" } else { "bypass" })
+        .await;
     await_condition("shell observer baseline", || {
         journal_count(&flow, records::CHECKPOINT) == 1
     })
     .await;
     flow.prompt(&session, "run foreground and background fixture commands")
         .await;
-    // Member calls/control flow deliberately retain manual confirmation even
-    // in bypass mode. Approve only these exact fixture commands, as a real user.
+    // Default Mode permits individual confirmation for member calls/control
+    // flow; bypass Mode refuses them. Approve only these exact fixture commands.
     #[cfg(windows)]
     approve_observation_commands(&flow, &session, [&foreground, &background]).await;
     flow.settle_within(&session, Duration::from_secs(30)).await;
