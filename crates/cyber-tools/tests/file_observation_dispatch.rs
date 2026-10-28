@@ -17,6 +17,15 @@ impl Recorder {
         Self::with_gate(None).await
     }
     async fn with_gate(gate: Option<Arc<tokio::sync::Notify>>) -> Self {
+        Self::configured(gate, None).await
+    }
+    async fn with_effect(effect: Arc<dyn Fn() + Send + Sync>) -> Self {
+        Self::configured(None, Some(effect)).await
+    }
+    async fn configured(
+        gate: Option<Arc<tokio::sync::Notify>>,
+        effect: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) -> Self {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/hook", listener.local_addr().unwrap());
@@ -25,8 +34,10 @@ impl Recorder {
             move |axum::Json(event):axum::Json<Value>| {
                 let seen=Arc::clone(&seen);
                 let gate=gate.clone();
+                let effect=effect.clone();
                 async move {
                     seen.lock().unwrap().push(event);
+                    if let Some(effect) = effect { effect(); }
                     if let Some(gate) = gate { gate.notified().await; }
                     axum::Json(json!({"decision":"deny","reason":"observation cannot veto a committed write"}))
                 }
@@ -625,4 +636,241 @@ async fn shutdown_settles_a_held_observer_callback_and_restart_does_not_replay_i
         .await
         .expect("restarted observer must also settle its callback");
     gate.notify_waiters();
+}
+
+#[tokio::test]
+async fn hook_writes_stop_at_the_durable_feedback_limit_after_quiet_time() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let flow = support::flow::Flow::new(vec![], false);
+    let effects = Arc::new(AtomicUsize::new(0));
+    let recorder = Recorder::with_effect({
+        let root = flow.f.repo.clone();
+        let effects = Arc::clone(&effects);
+        Arc::new(move || {
+            let index = effects.fetch_add(1, Ordering::SeqCst);
+            std::fs::write(
+                root.join(format!("hook-followup-{index:03}")),
+                "hook side effect",
+            )
+            .unwrap();
+        })
+    })
+    .await;
+    automatic_hooks(&flow, &recorder);
+    let _session = flow.session("default").await;
+    await_condition("self-write observer baseline", || {
+        journal_count(&flow, records::CHECKPOINT) == 1
+    })
+    .await;
+    std::fs::write(flow.f.repo.join("seed"), "external edit").unwrap();
+    let suppressed = || {
+        flow.f.store.read(|db| Ok(db.query_row(
+        "SELECT COUNT(*) FROM event WHERE type=?1 AND json_extract(data,'$.dispatch')=0 AND json_array_length(json_extract(data,'$.updates'))>0",
+        [records::CHANGED], |row| row.get::<_, i64>(0))?)).unwrap()
+    };
+    await_condition("self-write loop reaches its durable pause", || {
+        suppressed() > 0
+    })
+    .await;
+    assert_eq!(
+        effects.load(Ordering::SeqCst),
+        records::FEEDBACK_LIMIT as usize
+    );
+    assert_eq!(
+        recorder.seen.lock().unwrap().len(),
+        records::FEEDBACK_LIMIT as usize
+    );
+    let before = suppressed();
+    tokio::time::sleep(Duration::from_millis(3300)).await;
+    std::fs::write(
+        flow.f.repo.join("late-background-effect"),
+        "delayed follow-up",
+    )
+    .unwrap();
+    await_condition("paused owner records delayed changes", || {
+        suppressed() > before
+    })
+    .await;
+    assert_eq!(
+        effects.load(Ordering::SeqCst),
+        records::FEEDBACK_LIMIT as usize,
+        "quiet time must not restart the hook feedback loop"
+    );
+    assert!(flow.requests("test/main").is_empty());
+    flow.runtime.shutdown().await;
+}
+
+fn full_access_fixture() -> support::Fixture {
+    // These tests cover observation after native effects, with explicit full
+    // access. Native confinement is verified by its separate enforcement suite.
+    support::Fixture::with_policy(
+        "bash",
+        cyber_sandbox::find_helper(),
+        Some("full-access".into()),
+    )
+}
+
+#[cfg(unix)]
+fn observation_formatter(_fixture: &support::Fixture) -> Vec<String> {
+    [
+        "/bin/sh",
+        "-c",
+        "printf formatted > \"$1\"",
+        "formatter",
+        "$FILE",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
+#[cfg(windows)]
+fn observation_formatter(fixture: &support::Fixture) -> Vec<String> {
+    let script = fixture.dir.path().join("observer-formatter.ps1");
+    std::fs::write(&script, "param([string]$Target)\n[System.IO.File]::WriteAllText($Target, 'formatted', [System.Text.UTF8Encoding]::new($false))\n").unwrap();
+    let system = std::env::var_os("SystemRoot").expect("Windows requires SystemRoot");
+    vec![
+        std::path::PathBuf::from(system)
+            .join("System32/WindowsPowerShell/v1.0/powershell.exe")
+            .display()
+            .to_string(),
+        "-NoProfile".into(),
+        "-NonInteractive".into(),
+        "-ExecutionPolicy".into(),
+        "Bypass".into(),
+        "-File".into(),
+        script.display().to_string(),
+        "$FILE".into(),
+    ]
+}
+
+#[tokio::test]
+async fn native_formatter_settlement_produces_a_file_observation() {
+    let fixture = full_access_fixture();
+    let mut formatters: serde_json::Map<String, Value> =
+        cyber_core::intelligence::builtin_formatters()
+            .into_iter()
+            .map(|formatter| (formatter.id, json!({"disabled":true})))
+            .collect();
+    formatters.insert(
+        "observer-formatter".into(),
+        json!({"command":observation_formatter(&fixture), "extensions":[".txt"]}),
+    );
+    fixture.set_config(json!({"formatters":formatters}));
+    let flow = support::flow::Flow::with(
+        fixture,
+        vec![
+            support::flow::call(
+                "formatter-write",
+                "write",
+                json!({"path":"formatted.txt", "content":"draft"}),
+            ),
+            support::flow::text("formatted"),
+        ],
+        false,
+        Arc::new(cyber_server::runtime::NoSnapshots),
+    );
+    let recorder = Recorder::start().await;
+    automatic_hooks(&flow, &recorder);
+    let session = flow.session("bypass").await;
+    await_condition("formatter observer baseline", || {
+        journal_count(&flow, records::CHECKPOINT) == 1
+    })
+    .await;
+    flow.prompt(&session, "write and format the fixture").await;
+    flow.settle_within(&session, Duration::from_secs(30)).await;
+    assert_eq!(
+        flow.f.read("formatted.txt"),
+        "formatted",
+        "a real formatter must have run"
+    );
+    assert!(
+        flow.output(&session, "formatter-write")
+            .await
+            .contains("Formatting result:")
+    );
+    await_condition("native formatter observation", || {
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["file_path"] == "formatted.txt")
+    })
+    .await;
+    flow.runtime.shutdown().await;
+}
+
+#[cfg(unix)]
+fn observation_shell_commands() -> (&'static str, &'static str, &'static str) {
+    (
+        "bash",
+        "printf foreground > shell-observed",
+        "n=0; while [ ! -f release-background ] && [ \"$n\" -lt 1200 ]; do sleep 0.05; n=$((n+1)); done; test -f release-background && printf background > background-observed",
+    )
+}
+#[cfg(windows)]
+fn observation_shell_commands() -> (&'static str, &'static str, &'static str) {
+    (
+        "powershell",
+        "[System.IO.File]::WriteAllText('shell-observed', 'foreground')",
+        "$limit=[DateTime]::UtcNow.AddSeconds(60); while (-not (Test-Path -LiteralPath 'release-background') -and ([DateTime]::UtcNow -lt $limit)) { Start-Sleep -Milliseconds 50 }; if (Test-Path -LiteralPath 'release-background') { [System.IO.File]::WriteAllText('background-observed', 'background') } else { exit 1 }",
+    )
+}
+
+#[tokio::test]
+async fn native_foreground_and_background_shell_writes_are_observed_after_the_turn() {
+    let (tool, foreground, background) = observation_shell_commands();
+    let flow = support::flow::Flow::with(
+        full_access_fixture(),
+        vec![
+            support::flow::call("shell-write", tool, json!({"command":foreground})),
+            support::flow::call(
+                "background-write",
+                tool,
+                json!({"command":background,"background":true,"notify":false}),
+            ),
+            support::flow::text("background started"),
+        ],
+        false,
+        Arc::new(cyber_server::runtime::NoSnapshots),
+    );
+    let recorder = Recorder::start().await;
+    automatic_hooks(&flow, &recorder);
+    let session = flow.session("bypass").await;
+    await_condition("shell observer baseline", || {
+        journal_count(&flow, records::CHECKPOINT) == 1
+    })
+    .await;
+    flow.prompt(&session, "run foreground and background fixture commands")
+        .await;
+    flow.settle_within(&session, Duration::from_secs(30)).await;
+    assert_eq!(flow.f.read("shell-observed"), "foreground");
+    assert!(
+        flow.output(&session, "background-write")
+            .await
+            .contains("job_id"),
+        "background execution must have been admitted"
+    );
+    assert!(
+        !flow.f.repo.join("background-observed").exists(),
+        "background effect must wait until the Turn has ended"
+    );
+    std::fs::write(flow.f.repo.join("release-background"), "release").unwrap();
+    await_condition("both native shell observations", || {
+        let seen = recorder.seen.lock().unwrap();
+        ["shell-observed", "background-observed"]
+            .iter()
+            .all(|path| seen.iter().any(|event| event["file_path"] == *path))
+    })
+    .await;
+    assert_eq!(flow.f.read("background-observed"), "background");
+    assert!(
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|event| event.get("writer").is_none())
+    );
+    flow.runtime.shutdown().await;
 }

@@ -50,6 +50,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: file-observation
+      - name: Build native process ownership helper
+        run: cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec
       - name: Validate bounded observation records
         run: |
           cargo test --locked -p cyber-core --lib hooks::file_observations::

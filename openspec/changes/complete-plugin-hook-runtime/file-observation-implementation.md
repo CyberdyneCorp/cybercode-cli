@@ -341,3 +341,29 @@ check correctly starts no pass or Location services without work. The test now
 uses explicit Session resume with a scripted response, preserving the absence
 of a new admitted user prompt while exercising the real service-reopen path.
 That corrected restart/no-replay scenario must rerun; it is not counted passed.
+
+
+## Native effects and real hook feedback acceptance
+
+At `f0c5a743`, the focused workflow passed on Linux, macOS and Windows, including
+all seven HTTP/scripted-runtime scenarios and both actual AppHost forwarding
+checks. This includes scoped hard links, held-callback shutdown, explicit Session
+resume without replay, nested owner-storage exclusion, and committed-input
+renewal through the real application facade. Broader workspace checks still
+need separate results.
+
+Three additional application regressions now exercise a callback that writes
+follow-up files until durable feedback exhaustion, a real formatter process,
+and real foreground/background shell tools. The background command waits for a
+fixture gate until the model Turn is idle, then changes a file. The self-write
+case verifies that delayed changes after quiet time are still recorded without
+restarting the callback loop. Windows uses PowerShell and the production native
+process-ownership helper; Unix uses its shell. The focused workflow builds that
+helper before exercising native processes.
+
+These native-effect tests deliberately select the existing explicit full-access
+sandbox option to test observation and process lifecycle. They do not establish
+plugin confinement or weaken production sandbox defaults. The new tests await
+CI; the previous `f0c5a743` suite success does not verify them. Canonical/alias
+Session admission and remaining resource/overflow/lifecycle acceptance still
+keep the producer task open.
