@@ -47,7 +47,12 @@ using `POSIX_SPAWN_SETEXEC | POSIX_SPAWN_CLOEXEC_DEFAULT`, inheriting only open
 stdio descriptors. The gap test includes descriptor 500 above a lowered soft
 limit of 64, with a positive inheritance control. CI now requires this candidate
 on both macOS architectures; a queued or earlier default-subset run is not proof
-of the new matrix. Staging is fixture-only: immutable admission, transformed-image
+of the new matrix. Native cases also reject turning readable package data into
+a writable scratch hard link, with driver-side package-byte checks. Staging
+controls modify a pre-existing input alias and verify that its distinct staged
+inode/hash stay intact. Direct and sandboxed system-image positive controls are
+reported independently; a signal termination cannot count as policy-denied exec.
+Staging is fixture-only: immutable admission, transformed-image
 integrity, entitlement compatibility and distribution remain unproved.
 
 The native fixture is an untrusted C executable with no confinement bootstrap; its

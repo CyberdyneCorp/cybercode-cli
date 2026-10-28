@@ -204,10 +204,15 @@ int main(int argc, char **argv) {
     struct worker worker = { .project = project, .private = private };
     pthread_t thread;
     if (pthread_create(&thread, NULL, thread_work, &worker) != 0 || pthread_join(thread, NULL) != 0) return 2;
-    char private_dir[PATH_MAX], alias[PATH_MAX], moved[PATH_MAX];
+    char private_dir[PATH_MAX], alias[PATH_MAX], moved[PATH_MAX], package_alias[PATH_MAX];
     if (!parent_directory(private, private_dir) || !joined(alias, scratch_dir, "private-alias") ||
-        !joined(moved, scratch_dir, "moved-project")) return 2;
+        !joined(moved, scratch_dir, "moved-project") ||
+        !joined(package_alias, scratch_dir, "package-alias")) return 2;
     int hardlink = link(private, alias) == 0 && native_read(alias);
+    /* Package data is readable, unlike the private-file control. Linking it into
+     * writable scratch must not manufacture a write alias to a read-only root. */
+    int package_link = link(package, package_alias) == 0;
+    int package_alias_write = package_link && native_write(package_alias);
     int renamed = rename(project_dir, moved) == 0;
     if (renamed && rename(moved, project_dir) != 0) return 2;
     int scratch_write = native_write(scratch), project_write = native_write(written);
@@ -234,6 +239,7 @@ int main(int argc, char **argv) {
            truth(native_read(protected)), truth(native_write(protected)), truth(native_read(symlink)));
     printf("\"hardlink_private\":%s,\"project_rename\":%s,\"inherited_descriptor\":%s,\"thread\":true,",
            truth(hardlink), truth(renamed), truth(inherited));
+    printf("\"package_hardlink\":%s,\"package_alias_write\":%s,", truth(package_link), truth(package_alias_write));
     printf("\"thread_reads\":[%s,%s],\"thread_shell\":%s,\"shell\":%s,\"native_fork\":%s,",
            truth(worker.project_read), truth(worker.private_read), truth(worker.shell), truth(shell()), truth(native_fork()));
     printf("\"child_reads\":%s,\"native_child_reads\":%s,\"cannot_relax\":%s,",

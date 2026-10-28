@@ -281,6 +281,8 @@ function check(root: string, artifacts: Artifacts, runtime: Runtime, name: strin
     expectations.constructor_private_read = !!flags.unrestricted;
     expectations.constructor_fork = flags.shell;
     expectations.native_spawn = flags.shell;
+    expectations.package_hardlink = !!flags.unrestricted;
+    expectations.package_alias_write = !!flags.unrestricted;
     if (!isLinux) {
       expectations.platform_status_known = true;
       expectations.platform_before = false;
@@ -288,6 +290,8 @@ function check(root: string, artifacts: Artifacts, runtime: Runtime, name: strin
     }
   }
   assert.deepEqual(actual, expectations, `${name}: capability boundary differs`);
+  if (runtime.kind === "native") assert.equal(readFileSync(join(paths.package, "data"), "utf8"),
+    flags.unrestricted ? "fixture only" : "owned temporary fixture", `${name}: package changed through a writable alias`);
   const execution = observe(artifacts, runtime, paths, profile, "exec", flags);
   assert.deepEqual(execution, { self_exec: flags.shell }, `${name}: interpreter exec boundary differs`);
   const constructorExecution = !isLinux && runtime.kind === "native"

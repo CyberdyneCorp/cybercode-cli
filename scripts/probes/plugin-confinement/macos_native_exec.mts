@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { stageNative } from "./macos_stage.mts";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, linkSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { release, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -56,6 +56,21 @@ try {
     `(allow process-exec (require-all (process-attribute is-platform-binary) (literal ${JSON.stringify(executable)})))`;
   const platformNative = JSON.parse(success("/usr/bin/sandbox-exec", ["-p", platformProfile(fixture), fixture]));
   assert.deepEqual(platformNative, { initial_exec: true, self_exec: false });
+  // An existing writable input alias must not become an alias of the private
+  // staged inode. Mutate only a separate controlled copy, never a system file.
+  const aliasedInput = join(root, "aliased-native-input"), inputAlias = join(root, "writable-input-alias");
+  copyFileSync(fixture, aliasedInput);
+  linkSync(aliasedInput, inputAlias);
+  const aliasStage = stageNative(aliasedInput, join(root, "staged-aliased-input"));
+  const originalInput = statSync(aliasedInput, { bigint: true }), stagedInput = statSync(aliasStage.executable, { bigint: true });
+  assert.equal(originalInput.nlink, 2n);
+  assert.equal(stagedInput.nlink, 1n);
+  assert(originalInput.dev !== stagedInput.dev || originalInput.ino !== stagedInput.ino);
+  appendFileSync(inputAlias, "changed through pre-existing input alias");
+  const stagedUnchanged = createHash("sha256").update(readFileSync(aliasStage.executable)).digest("hex") === aliasStage.staged_sha256;
+  assert(stagedUnchanged, "input alias mutation must not change the staged image");
+  const aliasControl = JSON.parse(success("/usr/bin/sandbox-exec", ["-p", base + "(allow process-exec)", aliasStage.executable]));
+  assert.deepEqual(aliasControl, { initial_exec: true, self_exec: true });
   const platformExecutable = "/bin/bash";
   const platformSelfExec = success("/usr/bin/sandbox-exec", ["-p", platformProfile(platformExecutable),
     platformExecutable, "-c", "exec /bin/bash -c 'printf platform-self-exec'"]);
@@ -66,10 +81,23 @@ try {
   const stagedArgs = [stagedPlatform.executable, "-c", "printf 'initial-admitted\\n'; exec \"$0\" -c 'printf platform-self-exec'"];
   console.error(JSON.stringify({ experiment: "staged-platform-positive-control",
     platform: process.platform, architecture: process.arch, kernel_release: release(), staging: stagedPlatform }));
-  const stagedControl = success("/usr/bin/sandbox-exec", ["-p", base + "(allow process-exec)", ...stagedArgs]);
+  const stagedDirect = run(stagedPlatform.executable, stagedArgs.slice(1));
+  const stagedSandbox = run("/usr/bin/sandbox-exec", ["-p", base + "(allow process-exec)", ...stagedArgs]);
+  const outcome = (result: ReturnType<typeof run>) => ({ status: result.status, signal: result.signal,
+    stdout: result.stdout, stderr: result.stderr });
+  const stagingControls = { direct: outcome(stagedDirect), sandbox: outcome(stagedSandbox) };
+  console.error(JSON.stringify({ experiment: "staged-platform-controls", ...stagingControls }));
+  assert.equal(stagedDirect.status, 0, `staged direct positive control: ${JSON.stringify(stagingControls)}`);
+  assert.equal(stagedSandbox.status, 0, `staged sandbox positive control: ${JSON.stringify(stagingControls)}`);
+  const stagedControl = stagedSandbox.stdout.trim();
+  assert.equal(stagedDirect.stdout.trim(), "initial-admitted\nplatform-self-exec");
   assert.equal(stagedControl, "initial-admitted\nplatform-self-exec");
   const stagedRestricted = run("/usr/bin/sandbox-exec", ["-p", platformProfile(stagedPlatform.executable), ...stagedArgs]);
-  assert.notEqual(stagedRestricted.status, 0, "staged payload cannot retain platform self-exec");
+  assert.equal(stagedRestricted.signal, null, "termination is not a policy-denied exec result");
+  assert(stagedRestricted.status !== null && stagedRestricted.status > 0,
+    `bash must report the rejected exec: ${JSON.stringify(outcome(stagedRestricted))}`);
+  assert.match(stagedRestricted.stderr, /Operation not permitted|Permission denied/,
+    "exec denial must report a native permission error");
   assert.equal(stagedRestricted.stdout.trim(), "initial-admitted");
   assert(!stagedRestricted.stderr.includes("sandbox_init"), "policy startup failure is not exec denial evidence");
   const ownedFile = join(root, "dummy-private-descriptor");
@@ -90,7 +118,9 @@ try {
       platform_executable: platformExecutable, platform_self_exec: true,
       limitation: "The platform-subject exception is not one-shot for a platform executable; an independently enforced target-admission contract remains unproved." },
     inherited_above_soft_limit: { descriptor: 500, soft_limit: 64, control: descriptorControl, launcher: descriptorClosed },
-    staged_platform: { ...stagedPlatform, control_self_exec: true, initial_exec: true, self_exec: false,
+    staged_input_alias: { staging: aliasStage, source_link_count: 2, staged_link_count: 1, distinct_inode: true,
+      input_alias_mutated: true, staged_sha256_unchanged: stagedUnchanged, control: aliasControl },
+    staged_platform: { ...stagedPlatform, controls: stagingControls, restricted: outcome(stagedRestricted), control_self_exec: true, initial_exec: true, self_exec: false,
       limitation: "Fixture staging resolves this counterexample locally; production immutable-package admission, transformed-image integrity, entitlement compatibility and architecture acceptance remain unproved." },
     conclusion: "The platform predicate alone is insufficient. An ad-hoc re-signed fixture copy starts and denies self-exec, including a formerly platform-signed input; this is an experimental candidate, not production admission or an fs.read policy." };
   if (values.report) writeFileSync(values.report, JSON.stringify(report, null, 2) + "\n", { mode: 0o600 });

@@ -55,7 +55,10 @@ does not yet establish immutable package/image admission, alias protection,
 entitlement compatibility or deployable packaging. Both macOS architectures
 now require the new matrix in CI. At `ba2d597e`, both native nine-row matrices
 passed, but the separate staged-system-payload positive control failed on the
-arm64 runner. Its cause and portable admission remain unresolved; local success
+arm64 runner. The diagnostic confirms SIGKILL before output on Darwin 24.6.0 for the
+re-signed x86_64/arm64e system image; a separate direct/unconfined control is
+being added to isolate staging compatibility from policy startup. Its cause
+and portable admission remain unresolved; local success
 and Intel success do not satisfy that missing positive control.
 The proposed availability table and request for an explicit support decision
 remain unchanged pending that evidence and review.

@@ -378,3 +378,51 @@ termination is not counted as successful initial admission or safe confinement.
 The cause and portable signature/architecture compatibility remain unresolved,
 and production support/design approval is still pending. No unrestricted retry
 or architecture-slice removal is introduced.
+
+
+## Package aliases and staged-system termination follow-up
+
+The `6a819a19` arm64 [retained diagnostic log](../../../scripts/probes/plugin-confinement/evidence/6a819a19/macos-arm64-native-exec-gap-failure.log)
+identifies SIGKILL with no output from the staged `/bin/bash` positive control
+on Darwin 24.6.0. Its input contains x86_64 and arm64e slices and passed all-slice
+signature verification. Local success was on Darwin 25.6.0. This proves a host
+difference and failed positive admission, not its cause or safe confinement.
+The next experiment independently records direct/unconfined and sandboxed
+positive controls to separate image compatibility from the test policy. Neither
+control can satisfy the other, and neither is a production fallback.
+
+New local arm64 reports bind these exact source digests:
+
+- [Nine-row native matrix](../../../scripts/probes/plugin-confinement/evidence/package-alias-local/macos-arm64-native.json)
+  and [default subset](../../../scripts/probes/plugin-confinement/evidence/package-alias-local/macos-arm64-native-unstaged.json):
+  `c5cf1f1ca293b88722d3b7cbfe159bf237688ae4f796831884f675fea686c5b1`.
+- [Exec/staging controls](../../../scripts/probes/plugin-confinement/evidence/package-alias-local/macos-arm64-native-exec-gap.json):
+  `778d239d4a6e693ab4a664c08ce624d6818c8dc6f61a8b193a15fa9869f338f0`.
+
+The native fixture now tries linking readable package data into writable scratch
+and writing through that alias. The unrestricted control succeeds and changes
+the dummy package file. Every confined local case rejects the link/write, and
+the driver independently reads back the original package bytes after inspection.
+This checks a read-root alias attack distinct from the unreadable-private-file
+link control; it does not establish complete package admission.
+
+A separate staging test creates two hard links to a controlled native input,
+stages it, then modifies the input through its pre-existing writable alias. The
+staged inode has one link, is distinct from the input, keeps its recorded SHA-256
+and still executes the positive control. This demonstrates copy separation for
+these controlled fixtures; concurrent input replacement/copy races and production
+parent/image ownership remain unproved.
+
+The staged-system restricted control now requires a normal nonzero exit and
+a native permission error after the initial marker; termination by signal is not
+accepted as a denied exec. Local Bash reports exit 1 and Operation not permitted;
+an initial assertion expecting 126 was corrected to the required behavioral
+contract. Direct and sandbox positive controls both execute initial and self-exec
+markers locally. The high-descriptor regression still passes.
+
+All three fresh reports were independently rebound to the current source list
+and SHA-256 before copying. Local native modes, staging/exec experiment, syntax
+and diff checks passed. This increment changes only executable tests and evidence.
+Native CI for these new assertions remains required, the Darwin 24.6.0 system-image
+issue remains unresolved, and the explicit production support/design gate stays
+open. No runtime availability or production launcher change is made.
