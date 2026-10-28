@@ -53,7 +53,10 @@ a descriptor above a lowered soft limit. See [source-bound evidence](native-proo
 This is a candidate for satisfying the original native no-shell requirement. It
 does not yet establish immutable package/image admission, alias protection,
 entitlement compatibility or deployable packaging. Both macOS architectures
-now require the new matrix in CI; results for this candidate remain pending.
+now require the new matrix in CI. At `ba2d597e`, both native nine-row matrices
+passed, but the separate staged-system-payload positive control failed on the
+arm64 runner. Its cause and portable admission remain unresolved; local success
+and Intel success do not satisfy that missing positive control.
 The proposed availability table and request for an explicit support decision
 remain unchanged pending that evidence and review.
 

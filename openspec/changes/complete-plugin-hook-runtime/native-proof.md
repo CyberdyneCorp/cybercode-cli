@@ -349,3 +349,32 @@ all three TypeScript syntax checks and `git diff --check` passed. Pinned OpenSpe
 1.13.2 strict validation passed all 106 entries; spec lint reported zero errors
 and 25 warnings (no origin assigned). Local Linux/Intel and production owner
 acceptance were not run for this increment; CI and integration remain required.
+
+
+## Staged native CI at `ba2d597e`: positive matrices, unresolved system payload
+
+[Run 40649398655](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40649398655)
+completed with 21 successful jobs and one failure. All 20 runtime jobs passed,
+including all nine staged-native rows on macOS
+[arm64](../../../scripts/probes/plugin-confinement/evidence/ba2d597e/macos-arm64-native.json)
+and [Intel](../../../scripts/probes/plugin-confinement/evidence/ba2d597e/macos-x64-native.json).
+Both native reports independently match executable source digest
+`955059e9d5d18d5865296adc4b80da4af8fecaee18910ef1f596d849524d7437`.
+The constructor-time exec/spawn and platform-status assertions therefore have
+both-architecture native fixture evidence.
+
+The separate [Intel counterexample/descriptor report](../../../scripts/probes/plugin-confinement/evidence/ba2d597e/macos-x64-native-exec-gap.json)
+passed with source digest
+`392ab27738098b637073e7fb5843c7143b118f6dda8c8c521b21f3882a29b18c`.
+The equivalent arm64 job failed before the required staged `/bin/bash` positive
+control returned successfully. Its [retained log](../../../scripts/probes/plugin-confinement/evidence/ba2d597e/macos-arm64-native-exec-gap-failure.log)
+reports null exit status at that control; this version did not print the signal.
+No successful arm64 system-payload or descriptor assertion from that job is
+claimed. Local arm64 success on a different kernel does not override this failure.
+
+The follow-up adds termination status/signal/output diagnostics and staging/kernel
+metadata at the positive-control boundary. Assertions remain required: an OS
+termination is not counted as successful initial admission or safe confinement.
+The cause and portable signature/architecture compatibility remain unresolved,
+and production support/design approval is still pending. No unrestricted retry
+or architecture-slice removal is introduced.

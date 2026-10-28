@@ -19,7 +19,7 @@ function run(program: string, args: string[]) {
 }
 function success(program: string, args: string[]) {
   const result = run(program, args);
-  assert.equal(result.status, 0, `${program}: ${result.stderr}`);
+  assert.equal(result.status, 0, `${program}: ${JSON.stringify({ status: result.status, signal: result.signal, stdout: result.stdout, stderr: result.stderr })}`);
   return result.stdout.trim();
 }
 
@@ -64,6 +64,8 @@ try {
   // architecture slice, then repeat the counterexample through the actual rule.
   const stagedPlatform = stageNative(platformExecutable, join(root, "staged-platform-payload"));
   const stagedArgs = [stagedPlatform.executable, "-c", "printf 'initial-admitted\\n'; exec \"$0\" -c 'printf platform-self-exec'"];
+  console.error(JSON.stringify({ experiment: "staged-platform-positive-control",
+    platform: process.platform, architecture: process.arch, kernel_release: release(), staging: stagedPlatform }));
   const stagedControl = success("/usr/bin/sandbox-exec", ["-p", base + "(allow process-exec)", ...stagedArgs]);
   assert.equal(stagedControl, "initial-admitted\nplatform-self-exec");
   const stagedRestricted = run("/usr/bin/sandbox-exec", ["-p", platformProfile(stagedPlatform.executable), ...stagedArgs]);
