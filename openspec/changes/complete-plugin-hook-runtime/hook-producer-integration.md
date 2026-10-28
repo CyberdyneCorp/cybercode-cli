@@ -291,3 +291,23 @@ private identity and server-root sources tested earlier. Formatting, PR diff and
 workflow YAML/bash/exact-source mutation checks passed for this increment. Full
 production/native CI and final composed review remain required; this correction
 is not acceptance evidence for the Windows timeout until those paths execute.
+
+
+## Membership regression complexity correction
+
+The complete Linux focused job passed at `b5dd82f0`, including the three new HTTP
+regressions and the missing-cancellation control. Broad Linux and Windows Clippy
+rejected the shared test helper with cognitive complexity 22 against the configured
+limit of 15. The helper is now split into event lookup, membership removal and
+post-removal verification, preserving all scenarios, deadlines, assertions and
+the negative control's expected assertion text.
+
+With additional local disk available, scoped Clippy was run against the actual
+production test target using the existing shared build cache:
+`cargo clippy --locked -p cyber-tools --test file_observation_dispatch --target-dir /Users/edvane/work/cybercode-cli/target -- -D warnings`.
+It passed in 54 seconds with the repository's unsafe-code and complexity lints
+unchanged. This check compiled production owner/host dependencies and type-checked
+the real integration test target; it did not execute HTTP tests or the full
+workspace suite. Native acceptance for the refactored revision still requires CI.
+The cognitive-complexity skill does not provide a Rust analyzer; the project's
+Clippy result is the authoritative check for this refactor.

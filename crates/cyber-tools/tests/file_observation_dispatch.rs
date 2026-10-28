@@ -1486,10 +1486,80 @@ enum MemberEnd {
     Held,
     Readmitted,
 }
-async fn end_membership_during_held_delivery(end: MemberEnd) {
+fn recorded_file_event(recorder: &Recorder, session: &str, path: &str) -> bool {
+    recorder
+        .seen
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|event| event["session_id"] == session && event["file_path"] == path)
+}
+
+async fn remove_member_during_delivery(
+    flow: &support::flow::Flow,
+    recorder: &Recorder,
+    gate: &tokio::sync::Notify,
+    sessions: &[String; 2],
+    end: MemberEnd,
+) -> (String, String) {
     use cyber_server::runtime::{Admission, Delivery, ToolHost};
-    let end_gated_member = matches!(end, MemberEnd::Held);
-    let readmit = matches!(end, MemberEnd::Readmitted);
+    let (removed, retained) = if matches!(end, MemberEnd::Held) {
+        (&sessions[0], &sessions[1])
+    } else {
+        (&sessions[1], &sessions[0])
+    };
+    ToolHost::end_session(&*flow.f.host, removed).await;
+    if matches!(end, MemberEnd::Readmitted) {
+        flow.runtime
+            .admit(
+                removed,
+                Admission::text("rejoin while an older batch is held", Delivery::Hold),
+            )
+            .await
+            .unwrap();
+    }
+    if matches!(end, MemberEnd::Held) {
+        // Keep the first HTTP response held: cancellation must settle its owned
+        // delivery before the remaining member can run.
+        await_condition("remaining member continues past cancelled callback", || {
+            recorded_file_event(recorder, retained, "held-membership")
+        })
+        .await;
+    } else {
+        gate.notify_one();
+    }
+    (removed.clone(), retained.clone())
+}
+
+async fn verify_delivery_after_member_end(
+    flow: &support::flow::Flow,
+    recorder: &Recorder,
+    removed: &str,
+    retained: &str,
+    end: MemberEnd,
+) {
+    std::fs::write(flow.f.repo.join("after-member-end"), "fixture").unwrap();
+    await_condition("remaining member observes a later reconciliation", || {
+        recorded_file_event(recorder, retained, "after-member-end")
+    })
+    .await;
+    if matches!(end, MemberEnd::Readmitted) {
+        await_condition("readmitted member observes a future batch", || {
+            recorded_file_event(recorder, removed, "after-member-end")
+        })
+        .await;
+    } else {
+        assert!(!recorded_file_event(recorder, removed, "after-member-end"));
+    }
+    if !matches!(end, MemberEnd::Held) {
+        assert!(
+            !recorded_file_event(recorder, removed, "held-membership"),
+            "a captured Session list cannot revive ended membership"
+        );
+    }
+}
+
+async fn end_membership_during_held_delivery(end: MemberEnd) {
     let flow = support::flow::Flow::new(vec![], false);
     let gate = Arc::new(tokio::sync::Notify::new());
     let recorder = Recorder::with_first_gate(Arc::clone(&gate)).await;
@@ -1502,63 +1572,14 @@ async fn end_membership_during_held_delivery(end: MemberEnd) {
         journal_count(&flow, records::CHECKPOINT) == 1
     })
     .await;
-    let seen = |session: &str, path: &str| {
-        recorder
-            .seen
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|event| event["session_id"] == session && event["file_path"] == path)
-    };
     std::fs::write(flow.f.repo.join("held-membership"), "fixture").unwrap();
     await_condition("first member callback is held", || {
-        seen(&sessions[0], "held-membership")
+        recorded_file_event(&recorder, &sessions[0], "held-membership")
     })
     .await;
-    let (removed, retained) = if end_gated_member {
-        (&sessions[0], &sessions[1])
-    } else {
-        (&sessions[1], &sessions[0])
-    };
-    ToolHost::end_session(&*flow.f.host, removed).await;
-    if readmit {
-        flow.runtime
-            .admit(
-                removed,
-                Admission::text("rejoin while an older batch is held", Delivery::Hold),
-            )
-            .await
-            .unwrap();
-    }
-    if end_gated_member {
-        // Keep the first HTTP response held: cancellation of this membership
-        // must settle its owned delivery before the remaining member can run.
-        await_condition("remaining member continues past cancelled callback", || {
-            seen(retained, "held-membership")
-        })
-        .await;
-    } else {
-        gate.notify_one();
-    }
-    std::fs::write(flow.f.repo.join("after-member-end"), "fixture").unwrap();
-    await_condition("remaining member observes a later reconciliation", || {
-        seen(retained, "after-member-end")
-    })
-    .await;
-    if readmit {
-        await_condition("readmitted member observes a future batch", || {
-            seen(removed, "after-member-end")
-        })
-        .await;
-    } else {
-        assert!(!seen(removed, "after-member-end"));
-    }
-    if !end_gated_member {
-        assert!(
-            !seen(removed, "held-membership"),
-            "a captured Session list cannot revive ended membership"
-        );
-    }
+    let (removed, retained) =
+        remove_member_during_delivery(&flow, &recorder, &gate, &sessions, end).await;
+    verify_delivery_after_member_end(&flow, &recorder, &removed, &retained, end).await;
     gate.notify_one();
     assert!(flow.requests("test/main").is_empty());
     tokio::time::timeout(Duration::from_secs(10), flow.runtime.shutdown())
