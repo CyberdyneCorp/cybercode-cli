@@ -1,14 +1,11 @@
 # File observation implementation notes
 
-Status: **in progress; task 5.2 remains open**. The full focused suite at
-`3e852288` passed Linux, macOS and Windows, including pinned native alias/input
-scope integration and the directory-move guard (the latter's new fixtures were
-Unix-only at that revision). Session-capacity recovery also passed Linux at
-`8c32f621`. Revised Windows finalization/lock-release fixtures passed the full
-focused Windows and Linux jobs at `6d065e1c`; macOS remained queued. Later
-lifecycle changes still require a fresh platform run. Remaining resource,
-lifecycle and broader workspace verification and substantive review are still
-required.
+Status: **in progress; task 5.2 remains open**. Revision `3e852288` passed the
+full focused Linux/macOS/Windows suite. At `c0cc40e3`, Linux/Windows also passed
+all 18 HTTP/runtime lifecycle scenarios and AppHost checks; macOS remained
+queued. The later inventory/batch byte-budget fix passes 63 local source-library
+tests and scoped Clippy, but its owner/application/platform checks await fresh
+CI. Broader verification and final substantive review remain required.
 
 ## Ownership and native observation
 
@@ -406,3 +403,44 @@ release fixture, plus Session-capacity recovery and AppHost forwarding/privacy:
 https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40636145681.
 The macOS job was still queued when checked. These results precede the three
 new lifecycle/burst/idle-return scenarios and runtime refresh correction above.
+
+## Encoded inventory and batch budget correction under verification
+
+At `c0cc40e3`, Linux and Windows passed the full focused suite, including all
+18 HTTP/runtime scenarios (idle return, archive/resume and held-callback burst),
+the real AppHost checks and the Linux required unchanged-source failure:
+https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40637762806.
+The macOS job remained queued. These results precede the byte-budget increment.
+
+A review fixture reproduced 4,800 valid files under the 10,000-entry and
+4,096-byte path bounds producing a 4,545,809-byte checkpoint, exceeding the
+4,194,304-byte record limit. The prior owner refused that entire baseline.
+`budget.rs` now constrains publication before initial claim and reconciliation,
+using the core replay serializer's exact entry accounting with header reserve.
+The native scan still establishes enumeration/scope proof; known publication
+omissions enter `suppressed` so old stamps remain unknown without false deletion.
+Confirmed absence can reclaim capacity. Old unknown stamps reserve bytes/count
+first, existing shrinking updates precede growth/new entries, and valid older
+inventories above the conservative reserve can shrink without admitting growth.
+
+Journal changes order confirmed removals and shrinking updates before growth so
+intermediate maps also fit, not merely the final candidate. Delta batches obey
+encoded JSON bytes as well as the existing 256-update ceiling; private retirement
+uses the same byte sizing without granting dispatch. Core record validation
+remains authoritative and its existing public byte/count limits are unchanged.
+Pure helpers add no filesystem authority, contents or new event schema.
+
+The standalone actual-source harness now passes 63 library tests and scoped
+Clippy at threshold 15 with warnings denied (unused-code lint disabled only for
+omitted harness consumers). New regressions cover the real oversized inventory,
+retained unknown preimages, file/count priority, complete absence, shrinking
+legacy state, escaped JSON batches and intermediate-checkpoint capacity. The
+separate temporary before-fix inventory fixture failed with the byte-bound error;
+its corrected publication path now validates. Worst escaped-name tests are pure
+model fixtures, not assertions that every OS accepts those native filenames.
+
+A new actual-runtime test creates the long-path tree, requires a bounded partial
+baseline and visible coverage notice, modifies an admitted existing file and
+requires its real callback plus joined shutdown. Full owner/application/platform
+execution of this increment is pending CI; the harness does not compile that
+owner integration or application test. Task 5.2 and broader review remain open.

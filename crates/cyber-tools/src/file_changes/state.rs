@@ -10,8 +10,8 @@ pub(super) use cyber_core::hooks::file_observations::Stamp;
 pub(super) struct Scan {
     pub files: BTreeMap<PathBuf, Stamp>,
     pub directories: BTreeSet<PathBuf>,
-    /// Known names with unproven alias scope. Their absence from `files` is not
-    /// deletion evidence and must not expose a new private metadata stamp.
+    /// Known names with unproven alias scope or omitted by publication budgets.
+    /// Their absence from `files` is not deletion evidence or a new metadata stamp.
     pub suppressed: BTreeSet<PathBuf>,
     /// False for entry limits, cancellation, unreadable directories or traversal
     /// errors. A later complete scan can resolve retained, unseen entries.

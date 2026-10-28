@@ -86,6 +86,11 @@
 - **THEN** new metadata from that directory subtree is omitted and coverage is incomplete, retaining prior stamps without synthetic deletion
 - **AND** omitted paths cannot count as permitted hard-link aliases for files remaining in the Location
 
+#### Scenario: Metadata exceeds the journal byte budget
+- **WHEN** valid scoped entries fit traversal/count limits but their encoded inventory exceeds the journal budget
+- **THEN** the owner admits bounded metadata with visible partial coverage, preserves omitted old stamps without synthetic deletion and keeps admitted existing-file updates live
+- **AND** confirmed absence can reclaim capacity, shrinking updates precede growth, and every intermediate checkpoint and delta obeys its encoded byte limit
+
 #### Scenario: Native burst during a held observation effect
 - **WHEN** external writes exceed native hint budgets while a launched FileChanged callback is held
 - **THEN** bounded reconciliation records the changed tail even after handler feedback allowance is exhausted, with coverage uncertainty and paused delivery visible

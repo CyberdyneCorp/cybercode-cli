@@ -1418,6 +1418,85 @@ async fn session_limit_is_visible_and_released_membership_admits_a_waiting_sessi
 }
 
 #[tokio::test]
+async fn long_path_inventory_publishes_a_partial_baseline_and_keeps_existing_files_live() {
+    use cyber_server::runtime::LiveEvent;
+    let flow = support::flow::Flow::new(vec![], false);
+    std::fs::write(flow.f.repo.join("!healthy"), "before").unwrap();
+    let mut directory = flow.f.repo.clone();
+    for index in 0..6 {
+        directory = directory.join(format!("{index}{}", "d".repeat(109)));
+        std::fs::create_dir(&directory).unwrap();
+    }
+    for index in 0..4800 {
+        std::fs::write(
+            directory.join(format!("{index:04}{}", "f".repeat(196))),
+            "x",
+        )
+        .unwrap();
+    }
+    let recorder = Recorder::start().await;
+    automatic_hooks(&flow, &recorder);
+    let mut events = flow.runtime.subscribe();
+    let session = flow.session("default").await;
+    await_condition("byte-budgeted native baseline", || {
+        journal_count(&flow, records::CHECKPOINT) == 1
+    })
+    .await;
+    let checkpoint: records::Checkpoint = flow
+        .f
+        .store
+        .read(|db| {
+            let data: String = db.query_row(
+                "SELECT data FROM event WHERE type=?1 ORDER BY seq DESC LIMIT 1",
+                [records::CHECKPOINT],
+                |row| row.get(0),
+            )?;
+            Ok(serde_json::from_str(&data).unwrap())
+        })
+        .unwrap();
+    checkpoint.validate().unwrap();
+    assert!(checkpoint.files.contains_key("!healthy"));
+    assert!(
+        checkpoint.files.len() < 4801,
+        "byte-limited metadata must be visibly incomplete"
+    );
+    tokio::time::timeout(Duration::from_secs(45), async {
+        loop {
+            if let LiveEvent::HookNotice {
+                session_id,
+                hook_id,
+                message,
+            } = events.recv().await.unwrap()
+                && session_id == session
+                && hook_id == "FileChanged"
+                && message.contains("partial coverage")
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("byte-limit coverage must be visible");
+    std::fs::write(flow.f.repo.join("!healthy"), "after").unwrap();
+    await_condition(
+        "existing scoped file stays live under the metadata byte bound",
+        || {
+            recorder
+                .seen
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|event| event["session_id"] == session && event["file_path"] == "!healthy")
+        },
+    )
+    .await;
+    assert!(flow.requests("test/main").is_empty());
+    tokio::time::timeout(Duration::from_secs(15), flow.runtime.shutdown())
+        .await
+        .expect("byte-limited observer must join at shutdown");
+}
+
+#[tokio::test]
 async fn directory_registration_limit_is_visible_and_reconciliation_covers_its_tail() {
     use cyber_server::runtime::LiveEvent;
     let flow = support::flow::Flow::new(vec![], false);

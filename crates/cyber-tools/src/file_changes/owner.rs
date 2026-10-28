@@ -7,16 +7,17 @@ use std::time::{Duration, Instant};
 
 use cyber_core::hooks::{
     HookCatalog,
-    file_observations::{self as records, Delta, Renewal, Update},
+    file_observations::{self as records, Delta, Renewal},
 };
 use cyber_server::runtime::{SessionInfo, file_observations::FileWatch};
 use tokio_util::sync::CancellationToken;
 
 use super::{
+    budget,
     native::{Hints, Native},
     root::{Exclusions, Root},
     scan::{self, Limits},
-    state::{Change, Kind, Reconciled, Scan, State},
+    state::{Change, Reconciled, Scan, State},
 };
 use crate::BuiltinHost;
 
@@ -361,7 +362,8 @@ impl Observation {
     ) -> Result<Self, String> {
         let root = Root::open(path).map_err(|error| error.to_string())?;
         let mut native = Native::start(&root.path, 32).map_err(|error| error.to_string())?;
-        let initial = snapshot(&root, host.observation_exclusions(path), cancel).await?;
+        let mut initial = snapshot(&root, host.observation_exclusions(path), cancel).await?;
+        budget::retain(&mut initial, &BTreeMap::new());
         if cancel.is_cancelled() {
             return Err("file observation startup cancelled".into());
         }
@@ -483,7 +485,7 @@ impl Observation {
             return Ok(());
         }
         let excluded = host.observation_exclusions(&self.root.path);
-        let scan = snapshot(&self.root, excluded.clone(), cancel).await?;
+        let mut scan = snapshot(&self.root, excluded.clone(), cancel).await?;
         self.last_scan = Instant::now();
         if cancel.is_cancelled() {
             return Ok(());
@@ -491,11 +493,6 @@ impl Observation {
         if !self.root.current() {
             return Err("Location root changed during reconciliation".into());
         }
-        let native_complete = self
-            .native
-            .update_directories(&scan.directories, scan.complete);
-        let suppressed = !scan.suppressed.is_empty();
-        let files = names(&scan);
         let baseline = self
             .journal
             .state()
@@ -503,6 +500,12 @@ impl Observation {
             .iter()
             .map(|(path, stamp)| (PathBuf::from(path), stamp.clone()))
             .collect();
+        budget::retain(&mut scan, &baseline);
+        let native_complete = self
+            .native
+            .update_directories(&scan.directories, scan.complete);
+        let suppressed = !scan.suppressed.is_empty();
+        let files = names(&scan);
         let mut state = State::baseline(baseline);
         let Reconciled::Changes { changes, complete } = state.reconcile_bounded(
             scan,
@@ -523,8 +526,8 @@ impl Observation {
             .into_iter()
             .partition(|change| excluded.excludes(&change.path));
         self.retire_paths(&private, cancel).await?;
-        // Deletions first keep replacement batches within the retained-file bound.
-        changes.sort_by_key(|change| (!matches!(change.kind, Kind::Removed), change.path.clone()));
+        // Every acknowledged intermediate map must fit before later growth.
+        budget::order(&mut changes, &files, &self.journal.state().files);
         let mut pending = changes.as_slice();
         while !pending.is_empty() && !cancel.is_cancelled() {
             let remaining = self.journal.state().remaining as usize;
@@ -533,7 +536,8 @@ impl Observation {
             } else {
                 remaining.min(records::MAX_BATCH)
             };
-            let (batch, rest) = pending.split_at(pending.len().min(limit));
+            let length = budget::batch_len(pending, &files, limit)?;
+            let (batch, rest) = pending.split_at(length);
             self.record_batch(host, sessions, cancel, batch, &files)
                 .await?;
             pending = rest;
@@ -545,23 +549,18 @@ impl Observation {
         private: &[Change],
         cancel: &CancellationToken,
     ) -> Result<(), String> {
-        for batch in private.chunks(records::MAX_BATCH) {
+        let files = BTreeMap::new();
+        let mut pending = private;
+        while !pending.is_empty() {
             if cancel.is_cancelled() {
                 break;
             }
             if !self.root.current() {
                 return Err("Location root changed before protected-state retirement".into());
             }
-            let updates = batch
-                .iter()
-                .map(|change| Update {
-                    path: change
-                        .path
-                        .to_string_lossy()
-                        .replace(std::path::MAIN_SEPARATOR, "/"),
-                    stamp: None,
-                })
-                .collect();
+            let length = budget::batch_len(pending, &files, records::MAX_BATCH)?;
+            let (batch, rest) = pending.split_at(length);
+            let updates = budget::updates(batch, &files);
             self.journal
                 .record(Delta {
                     generation: self.journal.state().generation.clone(),
@@ -572,6 +571,7 @@ impl Observation {
                 })
                 .await
                 .map_err(|error| error.to_string())?;
+            pending = rest;
         }
         Ok(())
     }
@@ -591,7 +591,7 @@ impl Observation {
             announce(
                 host,
                 sessions,
-                "FileChanged observation is reconciling; native loss, scope changes or scan limits may leave partial coverage",
+                "FileChanged observation is reconciling; native loss, scope changes or metadata limits may leave partial coverage",
             );
         }
         self.warned_partial = !complete;
@@ -607,19 +607,7 @@ impl Observation {
         if !self.root.current() {
             return Err("Location root changed before observation commit".into());
         }
-        let updates: Vec<_> = batch
-            .iter()
-            .map(|change| {
-                let path = change
-                    .path
-                    .to_string_lossy()
-                    .replace(std::path::MAIN_SEPARATOR, "/");
-                Update {
-                    stamp: files.get(&path).cloned(),
-                    path,
-                }
-            })
-            .collect();
+        let updates = budget::updates(batch, files);
         let dispatch = updates.len() as u32 <= self.journal.state().remaining;
         let remaining =
             self.journal.state().remaining - if dispatch { updates.len() as u32 } else { 0 };

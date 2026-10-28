@@ -282,7 +282,9 @@ pub struct Replay {
     entries_bytes: usize,
 }
 
-fn entry_bytes(path: &str, stamp: &Stamp) -> Result<usize, String> {
+/// Encoded JSON key:value bytes, excluding surrounding braces and separators.
+/// Hosts use the same accounting to bound inventories before journal admission.
+pub fn entry_bytes(path: &str, stamp: &Stamp) -> Result<usize, String> {
     // A two-element tuple encodes as [key,value]. Removing its brackets leaves
     // exactly the byte length of the map's key:value entry (comma vs colon).
     serde_json::to_vec(&(path, stamp))

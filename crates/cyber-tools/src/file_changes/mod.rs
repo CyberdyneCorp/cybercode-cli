@@ -1,4 +1,5 @@
 //! Bounded host-owned file observation and durable observational hook dispatch.
+mod budget;
 mod links;
 mod native;
 mod owner;
