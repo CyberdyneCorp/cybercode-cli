@@ -1029,6 +1029,106 @@ async fn location_limit_is_visible_without_disabling_other_location_observations
 }
 
 #[tokio::test]
+async fn session_limit_is_visible_and_released_membership_admits_a_waiting_session() {
+    use cyber_server::runtime::{Admission, Delivery, LiveEvent, ToolHost};
+    let flow = support::flow::Flow::new(vec![], false);
+    let recorder = Recorder::start().await;
+    automatic_hooks(&flow, &recorder);
+    let mut events = flow.runtime.subscribe();
+    let mut sessions = Vec::new();
+    // Exercise the production membership bound through actual Session creation.
+    // Saturation must leave the extra Session usable and the owner bounded.
+    for _ in 0..257 {
+        sessions.push(flow.session("default").await);
+    }
+    let waiting = sessions.last().unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let LiveEvent::HookNotice {
+                session_id,
+                hook_id,
+                message,
+            } = events.recv().await.unwrap()
+                && session_id == *waiting
+                && hook_id == "FileChanged"
+                && message.contains("Session limit reached")
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("Session coverage refusal must be visible");
+    await_condition("shared Location baseline at membership limit", || {
+        journal_count(&flow, records::CHECKPOINT) == 1
+    })
+    .await;
+    flow.runtime
+        .admit(
+            waiting,
+            Admission::text("usable while coverage is full", Delivery::Hold),
+        )
+        .await
+        .expect("watcher membership saturation must not refuse user input");
+    // Retain one positive control and release the remaining covered memberships.
+    // This tests owner recovery without generating 256 redundant HTTP effects.
+    for session in &sessions[1..256] {
+        ToolHost::end_session(&*flow.f.host, session).await;
+    }
+    std::fs::write(flow.f.repo.join("before-readmission"), "covered control").unwrap();
+    await_condition("existing Session remains covered", || {
+        recorder.seen.lock().unwrap().iter().any(|event| {
+            event["session_id"] == sessions[0] && event["file_path"] == "before-readmission"
+        })
+    })
+    .await;
+    assert!(
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|event| { event["session_id"] != *waiting }),
+        "refused membership must not receive effects"
+    );
+    flow.runtime
+        .admit(
+            waiting,
+            Admission::text("join after capacity is released", Delivery::Hold),
+        )
+        .await
+        .unwrap();
+    let waiting_scope = waiting.clone();
+    await_condition("released capacity prepares durable Session scope", || {
+        let session = waiting_scope.clone();
+        flow.f.store.read(move |db| Ok(db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM event WHERE type=?1 AND json_extract(data,'$.session_id')=?2)",
+            rusqlite::params![records::SCOPE, session],
+            |row| row.get::<_, bool>(0),
+        )?)).unwrap()
+    })
+    .await;
+    std::fs::write(flow.f.repo.join("after-readmission"), "shared again").unwrap();
+    await_condition(
+        "existing and newly admitted memberships both observe",
+        || {
+            let seen = recorder.seen.lock().unwrap();
+            [&sessions[0], waiting].into_iter().all(|session| {
+                seen.iter().any(|event| {
+                    event["session_id"] == *session && event["file_path"] == "after-readmission"
+                })
+            })
+        },
+    )
+    .await;
+    assert_eq!(journal_count(&flow, records::CHECKPOINT), 1);
+    assert!(flow.requests("test/main").is_empty());
+    tokio::time::timeout(Duration::from_secs(10), flow.runtime.shutdown())
+        .await
+        .expect("membership recovery must preserve joined owner shutdown");
+}
+
+#[tokio::test]
 async fn directory_registration_limit_is_visible_and_reconciliation_covers_its_tail() {
     use cyber_server::runtime::LiveEvent;
     let flow = support::flow::Flow::new(vec![], false);

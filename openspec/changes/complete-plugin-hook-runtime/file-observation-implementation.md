@@ -306,3 +306,14 @@ The directory-move changes and this correction require fresh platform CI.
 Broader CI at `5af61f59` also reported `items_after_test_module` in the new
 core envelope test placement on Linux/macOS/Windows. The production impl now
 precedes that test module; current-head workspace Clippy still requires CI.
+
+## Session-capacity recovery acceptance pending
+
+An additional actual-runtime scenario creates 257 Sessions at one Location,
+checks the visible refusal at the 256-member bound and admits ordinary held
+user input while coverage is unavailable. It releases covered memberships,
+checks that the refused Session receives no effect before readmission, then
+requires committed input to prepare its durable scope and verifies shared
+observation delivery and joined shutdown. The test uses the production owner
+and HTTP hook, not a substitute registry. Execution is pending platform CI;
+formatting alone does not establish that this acceptance passes.
