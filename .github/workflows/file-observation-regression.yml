@@ -152,6 +152,40 @@ jobs:
           path: ${{ runner.temp }}/observation-membership-base.log
           if-no-files-found: error
           retention-days: 14
+      - name: Verify known-private retirement without the fix
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYCONTROL'
+          import os,re,subprocess
+          from pathlib import Path
+          p=Path('crates/cyber-tools/src/file_changes/owner.rs')
+          source=p.read_text()
+          needle='        self.retire_paths(&private, cancel).await?;'
+          assert source.count(needle)==2
+          try:
+              p.write_text(source.replace(needle,'        let _ = private;',1))
+              result=subprocess.run(['cargo','test','--locked','-p','cyber-tools','--test','file_observation_dispatch','known_private_'],capture_output=True,text=True)
+              log=result.stdout+result.stderr
+              Path(os.environ['RUNNER_TEMP'],'observation-private-retirement-base.log').write_text(log)
+              assert result.returncode!=0, log[-8000:]
+              names=['known_private_identity_retires_public_metadata_without_a_deletion_callback','known_private_subtree_retires_old_public_descendants_without_callbacks']
+              for name in names:
+                  assert re.search(r'^test '+name+r' \.\.\. FAILED$',log,re.M), log[-8000:]
+              for message in ['known private identity must not manufacture a public deletion callback','known private subtree must not manufacture descendant deletion callbacks']:
+                  assert message in log, log[-8000:]
+          finally:
+              p.write_text(source)
+          PYCONTROL
+      - name: Preserve known-private retirement regression evidence
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: known-private-retirement-baseline
+          path: ${{ runner.temp }}/observation-private-retirement-base.log
+          if-no-files-found: error
+          retention-days: 14
       - name: Exercise real scoped HTTP-hook dispatch
         run: cargo test --locked -p cyber-tools --test file_observation_dispatch
       - name: Verify moved-private-root regression with path-only exclusions

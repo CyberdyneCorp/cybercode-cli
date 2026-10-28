@@ -879,6 +879,126 @@ async fn hard_link_scope_allows_owned_aliases_and_suppresses_private_state_alias
 }
 
 #[tokio::test]
+async fn known_private_identity_retires_public_metadata_without_a_deletion_callback() {
+    let flow = support::flow::Flow::new(vec![], false);
+    let recorder = Recorder::start().await;
+    automatic_hooks(&flow, &recorder);
+    flow.f.write("former-public", "public baseline");
+    flow.f.write("genuinely-removed", "public baseline");
+    let _session = flow.session("default").await;
+    await_condition("public name is in the acknowledged baseline", || {
+        flow.f.store.read(|db| Ok(db.query_row(
+            "SELECT COUNT(*) FROM event e, json_each(e.data,'$.files') f WHERE e.type=?1 AND f.key='former-public'",
+            [records::CHECKPOINT], |row| row.get::<_, i64>(0))?)).unwrap() > 0
+    }).await;
+    let alias = flow.f.repo.join("prepared-private-alias");
+    std::fs::hard_link(flow.f.dir.path().join("cyber.db"), &alias).unwrap();
+    std::fs::rename(alias, flow.f.repo.join("former-public")).unwrap();
+    std::fs::remove_file(flow.f.repo.join("genuinely-removed")).unwrap();
+    std::fs::write(
+        flow.f.repo.join("zz-after-private-replacement"),
+        "public marker",
+    )
+    .unwrap();
+    await_condition(
+        "public reconciliation after a known-private replacement",
+        || {
+            recorder
+                .seen
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|event| event["file_path"] == "zz-after-private-replacement")
+        },
+    )
+    .await;
+    assert!(
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|event| { event["file_path"] != "former-public" || event["change"] != "removed" }),
+        "known private identity must not manufacture a public deletion callback"
+    );
+    assert!(
+        recorder.seen.lock().unwrap().iter().any(|event| {
+            event["file_path"] == "genuinely-removed" && event["change"] == "removed"
+        }),
+        "private exclusions must not suppress unrelated public deletions"
+    );
+    let retired = flow.f.store.read(|db| Ok(db.query_row(
+        "SELECT COUNT(*) FROM event e, json_each(e.data,'$.updates') u WHERE e.type=?1 AND json_extract(u.value,'$.path')='former-public' AND json_type(u.value,'$.stamp')='null' AND json_extract(e.data,'$.dispatch')=0",
+        [records::CHANGED], |row| row.get::<_, i64>(0))?)).unwrap();
+    assert_eq!(
+        retired, 1,
+        "newly private metadata must be retired without dispatch"
+    );
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn known_private_subtree_retires_old_public_descendants_without_callbacks() {
+    let flow = support::flow::Flow::new(vec![], false);
+    let public = flow.f.repo.join("public-tree");
+    let private = flow.f.dir.path().join("tmp");
+    std::fs::create_dir(&public).unwrap();
+    std::fs::create_dir(&private).unwrap();
+    std::fs::write(public.join("previously-public"), "public baseline").unwrap();
+    std::fs::write(private.join("private-leaf"), "private metadata").unwrap();
+    let once = std::sync::atomic::AtomicBool::new(false);
+    let outside = flow.f.dir.path().join("old-public-tree");
+    let marker = flow.f.repo.join("zz-after-private-tree");
+    let recorder = Recorder::with_effect(Arc::new(move || {
+        if !once.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            std::fs::rename(&public, &outside).unwrap();
+            std::fs::rename(&private, &public).unwrap();
+            std::fs::write(&marker, "public marker").unwrap();
+        }
+    }))
+    .await;
+    automatic_hooks(&flow, &recorder);
+    let _session = flow.session("default").await;
+    await_condition("public descendant is in the acknowledged baseline", || {
+        flow.f.store.read(|db| Ok(db.query_row(
+            "SELECT COUNT(*) FROM event e, json_each(e.data,'$.files') f WHERE e.type=?1 AND f.key='public-tree/previously-public'",
+            [records::CHECKPOINT], |row| row.get::<_, i64>(0))?)).unwrap() > 0
+    }).await;
+    std::fs::write(flow.f.repo.join("begin-private-transition"), "start").unwrap();
+    await_condition(
+        "reconciliation after a known-private subtree replacement",
+        || {
+            recorder
+                .seen
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|event| event["file_path"] == "zz-after-private-tree")
+        },
+    )
+    .await;
+    assert!(
+        recorder.seen.lock().unwrap().iter().all(|event| {
+            event["file_path"] != "public-tree/previously-public" || event["change"] != "removed"
+        }),
+        "known private subtree must not manufacture descendant deletion callbacks"
+    );
+    let retired = flow.f.store.read(|db| Ok(db.query_row(
+        "SELECT COUNT(*) FROM event e, json_each(e.data,'$.updates') u WHERE e.type=?1 AND json_extract(u.value,'$.path')='public-tree/previously-public' AND json_type(u.value,'$.stamp')='null' AND json_extract(e.data,'$.dispatch')=0",
+        [records::CHANGED], |row| row.get::<_, i64>(0))?)).unwrap();
+    assert_eq!(retired, 1);
+    assert!(
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|event| { event["file_path"] != "public-tree/private-leaf" })
+    );
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn shutdown_settles_a_held_observer_callback_and_restart_does_not_replay_it() {
     let mut flow = support::flow::Flow::new(vec![support::flow::text("Session reopened")], false);
     let gate = Arc::new(tokio::sync::Notify::new());

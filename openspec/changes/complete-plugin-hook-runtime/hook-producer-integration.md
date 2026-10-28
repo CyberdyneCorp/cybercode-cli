@@ -343,3 +343,38 @@ see [the baseline evidence](baseline.md#passing-unchanged-main-native-baseline-2
 Those local native runs are on Darwin 25.6.0 arm64, with CI/platform results tracked
 separately. Full CI for the identity-precise regression remains required before
 this draft is ready.
+
+
+## Known-private replacement retirement from composed review
+
+At `6385cabe`, all 16 broad CI jobs and all seven focused producer jobs passed.
+Final composed review then reproduced a distinct observation error: replacing a
+previously public baseline file with an alias of the live private database caused
+a public FileChanged removed callback. A known private directory replacing a
+public subtree similarly manufactured descendant deletion callbacks. The scanner
+filtered private identities before alias accounting, so those omissions were
+mistaken for absence rather than private scope.
+
+The native scan now records known-private entry/subtree paths separately from
+ambiguous aliases and byte-budget omissions. After verifying its pinned root,
+the owner retires previous public preimages under those private prefixes without
+dispatch or feedback charge, before folding the remaining scan. This also applies
+when unrelated traversal is incomplete. Directory-scope revalidation removes
+private exclusions whose containing scope lost proof. Ambiguous aliases keep
+their existing unknown-state behavior; they are not silently retired by this fix.
+No additional durable format or schema change is introduced by this follow-up.
+
+Two actual HTTP regressions cover a known database inode replacing a public file
+and a retained private directory replacing a public subtree. They require silent
+retirement, continued public observation, and no private-leaf callback. The file
+case also requires an unrelated real public deletion, preventing an implementation
+that simply labels every filtered scan incomplete. Removing only early retirement
+in a local source control makes both named tests execute and fail their expected
+behavioral assertion; restored source passes both. Linux CI repeats this control
+and preserves its logs before the full positive suite.
+
+The native component suite passes 57 tests, with one ignored subprocess helper
+explicitly invoked by its SQLite-lock regression. The 24-case HTTP suite and scoped
+actual-target Clippy pass locally on Darwin 25.6.0 arm64. Full CI for this new
+review correction remains required; the green `6385cabe` result is historical
+acceptance of the preceding revision, not evidence for this source.

@@ -169,6 +169,7 @@ pub(super) fn scan_with_metadata(
             continue;
         };
         if excluded_metadata(&metadata) {
+            out.private_paths.insert(path);
             continue;
         }
         if metadata.is_dir() {
@@ -180,6 +181,7 @@ pub(super) fn scan_with_metadata(
             let child = opened.and_then(|child| {
                 let current = child.dir_metadata()?;
                 if excluded_metadata(&current) {
+                    out.private_paths.insert(path.clone());
                     return Ok(None);
                 }
                 if super::links::identity(&current) != super::links::identity(&metadata) {

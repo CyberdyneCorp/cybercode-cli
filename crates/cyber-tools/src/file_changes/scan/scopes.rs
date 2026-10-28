@@ -97,6 +97,7 @@ impl Catalog {
             scan.files.retain(|path, _| !rejected(path, &invalid));
             scan.directories.retain(|path| !rejected(path, &invalid));
             scan.suppressed.retain(|path| !rejected(path, &invalid));
+            scan.private_paths.retain(|path| !rejected(path, &invalid));
         }
     }
     fn close(&self, stack: &mut Vec<Opened>, invalid: &mut BTreeSet<PathBuf>) {
@@ -118,4 +119,5 @@ fn discard(scan: &mut Scan) {
     scan.files.clear();
     scan.directories.clear();
     scan.suppressed.clear();
+    scan.private_paths.clear();
 }

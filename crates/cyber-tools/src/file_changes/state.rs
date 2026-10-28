@@ -13,6 +13,9 @@ pub(super) struct Scan {
     /// Known names with unproven alias scope or omitted by publication budgets.
     /// Their absence from `files` is not deletion evidence or a new metadata stamp.
     pub suppressed: BTreeSet<PathBuf>,
+    /// Known private entry/subtree identities. Previously public names beneath
+    /// them are retired without reporting an observed deletion.
+    pub private_paths: BTreeSet<PathBuf>,
     /// False for entry limits, cancellation, unreadable directories or traversal
     /// errors. A later complete scan can resolve retained, unseen entries.
     /// `suppressed` names remain unknown independently of enumeration completeness.
@@ -209,6 +212,7 @@ mod tests {
         let scan = Scan {
             directories: Default::default(),
             suppressed: Default::default(),
+            private_paths: Default::default(),
             files: files(&[("same-size", 4), ("new-name", 2)]),
             complete: true,
         };
@@ -245,6 +249,7 @@ mod tests {
         let partial = Scan {
             directories: Default::default(),
             suppressed: Default::default(),
+            private_paths: Default::default(),
             files: files(&[("kept", 3)]),
             complete: false,
         };
@@ -259,6 +264,7 @@ mod tests {
         let complete = Scan {
             directories: Default::default(),
             suppressed: Default::default(),
+            private_paths: Default::default(),
             files: files(&[("kept", 3)]),
             complete: true,
         };
@@ -281,6 +287,7 @@ mod tests {
         let scan = || Scan {
             directories: Default::default(),
             suppressed: Default::default(),
+            private_paths: Default::default(),
             files: files(&[("after", 2)]),
             complete: true,
         };
@@ -306,6 +313,7 @@ mod tests {
                 Scan {
                     directories: Default::default(),
                     suppressed: Default::default(),
+                    private_paths: Default::default(),
                     files: files(&[("data", 1)]),
                     complete: true
                 },
@@ -340,6 +348,7 @@ mod tests {
         let scan = Scan {
             directories: Default::default(),
             suppressed: Default::default(),
+            private_paths: Default::default(),
             files: files(&[("public", 2)]),
             complete: true,
         };
@@ -358,6 +367,7 @@ mod tests {
         let first = Scan {
             directories: Default::default(),
             suppressed: Default::default(),
+            private_paths: Default::default(),
             files: files(&[("new", 2)]),
             complete: false,
         };
@@ -368,6 +378,7 @@ mod tests {
         let second = Scan {
             directories: Default::default(),
             suppressed: Default::default(),
+            private_paths: Default::default(),
             files: files(&[("another", 3)]),
             complete: false,
         };
@@ -395,6 +406,7 @@ mod tests {
                 files: files(&[("public", 4)]),
                 directories: Default::default(),
                 suppressed: BTreeSet::from([PathBuf::from("alias")]),
+                private_paths: Default::default(),
                 complete: true,
             },
             &BTreeSet::from([PathBuf::from("alias")]),

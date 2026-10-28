@@ -140,6 +140,11 @@
 - **THEN** that membership's owned delivery SHALL be cancelled and settled without stopping the other member, and no later handler SHALL start from a captured obsolete membership
 - **AND** readmission SHALL use a fresh membership and SHALL NOT revive delivery from the older batch
 
+#### Scenario: Known private identity replaces a public name
+- **WHEN** a pinned private file or directory replaces a previously recorded public name inside the Location
+- **THEN** the owner retires the previous public preimages without dispatching a deletion callback or spending feedback allowance
+- **AND** the scanner records private entry/subtree exclusions separately from ambiguous aliases and publication-budget omissions, so unrelated public observations remain eligible
+
 ### Requirement: Setup attempt ownership and explicit initialization
 (P1) Setup SHALL admit durable installation/Location-bound attempts before effects, serialize automatic first-root-Session claims with creation, and expose explicit initialization through the owner surface without a model Turn. Marker and migration semantics SHALL follow the reviewed Setup ownership design. Completed, failed, skipped and unknown outcomes SHALL remain distinguishable; neither an automatic marker nor a retry SHALL manufacture successful execution or replay an uncertain effect.
 

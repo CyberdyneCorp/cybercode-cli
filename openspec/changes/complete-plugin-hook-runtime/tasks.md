@@ -45,3 +45,10 @@ expand task 5.1 without closing it or the other producer obligations.
 - [ ] 6.2 Run relevant Rust tests, format/Clippy, plugin/SDK checks, native positive/denial tests, strict OpenSpec/lint and real-server acceptance; record configured skips explicitly.
 - [ ] 6.3 Perform substantive code/security review using the code-review skill; resolve findings and obtain green relevant CI in reviewable PRs. Merge only when authorized.
 - [ ] 6.4 Record accepted first-workstream evidence, then begin the reviewed Daily coding workstream. Archive only after accepted merge and reconcile overlapping deltas.
+
+
+Composed-review follow-up: `6385cabe` passed all 16 broad and seven focused jobs,
+then review reproduced false deletion dispatch when a known private inode/subtree
+replaces a public baseline name. The new silent-retirement correction has two
+real HTTP regressions and a missing-fix behavioral control. Task 5.2 remains open
+for current-source platform acceptance; see the integration evidence above.

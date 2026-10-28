@@ -535,6 +535,27 @@ impl Observation {
         if !self.root.current() {
             return Err("Location root changed during reconciliation".into());
         }
+        // A known private inode can replace a previously public name, including
+        // an entire subtree. Absence from the filtered scan is not a deletion.
+        // Retire its old public preimage even when other traversal is partial.
+        let private: Vec<_> = self
+            .journal
+            .state()
+            .files
+            .keys()
+            .map(PathBuf::from)
+            .filter(|path| {
+                excluded.excludes(path)
+                    || path
+                        .ancestors()
+                        .any(|parent| scan.private_paths.contains(parent))
+            })
+            .map(|path| Change {
+                path,
+                kind: super::state::Kind::Removed,
+            })
+            .collect();
+        self.retire_paths(&private, cancel).await?;
         let baseline = self
             .journal
             .state()
