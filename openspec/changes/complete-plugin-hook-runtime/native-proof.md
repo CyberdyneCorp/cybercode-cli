@@ -426,3 +426,72 @@ and diff checks passed. This increment changes only executable tests and evidenc
 Native CI for these new assertions remains required, the Darwin 24.6.0 system-image
 issue remains unresolved, and the explicit production support/design gate stays
 open. No runtime availability or production launcher change is made.
+
+
+## Original-signature target candidate and detached-signature control
+
+[Run 40674537036](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40674537036)
+at `74ae15f1` completed with 21 successful jobs and one failure. All 20 runtime
+matrices and the Intel exec-gap job passed. The retained
+[arm64 log](../../../scripts/probes/plugin-confinement/evidence/74ae15f1/macos-arm64-native-exec-gap-failure.log)
+now distinguishes both positive controls: direct staged `/bin/bash` terminated
+with SIGSEGV, sandboxed execution with SIGKILL, neither producing an initial
+marker. This establishes failed positive admission on Darwin 24.6.0, not its cause
+or a successful policy denial. The staged-image experiment and assertions remain.
+
+A separate candidate signs the trusted native launcher with a fresh identifier,
+then intersects `(signing-identifier ...)` with the exact target path in the
+Seatbelt process-exec rule. The target image is not re-signed. Apple's
+[WebKit WebProcess profile](https://github.com/WebKit/WebKit/blob/main/Source/WebKit/WebProcess/com.apple.WebProcess.sb.in)
+uses the signing-identifier filter; the exec behavior below is experimental
+native evidence rather than an inference from that profile.
+
+On local Darwin 25.6.0 arm64, the new
+[native matrix](../../../scripts/probes/plugin-confinement/evidence/signing-identity-local/macos-arm64-native.json)
+passed all nine rows, including constructor-time exec/spawn, reads, writes,
+threads, fork, package-alias protection, and JSON-RPC tool execution. Its source
+SHA-256 is `7be22e5a112b64c55498cda8a68cfab46182e0d6f5e93682733437b2d219e63a`.
+The separate
+[exec controls](../../../scripts/probes/plugin-confinement/evidence/signing-identity-local/macos-arm64-exec.json)
+bind source SHA-256 `7a06af58c27b8b134dd4833f6947b1a27623c4c3ef34c74542528d05ae284723`.
+Both native and original `/bin/bash` controls execute/self-execute unrestricted,
+start normally when confined, and then fail self-exec with a native permission
+error. Bash's bytes remain unchanged. High-descriptor closure also passes.
+
+A copied payload deliberately signed with the bootstrap identifier **can
+self-exec** under the candidate. This is an observed bypass unless admission
+proves target/helper identity separation across every usable architecture and
+keeps both images immutable. The fresh identifier alone is not a complete
+production admission contract.
+
+A second controlled payload supplies F_ADDSIGS with an alternate valid ad-hoc
+signature for identical code, using only a read-only self descriptor. The
+alternate signature bears the bootstrap identifier; prefix equality independently
+checks unchanged code bytes. The call returns success in both controls, but the
+confined payload still receives EPERM on self-exec, and the source image hash
+remains unchanged. This is a behavioral check of one mutation interface, not a
+claim that every successful fcntl changed identity or that all mutation routes
+are covered. Apple's [fcntl implementation](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_descrip.c)
+can return an existing cached signature, while
+[ubc_cs_blob_add](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/ubc_subr.c)
+rejects different overlapping signature blobs; neither source inspection alone
+proves behavior on every supported kernel.
+
+The new candidate has separate macOS 15 arm64/Intel CI jobs requiring both
+matrices and exec controls. Those current-source jobs have not yet run. Immutable
+package/helper admission, kernel-interface coverage, distribution compatibility,
+production owner integration and the explicit design/support review gate stay
+open. No production Rust launch path, capability enforcement, or availability
+contract changes in this increment.
+
+
+Increment verification also passed the current-source default native comparison
+(5 rows, 4 explicitly unsupported cases) and staged native matrix (9 rows),
+TypeScript syntax, all four workflow shell snippets, YAML parsing, diff checks,
+strict OpenSpec (106 items on this branch), and spec lint (0 errors, 25 warnings).
+The code-review pass covers the changed probe, controlled C fixture, workflow,
+reports and documentation. This is test infrastructure, with no new production
+API or architecture boundary. Commands use argument arrays, a sanitized environment,
+bounded dummy data and a private temporary directory; reports bind exact sources.
+The collision/admission and cross-platform coverage gaps above remain explicit;
+local passes do not supply the pending macOS 15 or production acceptance.

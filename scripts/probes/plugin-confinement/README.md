@@ -290,3 +290,36 @@ bootstrap/protected-path overlap, all privileged-helper lifecycle/failure cases
 and the complete owner/network/secret intersection still require integration
 and acceptance. A metadata startup requirement must not become broad access to
 owner files, parent descriptors or another plugin's state.
+
+
+## Signing-identity native candidate
+
+On macOS, run the separate experimental candidate with:
+
+```sh
+node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime native --macos-signing-native --report /tmp/native-signing-matrix.json
+node --experimental-strip-types scripts/probes/plugin-confinement/macos_signing_exec.mts --report /tmp/native-signing-exec.json
+```
+
+The first command requires all nine native capability rows, including no-shell
+constructor behavior. It signs only the trusted launcher with a fresh ad-hoc
+identifier and admits the exact target path when the subject has that identifier.
+The target retains its signature; the staged-platform mechanism is a separate
+option and cannot be combined with this one. Other runtime modes are unchanged.
+
+The second command requires normal initial admission and denied self-exec for
+both a controlled native image and the original `/bin/bash`, without re-signing
+that system image. It also requires an explicit matching-identifier counterexample
+to self-exec successfully. This observed bypass makes immutable, all-architecture
+helper/target identity separation a prerequisite, not an optional hardening step.
+A detached-signature attempt through an O_RDONLY descriptor must leave self-exec
+denied; the executable bytes must remain unchanged. The return value of
+F_ADDSIGS alone does not establish that the requested signature was adopted.
+The original descriptor-above-soft-limit closure control is retained.
+
+Local arm64 evidence is in `evidence/signing-identity-local/`. Native macOS 15
+arm64/Intel CI runs the candidate separately from the older staged-system gap
+experiment; no failure in the older experiment is removed or counted as passing.
+These probes do not establish production immutable package admission, distribution,
+all kernel signature-mutation interfaces, owner integration, or Windows support.
+No production confinement or runtime availability changes are made.

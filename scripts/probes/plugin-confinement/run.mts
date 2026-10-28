@@ -6,13 +6,13 @@ import { stageNative } from "./macos_stage.mts";
 import { spawnSync } from "node:child_process";
 import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { release, tmpdir } from "node:os";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 type Runtime = { kind: "python" | "node" | "bun" | "deno" | "native"; executable: string; prefix: string; include: string; libdir: string; library?: string; version: string };
-type Artifacts = { executable: string; addon?: string; landlock?: string; initialExec: boolean; stagedPlatform?: boolean; trace?: string };
+type Artifacts = { executable: string; addon?: string; landlock?: string; initialExec: boolean; stagedPlatform?: boolean; signingIdentifier?: string; trace?: string };
 type Flags = { read: boolean; write: boolean; shell: boolean; unrestricted?: boolean };
 type Observation = Record<string, boolean | null | boolean[]>;
 const source = dirname(fileURLToPath(import.meta.url));
@@ -95,7 +95,7 @@ function build(root: string, runtime: Runtime, initialExec: boolean): Artifacts 
   return { executable, landlock, initialExec };
 }
 
-function policy(runtime: Runtime, paths: Record<string, string>, flags: Flags, stagedPlatform = false): string {
+function policy(runtime: Runtime, paths: Record<string, string>, flags: Flags, stagedPlatform = false, signingIdentifier?: string): string {
   const allow = (operation: string, path: string) => `(allow ${operation} (subpath ${JSON.stringify(path)}))`;
   // The child runtime requires directory-data access to the root object itself.
   // A literal root rule does not grant reads of descendant files/directories.
@@ -118,6 +118,7 @@ function policy(runtime: Runtime, paths: Record<string, string>, flags: Flags, s
   }
   lines.push(`(deny file-write-unlink (literal ${JSON.stringify(paths.project)}))`);
   if (flags.shell) lines.push("(allow process-fork)", "(allow process-exec)");
+  else if (signingIdentifier) lines.push(`(allow process-exec (require-all (signing-identifier ${JSON.stringify(signingIdentifier)}) (literal ${JSON.stringify(runtime.executable)})))`);
   else if (stagedPlatform) lines.push(`(allow process-exec (require-all (process-attribute is-platform-binary) (literal ${JSON.stringify(runtime.executable)})))`);
   return lines.join("\n");
 }
@@ -268,7 +269,7 @@ function check(root: string, artifacts: Artifacts, runtime: Runtime, name: strin
   const paths = fixture(directory);
   paths.cwd = flags.read ? paths.project : paths.scratch;
   const profile = flags.unrestricted ? "-" : join(directory, "policy.sb");
-  if (!flags.unrestricted) writeFileSync(profile, isLinux ? `shell=${flags.shell ? 1 : 0}\n` : policy(runtime, paths, flags, artifacts.stagedPlatform), { mode: 0o600 });
+  if (!flags.unrestricted) writeFileSync(profile, isLinux ? `shell=${flags.shell ? 1 : 0}\n` : policy(runtime, paths, flags, artifacts.stagedPlatform, artifacts.signingIdentifier), { mode: 0o600 });
   const actual = observe(artifacts, runtime, paths, profile, "inspect", flags);
   const expectations = expected(flags);
   if (artifacts.addon) expectations.startup_artifacts = false;
@@ -307,11 +308,13 @@ function check(root: string, artifacts: Artifacts, runtime: Runtime, name: strin
 
 function main() {
   assert(["darwin", "linux"].includes(process.platform), "native proof requires macOS or Linux; other platforms are unproved");
-  const { values } = parseArgs({ options: { runtime: { type: "string", default: "python" }, python: { type: "string" }, executable: { type: "string" }, report: { type: "string" }, trace: { type: "string" }, "initial-exec": { type: "boolean", default: false }, "macos-staged-native": { type: "boolean", default: false } } });
+  const { values } = parseArgs({ options: { runtime: { type: "string", default: "python" }, python: { type: "string" }, executable: { type: "string" }, report: { type: "string" }, trace: { type: "string" }, "initial-exec": { type: "boolean", default: false }, "macos-staged-native": { type: "boolean", default: false }, "macos-signing-native": { type: "boolean", default: false } } });
   assert(["python", "node", "bun", "deno", "native"].includes(values.runtime), "runtime must be python, node, bun, deno or native");
   if (values.runtime === "bun" || values.runtime === "deno") assert(values.executable, "supply an explicit trusted Bun/Deno executable");
   const stagedPlatform = values["macos-staged-native"];
   assert(!stagedPlatform || (!isLinux && values.runtime === "native"), "macos-staged-native requires macOS native runtime");
+  const signingNative = values["macos-signing-native"];
+  assert(!signingNative || (!isLinux && values.runtime === "native" && !stagedPlatform), "macos-signing-native requires macOS native runtime without staging");
   const initialExec = values["initial-exec"] || (values.runtime === "native" && isLinux);
   assert(!initialExec || isLinux, "initial-exec proof currently requires Linux");
   if (values.runtime === "python") assert(values.python, "supply an explicit trusted Python with development headers and dynamic library");
@@ -326,7 +329,12 @@ function main() {
     for (const allowed of [runtime.prefix, runtime.libdir, ...runtime.kind === "native" ? [] : [dirname(runtime.executable)], ...isLinux ? ["/usr", "/lib", "/bin"] : ["/System", "/usr/lib", "/bin", "/usr/bin"]]) {
       if (existsSync(allowed)) assert(outside(root, allowed), `runtime read root overlaps private proof fixtures: ${allowed}`);
     }
-    const artifacts = { ...build(root, runtime, initialExec), trace: values.trace };
+    const artifacts: Artifacts = { ...build(root, runtime, initialExec), trace: values.trace };
+    if (signingNative) {
+      artifacts.signingIdentifier = `com.cyberdyne.probe.bootstrap.${randomUUID()}`;
+      command("/usr/bin/codesign", ["--force", "--sign", "-", "--identifier", artifacts.signingIdentifier, "--timestamp=none", artifacts.executable]);
+      command("/usr/bin/codesign", ["--verify", "--strict", "--all-architectures", artifacts.executable]);
+    }
     const staging = stagedPlatform ? stageNative(runtime.executable, join(root, "staged-native-fixture")) : undefined;
     if (staging) runtime.executable = staging.executable;
     artifacts.stagedPlatform = stagedPlatform;
@@ -342,7 +350,7 @@ function main() {
       ["write-shell-without-read", { read: false, write: true, shell: true }],
       ["declared-read-write-shell", { read: true, write: true, shell: true }],
     ];
-    const unsupported_cases = cases.filter(([, flags]) => runtime.kind === "native" && !isLinux && !flags.shell && !stagedPlatform)
+    const unsupported_cases = cases.filter(([, flags]) => runtime.kind === "native" && !isLinux && !flags.shell && !stagedPlatform && !signingNative)
       .map(([name]) => ({ name, reason: "native macOS shell=false initial-exec mechanism remains unproved; explicit support review required" }));
     const rows = cases.filter(([name]) => !unsupported_cases.some(item => item.name === name))
       .map(([name, flags]) => check(root, artifacts, runtime, name, flags));
@@ -352,7 +360,8 @@ function main() {
       digest.update(file + "\0").update(readFileSync(join(source, file)));
     }
     const report = { recorded_at: new Date().toISOString(), kernel_release: release(), sources, source_sha256: digest.digest("hex"), platform: process.platform, architecture: process.arch, runtime: runtime.kind, version: runtime.version, startup_control,
-      staging, mechanism: stagedPlatform ? "ad-hoc-staged native image + system platform launcher Seatbelt policy before first target instruction; platform-subject exact-path exec admission" : initialExec ? "bubblewrap private mounts + Landlock/seccomp before first target instruction + one-shot exec admission; closed listener and immutable filter" : isLinux ? "bubblewrap private mounts + Landlock before runtime startup + synchronized seccomp before fixture execution" : "trusted native/runtime bootstrap followed by native sandbox_init before fixture execution",
+      staging, signing_identifier: artifacts.signingIdentifier,
+      mechanism: signingNative ? "fresh signing identifier on trusted launcher + exact-target Seatbelt exec rule; target signature unchanged; experimental subject-identity candidate" : stagedPlatform ? "ad-hoc-staged native image + system platform launcher Seatbelt policy before first target instruction; platform-subject exact-path exec admission" : initialExec ? "bubblewrap private mounts + Landlock/seccomp before first target instruction + one-shot exec admission; closed listener and immutable filter" : isLinux ? "bubblewrap private mounts + Landlock before runtime startup + synchronized seccomp before fixture execution" : "trusted native/runtime bootstrap followed by native sandbox_init before fixture execution",
       limitation: "experimental native mechanisms; macOS uses deprecated Seatbelt API; not production packaging or Windows acceptance", unsupported_cases, rows };
     if (values.report) writeFileSync(values.report, JSON.stringify(report, null, 2) + "\n", { mode: 0o600 });
     console.log(JSON.stringify(report, null, 2));

@@ -118,3 +118,37 @@ jobs:
             ${{ runner.temp }}/proof.log
           if-no-files-found: error
           retention-days: 14
+
+  macos-signing-candidate:
+    name: Native signing-identity candidate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify capability matrix and original-signature exec controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          # This is a separate candidate. Keep the staged-system positive
+          # control and its unresolved failure in macos-native-gap intact.
+          node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime native --macos-signing-native --report "$RUNNER_TEMP/matrix.json" > "$RUNNER_TEMP/matrix.log" 2>&1
+          node --experimental-strip-types scripts/probes/plugin-confinement/macos_signing_exec.mts --report "$RUNNER_TEMP/exec.json" > "$RUNNER_TEMP/exec.log" 2>&1
+      - name: Retain signing-identity candidate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-signing-candidate-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/matrix.json
+            ${{ runner.temp }}/matrix.log
+            ${{ runner.temp }}/exec.json
+            ${{ runner.temp }}/exec.log
+          if-no-files-found: error
+          retention-days: 14
