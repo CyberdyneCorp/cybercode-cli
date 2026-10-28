@@ -229,3 +229,25 @@ unavailable and test-only diagnostics now record its raw OS error. The sidecar
 turnover assertion remains in place. Native Windows and the full production
 checks for this correction remain pending; the earlier Linux restart assertion
 was not reached at `0b7c4a3a` and is not counted as resolved.
+
+
+## Server Location identity checks preserve the same lock boundary
+
+Follow-up review traced user-input scope capture and handler membership through
+`runtime/file_observation_roots.rs`. Both still used `Handle::from_path` on Unix,
+which could open and close a regular file after a Location or alias was replaced.
+Three new real SQLite regressions independently failed before correction: direct
+input capture from a database path, a Session alias naming a database while the
+canonical root remains intact, and the canonical root replaced by a database hard
+link. Each subprocess ran exactly one lock probe and reported that the owner lock
+had been released.
+
+These production Unix probes now use the server's existing safe rustix dependency
+to open with `O_DIRECTORY | O_CLOEXEC`; a regular file cannot be opened and later
+closed as part of directory identity validation. Existing alias/identity matching
+still applies. Other platforms retain their native handles and explicitly reject
+non-directory metadata. No new project dependency, durable record or API is added.
+The actual-source harness now passes 75 tests with two subprocess helpers ignored
+in the parent suite and invoked by the lock regressions. Production server and
+platform CI remain required, and Windows behavior cannot be verified on this local
+macOS host.

@@ -8,6 +8,27 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use same_file::Handle;
 
+#[cfg(unix)]
+fn directory_handle(path: &Path) -> io::Result<Handle> {
+    use rustix::fs::{Mode, OFlags};
+    // A stale Location may now name a database. O_DIRECTORY prevents even an
+    // attempted independent regular-file open/close from releasing SQLite locks.
+    let file = rustix::fs::open(
+        path,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?;
+    Handle::from_file(file.into())
+}
+#[cfg(not(unix))]
+fn directory_handle(path: &Path) -> io::Result<Handle> {
+    let handle = Handle::from_path(path)?;
+    if !handle.as_file().metadata()?.is_dir() {
+        return Err(io::Error::other("observation Location is not a directory"));
+    }
+    Ok(handle)
+}
+
 pub(super) struct CapturedInput {
     pub scope: cyber_core::hooks::file_observations::InputScope,
     _handle: Handle,
@@ -19,8 +40,8 @@ impl CapturedInput {
         let canonical_text = canonical.to_str().ok_or_else(|| {
             io::Error::other("observation Location requires a UTF-8 canonical path")
         })?;
-        let handle = Handle::from_path(raw)?;
-        if !canonical.is_dir() || Handle::from_path(&canonical)? != handle {
+        let handle = directory_handle(raw)?;
+        if directory_handle(&canonical)? != handle {
             return Err(io::Error::other(
                 "user input Location changed during capture",
             ));
@@ -74,8 +95,8 @@ impl PinnedRoot {
     /// The canonical owner path and the Session alias must both still name the
     /// pinned incarnation. Call only after releasing registry and Session locks.
     pub fn matches(&self, directory: &Path) -> bool {
-        Handle::from_path(&self.path).is_ok_and(|current| current == self.handle)
-            && Handle::from_path(directory).is_ok_and(|current| current == self.handle)
+        directory_handle(&self.path).is_ok_and(|current| current == self.handle)
+            && directory_handle(directory).is_ok_and(|current| current == self.handle)
     }
 }
 
@@ -129,6 +150,92 @@ impl Roots {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    struct LockedDatabase {
+        path: PathBuf,
+        connection: rusqlite::Connection,
+        _temporary: tempfile::TempDir,
+    }
+    #[cfg(unix)]
+    impl LockedDatabase {
+        fn new() -> Self {
+            let temporary = tempfile::tempdir().unwrap();
+            let path = temporary.path().join("database");
+            let connection = rusqlite::Connection::open(&path).unwrap();
+            connection.execute_batch("PRAGMA journal_mode=DELETE; CREATE TABLE fixture(value); BEGIN EXCLUSIVE; INSERT INTO fixture VALUES(1)").unwrap();
+            let fixture = Self {
+                path,
+                connection,
+                _temporary: temporary,
+            };
+            fixture.probe();
+            fixture
+        }
+        fn probe(&self) {
+            let module = module_path!().split_once("::").unwrap().1;
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    &format!("{module}::database_lock_probe"),
+                    "--ignored",
+                ])
+                .env("CYBER_LOCATION_LOCK_FIXTURE", &self.path)
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(stdout.contains("running 1 test"), "{stdout}");
+            assert!(
+                output.status.success(),
+                "{stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(!self.connection.is_autocommit());
+        }
+    }
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "subprocess fixture invoked by Location identity lock regressions"]
+    fn database_lock_probe() {
+        let path = std::env::var_os("CYBER_LOCATION_LOCK_FIXTURE").unwrap();
+        let database = rusqlite::Connection::open(path).unwrap();
+        database.busy_timeout(std::time::Duration::ZERO).unwrap();
+        let error = database
+            .execute_batch("BEGIN IMMEDIATE")
+            .expect_err("Location identity check released the owner database lock");
+        assert_eq!(
+            error.sqlite_error_code(),
+            Some(rusqlite::ErrorCode::DatabaseBusy)
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn input_capture_rejects_a_file_without_releasing_database_locks() {
+        let database = LockedDatabase::new();
+        assert!(CapturedInput::new(database.path.to_str().unwrap()).is_err());
+        database.probe();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn native_root_rejects_a_file_alias_without_releasing_database_locks() {
+        let database = LockedDatabase::new();
+        let path = database.path.with_file_name("location");
+        std::fs::create_dir(&path).unwrap();
+        let root = PinnedRoot::new(&path, opened(&path)).unwrap();
+        assert!(!root.matches(&database.path));
+        database.probe();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn native_root_replaced_by_a_file_preserves_database_locks() {
+        let database = LockedDatabase::new();
+        let path = database.path.with_file_name("location");
+        std::fs::create_dir(&path).unwrap();
+        let root = PinnedRoot::new(&path, opened(&path)).unwrap();
+        std::fs::rename(&path, path.with_file_name("old-location")).unwrap();
+        std::fs::hard_link(&database.path, &path).unwrap();
+        assert!(!root.matches(&path));
+        database.probe();
+    }
     fn opened(path: &Path) -> File {
         cap_std::fs::Dir::open_ambient_dir(path, cap_std::ambient_authority())
             .unwrap()
