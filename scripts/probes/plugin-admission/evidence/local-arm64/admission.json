@@ -1,0 +1,34 @@
+{
+  "recorded_at": "2026-10-28T18:44:23.331Z",
+  "platform": "darwin",
+  "architecture": "arm64",
+  "kernel_release": "25.6.0",
+  "sources": [
+    "plugin-admission/run.mts",
+    "plugin-admission/fixture.c",
+    "plugin-confinement/macos_exec.c"
+  ],
+  "source_sha256": "a64f380cb5b428a4551abe44378a33233202463aa95007becea646755826af87",
+  "control": {
+    "initial_exec": true,
+    "private_alias_read": true,
+    "package_alias_write": true
+  },
+  "path_only_counterexample": {
+    "initial_exec": true,
+    "private_alias_read": true,
+    "package_alias_write": true
+  },
+  "known_private_alias_refused_before_start": true,
+  "staged_executable_alias_refused_before_start": true,
+  "copied_package_distinct_inode": true,
+  "copied_executable_distinct_inode": true,
+  "input_alias_cannot_mutate_copy": true,
+  "executable_signature_preserved": true,
+  "admitted": {
+    "initial_exec": true,
+    "private_alias_read": false,
+    "package_alias_write": false
+  },
+  "limitation": "Controlled known-file stat guard and immutable-copy experiment, not production admission. Complete private-root inventory, directory aliases, concurrent replacement, generation ownership, budgets, cross-platform behavior and owner/SQLite integration remain required."
+}

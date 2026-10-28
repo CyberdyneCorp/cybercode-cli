@@ -1,7 +1,9 @@
 # Runtime support revision for review
 
-Status: proposed, awaiting the user's explicit decision. This does not close task
-2.1, change the production launcher, or approve weaker capability semantics.
+Status: the availability-reduction proposal below was not approved; the original
+strict scope remains required. New signing-identity evidence supports continued
+work toward that scope. Task 2.1 and the native admission/integration gates remain
+open; no production launcher or capability semantics change here.
 
 The approved design says: “If the prototype cannot enforce the proposed contract
 on a required platform/runtime, return the evidence and revised support decision
@@ -56,14 +58,32 @@ entitlement compatibility or deployable packaging. Both macOS architectures
 now require the new matrix in CI. At `ba2d597e`, both native nine-row matrices
 passed, but the separate staged-system-payload positive control failed on the
 arm64 runner. The diagnostic confirms SIGKILL before output on Darwin 24.6.0 for the
-re-signed x86_64/arm64e system image; a separate direct/unconfined control is
-being added to isolate staging compatibility from policy startup. Its cause
-and portable admission remain unresolved; local success
-and Intel success do not satisfy that missing positive control.
+re-signed x86_64/arm64e system image. At `74ae15f1`, the added direct/unconfined
+control terminated with SIGSEGV and the sandboxed control with SIGKILL, both
+without output. Their cause and portable staged-image admission remain unresolved;
+local success and Intel success do not satisfy that missing positive control.
 The proposed availability table and request for an explicit support decision
 remain unchanged pending that evidence and review.
 
-## Proposed production availability
+## Signing-identity evidence without reducing availability
+
+At `bcad75b3`, both macOS 15 arm64 and Intel signing-identity candidate jobs
+passed all nine native capability rows plus original-system-image exec controls.
+The target signature stays intact; the trusted bootstrap alone receives a fresh
+identifier. The pre-runtime extension at `574714f8` also passes 36 local rows for
+native, Node, standalone Python and framework Python. Its new runtime/platform
+CI remains separate from the historical staged-image failure. See the exact-source
+reports in the [native proof ledger](native-proof.md#pre-runtime-signing-candidate-framework-admission-and-runtime-coverage).
+
+An independent admission experiment now reproduces pre-existing private-file and
+package-write aliases despite the path-only policy. A known-file stat guard and
+distinct-inode copies demonstrate targeted refusal and successful clean startup;
+complete owner inventory, copying/race bounds and host integration are not yet
+proven. See [the admission experiment](../../../scripts/probes/plugin-admission/README.md).
+Those requirements cannot be replaced with an exec-policy pass or a universal
+launch refusal.
+
+## Historical availability-reduction proposal (not selected)
 
 | Platform | Runtime | Proposal |
 |---|---|---|
@@ -87,11 +107,17 @@ protected-root composition, private startup configuration, packaged helper
 lifecycle and actual App/server acceptance remain implementation requirements;
 the prototype table alone is not production support.
 
-## Decision requested
+## Retained scope and integration gate
 
-Approve this explicit availability matrix as the support contract for production
-integration, or retain the requirement to find a general no-shell mechanism for
-arbitrary macOS native executables before integration. Approval of availability
-must not be recorded as completion of enforcement, protocol features or either
-later workstream. No source capability promise changes until the implementation,
-regressions and public documentation agree with the approved decision.
+The goal retains strict native filesystem/process capabilities, including arbitrary
+macOS native executables with shell=false. No approval to reduce that scope has
+been recorded. The historical table is not a production availability contract.
+
+Keep the approved native proof/design gate before protocol integration. Before
+claiming production support, establish immutable helper/package ownership, reviewed
+runtime resolution, private aliases/protected-root composition, network/secret
+intersections and real App/server acceptance. If required support
+cannot satisfy the original contract, present that evidence and a concrete revised
+support decision for explicit review. Experimental positives or targeted unsafe-image
+refusals do not close the goal, the remaining host protocol work, Daily coding or
+the binary editor.

@@ -1,0 +1,52 @@
+name: Plugin image admission proof
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - scripts/probes/plugin-admission/**
+      - scripts/probes/plugin-confinement/macos_exec.c
+      - .github/workflows/plugin-admission-proof.yml
+  push:
+    branches: [main]
+    paths:
+      - scripts/probes/plugin-admission/**
+      - scripts/probes/plugin-confinement/macos_exec.c
+      - .github/workflows/plugin-admission-proof.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plugin-admission-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  aliases:
+    name: Pre-existing alias admission (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify counterexamples, targeted refusal and copied-image startup
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --experimental-strip-types scripts/probes/plugin-admission/run.mts --report "$RUNNER_TEMP/proof.json" > "$RUNNER_TEMP/proof.log" 2>&1
+      - name: Retain exact-source admission evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-admission-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/proof.json
+            ${{ runner.temp }}/proof.log
+          if-no-files-found: error
+          retention-days: 14

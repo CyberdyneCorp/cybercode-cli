@@ -568,3 +568,49 @@ wrapper resolution avoids a reusable exec exception, and the entropy rule is
 limited to one public device. No new production API or architecture boundary is
 introduced. Missing current-source Bun/Deno, Intel and production admission
 coverage remains explicit rather than counting other mechanisms as acceptance.
+
+
+## Pre-existing aliases require a separate admission boundary
+
+The earlier hard-link assertions attempt link creation after confinement starts.
+The new [admission experiment](../../../scripts/probes/plugin-admission/README.md)
+tests aliases that already exist. On local Darwin 25.6.0 arm64, a native target
+starts successfully under the signing-identity process policy, reads the dummy
+private file through an existing package hard link, and modifies the original
+read-only package data through an existing scratch hard link. Direct private-path
+denials and post-start link-creation failures therefore do not establish private
+object or immutable-image admission.
+
+The [source-bound local report](../../../scripts/probes/plugin-admission/evidence/local-arm64/admission.json)
+binds SHA-256 `a64f380cb5b428a4551abe44378a33233202463aa95007becea646755826af87`.
+Its unrestricted and confined counterexamples both require positive target startup
+and the observed alias read/write. A prototype guard uses stat only for known
+private files and staged images, refuses link counts other than one, and requires
+an independent target-start receipt to remain absent on refusal. It deliberately
+does not open/close private regular files in the owner process, preserving the
+SQLite-lock constraint demonstrated in the producer work.
+
+The driver then copies package data and the compiled native executable onto
+distinct inodes, verifies unchanged executable bytes and its all-architecture
+signature, and modifies the original input through its existing alias. The staged
+copies remain unchanged. A writable hard link to the staged executable must refuse
+startup too. Removing unsafe aliases allows normal copied-image startup, after
+which direct private reads and staged-package writes fail. This supplies successful
+admission and targeted refusal controls rather than treating all refusal as support.
+
+This known-file guard is not a race-proof production package builder or complete
+private-root inventory. Directory aliases, concurrent replacement, bounded copying,
+protected-root composition, generation ownership, helper distribution, Linux/Windows
+and real owner/SQLite acceptance remain required. Task 2.1 and production integration
+stay open. A separate two-platform workflow covers this admission experiment;
+it leaves the running `574714f8` runtime matrices intact when only these files change.
+
+
+This increment passes the actual local native experiment, TypeScript syntax,
+YAML/bash validation, independent source-digest binding, diff checks, strict
+OpenSpec (106 items) and spec lint (0 errors, 25 warnings). The scoped code-review
+pass covers the driver, native fixture, workflow, evidence and docs. It verifies
+positive execution controls, dummy-only data, separate private/staged refusal
+receipts and preserved-image checks; the documented production admission gaps
+remain findings to resolve before claiming enforcement. No production API or
+launcher behavior changes in this increment.
