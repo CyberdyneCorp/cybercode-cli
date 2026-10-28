@@ -323,3 +323,33 @@ experiment; no failure in the older experiment is removed or counted as passing.
 These probes do not establish production immutable package admission, distribution,
 all kernel signature-mutation interfaces, owner integration, or Windows support.
 No production confinement or runtime availability changes are made.
+
+
+### Policy before interpreter startup
+
+`--macos-signing-runtime` applies the same candidate to Node, Python, Bun, Deno,
+or the native fixture. It cannot be combined with staging or Linux initial-exec
+mode. For example:
+
+```sh
+node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime node --macos-signing-runtime --report /tmp/node-pre-runtime.json
+node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime python --python /absolute/trusted/python3 --macos-signing-runtime --report /tmp/python-pre-runtime.json
+```
+
+The native launcher installs policy before entering the runtime. The JS test
+bootstrap loads the adversarial native addon after that boundary and does not
+reapply policy. Direct Python mode requires no embedding library or headers.
+Framework Python discovery uses the actual loaded image from dyld; a command-line
+shim that spawns another interpreter must not receive a reusable exec exception.
+The driver admits the actual stdlib and exact framework image rather than a stale
+build-machine LIBDIR. Older framework Python also needs an exact read grant for
+`/dev/urandom`; no general device read grant or predictable seed is substituted.
+Embedded/default Python modes retain their embedding prerequisites.
+
+Local reports in `evidence/pre-runtime-signing-local/` cover all nine cases for
+native, Node 22.18.0, standalone Python 3.12.12 and framework Python 3.9.6. Bun and
+Deno are not installed locally; their new pre-runtime candidate jobs and Intel
+results remain required. CI separately checks both configured and OS-provided
+Python, including direct framework-image resolution. The existing runtime
+bootstrap matrices continue to run independently. All production identity,
+package, lifecycle and support-review gates above remain open.

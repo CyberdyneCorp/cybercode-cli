@@ -495,3 +495,76 @@ API or architecture boundary. Commands use argument arrays, a sanitized environm
 bounded dummy data and a private temporary directory; reports bind exact sources.
 The collision/admission and cross-platform coverage gaps above remain explicit;
 local passes do not supply the pending macOS 15 or production acceptance.
+
+
+## Pre-runtime signing candidate: framework admission and runtime coverage
+
+At `bcad75b3`, the new macOS 15 arm64 candidate job
+[123003230017](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40741282794/job/123003230017)
+passed on Darwin 24.6.0. The corresponding Intel job
+[123003230011](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40741282794/job/123003230011)
+also passed on Darwin 24.6.0. The retained arm64
+[native matrix](../../../scripts/probes/plugin-confinement/evidence/bcad75b3/macos-arm64-native.json)
+and [exec controls](../../../scripts/probes/plugin-confinement/evidence/bcad75b3/macos-arm64-exec.json),
+plus Intel [matrix](../../../scripts/probes/plugin-confinement/evidence/bcad75b3/macos-x64-native.json)
+and [exec controls](../../../scripts/probes/plugin-confinement/evidence/bcad75b3/macos-x64-exec.json),
+were independently rebound to the sources at that exact commit, rather than to
+subsequently edited working files. All nine native rows pass; original Bash
+starts normally then denies self-exec; the matching-identifier bypass and
+read-only detached-signature attempt retain their stated results. The older
+staged-system arm64 gap job still fails separately. Both candidate reports prove
+initial admission and denied self-exec for their original system image; neither
+relabels the failed staged-image experiment as passing.
+
+The next increment extends this mechanism to interpreter startup: policy is
+installed by the trusted native launcher before the first runtime instruction.
+The JS harness still loads a native adversarial addon, but does not install this
+candidate's policy. Python executes directly instead of linking an embedding
+bootstrap. Its isolated metadata query resolves the actual dyld image: the local
+Apple framework command-line entry is a trampoline that spawns a second image.
+Allowing that second exec through the payload would violate shell=false, so the
+candidate starts the actual interpreter image directly.
+
+Initial framework discovery failed the old embedding-library prerequisite. After
+removing that unnecessary prerequisite for direct mode, positive admission exposed
+both a missing exact framework read and the trampoline's second exec. Resolving
+the actual image then exposed Python's hash-randomization entropy read. The
+correction admits the actual stdlib and exact framework library, plus read-only
+`/dev/urandom` for Python. CPython's
+[bootstrap entropy implementation](https://github.com/python/cpython/blob/v3.9.6/Python/bootstrap_hash.c)
+includes this device fallback. It does not require arbitrary home/project reads,
+reusable exec permission, a broad device grant or disabling randomization.
+
+Fresh local Darwin 25.6.0 arm64 matrices bind source SHA-256
+`49f0279a6f0c217b1724edf8a98a40a2a12b78ac2be65ec19593b69f200a558a`:
+
+- [Native, compatibility flag](../../../scripts/probes/plugin-confinement/evidence/pre-runtime-signing-local/macos-arm64-native.json): 9 rows, none unsupported.
+- [Node 22.18.0](../../../scripts/probes/plugin-confinement/evidence/pre-runtime-signing-local/macos-arm64-node.json): 9 rows, none unsupported.
+- [Standalone Python 3.12.12](../../../scripts/probes/plugin-confinement/evidence/pre-runtime-signing-local/macos-arm64-python-3.12.json): 9 rows, none unsupported.
+- [Framework Python 3.9.6](../../../scripts/probes/plugin-confinement/evidence/pre-runtime-signing-local/macos-arm64-python-system.json): 9 rows, none unsupported.
+
+Two independent temporary source-copy controls retain the real framework matrix:
+leaving sys.executable instead of the dyld image fails at the framework
+posix_spawn diagnostic; removing only the entropy-device rule fails at
+_Py_HashRandomization_Init. Both execute, return failure at those named runtime
+diagnostics, and do not alter repository source. All four positive reports above
+were generated from current source and independently rebound to its digest.
+
+New native macOS arm64/Intel jobs require all nine rows for each of Node, Python
+3.13, system Python, Bun 1.4.4 and Deno 2.9.8. Bun/Deno executables are not present
+locally, and the new jobs have not run yet. Existing bootstrap matrices and staged
+counterexamples remain separate. This may simplify a future production launcher;
+it does not prove immutable all-slice target/helper admission, deployable helper
+ownership, every kernel mutation interface or production owner/plugin behavior.
+The explicit proof/design-review gate and task 2.1 remain open.
+
+
+Increment verification passed TypeScript syntax, YAML parsing, all five workflow
+shell snippets, source-digest checks, diff checks, strict OpenSpec (106 items),
+and spec lint (0 errors, 25 warnings). The scoped code-review pass covered the
+changed driver, workflow, reports and docs: native policy is installed before
+interpreter entry, direct mode does not silently use the embedded installer,
+wrapper resolution avoids a reusable exec exception, and the entropy rule is
+limited to one public device. No new production API or architecture boundary is
+introduced. Missing current-source Bun/Deno, Intel and production admission
+coverage remains explicit rather than counting other mechanisms as acceptance.
