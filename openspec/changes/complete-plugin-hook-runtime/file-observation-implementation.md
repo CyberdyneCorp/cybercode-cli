@@ -332,3 +332,12 @@ covered by the existing exclusion adapter. The App forwarding regression places
 all five storage roots beneath its Location and checks that their marker metadata
 enters neither the baseline nor deltas, while public observation and held-input
 renewal still proceed. This application privacy/wiring regression awaits CI.
+
+
+At `351b6c57`, all three focused platforms passed the new hard-link regressions
+and six of seven HTTP application scenarios. The held-callback test settled its
+first shutdown but timed out reopening: it used an empty `wake`, whose eligibility
+check correctly starts no pass or Location services without work. The test now
+uses explicit Session resume with a scripted response, preserving the absence
+of a new admitted user prompt while exercising the real service-reopen path.
+That corrected restart/no-replay scenario must rerun; it is not counted passed.

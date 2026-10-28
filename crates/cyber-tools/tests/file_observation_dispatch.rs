@@ -554,7 +554,7 @@ async fn hard_link_scope_allows_owned_aliases_and_suppresses_private_state_alias
 
 #[tokio::test]
 async fn shutdown_settles_a_held_observer_callback_and_restart_does_not_replay_it() {
-    let mut flow = support::flow::Flow::new(vec![], false);
+    let mut flow = support::flow::Flow::new(vec![support::flow::text("Session reopened")], false);
     let gate = Arc::new(tokio::sync::Notify::new());
     let recorder = Recorder::with_gate(Some(Arc::clone(&gate))).await;
     automatic_hooks(&flow, &recorder);
@@ -587,7 +587,7 @@ async fn shutdown_settles_a_held_observer_callback_and_restart_does_not_replay_i
     gate.notify_waiters();
     flow.restart_default_runtime().await;
     automatic_hooks(&flow, &recorder);
-    flow.runtime.wake(&session).await.unwrap();
+    flow.runtime.resume(&session).await.unwrap();
     flow.runtime.wait_idle(&session).await;
     await_condition("restarted watcher generation", || {
         journal_count(&flow, records::CHECKPOINT) == 2
