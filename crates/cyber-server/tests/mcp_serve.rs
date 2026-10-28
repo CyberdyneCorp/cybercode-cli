@@ -1294,6 +1294,11 @@ async fn a_prompt_runs_to_completion_with_progress_and_replays_by_key() {
     let replay = tool_output(&server.prompt(&mcp, no_wait).await);
     assert_eq!(replay["replayed"], true, "{replay}");
     assert_eq!(replay["message_id"], json!(message));
+    assert_eq!(
+        replay["status"], "completed",
+        "a replay observes the existing run"
+    );
+    assert_eq!(replay["done"], true);
     // The key is shared by every connection.
     let (other, _) = server.initialize("2025-06-18").await;
     let replay = tool_output(&server.prompt(&other, arguments.clone()).await);
@@ -1446,6 +1451,9 @@ async fn waits_return_receipts_poll_and_reattach() {
         receipt["status"].as_str(),
         Some("queued" | "running")
     ));
+    assert_eq!(receipt["turns"], 0, "no-wait returns admission facts");
+    assert!(receipt.get("final_text").is_none(), "{receipt}");
+    assert!(receipt.get("finished_at").is_none(), "{receipt}");
     let done = tool_output(
         &server
             .wait(
@@ -1456,6 +1464,7 @@ async fn waits_return_receipts_poll_and_reattach() {
     );
     assert_eq!(done["status"], "completed", "{done}");
     assert_eq!(done["final_text"], "second answer");
+    assert_eq!(done["admitted_at"], receipt["admitted_at"]);
 }
 
 #[tokio::test]

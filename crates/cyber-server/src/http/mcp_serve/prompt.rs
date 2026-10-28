@@ -68,6 +68,9 @@ struct Admitted {
     session_id: String,
     message_id: String,
     replayed: bool,
+    /// Fresh admission acknowledgement. A no-wait call must not turn into a
+    /// result lookup after a fast Drain has already completed.
+    acknowledgement: Option<Value>,
     /// The Session's pending requests before this call admitted the prompt; a replay
     /// waits from now.
     before: Option<HashSet<String>>,
@@ -82,6 +85,7 @@ impl Admitted {
             session_id: text("session_id"),
             message_id: text("message_id"),
             replayed,
+            acknowledgement: None,
             before: None,
             depth: 0,
         }
@@ -160,6 +164,7 @@ async fn replayed(
         session_id,
         message_id,
         replayed: true,
+        acknowledgement: None,
         before: None,
         depth: 0,
     }))
@@ -190,7 +195,10 @@ async fn respond(
             )
             .await?
         }
-        None => result(&observe(connection, session_id, message_id).await?),
+        None => match &admitted.acknowledgement {
+            Some(value) => value.clone(),
+            None => result(&observe(connection, session_id, message_id).await?),
+        },
     };
     if admitted.replayed {
         value["replayed"] = json!(true);
@@ -393,6 +401,17 @@ impl Admission {
         }
         runtime.raise_mcp_depth(&session_id, self.depth);
         let mut admitted = Admitted::from_receipt(&receipt["data"].take(), false);
+        // These facts describe the acknowledged admission, before its Drain.
+        // Replays do not manufacture another acknowledgement: they observe the
+        // existing run through the ordinary receipt/status path instead.
+        admitted.acknowledgement = Some(json!({
+            "session_id": admitted.session_id,
+            "message_id": admitted.message_id,
+            "status": "queued",
+            "done": false,
+            "admitted_at": input.admitted_ms,
+            "turns": 0,
+        }));
         admitted.before = Some(before);
         admitted.depth = self.depth;
         Ok(admitted)

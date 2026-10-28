@@ -9,6 +9,8 @@ on:
       - crates/cyber-server/src/runtime/file_observations.rs
       - crates/cyber-server/src/runtime/events.rs
       - crates/cyber-server/src/runtime/mod.rs
+      - crates/cyber-server/src/http/mcp_serve/prompt.rs
+      - crates/cyber-server/tests/mcp_serve.rs
       - crates/cyber-server/tests/file_observations.rs
       - crates/cyber-tools/src/file_changes/**
       - crates/cyber-tools/tests/file_observation_dispatch.rs
@@ -153,3 +155,5 @@ jobs:
           retention-days: 14
       - name: Verify application host forwards observation notifications
         run: cargo test --locked -p cyber-app --lib host::tests::app_host_forwards_
+      - name: Preserve MCP admission and wait semantics with observation enabled
+        run: cargo test --locked -p cyber-server --test mcp_serve

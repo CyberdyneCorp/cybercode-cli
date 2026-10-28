@@ -98,3 +98,41 @@ Database-path lookup errors now withhold observation rather than omit protection
 A private root itself cannot become an observation Location. The regression tests
 above cover the scanner/retention changes; real owner/platform verification and
 final combined-feature review remain pending.
+
+
+## Broad acceptance: MCP no-wait admission and browser diagnostics
+
+All seven focused jobs passed at `22365228`, including 19 real HTTP dispatch
+tests on Linux/macOS, 18 on Windows, two AppHost tests per platform, and the
+Linux path-only missing-fix control. Builds, SDK and lint checks also passed.
+Broad Rust acceptance remained incomplete: Linux passed 5,107 of 5,108 tests and
+macOS passed 5,104 of 5,105, both failing the same MCP no-wait receipt case twice.
+The test received a completed `second answer` where the existing contract requires
+the fresh admission acknowledgement. These are observed results, not an
+assignment of failure origin.
+
+A fresh MCP admission now carries its queued acknowledgement with the original
+MCP admission timestamp and zero turns. `wait: false` returns that snapshot instead
+of querying a model run that may already have finished. Waiting and replayed
+calls retain their ordinary durable status lookup. The regression checks no
+terminal fields in the initial receipt, stable admission time on the later wait,
+and completed status on an exact replay. The focused workflow now runs the actual
+MCP protocol suite on all three platforms. No transport or output schema changes
+are introduced. Full Rust/MCP validation of this correction awaits CI.
+
+The browser suite passed 29 of 30 tests at `22365228`: the native integration
+crash-recovery test timed out while waiting for exactly one durable check intent.
+The same suite subsequently passed on main at `8093aaf6`; this does not establish
+the candidate timeout's cause. The candidate's macOS release artifact from that
+CI run (embedded build stamp `6b09e23`) also passed the same API-only crash/restart
+sequence locally with one check intent and no model calls. The browser assertion
+remains unchanged. On a recurrence, diagnostics now record the evidence count,
+batch/report status and bounded check outcome/limitation instead of only a generic
+timeout. It is not counted as fixed solely because another host passed.
+
+The branch is reconciled with merged PRs #56, #58 and #60, preserving both Setup
+and observation scenarios under their proper requirements. Local E2E typecheck,
+syntax, workflow YAML, Rust formatting, PR diff checks and strict OpenSpec
+validation passed for the new increment. Full local Rust compilation is still
+not performed due to available disk; production protocol and broader acceptance
+remain required before this draft is ready.
