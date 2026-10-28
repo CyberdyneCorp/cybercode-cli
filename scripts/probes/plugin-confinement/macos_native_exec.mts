@@ -1,4 +1,4 @@
-/** Evidence for two insufficient pre-exec Seatbelt strategies, not production
+/** Evidence for insufficient pre-exec Seatbelt strategies, not production
  * support and not a proof that no other mechanism can work. */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -45,13 +45,30 @@ try {
   assert.equal(denied.stdout, "");
   const literal = JSON.parse(success(launcher, [literalProfile, fixture]));
   assert.deepEqual(literal, { initial_exec: true, self_exec: true });
+  // Unlike a broad literal exception, the platform-subject predicate permits
+  // sandbox-exec's initial launch and denies this custom fixture's self-exec.
+  // It is nevertheless not a general native boundary: a platform executable
+  // keeps the subject predicate after its own initial launch and can self-exec.
+  // Use the canonical private fixture path; /var and /private/var aliases can
+  // otherwise turn a literal-path mismatch into a misleading initial refusal.
+  const platformProfile = (executable: string) => base +
+    `(allow process-exec (require-all (process-attribute is-platform-binary) (literal ${JSON.stringify(executable)})))`;
+  const platformNative = JSON.parse(success("/usr/bin/sandbox-exec", ["-p", platformProfile(fixture), fixture]));
+  assert.deepEqual(platformNative, { initial_exec: true, self_exec: false });
+  const platformExecutable = "/bin/bash";
+  const platformSelfExec = success("/usr/bin/sandbox-exec", ["-p", platformProfile(platformExecutable),
+    platformExecutable, "-c", "exec /bin/bash -c 'printf platform-self-exec'"]);
+  assert.equal(platformSelfExec, "platform-self-exec", "platform payload must demonstrate the retained exec exception");
   const sources = ["macos_native_exec.mts", "macos_exec.c", "fixture_exec.c"];
   const digest = createHash("sha256");
   for (const file of sources) digest.update(file + "\0").update(readFileSync(join(source, file)));
   const report = { recorded_at: new Date().toISOString(), platform: process.platform, architecture: process.arch, kernel_release: release(),
     sources, source_sha256: digest.digest("hex"), control,
     no_exec_policy: { initial_exec: false, exit_status: denied.status }, literal_exception: literal,
-    conclusion: "Both tested pre-exec strategies fail the independent initial/later-exec contract; other native mechanisms remain unproved. Broad reads here are not an fs.read policy." };
+    platform_attribute: { custom_native: platformNative,
+      platform_executable: platformExecutable, platform_self_exec: true,
+      limitation: "The platform-subject exception is not one-shot for a platform executable; an independently enforced target-admission contract remains unproved." },
+    conclusion: "No tested strategy proves the general independent initial/later-exec contract. The platform predicate distinguishes the custom fixture but retains exec rights for platform payloads; other mechanisms or independently proved target admission remain unproved. Broad reads here are not an fs.read policy." };
   if (values.report) writeFileSync(values.report, JSON.stringify(report, null, 2) + "\n", { mode: 0o600 });
   console.log(JSON.stringify(report, null, 2));
 } finally { rmSync(root, { recursive: true, force: true }); }

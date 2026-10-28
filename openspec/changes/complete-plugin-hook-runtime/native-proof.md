@@ -255,3 +255,26 @@ comparison. The macOS jobs on this source revision remain pending. These results
 resolve the earlier experimental Bun/Linux startup failure; they do not prove
 production confinement, network/secret intersections, immutable package
 admission or the proposed macOS native no-shell availability revision.
+
+## macOS platform-subject exec predicate experiment
+
+The [local arm64 report](../../../scripts/probes/plugin-confinement/evidence/platform-attribute-local/macos-arm64-native-exec-gap.json)
+binds source digest `37b114b07de092ebe63ae6c5137ad620df3f902c660dcff3c4145c70d57e384e`.
+The extended `macos_native_exec.mts` retains both existing negative strategies
+and adds a platform-subject filter intersected with an exact canonical path:
+
+- The system sandbox launcher starts the custom fixture; the fixture cannot
+  re-exec itself under that policy.
+- A platform executable (`/bin/bash`) starts and re-execs itself successfully
+  under the equivalent path-specific policy. Thus the subject exception is
+  not intrinsically one-shot for an arbitrary payload.
+
+The first result is a positive distinction, not a complete mechanism. No
+production target-admission or immutable-staging rule has yet been proved to
+exclude that exception from untrusted execution. Broad reads deliberately
+isolate the exec experiment and are not filesystem-capability evidence. A
+separate copied-system-binary experiment was killed by the local OS; that
+termination is not a reliable admission boundary and is not counted as proof.
+The existing native-gap CI jobs now require both new assertions on macOS arm64
+and Intel. Their results for this extension are pending. The support revision
+remains proposed; no production integration or task completion is implied.

@@ -210,9 +210,14 @@ parent, must not turn a capability-denial test into broad temporary-file access.
 node --experimental-strip-types scripts/probes/plugin-confinement/macos_native_exec.mts --report /tmp/macos-native-gap.json
 ```
 
-This experiment isolates two insufficient strategies: a pre-exec no-exec policy
+This experiment isolates insufficient strategies: a pre-exec no-exec policy
 refuses the initial executable, and an exact-file exec exception permits that
-file to re-exec itself. It deliberately grants broad reads to isolate the exec
+file to re-exec itself. A platform-subject predicate plus canonical literal path
+lets the system sandbox launcher start the custom fixture while denying that
+fixture's later self-exec. However, using a platform executable (`/bin/bash`)
+as the payload retains the exception and permits its self-exec. Therefore the
+predicate alone is not a general native boundary; independently enforced target
+admission would need its own proof before this can be a candidate. It deliberately grants broad reads to isolate the exec
 question; it is not a candidate fs.read policy and touches no real private data.
 A successful run means the assertions about these gaps passed, not that no-shell
 native executables are supported. It does not prove all possible mechanisms

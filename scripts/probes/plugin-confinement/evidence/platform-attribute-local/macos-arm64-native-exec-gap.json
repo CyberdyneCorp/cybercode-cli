@@ -1,0 +1,34 @@
+{
+  "recorded_at": "2026-10-28T05:01:34.640Z",
+  "platform": "darwin",
+  "architecture": "arm64",
+  "kernel_release": "25.6.0",
+  "sources": [
+    "macos_native_exec.mts",
+    "macos_exec.c",
+    "fixture_exec.c"
+  ],
+  "source_sha256": "37b114b07de092ebe63ae6c5137ad620df3f902c660dcff3c4145c70d57e384e",
+  "control": {
+    "initial_exec": true,
+    "self_exec": true
+  },
+  "no_exec_policy": {
+    "initial_exec": false,
+    "exit_status": 13
+  },
+  "literal_exception": {
+    "initial_exec": true,
+    "self_exec": true
+  },
+  "platform_attribute": {
+    "custom_native": {
+      "initial_exec": true,
+      "self_exec": false
+    },
+    "platform_executable": "/bin/bash",
+    "platform_self_exec": true,
+    "limitation": "The platform-subject exception is not one-shot for a platform executable; an independently enforced target-admission contract remains unproved."
+  },
+  "conclusion": "No tested strategy proves the general independent initial/later-exec contract. The platform predicate distinguishes the custom fixture but retains exec rights for platform payloads; other mechanisms or independently proved target admission remain unproved. Broad reads here are not an fs.read policy."
+}

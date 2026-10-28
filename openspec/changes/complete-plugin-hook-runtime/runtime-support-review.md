@@ -30,6 +30,16 @@ tool controls and protected proc-alias tests; exact-source reports are in the
 proof ledger. Production integration acceptance remains required. This evidence
 does not resolve the macOS native/no-shell support decision.
 
+A later local arm64 experiment also tested a dynamic platform-subject predicate
+with a canonical literal path. It permits the trusted system sandbox launcher
+to start the custom native fixture and denies that fixture's self-exec, but a
+platform payload (`/bin/bash`) retains the exception and self-execs successfully.
+The predicate alone does not prove the general contract. Target admission and
+immutable staging would need independent enforcement/proof before integrating
+such a mechanism. See the source-bound report in the proof ledger; Intel/native
+CI for this extension is pending. This evidence changes neither availability
+nor the pending decision.
+
 ## Proposed production availability
 
 | Platform | Runtime | Proposal |
