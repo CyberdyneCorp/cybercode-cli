@@ -198,7 +198,6 @@ mod tests {
         Dir::open_ambient_dir(path, cap_std::ambient_authority()).unwrap()
     }
 
-    #[cfg(unix)]
     #[test]
     fn directories_moved_out_during_full_or_limited_traversal_publish_no_new_metadata() {
         for entries in [100, 2] {
@@ -251,7 +250,6 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     #[test]
     fn moved_directory_links_do_not_count_as_scoped_aliases_of_remaining_files() {
         let inside = tempfile::tempdir().unwrap();

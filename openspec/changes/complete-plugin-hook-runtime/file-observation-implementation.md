@@ -292,8 +292,9 @@ than inventing deletions. Cancellation discards the candidate scan.
 
 A second regression verifies that a moved directory's files cannot count as
 permitted hard-link aliases of files remaining inside the Location. Scope
-filtering precedes link-proof finalization. Both regressions are Unix-only;
-Windows execution remains dependent on the platform suite's existing fixtures.
+filtering precedes link-proof finalization. Both regressions use portable
+filesystem operations and are configured for Linux/macOS/Windows CI; only their
+local macOS execution is verified so far.
 The actual-source macOS harness now passes 54 tests and Clippy with threshold 15
 and warnings denied, excluding the complete owner, runtime and application.
 
