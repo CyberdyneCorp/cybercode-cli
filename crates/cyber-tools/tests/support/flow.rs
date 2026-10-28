@@ -66,12 +66,18 @@ impl ModelResolver for Models {
             model: model.into(),
             context_limit: 200_000,
             cost: None,
-            prefers_apply_patch: model == "patch",
             family: cyber_core::prompts::ModelFamily::Default,
             // Scripted stand-ins take images, so delegated screenshots reach them.
             vision: true,
             pdf: false,
-            profile: Default::default(),
+            profile: cyber_llm::catalog::ModelProfile {
+                edit_tool: if model == "patch" {
+                    cyber_llm::catalog::EditTool::JsonPatch
+                } else {
+                    cyber_llm::catalog::EditTool::Edit
+                },
+                ..Default::default()
+            },
         })
     }
 

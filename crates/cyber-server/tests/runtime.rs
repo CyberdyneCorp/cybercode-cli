@@ -818,13 +818,16 @@ fn interleaved_reasoning() -> Vec<cyber_llm::adapters::ScriptStep> {
     };
     vec![
         ScriptStep::Event(LlmEvent::ReasoningDelta { text: "A".into() }),
-        ScriptStep::Event(LlmEvent::ReasoningSignature {
-            signature: "sigA".into(),
+        ScriptStep::Event(LlmEvent::ReasoningItem {
+            text: String::new(),
+            opaque: Some(cyber_llm::Opaque::new(
+                cyber_llm::OpaqueKind::Signature,
+                "sigA",
+            )),
         }),
         call("c1", Some(signature("ts1"))),
         ScriptStep::Event(LlmEvent::ReasoningDelta { text: "B".into() }),
         ScriptStep::Event(LlmEvent::ReasoningItem {
-            index: 1,
             text: String::new(),
             opaque: Some(signature("sigB")),
         }),
@@ -947,7 +950,6 @@ async fn opaque_state_over_one_mebibyte_is_dropped_and_the_item_kept_as_text() {
     let mut steps = vec![
         ScriptStep::Event(LlmEvent::ReasoningDelta { text: "big".into() }),
         ScriptStep::Event(LlmEvent::ReasoningItem {
-            index: 0,
             text: String::new(),
             opaque: Some(cyber_llm::Opaque::new(
                 cyber_llm::OpaqueKind::EncryptedReasoning,
@@ -956,7 +958,6 @@ async fn opaque_state_over_one_mebibyte_is_dropped_and_the_item_kept_as_text() {
         }),
         // A second oversized value in the same step logs no second warning.
         ScriptStep::Event(LlmEvent::ReasoningItem {
-            index: 1,
             text: "bigger".into(),
             opaque: Some(cyber_llm::Opaque::new(
                 cyber_llm::OpaqueKind::EncryptedReasoning,
@@ -2547,7 +2548,6 @@ fn reasoned_calls(
     })];
     if opaque.is_some() {
         steps.push(ScriptStep::Event(LlmEvent::ReasoningItem {
-            index: 0,
             text: String::new(),
             opaque,
         }));
@@ -2659,15 +2659,18 @@ async fn a_provider_switch_drops_redacted_reasoning_and_lowers_the_rest() {
     use cyber_llm::{LlmEvent, OpaqueKind};
     let mut steps = vec![
         ScriptStep::Event(LlmEvent::ReasoningItem {
-            index: 0,
             text: String::new(),
             opaque: Some(cyber_llm::Opaque::new(OpaqueKind::Redacted, "blob")),
         }),
         ScriptStep::Event(LlmEvent::ReasoningDelta {
             text: "visible".into(),
         }),
-        ScriptStep::Event(LlmEvent::ReasoningSignature {
-            signature: "sig".into(),
+        ScriptStep::Event(LlmEvent::ReasoningItem {
+            text: String::new(),
+            opaque: Some(cyber_llm::Opaque::new(
+                cyber_llm::OpaqueKind::Signature,
+                "sig",
+            )),
         }),
     ];
     steps.extend(text("answer"));
@@ -2704,13 +2707,14 @@ async fn a_provider_switch_drops_redacted_reasoning_and_lowers_the_rest() {
 }
 
 /// `session-runtime` → Reasoning replay policy, "Model switch inside a tool loop": the
-/// other model's reasoning is lowered to text, that one Anthropic request goes out with
-/// thinking off, and the next one has thinking on again.
+/// other model's reasoning is lowered to text, and the Anthropic requests of that loop
+/// go out with thinking off, since an answer to a thinking-off request carries no
+/// thinking block either; one `info` line says so, and the next prompt has thinking on
+/// again.
 #[tokio::test]
-async fn a_model_switch_inside_a_tool_loop_turns_thinking_off_for_one_request() {
+async fn a_model_switch_inside_a_tool_loop_turns_thinking_off_for_the_loop() {
     use cyber_llm::{OpaqueKind, Reasoning};
     let encrypted = cyber_llm::Opaque::new(OpaqueKind::EncryptedReasoning, "enc");
-    let signed = cyber_llm::Opaque::new(OpaqueKind::Signature, "sigC");
     let h = Harness::new(Setup {
         scripts: vec![
             (
@@ -2724,8 +2728,10 @@ async fn a_model_switch_inside_a_tool_loop_turns_thinking_off_for_one_request() 
             (
                 "anthropic/main",
                 vec![
-                    reasoned_calls("claude plan", Some(signed), &[("c2", "grep")]),
+                    // What Anthropic answers a request with thinking off: no thinking.
+                    tools(&[("c2", "grep", "{}")]),
                     text("done"),
+                    text("again"),
                 ],
             ),
         ],
@@ -2753,9 +2759,14 @@ async fn a_model_switch_inside_a_tool_loop_turns_thinking_off_for_one_request() 
     h.runtime.switch_model(&id, "anthropic/main").await.unwrap();
     h.tools.release.notify_one();
     h.settle(&id).await;
+    h.runtime
+        .admit(&id, admit("next", Delivery::Steer))
+        .await
+        .unwrap();
+    h.settle(&id).await;
 
     let requests = h.models.requests("anthropic/main");
-    assert_eq!(requests.len(), 2);
+    assert_eq!(requests.len(), 3);
     assert_eq!(requests[0].reasoning, Some(Reasoning::Off));
     assert_eq!(
         requests[0].messages[1].content[0],
@@ -2763,13 +2774,13 @@ async fn a_model_switch_inside_a_tool_loop_turns_thinking_off_for_one_request() 
             text: "gpt plan".into()
         }
     );
-    assert_eq!(requests[1].reasoning, Some(Reasoning::BudgetTokens(1024)));
-    assert!(has_reasoning(&requests[1].messages[3]));
+    assert_eq!(requests[1].reasoning, Some(Reasoning::Off), "same loop");
+    assert_eq!(requests[2].reasoning, Some(Reasoning::BudgetTokens(1024)));
     let guarded = infos
         .lock()
         .unwrap()
         .iter()
-        .filter(|msg| msg.contains("thinking off for one request"))
+        .filter(|msg| msg.contains("thinking off for the rest of this tool loop"))
         .count();
     assert_eq!(guarded, 1);
 }

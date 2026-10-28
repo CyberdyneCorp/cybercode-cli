@@ -736,6 +736,9 @@ pub(crate) struct Handle {
     pub attachment_cache: StdMutex<attachments::Cache>,
     /// The sticky-routing state of the Turns answering the latest prompt; in memory only.
     pub turn_state: cyber_llm::TurnState,
+    /// Whether the tool loop answering the latest prompt already logged that it runs
+    /// with Anthropic thinking off (`session-runtime` → Reasoning replay policy).
+    pub thinking_off_logged: std::sync::atomic::AtomicBool,
 }
 
 impl Handle {
@@ -2459,6 +2462,7 @@ impl Inner {
             compacting: std::sync::atomic::AtomicUsize::new(0),
             attachment_cache: StdMutex::default(),
             turn_state: cyber_llm::TurnState::default(),
+            thinking_off_logged: std::sync::atomic::AtomicBool::new(false),
         });
         let mut sessions = self.sessions.lock().unwrap_or_else(PoisonError::into_inner);
         Ok(Arc::clone(sessions.entry(id.into()).or_insert(handle)))

@@ -6,6 +6,7 @@
 
 use std::path::Path;
 
+use cyber_sandbox::{Policy, SandboxConfig};
 use serde_json::json;
 
 use super::ToolError;
@@ -35,13 +36,49 @@ pub(crate) fn shell_patch(script: &str) -> Option<ShellPatch<'_>> {
     (program == "apply_patch").then_some(ShellPatch { dir, patch })
 }
 
+/// Run `command` as `apply_patch` relative to `workdir` when it is an `apply_patch`
+/// heredoc and no `apply_patch` program is on the PATH the shell would get; `None` runs
+/// the script as written. A login shell (`sandbox.env.login_shell`, bash only) may
+/// extend PATH in its profile scripts, so its scripts always run as written.
+pub(crate) async fn intercept(
+    ctx: &Ctx<'_>,
+    command: &str,
+    workdir: &Path,
+    login_shell_applies: bool,
+) -> Option<Result<String, ToolError>> {
+    let found = shell_patch(command)?;
+    let sandbox = crate::sandboxing::effective(ctx);
+    if (login_shell_applies && sandbox.env.login_shell)
+        || program_installed(&shell_path(ctx, &sandbox))
+    {
+        return None;
+    }
+    Some(run(ctx, found, workdir).await)
+}
+
+/// The PATH a sandboxed shell starts with: `sandbox.env.set.PATH` under an enforcing
+/// policy, else the server's own.
+fn shell_path(ctx: &Ctx<'_>, sandbox: &SandboxConfig) -> String {
+    let set = (sandbox.policy != Policy::FullAccess)
+        .then(|| {
+            sandbox.env.set.iter().find(|(name, _)| {
+                if cfg!(windows) {
+                    name.eq_ignore_ascii_case("PATH")
+                } else {
+                    *name == "PATH"
+                }
+            })
+        })
+        .flatten();
+    match set {
+        Some((_, path)) => path.clone(),
+        None => ctx.host.opts.env.get("PATH").unwrap_or_default(),
+    }
+}
+
 /// Run `found` as `apply_patch` relative to `workdir` and its `cd`, noting the
 /// interception on the call's record.
-pub(crate) async fn run(
-    ctx: &Ctx<'_>,
-    found: ShellPatch<'_>,
-    workdir: &Path,
-) -> Result<String, ToolError> {
+async fn run(ctx: &Ctx<'_>, found: ShellPatch<'_>, workdir: &Path) -> Result<String, ToolError> {
     let base = match &found.dir {
         Some(dir) => workdir.join(dir),
         None => workdir.to_path_buf(),
@@ -85,19 +122,21 @@ fn executable(path: &Path) -> bool {
 }
 
 /// Split a heredoc into the command before its opener and its body. The closing line
-/// must be the last line. Shell heredocs (`<<EOF`, `<<'EOF'`, `<<-"EOF"`) and PowerShell
+/// must be the last line, unindented. Shell heredocs (`<<EOF`, `<<'EOF'`, `<<"EOF"`) and PowerShell
 /// here-strings (`@'` … `'@`) both qualify.
 fn heredoc(text: &str) -> Option<(&str, &str)> {
     let (first, rest) = text.split_once('\n')?;
     let (before, closer) = opener(first.trim_end())?;
     let (body, last) = rest.trim_end().rsplit_once('\n').unwrap_or(("", rest));
-    (last.trim() == closer).then_some((before, body.trim_end_matches('\r')))
+    (last == closer).then_some((before, body.trim_end_matches('\r')))
 }
 
 /// The command before a heredoc opener and the line that closes it.
 fn opener(line: &str) -> Option<(&str, String)> {
     if let Some(at) = line.find("<<") {
-        let word = unquote(line[at + 2..].trim_start_matches('-').trim())?;
+        // `<<-` strips leading tabs from the body, which the patch would then differ
+        // from; such a script runs as written.
+        let word = unquote(line[at + 2..].trim())?;
         let valid = !word.is_empty() && word.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
         return valid.then(|| (line[..at].trim_end(), word.to_owned()));
     }
@@ -163,6 +202,13 @@ mod tests {
             format!("cd $HOME && apply_patch <<'EOF'\n{PATCH}\nEOF"),
             format!("pushd src && apply_patch <<'EOF'\n{PATCH}\nEOF"),
             format!("apply_patch <<'EOF'\n{PATCH}\nEND"),
+            // `<<-` strips the tabs the patch lines carry; an indented closer does
+            // not close a plain heredoc.
+            format!(
+                "apply_patch <<-EOF\n\t{}\n\tEOF",
+                PATCH.replace('\n', "\n\t")
+            ),
+            format!("apply_patch <<'EOF'\n{PATCH}\n  EOF"),
             "apply_patch patch.diff".to_string(),
         ] {
             assert_eq!(shell_patch(&script), None, "{script}");

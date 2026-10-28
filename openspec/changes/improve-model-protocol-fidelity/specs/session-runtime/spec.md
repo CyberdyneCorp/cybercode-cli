@@ -31,7 +31,7 @@ Opaque data SHALL be stored exactly as received and never decoded. It SHALL be r
 
 An item SHALL be sent natively only when its recorded provider and model equal the Turn's provider and model. Otherwise its text SHALL be lowered to assistant text, and an item without text SHALL be dropped.
 
-When an Anthropic request with thinking enabled would continue a tool loop whose latest assistant message has no native reasoning item, the system SHALL send that one request with thinking off and log one `info` line naming the reason.
+When an Anthropic request with thinking enabled would continue a tool loop whose latest assistant message has no native reasoning item, the system SHALL send that request with thinking off. An answer to such a request has no thinking block, so the rest of that tool loop SHALL also go out with thinking off, and the system SHALL log one `info` line per tool loop naming the reason. The next user prompt SHALL have thinking on again.
 
 A compaction summary SHALL carry no opaque state. Items in the kept tail SHALL replay under the same policy.
 
@@ -45,4 +45,4 @@ A compaction summary SHALL carry no opaque state. Items in the kept tail SHALL r
 
 #### Scenario: Model switch inside a tool loop
 - **WHEN** a tool loop started on `openai/gpt-6-sol` continues on `anthropic/claude-opus-5-5` with thinking enabled
-- **THEN** the GPT reasoning is sent as assistant text, that one request is sent with thinking off, and later requests have thinking on again
+- **THEN** the GPT reasoning is sent as assistant text, the requests of that tool loop are sent with thinking off with one `info` line, and the next prompt's request has thinking on again

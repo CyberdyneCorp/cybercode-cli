@@ -372,7 +372,8 @@ impl Tool for ApplyPatch {
     }
 }
 
-/// Validate, approve as one `edit` and apply `patch`. Relative paths resolve against
+/// Validate, approve as one `apply_patch` edit (also when a shell call carried it) and
+/// apply `patch`. Relative paths resolve against
 /// `base` when given (a shell call's `cd <dir>`), else against the Location.
 pub(crate) async fn apply(
     ctx: &Ctx<'_>,
@@ -406,7 +407,7 @@ pub(crate) async fn apply(
         file_edit: true,
         ..Request::default()
     };
-    ctx.authorize(req, resources, json!({ "diff": diff }))
+    ctx.authorize_as("apply_patch", req, resources, json!({ "diff": diff }))
         .await?;
     write_all(ctx, &changes).await
 }

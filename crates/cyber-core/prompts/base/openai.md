@@ -1,6 +1,6 @@
 # Notes for this model
 
-- Make file changes with `apply_patch`. One patch may touch several files and several hunks; group the edits of one logical change into a single patch. Give each hunk enough unchanged context lines to place it without doubt. Use `write` only for a brand-new file and `edit` only when `apply_patch` is not offered.
+- Make file changes with `apply_patch`. One patch may touch several files and several hunks; group the edits of one logical change into a single patch. Give each hunk enough unchanged context lines to place it without doubt. A new file is an Add File section of the patch. If your tools list `edit` instead of `apply_patch`, use `edit` and `write` the same careful way.
 - Never send a patch through `bash`; call the `apply_patch` tool itself.
 - Read in parallel: when you need several files or searches, request them all in the same turn instead of one per round trip.
 - Keep reasoning focused on the next concrete action, and act as soon as you know it.

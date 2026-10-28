@@ -10,7 +10,6 @@ use crate::types::{FinishReason, LlmEvent, ToolCall, Usage};
 pub struct TurnOutput {
     pub text: String,
     pub reasoning: String,
-    pub reasoning_signature: Option<String>,
     pub tool_calls: Vec<ToolCall>,
     pub usage: Usage,
     pub finish: Option<FinishReason>,
@@ -28,7 +27,6 @@ pub async fn collect(
         match event {
             LlmEvent::TextDelta { text } => out.text.push_str(&text),
             LlmEvent::ReasoningDelta { text } => out.reasoning.push_str(&text),
-            LlmEvent::ReasoningSignature { signature } => out.reasoning_signature = Some(signature),
             // The streamed deltas already hold an item's text unless the adapter sent none.
             LlmEvent::ReasoningItem { text, .. } if out.reasoning.is_empty() => {
                 out.reasoning = text;

@@ -237,8 +237,9 @@ fn produced_by(a: &AssistantEntry, item: &ReasoningBlock, target: &Replay<'_>) -
 
 /// `session-runtime` → Reasoning replay policy: an Anthropic request with thinking on
 /// must continue a tool loop from a native thinking block. When the answer it continues
-/// has none (another model made it), thinking is off for this one request. Returns
-/// whether it turned thinking off. `carrier` is the profile's, which names the protocol
+/// has none (another model made it, or it answered a request sent with thinking off),
+/// thinking is off for this request, and so for the rest of the loop. Returns whether
+/// it turned thinking off. `carrier` is the profile's, which names the protocol
 /// even when nothing is replayed.
 pub fn thinking_guard(request: &mut LlmRequest, carrier: ReasoningCarrier) -> bool {
     let thinking = matches!(

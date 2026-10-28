@@ -2479,7 +2479,6 @@ impl cyber_server::runtime::ModelResolver for NativeSamplingModels {
             },
             context_limit: 200000,
             cost: None,
-            prefers_apply_patch: false,
             family: cyber_core::prompts::ModelFamily::Default,
             vision: false,
             pdf: false,

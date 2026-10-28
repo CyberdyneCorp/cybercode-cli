@@ -154,7 +154,7 @@ pub struct Variant {
     pub request: RequestOverlay,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct Model {
     pub id: String,
     pub provider_id: String,
@@ -184,7 +184,7 @@ pub struct Model {
     pub profile_config: ProfilePatch,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct Provider {
     pub id: String,
     pub name: String,

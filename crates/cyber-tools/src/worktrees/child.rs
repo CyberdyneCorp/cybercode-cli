@@ -118,6 +118,7 @@ impl BuiltinHost {
         let name = Name::parse(root.name).map_err(io::Error::other)?;
         request.source_directory = Some(source.directory.clone());
         let inv = Invocation {
+            tool_output: Default::default(),
             registration: None,
             session_id: source.id.clone(),
             directory: source.directory.clone(),

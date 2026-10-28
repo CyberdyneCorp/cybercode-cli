@@ -61,8 +61,12 @@ pub fn tools(calls: &[(&str, &str, &str)]) -> Vec<ScriptStep> {
 pub fn reasoning_then_text(r: &str, t: &str) -> Vec<ScriptStep> {
     let mut steps = vec![
         ScriptStep::Event(LlmEvent::ReasoningDelta { text: r.into() }),
-        ScriptStep::Event(LlmEvent::ReasoningSignature {
-            signature: "sig".into(),
+        ScriptStep::Event(LlmEvent::ReasoningItem {
+            text: String::new(),
+            opaque: Some(cyber_llm::Opaque::new(
+                cyber_llm::OpaqueKind::Signature,
+                "sig",
+            )),
         }),
     ];
     steps.extend(text(t));
@@ -141,7 +145,6 @@ impl ModelResolver for Models {
                 output: 2.0,
                 ..Cost::default()
             }),
-            prefers_apply_patch: false,
             family: cyber_core::prompts::ModelFamily::Default,
             vision: true,
             pdf: true,
@@ -151,6 +154,14 @@ impl ModelResolver for Models {
 
     fn role(&self, role: ModelRole) -> Option<String> {
         self.roles.get(role.key()).cloned()
+    }
+
+    /// No test model lists `xhigh`: a derived `xhigh` falls to `high`.
+    fn clamp_effort(&self, model_ref: &str) -> String {
+        match model_ref.strip_suffix("#xhigh") {
+            Some(base) => format!("{base}#high"),
+            None => model_ref.to_owned(),
+        }
     }
 }
 
@@ -186,8 +197,6 @@ pub struct Tools {
     pub hook_effects: Mutex<HashMap<String, HookEffects>>,
     /// Notes a call leaves on its settlement, by call id; taken once.
     pub call_metadata: Mutex<HashMap<String, serde_json::Value>>,
-    /// The output budgets the runtime announced, by Session.
-    pub output_profiles: Mutex<HashMap<String, cyber_llm::catalog::ToolOutput>>,
     /// A `UserPromptSubmit` hook denying every prompt with this reason.
     pub prompt_denial: Mutex<Option<String>>,
     /// A `UserPromptSubmit` hook that holds each prompt until notified.
@@ -246,7 +255,6 @@ impl Tools {
             reconcile: Mutex::new(Reconciliation::Unknown),
             hook_effects: Mutex::default(),
             call_metadata: Mutex::default(),
-            output_profiles: Mutex::default(),
             prompt_denial: Mutex::default(),
             prompt_hold: Mutex::default(),
             prompt_reached: tokio::sync::Semaphore::new(0),
@@ -531,13 +539,6 @@ impl ToolHost for Tools {
 
     fn take_call_metadata(&self, _session_id: &str, call_id: &str) -> Option<serde_json::Value> {
         self.call_metadata.lock().unwrap().remove(call_id)
-    }
-
-    fn set_output_profile(&self, session_id: &str, output: cyber_llm::catalog::ToolOutput) {
-        self.output_profiles
-            .lock()
-            .unwrap()
-            .insert(session_id.into(), output);
     }
 
     fn reconcile(&self, _directory: &str, _call: &CallState) -> BoxFuture<'_, Reconciliation> {

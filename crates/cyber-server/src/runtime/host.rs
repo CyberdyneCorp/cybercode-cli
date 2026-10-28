@@ -91,9 +91,6 @@ pub struct ResolvedModel {
     /// Context window in tokens; 0 when unknown.
     pub context_limit: u64,
     pub cost: Option<Cost>,
-    /// The model edits with `apply_patch` rather than `edit`/`write`: its profile's
-    /// `edit_tool` is a patch tool (`provider-catalog` → Model behavior profiles).
-    pub prefers_apply_patch: bool,
     /// Which base prompt the model gets (`system-context` → Provider base prompts).
     pub family: ModelFamily,
     /// The catalog's `capabilities.vision`: the model takes image input.
@@ -102,6 +99,14 @@ pub struct ResolvedModel {
     pub pdf: bool,
     /// The model's behavior profile (`provider-catalog` → Model behavior profiles).
     pub profile: cyber_llm::catalog::ModelProfile,
+}
+
+impl ResolvedModel {
+    /// The model edits with `apply_patch` rather than `edit`/`write`: its profile's
+    /// `edit_tool` is a patch tool (`provider-catalog` → Model behavior profiles).
+    pub fn prefers_apply_patch(&self) -> bool {
+        self.profile.edit_tool != cyber_llm::catalog::EditTool::Edit
+    }
 }
 
 /// Why a `file` prompt part was not read (`server-api` → Prompt attachment parts).
@@ -199,7 +204,6 @@ impl ModelResolver for CatalogResolver {
             model: r.model.clone(),
             context_limit: model.limits.context,
             cost: model.cost.clone(),
-            prefers_apply_patch: model.profile.edit_tool != cyber_llm::catalog::EditTool::Edit,
             family: cyber_llm::catalog::model_family(provider, model),
             vision: model.capabilities.vision,
             pdf: model.capabilities.pdf,
@@ -340,6 +344,8 @@ pub struct Invocation {
     pub asker: super::requests::Asker,
     /// The Session ruleset.
     pub rules: Value,
+    /// The Turn model's output budget (`tool-registry` → Profile output budgets).
+    pub tool_output: cyber_llm::catalog::ToolOutput,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1166,10 +1172,6 @@ pub trait ToolHost: Send + Sync {
         None
     }
 
-    /// The tool-output budget of the model a Session's next calls answer
-    /// (`tool-registry` → Profile output budgets). Hosts without a budget ignore it.
-    fn set_output_profile(&self, _session_id: &str, _output: cyber_llm::catalog::ToolOutput) {}
-
     /// Establish, without side effects, whether a dispatched call took effect.
     /// `directory` is the Session's Location, for resolving relative paths.
     fn reconcile(&self, _directory: &str, _call: &CallState) -> BoxFuture<'_, Reconciliation> {
@@ -1297,9 +1299,25 @@ mod tests {
             }},
         });
         let resolver = CatalogResolver::new(&json!({}), config, &HashMap::<String, String>::new());
+        let dir = tempfile::tempdir().unwrap();
+        cyber_core::log::init(dir.path(), cyber_core::log::Level::Info, false);
+        let clamps = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = Arc::clone(&clamps);
+        cyber_core::log::set_sink(Some(Arc::new(move |record| {
+            if record.component == "model-profile" && record.level == cyber_core::log::Level::Info {
+                seen.lock().unwrap().push(record.fields.clone());
+            }
+        })));
         assert_eq!(
             resolver.role(ModelRole::Small).as_deref(),
             Some("corp/coder#high")
+        );
+        cyber_core::log::set_sink(None);
+        let clamps = clamps.lock().unwrap();
+        assert_eq!(clamps.len(), 1, "one info line names both levels");
+        assert_eq!(
+            (&clamps[0]["requested"], &clamps[0]["used"]),
+            (&json!("xhigh"), &json!("high"))
         );
         assert_eq!(resolver.clamp_effort("corp/coder#xhigh"), "corp/coder#high");
         assert_eq!(resolver.clamp_effort("corp/coder#low"), "corp/coder#low");

@@ -395,7 +395,7 @@ async fn infer(
             }
             LlmEvent::Finish { reason } => finish = Some(reason),
             LlmEvent::ToolCallDone(_) | LlmEvent::ToolCallDelta { .. } => invalid = true,
-            LlmEvent::ReasoningSignature { .. } | LlmEvent::ReasoningItem { .. } => {}
+            LlmEvent::ReasoningItem { .. } => {}
         }
         if chars > 65_536 {
             return Err("Evaluator output exceeds the review limit".into());

@@ -269,8 +269,6 @@ fn reasoning_block(text: &str, opaque: Option<&Opaque>) -> Option<Value> {
 #[derive(Default)]
 struct AnthropicDecoder {
     tools: ToolCalls,
-    /// Reasoning blocks closed so far, for [`LlmEvent::ReasoningItem`] indexes.
-    reasoning_blocks: u32,
     usage: Usage,
     stop_reason: Option<String>,
     done: bool,
@@ -315,7 +313,6 @@ impl AnthropicDecoder {
             "content_block_start" if str_at(data, "/content_block/type") == "redacted_thinking" => {
                 let opaque = Opaque::new(OpaqueKind::Redacted, str_at(data, "/content_block/data"));
                 out.push(Ok(LlmEvent::ReasoningItem {
-                    index: self.next_reasoning(),
                     text: String::new(),
                     opaque: Some(opaque),
                 }));
@@ -343,11 +340,6 @@ impl AnthropicDecoder {
         }
     }
 
-    fn next_reasoning(&mut self) -> u32 {
-        self.reasoning_blocks += 1;
-        self.reasoning_blocks - 1
-    }
-
     fn start_usage(&mut self, u: &Value) {
         self.usage = Usage {
             input: u64_at(u, "/input_tokens"),
@@ -367,12 +359,13 @@ impl AnthropicDecoder {
             "thinking_delta" => Some(LlmEvent::ReasoningDelta {
                 text: str_at(delta, "/thinking").into(),
             }),
-            "signature_delta" => {
-                self.next_reasoning();
-                Some(LlmEvent::ReasoningSignature {
-                    signature: str_at(delta, "/signature").into(),
-                })
-            }
+            "signature_delta" => Some(LlmEvent::ReasoningItem {
+                text: String::new(),
+                opaque: Some(Opaque::new(
+                    OpaqueKind::Signature,
+                    str_at(delta, "/signature"),
+                )),
+            }),
             "input_json_delta" => self
                 .tools
                 .append(&data["index"].to_string(), str_at(delta, "/partial_json")),

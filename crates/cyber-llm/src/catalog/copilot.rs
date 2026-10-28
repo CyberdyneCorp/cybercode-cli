@@ -4,7 +4,8 @@
 
 use std::collections::BTreeMap;
 
-use super::{Capabilities, Limits, Model, ModelProfile, ProfilePatch, Provider, RequestOverlay};
+use super::profile::ReasoningCarrier;
+use super::{Capabilities, Limits, Model, ProfilePatch, Provider, RequestOverlay};
 use crate::adapters::ApiKind;
 use crate::copilot::{API_URL, CopilotModel, PROVIDER_ID, Protocol, Session};
 
@@ -27,17 +28,21 @@ pub fn insert(providers: &mut BTreeMap<String, Provider>, session: &Session) {
             api_key: None,
             auth_none: false,
             request: RequestOverlay::default(),
-            idle_ms: None,
             disabled: false,
             models: listed
                 .iter()
                 .map(|listed| (listed.slug.clone(), model(listed)))
                 .collect(),
+            ..Provider::default()
         },
     );
 }
 
+/// Copilot lists no reasoning capability, but the models it serves by Responses all
+/// reason, and carry it in Responses items; `reasoning_opaque` (the provider rule)
+/// belongs to its Chat Completions protocol.
 fn model(listed: &CopilotModel) -> Model {
+    let responses = listed.protocol == Protocol::Responses;
     Model {
         id: listed.slug.clone(),
         provider_id: PROVIDER_ID.into(),
@@ -50,7 +55,7 @@ fn model(listed: &CopilotModel) -> Model {
             tools: listed.tools,
             vision: listed.vision,
             pdf: false,
-            reasoning: false,
+            reasoning: responses,
             structured_output: false,
             // Responses-only models (the GPT-5 family) reject a temperature.
             temperature: listed.protocol == Protocol::Chat,
@@ -68,8 +73,10 @@ fn model(listed: &CopilotModel) -> Model {
         released_at: None,
         disabled: false,
         request: RequestOverlay::default(),
-        profile: ModelProfile::default(),
-        profile_catalog: ProfilePatch::default(),
-        profile_config: ProfilePatch::default(),
+        profile_catalog: ProfilePatch {
+            reasoning_carrier: responses.then_some(ReasoningCarrier::Responses),
+            ..ProfilePatch::default()
+        },
+        ..Model::default()
     }
 }

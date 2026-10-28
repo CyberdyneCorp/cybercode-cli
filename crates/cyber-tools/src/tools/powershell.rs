@@ -46,8 +46,10 @@ impl Tool for PowerShell {
             let ready = super::dev_server::Readiness::parse(input, background)?;
             let raw = text(input, "workdir");
             let workdir = ctx.resolve(if raw.is_empty() { "." } else { raw });
-            if let Some(found) = bash::intercepted_patch(ctx, command) {
-                return super::patch_shell::run(ctx, found, &workdir).await;
+            if let Some(patched) =
+                super::patch_shell::intercept(ctx, command, &workdir, false).await
+            {
+                return patched;
             }
             let program = installed(&ctx.location).ok_or_else(|| {
                 failed("Neither pwsh.exe nor powershell.exe is installed outside the checkout")

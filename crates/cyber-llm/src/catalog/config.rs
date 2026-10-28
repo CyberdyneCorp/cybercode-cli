@@ -6,8 +6,7 @@ use std::collections::BTreeMap;
 use serde_json::{Map, Value};
 
 use super::{
-    Capabilities, Limits, Model, ModelProfile, ProfilePatch, Provider, RequestOverlay, Variant,
-    models_dev,
+    Capabilities, Limits, Model, ProfilePatch, Provider, RequestOverlay, Variant, models_dev,
 };
 use crate::adapters::ApiKind;
 use crate::types::Reasoning;
@@ -31,9 +30,9 @@ fn custom_provider(id: &str) -> Provider {
         api_key: None,
         auth_none: false,
         request: RequestOverlay::default(),
-        idle_ms: None,
         disabled: false,
         models: BTreeMap::new(),
+        ..Provider::default()
     }
 }
 
@@ -116,9 +115,7 @@ fn custom_model(provider_id: &str, id: &str, kind: Option<ApiKind>) -> Model {
         released_at: None,
         disabled: false,
         request: RequestOverlay::default(),
-        profile: ModelProfile::default(),
-        profile_catalog: ProfilePatch::default(),
-        profile_config: ProfilePatch::default(),
+        ..Model::default()
     }
 }
 

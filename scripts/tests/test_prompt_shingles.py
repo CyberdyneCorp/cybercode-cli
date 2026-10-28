@@ -19,6 +19,22 @@ class Normalization(unittest.TestCase):
         self.assertEqual(shingles.shingle_hash(run), "aba257081516")
         self.assertEqual(shingles.words("don’t café"), ["don", "t", "caf"])
 
+    def test_rust_literals_vector_shared_with_the_rust_test(self):
+        # Pinned in crates/cyber-core/tests/prompt_provenance.rs as well.
+        source = (
+            "let c = '\"'; let d = '\\''; let s: &'a str = \"one\\ntwo\"; // a \"note\n"
+            "let r = r#\"raw \"x\" text\"#;\n#[cfg(test)]\nmod t { \"hidden\" }"
+        )
+        self.assertEqual(shingles.rust_literals(source), ["one two", 'raw "x" text'])
+
+    def test_a_copied_grammar_run_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ours = Path(tmp) / "ours.lark"
+            ours.write_text('start: begin_patch hunk+ end_patch\nbegin_patch: "x"\n')
+            reference = shingles.shingles("start: begin_patch hunk+ end_patch", shingles.GRAMMAR_WIDTH)
+            found = shingles.matches(set(), [ours], reference)
+            self.assertEqual(found, [("ours.lark", "start begin patch hunk end patch")])
+
     def test_short_text_has_no_shingles(self):
         self.assertEqual(shingles.shingles("only eleven words " * 3), set())
 
@@ -31,6 +47,8 @@ class Normalization(unittest.TestCase):
                 "codex-rs/tui/tips.txt",
                 "codex-rs/core/assets/agent/roles.toml",
                 "codex-rs/core/src/lib.rs",
+                "codex-rs/core/src/tests.rs",
+                "codex-rs/core/tests/suite.rs",
                 "codex-rs/target/debug/notes.md",
                 "codex-rs/node_modules/pkg/README.md",
                 "docs/config.md",
@@ -47,6 +65,7 @@ class Normalization(unittest.TestCase):
                     "codex-rs/core/assets/agent/roles.toml",
                     "codex-rs/core/assets/tools/patch.lark",
                     "codex-rs/core/prompt.md",
+                    "codex-rs/core/src/lib.rs",
                     "codex-rs/tui/tips.txt",
                     "sdk/templates/greeting.yaml",
                 ],
@@ -70,9 +89,11 @@ class Provenance(unittest.TestCase):
         self.assertGreater(len(shingles.fixture_hashes()), 50_000)
         self.assertEqual(shingles.matches(), [])
 
-    def test_every_base_prompt_is_checked(self):
+    def test_every_base_prompt_grammar_and_tool_module_is_checked(self):
         names = [path.name for path in shingles.our_assets()]
         self.assertTrue({"core.md", "openai.md", "anthropic.md", "gemini.md", "local.md"} <= set(names))
+        self.assertTrue({"apply_patch.lark", "patch.rs", "bash.rs"} <= set(names))
+        self.assertGreater(len(shingles.fixture_hashes(shingles.GRAMMAR_FIXTURE)), 20)
 
 
 if __name__ == "__main__":

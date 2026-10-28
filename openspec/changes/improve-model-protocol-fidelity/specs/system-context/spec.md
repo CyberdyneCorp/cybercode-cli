@@ -12,7 +12,7 @@
 - brief progress updates during long work;
 - the final answer: lead with the result, refer to files as `path:line`, and add no filler.
 
-The family addendum SHALL adapt this guidance to the family's edit tool and tool-calling habits. The base prompts SHALL carry a version, and a change of version SHALL start a new Context Epoch at the next Turn, as a change of model family does. No base prompt SHALL reproduce text from another product's prompts.
+The family addendum SHALL adapt this guidance to the family's edit tool and tool-calling habits. The addendum follows the family, so it SHALL name the family's default edit tool and say which tool to use when the profile offers the other one instead. The base prompts SHALL carry a version, and a change of version SHALL start a new Context Epoch at the next Turn, as a change of model family does. An epoch recorded before epochs carried a family keeps its prefix across a version change, so a restart never rebuilds it. No base prompt SHALL reproduce text from another product's prompts.
 
 #### Scenario: OpenAI prompt names the patch tool
 - **WHEN** the resolved family is OpenAI and the profile's `edit_tool` is `freeform_patch`

@@ -21,7 +21,7 @@
 
 - [x] 2.1 `runtime/view.rs` applies `reasoning_replay` (`never`/`tool_loop`/`always`) and the same-model guard. A `Redacted` item without text is dropped when lowered.
   - Unit tests: each policy, a provider switch, and items before and after the latest user message.
-- [x] 2.2 Anthropic tool-loop guard: thinking off for one request when the latest tool-calling assistant message has no native item, with one `info` log.
+- [x] 2.2 Anthropic tool-loop guard: thinking off when the latest tool-calling assistant message has no native item, which keeps it off for the rest of that tool loop, with one `info` log per loop.
   - Scenario test: "Model switch inside a tool loop".
 - [x] 2.3 Compaction: summaries carry no opaque state, and the kept tail replays.
   - Test in `compaction` tests.
@@ -77,7 +77,7 @@
 - [x] 5.2 ChatGPT routing headers and `x-codex-turn-state` echo, scoped to one Turn.
   - Test with a mock backend: "Turn state echoed within a Turn only".
   - The Turn state spans the requests answering one prompt (its tool loop and retries) and resets when the next prompt starts; `tests/runtime.rs` covers the reset and the subagent's Session ID in retry notices.
-- [x] 5.3 Idle timeout in `sse.rs` (`provider.timeout.idle_ms`).
+- [x] 5.3 Idle timeout in the stream decoder (`adapters/mod.rs`, `DecodeState::next_chunk`; `provider.timeout.idle_ms`).
   - Test in `tests/transport_faults.rs` using a paused clock.
 - [x] 5.4 Error code table, server-advised delay parsing (capped at 60 s), `usage_limit_reached` with `resets_at`, and the `response.incomplete` mapping.
   - Unit tests for each code.
@@ -89,17 +89,17 @@
 - [x] 6.1 Our own Lark grammar for the patch envelope.
   - Freeform `apply_patch` on Responses when `edit_tool = freeform_patch`, plus decoding and replay of `custom_tool_call` / `custom_tool_call_output`.
   - The other adapters keep the JSON tool.
-  - Done: `adapters/openai_responses/apply_patch.lark` (in the provenance scan), `Shaping.freeform_patch`; Copilot and reserved requests keep the JSON tool; `ResolvedModel.prefers_apply_patch` now follows the profile's `edit_tool`. Tests `freeform_patch_offers_a_grammar_tool_and_replays_custom_items`, `custom_tool_calls_decode_to_the_patch_input`, `a_freeform_patch_profile_reserves_with_the_json_tool`, `copilot_responses_keep_the_json_patch_tool`.
+  - Done: `adapters/openai_responses/apply_patch.lark` (in the provenance scan), `Shaping.freeform_patch`; only OpenAI's own Responses backends get the grammar tool (`Backend::allows_freeform_patch`), so Copilot and any compatible gateway keep the JSON tool, and reserved requests pin it; `ResolvedModel::prefers_apply_patch()` reads the profile's `edit_tool`. Tests `freeform_patch_offers_a_grammar_tool_and_replays_custom_items`, `custom_tool_calls_decode_to_the_patch_input`, `a_freeform_patch_profile_reserves_with_the_json_tool`, `a_responses_gateway_gets_the_json_patch_tool`.
 - [x] 6.2 Tolerant matching levels and heredoc-wrapped envelopes in `tools/patch.rs`.
   - Tests: "Smart quotes in context", "Ambiguous loose match", trailing-whitespace, heredoc.
   - Done: an exact match keeps taking the first place after the cursor; the looser levels must be unique (spec: "Exact hunk matches keep their order"). Tests `smart_quotes_in_context_match_ascii_quotes`, `ambiguous_loose_match_fails_naming_the_hunk`, `trailing_whitespace_and_exact_matches`, `heredoc_wrapped_envelopes_parse`.
 - [x] 6.3 Shell interception of `apply_patch` heredocs (bash, powershell, `cd <dir> &&`), only when no `apply_patch` binary is on `PATH`.
   - The `edit` permission is checked, with `metadata.intercepted`.
   - Tests, including the binary-present case.
-  - Done: `tools/patch_shell.rs`; `metadata` on `session.tool.settled.1` and `CallState` through `ToolHost::take_call_metadata`. Tests in `cyber-tools/tests/shell_patch.rs` (bash, `cd`, edit denied, PowerShell here-string on Windows, installed program) and `patch_shell` unit tests.
+  - Done: `tools/patch_shell.rs`; the edit is authorized as `apply_patch` (tool-scoped rules apply, a shell hook's Allow does not approve it); PATH is the shell's (`sandbox.env.set.PATH` under an enforcing policy) and a login shell runs the script as written; `<<-` heredocs run as written. `metadata` on `session.tool.settled.1` and `CallState` through `ToolHost::take_call_metadata`. Tests in `cyber-tools/tests/shell_patch.rs` (bash, `cd`, edit denied, tool-scoped deny, PowerShell here-string on Windows, installed program, sandbox PATH, login shell) and `patch_shell` unit tests.
 - [x] 6.4 Profile output budgets and `middle` truncation in the tool output budget.
   - Test: "Long build log for an OpenAI model". Existing truncation tests must still pass.
-  - Done: `Budget::apply_for`, fed per Session by `ToolHost::set_output_profile` before each step's calls. Tests `long_build_log_keeps_head_and_tail_for_a_middle_profile`, `head_and_tail_profiles_keep_the_existing_truncation`, `a_middle_profile_keeps_both_ends_of_a_long_log`.
+  - Done: `Budget::apply_for` and `Budget::apply_registered` (MCP and registered tools, with a server's `output_token_limit` as a further cap), one truncation path; the Turn model's budget rides on `Invocation.tool_output`. `truncation: default` keeps each tool's own end, `head`/`tail` force one. Tests `long_build_log_keeps_head_and_tail_for_a_middle_profile`, `default_head_and_tail_profiles_pick_the_kept_end`, `registered_results_follow_the_profile_budget`, `a_middle_profile_keeps_both_ends_of_a_long_log`.
 
 ## 7. Base prompts
 
@@ -107,20 +107,20 @@
   - Test: "Prompt version change".
   - Done: `prompts/base/*.md`, `VERSION` = 2, `Epoch::serves`; tests `prompt_version_change_starts_a_new_epoch`, `core_text_covers_every_required_topic`, `addenda_follow_each_family_edit_tool`.
 - [x] 7.2 Provenance check: a script test that fails if any sentence of 12 words or more in `prompts/base/*.md` appears in the Codex prompt files. It runs against a fixture list of Codex sentences. The Codex source is not vendored; the fixture holds only short hashes.
-  - Done: `scripts/prompt_shingles.py` hashes 12-word shingles of every `.md`, `.lark` and `.txt` under Codex's `codex-rs` plus the text files of any `assets`/`templates`/`prompts` folder (226 files, 93 601 hashes in `tests/fixtures/reference_prompt_shingles.txt`); `tests/prompt_provenance.rs` and `scripts/tests/test_prompt_shingles.py` check every base prompt and any `.lark` grammar under `crates/`.
+  - Done: `scripts/prompt_shingles.py` hashes 12-word shingles of every `.md`, `.lark` and `.txt` under Codex's `codex-rs`, the text files of any `assets`/`templates`/`prompts` folder, and each string literal of its non-test Rust sources (116 061 hashes in `tests/fixtures/reference_prompt_shingles.txt`), plus 6-word shingles of its grammars (`reference_grammar_shingles.txt`); `tests/prompt_provenance.rs` and `scripts/tests/test_prompt_shingles.py` check every base prompt, any `.lark` grammar under `crates/` (also at 6 words), and the string literals of `cyber-tools/src/tools/*.rs` (tool descriptions and the messages sent back to the model).
 
 ## 8. Evidence
 
 - [x] 8.1 Golden request fixtures in `tests/adapters.rs`, one per carrier and per Responses option set, pinning the exact JSON.
   - Done for every carrier (`golden_*` in `tests/adapters.rs`, Copilot in `tests/copilot.rs`) and for the Responses option sets (supporting model, unsupporting model, reasoning off and tools disabled).
-- [x] 8.2 Live tests (`tests/live.rs`, ignored by default, run with keys):
+- [x] 8.2 Live tests written (`tests/live.rs`, ignored by default, run with keys):
   - an OpenAI tool loop with encrypted reasoning replayed;
   - an Anthropic interleaved-thinking loop;
   - a DeepSeek thinking tool loop;
   - a Gemini 3 tool loop through the compatible endpoint.
   
-  Each must finish with no 400 errors.
-  - Done: four `#[ignore]` tests in `tests/live.rs`, each skipped without its key. They compile; they have not been run here (no keys).
+  - Done: four `#[ignore]` tests in `tests/live.rs`, each skipped without its key. They compile.
+- [ ] 8.2a Run the four live tests with provider keys; each must finish with no 400 errors.
 - [ ] 8.3 Eval comparison: run the pinned-repository eval (`harness-evaluation`) on `openai/gpt-6-sol`, before and after, and record the pass rate and token use in `docs/`.
 
 ## 9. Docs and checks

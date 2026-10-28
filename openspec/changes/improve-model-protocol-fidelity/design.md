@@ -76,7 +76,7 @@ OpaqueKind = EncryptedReasoning | Signature | Redacted | Details
 - **Native only for the same model.** Items are sent natively only when `opaque.provider/model` equals the Turn's provider and model, which is today's Reasoning lowering rule. Otherwise:
   - an item with text is lowered to text;
   - a `Redacted` item, which has no text, is dropped.
-- **Anthropic tool-loop guard.** When thinking is enabled and the latest assistant message (with tool calls) has no native item, an Anthropic request can't be built. This happens after a model switch in the middle of a loop. Thinking is then turned off for that single request, and one `info` log line says why. Without the guard the provider answers 400.
+- **Anthropic tool-loop guard.** When thinking is enabled and the latest assistant message (with tool calls) has no native item, an Anthropic request can't be built. This happens after a model switch in the middle of a loop. Thinking is then turned off for that request. Its answer has no thinking block either, so the rest of that tool loop stays off; one `info` log line per loop says why, and the next prompt has thinking on again. Without the guard the provider answers 400.
 - **Compaction keeps no opaque state.** A compaction summary carries none. Items in the kept tail are still replayed.
 
 ### D4. Model behavior profiles
@@ -86,7 +86,7 @@ OpaqueKind = EncryptedReasoning | Signature | Redacted | Details
 reasoning_replay: never|tool_loop|always       reasoning_carrier: none|responses|anthropic|reasoning_content|reasoning|reasoning_details|gemini_signature|copilot_opaque
 reasoning_summary: bool                        verbosity: { supported: bool, default: low|medium|high|null }
 parallel_tool_calls: bool                      edit_tool: freeform_patch|json_patch|edit
-tool_output: { tokens: u32|null, truncation: head|tail|middle }
+tool_output: { tokens: u32|null, truncation: default|head|tail|middle }
 efforts: [..], effort_clamp: nearest_lower|fail
 ```
 
@@ -176,7 +176,7 @@ The prompts are versioned (`prompts/base/VERSION`). A version change starts a ne
 ### D11. Profile output budgets
 When the profile sets `tool_output.tokens`, the model-facing budget is the smaller of the byte limit and `tokens * 4` bytes.
 - With `truncation: middle`, the kept text is head and tail in a 1:1 split on line boundaries, around `…[<n> lines / <m> bytes omitted; full output at <path>]…`.
-- `head` and `tail` keep today's behaviour.
+- `default` keeps today's behaviour (each tool's own end); `head` and `tail` force one end for every tool.
 
 The overflow file and `output_paths` work as today. The marker stays one line, so `builtin-tools` → Tool output formats are stable contracts keeps its parse.
 

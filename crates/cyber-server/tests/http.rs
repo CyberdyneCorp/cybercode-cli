@@ -664,26 +664,49 @@ async fn history_pages_durable_events() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
+/// Every `opaque` object in `value` holds only the redaction marker.
+fn assert_opaque_redacted(value: &Value) {
+    match value {
+        Value::Object(map) => {
+            if let Some(opaque) = map.get("opaque").filter(|o| o.is_object()) {
+                assert_eq!(opaque["data"], cyber_llm::OPAQUE_REDACTED, "{opaque}");
+            }
+            map.values().for_each(assert_opaque_redacted);
+        }
+        Value::Array(items) => items.iter().for_each(assert_opaque_redacted),
+        _ => {}
+    }
+}
+
 #[tokio::test]
 async fn opaque_reasoning_never_leaves_through_exports_messages_or_history() {
     use cyber_llm::adapters::ScriptStep;
-    use cyber_llm::{LlmEvent, Opaque, OpaqueKind};
-    let mut steps = vec![
+    use cyber_llm::{FinishReason, LlmEvent, Opaque, OpaqueKind, ToolCall};
+    let steps = vec![
         ScriptStep::Event(LlmEvent::ReasoningDelta {
             text: "summary of thought".into(),
         }),
         ScriptStep::Event(LlmEvent::ReasoningItem {
-            index: 0,
             text: String::new(),
             opaque: Some(Opaque::new(
                 OpaqueKind::EncryptedReasoning,
                 "gAAAA-secret-blob",
             )),
         }),
+        // A call's own state (a Gemini thought signature) is opaque too.
+        ScriptStep::Event(LlmEvent::ToolCallDone(ToolCall {
+            id: "c1".into(),
+            name: "read".into(),
+            arguments: "{}".into(),
+            input: Some(json!({})),
+            opaque: Some(Opaque::new(OpaqueKind::Signature, "thought-sig-secret")),
+        })),
+        ScriptStep::Event(LlmEvent::Finish {
+            reason: FinishReason::ToolCalls,
+        }),
     ];
-    steps.extend(text("answer"));
     let h = Harness::new(Setup {
-        scripts: vec![("test/main", vec![steps])],
+        scripts: vec![("test/main", vec![steps, text("answer")])],
         ..Setup::default()
     });
     let api = Api::new(&h);
@@ -695,8 +718,10 @@ async fn opaque_reasoning_never_leaves_through_exports_messages_or_history() {
     let (_, messages) = api.get(&format!("/sessions/{id}/messages?order=asc")).await;
     let (_, history) = api.get(&format!("/sessions/{id}/history?limit=100")).await;
     for body in [&export, &messages, &history] {
+        assert_opaque_redacted(body);
         let text = body.to_string();
         assert!(!text.contains("gAAAA-secret-blob"), "{text}");
+        assert!(!text.contains("thought-sig-secret"), "{text}");
         assert!(text.contains(cyber_llm::OPAQUE_REDACTED), "{text}");
         assert!(text.contains("summary of thought"), "{text}");
     }
@@ -728,7 +753,6 @@ async fn a_forks_creation_event_carries_no_opaque_reasoning() {
             text: "summary of thought".into(),
         }),
         ScriptStep::Event(LlmEvent::ReasoningItem {
-            index: 0,
             text: String::new(),
             opaque: Some(Opaque::new(
                 OpaqueKind::EncryptedReasoning,
@@ -762,6 +786,32 @@ async fn a_forks_creation_event_carries_no_opaque_reasoning() {
     let text = history.to_string();
     assert!(text.contains("session.created"), "{text}");
     assert!(!text.contains("gAAAA-fork-blob"), "{text}");
+    assert!(text.contains(cyber_llm::OPAQUE_REDACTED), "{text}");
+}
+
+/// Regression: a reasoning event stored before opaque items held its state as a
+/// top-level `signature` string, which `/history` streamed unredacted.
+#[tokio::test]
+async fn a_legacy_reasoning_signature_is_redacted_in_history() {
+    use cyber_store::{Expected, NewEvent};
+    let h = Harness::new(Setup::default());
+    let id = h.session().await;
+    h.store
+        .append(
+            &id,
+            Expected::Any,
+            vec![NewEvent::new(
+                "session.reasoning.ended.1",
+                json!({"text": "thought", "signature": "legacy-sig-blob"}),
+            )],
+        )
+        .unwrap();
+    let (_, history) = Api::new(&h)
+        .get(&format!("/sessions/{id}/history?limit=100"))
+        .await;
+    let text = history.to_string();
+    assert!(text.contains("session.reasoning.ended.1"), "{text}");
+    assert!(!text.contains("legacy-sig-blob"), "{text}");
     assert!(text.contains(cyber_llm::OPAQUE_REDACTED), "{text}");
 }
 

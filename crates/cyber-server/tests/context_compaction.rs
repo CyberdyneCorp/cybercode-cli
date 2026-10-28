@@ -268,6 +268,17 @@ async fn manual_compaction_keeps_a_verbatim_tail_and_the_task_state() {
     let summary_request = &h.models.requests("test/summary")[0];
     assert!(transcript(summary_request).contains("focus on the parser"));
     assert!(summary_request.tools.is_empty());
+    // Regression: only Turn requests carried the prompt cache key.
+    assert_eq!(summary_request.cache_key.as_deref(), Some(id.as_str()));
+    assert_eq!(
+        summary_request
+            .routing
+            .as_ref()
+            .unwrap()
+            .subagent
+            .as_deref(),
+        Some("compact")
+    );
 
     h.runtime.admit(&id, admit("next")).await.unwrap();
     h.settle(&id).await;

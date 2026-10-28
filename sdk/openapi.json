@@ -8749,11 +8749,12 @@
       "Truncation": {
         "type": "string",
         "enum": [
+          "default",
           "head",
           "tail",
           "middle"
         ],
-        "description": "Which part of a long tool output the model sees."
+        "description": "Which part of a long tool output the model sees: `default` is each tool's own end\n(the tail of shell output, the head of anything else), `head` and `tail` force that\nend for every tool, and `middle` keeps both ends."
       },
       "EffortClamp": {
         "type": "string",

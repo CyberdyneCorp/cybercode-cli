@@ -285,7 +285,6 @@ async fn anthropic_streams_thinking_tools_and_cache_usage() {
     req.temperature = Some(0.3);
     let (out, sent) = run(ApiKind::Anthropic, &server, "/v1", req).await;
     assert_eq!(out.reasoning, "hmm");
-    assert_eq!(out.reasoning_signature.as_deref(), Some("sig=="));
     assert_eq!(out.text, "Let me check.");
     assert_eq!(out.tool_calls[0].id, "toolu_1");
     assert_eq!(
@@ -394,18 +393,19 @@ async fn anthropic_decodes_interleaved_and_redacted_thinking_in_order() {
     let mut seen = Vec::new();
     let stream = a.stream(request()).await.unwrap();
     collect(stream, |event| match event {
-        LlmEvent::ReasoningSignature { signature } => seen.push(format!("sig:{signature}")),
-        LlmEvent::ReasoningItem { index, opaque, .. } => {
+        LlmEvent::ReasoningItem { opaque, .. } => {
             let opaque = opaque.as_ref().unwrap();
-            assert_eq!(opaque.kind, OpaqueKind::Redacted);
-            seen.push(format!("redacted{index}:{}", opaque.data));
+            seen.push(format!("{:?}:{}", opaque.kind, opaque.data));
         }
         LlmEvent::ToolCallDone(call) => seen.push(format!("call:{}", call.id)),
         _ => {}
     })
     .await
     .unwrap();
-    assert_eq!(seen, ["sig:sigA", "call:c1", "redacted1:blob", "call:c2"]);
+    assert_eq!(
+        seen,
+        ["Signature:sigA", "call:c1", "Redacted:blob", "call:c2"]
+    );
 }
 
 /// Regression (`session-runtime` → Interleaved thinking keeps every signed block): thinking
@@ -1132,6 +1132,43 @@ async fn a_responses_gateway_gets_no_routing_headers() {
     }
 }
 
+/// `include` follows the reasoning capability alone: a `reasoning_replay: never`
+/// profile, whose carrier resolves to none, still asks for the encrypted content.
+#[tokio::test]
+async fn a_never_replay_profile_still_requests_encrypted_reasoning() {
+    let mut req = shaped_request(
+        None,
+        Shaping {
+            reasoning: true,
+            ..Shaping::default()
+        },
+    );
+    req.reasoning_carrier = ReasoningCarrier::None;
+    let body = responses_body(req).await;
+    assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+}
+
+/// Regression: a gateway serving a `gpt-5*` model was offered the freeform grammar
+/// tool, which compatible servers need not implement; it gets the JSON patch tool.
+#[tokio::test]
+async fn a_responses_gateway_gets_the_json_patch_tool() {
+    let mut req = shaped_request(
+        None,
+        Shaping {
+            freeform_patch: true,
+            ..Shaping::default()
+        },
+    );
+    req.tools.push(ToolSpec {
+        name: "apply_patch".into(),
+        description: "Apply a patch".into(),
+        input_schema: json!({"type": "object", "properties": {"patch": {"type": "string"}}}),
+    });
+    let body = responses_body(req).await;
+    assert_eq!(body["tools"][1]["name"], "apply_patch");
+    assert_eq!(body["tools"][1]["type"], "function");
+}
+
 /// Reasoning off is the `none` effort only where the model lists it; with tools
 /// disabled `tool_choice` stays `none` and no parallel flag is sent.
 #[tokio::test]
@@ -1266,15 +1303,11 @@ async fn responses_decodes_reasoning_items_with_encrypted_content() {
     );
     let mut seen = Vec::new();
     collect(a.stream(request()).await.unwrap(), |event| match event {
-        LlmEvent::ReasoningItem {
-            index,
-            text,
-            opaque,
-        } => {
+        LlmEvent::ReasoningItem { text, opaque } => {
             let opaque = opaque.as_ref().unwrap();
             assert_eq!(opaque.kind, OpaqueKind::EncryptedReasoning);
             seen.push(format!(
-                "item{index}:{text}:{}:{}",
+                "item:{text}:{}:{}",
                 opaque.data,
                 opaque.id.as_deref().unwrap()
             ));
@@ -1284,7 +1317,7 @@ async fn responses_decodes_reasoning_items_with_encrypted_content() {
     })
     .await
     .unwrap();
-    assert_eq!(seen, ["item0:First\n\nSecond:gAAA1:rs_1", "call:c1"]);
+    assert_eq!(seen, ["item:First\n\nSecond:gAAA1:rs_1", "call:c1"]);
 }
 
 /// The Chat Completions body of a tool loop whose answer reasoned before its one call.
@@ -1346,6 +1379,39 @@ async fn golden_chat_reasoning_content() {
     ];
     let sent = chat_loop_body(ReasoningCarrier::None, plain).await;
     assert!(sent["messages"][1].get("reasoning_content").is_none());
+}
+
+/// Regression: a tool-calling message of the current loop without a reasoning part (its
+/// reasoning was another model's, lowered to text) went without `reasoning_content`,
+/// which DeepSeek, Kimi and GLM reject in thinking mode; it gets the placeholder. Once a
+/// new prompt starts, the earlier loop's messages go without it.
+#[tokio::test]
+async fn golden_chat_reasoning_content_placeholder_within_the_loop() {
+    let lowered = vec![
+        Content::Text {
+            text: "another model's plan".into(),
+        },
+        clock_call("c1", None),
+        clock_call("c2", None),
+    ];
+    let sent = chat_loop_body(ReasoningCarrier::ReasoningContent, lowered.clone()).await;
+    assert_eq!(
+        sent,
+        chat_golden(
+            json!({"role": "assistant", "content": "another model's plan",
+            "tool_calls": [chat_call("c1"), chat_call("c2")], "reasoning_content": " "})
+        )
+    );
+    let mut request = tool_loop(ReasoningCarrier::ReasoningContent, lowered);
+    request.messages.push(Message::user_text("and now?"));
+    let body = sent_body(
+        ApiKind::OpenaiCompatible,
+        "/v1/chat/completions",
+        chat_done(),
+        request,
+    )
+    .await;
+    assert!(body["messages"][1].get("reasoning_content").is_none());
 }
 
 /// Ollama and LM Studio take it back as `reasoning`.

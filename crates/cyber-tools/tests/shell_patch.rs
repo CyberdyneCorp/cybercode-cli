@@ -68,6 +68,25 @@ async fn the_edit_permission_decides_an_intercepted_patch() {
     assert_eq!(f.read("a.txt"), "old\n");
 }
 
+/// Regression: the intercepted patch is decided as `apply_patch`, so a tool-scoped
+/// `apply_patch` deny holds when the same patch goes through `bash`.
+#[tokio::test]
+async fn a_tool_scoped_apply_patch_deny_blocks_the_shell_patch() {
+    let f = Fixture::new();
+    f.set_config(json!({"permissions": {
+        "bash": "allow",
+        "edit": "allow",
+        "rules": [{"action": "edit", "resource": "*", "effect": "deny", "tool": "apply_patch"}]
+    }}));
+    f.write("a.txt", "old\n");
+    let out = failed(
+        f.call("default", "bash", json!({"command": heredoc("")}))
+            .await,
+    );
+    assert!(!out.is_empty());
+    assert_eq!(f.read("a.txt"), "old\n");
+}
+
 /// A `powershell` script (registered on Windows) holding a here-string patch is
 /// intercepted as well.
 #[cfg(windows)]
@@ -112,21 +131,68 @@ async fn an_installed_apply_patch_program_is_left_alone() {
     assert_eq!(f.read("a.txt"), "old\n", "our patch tool did not run");
 }
 
+/// Regression: PATH comes from the shell's environment, so an `apply_patch` program
+/// reachable only through `sandbox.env.set.PATH` keeps the script as written.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_program_on_the_sandbox_path_is_left_alone() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = Fixture::new();
+    let bin = f.dir.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let program = bin.join("apply_patch");
+    std::fs::write(&program, "#!/bin/sh\necho installed program ran\n").unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    )))
+    .unwrap();
+    f.set_config(json!({
+        "permissions": {"bash": "allow"},
+        "sandbox": {"env": {"set": {"PATH": path.to_str().unwrap()}}}
+    }));
+    f.write("a.txt", "old\n");
+    let _ = f
+        .call("default", "bash", json!({"command": heredoc("")}))
+        .await;
+    assert_eq!(intercepted(&f, "call_bash"), None);
+    assert_eq!(f.read("a.txt"), "old\n", "our patch tool did not run");
+}
+
+/// A login shell may extend PATH in its profile scripts, so its patch scripts run as
+/// written.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_login_shell_runs_the_script_as_written() {
+    let f = Fixture::new();
+    f.set_config(json!({
+        "permissions": {"bash": "allow"},
+        "sandbox": {"env": {"login_shell": true}}
+    }));
+    f.write("a.txt", "old\n");
+    let _ = f
+        .call("default", "bash", json!({"command": heredoc("")}))
+        .await;
+    assert_eq!(intercepted(&f, "call_bash"), None);
+    assert_eq!(f.read("a.txt"), "old\n");
+}
+
 /// "Long build log for an OpenAI model": a middle profile keeps about 20 KB of each
 /// end of a 200 KB log around one marker, and the overflow file holds all of it.
 #[tokio::test]
 async fn a_middle_profile_keeps_both_ends_of_a_long_log() {
     let f = Fixture::new();
     f.set_config(json!({"permissions": {"bash": "allow"}}));
-    f.host.set_output_profile(
-        "ses_test",
-        ToolOutput {
-            tokens: Some(10_000),
-            truncation: Truncation::Middle,
-        },
-    );
     let script = "i=0; while [ $i -lt 4000 ]; do echo \"step $i of the build writes this fairly long log line\"; i=$((i+1)); done";
-    let out = ok(f.call("default", "bash", json!({"command": script})).await);
+    let mut call = f.invocation("default", "bash", json!({"command": script}));
+    call.tool_output = ToolOutput {
+        tokens: Some(10_000),
+        truncation: Truncation::Middle,
+    };
+    let out = ok(f
+        .host
+        .execute(call, tokio_util::sync::CancellationToken::new())
+        .await);
     let marker = out
         .lines()
         .find(|line| line.starts_with("…["))

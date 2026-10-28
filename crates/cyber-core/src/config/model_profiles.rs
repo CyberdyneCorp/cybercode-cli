@@ -17,7 +17,7 @@ pub const REASONING_CARRIER: &[&str] = &[
 ];
 pub const VERBOSITY: &[&str] = &["low", "medium", "high"];
 pub const EDIT_TOOL: &[&str] = &["freeform_patch", "json_patch", "edit"];
-pub const TRUNCATION: &[&str] = &["head", "tail", "middle"];
+pub const TRUNCATION: &[&str] = &["default", "head", "tail", "middle"];
 pub const EFFORT_CLAMP: &[&str] = &["nearest_lower", "fail"];
 
 /// What one key accepts.

@@ -1309,6 +1309,7 @@ async fn child_setup_recovery_api_preserves_steps_and_idempotent_retry() {
         .await
         .unwrap();
     let result = application.host.execute(Invocation {
+        tool_output: Default::default(),
         registration: None,
         session_id:parent.id.clone(),directory:parent.directory.clone(),agent:parent.agent.clone(),mode:parent.mode.clone(),rules:parent.rules.clone(),
         message_id:"msg_setup".into(),call_id:"call_setup".into(),operation_key:"call_setup".into(),name:"agent".into(),
@@ -1436,6 +1437,7 @@ async fn application_reloads_command_hooks_at_the_builtin_boundary() {
         .host
         .execute(
             Invocation {
+                tool_output: Default::default(),
                 registration: None,
                 session_id: session.id.clone(),
                 directory: session.directory.clone(),
@@ -6105,6 +6107,7 @@ async fn entered_worktree_refused_for_a_started_session_before_any_creation() {
         .host
         .execute(
             cyber_server::runtime::Invocation {
+                tool_output: Default::default(),
                 registration: None,
                 session_id: info.id.clone(),
                 directory: info.directory.clone(),

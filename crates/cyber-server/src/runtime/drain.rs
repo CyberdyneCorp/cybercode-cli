@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use cyber_llm::catalog::compute_cost;
 use cyber_llm::{
-    ErrorKind, EventStream, FinishReason, LlmError, LlmEvent, Opaque, OpaqueKind, ToolCall, Usage,
+    ErrorKind, EventStream, FinishReason, LlmError, LlmEvent, Opaque, ToolCall, Usage,
     open_with_retry,
 };
 use futures::future::join_all;
@@ -368,6 +368,9 @@ async fn prepare_pass(
     if !continue_tools {
         // A new prompt's Turns start without the previous one's routing state.
         handle.turn_state.reset();
+        handle
+            .thinking_off_logged
+            .store(false, std::sync::atomic::Ordering::Relaxed);
     }
     if inner.needs_compaction(handle, &resolved.model).await? {
         let compaction =
@@ -1091,10 +1094,14 @@ impl Inner {
             epoch.baseline.clone(),
         ];
         request.messages = view::messages(&state, &view::Replay::of(resolved));
-        if view::thinking_guard(&mut request, resolved.profile.reasoning_carrier) {
+        if view::thinking_guard(&mut request, resolved.profile.reasoning_carrier)
+            && !handle
+                .thinking_off_logged
+                .swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
             cyber_core::log::info(
                 "reasoning",
-                "thinking off for one request: the tool loop it continues has no native thinking block",
+                "thinking off for the rest of this tool loop: it continues an answer with no native thinking block",
                 serde_json::json!({"session_id": state.info.id, "model": resolved.model}),
             );
         }
@@ -1238,12 +1245,7 @@ impl Inner {
                     .push_str(&text);
                 self.bus.publish(live(text, true));
             }
-            LlmEvent::ReasoningSignature { signature } => {
-                let opaque = Opaque::new(OpaqueKind::Signature, signature);
-                self.close_reasoning(handle, message_id, acc, String::new(), Some(opaque))
-                    .await?;
-            }
-            LlmEvent::ReasoningItem { text, opaque, .. } => {
+            LlmEvent::ReasoningItem { text, opaque } => {
                 self.close_reasoning(handle, message_id, acc, text, opaque)
                     .await?;
             }
@@ -1496,8 +1498,6 @@ impl Inner {
             turn.agent = state.effective_agent(true).into();
             (turn, paused)
         };
-        self.tools
-            .set_output_profile(&turn.session_id, resolved.profile.tool_output);
         let groups = groups(calls, defs);
         // A hook's `continue: false` ends the Drain after this Turn's calls settle.
         let mut hook_stopped = false;
@@ -1545,9 +1545,10 @@ impl Inner {
                             .await?;
                     }
                     Ok((def, input)) => {
-                        let invocation = self
+                        let mut invocation = self
                             .dispatch(handle, &turn, message_id, call, &def, input)
                             .await?;
+                        invocation.tool_output = resolved.profile.tool_output;
                         runs.push(self.run_tool(handle, def, invocation, cancel.child_token()));
                     }
                 }
@@ -1781,6 +1782,7 @@ impl Inner {
             .await?;
         let inner = self.me.upgrade().expect("runtime alive");
         Ok(Invocation {
+            tool_output: Default::default(),
             registration: def.registration.clone(),
             session_id: turn.session_id.clone(),
             directory: turn.directory.clone(),
@@ -2391,7 +2393,7 @@ fn kind_name(kind: ErrorKind) -> &'static str {
 }
 
 pub(crate) fn turn_context(state: &SessionState, resolved: &ResolvedModel) -> TurnContext {
-    turn_context_for(state, resolved.prefers_apply_patch)
+    turn_context_for(state, resolved.prefers_apply_patch())
 }
 
 pub(crate) fn turn_context_for(state: &SessionState, prefers_apply_patch: bool) -> TurnContext {

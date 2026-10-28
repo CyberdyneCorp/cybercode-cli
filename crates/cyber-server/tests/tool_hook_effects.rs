@@ -166,5 +166,10 @@ async fn call_metadata_commits_with_the_settlement() {
         h.tools.call_metadata.lock().unwrap().is_empty(),
         "taken once"
     );
-    assert!(h.tools.output_profiles.lock().unwrap().contains_key(&id));
+    let executed = h.tools.executed.lock().unwrap();
+    assert_eq!(
+        executed[0].tool_output,
+        cyber_llm::catalog::ToolOutput::default(),
+        "the Turn model's output budget rides on the invocation"
+    );
 }

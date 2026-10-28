@@ -4668,8 +4668,12 @@ export type Totals = {
   steps: number;
 };
 
-/** Which part of a long tool output the model sees. */
-export type Truncation = "head" | "tail" | "middle";
+/**
+ * Which part of a long tool output the model sees: `default` is each tool's own end
+ * (the tail of shell output, the head of anything else), `head` and `tail` force that
+ * end for every tool, and `middle` keeps both ends.
+ */
+export type Truncation = "default" | "head" | "tail" | "middle";
 
 export type UpdateBody = {
   title?: string | null;

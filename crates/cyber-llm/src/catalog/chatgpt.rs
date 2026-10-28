@@ -4,9 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{
-    Capabilities, Limits, Model, ModelProfile, ProfilePatch, Provider, RequestOverlay, Variant,
-};
+use super::{Capabilities, Limits, Model, Provider, RequestOverlay, Variant};
 use crate::adapters::ApiKind;
 use crate::chatgpt::{PROVIDER_ID, PlanModel, Session};
 use crate::types::Reasoning;
@@ -29,9 +27,9 @@ pub fn insert(providers: &mut BTreeMap<String, Provider>, session: &Session) {
             api_key: None,
             auth_none: false,
             request: RequestOverlay::default(),
-            idle_ms: None,
             disabled: false,
             models,
+            ..Provider::default()
         },
     );
 }
@@ -77,8 +75,7 @@ fn model(plan: &PlanModel) -> Model {
         released_at: None,
         disabled: false,
         request: RequestOverlay::default(),
-        profile: ModelProfile::default(),
         profile_catalog: plan.profile.clone(),
-        profile_config: ProfilePatch::default(),
+        ..Model::default()
     }
 }

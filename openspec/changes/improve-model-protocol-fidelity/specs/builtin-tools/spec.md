@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Freeform apply_patch
-(P1) When the model profile's `edit_tool` is `freeform_patch` and the adapter is OpenAI Responses, `apply_patch` SHALL be offered as a custom tool whose input is the raw patch, constrained by a grammar of the `*** Begin Patch` envelope. The grammar SHALL be written for this product. A `custom_tool_call` SHALL run as `apply_patch { patch }`, and its result SHALL be sent back as `custom_tool_call_output`. Every other adapter SHALL receive the JSON `apply_patch` tool.
+(P1) When the model profile's `edit_tool` is `freeform_patch` and the request goes to OpenAI's own Responses backends (the official API URL or the ChatGPT backend), `apply_patch` SHALL be offered as a custom tool whose input is the raw patch, constrained by a grammar of the `*** Begin Patch` envelope. The grammar SHALL be written for this product. A `custom_tool_call` SHALL run as `apply_patch { patch }`, and its result SHALL be sent back as `custom_tool_call_output`. Every other adapter, and a compatible gateway speaking Responses, SHALL receive the JSON `apply_patch` tool.
 
 #### Scenario: Raw patch from an OpenAI model
 - **WHEN** `openai/gpt-6-sol` calls the custom `apply_patch` tool with a raw `*** Begin Patch` text
@@ -39,7 +39,7 @@ The first level that matches SHALL win; at a looser level, several matches SHALL
 - **THEN** the hunk applies at the first of them
 
 ### Requirement: apply_patch through the shell
-(P1) A `bash` or `powershell` call whose whole script is an `apply_patch` heredoc, optionally preceded by `cd <dir> &&`, SHALL be executed as `apply_patch` relative to that directory. This applies only when no `apply_patch` executable is on `PATH`. The call SHALL be approved as an `edit`, not as a shell command, and SHALL return the `apply_patch` result. Its record SHALL keep the tool name `bash` with `metadata.intercepted: "apply_patch"`.
+(P1) A `bash` or `powershell` call whose whole script is an `apply_patch` heredoc, optionally preceded by `cd <dir> &&`, SHALL be executed as `apply_patch` relative to that directory. This applies only when no `apply_patch` executable is on the `PATH` the shell would start with (`sandbox.env.set.PATH` when set), and not for a login shell, whose profile scripts may change `PATH`; a `<<-` heredoc, which strips tabs from the patch, runs as written. The call SHALL be approved as an `apply_patch` edit, not as a shell command: rules scoped to `apply_patch` decide it, and a hook's approval of the shell command does not approve the edit. It SHALL return the `apply_patch` result. Its record SHALL keep the tool name `bash` with `metadata.intercepted: "apply_patch"`.
 
 #### Scenario: Patch sent through bash
 - **WHEN** a model calls `bash` with `apply_patch <<'EOF'` followed by a valid patch and `EOF`

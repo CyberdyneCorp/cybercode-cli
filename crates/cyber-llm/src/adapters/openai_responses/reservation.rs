@@ -19,7 +19,7 @@ pub(super) fn prepare(
         return Err(unavailable("the model has no declared context ceiling"));
     }
     pin_contract(&mut request)?;
-    let body = super::build_body(&request);
+    let body = super::build_body(&request, super::Backend::Api);
     validate_body(&body, &request.model)?;
     let output = body["max_output_tokens"]
         .as_u64()
@@ -45,17 +45,7 @@ pub(super) fn prepare(
 }
 
 fn official_route(endpoint: &Endpoint, request: &LlmRequest) -> Result<(), BoundUnavailable> {
-    let url = reqwest::Url::parse(&endpoint.base_url)
-        .map_err(|_| unavailable("invalid provider route"))?;
-    if url.scheme() != "https"
-        || url.host_str() != Some("api.openai.com")
-        || url.port().is_some_and(|p| p != 443)
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.path().trim_end_matches('/') != "/v1"
-        || url.query().is_some()
-        || url.fragment().is_some()
-    {
+    if !super::is_official_openai(&endpoint.base_url) {
         return Err(unavailable(
             "reserved Responses requires the official OpenAI route; compatible gateways have no verified bound contract",
         ));
@@ -233,12 +223,16 @@ mod tests {
         assert_eq!(prepared.bound.classes.output, 50);
         assert_eq!(prepared.bound.total_tokens, 1000);
         assert_eq!(
-            super::super::build_body(&prepared.request)["service_tier"],
+            super::super::build_body(&prepared.request, super::super::Backend::Api)["service_tier"],
             "default"
         );
         assert_eq!(
             prepared.bound.normalized_sha256,
-            digest(&super::super::build_body(&prepared.request)).unwrap()
+            digest(&super::super::build_body(
+                &prepared.request,
+                super::super::Backend::Api
+            ))
+            .unwrap()
         );
     }
     #[test]
@@ -301,7 +295,7 @@ mod tests {
             ],
         });
         let prepared = prepare(&endpoint, request.clone(), 1000).unwrap();
-        let body = super::super::build_body(&prepared.request);
+        let body = super::super::build_body(&prepared.request, super::super::Backend::Api);
         assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
         assert_eq!(body["input"][1]["type"], "reasoning");
 
@@ -339,7 +333,7 @@ mod tests {
             freeform_patch: false,
         };
         let prepared = prepare(&endpoint, request, 1000).unwrap();
-        let body = super::super::build_body(&prepared.request);
+        let body = super::super::build_body(&prepared.request, super::super::Backend::Api);
         assert_eq!(
             body["reasoning"],
             json!({"effort": "high", "summary": "auto"})
@@ -374,7 +368,7 @@ mod tests {
             }],
         });
         let prepared = prepare(&endpoint, request, 1000).unwrap();
-        let body = super::super::build_body(&prepared.request);
+        let body = super::super::build_body(&prepared.request, super::super::Backend::Api);
         assert_eq!(body["tools"][0]["type"], "function");
         assert_eq!(body["input"][1]["type"], "function_call");
     }

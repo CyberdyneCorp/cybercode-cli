@@ -222,6 +222,7 @@ impl BuiltinHost {
 
 fn probe_invocation(location: &Path, agent: &str, mode: &str) -> cyber_server::runtime::Invocation {
     cyber_server::runtime::Invocation {
+        tool_output: Default::default(),
         registration: None,
         session_id: String::new(),
         directory: location.display().to_string(),

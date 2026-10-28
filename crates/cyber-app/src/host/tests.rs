@@ -43,6 +43,7 @@ async fn application(root: &std::path::Path) -> App {
 
 fn invocation(turn: &TurnContext) -> Invocation {
     Invocation {
+        tool_output: Default::default(),
         registration: None,
         session_id: turn.session_id.clone(),
         directory: turn.directory.clone(),

@@ -4596,7 +4596,7 @@ fn models_json_shows_the_resolved_profile_with_a_config_override() {
     let coder = profile("corp/coder");
     assert_eq!(coder["reasoning_replay"], "never");
     assert_eq!(coder["edit_tool"], "edit");
-    assert_eq!(coder["tool_output"]["truncation"], "head");
+    assert_eq!(coder["tool_output"]["truncation"], "default");
     let kimi = profile("corp/kimi-k2-thinking");
     assert_eq!(kimi["reasoning_carrier"], "reasoning_content");
     assert_eq!(kimi["reasoning_replay"], "tool_loop");

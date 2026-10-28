@@ -199,6 +199,7 @@ impl BuiltinHost {
         cancel: &CancellationToken,
     ) -> Result<String, String> {
         let invocation = Invocation {
+            tool_output: Default::default(),
             registration: None,
             session_id: turn.session_id.clone(),
             directory: turn.directory.clone(),

@@ -12,8 +12,6 @@
 //!
 //!     OPENAI_API_KEY=… cargo test -p cyber-llm --test live -- --ignored --nocapture
 
-use std::collections::BTreeMap;
-
 use cyber_core::env::{EnvSource, ProcessEnv};
 use cyber_llm::catalog::{BuildInputs, Catalog, ModelRef, SourceOptions, load_source};
 use cyber_llm::{
@@ -220,7 +218,8 @@ async fn reasoning_tool_loop(
     ));
     let mut report = LoopReport::default();
     for step in 0..MAX_STEPS {
-        let mut items = BTreeMap::new();
+        let mut items = Vec::new();
+        let mut streamed = String::new();
         let stream = open_with_retry(
             adapter.as_ref(),
             &request,
@@ -229,19 +228,23 @@ async fn reasoning_tool_loop(
         )
         .await
         .unwrap_or_else(|e| panic!("{model} step {step} rejected: {e:?}"));
-        let out = collect(stream, |event| {
-            if let LlmEvent::ReasoningItem {
-                index,
-                text,
-                opaque,
-            } = event
-            {
-                items.insert(*index, (text.clone(), opaque.clone()));
+        // An item without text closes the reasoning streamed since the last item.
+        let out = collect(stream, |event| match event {
+            LlmEvent::ReasoningDelta { text } => streamed.push_str(text),
+            LlmEvent::ReasoningItem { text, opaque } => {
+                let streamed = std::mem::take(&mut streamed);
+                let text = if text.is_empty() {
+                    streamed
+                } else {
+                    text.clone()
+                };
+                items.push((text, opaque.clone()));
             }
+            _ => {}
         })
         .await
         .unwrap_or_else(|e| panic!("{model} step {step} failed: {e:?}"));
-        report.reasoned |= !out.reasoning.is_empty() || items.values().any(|(t, _)| !t.is_empty());
+        report.reasoned |= !out.reasoning.is_empty() || items.iter().any(|(t, _)| !t.is_empty());
         if out.finish != Some(FinishReason::ToolCalls) {
             assert_eq!(out.finish, Some(FinishReason::Stop), "{model} step {step}");
             report.answer = out.text;
@@ -264,12 +267,12 @@ async fn reasoning_tool_loop(
 /// order before its calls, and the user message of clock results for step `step`.
 fn replay(
     out: &TurnOutput,
-    items: BTreeMap<u32, (String, Option<Opaque>)>,
+    items: Vec<(String, Option<Opaque>)>,
     model_ref: &ModelRef,
     step: usize,
 ) -> (Message, Message) {
     let mut content: Vec<Content> = items
-        .into_values()
+        .into_iter()
         .map(|(text, opaque)| Content::Reasoning {
             text,
             opaque: stamped(opaque, model_ref),

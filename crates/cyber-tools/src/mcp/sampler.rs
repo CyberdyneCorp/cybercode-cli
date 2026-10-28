@@ -359,7 +359,7 @@ async fn infer(
             LlmEvent::ToolCallDone(_) | LlmEvent::ToolCallDelta { .. } => {
                 return Err("Sampling provider attempted a tool call");
             }
-            LlmEvent::ReasoningSignature { .. } | LlmEvent::ReasoningItem { .. } => {}
+            LlmEvent::ReasoningItem { .. } => {}
         }
         if bytes > super::LIMIT / 2 {
             return Err("Sampling response exceeds its byte allowance");

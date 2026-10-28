@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use cyber_llm::catalog::profile::ReasoningCarrier;
 use cyber_llm::catalog::{BuildInputs, Catalog, CatalogError, CredentialSource, ModelRef};
 use cyber_llm::copilot::{
     self, AuthFile, CopilotError, CopilotModel, CopilotToken, DeviceCode, Host, Login, ModelsFile,
@@ -958,6 +959,19 @@ async fn copilot_responses_models_replay_encrypted_reasoning_items() {
         .mount(&server)
         .await;
     let catalog = catalog(&stored(dir.path(), &server), json!({}));
+    // The profile layer names the carrier per protocol, so `cyber models --json` shows
+    // what goes on the wire; the adapter rewrites nothing.
+    let carrier = |model: &str| {
+        let resolved = catalog
+            .resolve(&ModelRef::parse(model).unwrap(), None)
+            .unwrap();
+        resolved.request.reasoning_carrier
+    };
+    assert_eq!(carrier("copilot/gpt-5.6-sol"), ReasoningCarrier::Responses);
+    assert_eq!(
+        carrier("copilot/claude-sonnet-4.5"),
+        ReasoningCarrier::CopilotOpaque
+    );
     let mut opaque = cyber_llm::Opaque::new(OpaqueKind::EncryptedReasoning, "gAAA");
     opaque.id = Some("rs_7".into());
 

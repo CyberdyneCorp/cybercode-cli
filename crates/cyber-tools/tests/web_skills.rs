@@ -295,7 +295,6 @@ async fn webfetch_summary_budget_case(reserved: bool) {
                 model: "summary".into(),
                 context_limit: 200000,
                 cost: None,
-                prefers_apply_patch: false,
                 family: cyber_core::prompts::ModelFamily::Default,
                 vision: false,
                 pdf: false,

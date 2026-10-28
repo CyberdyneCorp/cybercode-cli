@@ -8,7 +8,7 @@
 - `verbosity`: `{ supported, default }`;
 - `parallel_tool_calls`: a boolean;
 - `edit_tool`: `freeform_patch`, `json_patch` or `edit`;
-- `tool_output`: `{ tokens, truncation: head | tail | middle }`;
+- `tool_output`: `{ tokens, truncation: default | head | tail | middle }`;
 - `effort_clamp`: `nearest_lower` or `fail`.
 
 Profiles SHALL be resolved field by field, with a later layer winning:
@@ -98,4 +98,4 @@ A Responses `response.incomplete` SHALL finish as follows:
 
 #### Scenario: Subscription limit reached
 - **WHEN** the ChatGPT backend answers 429 with `error.type: "usage_limit_reached"` and `resets_at` in 40 minutes
-- **THEN** the reason is `QuotaExceeded`, fallback models are tried, and with none available the TUI shows `usage limit reached; resets at <time>`
+- **THEN** the reason is `QuotaExceeded`, one of the reasons Model fallback chain names, and when the Turn fails the TUI shows `usage limit reached; resets at <time>`

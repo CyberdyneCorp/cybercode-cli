@@ -62,6 +62,19 @@ pub(super) fn carry(message: &mut Value, carrier: ReasoningCarrier, reasoning: &
     }
 }
 
+/// A `reasoning_content` server in thinking mode rejects a tool-calling message of the
+/// current tool loop without the field, as when its reasoning was another model's and
+/// went as text, or there was none: such a message gets the one-space placeholder.
+pub(super) fn hold_tool_loop(message: &mut Value, carrier: ReasoningCarrier) {
+    let calls = message.get("tool_calls").is_some();
+    if carrier == ReasoningCarrier::ReasoningContent
+        && calls
+        && message.get("reasoning_content").is_none()
+    {
+        message["reasoning_content"] = json!(" ");
+    }
+}
+
 /// A tool call's own state on the wire: the Gemini thought signature.
 pub(super) fn call_extra(opaque: Option<&Opaque>) -> Option<Value> {
     let opaque = opaque.filter(|o| o.kind == OpaqueKind::Signature)?;
@@ -84,7 +97,6 @@ pub(super) struct Streamed {
     details: Vec<Value>,
     /// Copilot's `reasoning_opaque`.
     opaque: String,
-    items: u32,
 }
 
 /// The string fields of a `reasoning_details` entry that stream in pieces.
@@ -144,13 +156,9 @@ impl Streamed {
         }
         states
             .into_iter()
-            .map(|opaque| {
-                self.items += 1;
-                LlmEvent::ReasoningItem {
-                    index: self.items - 1,
-                    text: String::new(),
-                    opaque: Some(opaque),
-                }
+            .map(|opaque| LlmEvent::ReasoningItem {
+                text: String::new(),
+                opaque: Some(opaque),
             })
             .collect()
     }

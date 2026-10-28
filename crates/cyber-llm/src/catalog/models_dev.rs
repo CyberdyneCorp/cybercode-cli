@@ -4,10 +4,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use super::{
-    Capabilities, Cost, CostTier, Limits, Model, ModelProfile, ProfilePatch, Provider,
-    RequestOverlay, Variant,
-};
+use super::{Capabilities, Cost, CostTier, Limits, Model, Provider, RequestOverlay, Variant};
 use crate::adapters::ApiKind;
 use crate::json::str_at;
 use crate::types::Reasoning;
@@ -52,9 +49,9 @@ fn provider(id: &str, v: &Value) -> Provider {
         api_key: None,
         auth_none: false,
         request: RequestOverlay::default(),
-        idle_ms: None,
         disabled: false,
         models,
+        ..Provider::default()
     }
 }
 
@@ -113,9 +110,8 @@ fn model(provider_id: &str, id: &str, v: &Value, provider_kind: Option<ApiKind>)
             .map(str::to_string),
         disabled: false,
         request: RequestOverlay::default(),
-        profile: ModelProfile::default(),
         profile_catalog: super::profile::from_models_dev(v),
-        profile_config: ProfilePatch::default(),
+        ..Model::default()
     }
 }
 

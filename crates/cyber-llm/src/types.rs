@@ -141,9 +141,17 @@ impl Opaque {
 
 /// Redact every `opaque` object of a serialized event or part, at any depth, for what
 /// leaves the store: a forked Session's creation event carries whole entries and calls.
+/// The legacy `signature` string of a reasoning payload or part (`{text, signature}`)
+/// is signature state too.
 pub fn redact_opaque_fields(value: &mut Value) {
     match value {
         Value::Object(map) => {
+            if map.contains_key("text")
+                && let Some(signature) = map.get_mut("signature")
+                && signature.is_string()
+            {
+                *signature = Value::String(OPAQUE_REDACTED.into());
+            }
             for (key, field) in map.iter_mut() {
                 match field.get_mut("data") {
                     Some(data) if key == "opaque" && data.is_string() => {
@@ -467,15 +475,10 @@ pub enum LlmEvent {
     ReasoningDelta {
         text: String,
     },
-    /// A signature that closes the reasoning block streamed since the last one.
-    ReasoningSignature {
-        signature: String,
-    },
-    /// Closes the reasoning block streamed since the last one: `index` is its position
-    /// among the response's reasoning blocks, `text` its full text when the adapter has it
-    /// (empty keeps the streamed text), and `opaque` the state to replay with it.
+    /// Closes the reasoning block streamed since the last one: `text` is its full text
+    /// when the adapter has it (empty keeps the streamed text), and `opaque` the state to
+    /// replay with it, such as an Anthropic signature. The runtime numbers the blocks.
     ReasoningItem {
-        index: u32,
         #[serde(default)]
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -572,6 +575,20 @@ mod tests {
         assert_eq!(plain, json!({"text": "t", "data": "kept"}));
     }
 
+    /// Regression: the legacy `{text, signature}` reasoning shape kept its signature.
+    #[test]
+    fn legacy_reasoning_signatures_are_redacted() {
+        let mut ended = json!({"text": "t", "signature": "sig"});
+        redact_opaque_fields(&mut ended);
+        assert_eq!(ended["signature"], OPAQUE_REDACTED);
+        let mut part = json!({"parts": [{"type": "reasoning", "text": "t", "signature": "sig"}]});
+        redact_opaque_fields(&mut part);
+        assert_eq!(part["parts"][0]["signature"], OPAQUE_REDACTED);
+        let mut other = json!({"signature": "kept"});
+        redact_opaque_fields(&mut other);
+        assert_eq!(other["signature"], "kept");
+    }
+
     /// Regression: only a top-level `opaque` was redacted, so a fork's creation event
     /// streamed the nested entries' and calls' blobs.
     #[test]
@@ -593,7 +610,6 @@ mod tests {
     #[test]
     fn reasoning_item_event_round_trips() {
         let event = LlmEvent::ReasoningItem {
-            index: 1,
             text: String::new(),
             opaque: Some(Opaque::new(OpaqueKind::Signature, "B")),
         };

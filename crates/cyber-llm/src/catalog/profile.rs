@@ -73,13 +73,16 @@ pub enum EditTool {
     Edit,
 }
 
-/// Which part of a long tool output the model sees.
+/// Which part of a long tool output the model sees: `default` is each tool's own end
+/// (the tail of shell output, the head of anything else), `head` and `tail` force that
+/// end for every tool, and `middle` keeps both ends.
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum Truncation {
     #[default]
+    Default,
     Head,
     Tail,
     Middle,
@@ -136,7 +139,7 @@ impl Default for ModelProfile {
 }
 
 /// One layer's fields; unset fields leave the earlier layer's value.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfilePatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_replay: Option<ReasoningReplay>,
@@ -161,6 +164,12 @@ pub struct ProfilePatch {
     pub efforts: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort_clamp: Option<EffortClamp>,
+}
+
+impl Default for ProfilePatch {
+    fn default() -> Self {
+        Self::EMPTY
+    }
 }
 
 impl ProfilePatch {
@@ -620,21 +629,45 @@ mod tests {
         assert_eq!(resolve(&p, &m).efforts, ["none", "low", "high"]);
     }
 
-    /// The vocabulary configuration validation checks is the one the profile parses.
+    /// The vocabulary configuration validation checks is exactly the one the profile
+    /// types parse: every listed value parses, and every variant is listed.
     #[test]
     fn config_vocabulary_matches_the_profile_types() {
         use cyber_core::config::model_profiles as vocabulary;
-        fn all_parse<T: serde::de::DeserializeOwned>(values: &[&str]) {
+        fn same<T: serde::de::DeserializeOwned + schemars::JsonSchema>(values: &[&str]) {
             for value in values {
                 assert!(parsed::<T>(Some(&json!(value))).is_some(), "{value}");
             }
+            let schema = serde_json::to_value(schemars::schema_for!(T)).unwrap();
+            let mut variants = std::collections::BTreeSet::new();
+            names(&schema, &mut variants);
+            let listed: std::collections::BTreeSet<String> =
+                values.iter().map(|v| (*v).to_owned()).collect();
+            assert_eq!(variants, listed, "{}", std::any::type_name::<T>());
         }
-        all_parse::<ReasoningReplay>(vocabulary::REASONING_REPLAY);
-        all_parse::<ReasoningCarrier>(vocabulary::REASONING_CARRIER);
-        all_parse::<VerbosityLevel>(vocabulary::VERBOSITY);
-        all_parse::<EditTool>(vocabulary::EDIT_TOOL);
-        all_parse::<Truncation>(vocabulary::TRUNCATION);
-        all_parse::<EffortClamp>(vocabulary::EFFORT_CLAMP);
-        assert_eq!(vocabulary::REASONING_CARRIER.len(), 8);
+        /// The string values a schema admits, through `enum` lists and `const`s.
+        fn names(schema: &Value, out: &mut std::collections::BTreeSet<String>) {
+            match schema {
+                Value::Object(map) => {
+                    let listed = map.get("enum").and_then(Value::as_array);
+                    out.extend(
+                        listed
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|v| v.as_str().map(str::to_owned)),
+                    );
+                    out.extend(map.get("const").and_then(Value::as_str).map(str::to_owned));
+                    map.values().for_each(|v| names(v, out));
+                }
+                Value::Array(items) => items.iter().for_each(|v| names(v, out)),
+                _ => {}
+            }
+        }
+        same::<ReasoningReplay>(vocabulary::REASONING_REPLAY);
+        same::<ReasoningCarrier>(vocabulary::REASONING_CARRIER);
+        same::<VerbosityLevel>(vocabulary::VERBOSITY);
+        same::<EditTool>(vocabulary::EDIT_TOOL);
+        same::<Truncation>(vocabulary::TRUNCATION);
+        same::<EffortClamp>(vocabulary::EFFORT_CLAMP);
     }
 }

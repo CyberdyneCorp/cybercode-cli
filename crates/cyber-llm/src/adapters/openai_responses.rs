@@ -7,7 +7,6 @@ use super::{
     Adapter, Decoder, Endpoint, EventStream, ToolCalls, data_url, decode_sse, document_name,
     ensure_resolved, parse_json,
 };
-use crate::catalog::profile::ReasoningCarrier;
 use crate::error::{ErrorKind, LlmError, stream_error};
 use crate::json::{deep_merge, force_no_tools, str_at, strip_credentials};
 use crate::sse::SseEvent;
@@ -27,7 +26,7 @@ pub struct OpenAiResponsesAdapter {
 /// Who serves the Responses protocol, which decides the routing headers
 /// (`provider-catalog` → Session routing headers).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Backend {
+pub(crate) enum Backend {
     /// The OpenAI API with a key: `session-id` only.
     Api,
     /// The ChatGPT subscription backend: every routing header and the Turn state.
@@ -37,16 +36,37 @@ pub(super) enum Backend {
 }
 
 impl Backend {
-    /// The OpenAI API only at its default URL; a custom gateway speaking Responses gets
+    /// The OpenAI API only at its official URL; a custom gateway speaking Responses gets
     /// no routing headers.
     fn for_url(base_url: &str) -> Self {
-        let default = super::ApiKind::OpenaiResponses.default_url();
-        if Some(base_url.trim_end_matches('/')) == default {
+        if is_official_openai(base_url) {
             Self::Api
         } else {
             Self::Other
         }
     }
+
+    /// Whether the freeform `apply_patch` tool may be offered: OpenAI's own backends
+    /// implement grammar tools, a compatible gateway may not (`builtin-tools` → Freeform
+    /// apply_patch).
+    fn allows_freeform_patch(self) -> bool {
+        self != Self::Other
+    }
+}
+
+/// Whether `base_url` is the official OpenAI API route: `https://api.openai.com/v1`, on
+/// the default port, with no credentials, query or fragment.
+pub(super) fn is_official_openai(base_url: &str) -> bool {
+    reqwest::Url::parse(base_url).is_ok_and(|url| {
+        url.scheme() == "https"
+            && url.host_str() == Some("api.openai.com")
+            && url.port().is_none_or(|port| port == 443)
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.path().trim_end_matches('/') == "/v1"
+            && url.query().is_none()
+            && url.fragment().is_none()
+    })
 }
 
 const TURN_STATE: &str = "x-codex-turn-state";
@@ -121,7 +141,7 @@ impl Adapter for OpenAiResponsesAdapter {
     fn stream(&self, request: LlmRequest) -> BoxFuture<'_, Result<EventStream, LlmError>> {
         Box::pin(async move {
             ensure_resolved(&request)?;
-            let body = build_body(&request);
+            let body = build_body(&request, self.backend);
             let auth = self
                 .endpoint
                 .api_key
@@ -145,8 +165,9 @@ impl Adapter for OpenAiResponsesAdapter {
     }
 }
 
-pub(crate) fn build_body(request: &LlmRequest) -> Value {
-    let custom = custom_calls(request);
+pub(crate) fn build_body(request: &LlmRequest, backend: Backend) -> Value {
+    let freeform = request.shaping.freeform_patch && backend.allows_freeform_patch();
+    let custom = custom_calls(request, freeform);
     let input: Vec<Value> = request
         .messages
         .iter()
@@ -162,7 +183,7 @@ pub(crate) fn build_body(request: &LlmRequest) -> Value {
         let tools: Vec<Value> = request
             .tools
             .iter()
-            .map(|t| tool_entry(t, request.shaping.freeform_patch))
+            .map(|t| tool_entry(t, freeform))
             .collect();
         map.insert("tools".into(), Value::Array(tools));
         map.insert("tool_choice".into(), json!("auto"));
@@ -198,8 +219,9 @@ fn optional_fields(request: &LlmRequest, map: &mut Map<String, Value>) {
     if let (Some(key), true) = (&request.cache_key, request.cache) {
         map.insert("prompt_cache_key".into(), json!(key));
     }
-    // With `store: false` the encrypted reasoning is the only way to keep it across calls.
-    if request.shaping.reasoning && request.reasoning_carrier == ReasoningCarrier::Responses {
+    // With `store: false` the encrypted reasoning is the only way to keep it across calls;
+    // whether it goes back is the replay policy's choice, made later.
+    if request.shaping.reasoning {
         map.insert("include".into(), json!(["reasoning.encrypted_content"]));
     }
 }
@@ -237,8 +259,8 @@ fn tool_entry(tool: &crate::types::ToolSpec, freeform_patch: bool) -> Value {
 
 /// IDs of the patch calls replayed as custom tool calls: with the freeform tool offered,
 /// every earlier `apply_patch` call and its result take the custom item shapes.
-fn custom_calls(request: &LlmRequest) -> std::collections::HashSet<&str> {
-    if !request.shaping.freeform_patch {
+fn custom_calls(request: &LlmRequest, freeform: bool) -> std::collections::HashSet<&str> {
+    if !freeform {
         return Default::default();
     }
     request
@@ -370,8 +392,6 @@ fn reasoning_item(text: &str, opaque: Option<&Opaque>) -> Option<Value> {
 #[derive(Default)]
 struct ResponsesDecoder {
     tools: ToolCalls,
-    /// Reasoning items decoded so far, for [`LlmEvent::ReasoningItem`] indexes.
-    reasoning_items: u32,
     done: bool,
 }
 
@@ -477,12 +497,7 @@ impl ResponsesDecoder {
             opaque.id = item["id"].as_str().map(str::to_owned);
             opaque
         });
-        self.reasoning_items += 1;
-        LlmEvent::ReasoningItem {
-            index: self.reasoning_items - 1,
-            text,
-            opaque,
-        }
+        LlmEvent::ReasoningItem { text, opaque }
     }
 
     fn complete(&mut self, response: &Value, out: &mut Vec<Result<LlmEvent, LlmError>>) {
@@ -585,7 +600,7 @@ mod tests {
             ..LlmRequest::default()
         };
         assert_eq!(
-            build_body(&request)["input"][0]["content"][0],
+            build_body(&request, Backend::Api)["input"][0]["content"][0],
             json!({ "type": "input_file", "filename": "spec.pdf", "file_data": "data:application/pdf;base64,JVBERi0=" })
         );
     }
@@ -666,7 +681,7 @@ mod tests {
             ..LlmRequest::default()
         };
         request.shaping.freeform_patch = true;
-        let body = build_body(&request);
+        let body = build_body(&request, Backend::Api);
         let tool = &body["tools"][0];
         assert_eq!(tool["type"], "custom");
         assert_eq!(tool["name"], "apply_patch");
@@ -682,11 +697,15 @@ mod tests {
             body["input"][2],
             json!({"type": "custom_tool_call_output", "call_id": "call_1", "output": "D a.txt"})
         );
-        request.shaping.freeform_patch = false;
-        let body = build_body(&request);
-        assert_eq!(body["tools"][0]["type"], "function");
-        assert_eq!(body["input"][1]["type"], "function_call");
-        assert_eq!(body["input"][2]["type"], "function_call_output");
+        // A compatible gateway may not implement grammar tools, and Copilot's Responses
+        // models are served through one: the patch tool stays a function there.
+        for (freeform, backend) in [(false, Backend::Api), (true, Backend::Other)] {
+            request.shaping.freeform_patch = freeform;
+            let body = build_body(&request, backend);
+            assert_eq!(body["tools"][0]["type"], "function");
+            assert_eq!(body["input"][1]["type"], "function_call");
+            assert_eq!(body["input"][2]["type"], "function_call_output");
+        }
     }
 
     /// A streamed custom tool call decodes to `apply_patch { patch }` and finishes the
@@ -750,6 +769,10 @@ mod tests {
         for (url, backend) in [
             ("https://api.openai.com/v1", Backend::Api),
             ("https://api.openai.com/v1/", Backend::Api),
+            ("https://api.openai.com:443/v1", Backend::Api),
+            ("https://api.openai.com/v1?x", Backend::Other),
+            ("http://api.openai.com/v1", Backend::Other),
+            ("https://api.openai.com:8443/v1", Backend::Other),
             ("https://gateway.corp.example/v1", Backend::Other),
             ("http://127.0.0.1:4000/v1", Backend::Other),
         ] {

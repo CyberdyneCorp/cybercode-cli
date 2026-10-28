@@ -41,7 +41,6 @@ impl ModelResolver for Models {
                 ..Default::default()
             },
             context_limit: 200000,
-            prefers_apply_patch: false,
             family: cyber_core::prompts::ModelFamily::Default,
             vision: false,
             pdf: false,

@@ -80,10 +80,17 @@ pub(crate) fn build_body(request: &LlmRequest) -> Value {
     if !request.system.is_empty() {
         messages.push(json!({ "role": "system", "content": request.system.join("\n\n") }));
     }
-    for message in &request.messages {
+    let loop_start = tool_loop_start(&request.messages);
+    for (index, message) in request.messages.iter().enumerate() {
         match message.role {
             Role::User => push_user(message, &mut messages),
-            Role::Assistant => messages.push(assistant(message, request.reasoning_carrier)),
+            Role::Assistant => {
+                let mut value = assistant(message, request.reasoning_carrier);
+                if index > loop_start {
+                    reasoning::hold_tool_loop(&mut value, request.reasoning_carrier);
+                }
+                messages.push(value);
+            }
         }
     }
     let mut body = json!({
@@ -106,6 +113,21 @@ pub(crate) fn build_body(request: &LlmRequest) -> Value {
     force_no_tools(&mut body, request.tools_disabled, json!("none"));
     strip_credentials(&mut body);
     body
+}
+
+/// The index of the latest prompt: a user message that is more than tool results. The
+/// messages after it are the current tool loop.
+fn tool_loop_start(messages: &[Message]) -> usize {
+    messages
+        .iter()
+        .rposition(|message| {
+            message.role == Role::User
+                && message
+                    .content
+                    .iter()
+                    .any(|part| !matches!(part, Content::ToolResult { .. }))
+        })
+        .unwrap_or(0)
 }
 
 fn optional_fields(request: &LlmRequest, map: &mut Map<String, Value>) {

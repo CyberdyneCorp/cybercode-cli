@@ -154,11 +154,23 @@ mod tests {
         assert!(local.contains("valid JSON") && local.contains("`apply_patch`"));
     }
 
+    /// A version stands for exact texts: an edit to any base prompt fails here until
+    /// `prompts/base/VERSION` is bumped and this digest updated, so no Session keeps a
+    /// stale prefix under an unchanged version.
     #[test]
-    fn version_counts_the_rewrite() {
-        assert!(
-            base_prompt_version() >= 2,
-            "the rewritten prompts are version 2"
+    fn the_version_pins_the_prompt_texts() {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        for text in [CORE, OPENAI, ANTHROPIC, GEMINI, LOCAL] {
+            // A checkout with CRLF line endings holds the same texts.
+            hasher.update(text.replace("\r\n", "\n").as_bytes());
+            hasher.update([0]);
+        }
+        let digest = format!("{:x}", hasher.finalize());
+        assert_eq!(
+            (base_prompt_version(), &digest[..16]),
+            (2, "cf61e2d10d918a9d"),
+            "a base prompt changed: bump prompts/base/VERSION and update this digest"
         );
     }
 }

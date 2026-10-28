@@ -58,7 +58,7 @@ impl Inner {
             (snapshot(&state, &resolved), resolved)
         };
         let turn =
-            super::drain::turn_context_for_info(&snapshot.info, resolved.prefers_apply_patch);
+            super::drain::turn_context_for_info(&snapshot.info, resolved.prefers_apply_patch());
         let mut defs = self.tools.definitions(&turn);
         defs.retain(|def| READ_ONLY_TOOLS.contains(&def.spec.name.as_str()) && !def.deferred);
         let mut request = resolved.template.clone();
@@ -193,6 +193,7 @@ impl Inner {
         input: serde_json::Value,
     ) -> (String, bool) {
         let invocation = Invocation {
+            tool_output: Default::default(),
             registration: def.registration.clone(),
             session_id: info.id.clone(),
             directory: info.directory.clone(),
