@@ -217,6 +217,10 @@ pub struct EpochStarted {
     /// The model family of `system_prefix`; absent on epochs from before families.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub family: Option<String>,
+    /// The base prompt version of `system_prefix`; absent on epochs from before
+    /// versions, which were built with version 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_version: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

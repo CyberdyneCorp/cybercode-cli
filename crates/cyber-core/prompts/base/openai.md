@@ -1,1 +1,7 @@
-You are running on an OpenAI model. Prefer apply_patch-style edits when that tool is offered.
+# Notes for this model
+
+- Make file changes with `apply_patch`. One patch may touch several files and several hunks; group the edits of one logical change into a single patch. Give each hunk enough unchanged context lines to place it without doubt. Use `write` only for a brand-new file and `edit` only when `apply_patch` is not offered.
+- Never send a patch through `bash`; call the `apply_patch` tool itself.
+- Read in parallel: when you need several files or searches, request them all in the same turn instead of one per round trip.
+- Keep reasoning focused on the next concrete action, and act as soon as you know it.
+- Your progress notes and final answer are plain prose with short bullet lists where they help. Avoid long headings, tables or code dumps unless the user asked for them.

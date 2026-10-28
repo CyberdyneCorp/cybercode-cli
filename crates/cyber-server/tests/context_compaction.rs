@@ -84,6 +84,42 @@ async fn epoch_without_a_family_keeps_its_prefix_bytes() {
     assert_eq!((epoch.number, epoch.family), (1, None));
 }
 
+/// `system-context` → Base prompt coverage, "Prompt version change".
+#[tokio::test]
+async fn prompt_version_change_starts_a_new_epoch() {
+    use cyber_server::runtime::{ModelFamily, base_prompt};
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("a"), text("b")])],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    h.runtime.admit(&id, admit("one")).await.unwrap();
+    h.settle(&id).await;
+    let built = h.state(&id).await.epoch.unwrap();
+    let version = cyber_core::prompts::base_prompt_version();
+    assert_eq!((built.number, built.prompt_version), (1, Some(version)));
+    let family = ModelFamily::ALL
+        .into_iter()
+        .find(|f| Some(f.as_str()) == built.family.as_deref())
+        .unwrap();
+
+    // The same family, but built with the version 1 prompt.
+    let seq = h.store.aggregate_seq(&id).unwrap().unwrap();
+    h.store.append(&id, cyber_store::Expected::Seq(seq), vec![cyber_store::NewEvent::new(
+        "session.context.epoch_started.1", serde_json::json!({
+            "epoch":2, "baseline":built.baseline, "snapshot":built.snapshot, "provider":"test",
+            "system_prefix":"Version 1 base prompt.", "family":family.as_str(), "prompt_version":1
+        }),
+    )]).unwrap();
+    let restarted = h.restart();
+    restarted.admit(&id, admit("two")).await.unwrap();
+    restarted.wait_idle(&id).await;
+    let requests = h.models.requests("test/main");
+    assert_eq!(requests.last().unwrap().system[0], base_prompt(family));
+    let epoch = restarted.state(&id).await.unwrap().epoch.unwrap();
+    assert_eq!((epoch.number, epoch.prompt_version), (3, Some(version)));
+}
+
 #[tokio::test]
 async fn baseline_is_byte_stable_within_an_epoch() {
     let h = Harness::new(Setup {

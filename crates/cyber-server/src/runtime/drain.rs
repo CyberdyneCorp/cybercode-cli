@@ -691,9 +691,8 @@ struct Accum {
 }
 
 impl Inner {
-    /// Start a Context Epoch when there is none, it is stale, or the provider or model
-    /// family changed. An epoch without a family (from before families) compares by
-    /// provider only, so a restart never rebuilds its prefix.
+    /// Start a Context Epoch when there is none, it is stale, or the provider, model
+    /// family or base prompt version changed (see [`super::model::Epoch::serves`]).
     pub(crate) async fn ensure_epoch(
         &self,
         handle: &Handle,
@@ -701,13 +700,10 @@ impl Inner {
     ) -> Result<(), RuntimeError> {
         {
             let state = handle.state.lock().await;
+            let version = cyber_core::prompts::base_prompt_version();
             if let Some(epoch) = &state.epoch
                 && !state.epoch_stale
-                && epoch.provider == resolved.provider
-                && epoch
-                    .family
-                    .as_deref()
-                    .is_none_or(|family| family == resolved.family.as_str())
+                && epoch.serves(&resolved.provider, resolved.family.as_str(), version)
             {
                 return Ok(());
             }
@@ -739,6 +735,7 @@ impl Inner {
             provider: resolved.provider.clone(),
             system_prefix: Some(system_prefix),
             family: Some(resolved.family.as_str().into()),
+            prompt_version: Some(cyber_core::prompts::base_prompt_version()),
         };
         self.commit_locked(&mut state, vec![event(EPOCH_STARTED, &payload)])?;
         drop(state);

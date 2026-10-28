@@ -99,26 +99,29 @@
 
 ## 7. Base prompts
 
-- [ ] 7.1 Write new base prompts (core plus the OpenAI, Anthropic, Gemini and local addenda) that cover the topics in "Base prompt coverage". Add `prompts/base/VERSION`, and start a new Epoch when the version changes.
+- [x] 7.1 Write new base prompts (core plus the OpenAI, Anthropic, Gemini and local addenda) that cover the topics in "Base prompt coverage". Add `prompts/base/VERSION`, and start a new Epoch when the version changes.
   - Test: "Prompt version change".
-- [ ] 7.2 Provenance check: a script test that fails if any sentence of 12 words or more in `prompts/base/*.md` appears in the Codex prompt files. It runs against a fixture list of Codex sentences. The Codex source is not vendored; the fixture holds only short hashes.
+  - Done: `prompts/base/*.md`, `VERSION` = 2, `Epoch::serves`; tests `prompt_version_change_starts_a_new_epoch`, `core_text_covers_every_required_topic`, `addenda_follow_each_family_edit_tool`.
+- [x] 7.2 Provenance check: a script test that fails if any sentence of 12 words or more in `prompts/base/*.md` appears in the Codex prompt files. It runs against a fixture list of Codex sentences. The Codex source is not vendored; the fixture holds only short hashes.
+  - Done: `scripts/prompt_shingles.py` hashes 12-word shingles of every `.md`, `.lark` and `.txt` under Codex's `codex-rs` plus the text files of any `assets`/`templates`/`prompts` folder (226 files, 93 601 hashes in `tests/fixtures/reference_prompt_shingles.txt`); `tests/prompt_provenance.rs` and `scripts/tests/test_prompt_shingles.py` check every base prompt and any `.lark` grammar under `crates/`.
 
 ## 8. Evidence
 
 - [x] 8.1 Golden request fixtures in `tests/adapters.rs`, one per carrier and per Responses option set, pinning the exact JSON.
   - Done for every carrier (`golden_*` in `tests/adapters.rs`, Copilot in `tests/copilot.rs`) and for the Responses option sets (supporting model, unsupporting model, reasoning off and tools disabled).
-- [ ] 8.2 Live tests (`tests/live.rs`, ignored by default, run with keys):
+- [x] 8.2 Live tests (`tests/live.rs`, ignored by default, run with keys):
   - an OpenAI tool loop with encrypted reasoning replayed;
   - an Anthropic interleaved-thinking loop;
   - a DeepSeek thinking tool loop;
   - a Gemini 3 tool loop through the compatible endpoint.
   
   Each must finish with no 400 errors.
+  - Done: four `#[ignore]` tests in `tests/live.rs`, each skipped without its key. They compile; they have not been run here (no keys).
 - [ ] 8.3 Eval comparison: run the pinned-repository eval (`harness-evaluation`) on `openai/gpt-6-sol`, before and after, and record the pass rate and token use in `docs/`.
 
 ## 9. Docs and checks
 
-- [ ] 9.1 Docs: model profiles, reasoning replay, idle timeout and the new error messages in `docs/local-core-guide.md`; a row in `docs/features.md`; the ROADMAP entry.
+- [x] 9.1 Docs: model profiles, reasoning replay, idle timeout and the new error messages in `docs/local-core-guide.md`; a row in `docs/features.md`; the ROADMAP entry.
 - [ ] 9.2 Run the gate:
   - `cargo fmt`;
   - workspace clippy with `-D warnings`;

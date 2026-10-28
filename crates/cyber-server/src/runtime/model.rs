@@ -315,6 +315,23 @@ pub struct Epoch {
     /// See [`EpochStarted::family`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub family: Option<String>,
+    /// See [`EpochStarted::prompt_version`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_version: Option<u32>,
+}
+
+impl Epoch {
+    /// Whether this epoch's prefix still serves a Turn on `provider` with a `family`
+    /// model and base prompt `version`. An epoch from before families compares by
+    /// provider only, so a restart never rebuilds its prefix; one with a family but no
+    /// version was built with version 1.
+    pub(crate) fn serves(&self, provider: &str, family: &str, version: u32) -> bool {
+        self.provider == provider
+            && self
+                .family
+                .as_deref()
+                .is_none_or(|built| built == family && self.prompt_version.unwrap_or(1) == version)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -1272,6 +1289,7 @@ impl SessionState {
             provider: e.provider,
             system_prefix: e.system_prefix,
             family: e.family,
+            prompt_version: e.prompt_version,
         });
         self.epoch_stale = false;
     }

@@ -103,9 +103,9 @@ Opaque state never leaves the store: exports (JSON, Markdown and HTML), the mess
 
 ## Model behavior profiles
 
-Every model has a behavior profile: how its reasoning is replayed and in which request field (`reasoning_replay`, `reasoning_carrier`), whether it takes reasoning summaries and a verbosity, whether it makes parallel tool calls, which edit tool suits it (`freeform_patch`, `json_patch` or `edit`), its tool-output budget and truncation, its effort levels, and what happens to an effort it does not list (`effort_clamp`). `cyber models --json` and `GET /api/v1/models` show the resolved `profile` of each model.
+Every model has a behavior profile: how its reasoning is replayed and in which request field (`reasoning_replay`, `reasoning_carrier`), whether it takes reasoning summaries and a verbosity, whether it makes parallel tool calls, which edit tool suits it (`freeform_patch`, `json_patch` or `edit`), its tool-output budget and truncation, its effort levels, and what happens to an effort it does not list (`effort_clamp`). `cyber models --json` and `GET /api/v1/models` show the resolved `profile` of each model. The edit tool and the tool-output budget are resolved and shown but not acted on yet: every model is still offered the JSON `apply_patch`, `edit` and `write` tools, and tool output is cut by the global `tool_output` limits. The freeform patch tool, tolerant patch matching, `apply_patch` interception in shell commands and `middle` truncation are not implemented yet.
 
-The profile is resolved field by field, a later layer winning: defaults by family and protocol; built-in rules by model name (for example `deepseek`, `kimi`, `glm` and `qwen` on a Chat Completions endpoint use `reasoning_content` within a tool loop, and `gpt-5`, `gpt-6`, `o3` and `o4` use the freeform patch tool with middle truncation at 10 000 tokens) and by provider (OpenRouter, Ollama, LM Studio, Copilot); the provider's catalog metadata (the ChatGPT model list, models.dev `reasoning` and `tool_call`); then configuration:
+The profile is resolved field by field, a later layer winning: defaults by family and protocol; built-in rules by model name (for example `deepseek`, `kimi`, `glm` and `qwen` on a Chat Completions endpoint use `reasoning_content` within a tool loop, and `gpt-5`, `gpt-6`, `o3` and `o4` are profiled for the freeform patch tool with middle truncation at 10 000 tokens) and by provider (OpenRouter, Ollama, LM Studio, Copilot); the provider's catalog metadata (the ChatGPT model list, models.dev `reasoning` and `tool_call`); then configuration:
 
 ```jsonc
 { "providers": { "corp": { "models": { "coder": {
@@ -952,18 +952,20 @@ Not implemented yet: `.cyber/rules/*.md` and `.claude/rules/*.md`, `.claude/CLAU
 
 ## Base prompts and output styles
 
-The system prompt starts with the agent's `system` text when the agent sets one. Otherwise it starts with a short base prompt chosen by the model's family, followed by the Session's output style. The base prompts and the built-in styles are embedded in the binary (`crates/cyber-core/prompts/`).
+The system prompt starts with the agent's `system` text when the agent sets one. Otherwise it starts with a base prompt chosen by the model's family, followed by the Session's output style. The base prompts and the built-in styles are embedded in the binary (`crates/cyber-core/prompts/`).
 
 ### Base prompts by model family
 
-Every base prompt is one shared core text plus a family addendum: `openai`, `anthropic`, `gemini`, `local` (open-weights models) or `default` (the core text alone). The family comes from the catalog model, not the provider id, so `openrouter/anthropic/claude-sonnet` gets the Anthropic prompt and `groq/gpt-oss-120b` the local one. The order is:
+Every base prompt is one shared core text plus a family addendum: `openai`, `anthropic`, `gemini`, `local` (open-weights models) or `default` (the core text alone). The core text is a short operating manual: scope, reading before editing and making the smallest sufficient change, editing only through the edit tools (never shell redirection), fast search and parallel independent reads, carrying the task to a verified result and asking only when a real decision is blocked, leaving changes it did not make alone, care before destructive actions, brief progress notes during long work, and a final answer that leads with the result and cites `path:line`. The addenda tune it to the family: OpenAI and local models edit with `apply_patch` and batch reads, Anthropic models edit with `edit` and call tools in parallel, and Gemini models make small sequential edits and verify each one explicitly. The family comes from the catalog model, not the provider id, so `openrouter/anthropic/claude-sonnet` gets the Anthropic prompt and `groq/gpt-oss-120b` the local one. The order is:
 
 1. Open-weights names (`gpt-oss`, `llama`, `qwen`, `mistral`, `deepseek`, `gemma`, `phi`, `glm`, `kimi`, …) select `local`.
 2. `claude` selects `anthropic`; `gpt`, `o1`, `o3`, `o4`, `codex` and `chatgpt` select `openai`; `gemini` selects `gemini`. The catalog family name is checked first, then the last `/` segment of the model id.
 3. Otherwise the protocol decides: Anthropic Messages is `anthropic`, OpenAI Responses and the ChatGPT plan are `openai`.
 4. Otherwise a provider without authentication or with a loopback URL is `local`, and anything else is `default`.
 
-A model switch that changes the family starts a new Context Epoch on the next Turn. Epochs recorded before families existed compare by provider only, so a restart never rebuilds their prefix.
+A model switch that changes the family starts a new Context Epoch on the next Turn. So does a new version of the base prompts (`prompts/base/VERSION`, recorded on each epoch as `prompt_version`): a Session resumed by a newer binary picks up the new text at its next Turn. An epoch with a family but no version was built with version 1. Epochs recorded before families existed compare by provider only, so a restart never rebuilds their prefix.
+
+The prompts are written for Cyber Code. `scripts/prompt_shingles.py` builds `crates/cyber-core/tests/fixtures/reference_prompt_shingles.txt`: hashes of every 12-word run of a reference product's text assets (every `.md`, `.lark` and `.txt` file of its `codex-rs` tree, and the text files of any `assets`, `templates` or `prompts` folder), with no text stored. The `prompt_provenance` test (and `python3 scripts/prompt_shingles.py check`) fails if any 12-word run of a base prompt, or of any `.lark` grammar under `crates/`, matches one. Words are lowercased ASCII letters and digits, so punctuation, case and Markdown do not hide a copy. Regenerate the fixture with `python3 scripts/prompt_shingles.py generate <checkout>`.
 
 ### Output styles
 
