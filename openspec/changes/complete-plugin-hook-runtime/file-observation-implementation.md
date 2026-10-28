@@ -1,369 +1,177 @@
 # File observation implementation notes
 
-Status: in progress. The earlier journal/dispatch revision passed focused Linux
-and Windows checks; macOS is queued. Automatic host-owned watching is now wired
-and has new application regressions awaiting CI. Local isolated model/native/root
-checks pass, but do not compile the host integration. Task 5.2 remains open.
-## Components under construction
+Status: **in progress; task 5.2 remains open**. The production observer and its
+focused application suite at `f0c5a743` passed Linux, macOS and Windows. The
+additional native formatter, foreground/background shell and self-mutating-hook
+regressions at `413d10ad` await CI. Broader workspace verification, remaining
+scope/resource/lifecycle acceptance and substantive review are still required.
 
-- `cyber-tools/src/file_changes/native.rs`: native notify 8.2.0 hints, with a
-  bounded synchronous queue, at most 128 relative paths per retained hint and
-  4,096 bytes per path. Queue loss, oversized payloads and backend rescan flags
-  request reconciliation. Native registrations are non-recursive and capped at
-  256 directories supplied by the no-follow scanner. Incomplete scans preserve
-  existing coverage; limit/registration failures report partial coverage through
-  the rescan flag. Deleted registrations release their slots. Access-only events
-  do not masquerade as writes.
-- `scan.rs`: metadata-only traversal through pinned cap-std directories and
-  `open_dir_nofollow`, with entry, depth, path and cancellation bounds. It opens
-  no file contents and follows neither directory nor file symlinks. Exclusion
-  is supplied before reading child metadata. Unreadable/limited scans are
-  incomplete evidence, not proof of file deletion.
-- `state.rs`: native hints plus metadata reconciliation detect replacements,
-  create/remove and renames as changed source/destination paths without claiming
-  a writer identity. Overflow preserves prior state; incomplete scans retain
-  unseen entries under a memory bound. Protection revocation forgets obsolete
-  stamps without reporting the newly protected paths as deleted.
+## Ownership and native observation
 
-The native API documents editor-dependent event shapes and possible notification
-loss. Reconciliation is required even when the watcher starts successfully; a
-native hint is not proof of exact write ordering or actor identity.
-Sources: [notify](https://docs.rs/notify/8.2.0/notify/),
+`cyber-tools/src/file_changes/owner.rs` starts a host-owned observer from
+`open_location`/`refresh_location`. One actor is shared by the canonical Location,
+with at most 32 Locations and 256 member Sessions per Location. Registry locks
+never span scans, journal writes, callbacks or task joins. Idle actors check for
+eligible handlers before acquiring native observation resources. Shutdown cancels
+and joins workers outside registry locks; already launched callbacks receive
+cooperative cancellation and settle through the existing receipt machinery.
+
+`native.rs` uses notify 8.2.0 with a bounded queue of 32 hints. Each hint retains
+at most 128 relative paths of at most 4,096 bytes; coalescing retains at most
+1,024 names. Loss, invalid names, oversized payloads and backend rescan flags
+request reconciliation. Native registrations are non-recursive, supplied by the
+safe scanner and capped at 256 directories. Missing coverage is reported rather
+than interpreted as complete evidence. Access-only events are ignored.
+
+Native notifications may be coalesced or lost and have editor-dependent shapes.
+A three-second reconciliation supplements notifications and successful mutation
+hints. Neither notification nor metadata establishes an exact write order or
+writer identity. See the primary API documentation for
+[notify](https://docs.rs/notify/8.2.0/notify/) and its
 [rescan flag](https://docs.rs/notify/8.2.0/notify/struct.Event.html#method.need_rescan).
 
-## Durable journal increment
+## Pinned roots, traversal and private state
 
-`cyber-core::hooks::file_observations` defines bounded checkpoints and deltas.
-`Runtime::claim_file_watch` claims an exclusive generation through exact-sequence
-append; a stale worker cannot advance acknowledged state. The registered single
-writer projector checks Location identity, checkpoint preservation, monotonic
-allowance accounting and bounded replay. An append failure leaves the caller's
-metadata and allowance unchanged. Checkpoints occur at most every 128 deltas;
-replay rebuilds metadata and never returns hook effects to execute again.
+`root.rs` retains a pinned directory and filesystem identity, checking that its
+path still names that incarnation before committing or delivering observations.
+A replacement claims a fresh generation and baseline. Loaded Sessions at the
+recorded directory have their project-envelope caches invalidated; an epoch
+prevents an earlier resolution from restoring a stale cache. On Windows the
+read-only directory handle permits read/write/delete sharing so observation does
+not prevent ordinary root renames.
 
-A renewal is a separate empty delta. The writer requires a committed user input
-from a live Session at that Location, and rejects a repeated acknowledgement ID
-across generations. Hook-originated input cannot satisfy that proof. The actual
-user-action forwarding and alias-aware owner integration remain pending; this
-port does not create human presence or authorize a callback itself.
+`scan.rs` traverses metadata through pinned cap-std directories and
+`open_dir_nofollow`. It opens no file contents, follows neither directory nor file
+symlinks and bounds entries to 10,000, depth to 64 and paths to 4,096 bytes.
+Unreadable or limited traversal is incomplete evidence. Nested traversal retains
+the actual child basename separately from the normalized observation name.
 
-The initial six actual Store/Runtime regressions cover restart fencing, append failure,
-periodic checkpoints, forged scope/credit/metadata checkpoints and single-use
-user renewal and historical Location binding. These initial six and the native components passed the focused Linux job at
-`c7f73ff3`. The later `84eb1d3d` dispatch revision passed Linux/Windows; macOS and the newer automatic-owner revision remain pending. The focused
-workflow runs pure models, native components and Store/Runtime regressions on
-Linux, macOS and Windows. No platform result is implied by adding that workflow.
+Exclusions are checked before child metadata is read. They combine existing
+protected-path rules, `.cyber`, database/WAL/SHM files, tool output, temporary
+storage and global configuration. The real App explicitly supplies its owner
+data/configuration/state/cache/temporary roots before opening Locations;
+canonical aliases of those roots are also excluded. Inferring a storage root
+from a tool-output parent could incorrectly exclude an embedding checkout.
 
-## Remaining integration requirements
+`links.rs` groups permitted regular entries by filesystem identity and reported
+link count. Fully accounted in-Location hard links remain observable. Entries
+with unaccounted, excluded or inconsistent aliases are suppressed; the observer
+does not enumerate outside or private trees to manufacture a proof. Every
+bounded traversal finalizes link checks. Suppressed names retain old stamps
+without synthetic deletion while complete evidence for other names can still
+report real deletion. Coverage notices expose this uncertainty. Windows stamps
+also retain the identity from cap-fs-ext metadata.
 
-1. Bind one cancellable watcher generation to a canonical Location and actual
-   runtime ownership. The native registration component now has a per-Location bound;
-   the new owner adds global Location/Session bounds and partial-coverage notices,
-   which still need application acceptance. Verify the root incarnation and fresh Session scope before
-   recording/dispatching. Multiple Sessions must receive only their current
-   Location's observations; archived/moved Sessions cannot borrow old watches.
-2. The checkpoint/delta journal is implemented with registered owner events;
-   retain the passing Store regressions and verify the new watcher connection. Advance in-memory state only after durable
-   acknowledgement. A restarted generation must fence the old writer and reconcile
-   recorded state, while uncertain hook effects retain Unknown and are not replayed.
-3. Compose exclusions from the existing protected-path rules and owner storage,
-   including state nested below a Location and roots reached through aliases.
-   File contents and provider credentials must not enter observation records.
-4. Deliver bounded/coalesced events through the existing scoped hook executor.
-   Preserve path matchers and stable observation IDs, ignore post-effect decisions
-   and leave durable completed/failed/unknown receipts. No observation grants
-   permission or asserts that an identified tool/user wrote the path.
-5. Persist a finite feedback allowance: quiet periods and delayed/background
-   writes cannot replenish it. Exhaustion must pause handler dispatch visibly
-   while retaining bounded observations/reconciliation. Renewal requires a real
-   owner-authorized user action; hook/plugin prompts cannot manufacture renewal.
-   The owner now forwards newly committed user input and shows paused/resumed
-   notices; application acceptance of this path is pending.
-6. Reconcile after successful built-in and formatter changes and observe native
-   shell/background/external changes. Handle error/unknown tool results without
-   fabricating a successful writer receipt. Overflow needs a visible reconciliation
-   state and a bounded recovery path, including large/inaccessible trees.
-7. Join watcher/worker tasks during shutdown and settle launched hooks. Obtain
-   native macOS/Linux and explicit Windows results, real-server regressions for
-   multiple Sessions, feedback, restart, rename/delete and external edits, plus
-   full relevant Rust checks before a reviewable production PR.
+## Durable state and dispatch
 
-## Current checks
+`cyber-core::hooks::file_observations` defines bounded checkpoints and deltas:
+10,000 retained files, 256 updates per batch, 4 MiB per record and at most 128
+deltas between checkpoints. Metadata, not file contents, enters these records.
+`Runtime::claim_file_watch` claims an exclusive generation with exact-sequence
+CAS; a stale actor cannot advance the acknowledged baseline. The single writer
+validates Location, generation, checkpoint preservation and allowance accounting.
+An append failure leaves the actor's acknowledged state unchanged.
 
-The source components were loaded by path into a small temporary Cargo harness
-so local tests fit available disk. Its isolated tests and Clippy do not compile
-or verify the full Cyber application. Workspace test registration is present;
-the newer host producer requires full application verification. The journal is
-registered in production and now has a host observer caller. A component regression first
-caught a missing `cap_fs_ext::DirExt` import and was corrected. Sixteen component
-tests now cover traversal, native events, reconciliation, overflow, policy
-revocation, scope names and finite feedback allowance on the local macOS host.
+`state.rs` combines hints and metadata reconciliation. Incomplete scans preserve
+unseen entries under bounds; deletes precede creates in replacement batches.
+Protection revocation forgets old stamps silently instead of disclosing newly
+protected names as deletions. Replay reconstructs only metadata and credit,
+never pending hook effects. Incremental replay checks byte bounds at each fold
+and poisons a failed candidate rather than returning partial state.
 
-The expanded isolated harness passes 31 tests: the 20 native/reconciliation
-component tests, ten pure observation-record tests and the existing ID helper
-regression loaded with them. Isolated Clippy with warnings denied and the
-project cognitive-complexity threshold also passes. These do not establish a
-full application build or acceptance of the actual Store/Runtime regressions.
+`FileWatch::dispatch_to_cancellable` constructs observational events for a real,
+non-archived Session at the recorded Location, outside Session/lifecycle locks.
+The private hook-admission binding is checked by the single writer against the
+actual source observation, path, eligibility and current generation. Public
+receipts omit the binding. Receipt IDs are stable for the source observation,
+Session, path and effective handler identity; source entropy distinguishes
+observations created in the same millisecond. Duplicate and Unknown receipts
+remain consumed across restart. Post-effect hook decisions cannot veto a write
+that already occurred, and observations grant no permission or writer identity.
 
-A local debug-only model probe with 5,000 files and 128 deltas measured 2.065 s
-for clone-and-validate-per-delta replay. The incremental private replay builder
-measured 77.821 ms for that same workload. It enforces byte bounds at each fold
-and poisons a failed candidate so partial state cannot escape. This sample
-measures the model algorithm, not end-to-end SQLite or application latency.
+## Feedback and explicit mutation hints
 
-Full workspace CI at `90a57da8` caught a direct `ulid` reference in the server
-without that package dependency. Generation creation now lives in the existing
-core module that owns ULID validation (`11d5d517`); the actual Store/Runtime and
-full platform checks are rerunning. Isolated harness success is not evidence of
-a whole-workspace compile.
+Each Location has a durable allowance of 64 changed paths before handler
+execution pauses visibly. Quiet time, background writes and restart do not
+restore credit. Reconciliation and bounded recording continue while paused.
 
-## Committed observation dispatch port
+A renewal is a separate empty delta. Only a newly committed, hook-checked user
+prompt is forwarded to the host, after releasing the Session lock. Failed or
+denied admission, exact retries and non-user input do not forward it. AppHost
+forwards the notification to BuiltinHost. The actor retains only the newest
+acknowledgement per admitted Session, under its existing membership bound. The
+single writer verifies the real user source, current and historical Location,
+non-archived ownership and single-use event ID before restoring credit. Notices
+explain pause and resumption; hook/plugin input cannot create renewal authority.
 
-`FileWatch::dispatch_to` builds observational FileChanged events for a real,
-non-archived Session at the recorded Location and invokes the existing lifecycle
-executor outside Session/lifecycle locks. Receipt admission carries a private
-observation binding; the single writer verifies the actual source record, path,
-eligibility and current generation before any new handler starts. The binding
-is not part of public receipts or telemetry. Synthetic CLI hook tests keep their
-existing isolated behavior.
+Successful built-in write/edit/notebook/patch feedback contributes bounded hints
+**after formatter settlement**, including when language services are disabled.
+Native observation supplies shell, background and external effects. These hints
+request metadata reconciliation; they make no authenticated tool-writer claim.
 
-Receipt identities are stable for the observation, Session, path and effective
-handler identity. A duplicate delivery remains consumed even when its earlier
-receipt is Unknown. Separate source IDs created in one millisecond remain
-distinct. This adds three actual Store/admission regressions and one real
-BuiltinHost/HTTP-hook flow for two Sessions, path matching, duplicate delivery,
-ignored observational deny and receipt privacy. These tests await CI.
+## Verification evidence
 
-The new automatic owner described below awaits application checks. Alias-aware
-Session admission, acceptance of user-input feedback renewal, explicit tool/formatter
-reconciliation and full shutdown/restart/overflow acceptance remain required. No task is closed
-on the strength of a manually dispatched observation.
+The [focused workflow](../../../.github/workflows/file-observation-regression.yml)
+at [`f0c5a743`](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40606857160)
+passed on Linux, macOS and Windows. It executes:
 
+- Ten core observation-record tests and the native/scanner/reconciliation
+  component tests (32 on Unix, 27 on Windows).
+- Nine actual Store/Runtime regressions for generation fencing, failed append,
+  checkpoint/replay bounds, forged scope/credit/metadata, user renewal and
+  source/admission provenance.
+- Seven HTTP/scripted-runtime scenarios covering real scoped dispatch,
+  deduplication and ignored observational deny; automatic nested external edits,
+  rename/removal and shared Sessions; quiet-time feedback and user renewal;
+  root replacement with distinct real Git project identities; built-in
+  write/edit effects without language services; scoped hard links; and held
+  callback shutdown followed by explicit Session resume without old-effect replay.
+- Both real AppHost forwarding checks, including nested owner-storage privacy
+  and durable renewal through an actually committed held user prompt.
 
-## Host observer integration in progress
+The broader workspace workflow at that revision is separate and was still
+queued when last checked. An earlier broad run caught a missing AppHost delegate
+for the new notification, which was corrected before this focused success;
+lower-level observer tests alone did not verify the App facade.
 
-The host now registers the observer module in production and starts one shared
-native observer per canonical Location on `open_location`/`refresh_location`.
-The registry admits at most 32 Locations and 256 Sessions per Location; native
-directory registrations remain capped at 256 each. Idle registrations inspect
-whether file handlers exist before starting native observation. The existing
-scoped hook executor remains responsible for resolving actual handler authority.
+At `413d10ad`, three new application tests exercise an actual formatter process,
+foreground and background shell tools, and a hook that writes follow-up files
+until durable feedback exhaustion. The background command waits for a fixture
+gate until the model Turn is idle, then writes. Delayed changes after quiet time
+must still be recorded without restarting the hook loop. The workflow builds
+the production native process-ownership helper first. Windows uses PowerShell;
+Unix uses its shell. These tests explicitly select full access to verify
+observation/process lifecycle and are **not plugin-confinement evidence**.
+Their platform results remain pending.
 
-The owner scans through a pinned directory handle, checks that the path still
-names that root before recording/delivery, and claims a new fenced baseline on
-root replacement. Native hints are coalesced under a fixed queue-drain bound.
-Periodic reconciliation supplements native hints; incomplete evidence cannot
-prove deletion. Database/WAL/SHM paths, tool output, temporary storage, global
-configuration and protected project paths are excluded. Symlink aliases of
-configured private roots are excluded at their physical locations. Hard-link
-aliases and full alias-aware Session admission still need acceptance and any
-required follow-up implementation.
+A temporary local Cargo harness loads the actual core/native/root/scanner/state
+sources by path and passes 42 tests plus Clippy with warnings denied and the
+project complexity threshold of 15. It does not compile the complete owner,
+Store/Runtime, AppHost or application tests. Formatting and whitespace checks
+pass; strict OpenSpec validation passes all 106 items, and spec lint reports
+zero errors and 25 warnings. Those validation scopes do not establish full
+workspace or feature completion.
 
-Metadata advances only through acknowledged journal deltas. Deletes precede
-creates in large replacements so batches stay within the retained-file bound.
-Dispatch uses the durable feedback allowance and shows a notice when paused;
-quiet periods do not renew it. The newer committed-input forwarding path is described below and awaits application acceptance.
-Host shutdown cancels and joins observers outside registry locks. File-change
-dispatch now forwards owner cancellation into the existing runner while retaining
-the launched future through cooperative receipt settlement.
+A debug-only model probe with 5,000 files and 128 deltas measured 2.065 seconds
+for clone-and-validate-per-delta replay and 77.821 milliseconds for incremental
+replay. This measures the model algorithm, not SQLite/application latency.
 
-Three additional application regressions exercise automatic external edits,
-rename/removal and shared Sessions, shutdown, feedback exhaustion across a quiet
-period, and replacing the root directory. The manual dispatch regression now
-isolates itself from the automatic owner and checks pre-cancelled admission.
-These application tests have been added but have not yet run for this revision.
-The isolated source harness passes 35 tests and Clippy with warnings denied at
-the project complexity threshold; it does not load the new host owner or compile
-the full application. Formatting and whitespace checks pass.
+## Remaining acceptance and implementation
 
-At `84eb1d3d`, the earlier focused suite passed Linux and Windows, including all
-nine Store/Runtime regressions and the manual HTTP-hook dispatch test. macOS
-was still queued when these notes were updated. Those results do not verify
-the newer host integration. Task 5.2 remains open pending the remaining behavior,
-resource/lifecycle regressions, platform checks and substantive review.
-
-
-## Committed user-input renewal
-
-The runtime now forwards a newly committed, hook-checked user prompt to a narrow
-synchronous host notification after releasing the Session lock. A failed/denied
-admission, an exact retry and non-user input do not notify it. The host retains
-only the latest acknowledgement per admitted member Session, under the existing
-256-Session bound. The observer drains that bounded map and submits a separate
-renewal delta; the single writer still verifies the real source event, current
-and historical Location, source=user and single-use identity before restoring
-credit. Hook callbacks cannot refresh the budget by sleeping or sending their
-own source=hook prompts. Paused/resumed notices explain that new user input
-resumes handlers. The automatic feedback test now exercises hook input, real
-user input and exact retries as well as quiet time; that expanded application
-test awaits CI.
-
-The first automatic-owner workspace build at `7e479fed` failed on Linux and
-Windows because an async delivery method retained `&Observation` across an
-await; its native receiver is Send but not Sync. Delivery now retains exclusive
-actor ownership (`&mut self`) rather than making the receiver shared or adding
-an unsafe Sync implementation. SDK/dashboard generation also stopped at that
-same Rust compile error. The corrected application build and tests must rerun;
-no result from the isolated harness establishes this correction's acceptance.
-
-
-## Nested scanner regression
-
-A new actual-source regression reproduced failed nested traversal: validating a
-normalized relative name had shadowed the entry's basename, so metadata lookup
-inside a pinned child directory mistakenly repeated its parent components.
-Validation now keeps a separate normalized name, and metadata/open-directory
-operations retain the original basename. The regression failed before the fix;
-the expanded isolated source harness now passes 36 tests and Clippy at threshold
-15. The automatic external-edit application test now uses newly created nested
-directories, so CI must also verify that this works through native observation
-and HTTP-hook delivery. Application verification is still pending.
-
-
-## Application compilation follow-up
-
-At `0a6461a1`, Linux compiled the automatic owner and passed all 25 observer
-component tests and all nine actual Store/Runtime regressions. The HTTP
-application test binary then failed to compile because three count queries
-requested `usize`, which rusqlite does not decode from SQLite. Those test
-queries now use SQLite's supported `i64` count representation. The application
-scenarios still require execution; compilation of the owner and narrow suite
-success do not establish their behavior.
-
-
-## Explicit mutation hints and root identity follow-up
-
-Successful built-in write/edit/notebook and patch feedback paths now notify the
-observer after formatter settlement. Patch removal notifies it even when language
-services are disabled. These are metadata reconciliation hints, not claims that
-a named tool or formatter wrote the observed result. The same bounded hint set
-coalesces native and explicit names: at most 1,024 paths, with overflow requiring
-reconciliation. A source regression checks that bound, duplicate coalescing and
-invalid-name rejection. A full host unit regression checks Location scoping and
-shutdown; a new scripted-runtime application regression covers write/edit without
-language services. Actual formatter-process acceptance remains required.
-
-Claiming a replacement root also invalidates loaded Sessions' cached project
-envelopes at that directory. An epoch on the cache prevents an earlier resolution
-from refilling the current cache after invalidation. The root-replacement
-application test now initializes two real Git repositories with different origins
-and requires the replacement's hook to carry its new project ID.
-
-At `9c2b9838`, the entire focused Linux suite passed, including all four automatic/
-manual HTTP application tests, user-input renewal, quiet-time feedback bounds,
-shared Sessions, nested external edits and root replacement/shutdown. Windows
-passed the core models but its root component regression failed when renaming a
-pinned directory (sharing violation). Its observer directory handle now explicitly
-allows read/write/delete sharing while remaining read-only and refusing a reparse
-point. This preserves identity checks while allowing normal root replacement;
-Windows must rerun the failing regression and remaining application suite. The
-notify backend already opens its own watcher handle with delete sharing.
-
-The newer explicit-hint, cache-epoch and Windows-sharing revision has not yet
-passed application CI. The local isolated harness passes 37 tests and Clippy with
-warnings denied at threshold 15; it includes the new bounded hint regression,
-not the full host owner or cache-epoch application tests. Alias-aware admission,
-private hard-link handling and remaining resource/lifecycle/restart/overflow
-acceptance still prevent closing task 5.2.
-
-
-Broad Linux/Windows Clippy at `9c2b9838` also measured the owning loop at 18,
-above the configured complexity limit of 15. The per-iteration observation
-state now owns startup, renewal and reconciliation in one `tick` method;
-the outer loop owns weak-host lifetime, pacing and cancellation. The configured
-Clippy checks must verify the refactor; isolated component Clippy does not load
-the full owner.
-
-
-## Scoped hard links and cancellation/restart coverage
-
-The scanner now groups permitted regular entries by filesystem identity and
-reported link count. Fully accounted in-Location hard links remain observable;
-entries with an unaccounted, excluded or inconsistent alias are suppressed before
-metadata enters the journal. Every bounded/cancelled traversal finalizes these
-checks before returning. Suppressed names have independent uncertainty: previous
-stamps survive without a synthetic deletion while ordinary, completely scanned
-names can still produce real changes. Coverage notices report this uncertainty.
-This avoids a blanket refusal of ordinary in-Location hard links. Links extending
-outside the permitted scan are unproved; the observer does not inventory private
-or outside trees to turn them into an authorization proof.
-
-The local source harness passes 42 tests and Clippy with warnings denied at
-threshold 15, including new complete/partial hard-link scans, excluded-state
-aliases, changing link counts during inventory and retained-stamp behavior. Windows file stamps now also retain the
-identity supplied by cap-fs-ext metadata queries. A new application test checks
-ordinary linked files, replacing a previously public path with an alias of
-private temporary state, and absence of that alias from hook/journal deltas.
-A held HTTP callback test adds shutdown/receipt settlement and reopening without
-old-observation replay. These newer application tests await CI; local harness
-success does not verify them.
-
-At `653aeba5`, both the Linux and Windows focused workflows passed all existing
-application scenarios, including the corrected Windows root sharing, project
-identity replacement and scripted write/edit flows. Windows workspace Clippy,
-SDK/dashboard checks and all six Linux/Windows cross builds were also successful
-when checked; Linux full tests and the native Windows build were still running,
-and macOS jobs were queued. These results precede the newer hard-link and held-
-callback tests. Alias-aware Session admission, actual formatter-process and
-remaining lifecycle/resource/overflow acceptance still keep task 5.2 open.
-
-
-## Real application notification forwarding
-
-The full Linux and Windows workspace suites at `653aeba5` failed the existing
-AppHost forwarding regression: the new `user_input_committed` ToolHost method
-was not forwarded to BuiltinHost. The dedicated lower-level observer tests did
-not exercise that facade. AppHost now forwards it, and a new real App/runtime
-regression requires a committed held user prompt to produce a durable watcher
-renewal after an observed edit. The focused platform workflow now runs both
-forwarding checks. These full-application corrections await CI; the earlier
-lower-level suite success is not proof of application forwarding.
-
-The focused `653aeba5` workflow subsequently completed successfully on macOS as
-well as Linux and Windows. That verifies the earlier five application scenarios
-on all three platforms, not the newer hard-link and held-callback tests.
-
-
-The real application also now supplies all owner data/configuration/state/cache/
-temporary roots to BuiltinHost before opening Locations. Inferring the data root
-from the tool-output parent would incorrectly exclude some embedding checkouts;
-the trusted owner supplies the roots explicitly instead. Canonical aliases are
-covered by the existing exclusion adapter. The App forwarding regression places
-all five storage roots beneath its Location and checks that their marker metadata
-enters neither the baseline nor deltas, while public observation and held-input
-renewal still proceed. This application privacy/wiring regression awaits CI.
-
-
-At `351b6c57`, all three focused platforms passed the new hard-link regressions
-and six of seven HTTP application scenarios. The held-callback test settled its
-first shutdown but timed out reopening: it used an empty `wake`, whose eligibility
-check correctly starts no pass or Location services without work. The test now
-uses explicit Session resume with a scripted response, preserving the absence
-of a new admitted user prompt while exercising the real service-reopen path.
-That corrected restart/no-replay scenario must rerun; it is not counted passed.
-
-
-## Native effects and real hook feedback acceptance
-
-At `f0c5a743`, the focused workflow passed on Linux, macOS and Windows, including
-all seven HTTP/scripted-runtime scenarios and both actual AppHost forwarding
-checks. This includes scoped hard links, held-callback shutdown, explicit Session
-resume without replay, nested owner-storage exclusion, and committed-input
-renewal through the real application facade. Broader workspace checks still
-need separate results.
-
-Three additional application regressions now exercise a callback that writes
-follow-up files until durable feedback exhaustion, a real formatter process,
-and real foreground/background shell tools. The background command waits for a
-fixture gate until the model Turn is idle, then changes a file. The self-write
-case verifies that delayed changes after quiet time are still recorded without
-restarting the callback loop. Windows uses PowerShell and the production native
-process-ownership helper; Unix uses its shell. The focused workflow builds that
-helper before exercising native processes.
-
-These native-effect tests deliberately select the existing explicit full-access
-sandbox option to test observation and process lifecycle. They do not establish
-plugin confinement or weaken production sandbox defaults. The new tests await
-CI; the previous `f0c5a743` suite success does not verify them. Canonical/alias
-Session admission and remaining resource/overflow/lifecycle acceptance still
-keep the producer task open.
+1. **Alias-aware Session admission:** the registry uses canonical Locations, but
+   the journal, user-renewal and receipt checks currently require identical raw
+   Session directory strings. Sessions reaching the same root through different
+   aliases need scoped delivery and renewal without weakening durable source
+   checks. Retargeted aliases and moved/archived Sessions must lose eligibility.
+   Root/project-cache invalidation must cover those admitted aliases as well.
+2. **Resource/overflow/lifecycle acceptance:** exercise global Location/Session
+   limits and visible incomplete coverage through the actual application, native
+   queue loss/registration limits and bounded recovery, inaccessible/large trees,
+   membership transitions and shutdown during reconciliation. Component tests
+   cover several bounds but do not prove their full owner integration.
+3. **Native-effect verification:** obtain Linux/macOS/Windows results for the
+   three tests introduced at `413d10ad` and correct any failures.
+4. **Delivery checks:** complete relevant broader workspace checks and a
+   substantive code/security review, update evidence and keep task 5.2 open until
+   all approved requirements are verified. This producer work does not close the
+   separate plugin-enforcement/protocol support gates or the overall goal.
