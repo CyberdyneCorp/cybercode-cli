@@ -27,6 +27,7 @@ pub(super) struct Limits {
 pub(super) async fn run(
     root: Dir,
     excluded: impl Fn(&Path) -> bool + Send + 'static,
+    excluded_metadata: impl Fn(&Metadata) -> bool + Send + 'static,
     limits: Limits,
     cancel: &tokio_util::sync::CancellationToken,
 ) -> Result<Scan, String> {
@@ -35,8 +36,9 @@ pub(super) async fn run(
     }
     let interrupted = Arc::new(AtomicBool::new(false));
     let worker_flag = Arc::clone(&interrupted);
-    let mut task =
-        tokio::task::spawn_blocking(move || scan(&root, &excluded, &limits, &worker_flag));
+    let mut task = tokio::task::spawn_blocking(move || {
+        scan_with_metadata(&root, &excluded, &excluded_metadata, &limits, &worker_flag)
+    });
     tokio::select! {
         biased;
         () = cancel.cancelled() => {
@@ -81,9 +83,20 @@ impl Frame {
     }
 }
 
+#[cfg(test)]
 pub(super) fn scan(
     root: &Dir,
     excluded: &dyn Fn(&Path) -> bool,
+    limits: &Limits,
+    cancelled: &AtomicBool,
+) -> Scan {
+    scan_with_metadata(root, excluded, &|_| false, limits, cancelled)
+}
+
+pub(super) fn scan_with_metadata(
+    root: &Dir,
+    excluded: &dyn Fn(&Path) -> bool,
+    excluded_metadata: &dyn Fn(&Metadata) -> bool,
     limits: &Limits,
     cancelled: &AtomicBool,
 ) -> Scan {
@@ -91,6 +104,17 @@ pub(super) fn scan(
         complete: true,
         ..Scan::default()
     };
+    match root.dir_metadata() {
+        Ok(metadata) if excluded_metadata(&metadata) => {
+            out.complete = false;
+            return out;
+        }
+        Err(_) => {
+            out.complete = false;
+            return out;
+        }
+        _ => {}
+    }
     let initial = root
         .try_clone()
         .and_then(|root| Frame::new(root, PathBuf::new(), 0));
@@ -144,21 +168,34 @@ pub(super) fn scan(
             out.complete = false;
             continue;
         };
+        if excluded_metadata(&metadata) {
+            continue;
+        }
         if metadata.is_dir() {
             if frame.depth >= limits.depth {
                 out.complete = false;
                 continue;
             }
-            let child = frame
-                .directory
-                .open_dir_nofollow(&name)
-                .and_then(|child| Frame::new(child, path.clone(), frame.depth + 1));
+            let opened = frame.directory.open_dir_nofollow(&name);
+            let child = opened.and_then(|child| {
+                let current = child.dir_metadata()?;
+                if excluded_metadata(&current) {
+                    return Ok(None);
+                }
+                if super::links::identity(&current) != super::links::identity(&metadata) {
+                    return Err(std::io::Error::other(
+                        "observed directory changed while opening",
+                    ));
+                }
+                Frame::new(child, path.clone(), frame.depth + 1).map(Some)
+            });
             match child {
-                Ok(child) => {
+                Ok(Some(child)) => {
                     scopes.record(path.clone(), &child.directory);
                     out.directories.insert(path);
                     pending.push(child);
                 }
+                Ok(None) => {}
                 Err(_) => out.complete = false,
             }
         } else if metadata.is_file() {
@@ -442,7 +479,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         std::fs::write(temp.path().join("public"), "metadata").unwrap();
         let cancel = tokio_util::sync::CancellationToken::new();
-        let actual = run(root(temp.path()), |_| false, limits(), &cancel)
+        let actual = run(root(temp.path()), |_| false, |_| false, limits(), &cancel)
             .await
             .unwrap();
         assert!(actual.complete);
@@ -451,6 +488,7 @@ mod tests {
         let cancelled = run(
             root(temp.path()),
             |_| panic!("cancelled worker must not traverse"),
+            |_| false,
             limits(),
             &cancel,
         )
@@ -485,6 +523,7 @@ mod tests {
                         }
                         false
                     },
+                    |_| false,
                     limits(),
                     &cancel,
                 )

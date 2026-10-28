@@ -73,6 +73,7 @@ pub struct BuiltinHost {
     tools: Vec<Box<dyn Tool>>,
     file_observers: crate::file_changes::Observers,
     pub(crate) observation_private_roots: OnceLock<Vec<PathBuf>>,
+    pub(crate) observation_private_pins: crate::file_changes::PrivatePins,
     reads: Mutex<HashMap<String, HashSet<PathBuf>>>,
     locks: Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
     runtime: OnceLock<WeakRuntime>,
@@ -172,7 +173,7 @@ impl BuiltinHost {
         Ok(())
     }
     pub fn new(opts: HostOptions) -> Arc<Self> {
-        Arc::new_cyclic(|weak| Self {
+        let host = Arc::new_cyclic(|weak| Self {
             weak: weak.clone(),
             mcp: Default::default(),
             plugins: Default::default(),
@@ -182,6 +183,7 @@ impl BuiltinHost {
             tools: tools::all(),
             file_observers: Default::default(),
             observation_private_roots: OnceLock::new(),
+            observation_private_pins: Default::default(),
             reads: Mutex::default(),
             locks: Mutex::default(),
             runtime: OnceLock::new(),
@@ -199,7 +201,9 @@ impl BuiltinHost {
             ),
             remote_skills: OnceLock::new(),
             client_hooks: OnceLock::new(),
-        })
+        });
+        host.prime_observation_privacy();
+        host
     }
 
     /// Trusted owner storage roots, attached before opening Locations. These
@@ -207,7 +211,9 @@ impl BuiltinHost {
     pub fn attach_observation_private_roots(&self, roots: Vec<PathBuf>) -> Result<(), String> {
         self.observation_private_roots
             .set(roots)
-            .map_err(|_| "file observation private roots already attached".into())
+            .map_err(|_| "file observation private roots already attached".to_owned())?;
+        self.prime_observation_privacy();
+        Ok(())
     }
 
     pub(crate) fn observe_file_change(&self, location: &Path, path: &Path) {

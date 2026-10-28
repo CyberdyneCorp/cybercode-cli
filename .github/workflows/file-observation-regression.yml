@@ -115,5 +115,41 @@ jobs:
           retention-days: 14
       - name: Exercise real scoped HTTP-hook dispatch
         run: cargo test --locked -p cyber-tools --test file_observation_dispatch
+      - name: Verify moved-private-root regression with path-only exclusions
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          source=crates/cyber-tools/src/file_changes/root.rs
+          cp "$source" "$RUNNER_TEMP/private-root-fixed.rs"
+          restore() { cp "$RUNNER_TEMP/private-root-fixed.rs" "$source"; }
+          trap restore EXIT
+          python3 - <<'PYCONTROL'
+          from pathlib import Path
+          p=Path("crates/cyber-tools/src/file_changes/root.rs")
+          s=p.read_text()
+          old="self.private.excludes(metadata)"
+          assert s.count(old)==1
+          p.write_text(s.replace(old,"{ let _ = metadata; false }"))
+          PYCONTROL
+          if cargo test --locked -p cyber-app --lib host::tests::app_host_forwards_committed_user_input_to_file_observer -- --exact > "$RUNNER_TEMP/private-root-path-only.log" 2>&1; then
+            echo 'Private-root regression unexpectedly passed with path-only exclusions.'
+            exit 1
+          fi
+          python3 - <<'PY'
+          import os,re
+          from pathlib import Path
+          log=Path(os.environ['RUNNER_TEMP'],'private-root-path-only.log').read_text()
+          assert re.search(r'^test host::tests::app_host_forwards_committed_user_input_to_file_observer \.\.\. FAILED$',log,re.M), log[-8000:]
+          assert 'nested owner state must not enter observation deltas' in log and 'right: 0' in log, log[-8000:]
+          PY
+      - name: Preserve moved-private-root regression evidence
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: private-root-path-only-regression
+          path: ${{ runner.temp }}/private-root-path-only.log
+          if-no-files-found: error
+          retention-days: 14
       - name: Verify application host forwards observation notifications
         run: cargo test --locked -p cyber-app --lib host::tests::app_host_forwards_

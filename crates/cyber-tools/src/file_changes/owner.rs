@@ -274,8 +274,13 @@ impl BuiltinHost {
         }
         false
     }
-    fn observation_exclusions(&self, path: &Path) -> Exclusions {
-        let database: Option<String> = self
+    pub(crate) fn prime_observation_privacy(&self) {
+        // Best effort at trusted construction/attachment; scan admission reports
+        // any capture error and never publishes without a successful snapshot.
+        let _ = self.observation_exclusions(&self.opts.home);
+    }
+    fn observation_exclusions(&self, path: &Path) -> Result<Exclusions, String> {
+        let database: String = self
             .opts
             .store
             .read(|db| {
@@ -285,9 +290,13 @@ impl BuiltinHost {
                     |row| row.get(0),
                 )?)
             })
-            .ok();
-        let files = database
-            .filter(|path| !path.is_empty())
+            .map_err(|_| {
+                self.observation_private_pins.unavailable(
+                    "private database observation identity unavailable; restart required",
+                )
+            })?;
+        let files: Vec<PathBuf> = (!database.is_empty())
+            .then_some(database)
             .into_iter()
             .flat_map(|path| {
                 [
@@ -305,13 +314,17 @@ impl BuiltinHost {
         if let Some(private) = self.observation_private_roots.get() {
             trees.extend(private.iter().cloned());
         }
-        Exclusions::new(
+        let private = self
+            .observation_private_pins
+            .capture(trees.iter().chain(files.iter()).map(PathBuf::as_path))?;
+        Ok(Exclusions::new(
             path,
             &self.opts.home,
             trees,
             files,
             crate::permissions::is_protected,
         )
+        .with_private(private))
     }
 }
 
@@ -320,13 +333,22 @@ async fn snapshot(
     excluded: Exclusions,
     cancel: &CancellationToken,
 ) -> Result<Scan, String> {
+    let metadata = root
+        .directory
+        .dir_metadata()
+        .map_err(|error| error.to_string())?;
+    if excluded.excludes_metadata(&metadata) {
+        return Err("FileChanged Location is private owner storage".into());
+    }
     let directory = root
         .directory
         .try_clone()
         .map_err(|error| error.to_string())?;
+    let metadata = excluded.clone();
     scan::run(
         directory,
         move |path| excluded.excludes(path),
+        move |entry| metadata.excludes_metadata(entry),
         Limits {
             entries: records::MAX_FILES,
             depth: 64,
@@ -362,7 +384,7 @@ impl Observation {
     ) -> Result<Self, String> {
         let root = Root::open(path).map_err(|error| error.to_string())?;
         let mut native = Native::start(&root.path, 32).map_err(|error| error.to_string())?;
-        let mut initial = snapshot(&root, host.observation_exclusions(path), cancel).await?;
+        let mut initial = snapshot(&root, host.observation_exclusions(path)?, cancel).await?;
         budget::retain(&mut initial, &BTreeMap::new());
         if cancel.is_cancelled() {
             return Err("file observation startup cancelled".into());
@@ -484,7 +506,7 @@ impl Observation {
         if hint.paths.is_empty() && !hint.rescan && self.last_scan.elapsed() < RECONCILE {
             return Ok(());
         }
-        let excluded = host.observation_exclusions(&self.root.path);
+        let excluded = host.observation_exclusions(&self.root.path)?;
         let mut scan = snapshot(&self.root, excluded.clone(), cancel).await?;
         self.last_scan = Instant::now();
         if cancel.is_cancelled() {

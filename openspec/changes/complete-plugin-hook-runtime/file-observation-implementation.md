@@ -444,3 +444,18 @@ baseline and visible coverage notice, modifies an admitted existing file and
 requires its real callback plus joined shutdown. Full owner/application/platform
 execution of this increment is pending CI; the harness does not compile that
 owner integration or application test. Task 5.2 and broader review remain open.
+
+
+## Integration follow-up: moved private roots
+
+The integration branch combines this observer with the committed CwdChanged and
+isolated-child WorktreeCreate producers. All seven focused platform jobs passed
+at `1b2ebe71`. A subsequent review reproduced private metadata entering inventory
+when a configured owner storage directory was renamed within the Location.
+The correction retains at most 128 live private object pins per host, checks
+metadata before traversal and after opening directories, and latches observation
+unavailable on uncertain identity or live-budget exhaustion. Fully unlinked pins
+can retire. This includes host initialization/attachment and database identity
+lookup; there is no unprotected fallback. See [integration evidence and limits](hook-producer-integration.md#private-root-rename-correction).
+The correction passes 69 local source tests and scoped Clippy; full owner/AppHost
+and native platform acceptance for this new revision remain pending.

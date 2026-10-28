@@ -13,12 +13,12 @@ pub(super) struct Root {
 }
 
 #[cfg(not(windows))]
-fn open_directory(path: &Path) -> io::Result<Dir> {
+pub(super) fn open_directory(path: &Path) -> io::Result<Dir> {
     Dir::open_ambient_dir(path, cap_std::ambient_authority())
 }
 
 #[cfg(windows)]
-fn open_directory(path: &Path) -> io::Result<Dir> {
+pub(super) fn open_directory(path: &Path) -> io::Result<Dir> {
     use std::os::windows::fs::OpenOptionsExt;
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
@@ -69,6 +69,7 @@ pub(super) struct Exclusions {
     trees: Vec<PathBuf>,
     files: Vec<PathBuf>,
     protected: fn(&Path, &Path, &Path) -> bool,
+    private: super::privacy::Snapshot,
 }
 impl Exclusions {
     pub fn new(
@@ -93,7 +94,15 @@ impl Exclusions {
             trees: aliases(trees),
             files: aliases(files),
             protected,
+            private: Default::default(),
         }
+    }
+    pub fn with_private(mut self, private: super::privacy::Snapshot) -> Self {
+        self.private = private;
+        self
+    }
+    pub fn excludes_metadata(&self, metadata: &cap_std::fs::Metadata) -> bool {
+        self.private.excludes(metadata)
     }
     pub fn excludes(&self, relative: &Path) -> bool {
         let path = self.location.join(relative);

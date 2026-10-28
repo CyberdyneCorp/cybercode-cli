@@ -122,3 +122,9 @@
 - **WHEN** owner data, configuration, state, cache or temporary roots lie below an observed Location
 - **THEN** owner-supplied private roots and their canonical aliases are excluded before traversing those subtrees, from both initial metadata and subsequent deltas
 - **AND** ordinary project observations and committed user-input renewal continue through the real application host
+
+#### Scenario: A live owner's private storage root moves inside its Location
+- **WHEN** a previously pinned owner storage directory is renamed within an observed Location
+- **THEN** its physical identity remains excluded before traversal despite the changed pathname, including replacement between pathname metadata and directory open
+- **AND** private file identities remain excluded through retained aliases, while ordinary project observations continue
+- **AND** private identity capture is bounded, retains live ownership and reports observation unavailable rather than evicting an owned identity or resuming after uncertain capture

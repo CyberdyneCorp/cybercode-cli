@@ -948,6 +948,9 @@ async fn app_host_forwards_committed_user_input_to_file_observer() {
         )
         .unwrap();
     }
+    // The private cache keeps its identity after a rename inside the Location.
+    // A path-only exclusion would publish its file metadata under the new name.
+    std::fs::rename(&app.paths.cache, project.join("relocated-private-cache")).unwrap();
     std::fs::write(project.join("observer-marker"), "changed").unwrap();
     wait_for_observer_record(&app, records::CHANGED, false).await;
     let mut input = cyber_server::runtime::Admission::text(
