@@ -516,6 +516,7 @@ impl Inner {
                 event(
                     ADMITTED,
                     &Admitted {
+                        observation_scope: None,
                         skill_command: None,
                         admission_bindings: None,
                         wake: false,

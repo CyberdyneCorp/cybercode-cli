@@ -45,6 +45,7 @@ const DISTINCT_UNAVAILABLE: &[&str] = &[
     "Setup",
     "ConfigChange",
     "CwdChanged",
+    "FileChanged",
     "GoalEvaluated",
     "GoalCompleted",
 ];
@@ -74,6 +75,7 @@ const RUNTIME_EVENTS: &[&str] = &[
     "Setup",
     "ConfigChange",
     "CwdChanged",
+    "FileChanged",
 ];
 
 /// Events whose additional_context the runtime applies: lifecycle context with its

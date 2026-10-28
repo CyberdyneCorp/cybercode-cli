@@ -71,6 +71,8 @@ pub struct BuiltinHost {
     pub(crate) weak: std::sync::Weak<Self>,
     pub(crate) opts: HostOptions,
     tools: Vec<Box<dyn Tool>>,
+    file_observers: crate::file_changes::Observers,
+    pub(crate) observation_private_roots: OnceLock<Vec<PathBuf>>,
     reads: Mutex<HashMap<String, HashSet<PathBuf>>>,
     locks: Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
     runtime: OnceLock<WeakRuntime>,
@@ -178,6 +180,8 @@ impl BuiltinHost {
             lsp: OnceLock::new(),
             opts,
             tools: tools::all(),
+            file_observers: Default::default(),
+            observation_private_roots: OnceLock::new(),
             reads: Mutex::default(),
             locks: Mutex::default(),
             runtime: OnceLock::new(),
@@ -196,6 +200,18 @@ impl BuiltinHost {
             remote_skills: OnceLock::new(),
             client_hooks: OnceLock::new(),
         })
+    }
+
+    /// Trusted owner storage roots, attached before opening Locations. These
+    /// augment built-in protection even when application state is in a checkout.
+    pub fn attach_observation_private_roots(&self, roots: Vec<PathBuf>) -> Result<(), String> {
+        self.observation_private_roots
+            .set(roots)
+            .map_err(|_| "file observation private roots already attached".into())
+    }
+
+    pub(crate) fn observe_file_change(&self, location: &Path, path: &Path) {
+        self.file_observers.changed(location, path);
     }
 
     /// Every built-in tool name, offered or not, and the runtime's `return_result`.
@@ -714,15 +730,21 @@ impl BuiltinHost {
 
 impl ToolHost for BuiltinHost {
     fn open_location(&self, info: &cyber_server::runtime::SessionInfo) {
+        self.file_observers.refresh(self, info);
         self.start_mcp(info);
         self.reconcile_plugins(&info.directory, true);
         self.start_browser(info);
     }
 
     fn refresh_location(&self, info: &cyber_server::runtime::SessionInfo) {
+        self.file_observers.refresh(self, info);
         self.refresh_mcp(info);
         self.reconcile_plugins(&info.directory, false);
         self.start_browser(info);
+    }
+
+    fn user_input_committed(&self, info: &cyber_server::runtime::SessionInfo, event_id: &str) {
+        self.file_observers.acknowledge(self, info, event_id);
     }
 
     /// Required MCP servers, then every plugin host of the Location and the Session's
@@ -826,6 +848,7 @@ impl ToolHost for BuiltinHost {
                 }
             };
             tokio::join!(
+                self.file_observers.shutdown(),
                 self.shutdown_mcp(),
                 lsp,
                 self.shutdown_plugins(),
@@ -836,6 +859,7 @@ impl ToolHost for BuiltinHost {
 
     fn end_session(&self, session_id: &str) -> BoxFuture<'_, ()> {
         let session_id = session_id.to_string();
+        self.file_observers.remove(&session_id);
         Box::pin(async move { self.end_browser_session(&session_id).await })
     }
     /// A config that fails to load turns `CLAUDE.md` off rather than on: `config_for`'s

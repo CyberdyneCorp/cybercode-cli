@@ -632,6 +632,11 @@ pub trait ToolHost: Send + Sync {
         self.open_location(info);
     }
 
+    /// A new user prompt was durably admitted. Called outside the Session lock;
+    /// retries, rejected prompts and hook/plugin input never reach this port.
+    /// Adapters may enqueue bounded work but must not wait for callback effects.
+    fn user_input_committed(&self, _info: &SessionInfo, _event_id: &str) {}
+
     /// Readiness of required Location services before this Session's first Turn.
     /// Cancelling the wait does not assert shared native service shutdown.
     fn wait_for_required_mcp(

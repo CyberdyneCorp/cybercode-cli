@@ -1,0 +1,119 @@
+name: File observation regression
+on:
+  pull_request:
+    paths:
+      - crates/cyber-core/src/hooks.rs
+      - crates/cyber-core/src/hooks/file_observations.rs
+      - crates/cyber-core/src/hooks/envelope.rs
+      - crates/cyber-server/src/runtime/worktree_events.rs
+      - crates/cyber-server/src/runtime/file_observations.rs
+      - crates/cyber-server/src/runtime/events.rs
+      - crates/cyber-server/src/runtime/mod.rs
+      - crates/cyber-server/tests/file_observations.rs
+      - crates/cyber-tools/src/file_changes/**
+      - crates/cyber-tools/tests/file_observation_dispatch.rs
+      - crates/cyber-server/src/runtime/file_observation_hooks.rs
+      - crates/cyber-server/src/runtime/file_observation_scopes.rs
+      - crates/cyber-server/src/runtime/file_observation_roots.rs
+      - crates/cyber-server/src/runtime/hooks.rs
+      - crates/cyber-tools/src/lifecycle_hooks.rs
+      - crates/cyber-tools/src/host.rs
+      - crates/cyber-app/src/lib.rs
+      - crates/cyber-app/src/host.rs
+      - crates/cyber-app/src/host/tests.rs
+      - crates/cyber-server/src/runtime/lifecycle.rs
+      - crates/cyber-server/src/runtime/host.rs
+      - crates/cyber-server/src/runtime/lifecycle_events.rs
+      - crates/cyber-store/migrations/**
+      - crates/cyber-tools/src/tool_hooks.rs
+      - crates/cyber-tools/src/hook_commands/**
+      - crates/cyber-tools/src/tools/intelligence.rs
+      - crates/cyber-tools/src/lib.rs
+      - crates/cyber-tools/Cargo.toml
+      - Cargo.lock
+      - .github/workflows/file-observation-regression.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: file-observation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  regression:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: file-observation
+      - name: Build native process ownership helper
+        run: cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec
+      - name: Validate bounded observation records
+        run: |
+          cargo test --locked -p cyber-core --lib hooks::file_observations::
+          cargo test --locked -p cyber-core --lib hooks::envelope::
+      - name: Exercise actual native hints and safe reconciliation
+        run: |
+          cargo test --locked -p cyber-tools --lib file_changes::
+      - name: Exercise actual durable store and runtime ownership
+        run: |
+          cargo test --locked -p cyber-server --lib file_observation_roots::
+          cargo test --locked -p cyber-server --test file_observations
+      - name: Verify idle membership regression without refresh (retaining CwdChanged)
+        if: runner.os == 'Linux'
+        env:
+          BASE_SOURCE: ${{ github.event.pull_request.base.sha || 'origin/main' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          worktree_source=crates/cyber-server/src/runtime/worktree_events.rs
+          cp "$worktree_source" "$RUNNER_TEMP/observation-worktree-events.rs"
+          restore() { cp "$RUNNER_TEMP/observation-worktree-events.rs" "$worktree_source"; }
+          trap restore EXIT
+          python3 - <<'PYCONTROL'
+          from pathlib import Path
+          p=Path("crates/cyber-server/src/runtime/worktree_events.rs")
+          s=p.read_text()
+          start=s.index("    pub async fn exit_idle_worktree(")
+          end=s.index("    async fn relocate(", start)
+          block=s[start:end]
+          old="self.inner.tools.refresh_location(&info);"
+          assert block.count(old)==1
+          block=block.replace(old,"let _ = info;")
+          p.write_text(s[:start]+block+s[end:])
+          PYCONTROL
+          if cargo test --locked -p cyber-tools --test file_observation_dispatch idle_worktree_return_refreshes_observation_membership_without_another_turn -- --exact > "$RUNNER_TEMP/observation-idle-base.log" 2>&1; then
+            echo 'Idle observer membership regression unexpectedly passed without refresh.'
+            exit 1
+          fi
+          python3 - <<'PY'
+          import os,re
+          from pathlib import Path
+          log=Path(os.environ['RUNNER_TEMP'],'observation-idle-base.log').read_text()
+          assert re.search(r'^test idle_worktree_return_refreshes_observation_membership_without_another_turn \.\.\. FAILED$',log,re.M), log[-8000:]
+          assert 'timed out waiting for returned membership observes without a new Turn' in log, log[-8000:]
+          PY
+      - name: Preserve idle observer baseline evidence
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: idle-observer-membership-baseline
+          path: ${{ runner.temp }}/observation-idle-base.log
+          if-no-files-found: error
+          retention-days: 14
+      - name: Exercise real scoped HTTP-hook dispatch
+        run: cargo test --locked -p cyber-tools --test file_observation_dispatch
+      - name: Verify application host forwards observation notifications
+        run: cargo test --locked -p cyber-app --lib host::tests::app_host_forwards_

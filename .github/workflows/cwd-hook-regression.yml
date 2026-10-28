@@ -46,7 +46,7 @@ jobs:
           sudo apt-get install -y bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - run: cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec
-      - name: Verify the Location regression fails against unchanged base production sources
+      - name: Verify the Location regression without the committed CwdChanged producer
         env:
           BASE_SOURCE: ${{ github.event.pull_request.base.sha || 'origin/main' }}
         shell: bash
@@ -63,9 +63,16 @@ jobs:
           }
           for path in "${files[@]}"; do cp "$path" "$RUNNER_TEMP/$(basename "$path")"; done
           trap restore EXIT
-          for path in "${files[@]}"; do git show "$BASE_SOURCE:$path" > "$path"; done
+          python3 - <<'PYCONTROL'
+          from pathlib import Path
+          p=Path("crates/cyber-server/src/runtime/worktree_events.rs")
+          s=p.read_text()
+          start=s.index("    let transition = stored.iter().find(|event| relocates(&event.kind))?;")
+          end=s.index("\n}\n\n#[derive", start)
+          p.write_text(s[:start]+"    let _ = (state, stored);\n    None"+s[end:])
+          PYCONTROL
           if cargo test --locked -p cyber-tools --test worktree_setup cwd_changed_hooks_observe_committed_enter_and_exit_only -- --exact > "$RUNNER_TEMP/base-regression.log" 2>&1; then
-            echo 'Regression unexpectedly passed on the unchanged base.'
+            echo 'Regression unexpectedly passed with the CwdChanged producer removed.'
             exit 1
           fi
           python3 - <<'PY'

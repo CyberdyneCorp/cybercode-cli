@@ -44,7 +44,7 @@ jobs:
           sudo apt-get install -y bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - run: cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec
-      - name: Verify the veto regression fails against unchanged base production sources
+      - name: Verify the veto regression without child admission (retaining observer APIs)
         env:
           BASE_SOURCE: ${{ github.event.pull_request.base.sha || 'origin/main' }}
         shell: bash
@@ -56,9 +56,16 @@ jobs:
           cp "$host" "$RUNNER_TEMP/fixed-host.rs"
           trap 'cp "$RUNNER_TEMP/fixed-child.rs" "$child"; cp "$RUNNER_TEMP/fixed-host.rs" "$host"' EXIT
           git show "$BASE_SOURCE:$child" > "$child"
-          git show "$BASE_SOURCE:$host" > "$host"
+          python3 - <<'PYCONTROL'
+          from pathlib import Path
+          p=Path("crates/cyber-tools/src/host.rs")
+          s=p.read_text()
+          old=".resume_child_worktree_authorized(&inv, cancel, owner, info, managed, Some(parent))"
+          assert s.count(old)==1
+          p.write_text(s.replace(old, old.replace("Some(parent)", "true")))
+          PYCONTROL
           if cargo test --locked -p cyber-tools --test isolated_subagents isolated_creation_hook_veto_has_no_git_child_or_model_effects -- --exact > "$RUNNER_TEMP/base-regression.log" 2>&1; then
-            echo 'Regression unexpectedly passed on the unchanged base.'
+            echo 'Regression unexpectedly passed with child admission removed.'
             exit 1
           fi
           python3 - <<'PY'

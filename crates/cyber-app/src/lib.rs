@@ -263,6 +263,13 @@ impl App {
                 .isolation
                 .unwrap_or_else(|| cyber_tools::IsolationOptions::probe(false)),
         });
+        host.attach_observation_private_roots(vec![
+            opts.paths.data.clone(),
+            opts.paths.config.clone(),
+            opts.paths.state.clone(),
+            opts.paths.cache.clone(),
+            opts.paths.tmp.clone(),
+        ])?;
         host.attach_hook_config(
             hook_config_loader(opts.paths.clone(), opts.home.clone()),
             cyber_core::trust::TrustStore::new(opts.paths.trust_file()),

@@ -18,6 +18,7 @@ pub(crate) async fn feedback(
     origin: Option<ReadOrigin>,
 ) -> String {
     let (formatted, formatting) = super::formatters::apply(ctx, path, bytes).await;
+    ctx.host.observe_file_change(&ctx.location, path);
     let diagnostics = diagnostics(ctx, path, &formatted, origin).await;
     format!("{formatting}{diagnostics}")
 }
@@ -60,6 +61,7 @@ async fn diagnostics(
 }
 
 pub(crate) async fn removed(ctx: &Ctx<'_>, path: &Path, origin: Option<ReadOrigin>) {
+    ctx.host.observe_file_change(&ctx.location, path);
     let Some(origin) = origin else {
         return;
     };

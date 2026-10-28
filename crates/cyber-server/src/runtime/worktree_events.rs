@@ -342,6 +342,7 @@ impl Runtime {
         let ids = [id.to_owned()];
         self.fence_deletion(id, &ids)?;
         let mut hook = None;
+        let mut observed = None;
         let exited = {
             let mut state = handle.state.lock().await;
             match state.entered_worktree.as_deref().cloned() {
@@ -359,11 +360,17 @@ impl Runtime {
                     );
                     let stored = self.inner.commit_locked(&mut state, vec![event])?;
                     hook = cwd_hook(&state, &stored);
+                    observed = Some(state.info.clone());
                     Ok(Some((from, WorktreeExit { origin, created })))
                 }),
             }
         };
         self.lift_deletion_fence(&ids);
+        if let Some(info) = observed {
+            // Refresh file-observer membership before CwdChanged handlers can
+            // write at the committed destination. Neither holds the Session lock.
+            self.inner.tools.refresh_location(&info);
+        }
         drop(_admission);
         if let Some(hook) = hook {
             self.inner.observe_cwd(hook).await;

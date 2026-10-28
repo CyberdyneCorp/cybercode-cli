@@ -339,7 +339,7 @@ impl HookCommandRunner<'_> {
                 command
                     .env_clear()
                     .envs(prepared.env.iter().map(|(key, value)| (key, value)))
-                    .current_dir(&event.identity().location.directory)
+                    .current_dir(event.execution_directory())
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
@@ -455,7 +455,7 @@ impl HookCommandRunner<'_> {
             .ok_or("missing hook command")?;
         #[cfg(windows)]
         let (program, args) = (
-            crate::tools::powershell::installed(&event.identity().location.directory)
+            crate::tools::powershell::installed(event.execution_directory())
                 .ok_or("PowerShell is required for Windows hook commands")?
                 .display()
                 .to_string(),
@@ -463,7 +463,7 @@ impl HookCommandRunner<'_> {
         );
         #[cfg(not(windows))]
         let (program, args) = (
-            crate::tools::bash::shell(self.shell, &event.identity().location.directory)
+            crate::tools::bash::shell(self.shell, event.execution_directory())
                 .map_err(|e| format!("{e:?}"))?,
             vec!["-c".into(), command.clone()],
         );
