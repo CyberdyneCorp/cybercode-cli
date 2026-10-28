@@ -602,8 +602,12 @@ This known-file guard is not a race-proof production package builder or complete
 private-root inventory. Directory aliases, concurrent replacement, bounded copying,
 protected-root composition, generation ownership, helper distribution, Linux/Windows
 and real owner/SQLite acceptance remain required. Task 2.1 and production integration
-stay open. A separate two-platform workflow covers this admission experiment;
-it leaves the running `574714f8` runtime matrices intact when only these files change.
+stay open. A separate two-platform workflow covers this admission experiment.
+Its concurrency group is separate, but pull-request path filters use the PR's
+full diff: the `b44abbff` update also triggered the capability workflow and
+superseded the running `574714f8` matrix. The earlier claim that workflow
+separation alone preserved that run was incorrect. Completed source-bound rows
+remain evidence for their exact inputs; cancelled jobs are not passes.
 
 
 This increment passes the actual local native experiment, TypeScript syntax,
@@ -614,3 +618,26 @@ positive execution controls, dummy-only data, separate private/staged refusal
 receipts and preserved-image checks; the documented production admission gaps
 remain findings to resolve before claiming enforcement. No production API or
 launcher behavior changes in this increment.
+
+
+## Signed admission fixture on Intel
+
+At `b44abbff`, admission job
+[123028752293](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40748555518/job/123028752293)
+passed on macOS 15 arm64. The Intel job
+[123028752836](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40748555518/job/123028752836)
+failed the copied-fixture signature verification: clang had produced an unsigned
+x86_64 input. The [retained failure log](../../../scripts/probes/plugin-admission/evidence/b44abbff/macos-x64-failure.log)
+records that exact input-preparation failure. It does not establish failed target
+admission or a policy denial; no Intel completion is claimed for that revision.
+
+The fixture is now explicitly signed and verified before the experiment on both
+architectures. Copying must still preserve the prepared input's exact bytes and
+signature; the copy step neither re-signs nor repairs an image. Counterexamples,
+known-private/staged alias refusals and clean native startup remain required.
+Bounded diagnostics record the counterexample outcomes before later copy checks.
+The [fresh local arm64 report](../../../scripts/probes/plugin-admission/evidence/signed-fixture-local-arm64/admission.json)
+binds source SHA-256 `c1da12095226a2802efc3db2b80413747c952c1a98f780f2c592244136756dc5`
+and passes all assertions. Native Intel and arm64 CI for this corrected fixture
+remain required. The original `a64f380c` local report is retained as historical
+evidence rather than overwritten with results from changed input preparation.

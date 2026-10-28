@@ -48,6 +48,11 @@ try {
   const identifier = `com.cyberdyne.probe.admission.${randomUUID()}`;
   run("/usr/bin/codesign", ["--force", "--sign", "-", "--identifier", identifier, "--timestamp=none", helper]);
   run("/usr/bin/codesign", ["--verify", "--strict", "--all-architectures", helper]);
+  // arm64 clang normally emits an ad-hoc signature; Intel clang need not.
+  // Prepare a signed controlled input on both hosts before testing unchanged
+  // copies. The copy step must not repair or replace its input signature.
+  run("/usr/bin/codesign", ["--force", "--sign", "-", "--identifier", `com.cyberdyne.probe.fixture.${randomUUID()}`, "--timestamp=none", fixture]);
+  run("/usr/bin/codesign", ["--verify", "--strict", "--all-architectures", fixture]);
   const privateRoot = join(root, "private"), packageRoot = join(root, "input-package"), scratch = join(root, "scratch"), staged = join(root, "staged-package");
   for (const path of [privateRoot, packageRoot, scratch, staged]) mkdirSync(path, { mode: 0o700 });
   const secret = join(privateRoot, "dummy-private"), data = join(packageRoot, "data");
@@ -81,6 +86,8 @@ try {
   assert.deepEqual(control, bypass);
   writeFileSync(data, "dummy package fixture");
   const pathOnly = execute(profile(fixture, packageRoot), fixture, privateAlias, writableAlias);
+  console.error(JSON.stringify({ experiment: "pre-existing-alias-controls", platform: process.platform,
+    architecture: process.arch, kernel_release: release(), control, path_only_counterexample: pathOnly }));
   assert.deepEqual(pathOnly, bypass, "pre-existing aliases must demonstrate the path-only policy gap");
   assert.equal(readFileSync(data, "utf8"), "alias mutation");
   unlinkSync(receipt);

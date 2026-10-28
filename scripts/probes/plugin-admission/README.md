@@ -29,5 +29,11 @@ helper distribution, Linux/Windows behavior and actual host/SQLite integration
 remain unproved. A successful report includes an observed bypass and targeted
 refusals; it cannot be counted as production capability enforcement.
 
-The independent workflow runs on macOS arm64/Intel and does not restart the
-separate runtime capability workflow when only this admission experiment changes.
+The controlled fixture is explicitly signed before the experiment, on both
+architectures. Its staged copy must preserve those exact bytes/signature; the
+experiment does not require Intel clang to sign automatically.
+
+The independent workflow runs on macOS arm64/Intel. Its concurrency group is
+separate, but updates to a PR also trigger the capability workflow when that PR's
+full diff contains capability-probe changes. Workflow separation alone does not
+prevent the older capability run from being superseded.
