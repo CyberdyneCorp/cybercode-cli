@@ -196,3 +196,36 @@ Scoped review checked file/directory classification, directory-only replacement
 handling, descriptor lifetime and subprocess execution. Remaining merge gates are
 full production/platform CI, the unresolved restart/browser failures, and final
 review of the composed feature. No overall security approval is claimed.
+
+
+## Current CI failure correction after 0b7c4a3a
+
+The full browser suite and both child-hook jobs passed at `0b7c4a3a`. The Linux
+and macOS focused suites could not compile the new raw-fcntl test because the
+workspace denies unsafe code; both broad Rust jobs failed at Clippy for the
+same reason. The standalone harness had omitted that workspace lint. Linux
+artifact-upload errors followed the earlier compile failure and do not establish
+additional runtime defects. Windows reached the native component tests: 45
+passed and sidecar turnover failed with unavailable identity capture.
+
+The lock regression now holds a real SQLite exclusive transaction and uses a
+separate SQLite connection in its subprocess to require `DatabaseBusy`; it has
+no unsafe blocks or new project dependencies. The harness also enforces
+`unsafe_code = deny`. Restoring an independent file open/close and then restoring
+the original Location check each made this new SQLite regression execute and
+fail at the intended lock assertion, independently; both controls were restored.
+The fixed actual-source harness passed 72 tests with its one subprocess helper
+ignored in the parent suite and invoked explicitly by the regression; scoped
+Clippy passed.
+
+Windows capture now requests only `FILE_READ_ATTRIBUTES`, not file-data read
+access. A new Windows-native regression captures metadata while an existing
+writer denies data sharing, and verifies the writer can still write. Capture
+retries access/sharing errors up to eight times with two-millisecond intervals.
+A pending delete can map to access denied through [CreateFile](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew),
+but that does not prove the observed error's exact cause. The candidate never
+treats an ambiguous denial as an absent file: a persistent error still latches
+unavailable and test-only diagnostics now record its raw OS error. The sidecar
+turnover assertion remains in place. Native Windows and the full production
+checks for this correction remain pending; the earlier Linux restart assertion
+was not reached at `0b7c4a3a` and is not counted as resolved.

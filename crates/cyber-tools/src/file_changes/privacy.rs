@@ -52,7 +52,9 @@ impl PrivatePins {
             let pin = match pin(path) {
                 Ok(Some(pin)) => pin,
                 Ok(None) => continue,
-                Err(_) => {
+                Err(_error) => {
+                    #[cfg(test)]
+                    eprintln!("private identity capture failed: {_error:?}");
                     let reason = "private file observation identity unavailable; restart required";
                     registry.unavailable = Some(reason);
                     return Err(reason.into());
@@ -85,16 +87,32 @@ fn open_private(path: &Path) -> std::io::Result<std::fs::File> {
 #[cfg(windows)]
 fn open_private(path: &Path) -> std::io::Result<std::fs::File> {
     use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION};
     use windows_sys::Win32::Storage::FileSystem::{
-        FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE,
     };
     // BACKUP_SEMANTICS admits directories as well as files through this atomic
     // open. Retained metadata ownership must not prevent native rename/unlink.
-    std::fs::OpenOptions::new()
-        .read(true)
-        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-        .open(path)
+    for attempt in 0..8 {
+        let result = std::fs::OpenOptions::new()
+            .access_mode(FILE_READ_ATTRIBUTES)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(path);
+        // CreateFile may map a pending delete to ACCESS_DENIED. Retry capture
+        // briefly without publishing a scan or treating an ambiguous denial as
+        // absence. Persistent denial still latches unavailable in the caller.
+        let transient = result.as_ref().is_err_and(|error| {
+            matches!(error.raw_os_error(), Some(code)
+                if code == ERROR_ACCESS_DENIED as i32 || code == ERROR_SHARING_VIOLATION as i32)
+        });
+        if !transient || attempt == 7 {
+            return result;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    unreachable!("the final private capture attempt always returns")
 }
 #[cfg(not(any(unix, windows)))]
 fn open_private(_path: &Path) -> std::io::Result<std::fs::File> {
@@ -161,40 +179,46 @@ fn pin(path: &Path) -> std::io::Result<Option<Pin>> {
 mod tests {
     use super::*;
     use cap_std::fs::Dir;
-    #[cfg(unix)]
-    fn record_lock(file: &std::fs::File) -> std::io::Result<()> {
-        use std::os::fd::AsRawFd;
-        // SAFETY: zero is valid for every field of flock; fcntl reads it only
-        // during this call, against a live descriptor owned by this function's caller.
-        let mut lock: libc::flock = unsafe { std::mem::zeroed() };
-        lock.l_type = libc::F_WRLCK as _;
-        lock.l_whence = libc::SEEK_SET as _;
-        // SAFETY: file owns a live descriptor and lock points to an initialized
-        // flock for this synchronous call; F_SETLK does not retain the pointer.
-        if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETLK, &lock) } == -1 {
-            return Err(std::io::Error::last_os_error());
-        }
-        Ok(())
+    #[cfg(windows)]
+    #[test]
+    fn private_metadata_capture_does_not_require_file_data_read_access() {
+        use std::io::Write;
+        use std::os::windows::fs::OpenOptionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("private-file");
+        let mut writer = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .share_mode(0)
+            .open(&path)
+            .unwrap();
+        let pins = PrivatePins::default();
+        let snapshot = pins.capture([path.as_path()]).unwrap();
+        writer.write_all(b"fixture").unwrap();
+        assert!(snapshot.excludes(&Metadata::from_file(&writer).unwrap()));
     }
     #[cfg(unix)]
     #[test]
     #[ignore = "subprocess fixture invoked by private_capture_preserves_existing_record_locks"]
     fn private_file_lock_probe() {
         let path = std::env::var_os("CYBER_PRIVATE_LOCK_FIXTURE").unwrap();
-        let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
-        let error = record_lock(&file).expect_err("owner record lock was released");
-        assert!(matches!(
-            error.raw_os_error(),
-            Some(libc::EACCES | libc::EAGAIN)
-        ));
+        let database = rusqlite::Connection::open(path).unwrap();
+        database.busy_timeout(std::time::Duration::ZERO).unwrap();
+        let error = database
+            .execute_batch("BEGIN IMMEDIATE")
+            .expect_err("owner database lock was released");
+        assert_eq!(
+            error.sqlite_error_code(),
+            Some(rusqlite::ErrorCode::DatabaseBusy)
+        );
     }
     #[cfg(unix)]
     #[test]
     fn private_capture_preserves_existing_record_locks() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("database");
-        let file = std::fs::File::create(&path).unwrap();
-        record_lock(&file).unwrap();
+        let database = rusqlite::Connection::open(&path).unwrap();
+        database.execute_batch("PRAGMA journal_mode=DELETE; CREATE TABLE fixture(value); BEGIN EXCLUSIVE; INSERT INTO fixture VALUES(1)").unwrap();
         let probe = || {
             let module = module_path!().split_once("::").unwrap().1;
             let output = std::process::Command::new(std::env::current_exe().unwrap())
@@ -232,6 +256,7 @@ mod tests {
         std::fs::hard_link(&path, &location).unwrap();
         assert!(!root.current());
         probe();
+        assert!(!database.is_autocommit());
     }
     #[test]
     fn moved_private_directory_and_file_aliases_retain_their_pins() {
