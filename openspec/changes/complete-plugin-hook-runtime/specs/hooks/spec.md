@@ -15,6 +15,13 @@
 - **WHEN** a command hook may have changed external state before its outcome was recorded
 - **THEN** recovery retains its unknown status without replaying the command solely to obtain a receipt
 
+#### Scenario: Public child input recreates through a real delegating Session envelope
+
+- **WHEN** a user continues an isolated child whose checkout was removed and recreation reaches `WorktreeCreate`
+- **THEN** the hook runs at the delegating Session's actual Location after the child's applicable worktree permission checks, without fabricating a child envelope at that Location
+- **AND** a veto prevents checkout creation, rebinding and new input/model admission, while a retained checkout emits no new creation event
+- **AND** no hook dispatch holds the child lifecycle mutex or runtime shutdown admission, and current deny rules are checked again before Git effects
+
 ### Requirement: Setup attempt ownership and explicit initialization
 (P1) Setup SHALL admit durable installation/Location-bound attempts before effects, serialize automatic first-root-Session claims with creation, and expose explicit initialization through the owner surface without a model Turn. Marker and migration semantics SHALL follow the reviewed Setup ownership design. Completed, failed, skipped and unknown outcomes SHALL remain distinguishable; neither an automatic marker nor a retry SHALL manufacture successful execution or replay an uncertain effect.
 
