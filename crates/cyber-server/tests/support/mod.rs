@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use cyber_core::paths::DatabaseLocation;
 use cyber_llm::adapters::{ScriptStep, ScriptedAdapter};
-use cyber_llm::catalog::{Cost, ModelRole};
+use cyber_llm::catalog::{Cost, ModelProfile, ModelRole};
 use cyber_llm::{
     ErrorKind, FinishReason, LlmEvent, LlmRequest, RetryPolicy, ToolCall, ToolSpec, Usage,
 };
@@ -76,6 +76,28 @@ pub fn error(kind: ErrorKind, message: &str) -> Vec<ScriptStep> {
     }]
 }
 
+/// The behavior profile of a scripted provider: `anthropic` speaks the Anthropic
+/// carrier (with thinking on), `deepseek` replays `reasoning_content` within a tool loop,
+/// `plain` never replays reasoning, and every other provider replays its reasoning
+/// natively for the whole history.
+pub fn profile(provider: &str) -> ModelProfile {
+    use cyber_llm::catalog::profile::{ReasoningCarrier, ReasoningReplay};
+    let (reasoning_carrier, reasoning_replay) = match provider {
+        "anthropic" => (ReasoningCarrier::Anthropic, ReasoningReplay::Always),
+        "deepseek" => (
+            ReasoningCarrier::ReasoningContent,
+            ReasoningReplay::ToolLoop,
+        ),
+        "plain" => (ReasoningCarrier::None, ReasoningReplay::Never),
+        _ => (ReasoningCarrier::Responses, ReasoningReplay::Always),
+    };
+    ModelProfile {
+        reasoning_carrier,
+        reasoning_replay,
+        ..ModelProfile::default()
+    }
+}
+
 /// Models by reference: `test/main`, `other/main`, `test/title`, `test/summary`.
 pub struct Models {
     pub adapters: HashMap<String, Arc<ScriptedAdapter>>,
@@ -106,6 +128,9 @@ impl ModelResolver for Models {
                 model: model.into(),
                 max_output_tokens: Some(1000),
                 cache: true,
+                reasoning_carrier: profile(provider).reasoning_carrier,
+                reasoning: (provider == "anthropic")
+                    .then_some(cyber_llm::Reasoning::BudgetTokens(1024)),
                 ..LlmRequest::default()
             },
             provider: provider.into(),
@@ -120,6 +145,7 @@ impl ModelResolver for Models {
             family: cyber_core::prompts::ModelFamily::Default,
             vision: true,
             pdf: true,
+            profile: profile(provider),
         })
     }
 

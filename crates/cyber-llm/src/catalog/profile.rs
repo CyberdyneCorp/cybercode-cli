@@ -41,6 +41,12 @@ pub enum ReasoningCarrier {
     CopilotOpaque,
 }
 
+impl ReasoningCarrier {
+    pub fn is_none(&self) -> bool {
+        *self == Self::None
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum VerbosityLevel {

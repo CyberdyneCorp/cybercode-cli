@@ -61,7 +61,19 @@ An HTTP body failure reports `provider response stream interrupted after N body 
 
 ## Reasoning replay
 
-An answer keeps its reasoning as separate items, one per reasoning block the provider streamed, each placed among the answer's tool calls where the provider produced it. An item can carry opaque provider state, such as an Anthropic thinking signature or a `redacted_thinking` block, stored exactly as received. The state goes back only to the provider and model that produced it: on Anthropic, signed `thinking` and `redacted_thinking` blocks are replayed in their original order between the `tool_use` blocks. A Turn on another model gets the item's text as assistant text and drops an item without text. An item whose state was dropped is also replayed as text. Sessions recorded before reasoning items read their one reasoning string and signature as a single item.
+An answer keeps its reasoning as separate items, one per reasoning block the provider streamed, each placed among the answer's tool calls where the provider produced it. An item can carry opaque provider state, stored exactly as received. Each provider gets it back in its own field (the profile's `reasoning_carrier`):
+
+| Carrier | Sent back as |
+|---|---|
+| `responses` (OpenAI, the ChatGPT subscription, Copilot models served by Responses) | `reasoning` input items with `encrypted_content`, before the calls they preceded; requests ask for it with `include: ["reasoning.encrypted_content"]`. An item ID the API did not issue is left out. |
+| `anthropic` | signed `thinking` and `redacted_thinking` blocks, in their original order between the `tool_use` blocks |
+| `reasoning_content` (DeepSeek, Kimi, GLM, Qwen, vLLM) | the assistant message's `reasoning_content`; a single space when the reasoning is empty |
+| `reasoning` (Ollama, LM Studio) | the assistant message's `reasoning` |
+| `reasoning_details` (OpenRouter) | the streamed `reasoning_details` entries, merged by index, unchanged |
+| `gemini_signature` | `extra_content.google.thought_signature` on the tool call that carried it |
+| `copilot_opaque` (Copilot Chat Completions models) | `reasoning_text` and `reasoning_opaque` on the assistant message |
+
+How much reasoning goes back follows the profile's `reasoning_replay`: `always` replays it for the whole history (the default for OpenAI Responses and Anthropic), `tool_loop` only for the answers after the latest user message and drops older reasoning (the Chat Completions carriers and Gemini), and `never` sends reasoning as assistant text. Native state goes back only to the provider and model that produced it. A Turn on another model gets an item's text as assistant text and drops an item without text, such as a redacted block. An item whose state was dropped is also replayed as text, except on OpenAI Responses, which cannot replay reasoning without its encrypted content and leaves it out. When a tool loop continues on an Anthropic model with thinking on, but the answer it continues came from another model, that one request goes out with thinking off (the API would reject it otherwise) and one `info` log line says so. A compaction summary carries no opaque state; the reasoning in the kept tail still replays. Sessions recorded before reasoning items read their one reasoning string and signature as a single item.
 
 Opaque state never leaves the store: exports (JSON, Markdown and HTML), the messages and history routes, the event streams (including a fork's `session.created.1`) and telemetry show `[opaque reasoning]` instead, and an imported document never supplies any. A value over 1 MiB is dropped when it arrives, with one warning per step in the log. Context estimates count opaque state at 3 tokens per 4 bytes.
 

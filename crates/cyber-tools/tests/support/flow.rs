@@ -71,6 +71,7 @@ impl ModelResolver for Models {
             // Scripted stand-ins take images, so delegated screenshots reach them.
             vision: true,
             pdf: false,
+            profile: Default::default(),
         })
     }
 

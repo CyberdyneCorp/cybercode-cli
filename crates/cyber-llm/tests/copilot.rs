@@ -823,3 +823,156 @@ fn configuration_cannot_select_the_copilot_protocol() {
     assert!(catalog.credential("evil").is_none());
     assert_eq!(ApiKind::parse("copilot-chat"), None);
 }
+
+/// The events of one request through the catalog's resolution of `model`.
+async fn events(
+    catalog: &Catalog,
+    model: &str,
+    messages: Vec<Message>,
+) -> Vec<cyber_llm::LlmEvent> {
+    let resolved = catalog
+        .resolve(&ModelRef::parse(model).unwrap(), None)
+        .unwrap();
+    let request = LlmRequest {
+        messages,
+        ..resolved.request.clone()
+    };
+    let stream = resolved.adapter().stream(request).await.unwrap();
+    let mut seen = Vec::new();
+    cyber_llm::collect(stream, |event| seen.push(event.clone()))
+        .await
+        .unwrap();
+    seen
+}
+
+async fn last_body(server: &MockServer, route: &str) -> Value {
+    let requests = server.received_requests().await.unwrap();
+    let sent = requests.iter().rfind(|r| r.url.path() == route).unwrap();
+    serde_json::from_slice(&sent.body).unwrap()
+}
+
+/// A tool loop whose answer reasoned with `opaque` before calling `clock`.
+fn reasoned_loop(opaque: cyber_llm::Opaque) -> Vec<Message> {
+    vec![
+        Message::user_text("time?"),
+        Message {
+            role: cyber_llm::Role::Assistant,
+            content: vec![
+                Content::Reasoning {
+                    text: "look".into(),
+                    opaque: Some(opaque),
+                },
+                Content::ToolCall {
+                    id: "c1".into(),
+                    name: "clock".into(),
+                    input: json!({}),
+                    opaque: None,
+                },
+            ],
+        },
+        Message {
+            role: cyber_llm::Role::User,
+            content: vec![Content::ToolResult {
+                call_id: "c1".into(),
+                output: "12:00".into(),
+                is_error: false,
+            }],
+        },
+    ]
+}
+
+/// `session-runtime` → Reasoning items: Copilot's Chat Completions models stream
+/// `reasoning_text` with a `reasoning_opaque` blob, which goes back on the assistant
+/// message of the tool loop.
+#[tokio::test]
+async fn copilot_chat_round_trips_reasoning_opaque() {
+    use cyber_llm::{LlmEvent, OpaqueKind};
+    let dir = tempfile::tempdir().unwrap();
+    let server = MockServer::start().await;
+    mint_mock()
+        .respond_with(minted(&server, 1800))
+        .mount(&server)
+        .await;
+    let body = [
+        json!({"choices": [{"delta": {"reasoning_text": "look"}}]}),
+        json!({"choices": [{"delta": {"reasoning_opaque": "op4que"}}]}),
+        json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1",
+            "function": {"name": "clock", "arguments": "{}"}}]}, "finish_reason": "tool_calls"}]}),
+    ]
+    .iter()
+    .map(|data| format!("data: {data}\n\n"))
+    .collect::<String>()
+        + "data: [DONE]\n\n";
+    copilot_request("/chat/completions")
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(body),
+        )
+        .mount(&server)
+        .await;
+    let catalog = catalog(&stored(dir.path(), &server), json!({}));
+    let model = "copilot/claude-sonnet-4.5";
+
+    let seen = events(&catalog, model, vec![Message::user_text("time?")]).await;
+    let order: Vec<String> = seen
+        .iter()
+        .filter_map(|event| match event {
+            LlmEvent::ReasoningDelta { text } => Some(format!("text:{text}")),
+            LlmEvent::ReasoningItem { opaque, .. } => {
+                let opaque = opaque.as_ref().unwrap();
+                assert_eq!(opaque.kind, OpaqueKind::EncryptedReasoning);
+                Some(format!("opaque:{}", opaque.data))
+            }
+            LlmEvent::ToolCallDone(call) => Some(format!("call:{}", call.id)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(order, ["text:look", "opaque:op4que", "call:c1"]);
+
+    let opaque = cyber_llm::Opaque::new(OpaqueKind::EncryptedReasoning, "op4que");
+    events(&catalog, model, reasoned_loop(opaque)).await;
+    let sent = last_body(&server, "/chat/completions").await;
+    assert_eq!(
+        sent["messages"][1],
+        json!({"role": "assistant", "content": null,
+            "tool_calls": [{"id": "c1", "type": "function",
+                "function": {"name": "clock", "arguments": "{}"}}],
+            "reasoning_text": "look", "reasoning_opaque": "op4que"})
+    );
+}
+
+/// Copilot's Responses models keep their reasoning in Responses items, not in
+/// `reasoning_opaque`.
+#[tokio::test]
+async fn copilot_responses_models_replay_encrypted_reasoning_items() {
+    use cyber_llm::OpaqueKind;
+    let dir = tempfile::tempdir().unwrap();
+    let server = MockServer::start().await;
+    mint_mock()
+        .respond_with(minted(&server, 1800))
+        .mount(&server)
+        .await;
+    copilot_request("/responses")
+        .respond_with(responses_reply())
+        .mount(&server)
+        .await;
+    let catalog = catalog(&stored(dir.path(), &server), json!({}));
+    let mut opaque = cyber_llm::Opaque::new(OpaqueKind::EncryptedReasoning, "gAAA");
+    opaque.id = Some("rs_7".into());
+
+    events(&catalog, "copilot/gpt-5.6-sol", reasoned_loop(opaque)).await;
+    let sent = last_body(&server, "/responses").await;
+    assert_eq!(sent["include"], json!(["reasoning.encrypted_content"]));
+    assert_eq!(
+        sent["input"],
+        json!([
+            {"role": "user", "content": [{"type": "input_text", "text": "time?"}]},
+            {"type": "reasoning", "id": "rs_7", "encrypted_content": "gAAA",
+                "summary": [{"type": "summary_text", "text": "look"}]},
+            {"type": "function_call", "call_id": "c1", "name": "clock", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "c1", "output": "12:00"},
+        ])
+    );
+    assert!(sent["input"].to_string().find("reasoning_opaque").is_none());
+}

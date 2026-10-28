@@ -99,6 +99,8 @@ pub struct ResolvedModel {
     pub vision: bool,
     /// The catalog's `capabilities.pdf`: the model takes PDF input.
     pub pdf: bool,
+    /// The model's behavior profile (`provider-catalog` → Model behavior profiles).
+    pub profile: cyber_llm::catalog::ModelProfile,
 }
 
 /// Why a `file` prompt part was not read (`server-api` → Prompt attachment parts).
@@ -200,6 +202,7 @@ impl ModelResolver for CatalogResolver {
             family: cyber_llm::catalog::model_family(provider, model),
             vision: model.capabilities.vision,
             pdf: model.capabilities.pdf,
+            profile: model.profile.clone(),
         })
     }
 

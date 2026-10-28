@@ -7,10 +7,14 @@ use super::{
     Adapter, Decoder, Endpoint, EventStream, ToolCalls, data_url, decode_sse, document_name,
     ensure_resolved, parse_json,
 };
+use crate::catalog::profile::ReasoningCarrier;
 use crate::error::{LlmError, classify_stream_error};
 use crate::json::{deep_merge, force_no_tools, str_at, strip_credentials};
 use crate::sse::SseEvent;
-use crate::types::{Content, FinishReason, LlmEvent, LlmRequest, Message, Reasoning, Role, Usage};
+use crate::types::{
+    Content, FinishReason, LlmEvent, LlmRequest, Message, Opaque, OpaqueKind, Reasoning, Role,
+    Usage,
+};
 
 mod reservation;
 
@@ -125,28 +129,25 @@ fn optional_fields(request: &LlmRequest, map: &mut Map<String, Value>) {
     if let (Some(key), true) = (&request.cache_key, request.cache) {
         map.insert("prompt_cache_key".into(), json!(key));
     }
+    // With `store: false` the encrypted reasoning is the only way to keep it across calls.
+    if request.reasoning_carrier == ReasoningCarrier::Responses {
+        map.insert("include".into(), json!(["reasoning.encrypted_content"]));
+    }
 }
 
 fn input_items(message: &Message) -> Vec<Value> {
+    match message.role {
+        Role::User => user_items(message),
+        Role::Assistant => assistant_items(message),
+    }
+}
+
+/// Function call outputs answer the previous assistant turn, so they come first.
+fn user_items(message: &Message) -> Vec<Value> {
     let mut items = Vec::new();
     let mut parts = Vec::new();
-    let user = message.role == Role::User;
     for content in &message.content {
         match content {
-            Content::Text { text } if user => {
-                parts.push(json!({ "type": "input_text", "text": text }))
-            }
-            Content::Text { text } => parts.push(json!({ "type": "output_text", "text": text })),
-            Content::Image { media_type, data } => {
-                parts.push(
-                    json!({ "type": "input_image", "image_url": data_url(media_type, data) }),
-                );
-            }
-            Content::ToolCall {
-                id, name, input, ..
-            } => {
-                items.push(json!({ "type": "function_call", "call_id": id, "name": name, "arguments": input.to_string() }));
-            }
             Content::ToolResult {
                 call_id, output, ..
             } => {
@@ -154,33 +155,98 @@ fn input_items(message: &Message) -> Vec<Value> {
                     json!({ "type": "function_call_output", "call_id": call_id, "output": output }),
                 );
             }
-            Content::Document {
-                media_type,
-                data,
-                name,
-            } => {
-                parts.push(json!({ "type": "input_file", "filename": document_name(name), "file_data": data_url(media_type, data) }));
-            }
-            // References are resolved before a request (`ensure_resolved`).
-            Content::Reasoning { .. } | Content::Attachment(_) => {}
+            Content::Text { text } => parts.push(json!({ "type": "input_text", "text": text })),
+            other => parts.extend(media_part(other)),
         }
     }
     if !parts.is_empty() {
-        let role = if user { "user" } else { "assistant" };
-        // Function call outputs answer the previous assistant turn, so they come first.
-        let message = json!({ "role": role, "content": parts });
-        if user {
-            items.push(message)
-        } else {
-            items.insert(0, message)
-        }
+        items.push(json!({ "role": "user", "content": parts }));
     }
     items
+}
+
+/// An answer's items in the order the model produced them: reasoning, its message, and
+/// the function calls with the reasoning that came between them
+/// (`provider-catalog` → Responses request shaping).
+fn assistant_items(message: &Message) -> Vec<Value> {
+    let mut items = Vec::new();
+    let mut parts = Vec::new();
+    for content in &message.content {
+        let item = match content {
+            Content::Text { text } => {
+                parts.push(json!({ "type": "output_text", "text": text }));
+                continue;
+            }
+            Content::ToolCall {
+                id, name, input, ..
+            } => Some(
+                json!({ "type": "function_call", "call_id": id, "name": name, "arguments": input.to_string() }),
+            ),
+            Content::Reasoning { text, opaque } => reasoning_item(text, opaque.as_ref()),
+            other => {
+                parts.extend(media_part(other));
+                continue;
+            }
+        };
+        flush_message(&mut parts, &mut items);
+        items.extend(item);
+    }
+    flush_message(&mut parts, &mut items);
+    items
+}
+
+fn flush_message(parts: &mut Vec<Value>, items: &mut Vec<Value>) {
+    if !parts.is_empty() {
+        items.push(json!({ "role": "assistant", "content": std::mem::take(parts) }));
+    }
+}
+
+fn media_part(content: &Content) -> Option<Value> {
+    match content {
+        Content::Image { media_type, data } => {
+            Some(json!({ "type": "input_image", "image_url": data_url(media_type, data) }))
+        }
+        Content::Document {
+            media_type,
+            data,
+            name,
+        } => Some(
+            json!({ "type": "input_file", "filename": document_name(name), "file_data": data_url(media_type, data) }),
+        ),
+        // References are resolved before a request (`ensure_resolved`).
+        _ => None,
+    }
+}
+
+/// The prefix of the reasoning item IDs the Responses API issues.
+const REASONING_ID_PREFIX: &str = "rs_";
+
+/// A reasoning item with its encrypted content. Reasoning without it cannot be replayed
+/// statelessly and is left out. An ID the API did not issue (a forked or imported item)
+/// is left out too, since the API rejects it.
+fn reasoning_item(text: &str, opaque: Option<&Opaque>) -> Option<Value> {
+    let opaque = opaque.filter(|opaque| opaque.kind == OpaqueKind::EncryptedReasoning)?;
+    let summary: Vec<Value> = (!text.is_empty())
+        .then(|| json!({ "type": "summary_text", "text": text }))
+        .into_iter()
+        .collect();
+    let mut item =
+        json!({ "type": "reasoning", "summary": summary, "encrypted_content": opaque.data });
+    if let Some(id) = opaque
+        .id
+        .as_deref()
+        .filter(|id| id.starts_with(REASONING_ID_PREFIX))
+    {
+        item["id"] = json!(id);
+    }
+    Some(item)
 }
 
 #[derive(Default)]
 struct ResponsesDecoder {
     tools: ToolCalls,
+    /// Reasoning items decoded so far, for [`LlmEvent::ReasoningItem`] indexes.
+    reasoning_items: u32,
     done: bool,
 }
 
@@ -242,10 +308,36 @@ impl ResponsesDecoder {
                     out.push(Ok(LlmEvent::ToolCallDone(call)));
                 }
             }
+            "response.output_item.done" if str_at(data, "/item/type") == "reasoning" => {
+                out.push(Ok(self.reasoning_item(&data["item"])));
+            }
             "response.completed" | "response.incomplete" => self.complete(&data["response"], out),
             "response.failed" => self.fail(&data["response"]["error"], out),
             "error" => self.fail(data, out),
             _ => {}
+        }
+    }
+
+    /// A finished reasoning item: its summary parts as the item text, and its encrypted
+    /// content with the item ID as the state to replay.
+    fn reasoning_item(&mut self, item: &Value) -> LlmEvent {
+        let text = item["summary"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|part| part["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let opaque = item["encrypted_content"].as_str().map(|data| {
+            let mut opaque = Opaque::new(OpaqueKind::EncryptedReasoning, data);
+            opaque.id = item["id"].as_str().map(str::to_owned);
+            opaque
+        });
+        self.reasoning_items += 1;
+        LlmEvent::ReasoningItem {
+            index: self.reasoning_items - 1,
+            text,
+            opaque,
         }
     }
 

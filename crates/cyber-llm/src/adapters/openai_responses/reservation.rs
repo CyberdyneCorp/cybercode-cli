@@ -114,6 +114,7 @@ fn validate_body(body: &Value, model: &str) -> Result<(), BoundUnavailable> {
         "text",
         "tool_choice",
         "parallel_tool_calls",
+        "include",
         "service_tier",
         "truncation",
         "access_programs",
@@ -126,6 +127,12 @@ fn validate_body(body: &Value, model: &str) -> Result<(), BoundUnavailable> {
         return Err(unavailable(
             "opaque extension, state, model override or nonstateless request cannot be reserved",
         ));
+    }
+    if body
+        .get("include")
+        .is_some_and(|v| v != &json!(["reasoning.encrypted_content"]))
+    {
+        return Err(unavailable("only encrypted reasoning may be included"));
     }
     validate_input(&body["input"])?;
     if body.get("tools").is_some_and(|v| {
@@ -156,6 +163,8 @@ fn validate_input(input: &Value) -> Result<(), BoundUnavailable> {
         match item["type"].as_str() {
             Some("function_call") if item["arguments"].is_string() => {}
             Some("function_call_output") if item["output"].is_string() => {}
+            // Replayed reasoning is input the declared context ceiling already bounds.
+            Some("reasoning") if is_replayed_reasoning(item) => {}
             None | Some("message")
                 if matches!(
                     item["role"].as_str(),
@@ -181,6 +190,24 @@ fn validate_input(input: &Value) -> Result<(), BoundUnavailable> {
         }
     }
     Ok(())
+}
+
+/// A stateless reasoning item: encrypted content and text summaries, nothing else.
+fn is_replayed_reasoning(item: &Value) -> bool {
+    let known = item.as_object().is_some_and(|fields| {
+        fields.keys().all(|key| {
+            matches!(
+                key.as_str(),
+                "type" | "id" | "summary" | "encrypted_content"
+            )
+        })
+    });
+    let summaries = item["summary"].as_array().is_some_and(|parts| {
+        parts
+            .iter()
+            .all(|p| p["type"] == "summary_text" && p["text"].is_string())
+    });
+    known && summaries && item["encrypted_content"].is_string()
 }
 
 #[cfg(test)]
@@ -250,6 +277,38 @@ mod tests {
         );
         assert!(prepared.bound.total_tokens >= 1000);
     }
+    /// A tool loop that replays encrypted reasoning can still be reserved.
+    #[test]
+    fn replayed_reasoning_and_its_include_are_accepted() {
+        use crate::catalog::profile::ReasoningCarrier;
+        use crate::{Content, Opaque, OpaqueKind, Role};
+        let endpoint = Endpoint::new("https://api.openai.com/v1", None);
+        let mut request = request();
+        request.reasoning_carrier = ReasoningCarrier::Responses;
+        let mut opaque = Opaque::new(OpaqueKind::EncryptedReasoning, "gAAAA");
+        opaque.id = Some("rs_1".into());
+        request.messages.push(Message {
+            role: Role::Assistant,
+            content: vec![
+                Content::Reasoning {
+                    text: "plan".into(),
+                    opaque: Some(opaque),
+                },
+                Content::Text { text: "hi".into() },
+            ],
+        });
+        let prepared = prepare(&endpoint, request.clone(), 1000).unwrap();
+        let body = super::super::build_body(&prepared.request);
+        assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+        assert_eq!(body["input"][1]["type"], "reasoning");
+
+        request.body = json!({"include": ["file_search_call.results"]});
+        assert!(prepare(&endpoint, request, 1000).is_err());
+        let mut odd = self::request();
+        odd.body = json!({"input": [{"type": "reasoning", "summary": [], "encrypted_content": "x", "content": [{}]}]});
+        assert!(prepare(&endpoint, odd, 1000).is_err());
+    }
+
     #[test]
     fn opaque_model_tier_state_tools_and_media_refuse() {
         let endpoint = Endpoint::new("https://api.openai.com/v1", None);

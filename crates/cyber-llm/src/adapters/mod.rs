@@ -18,7 +18,7 @@ use serde_json::Value;
 
 use crate::error::LlmError;
 use crate::sse::{SseEvent, SseParser};
-use crate::types::{Content, LlmEvent, LlmRequest, ToolCall};
+use crate::types::{Content, LlmEvent, LlmRequest, Opaque, ToolCall};
 
 pub use anthropic::AnthropicAdapter;
 pub use chatgpt::ChatGptAdapter;
@@ -354,6 +354,7 @@ struct Pending {
     id: String,
     name: String,
     arguments: String,
+    opaque: Option<Opaque>,
     done: bool,
 }
 
@@ -367,8 +368,16 @@ impl ToolCalls {
             id: id.into(),
             name: name.into(),
             arguments: String::new(),
+            opaque: None,
             done: false,
         });
+    }
+
+    /// Attach provider state to the open call with `key`, such as a thought signature.
+    pub fn set_opaque(&mut self, key: &str, opaque: Opaque) {
+        if let Some(p) = self.pending.iter_mut().find(|p| p.key == key && !p.done) {
+            p.opaque = Some(opaque);
+        }
     }
 
     pub fn append(&mut self, key: &str, fragment: &str) -> Option<LlmEvent> {
@@ -440,7 +449,7 @@ fn to_call(p: &Pending) -> ToolCall {
         name: p.name.clone(),
         arguments: p.arguments.clone(),
         input,
-        opaque: None,
+        opaque: p.opaque.clone(),
     }
 }
 

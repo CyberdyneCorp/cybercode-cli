@@ -299,6 +299,7 @@ async fn webfetch_summary_budget_case(reserved: bool) {
                 family: cyber_core::prompts::ModelFamily::Default,
                 vision: false,
                 pdf: false,
+                profile: Default::default(),
             })
         }
         fn role(&self, _: ModelRole) -> Option<String> {

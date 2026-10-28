@@ -209,7 +209,7 @@ impl Inner {
             .collect();
         let estimate = view::estimate_tokens(
             &system,
-            &view::messages(&state, &resolved.provider, &resolved.model),
+            &view::messages(&state, &view::Replay::of(resolved)),
             &tools,
         );
         let max_output = u64::from(resolved.template.max_output_tokens.unwrap_or(0));

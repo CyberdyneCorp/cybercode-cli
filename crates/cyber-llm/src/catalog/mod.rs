@@ -391,6 +391,10 @@ impl Catalog {
             body: overlay.body,
             headers: overlay.headers.into_iter().collect(),
             cache: true,
+            reasoning_carrier: match model.profile.reasoning_replay {
+                profile::ReasoningReplay::Never => profile::ReasoningCarrier::None,
+                _ => model.profile.reasoning_carrier,
+            },
             ..LlmRequest::default()
         };
         let kind = model

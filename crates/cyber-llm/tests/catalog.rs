@@ -557,3 +557,30 @@ fn a_derived_effort_clamps_to_the_nearest_lower_level() {
         Err(CatalogError::VariantUnavailable { .. })
     ));
 }
+
+/// The resolved request names the profile's reasoning carrier, and none when the profile
+/// replays no reasoning.
+#[test]
+fn the_request_names_the_carrier_unless_nothing_is_replayed() {
+    use cyber_llm::catalog::profile::ReasoningCarrier;
+    let config = json!({"providers": {"corp": {
+        "api": {"type": "openai-compatible", "url": "https://llm.corp.example/v1",
+            "settings": {"api_key": "k"}},
+        "models": {
+            "deepseek-v4": {},
+            "deepseek-quiet": {"profile": {"reasoning_replay": "never"}},
+        },
+    }}});
+    let c = catalog(config, &env(&[]));
+    let carrier = |model: &str| {
+        c.resolve(&model_ref(model), None)
+            .unwrap()
+            .request
+            .reasoning_carrier
+    };
+    assert_eq!(
+        carrier("corp/deepseek-v4"),
+        ReasoningCarrier::ReasoningContent
+    );
+    assert_eq!(carrier("corp/deepseek-quiet"), ReasoningCarrier::None);
+}

@@ -536,3 +536,57 @@ async fn loaded_schemas_survive_compaction_and_restart() {
             .contains("mcp__jira__read")
     );
 }
+
+/// `session-runtime` → Reasoning replay policy: a compaction summary carries no opaque
+/// state, and the reasoning of the kept tail still replays natively.
+#[tokio::test]
+async fn compaction_summary_carries_no_opaque_state_and_the_tail_replays() {
+    let h = Harness::new(Setup {
+        scripts: vec![
+            (
+                "test/main",
+                vec![
+                    reasoning_then_text("old thought", "a1"),
+                    reasoning_then_text("new thought", "a2"),
+                    text("a3"),
+                ],
+            ),
+            ("test/summary", vec![text("## Objective\nship it")]),
+        ],
+        compaction: small_tail(),
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    for prompt in ["one", "two"] {
+        h.runtime.admit(&id, admit(prompt)).await.unwrap();
+        h.settle(&id).await;
+    }
+    h.runtime.compact(&id, None).await.unwrap();
+    let summary_request = &h.models.requests("test/summary")[0];
+    assert!(
+        summary_request
+            .messages
+            .iter()
+            .flat_map(|m| &m.content)
+            .all(|part| part.opaque().is_none())
+    );
+    h.runtime.admit(&id, admit("three")).await.unwrap();
+    h.settle(&id).await;
+    let next = &h.models.requests("test/main")[2];
+    assert!(
+        next.messages[0]
+            .content
+            .iter()
+            .all(|p| p.opaque().is_none())
+    );
+    assert!(!transcript(next).contains("old thought"));
+    let tail: Vec<_> = next.messages[1..]
+        .iter()
+        .flat_map(|m| &m.content)
+        .filter_map(|part| match part {
+            Content::Reasoning { text, opaque } => Some((text.as_str(), opaque.is_some())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tail, [("new thought", true)]);
+}

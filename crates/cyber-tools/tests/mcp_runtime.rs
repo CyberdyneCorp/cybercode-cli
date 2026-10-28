@@ -2483,6 +2483,7 @@ impl cyber_server::runtime::ModelResolver for NativeSamplingModels {
             family: cyber_core::prompts::ModelFamily::Default,
             vision: false,
             pdf: false,
+            profile: Default::default(),
         })
     }
 }

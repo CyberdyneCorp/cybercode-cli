@@ -1060,7 +1060,14 @@ impl Inner {
                 .unwrap_or_else(|| context::base_prompt(resolved.family)),
             epoch.baseline.clone(),
         ];
-        request.messages = view::messages(&state, &resolved.provider, &resolved.model);
+        request.messages = view::messages(&state, &view::Replay::of(resolved));
+        if view::thinking_guard(&mut request, resolved.profile.reasoning_carrier) {
+            cyber_core::log::info(
+                "reasoning",
+                "thinking off for one request: the tool loop it continues has no native thinking block",
+                serde_json::json!({"session_id": state.info.id, "model": resolved.model}),
+            );
+        }
         self.project_attachments(
             &state.info.id,
             &mut request.messages,

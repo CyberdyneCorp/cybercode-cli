@@ -4,6 +4,7 @@
 use std::time::Duration;
 
 use cyber_llm::adapters::{ApiKind, Endpoint, ScriptStep, ScriptedAdapter, adapter};
+use cyber_llm::catalog::profile::ReasoningCarrier;
 use cyber_llm::{
     Content, ErrorKind, FinishReason, LlmEvent, LlmRequest, Message, Opaque, OpaqueKind, Reasoning,
     RetryPolicy, Role, ToolSpec, Usage, collect, open_with_retry,
@@ -929,4 +930,428 @@ async fn every_adapter_refuses_an_unresolved_attachment_before_sending() {
         assert_eq!(error.message, "unresolved attachment", "{kind:?}");
     }
     assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+// Golden request fixtures, one per reasoning carrier (`session-runtime` → Reasoning items,
+// design D2): each pins the exact JSON body of a tool-loop follow-up request.
+
+fn chat_done() -> String {
+    sse(&[(
+        "",
+        json!({"choices": [{"delta": {}, "finish_reason": "stop"}]}),
+    )]) + "data: [DONE]\n\n"
+}
+
+fn responses_done() -> String {
+    sse(&[(
+        "response.completed",
+        json!({"response": {"usage": {"input_tokens": 1, "output_tokens": 1}}}),
+    )])
+}
+
+/// The body one request sends, with the mock answering `stream` at `route`.
+async fn sent_body(kind: ApiKind, route: &str, stream: String, req: LlmRequest) -> Value {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(route))
+        .respond_with(ok_stream(stream))
+        .mount(&server)
+        .await;
+    run(kind, &server, "/v1", req).await.1
+}
+
+fn reasoning(text: &str, opaque: Option<Opaque>) -> Content {
+    Content::Reasoning {
+        text: text.into(),
+        opaque,
+    }
+}
+
+fn clock_call(id: &str, opaque: Option<Opaque>) -> Content {
+    Content::ToolCall {
+        id: id.into(),
+        name: "clock".into(),
+        input: json!({}),
+        opaque,
+    }
+}
+
+fn opaque(kind: OpaqueKind, data: &str, id: Option<&str>) -> Option<Opaque> {
+    let mut opaque = Opaque::new(kind, data);
+    opaque.id = id.map(str::to_owned);
+    Some(opaque)
+}
+
+/// A tool loop: the user asks, the answer is `answer`, and both calls returned.
+fn tool_loop(carrier: ReasoningCarrier, answer: Vec<Content>) -> LlmRequest {
+    let result = |id: &str| Content::ToolResult {
+        call_id: id.into(),
+        output: "12:00".into(),
+        is_error: false,
+    };
+    LlmRequest {
+        model: "m-1".into(),
+        messages: vec![
+            Message::user_text("time?"),
+            Message {
+                role: Role::Assistant,
+                content: answer,
+            },
+            Message {
+                role: Role::User,
+                content: vec![result("c1"), result("c2")],
+            },
+        ],
+        cache: false,
+        reasoning_carrier: carrier,
+        ..LlmRequest::default()
+    }
+}
+
+/// `provider-catalog` → Responses request shaping: encrypted reasoning is requested and
+/// replayed in position, and an ID the API did not issue is left out.
+#[tokio::test]
+async fn golden_responses_replays_encrypted_reasoning_in_position() {
+    let answer = vec![
+        reasoning(
+            "plan",
+            opaque(OpaqueKind::EncryptedReasoning, "gAAA1", Some("rs_1")),
+        ),
+        Content::Text {
+            text: "Checking.".into(),
+        },
+        clock_call("c1", None),
+        reasoning(
+            "",
+            opaque(OpaqueKind::EncryptedReasoning, "gAAA2", Some("fork_rs_2")),
+        ),
+        clock_call("c2", None),
+        // No encrypted content (dropped as oversized): nothing to replay statelessly.
+        reasoning("lost", None),
+    ];
+    let req = tool_loop(ReasoningCarrier::Responses, answer);
+    let sent = sent_body(
+        ApiKind::OpenaiResponses,
+        "/v1/responses",
+        responses_done(),
+        req,
+    )
+    .await;
+    assert_eq!(
+        sent,
+        json!({
+            "model": "m-1",
+            "stream": true,
+            "store": false,
+            "include": ["reasoning.encrypted_content"],
+            "input": [
+                {"role": "user", "content": [{"type": "input_text", "text": "time?"}]},
+                {"type": "reasoning", "id": "rs_1", "encrypted_content": "gAAA1",
+                    "summary": [{"type": "summary_text", "text": "plan"}]},
+                {"role": "assistant", "content": [{"type": "output_text", "text": "Checking."}]},
+                {"type": "function_call", "call_id": "c1", "name": "clock", "arguments": "{}"},
+                {"type": "reasoning", "encrypted_content": "gAAA2", "summary": []},
+                {"type": "function_call", "call_id": "c2", "name": "clock", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": "c1", "output": "12:00"},
+                {"type": "function_call_output", "call_id": "c2", "output": "12:00"},
+            ],
+        })
+    );
+}
+
+/// A recorded Responses stream: each finished reasoning item becomes one item with its
+/// summary text, encrypted content and ID, ahead of the call it preceded.
+#[tokio::test]
+async fn responses_decodes_reasoning_items_with_encrypted_content() {
+    let server = MockServer::start().await;
+    let body = sse(&[
+        (
+            "response.output_item.added",
+            json!({"item": {"type": "reasoning", "id": "rs_1", "summary": []}}),
+        ),
+        (
+            "response.reasoning_summary_text.delta",
+            json!({"item_id": "rs_1", "delta": "First"}),
+        ),
+        (
+            "response.reasoning_summary_text.delta",
+            json!({"item_id": "rs_1", "delta": "Second"}),
+        ),
+        (
+            "response.output_item.done",
+            json!({"item": {"type": "reasoning", "id": "rs_1", "encrypted_content": "gAAA1",
+                "summary": [{"type": "summary_text", "text": "First"},
+                    {"type": "summary_text", "text": "Second"}]}}),
+        ),
+        (
+            "response.output_item.added",
+            json!({"item": {"type": "function_call", "id": "fc_1", "call_id": "c1", "name": "clock"}}),
+        ),
+        (
+            "response.output_item.done",
+            json!({"item": {"type": "function_call", "id": "fc_1", "call_id": "c1", "name": "clock", "arguments": "{}"}}),
+        ),
+        (
+            "response.completed",
+            json!({"response": {"usage": {"input_tokens": 5, "output_tokens": 5}}}),
+        ),
+    ]);
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(ok_stream(body))
+        .mount(&server)
+        .await;
+    let a = adapter(
+        ApiKind::OpenaiResponses,
+        Endpoint::new(format!("{}/v1", server.uri()), None),
+    );
+    let mut seen = Vec::new();
+    collect(a.stream(request()).await.unwrap(), |event| match event {
+        LlmEvent::ReasoningItem {
+            index,
+            text,
+            opaque,
+        } => {
+            let opaque = opaque.as_ref().unwrap();
+            assert_eq!(opaque.kind, OpaqueKind::EncryptedReasoning);
+            seen.push(format!(
+                "item{index}:{text}:{}:{}",
+                opaque.data,
+                opaque.id.as_deref().unwrap()
+            ));
+        }
+        LlmEvent::ToolCallDone(call) => seen.push(format!("call:{}", call.id)),
+        _ => {}
+    })
+    .await
+    .unwrap();
+    assert_eq!(seen, ["item0:First\n\nSecond:gAAA1:rs_1", "call:c1"]);
+}
+
+/// The Chat Completions body of a tool loop whose answer reasoned before its one call.
+async fn chat_loop_body(carrier: ReasoningCarrier, answer: Vec<Content>) -> Value {
+    sent_body(
+        ApiKind::OpenaiCompatible,
+        "/v1/chat/completions",
+        chat_done(),
+        tool_loop(carrier, answer),
+    )
+    .await
+}
+
+fn chat_golden(assistant: Value) -> Value {
+    json!({
+        "model": "m-1",
+        "stream": true,
+        "stream_options": {"include_usage": true},
+        "messages": [
+            {"role": "user", "content": "time?"},
+            assistant,
+            {"role": "tool", "tool_call_id": "c1", "content": "12:00"},
+            {"role": "tool", "tool_call_id": "c2", "content": "12:00"},
+        ],
+    })
+}
+
+fn chat_call(id: &str) -> Value {
+    json!({"id": id, "type": "function", "function": {"name": "clock", "arguments": "{}"}})
+}
+
+/// DeepSeek, Kimi, GLM, Qwen and vLLM take the reasoning back as `reasoning_content`; an
+/// empty one is a single space, since some servers reject an empty string.
+#[tokio::test]
+async fn golden_chat_reasoning_content() {
+    let answer = vec![
+        reasoning("look", None),
+        clock_call("c1", None),
+        clock_call("c2", None),
+    ];
+    let sent = chat_loop_body(ReasoningCarrier::ReasoningContent, answer).await;
+    assert_eq!(
+        sent,
+        chat_golden(json!({"role": "assistant", "content": null,
+            "tool_calls": [chat_call("c1"), chat_call("c2")], "reasoning_content": "look"}))
+    );
+    let empty = vec![
+        reasoning("", None),
+        clock_call("c1", None),
+        clock_call("c2", None),
+    ];
+    let sent = chat_loop_body(ReasoningCarrier::ReasoningContent, empty).await;
+    assert_eq!(sent["messages"][1]["reasoning_content"], " ");
+    // Without a carrier the reasoning is not sent.
+    let plain = vec![
+        reasoning("look", None),
+        clock_call("c1", None),
+        clock_call("c2", None),
+    ];
+    let sent = chat_loop_body(ReasoningCarrier::None, plain).await;
+    assert!(sent["messages"][1].get("reasoning_content").is_none());
+}
+
+/// Ollama and LM Studio take it back as `reasoning`.
+#[tokio::test]
+async fn golden_chat_reasoning() {
+    let answer = vec![
+        reasoning("look", None),
+        clock_call("c1", None),
+        clock_call("c2", None),
+    ];
+    let sent = chat_loop_body(ReasoningCarrier::Reasoning, answer).await;
+    assert_eq!(
+        sent,
+        chat_golden(json!({"role": "assistant", "content": null,
+            "tool_calls": [chat_call("c1"), chat_call("c2")], "reasoning": "look"}))
+    );
+}
+
+/// OpenRouter streams `reasoning_details` in pieces: they are concatenated by index into
+/// one item ahead of the call, and replayed unchanged.
+#[tokio::test]
+async fn golden_chat_reasoning_details_round_trip() {
+    let server = MockServer::start().await;
+    let body = sse(&[
+        (
+            "",
+            json!({"choices": [{"delta": {"reasoning": "Lo", "reasoning_details": [
+                {"type": "reasoning.text", "index": 0, "text": "Lo", "format": "anthropic-claude-v1"}]}}]}),
+        ),
+        (
+            "",
+            json!({"choices": [{"delta": {"reasoning": "ok", "reasoning_details": [
+                {"type": "reasoning.text", "index": 0, "text": "ok", "signature": "sig"}]}}]}),
+        ),
+        (
+            "",
+            json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1",
+                "function": {"name": "clock", "arguments": "{}"}}]}, "finish_reason": "tool_calls"}]}),
+        ),
+    ]) + "data: [DONE]\n\n";
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ok_stream(body))
+        .mount(&server)
+        .await;
+    let a = adapter(
+        ApiKind::OpenaiCompatible,
+        Endpoint::new(format!("{}/v1", server.uri()), None),
+    );
+    let mut order = Vec::new();
+    let mut details = None;
+    collect(a.stream(request()).await.unwrap(), |event| match event {
+        LlmEvent::ReasoningItem { opaque, .. } => {
+            let opaque = opaque.clone().unwrap();
+            assert_eq!(opaque.kind, OpaqueKind::Details);
+            order.push("details");
+            details = Some(opaque);
+        }
+        LlmEvent::ToolCallDone(_) => order.push("call"),
+        _ => {}
+    })
+    .await
+    .unwrap();
+    assert_eq!(order, ["details", "call"]);
+    let details = details.unwrap();
+    let merged = json!([{"type": "reasoning.text", "index": 0, "text": "Look",
+        "format": "anthropic-claude-v1", "signature": "sig"}]);
+    assert_eq!(
+        serde_json::from_str::<Value>(&details.data).unwrap(),
+        merged
+    );
+
+    let answer = vec![
+        reasoning("Look", Some(details)),
+        clock_call("c1", None),
+        clock_call("c2", None),
+    ];
+    let sent = chat_loop_body(ReasoningCarrier::ReasoningDetails, answer).await;
+    assert_eq!(
+        sent,
+        chat_golden(json!({"role": "assistant", "content": null,
+            "tool_calls": [chat_call("c1"), chat_call("c2")], "reasoning_details": merged}))
+    );
+}
+
+/// Gemini's OpenAI-compatible endpoint signs the first of parallel calls in
+/// `extra_content.google`; the signature stays on that call and goes back on it.
+#[tokio::test]
+async fn golden_gemini_thought_signature_on_the_first_parallel_call() {
+    let server = MockServer::start().await;
+    let body = sse(&[(
+        "",
+        json!({"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "id": "c1", "function": {"name": "clock", "arguments": "{}"},
+                "extra_content": {"google": {"thought_signature": "ts=="}}},
+            {"index": 1, "id": "c2", "function": {"name": "clock", "arguments": "{}"}}]},
+            "finish_reason": "tool_calls"}]}),
+    )]) + "data: [DONE]\n\n";
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ok_stream(body))
+        .mount(&server)
+        .await;
+    let (out, _) = run(ApiKind::OpenaiCompatible, &server, "/v1", request()).await;
+    let signatures: Vec<_> = out
+        .tool_calls
+        .iter()
+        .map(|call| call.opaque.as_ref().map(|o| (o.kind, o.data.as_str())))
+        .collect();
+    assert_eq!(signatures, [Some((OpaqueKind::Signature, "ts==")), None]);
+
+    let answer = vec![
+        clock_call("c1", out.tool_calls[0].opaque.clone()),
+        clock_call("c2", None),
+    ];
+    let sent = chat_loop_body(ReasoningCarrier::GeminiSignature, answer).await;
+    let mut signed = chat_call("c1");
+    signed["extra_content"] = json!({"google": {"thought_signature": "ts=="}});
+    assert_eq!(
+        sent,
+        chat_golden(json!({"role": "assistant", "content": null,
+            "tool_calls": [signed, chat_call("c2")]}))
+    );
+}
+
+/// Anthropic thinking and redacted thinking go back as their own blocks, in block order
+/// between the calls (`session-runtime` → Interleaved thinking keeps every signed block).
+#[tokio::test]
+async fn golden_anthropic_thinking_blocks() {
+    let answer = vec![
+        reasoning("A", opaque(OpaqueKind::Signature, "sigA", None)),
+        clock_call("c1", None),
+        reasoning("", opaque(OpaqueKind::Redacted, "blob", None)),
+        clock_call("c2", None),
+    ];
+    let mut req = tool_loop(ReasoningCarrier::Anthropic, answer);
+    req.reasoning = Some(Reasoning::BudgetTokens(1024));
+    let done = sse(&[
+        (
+            "message_start",
+            json!({"message": {"usage": {"input_tokens": 1, "output_tokens": 1}}}),
+        ),
+        ("message_stop", json!({})),
+    ]);
+    let sent = sent_body(ApiKind::Anthropic, "/v1/messages", done, req).await;
+    assert_eq!(
+        sent,
+        json!({
+            "model": "m-1",
+            "max_tokens": 8192,
+            "stream": true,
+            "thinking": {"type": "enabled", "budget_tokens": 1024},
+            "messages": [
+                {"role": "user", "content": [{"type": "text", "text": "time?"}]},
+                {"role": "assistant", "content": [
+                    {"type": "thinking", "thinking": "A", "signature": "sigA"},
+                    {"type": "tool_use", "id": "c1", "name": "clock", "input": {}},
+                    {"type": "redacted_thinking", "data": "blob"},
+                    {"type": "tool_use", "id": "c2", "name": "clock", "input": {}},
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "c1", "content": "12:00", "is_error": false},
+                    {"type": "tool_result", "tool_use_id": "c2", "content": "12:00", "is_error": false},
+                ]},
+            ],
+        })
+    );
 }

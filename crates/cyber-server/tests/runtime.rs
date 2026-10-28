@@ -2426,3 +2426,243 @@ impl cyber_server::runtime::ModelResolver for HeldModels {
         cyber_server::runtime::ModelResolver::role(self.models.as_ref(), role)
     }
 }
+
+/// A scripted step: streamed reasoning, then optional state closing it, then tool calls.
+fn reasoned_calls(
+    reasoning: &str,
+    opaque: Option<cyber_llm::Opaque>,
+    calls: &[(&str, &str)],
+) -> Vec<cyber_llm::adapters::ScriptStep> {
+    use cyber_llm::adapters::ScriptStep;
+    use cyber_llm::{FinishReason, LlmEvent, ToolCall};
+    let mut steps = vec![ScriptStep::Event(LlmEvent::ReasoningDelta {
+        text: reasoning.into(),
+    })];
+    if opaque.is_some() {
+        steps.push(ScriptStep::Event(LlmEvent::ReasoningItem {
+            index: 0,
+            text: String::new(),
+            opaque,
+        }));
+    }
+    for (id, name) in calls {
+        steps.push(ScriptStep::Event(LlmEvent::ToolCallDone(ToolCall {
+            id: (*id).into(),
+            name: (*name).into(),
+            arguments: "{}".into(),
+            input: Some(serde_json::json!({})),
+            opaque: None,
+        })));
+    }
+    steps.push(ScriptStep::Event(LlmEvent::Finish {
+        reason: FinishReason::ToolCalls,
+    }));
+    steps
+}
+
+fn has_reasoning(message: &cyber_llm::Message) -> bool {
+    message
+        .content
+        .iter()
+        .any(|part| matches!(part, Content::Reasoning { .. }))
+}
+
+/// `session-runtime` → Reasoning replay policy, "DeepSeek tool loop": `tool_loop` replays
+/// the reasoning of the loop's answers, and drops it once a new user message arrives.
+#[tokio::test]
+async fn tool_loop_replays_reasoning_only_after_the_latest_user_message() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "deepseek/main",
+            vec![
+                reasoned_calls("look first", None, &[("c1", "read")]),
+                text("done"),
+                text("again"),
+            ],
+        )],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    h.runtime.switch_model(&id, "deepseek/main").await.unwrap();
+    for prompt in ["q1", "q2"] {
+        h.runtime
+            .admit(&id, admit(prompt, Delivery::Steer))
+            .await
+            .unwrap();
+        h.settle(&id).await;
+    }
+    let requests = h.models.requests("deepseek/main");
+    assert_eq!(
+        requests[1].messages[1].content[0],
+        Content::Reasoning {
+            text: "look first".into(),
+            opaque: None,
+        }
+    );
+    let after_user = &requests[2].messages;
+    assert!(
+        !after_user.iter().any(has_reasoning),
+        "reasoning before the latest user message is dropped"
+    );
+    assert!(
+        !serde_json::to_string(after_user)
+            .unwrap()
+            .contains("look first"),
+        "dropped, not lowered to text"
+    );
+}
+
+/// `never` lowers reasoning to assistant text even for the model that produced it.
+#[tokio::test]
+async fn never_replay_lowers_reasoning_for_the_same_model() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "plain/main",
+            vec![reasoning_then_text("I think", "answer"), text("again")],
+        )],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    h.runtime.switch_model(&id, "plain/main").await.unwrap();
+    for prompt in ["q1", "q2"] {
+        h.runtime
+            .admit(&id, admit(prompt, Delivery::Steer))
+            .await
+            .unwrap();
+        h.settle(&id).await;
+    }
+    assert_eq!(
+        h.models.requests("plain/main")[1].messages[1].content,
+        [
+            Content::Text {
+                text: "I think".into()
+            },
+            Content::Text {
+                text: "answer".into()
+            },
+        ]
+    );
+}
+
+/// A redacted block has no text to lower, so another model never sees it; the text of a
+/// signed block reaches it as assistant text.
+#[tokio::test]
+async fn a_provider_switch_drops_redacted_reasoning_and_lowers_the_rest() {
+    use cyber_llm::adapters::ScriptStep;
+    use cyber_llm::{LlmEvent, OpaqueKind};
+    let mut steps = vec![
+        ScriptStep::Event(LlmEvent::ReasoningItem {
+            index: 0,
+            text: String::new(),
+            opaque: Some(cyber_llm::Opaque::new(OpaqueKind::Redacted, "blob")),
+        }),
+        ScriptStep::Event(LlmEvent::ReasoningDelta {
+            text: "visible".into(),
+        }),
+        ScriptStep::Event(LlmEvent::ReasoningSignature {
+            signature: "sig".into(),
+        }),
+    ];
+    steps.extend(text("answer"));
+    let h = Harness::new(Setup {
+        scripts: vec![
+            ("test/main", vec![steps]),
+            ("other/main", vec![text("switched")]),
+        ],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    h.runtime
+        .admit(&id, admit("q1", Delivery::Steer))
+        .await
+        .unwrap();
+    h.settle(&id).await;
+    h.runtime.switch_model(&id, "other/main").await.unwrap();
+    h.runtime
+        .admit(&id, admit("q2", Delivery::Steer))
+        .await
+        .unwrap();
+    h.settle(&id).await;
+    assert_eq!(
+        h.models.requests("other/main")[0].messages[1].content,
+        [
+            Content::Text {
+                text: "visible".into()
+            },
+            Content::Text {
+                text: "answer".into()
+            },
+        ]
+    );
+}
+
+/// `session-runtime` → Reasoning replay policy, "Model switch inside a tool loop": the
+/// other model's reasoning is lowered to text, that one Anthropic request goes out with
+/// thinking off, and the next one has thinking on again.
+#[tokio::test]
+async fn a_model_switch_inside_a_tool_loop_turns_thinking_off_for_one_request() {
+    use cyber_llm::{OpaqueKind, Reasoning};
+    let encrypted = cyber_llm::Opaque::new(OpaqueKind::EncryptedReasoning, "enc");
+    let signed = cyber_llm::Opaque::new(OpaqueKind::Signature, "sigC");
+    let h = Harness::new(Setup {
+        scripts: vec![
+            (
+                "test/main",
+                vec![reasoned_calls(
+                    "gpt plan",
+                    Some(encrypted),
+                    &[("c1", "read")],
+                )],
+            ),
+            (
+                "anthropic/main",
+                vec![
+                    reasoned_calls("claude plan", Some(signed), &[("c2", "grep")]),
+                    text("done"),
+                ],
+            ),
+        ],
+        ..Setup::default()
+    });
+    h.tools.set("read", Behavior::Gated);
+    cyber_core::log::init(
+        &h.dir.path().join("log"),
+        cyber_core::log::Level::Info,
+        false,
+    );
+    let infos = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = Arc::clone(&infos);
+    cyber_core::log::set_sink(Some(Arc::new(move |record| {
+        if record.level == cyber_core::log::Level::Info {
+            seen.lock().unwrap().push(record.msg.to_string());
+        }
+    })));
+    let id = h.session().await;
+    h.runtime
+        .admit(&id, admit("go", Delivery::Steer))
+        .await
+        .unwrap();
+    h.tools.started.notified().await;
+    h.runtime.switch_model(&id, "anthropic/main").await.unwrap();
+    h.tools.release.notify_one();
+    h.settle(&id).await;
+
+    let requests = h.models.requests("anthropic/main");
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].reasoning, Some(Reasoning::Off));
+    assert_eq!(
+        requests[0].messages[1].content[0],
+        Content::Text {
+            text: "gpt plan".into()
+        }
+    );
+    assert_eq!(requests[1].reasoning, Some(Reasoning::BudgetTokens(1024)));
+    assert!(has_reasoning(&requests[1].messages[3]));
+    let guarded = infos
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|msg| msg.contains("thinking off for one request"))
+        .count();
+    assert_eq!(guarded, 1);
+}

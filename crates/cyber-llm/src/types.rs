@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::catalog::profile::ReasoningCarrier;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
@@ -293,6 +295,11 @@ pub struct LlmRequest {
     /// Set by the Turn loop; `None` for calls made outside one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initiator: Option<Initiator>,
+    /// The request field that carries reasoning state back, from the model's profile
+    /// (`provider-catalog` → Model behavior profiles); `none` when the profile replays no
+    /// reasoning. An adapter never guesses it.
+    #[serde(default, skip_serializing_if = "ReasoningCarrier::is_none")]
+    pub reasoning_carrier: ReasoningCarrier,
 }
 
 fn default_true() -> bool {

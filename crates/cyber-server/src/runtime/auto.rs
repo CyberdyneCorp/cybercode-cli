@@ -281,7 +281,7 @@ impl Inner {
         let execution_location = handle.state.lock().await.info.directory.clone();
         let request = {
             let state = context.state.lock().await;
-            let mut messages = view::messages(&state, &resolved.provider, &resolved.model);
+            let mut messages = view::messages(&state, &view::Replay::of(&resolved));
             messages.drain(..messages.len().saturating_sub(20));
             let evidence = json!({
                 "location": state.info.directory,

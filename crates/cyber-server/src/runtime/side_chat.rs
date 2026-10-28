@@ -237,7 +237,7 @@ fn snapshot(state: &super::model::SessionState, resolved: &super::ResolvedModel)
     };
     system.push(SYSTEM.into());
     Snapshot {
-        messages: super::view::messages(state, &resolved.provider, &resolved.model),
+        messages: super::view::messages(state, &super::view::Replay::of(resolved)),
         system,
         info: state.info.clone(),
     }

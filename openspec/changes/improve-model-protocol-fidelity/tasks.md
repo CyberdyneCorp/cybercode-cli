@@ -19,34 +19,34 @@
 
 ## 2. Replay policy
 
-- [ ] 2.1 `runtime/view.rs` applies `reasoning_replay` (`never`/`tool_loop`/`always`) and the same-model guard. A `Redacted` item without text is dropped when lowered.
+- [x] 2.1 `runtime/view.rs` applies `reasoning_replay` (`never`/`tool_loop`/`always`) and the same-model guard. A `Redacted` item without text is dropped when lowered.
   - Unit tests: each policy, a provider switch, and items before and after the latest user message.
-- [ ] 2.2 Anthropic tool-loop guard: thinking off for one request when the latest tool-calling assistant message has no native item, with one `info` log.
+- [x] 2.2 Anthropic tool-loop guard: thinking off for one request when the latest tool-calling assistant message has no native item, with one `info` log.
   - Scenario test: "Model switch inside a tool loop".
-- [ ] 2.3 Compaction: summaries carry no opaque state, and the kept tail replays.
+- [x] 2.3 Compaction: summaries carry no opaque state, and the kept tail replays.
   - Test in `compaction` tests.
 
 ## 3. Adapters
 
-- [ ] 3.1 OpenAI Responses:
+- [x] 3.1 OpenAI Responses:
   - request `include`;
   - decode `output_item.done` reasoning items (`id`, `summary`, `encrypted_content`);
   - replay them in position;
   - leave out IDs the provider did not issue.
   
   Golden request fixtures, plus a decoder test with a recorded stream.
-- [ ] 3.2 Anthropic:
+- [x] 3.2 Anthropic:
   - one item per `thinking` block, with its own signature;
   - keep `redacted_thinking {data}`;
   - replay in block order.
   
   Regression tests for "Interleaved thinking keeps every signed block" and "Redacted thinking is preserved". Both fail on main today; confirm that before fixing.
-- [ ] 3.3 Chat Completions carriers:
+- [x] 3.3 Chat Completions carriers:
   - `reasoning_content` (a single-space placeholder when empty), `reasoning` and `reasoning_details` (concatenated by index, replayed unchanged);
   - Gemini `extra_content.google.thought_signature` on the first parallel call.
   
   A golden fixture for each carrier.
-- [ ] 3.4 Copilot: `reasoning_opaque` on Chat, and Responses items on Responses models.
+- [x] 3.4 Copilot: `reasoning_opaque` on Chat, and Responses items on Responses models.
   - Fixtures in `tests/copilot.rs`.
 
 ## 4. Model behavior profiles
@@ -103,6 +103,7 @@
 ## 8. Evidence
 
 - [ ] 8.1 Golden request fixtures in `tests/adapters.rs`, one per carrier and per Responses option set, pinning the exact JSON.
+  - Done for every carrier (`golden_*` in `tests/adapters.rs`, Copilot in `tests/copilot.rs`); the Responses option sets wait for 5.1.
 - [ ] 8.2 Live tests (`tests/live.rs`, ignored by default, run with keys):
   - an OpenAI tool loop with encrypted reasoning replayed;
   - an Anthropic interleaved-thinking loop;

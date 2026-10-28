@@ -7,6 +7,7 @@
 use futures::future::BoxFuture;
 
 use super::{Adapter, Endpoint, EventStream, OpenAiChatAdapter, OpenAiResponsesAdapter};
+use crate::catalog::profile::ReasoningCarrier;
 use crate::copilot::{CopilotError, EDITOR_VERSION, INTEGRATION_ID, Protocol, Route};
 use crate::error::LlmError;
 use crate::types::{Content, Initiator, LlmRequest};
@@ -65,6 +66,15 @@ fn has_images(request: &LlmRequest) -> bool {
         .any(|content| matches!(content, Content::Image { .. }))
 }
 
+/// Copilot's models served by Responses carry reasoning in Responses items; the
+/// `reasoning_opaque` field belongs to its Chat Completions protocol.
+fn responses_carrier(mut request: LlmRequest) -> LlmRequest {
+    if request.reasoning_carrier == ReasoningCarrier::CopilotOpaque {
+        request.reasoning_carrier = ReasoningCarrier::Responses;
+    }
+    request
+}
+
 impl Adapter for CopilotAdapter {
     fn with_http_client(
         &self,
@@ -95,7 +105,7 @@ impl Adapter for CopilotAdapter {
                         endpoint,
                         response_limit,
                     };
-                    inner.stream(request).await
+                    inner.stream(responses_carrier(request)).await
                 }
                 Protocol::Chat => {
                     let inner = OpenAiChatAdapter {
