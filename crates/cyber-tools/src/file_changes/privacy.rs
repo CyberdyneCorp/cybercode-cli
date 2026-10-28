@@ -8,7 +8,7 @@ use cap_std::fs::{File, Metadata};
 const MAX_PINS: usize = 128;
 struct Pin {
     identity: (u64, u64),
-    file: File,
+    file: Option<File>,
 }
 #[derive(Clone, Default)]
 pub(super) struct Snapshot(Vec<Arc<Pin>>);
@@ -39,13 +39,14 @@ impl PrivatePins {
         if let Some(reason) = registry.unavailable {
             return Err(reason.into());
         }
-        // An unlinked object cannot have an observable pathname. Keep any pin
-        // whose metadata is uncertain; ordinary WAL cleanup may reclaim slots.
+        // Only retained handles can prove that an object has no remaining links.
+        // Unix file identities have no handle: never forget them after a move or
+        // infer retirement from a missing pathname. Inode reuse may over-exclude.
         use cap_fs_ext::MetadataExt;
         registry.pins.retain(|pin| {
             !pin.file
-                .metadata()
-                .is_ok_and(|metadata| metadata.nlink() == 0)
+                .as_ref()
+                .is_some_and(|file| file.metadata().is_ok_and(|metadata| metadata.nlink() == 0))
         });
         for path in paths {
             let pin = match pin(path) {
@@ -70,35 +71,168 @@ impl PrivatePins {
         Ok(Snapshot(registry.pins.clone()))
     }
 }
+#[cfg(unix)]
+fn open_private(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    // Never open regular files, even if a directory pathname is replaced while
+    // capture is in flight. Closing a second descriptor could release SQLite's
+    // process-wide POSIX record locks. O_NONBLOCK also guards unexpected devices.
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NONBLOCK | libc::O_NOCTTY)
+        .open(path)
+}
+#[cfg(windows)]
+fn open_private(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
+    // BACKUP_SEMANTICS admits directories as well as files through this atomic
+    // open. Retained metadata ownership must not prevent native rename/unlink.
+    std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+}
+#[cfg(not(any(unix, windows)))]
+fn open_private(_path: &Path) -> std::io::Result<std::fs::File> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "private metadata ownership is unsupported",
+    ))
+}
+#[cfg(unix)]
 fn pin(path: &Path) -> std::io::Result<Option<Pin>> {
     let metadata = match std::fs::metadata(path) {
-        Ok(metadata) => metadata,
+        Ok(metadata) => Metadata::from_just_metadata(metadata),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
-    let (metadata, file) = if metadata.is_dir() {
-        let directory = super::root::open_directory(&path.canonicalize()?)?;
-        (
-            directory.dir_metadata()?,
-            File::from_std(directory.into_std_file()),
-        )
-    } else if metadata.is_file() {
-        let file = File::open_ambient(path, cap_std::ambient_authority())?;
-        (file.metadata()?, file)
-    } else {
+    let identity = super::links::identity(&metadata)
+        .ok_or_else(|| std::io::Error::other("private observation identity unavailable"))?;
+    if metadata.is_file() {
+        // stat does not create or close a database descriptor. Retain this
+        // exclusion conservatively; a pathname cannot prove an inode retired.
+        return Ok(Some(Pin {
+            identity,
+            file: None,
+        }));
+    }
+    if !metadata.is_dir() {
         return Err(std::io::Error::other(
             "private observation path is not regular",
         ));
+    }
+    let file = File::from_std(open_private(path)?);
+    if super::links::identity(&file.metadata()?) != Some(identity) {
+        return Err(std::io::Error::other(
+            "private directory changed while opening",
+        ));
+    }
+    Ok(Some(Pin {
+        identity,
+        file: Some(file),
+    }))
+}
+#[cfg(not(unix))]
+fn pin(path: &Path) -> std::io::Result<Option<Pin>> {
+    let file = match open_private(path) {
+        Ok(file) => File::from_std(file),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
     };
+    let metadata = file.metadata()?;
+    if !metadata.is_dir() && !metadata.is_file() {
+        return Err(std::io::Error::other(
+            "private observation path is not regular",
+        ));
+    }
     let identity = super::links::identity(&metadata)
         .ok_or_else(|| std::io::Error::other("private observation identity unavailable"))?;
-    Ok(Some(Pin { identity, file }))
+    Ok(Some(Pin {
+        identity,
+        file: Some(file),
+    }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use cap_std::fs::Dir;
+    #[cfg(unix)]
+    fn record_lock(file: &std::fs::File) -> std::io::Result<()> {
+        use std::os::fd::AsRawFd;
+        // SAFETY: zero is valid for every field of flock; fcntl reads it only
+        // during this call, against a live descriptor owned by this function's caller.
+        let mut lock: libc::flock = unsafe { std::mem::zeroed() };
+        lock.l_type = libc::F_WRLCK as _;
+        lock.l_whence = libc::SEEK_SET as _;
+        // SAFETY: file owns a live descriptor and lock points to an initialized
+        // flock for this synchronous call; F_SETLK does not retain the pointer.
+        if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETLK, &lock) } == -1 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "subprocess fixture invoked by private_capture_preserves_existing_record_locks"]
+    fn private_file_lock_probe() {
+        let path = std::env::var_os("CYBER_PRIVATE_LOCK_FIXTURE").unwrap();
+        let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+        let error = record_lock(&file).expect_err("owner record lock was released");
+        assert!(matches!(
+            error.raw_os_error(),
+            Some(libc::EACCES | libc::EAGAIN)
+        ));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn private_capture_preserves_existing_record_locks() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("database");
+        let file = std::fs::File::create(&path).unwrap();
+        record_lock(&file).unwrap();
+        let probe = || {
+            let module = module_path!().split_once("::").unwrap().1;
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    &format!("{module}::private_file_lock_probe"),
+                    "--ignored",
+                ])
+                .env("CYBER_PRIVATE_LOCK_FIXTURE", &path)
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(stdout.contains("running 1 test"), "{stdout}");
+            assert!(
+                output.status.success(),
+                "{stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        probe();
+        let pins = PrivatePins::default();
+        pins.capture([path.as_path()]).unwrap();
+        pins.capture([path.as_path()]).unwrap();
+        assert!(
+            open_private(&path).is_err(),
+            "directory capture opened a file"
+        );
+        probe();
+        drop(pins);
+        probe();
+        let location = temp.path().join("location");
+        std::fs::create_dir(&location).unwrap();
+        let root = super::super::root::Root::open(&location).unwrap();
+        std::fs::rename(&location, temp.path().join("old-location")).unwrap();
+        std::fs::hard_link(&path, &location).unwrap();
+        assert!(!root.current());
+        probe();
+    }
     #[test]
     fn moved_private_directory_and_file_aliases_retain_their_pins() {
         let temp = tempfile::tempdir().unwrap();
@@ -221,16 +355,78 @@ mod tests {
     }
     #[cfg(unix)]
     #[test]
-    fn unlinking_all_aliases_reclaims_slots_without_dropping_live_private_files() {
+    fn private_file_identity_is_metadata_only_and_is_not_forgotten_after_unlink() {
         let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("database");
+        std::fs::write(&path, "fixture").unwrap();
+        let metadata = Metadata::from_just_metadata(std::fs::metadata(&path).unwrap());
         let pins = PrivatePins::default();
-        for index in 0..MAX_PINS + 8 {
-            let path = temp.path().join(index.to_string());
-            std::fs::write(&path, "fixture").unwrap();
-            pins.capture([path.as_path()]).unwrap();
-            std::fs::remove_file(path).unwrap();
+        pins.capture([path.as_path()]).unwrap();
+        assert!(pins.0.lock().unwrap().pins[0].file.is_none());
+        std::fs::remove_file(&path).unwrap();
+        assert!(pins.capture([path.as_path()]).unwrap().excludes(&metadata));
+    }
+    #[test]
+    fn directory_retirement_requires_handle_evidence_of_zero_links() {
+        use cap_fs_ext::MetadataExt;
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("private");
+        std::fs::create_dir(&path).unwrap();
+        let pins = PrivatePins::default();
+        pins.capture([path.as_path()]).unwrap();
+        std::fs::rename(&path, temp.path().join("moved")).unwrap();
+        assert_eq!(pins.capture([path.as_path()]).unwrap().0.len(), 1);
+        std::fs::remove_dir(temp.path().join("moved")).unwrap();
+        let proven_retired = pins.0.lock().unwrap().pins[0]
+            .file
+            .as_ref()
+            .unwrap()
+            .metadata()
+            .unwrap()
+            .nlink()
+            == 0;
+        // Some filesystems retain a nonzero directory link count after unlink.
+        // Such a handle provides no proof of retirement and must remain retained.
+        assert_eq!(
+            pins.capture([path.as_path()]).unwrap().0.len(),
+            usize::from(!proven_retired)
+        );
+    }
+    #[test]
+    fn sidecar_turnover_never_confuses_a_missing_path_with_failed_identity_capture() {
+        let temp = tempfile::tempdir().unwrap();
+        let sidecar = temp.path().join("database-wal");
+        let writer = std::thread::spawn({
+            let sidecar = sidecar.clone();
+            move || {
+                for _ in 0..2000 {
+                    std::fs::write(&sidecar, "fixture").unwrap();
+                    std::fs::remove_file(&sidecar).unwrap();
+                }
+            }
+        });
+        let pins = PrivatePins::default();
+        let mut failure = None;
+        while !writer.is_finished() {
+            if let Err(error) = pins.capture([sidecar.as_path()]) {
+                failure = Some(error);
+                break;
+            }
         }
-        assert!(pins.capture(std::iter::empty()).unwrap().0.is_empty());
+        writer.join().unwrap();
+        if let Some(error) = failure {
+            // Unix metadata-only file identities cannot prove unlink retirement.
+            // Their bounded history may fill, but a stat/open race must not be
+            // reported as unknown capture or silently evict prior ownership.
+            assert_eq!(
+                error,
+                "private file observation identity limit reached; restart required"
+            );
+            assert_eq!(pins.0.lock().unwrap().pins.len(), MAX_PINS);
+            assert!(pins.capture(std::iter::empty()).is_err());
+        } else {
+            assert!(pins.capture([sidecar.as_path()]).is_ok());
+        }
     }
     #[cfg(unix)]
     #[test]

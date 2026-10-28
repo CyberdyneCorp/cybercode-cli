@@ -129,6 +129,11 @@
 - **AND** private file identities remain excluded through retained aliases, while ordinary project observations continue
 - **AND** private identity capture is bounded, retains live ownership and reports observation unavailable rather than evicting an owned identity or resuming after uncertain capture
 
+#### Scenario: Observation preserves owner database locking
+- **WHEN** the owner captures private database or sidecar identities, refreshes them, or checks a Location replaced by a regular file
+- **THEN** observation SHALL NOT open and close an independent Unix regular-file descriptor that can release the owner's existing POSIX database locks
+- **AND** retained private-file history SHALL remain bounded and exclude moved aliases without silently evicting ownership when its budget is exhausted
+
 ### Requirement: Setup attempt ownership and explicit initialization
 (P1) Setup SHALL admit durable installation/Location-bound attempts before effects, serialize automatic first-root-Session claims with creation, and expose explicit initialization through the owner surface without a model Turn. Marker and migration semantics SHALL follow the reviewed Setup ownership design. Completed, failed, skipped and unknown outcomes SHALL remain distinguishable; neither an automatic marker nor a retry SHALL manufacture successful execution or replay an uncertain effect.
 

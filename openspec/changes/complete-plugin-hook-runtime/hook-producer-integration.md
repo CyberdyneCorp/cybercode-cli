@@ -27,8 +27,8 @@ Whole-file transplants from main now erase APIs required by another increment.
 The dedicated workflows therefore retain independent implementations while
 removing the specific production fix under test:
 
-- Child admission control restores the base child implementation and only the
-  matching resume call signature, retaining observer additions to BuiltinHost.
+- Child admission control removes only WorktreeCreate dispatch from the current
+  implementation, retaining permission checks and the current owner/observer APIs.
 - Cwd control suppresses the committed observation constructor while retaining
   worktree ownership helpers and file membership.
 - Idle membership control removes only its refresh call, preserving CwdChanged
@@ -56,12 +56,17 @@ The source-level before-fix test observed
 `relocated-owner-data/credential-metadata`. It did not read private file contents.
 
 The host now primes retained private identities at construction and trusted root
-attachment, and refreshes them before scan admission. At most 128 live native
-pins are held globally per host, independently of watcher count. Snapshots retain
-their own references. Fully unlinked objects can release registry slots; moved or
-linked objects cannot. An identity error or full live budget latches observation
-unavailable for that host, requiring restart instead of silently losing unknown
-ownership. No durable schema or public API changes are introduced.
+attachment, and refreshes them before scan admission. At most 128 private
+identities are held globally per host, independently of watcher count. Snapshots
+retain their own references. Directory handles (and Windows file handles) can
+release registry slots when their metadata proves zero remaining links. Unix
+regular-file identities are recorded using stat without opening those files;
+these records remain until host shutdown, including after unlink, because a
+missing pathname cannot prove retirement. Inode reuse can conservatively exclude
+an ordinary replacement. Heavy file-identity turnover can fill this budget even
+when earlier files were removed. An identity error or full budget latches
+observation unavailable for that host, requiring restart instead of silently
+losing unknown ownership. No durable schema or public API changes are introduced.
 
 Path exclusions still reject configured trees/files and canonical aliases. The
 scanner additionally rejects pinned private metadata before traversal and checks
@@ -72,7 +77,8 @@ storage from before host initialization.
 
 Tests cover renamed private trees with ordinary files still visible, private-file
 aliases, a private directory replacing public pathname metadata before open,
-unlinked-slot reclamation, live-budget exhaustion and latched uncertain capture.
+proven directory retirement, retained Unix file history, budget exhaustion and
+latched uncertain capture.
 The existing application-host test now renames the actual private cache inside
 the Location and requires zero private metadata in its real journal. Linux CI
 removes the identity filter as a missing-fix control and must execute/fail that
@@ -136,3 +142,57 @@ syntax, workflow YAML, Rust formatting, PR diff checks and strict OpenSpec
 validation passed for the new increment. Full local Rust compilation is still
 not performed due to available disk; production protocol and broader acceptance
 remain required before this draft is ready.
+
+
+After PR #56 merged, the old child control tried to pair main's new Option-based
+child API with the pre-fix boolean resume call. CI correctly rejected that as a
+compilation failure, not regression evidence. The control now removes only the
+WorktreeCreate dispatch call from the current candidate and still requires the
+real veto test to execute and fail at its behavioral assertion. It no longer
+assumes that the PR base lacks an already-merged fix.
+
+
+## SQLite lock preservation correction
+
+A native macOS record-lock probe and then the actual source-library regression
+reproduced a correctness defect in descriptor-based file pinning. Opening and
+closing a duplicate database descriptor released an existing process POSIX record
+lock. `O_EVTONLY` did not preserve that lock either. This matches SQLite's warning
+about [separate descriptor closes](https://www.sqlite.org/howtocorrupt.html#posix_advisory_locks_canceled_by_a_separate_thread_doing_close_).
+This evidence proves a defect in the candidate; it does not establish the cause
+of either outstanding CI timeout.
+
+Unix regular-file capture now uses metadata only, with the conservative bounded
+history described above. Directory capture uses `O_DIRECTORY` so replacing a
+known directory with a file cannot trigger a regular-file open/close. The owner
+root's current-incarnation check also opens only directories: review found that
+`same_file::Handle::from_path` otherwise opened a database replacement as a file.
+The lock regression independently failed for both the original pin capture and
+that root check. It uses a separate test process to attempt the native record
+lock before capture, after repeated capture, after registry drop and after a
+Location is replaced by a hard link to the locked file. The subprocess must run
+exactly one test; an unmatched filter cannot count as evidence.
+
+The sidecar turnover regression permits only explicit identity-budget exhaustion,
+never a stat/open race reported as unknown capture or silent ownership eviction.
+This is a deliberate bounded-history limitation, not a claim of unlimited live
+observation through arbitrary private-file generations. Production owner/AppHost,
+full protocol, platform and browser validation of this revision remain required.
+
+At `3685cd2b`, the full Linux and macOS Rust jobs passed, as did both CwdChanged
+jobs and the macOS/Windows FileChanged jobs. Linux FileChanged failed its real
+HTTP observer-restart liveness assertion; the browser crash-recovery test again
+remained in `checking` with zero durable check intents. Those failures remain
+unresolved pending investigation and checks of the locking correction.
+
+Local verification of the correction: 72 actual-source harness tests passed,
+with one subprocess helper ignored in the parent suite and explicitly exercised
+by the lock regression. Scoped Clippy (`--lib --tests -- -D warnings -A dead_code`),
+Rust formatting, workflow YAML/bash/exact-source control checks and PR diff checks
+passed. Strict OpenSpec passed all 107 items; spec lint reported zero errors and
+25 warnings. This harness excludes production owner/AppHost/MCP integration; no
+full local Rust workspace build was run because available disk is insufficient.
+Scoped review checked file/directory classification, directory-only replacement
+handling, descriptor lifetime and subprocess execution. Remaining merge gates are
+full production/platform CI, the unresolved restart/browser failures, and final
+review of the composed feature. No overall security approval is claimed.

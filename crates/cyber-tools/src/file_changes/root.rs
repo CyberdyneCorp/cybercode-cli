@@ -13,12 +13,12 @@ pub(super) struct Root {
 }
 
 #[cfg(not(windows))]
-pub(super) fn open_directory(path: &Path) -> io::Result<Dir> {
+fn open_directory(path: &Path) -> io::Result<Dir> {
     Dir::open_ambient_dir(path, cap_std::ambient_authority())
 }
 
 #[cfg(windows)]
-pub(super) fn open_directory(path: &Path) -> io::Result<Dir> {
+fn open_directory(path: &Path) -> io::Result<Dir> {
     use std::os::windows::fs::OpenOptionsExt;
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
@@ -58,7 +58,11 @@ impl Root {
         Ok(root)
     }
     pub fn current(&self) -> bool {
-        Handle::from_path(&self.path).is_ok_and(|current| current == self.handle)
+        // A replaced Location may now name a database file. Checking identity
+        // through a regular-file open/close could release its POSIX locks.
+        open_directory(&self.path)
+            .and_then(|directory| Handle::from_file(directory.into_std_file()))
+            .is_ok_and(|current| current == self.handle)
     }
 }
 
