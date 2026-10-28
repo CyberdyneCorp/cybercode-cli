@@ -115,6 +115,43 @@ jobs:
           path: ${{ runner.temp }}/observation-idle-base.log
           if-no-files-found: error
           retention-days: 14
+      - name: Verify membership cancellation regression without the fix
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          owner=crates/cyber-tools/src/file_changes/owner.rs
+          cp "$owner" "$RUNNER_TEMP/fixed-membership-owner.rs"
+          trap 'cp "$RUNNER_TEMP/fixed-membership-owner.rs" "$owner"' EXIT
+          python3 - <<'PYCONTROL'
+          from pathlib import Path
+          p=Path("crates/cyber-tools/src/file_changes/owner.rs")
+          s=p.read_text()
+          old="""        if let Some(cancel) = self.sessions.remove(session) {
+                      cancel.cancel();
+                  }"""
+          assert s.count(old)==1
+          p.write_text(s.replace(old,"        self.sessions.remove(session);"))
+          PYCONTROL
+          if cargo test --locked -p cyber-tools --test file_observation_dispatch ended_member_is_skipped_after_another_session_callback_settles -- --exact > "$RUNNER_TEMP/observation-membership-base.log" 2>&1; then
+            echo 'Regression unexpectedly passed without membership cancellation.'
+            exit 1
+          fi
+          python3 - <<'PY'
+          import os,re
+          from pathlib import Path
+          log=Path(os.environ['RUNNER_TEMP'],'observation-membership-base.log').read_text()
+          assert re.search(r'^test ended_member_is_skipped_after_another_session_callback_settles \.\.\. FAILED$',log,re.M), log[-8000:]
+          assert 'a captured Session list cannot revive ended membership' in log, log[-8000:]
+          PY
+      - name: Preserve membership cancellation regression evidence
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ended-observer-membership-baseline
+          path: ${{ runner.temp }}/observation-membership-base.log
+          if-no-files-found: error
+          retention-days: 14
       - name: Exercise real scoped HTTP-hook dispatch
         run: cargo test --locked -p cyber-tools --test file_observation_dispatch
       - name: Verify moved-private-root regression with path-only exclusions

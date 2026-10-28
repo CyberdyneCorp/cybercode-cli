@@ -134,6 +134,12 @@
 - **THEN** observation SHALL NOT open and close an independent Unix regular-file descriptor that can release the owner's existing POSIX database locks
 - **AND** retained private-file history SHALL remain bounded and exclude moved aliases without silently evicting ownership when its budget is exhausted
 
+#### Scenario: Shared watcher membership ends during a callback
+- **GIVEN** two Sessions share an observer and one HTTP handler is still awaiting a response
+- **WHEN** either Session's observer membership ends
+- **THEN** that membership's owned delivery SHALL be cancelled and settled without stopping the other member, and no later handler SHALL start from a captured obsolete membership
+- **AND** readmission SHALL use a fresh membership and SHALL NOT revive delivery from the older batch
+
 ### Requirement: Setup attempt ownership and explicit initialization
 (P1) Setup SHALL admit durable installation/Location-bound attempts before effects, serialize automatic first-root-Session claims with creation, and expose explicit initialization through the owner surface without a model Turn. Marker and migration semantics SHALL follow the reviewed Setup ownership design. Completed, failed, skipped and unknown outcomes SHALL remain distinguishable; neither an automatic marker nor a retry SHALL manufacture successful execution or replay an uncertain effect.
 

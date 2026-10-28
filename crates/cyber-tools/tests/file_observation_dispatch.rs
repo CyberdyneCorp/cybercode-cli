@@ -1343,6 +1343,30 @@ async fn location_limit_is_visible_without_disabling_other_location_observations
         .expect("all admitted observer owners must settle at shutdown");
 }
 
+fn recent_file_notices(
+    events: &mut tokio::sync::broadcast::Receiver<cyber_server::runtime::LiveEvent>,
+    sessions: &[&str],
+) -> std::collections::VecDeque<(String, String)> {
+    use cyber_server::runtime::LiveEvent;
+    let mut notices = std::collections::VecDeque::new();
+    loop {
+        match events.try_recv() {
+            Ok(LiveEvent::HookNotice {
+                session_id,
+                hook_id,
+                message,
+            }) if hook_id == "FileChanged" && sessions.contains(&session_id.as_str()) => {
+                if notices.len() == 8 {
+                    notices.pop_front();
+                }
+                notices.push_back((session_id, message));
+            }
+            Ok(_) | Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => {}
+            Err(_) => return notices,
+        }
+    }
+}
+
 #[tokio::test]
 async fn session_limit_is_visible_and_released_membership_admits_a_waiting_session() {
     use cyber_server::runtime::{Admission, Delivery, LiveEvent, ToolHost};
@@ -1414,15 +1438,28 @@ async fn session_limit_is_visible_and_released_membership_admits_a_waiting_sessi
         .await
         .unwrap();
     let waiting_scope = waiting.clone();
-    await_condition("released capacity prepares durable Session scope", || {
+    let prepared = || {
         let session = waiting_scope.clone();
         flow.f.store.read(move |db| Ok(db.query_row(
             "SELECT EXISTS(SELECT 1 FROM event WHERE type=?1 AND json_extract(data,'$.session_id')=?2)",
             rusqlite::params![records::SCOPE, session],
             |row| row.get::<_, bool>(0),
         )?)).unwrap()
+    };
+    let ready = tokio::time::timeout(Duration::from_secs(45), async {
+        while !prepared() {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        }
     })
     .await;
+    if ready.is_err() {
+        let notices = recent_file_notices(&mut events, &[waiting, &sessions[0]]);
+        panic!(
+            "timed out waiting for released capacity prepares durable Session scope; latest notices: {notices:?}; checkpoints={}, scopes={}",
+            journal_count(&flow, records::CHECKPOINT),
+            journal_count(&flow, records::SCOPE)
+        );
+    }
     std::fs::write(flow.f.repo.join("after-readmission"), "shared again").unwrap();
     await_condition(
         "existing and newly admitted memberships both observe",
@@ -1441,6 +1478,107 @@ async fn session_limit_is_visible_and_released_membership_admits_a_waiting_sessi
     tokio::time::timeout(Duration::from_secs(10), flow.runtime.shutdown())
         .await
         .expect("membership recovery must preserve joined owner shutdown");
+}
+
+#[derive(Clone, Copy)]
+enum MemberEnd {
+    Waiting,
+    Held,
+    Readmitted,
+}
+async fn end_membership_during_held_delivery(end: MemberEnd) {
+    use cyber_server::runtime::{Admission, Delivery, ToolHost};
+    let end_gated_member = matches!(end, MemberEnd::Held);
+    let readmit = matches!(end, MemberEnd::Readmitted);
+    let flow = support::flow::Flow::new(vec![], false);
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let recorder = Recorder::with_first_gate(Arc::clone(&gate)).await;
+    let mut sessions = [flow.session("default").await, flow.session("default").await];
+    sessions.sort();
+    // Enable observation only after both memberships exist, so the first
+    // reconciliation captures both and has a deterministic delivery order.
+    automatic_hooks(&flow, &recorder);
+    await_condition("membership delivery baseline", || {
+        journal_count(&flow, records::CHECKPOINT) == 1
+    })
+    .await;
+    let seen = |session: &str, path: &str| {
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["session_id"] == session && event["file_path"] == path)
+    };
+    std::fs::write(flow.f.repo.join("held-membership"), "fixture").unwrap();
+    await_condition("first member callback is held", || {
+        seen(&sessions[0], "held-membership")
+    })
+    .await;
+    let (removed, retained) = if end_gated_member {
+        (&sessions[0], &sessions[1])
+    } else {
+        (&sessions[1], &sessions[0])
+    };
+    ToolHost::end_session(&*flow.f.host, removed).await;
+    if readmit {
+        flow.runtime
+            .admit(
+                removed,
+                Admission::text("rejoin while an older batch is held", Delivery::Hold),
+            )
+            .await
+            .unwrap();
+    }
+    if end_gated_member {
+        // Keep the first HTTP response held: cancellation of this membership
+        // must settle its owned delivery before the remaining member can run.
+        await_condition("remaining member continues past cancelled callback", || {
+            seen(retained, "held-membership")
+        })
+        .await;
+    } else {
+        gate.notify_one();
+    }
+    std::fs::write(flow.f.repo.join("after-member-end"), "fixture").unwrap();
+    await_condition("remaining member observes a later reconciliation", || {
+        seen(retained, "after-member-end")
+    })
+    .await;
+    if readmit {
+        await_condition("readmitted member observes a future batch", || {
+            seen(removed, "after-member-end")
+        })
+        .await;
+    } else {
+        assert!(!seen(removed, "after-member-end"));
+    }
+    if !end_gated_member {
+        assert!(
+            !seen(removed, "held-membership"),
+            "a captured Session list cannot revive ended membership"
+        );
+    }
+    gate.notify_one();
+    assert!(flow.requests("test/main").is_empty());
+    tokio::time::timeout(Duration::from_secs(10), flow.runtime.shutdown())
+        .await
+        .expect("membership delivery shutdown must settle");
+}
+
+#[tokio::test]
+async fn ended_member_is_skipped_after_another_session_callback_settles() {
+    end_membership_during_held_delivery(MemberEnd::Waiting).await;
+}
+
+#[tokio::test]
+async fn ending_a_held_member_settles_delivery_and_retains_other_members() {
+    end_membership_during_held_delivery(MemberEnd::Held).await;
+}
+
+#[tokio::test]
+async fn readmitting_membership_does_not_revive_a_held_batch() {
+    end_membership_during_held_delivery(MemberEnd::Readmitted).await;
 }
 
 #[tokio::test]

@@ -251,3 +251,43 @@ The actual-source harness now passes 75 tests with two subprocess helpers ignore
 in the parent suite and invoked by the lock regressions. Production server and
 platform CI remain required, and Windows behavior cannot be verified on this local
 macOS host.
+
+
+## Shared-membership delivery lifetime correction
+
+At `e15197e1`, the complete Linux FileChanged job passed: native components (56
+passed and one parent-suite helper ignored), four runtime-root tests, 17 durable
+server tests, 19 HTTP dispatch tests, both AppHost tests, the missing-fix controls
+and all 30 MCP tests. Windows passed its native component and durable-runtime
+stages, including the unchanged sidecar-turnover assertion, but its HTTP suite
+passed 17 of 18 tests and timed out preparing the readmitted Session's durable
+scope after capacity was released. This is a distinct observed failure; its cause
+is not established solely by the earlier sidecar correction.
+
+Review found that an observation's captured Session list could outlive membership:
+removing a Session did not cancel its already-captured delivery or skip it after
+another callback awaited. That could admit effects for an ended membership and
+hold later membership preparation behind obsolete callbacks. Membership now owns
+a child cancellation token per Session. Removal cancels that token and clears
+pending scope/renewal work. Every batch captures its recipients' tokens before
+commit, rather than resolving a fresh token after earlier callbacks settle;
+readmission cannot revive the old batch. Parent cancellation still reaches all
+members. Pending scope/renewal processing also skips removed memberships.
+
+Three real HTTP regressions cover removing a queued member while another callback
+is held, cancelling the gated member while another remains covered, and readmitting
+a member without delivering its old held batch. An owner unit test checks that
+removal cancels held tokens without stopping other members and that a fresh token
+does not revive old delivery. Linux CI removes only membership cancellation and
+must execute/fail the named queued-member assertion, then restore the fix before
+running the complete positive suite. The existing capacity test keeps its 45-second
+deadline and assertion, adding only eight bounded recent FileChanged notices and
+journal counts when it fails.
+
+These owner/HTTP regressions have not run locally: the small harness excludes the
+production owner and integration bridge, and available disk prevents a full local
+workspace build. The 75-test harness result applies to the scanner, records,
+private identity and server-root sources tested earlier. Formatting, PR diff and
+workflow YAML/bash/exact-source mutation checks passed for this increment. Full
+production/native CI and final composed review remain required; this correction
+is not acceptance evidence for the Windows timeout until those paths execute.

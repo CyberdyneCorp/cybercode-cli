@@ -27,7 +27,7 @@ const TICK: Duration = Duration::from_millis(150);
 const RECONCILE: Duration = Duration::from_secs(3);
 #[derive(Default)]
 struct Membership {
-    sessions: BTreeSet<String>,
+    sessions: BTreeMap<String, CancellationToken>,
     /// Keep only the newest committed acknowledgement per current Session.
     /// Both maps share the 256-Session bound; input bursts cannot grow a queue.
     renewals: BTreeMap<String, Renewal>,
@@ -37,7 +37,9 @@ struct Membership {
 type Members = Arc<Mutex<Membership>>;
 impl Membership {
     fn remove(&mut self, session: &str) {
-        self.sessions.remove(session);
+        if let Some(cancel) = self.sessions.remove(session) {
+            cancel.cancel();
+        }
         self.renewals.remove(session);
         self.scopes.remove(session);
     }
@@ -76,8 +78,11 @@ impl Registry {
 impl Entry {
     fn add(&self, host: &BuiltinHost, session: &str) {
         let mut members = self.members.lock().unwrap_or_else(PoisonError::into_inner);
-        if members.sessions.contains(session) || members.sessions.len() < MAX_SESSIONS {
-            members.sessions.insert(session.into());
+        if members.sessions.contains_key(session) || members.sessions.len() < MAX_SESSIONS {
+            members
+                .sessions
+                .entry(session.into())
+                .or_insert_with(|| self.cancel.child_token());
             members.scopes.insert(session.into());
         } else {
             notice(
@@ -124,13 +129,13 @@ impl Observers {
             );
             return;
         }
+        let cancel = CancellationToken::new();
         let members = Arc::new(Mutex::new(Membership {
-            sessions: BTreeSet::from([info.id.clone()]),
+            sessions: BTreeMap::from([(info.id.clone(), cancel.child_token())]),
             renewals: BTreeMap::new(),
             scopes: BTreeSet::new(),
             explicit: Hints::default(),
         }));
-        let cancel = CancellationToken::new();
         let weak = host.weak.clone();
         let root = path.clone();
         let directory = path.display().to_string();
@@ -190,7 +195,7 @@ impl Observers {
             return;
         }
         let mut members = entry.members.lock().unwrap_or_else(PoisonError::into_inner);
-        if members.sessions.contains(&info.id) {
+        if members.sessions.contains_key(&info.id) {
             members.renewals.insert(
                 info.id.clone(),
                 Renewal {
@@ -235,9 +240,18 @@ fn members(members: &Members) -> Vec<String> {
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .sessions
-        .iter()
+        .keys()
         .cloned()
         .collect()
+}
+fn member_cancellation(members: &Members, session: &str) -> Option<CancellationToken> {
+    members
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .sessions
+        .get(session)
+        .filter(|cancel| !cancel.is_cancelled())
+        .cloned()
 }
 fn announce(host: &BuiltinHost, sessions: &[String], message: &str) {
     for session in sessions {
@@ -434,6 +448,9 @@ impl Observation {
             if cancel.is_cancelled() {
                 break;
             }
+            if member_cancellation(membership, &session).is_none() {
+                continue;
+            }
             if let Err(error) = self.journal.admit_session_scope(&session).await {
                 notice(
                     host,
@@ -458,6 +475,9 @@ impl Observation {
                 break;
             }
             let session = renewal.session_id.clone();
+            if member_cancellation(membership, &session).is_none() {
+                continue;
+            }
             let paused = self.warned_budget || self.journal.state().remaining == 0;
             let result = self
                 .journal
@@ -560,7 +580,7 @@ impl Observation {
             };
             let length = budget::batch_len(pending, &files, limit)?;
             let (batch, rest) = pending.split_at(length);
-            self.record_batch(host, sessions, cancel, batch, &files)
+            self.record_batch(host, sessions, membership, cancel, batch, &files)
                 .await?;
             pending = rest;
         }
@@ -622,6 +642,7 @@ impl Observation {
         &mut self,
         host: &BuiltinHost,
         sessions: &[String],
+        membership: &Members,
         cancel: &CancellationToken,
         batch: &[Change],
         files: &BTreeMap<String, records::Stamp>,
@@ -633,6 +654,14 @@ impl Observation {
         let dispatch = updates.len() as u32 <= self.journal.state().remaining;
         let remaining =
             self.journal.state().remaining - if dispatch { updates.len() as u32 } else { 0 };
+        // Bind this batch to the membership incarnations present before commit.
+        // Rejoining during another callback must not revive an older delivery.
+        let recipients: Vec<_> = sessions
+            .iter()
+            .filter_map(|session| {
+                member_cancellation(membership, session).map(|cancel| (session.clone(), cancel))
+            })
+            .collect();
         let event = self
             .journal
             .record(Delta {
@@ -645,7 +674,7 @@ impl Observation {
             .await
             .map_err(|error| error.to_string())?;
         if dispatch {
-            return self.deliver(host, sessions, cancel, &event).await;
+            return self.deliver(host, &recipients, cancel, &event).await;
         }
         if !self.warned_budget {
             announce(
@@ -662,20 +691,23 @@ impl Observation {
     async fn deliver(
         &mut self,
         host: &BuiltinHost,
-        sessions: &[String],
+        sessions: &[(String, CancellationToken)],
         cancel: &CancellationToken,
         event: &cyber_store::StoredEvent,
     ) -> Result<(), String> {
-        for session in sessions {
+        for (session, member_cancel) in sessions {
             if cancel.is_cancelled() {
                 break;
+            }
+            if member_cancel.is_cancelled() {
+                continue;
             }
             if !self.root.current() {
                 return Err("Location root changed before hook delivery".into());
             }
             if let Err(error) = self
                 .journal
-                .dispatch_to_cancellable(event, session, cancel.clone())
+                .dispatch_to_cancellable(event, session, member_cancel.clone())
                 .await
             {
                 notice(
@@ -713,7 +745,8 @@ impl RunState {
         }
         if self.observer.is_none() {
             self.observer =
-                start_observation(host, path, &sessions, &mut self.failure, cancel).await;
+                start_observation(host, path, &sessions, membership, &mut self.failure, cancel)
+                    .await;
         }
         let Some(current) = self.observer.as_mut() else {
             return true;
@@ -763,6 +796,7 @@ async fn start_observation(
     host: &BuiltinHost,
     path: &Path,
     sessions: &[String],
+    membership: &Members,
     failure: &mut Option<String>,
     cancel: &CancellationToken,
 ) -> Option<Observation> {
@@ -771,6 +805,9 @@ async fn start_observation(
             for session in sessions {
                 if cancel.is_cancelled() {
                     return None;
+                }
+                if member_cancellation(membership, session).is_none() {
+                    continue;
                 }
                 if let Err(error) = started.journal.admit_session_scope(session).await {
                     notice(
@@ -800,6 +837,44 @@ async fn start_observation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn removing_membership_cancels_held_delivery_without_stopping_other_members() {
+        let owner = CancellationToken::new();
+        let removed = owner.child_token();
+        let retained = owner.child_token();
+        let membership = Arc::new(Mutex::new(Membership {
+            sessions: BTreeMap::from([
+                ("removed".into(), removed),
+                ("retained".into(), retained.clone()),
+            ]),
+            ..Default::default()
+        }));
+        let held = member_cancellation(&membership, "removed").unwrap();
+        membership.lock().unwrap().remove("removed");
+        assert!(held.is_cancelled());
+        assert!(member_cancellation(&membership, "removed").is_none());
+        assert!(!retained.is_cancelled());
+        assert!(!owner.is_cancelled());
+        let readmitted = owner.child_token();
+        membership
+            .lock()
+            .unwrap()
+            .sessions
+            .insert("removed".into(), readmitted);
+        assert!(
+            !member_cancellation(&membership, "removed")
+                .unwrap()
+                .is_cancelled()
+        );
+        assert!(
+            held.is_cancelled(),
+            "a fresh membership cannot revive an old delivery"
+        );
+        owner.cancel();
+        assert!(retained.is_cancelled());
+        assert!(member_cancellation(&membership, "removed").is_none());
+    }
 
     #[tokio::test]
     async fn explicit_mutations_are_scoped_coalesced_bounded_and_closed_with_the_owner() {
