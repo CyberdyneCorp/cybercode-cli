@@ -32,6 +32,11 @@
 - [ ] 5.2 Implement bounded `FileChanged` observation/reconciliation for tools, formatters, shell/background and external edits, including overflow and self-write loop prevention.
 - [ ] 5.3 Test no false post-effect success for refused/failed/unknown transitions, pre-effect WorktreeCreate veto/no Git mutation, stable event identity, correct scope/order, rename/delete, multiple Sessions, shutdown/restart and unknown handler outcomes.
 
+Setup ownership is expanded in [setup-design.md](setup-design.md). Its Store
+epoch and exact-directory marker choices are proposed for review; marker/schema
+and init behavior are not implemented by this specification. Tasks S1–S6 there
+expand task 5.1 without closing it or the other producer obligations.
+
 ## 6. Acceptance and delivery
 
 - [ ] 6.1 Update plugin/hook guides, capability support matrix, API/SDK/schema artifacts and original extensibility task evidence without blanket-closing parent obligations.
