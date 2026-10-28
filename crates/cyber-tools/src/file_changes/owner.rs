@@ -397,7 +397,7 @@ impl Observation {
         })
     }
     async fn refresh_scopes(
-        &self,
+        &mut self,
         host: &BuiltinHost,
         membership: &Members,
         cancel: &CancellationToken,
