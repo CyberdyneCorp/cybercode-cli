@@ -1215,9 +1215,10 @@ async fn symlink_retarget_loses_old_delivery_and_user_input_admits_the_new_physi
         .await
         .unwrap();
     await_condition("new physical Location baseline and input renewal", || {
-        journal_count(&flow, records::CHECKPOINT) == 2 && flow.f.store.read(|db| Ok(db.query_row(
+        let session = alias.id.clone();
+        journal_count(&flow, records::CHECKPOINT) == 2 && flow.f.store.read(move |db| Ok(db.query_row(
             "SELECT EXISTS(SELECT 1 FROM event WHERE type=?1 AND json_extract(data,'$.renewal.session_id')=?2)",
-            rusqlite::params![records::CHANGED,alias.id], |row| row.get::<_,bool>(0))?)).unwrap()
+            rusqlite::params![records::CHANGED,session], |row| row.get::<_,bool>(0))?)).unwrap()
     }).await;
     std::fs::write(other.join("new-root-only"), "new scope").unwrap();
     await_condition("new scope has fresh project identity", || {

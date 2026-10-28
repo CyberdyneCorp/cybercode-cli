@@ -81,6 +81,11 @@
 - **THEN** retained traversal descriptors follow the depth bound rather than the tree width, and reconciliation can inspect the tail without permanent descriptor exhaustion
 
 
+#### Scenario: Directory moves during metadata traversal
+- **WHEN** a traversed directory leaves its recorded parent or is replaced before scan finalization, including an entry-limited scan
+- **THEN** new metadata from that directory subtree is omitted and coverage is incomplete, retaining prior stamps without synthetic deletion
+- **AND** omitted paths cannot count as permitted hard-link aliases for files remaining in the Location
+
 #### Scenario: Owner storage nested under a Location
 - **WHEN** owner data, configuration, state, cache or temporary roots lie below an observed Location
 - **THEN** owner-supplied private roots and their canonical aliases are excluded before traversing those subtrees, from both initial metadata and subsequent deltas

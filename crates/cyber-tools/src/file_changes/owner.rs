@@ -591,7 +591,7 @@ impl Observation {
             announce(
                 host,
                 sessions,
-                "FileChanged observation is reconciling; native loss or scan limits may leave partial coverage",
+                "FileChanged observation is reconciling; native loss, scope changes or scan limits may leave partial coverage",
             );
         }
         self.warned_partial = !complete;

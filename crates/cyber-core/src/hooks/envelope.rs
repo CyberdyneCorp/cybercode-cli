@@ -204,6 +204,17 @@ impl Serialize for HookEvent {
     }
 }
 
+impl HookDefinition {
+    pub fn matches_event(
+        &self,
+        event: &HookEvent,
+        subject: &str,
+        relative_paths: &[String],
+    ) -> bool {
+        self.matches(event.event(), subject, relative_paths, event.as_json())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,16 +261,5 @@ mod tests {
         )
         .unwrap();
         assert!(synthetic.with_observation_directory(canonical).is_err());
-    }
-}
-
-impl HookDefinition {
-    pub fn matches_event(
-        &self,
-        event: &HookEvent,
-        subject: &str,
-        relative_paths: &[String],
-    ) -> bool {
-        self.matches(event.event(), subject, relative_paths, event.as_json())
     }
 }

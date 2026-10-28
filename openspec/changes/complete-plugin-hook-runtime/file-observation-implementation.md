@@ -2,9 +2,9 @@
 
 Status: **in progress; task 5.2 remains open**. The focused suite at `1e31e2f6`
 passed Linux, macOS and Windows. The newer pinned alias, physical input-scope
-and traversal-descriptor integration has 52 passing local macOS component tests
-and awaits full application/platform CI. Remaining acceptance, broader workspace
-verification and substantive review are still required.
+and traversal-descriptor integration, including nested-directory move guards,
+has 54 passing local macOS component tests and awaits full application/platform
+CI. Remaining acceptance, broader workspace verification and substantive review are still required.
 
 ## Ownership and native observation
 
@@ -182,12 +182,11 @@ replay. This measures the model algorithm, not SQLite/application latency.
 
 ## Remaining acceptance and implementation
 
-1. **Alias-aware Session admission:** the registry uses canonical Locations, but
-   the journal, user-renewal and receipt checks currently require identical raw
-   Session directory strings. Sessions reaching the same root through different
-   aliases need scoped delivery and renewal without weakening durable source
-   checks. Retargeted aliases and moved/archived Sessions must lose eligibility.
-   Root/project-cache invalidation must cover those admitted aliases as well.
+1. **Alias-aware Session acceptance:** the native lease, canonical journal key,
+   Session scope and user-renewal integration below is implemented but awaits
+   application/platform acceptance. Verify shared aliases, retargeting refusal,
+   moved/archived Session eligibility and project-cache invalidation before
+   closing this item.
 2. **Resource/overflow/lifecycle acceptance:** exercise global Location/Session
    limits and visible incomplete coverage through the actual application, native
    queue loss/registration limits and bounded recovery, inaccessible/large trees,
@@ -221,8 +220,8 @@ record test passes in the 46-test local harness.
 
 [The scope integration design](file-observation-scope-design.md) specifies the
 remaining pinned native lease, canonical journal key, per-handler/renewal checks
-and project-cache work. Alias delivery remains unimplemented until those pieces
-are connected; the current exact-directory source checks remain intact.
+and project-cache work. The exact-directory increment described in this
+historical section preceded the native alias integration below; that integration still awaits acceptance.
 
 At `04deb581`, the full focused Linux job passed, including both new resource-limit
 application scenarios. Windows passed eleven of twelve HTTP scenarios; its
@@ -280,3 +279,30 @@ those Unix-only fixtures. No skipped platform fixture is counted as executed.
 The renewal-index migration and exact consumption query were checked against
 5,000 in-memory SQL events; SQLite selected the new expression index. This is
 SQL-plan evidence, not full Store/runtime migration acceptance.
+
+## Directory-move guard and current CI correction
+
+A regression reproduced a pinned child descriptor following a directory moved
+outside the Location during traversal, including a scan stopped at its entry
+limit. `scan/scopes.rs` now records bounded directory identities and revalidates
+them through no-follow parent opens before publishing results. It retains only
+the open ancestor chain. Missing or changed directory incarnations discard their
+subtree metadata and mark the scan incomplete, preserving prior stamps rather
+than inventing deletions. Cancellation discards the candidate scan.
+
+A second regression verifies that a moved directory's files cannot count as
+permitted hard-link aliases of files remaining inside the Location. Scope
+filtering precedes link-proof finalization. Both regressions are Unix-only;
+Windows execution remains dependent on the platform suite's existing fixtures.
+The actual-source macOS harness now passes 54 tests and Clippy with threshold 15
+and warnings denied, excluding the complete owner, runtime and application.
+
+The focused run at `5af61f59` failed. Linux and macOS logs identify a borrowed
+Session ID captured by a Store closure requiring a static lifetime in the new
+application fixture. The fixture now moves an owned ID into that closure; this
+is a compilation correction, not evidence that the application scenario passed.
+The directory-move changes and this correction require fresh platform CI.
+
+Broader CI at `5af61f59` also reported `items_after_test_module` in the new
+core envelope test placement on Linux/macOS/Windows. The production impl now
+precedes that test module; current-head workspace Clippy still requires CI.

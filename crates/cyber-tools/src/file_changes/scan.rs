@@ -13,6 +13,8 @@ use super::{
 };
 use cap_fs_ext::DirExt;
 use cap_std::fs::{Dir, Metadata};
+#[path = "scan/scopes.rs"]
+mod scopes;
 
 pub(super) struct Limits {
     pub entries: usize,
@@ -89,10 +91,10 @@ pub(super) fn scan(
         complete: true,
         ..Scan::default()
     };
-    let root = root
+    let initial = root
         .try_clone()
         .and_then(|root| Frame::new(root, PathBuf::new(), 0));
-    let Ok(root) = root else {
+    let Ok(first) = initial else {
         out.complete = false;
         return out;
     };
@@ -100,13 +102,14 @@ pub(super) fn scan(
     // Retain only the open ancestor chain. Opening all siblings before visiting
     // them lets a shallow wide tree exhaust process descriptors and permanently
     // omit its tail on every reconciliation pass.
-    let mut pending = vec![root];
+    let mut scopes = scopes::Catalog::new(root);
+    let mut pending = vec![first];
     let mut inspected = 0usize;
     let mut aliases = Aliases::default();
     while let Some(frame) = pending.last_mut() {
         if cancelled.load(Ordering::Acquire) {
             out.complete = false;
-            return finish(out, aliases);
+            break;
         }
         let Some(entry) = frame.entries.next() else {
             pending.pop();
@@ -114,7 +117,7 @@ pub(super) fn scan(
         };
         if inspected >= limits.entries {
             out.complete = false;
-            return finish(out, aliases);
+            break;
         }
         inspected += 1;
         let Ok(entry) = entry else {
@@ -152,6 +155,7 @@ pub(super) fn scan(
                 .and_then(|child| Frame::new(child, path.clone(), frame.depth + 1));
             match child {
                 Ok(child) => {
+                    scopes.record(path.clone(), &child.directory);
                     out.directories.insert(path);
                     pending.push(child);
                 }
@@ -162,10 +166,19 @@ pub(super) fn scan(
             out.files.insert(path, stamp(&metadata));
         }
     }
-    finish(out, aliases)
+    drop(pending);
+    finish(out, aliases, scopes, root, cancelled)
 }
 
-fn finish(mut scan: Scan, aliases: Aliases) -> Scan {
+fn finish(
+    mut scan: Scan,
+    mut aliases: Aliases,
+    scopes: scopes::Catalog,
+    root: &Dir,
+    cancelled: &AtomicBool,
+) -> Scan {
+    scopes.retain(&mut scan, root, cancelled);
+    aliases.retain_paths(|path| scan.files.contains_key(path));
     scan.suppressed = aliases.unproven();
     scan.files.retain(|path, _| !scan.suppressed.contains(path));
     scan
@@ -183,6 +196,89 @@ mod tests {
     }
     fn root(path: &Path) -> Dir {
         Dir::open_ambient_dir(path, cap_std::ambient_authority()).unwrap()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directories_moved_out_during_full_or_limited_traversal_publish_no_new_metadata() {
+        for entries in [100, 2] {
+            let inside = tempfile::tempdir().unwrap();
+            let outside = tempfile::tempdir().unwrap();
+            let public = inside.path().join("public");
+            let private = outside.path().join("private");
+            std::fs::create_dir(&public).unwrap();
+            for name in ["data", "tail"] {
+                std::fs::write(public.join(name), "public").unwrap();
+            }
+            if entries == 100 {
+                std::fs::write(inside.path().join("healthy"), "still scoped").unwrap();
+            }
+            let moved = std::cell::Cell::new(false);
+            let actual = scan(
+                &root(inside.path()),
+                &|path| {
+                    if path.parent() == Some(Path::new("public")) && !moved.replace(true) {
+                        std::fs::rename(&public, &private).unwrap();
+                        for name in ["data", "tail"] {
+                            std::fs::write(
+                                private.join(name),
+                                "private metadata after leaving the Location",
+                            )
+                            .unwrap();
+                        }
+                    }
+                    false
+                },
+                &Limits {
+                    entries,
+                    ..limits()
+                },
+                &AtomicBool::new(false),
+            );
+            assert!(moved.get());
+            assert!(
+                !actual.complete,
+                "changed directory scope is incomplete evidence"
+            );
+            assert!(
+                actual.files.keys().all(|path| !path.starts_with("public")),
+                "moved directory metadata must not enter observations"
+            );
+            assert!(!actual.directories.contains(Path::new("public")));
+            if entries == 100 {
+                assert!(actual.files.contains_key(Path::new("healthy")));
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn moved_directory_links_do_not_count_as_scoped_aliases_of_remaining_files() {
+        let inside = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let public = inside.path().join("public");
+        std::fs::create_dir(&public).unwrap();
+        std::fs::write(inside.path().join("remaining"), "linked").unwrap();
+        std::fs::hard_link(inside.path().join("remaining"), public.join("linked")).unwrap();
+        let moved = std::cell::Cell::new(false);
+        let actual = scan(
+            &root(inside.path()),
+            &|path| {
+                if path == Path::new("public/linked") && !moved.replace(true) {
+                    std::fs::rename(&public, outside.path().join("private")).unwrap();
+                }
+                false
+            },
+            &limits(),
+            &AtomicBool::new(false),
+        );
+        assert!(moved.get());
+        assert!(
+            actual.files.is_empty(),
+            "the remaining link now has an unaccounted outside alias"
+        );
+        assert!(actual.suppressed.contains(Path::new("remaining")));
+        assert!(!actual.suppressed.contains(Path::new("public/linked")));
     }
 
     #[cfg(unix)]

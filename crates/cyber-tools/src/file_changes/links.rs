@@ -42,6 +42,14 @@ pub(super) struct Aliases {
     unknown: BTreeSet<PathBuf>,
 }
 impl Aliases {
+    /// A directory can lose scope after inventory. Such paths cannot count as
+    /// permitted aliases when deciding whether any remaining link is observable.
+    pub fn retain_paths(&mut self, permitted: impl Fn(&Path) -> bool) {
+        for group in self.groups.values_mut() {
+            group.paths.retain(|path| permitted(path));
+        }
+        self.unknown.retain(|path| permitted(path));
+    }
     pub fn observe(&mut self, path: &Path, metadata: &Metadata) {
         let Some(identity) = identity(metadata) else {
             self.unknown.insert(path.into());
