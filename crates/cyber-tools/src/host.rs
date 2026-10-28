@@ -1134,7 +1134,7 @@ impl ToolHost for BuiltinHost {
                 asker: cyber_server::runtime::Asker::detached(),
             };
             let worktree = self
-                .resume_child_worktree_authorized(&inv, cancel, owner, info, managed, true)
+                .resume_child_worktree_authorized(&inv, cancel, owner, info, managed, Some(parent))
                 .await
                 .map_err(|error| error.to_string())?;
             Ok(Some(
