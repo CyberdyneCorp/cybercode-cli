@@ -21,3 +21,9 @@
 - **THEN** the hook runs at the delegating Session's actual Location after the child's applicable worktree permission checks, without fabricating a child envelope at that Location
 - **AND** a veto prevents checkout creation, rebinding and new input/model admission, while a retained checkout emits no new creation event
 - **AND** no hook dispatch holds the child lifecycle mutex or runtime shutdown admission, and current deny rules are checked again before Git effects
+
+#### Scenario: Committed Location observation
+- **WHEN** a Session successfully enters or exits a worktree, returns while idle, or is rebound to a different effective path
+- **THEN** `CwdChanged` uses the resulting Session Location and includes the previous/destination directories and durable transition ID, sequence and kind, after ownership locks settle
+- **AND** a refused or unknown transition, same-path rebind, no-op exit or reducer replay does not emit a successful path observation
+- **AND** observational decisions or unavailable handlers do not veto the already committed transition or change its reported result
