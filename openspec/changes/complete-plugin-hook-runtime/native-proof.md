@@ -278,3 +278,74 @@ termination is not a reliable admission boundary and is not counted as proof.
 The existing native-gap CI jobs now require both new assertions on macOS arm64
 and Intel. Their results for this extension are pending. The support revision
 remains proposed; no production integration or task completion is implied.
+
+
+## Staged native macOS candidate and descriptor regression
+
+The new local arm64 candidate passes all eight `fs.read`/`fs.write`/`shell`
+combinations and an unrestricted positive control. The
+[full report](../../../scripts/probes/plugin-confinement/evidence/staged-native-local/macos-arm64-native.json)
+binds source digest `955059e9d5d18d5865296adc4b80da4af8fecaee18910ef1f596d849524d7437`.
+The [default comparison](../../../scripts/probes/plugin-confinement/evidence/staged-native-local/macos-arm64-native-unstaged.json)
+retains five executed rows and four explicitly unsupported combinations.
+
+`macos_stage.mts` copies a controlled native fixture into the private test root,
+re-signs it ad-hoc with a fresh identifier, and verifies that identifier and the
+absence of an Apple anchor across all architecture slices. The fresh identifier
+also changes the CodeDirectory hash. The report records input/image SHA-256,
+identifier and architecture list. The trusted launcher replaces itself with the
+system sandbox program, which installs the profile before untrusted instructions.
+A platform-subject predicate intersected with the canonical staged path admits
+the initial launch. The re-signed fixture cannot retain that subject authority.
+
+Separate launches assert constructor-time self-exec and direct `posix_spawn`
+behavior as well as main-time exec/spawn. The constructor queries platform
+status before and after attempting `CS_OPS_SET_STATUS`; both queries succeed
+and report no platform bit. A successful setter return is not treated as
+authority: [XNU masks the accepted status bits](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_proc.c),
+and this local probe checks actual status afterward. This does not prove every
+other kernel surface or OS release safe.
+
+The [counterexample report](../../../scripts/probes/plugin-confinement/evidence/staged-native-local/macos-arm64-native-exec-gap.json)
+binds digest `392ab27738098b637073e7fb5843c7143b118f6dda8c8c521b21f3882a29b18c`.
+It preserves the no-exec/literal/platform counterexamples, then stages `/bin/bash`:
+initial execution succeeds, unrestricted self-exec succeeds, restricted self-exec
+is denied. This removes the previously demonstrated platform-payload exception
+for that staged fixture; it is not proof of arbitrary package admission.
+
+A new controlled descriptor regression exposed a leak in the test launcher's
+`getdtablesize()` loop: an already-open descriptor 500 remained inherited after
+the subprocess reduced its soft limit to 64. The corrected launcher uses
+`POSIX_SPAWN_SETEXEC | POSIX_SPAWN_CLOEXEC_DEFAULT` with explicit stdio inheritance.
+The control observes descriptor 500; the launcher target cannot observe it.
+[Apple's flag documentation](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/man/man3/posix_spawnattr_setflags.3)
+describes process replacement and explicit descriptor inheritance. An attempted
+`closefrom` implementation failed to compile in the local SDK and is not used.
+
+The prior `30c61cf2` [CI run](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40635690482)
+now passed all 22 jobs, including both platform-predicate counterexamples and
+the native shell-enabled subset. Those jobs predate this candidate. The workflow
+now requires the staged nine-row native matrix and descriptor regression on
+macOS arm64 and Intel; exact-source results for this change remain pending.
+
+Review scope: executable probes only. No production launcher or availability
+contract changes. Mode 0500 alone does not prove immutable ownership; pre-existing
+writable aliases/hard links, transformed-image integrity, package/entrypoint
+admission, entitlement/signature compatibility, helper packaging without
+developer tools, protected-root races, network/secret intersections and real
+owner/tool execution still require implementation and acceptance. Task 2.1
+and the explicit support/design review remain open.
+
+Scoped code/security review of this increment inspected the three TypeScript
+probe files, three modified C fixtures/launcher, new descriptor fixture, workflow
+and evidence bindings. No production architecture changes were introduced.
+Trusted tool invocations use argument arrays and a cleared environment; the
+stager uses exclusive copy creation and verifies all slices. The known staging
+limitations above prevent treating this helper as a production admission API.
+No additional must-fix finding remains within this experimental scope.
+
+Verification: both local native modes and the exec/descriptor experiment passed;
+all three TypeScript syntax checks and `git diff --check` passed. Pinned OpenSpec
+1.13.2 strict validation passed all 106 entries; spec lint reported zero errors
+and 25 warnings (no origin assigned). Local Linux/Intel and production owner
+acceptance were not run for this increment; CI and integration remain required.

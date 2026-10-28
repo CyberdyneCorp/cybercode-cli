@@ -2,11 +2,14 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <sandbox.h>
+#include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+extern char **environ;
 
 int main(int argc, char **argv) {
     if (argc < 3 || argv[2][0] != '/') return 2;
@@ -32,11 +35,26 @@ int main(int argc, char **argv) {
         sandbox_free_error(error);
         if (result != 0) return 2;
     }
-    int limit = getdtablesize();
-    if (limit < 3) return 2;
-    for (int fd = 3; fd < limit; fd++) close(fd);
-    execv(argv[2], argv + 2);
-    int denied = errno == EPERM || errno == EACCES;
+    /* Kernel exec-time closure covers descriptors above a lowered soft limit.
+     * SETEXEC replaces this process without needing a permitted fork. */
+    posix_spawnattr_t attributes;
+    posix_spawn_file_actions_t actions;
+    if (posix_spawnattr_init(&attributes) != 0) return 2;
+    if (posix_spawn_file_actions_init(&actions) != 0) {
+        posix_spawnattr_destroy(&attributes);
+        return 2;
+    }
+    int result = posix_spawnattr_setflags(&attributes,
+        POSIX_SPAWN_SETEXEC | POSIX_SPAWN_CLOEXEC_DEFAULT);
+    for (int fd = STDIN_FILENO; result == 0 && fd <= STDERR_FILENO; fd++) {
+        if (fcntl(fd, F_GETFD) >= 0) result = posix_spawn_file_actions_addinherit_np(&actions, fd);
+        else if (errno != EBADF) result = errno;
+    }
+    if (result == 0) result = posix_spawn(NULL, argv[2], &actions, &attributes, argv + 2, environ);
+    posix_spawn_file_actions_destroy(&actions);
+    posix_spawnattr_destroy(&attributes);
+    errno = result;
+    int denied = result == EPERM || result == EACCES;
     perror("initial native exec");
     return denied ? 13 : 2;
 }

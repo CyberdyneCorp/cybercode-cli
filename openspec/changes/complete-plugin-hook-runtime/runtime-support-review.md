@@ -20,8 +20,8 @@ architectures. Both native macOS exec-gap experiments passed their assertions:
 - Permitting that executable's exact path also permits it to re-exec itself.
 
 These results disprove those two proposed exceptions. They do not prove that
-another mechanism is impossible. No suitable general native-macOS/no-shell
-mechanism has been demonstrated by this work. It cannot inherit broader exec
+another mechanism is impossible. At that revision, no suitable general native-macOS/no-shell
+mechanism had been demonstrated by this work. It cannot inherit broader exec
 rights just to start successfully.
 
 Bun/Linux initially aborted during runtime initialization. At `d5bee987`, both
@@ -39,6 +39,23 @@ immutable staging would need independent enforcement/proof before integrating
 such a mechanism. See the source-bound report in the proof ledger; Intel/native
 CI for this extension is pending. This evidence changes neither availability
 nor the pending decision.
+
+## Staged-image candidate (not an availability change)
+
+A newer local arm64 experiment re-signs controlled native copies ad-hoc with a
+fresh identifier and verifies every architecture slice. It passes all eight
+capability combinations plus control, including constructor-time exec/spawn and
+actual platform-status queries. Staging a formerly platform-signed `/bin/bash`
+also removes the demonstrated retained exec exception. The launcher now removes
+inherited descriptors through exec-time default closure, with a regression for
+a descriptor above a lowered soft limit. See [source-bound evidence](native-proof.md#staged-native-macos-candidate-and-descriptor-regression).
+
+This is a candidate for satisfying the original native no-shell requirement. It
+does not yet establish immutable package/image admission, alias protection,
+entitlement compatibility or deployable packaging. Both macOS architectures
+now require the new matrix in CI; results for this candidate remain pending.
+The proposed availability table and request for an explicit support decision
+remain unchanged pending that evidence and review.
 
 ## Proposed production availability
 

@@ -1,11 +1,12 @@
-/* Untrusted Linux executable fixture. No policy installation or cooperation:
- * even this ELF constructor must enter with its read/process policy installed. */
+/* Untrusted native executable fixture. No policy installation or cooperation:
+ * even its ELF/Mach-O constructor enters with its read/process policy installed. */
 #define _GNU_SOURCE
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <pthread.h>
+#include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +14,16 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include "process_policy.h"
+#ifdef __APPLE__
+#include <crt_externs.h>
+#include <stdint.h>
+/* XNU bsd/sys/codesign.h: CS_OPS_STATUS=0, CS_OPS_SET_STATUS=9.
+ * Query and attempt to assert platform status; no successful setter return is
+ * mistaken for authority, because XNU masks the accepted status bits. */
+extern int csops(pid_t, unsigned int, void *, size_t);
+#define PROOF_CS_PLATFORM_BINARY 0x04000000u
+static int platform_status_known, platform_before, platform_after_set, constructor_spawn;
+#endif
 
 static const char *truth(int value) { return value ? "true" : "false"; }
 static int native_read(const char *path) {
@@ -25,8 +36,25 @@ static int native_read(const char *path) {
 }
 
 static int native_fork(void);
+static int native_spawn(const char *executable);
+extern char **environ;
 static int constructor_read, constructor_fork;
 __attribute__((constructor)) static void untrusted_constructor(void) {
+#ifdef __APPLE__
+    uint32_t before = 0, after = 0, request = PROOF_CS_PLATFORM_BINARY;
+    platform_status_known = csops(0, 0, &before, sizeof(before)) == 0;
+    platform_before = (before & PROOF_CS_PLATFORM_BINARY) != 0;
+    (void)csops(0, 9, &request, sizeof(request));
+    platform_status_known &= csops(0, 0, &after, sizeof(after)) == 0;
+    platform_after_set = (after & PROOF_CS_PLATFORM_BINARY) != 0;
+    char **args = *_NSGetArgv();
+    if (*_NSGetArgc() > 1 && strcmp(args[1], "ctor-exec") == 0) {
+        execl(args[0], args[0], "receipt", (char *)NULL);
+    }
+    if (*_NSGetArgc() > 1 && strcmp(args[1], "ctor-spawn") == 0) {
+        constructor_spawn = native_spawn(args[0]);
+    }
+#endif
     constructor_read = native_read(getenv("CYBER_PROOF_PRIVATE"));
     constructor_fork = native_fork();
 }
@@ -98,6 +126,26 @@ static int native_fork(void) {
     return waited == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
+/* posix_spawn may use a different kernel path than fork+exec. Exercise it
+ * directly against the same staged image, including the literal exec exception. */
+static int native_spawn(const char *executable) {
+    posix_spawn_file_actions_t actions;
+    if (posix_spawn_file_actions_init(&actions) != 0) return 0;
+    if (posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0) != 0 ||
+        posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0) != 0) {
+        posix_spawn_file_actions_destroy(&actions); return 0;
+    }
+    char *const args[] = {(char *)executable, "receipt", NULL};
+    pid_t pid;
+    int result = posix_spawn(&pid, executable, &actions, NULL, args, environ);
+    posix_spawn_file_actions_destroy(&actions);
+    if (result != 0) return 0;
+    int status;
+    pid_t waited;
+    do { waited = waitpid(pid, &status, 0); } while (waited < 0 && errno == EINTR);
+    return waited == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
 struct worker { const char *project, *private; int project_read, private_read, shell; };
 static void *thread_work(void *value) {
     struct worker *worker = value;
@@ -127,6 +175,16 @@ int main(int argc, char **argv) {
     }
     if (argc != 14) return 2;
     for (int index = 2; index <= 10; index++) if (strlen(argv[index]) >= PATH_MAX) return 2;
+#ifdef __APPLE__
+    if (strcmp(argv[1], "ctor-spawn") == 0) {
+        printf("{\"native_spawn\":%s}\n", truth(constructor_spawn));
+        return 0;
+    }
+#endif
+    if (strcmp(argv[1], "ctor-exec") == 0) {
+        puts("{\"self_exec\":false}");
+        return 0;
+    }
     if (strcmp(argv[1], "exec") == 0) {
         execl(argv[0], argv[0], "receipt", (char *)NULL);
         puts("{\"self_exec\":false}");
@@ -181,8 +239,12 @@ int main(int argc, char **argv) {
     printf("\"child_reads\":%s,\"native_child_reads\":%s,\"cannot_relax\":%s,",
            native_status == -1 ? "null" : child_result, native_children,
            confined ? truth(proof_relax() != 0 && !native_read(private)) : "null");
-    printf("\"constructor_private_read\":%s,\"constructor_fork\":%s",
-           truth(constructor_read), truth(constructor_fork));
+    printf("\"constructor_private_read\":%s,\"constructor_fork\":%s,\"native_spawn\":%s",
+           truth(constructor_read), truth(constructor_fork), truth(native_spawn(argv[0])));
+#ifdef __APPLE__
+    printf(",\"platform_status_known\":%s,\"platform_before\":%s,\"platform_after_set\":%s",
+           truth(platform_status_known), truth(platform_before), truth(platform_after_set));
+#endif
 #ifdef __linux__
     printf(",\"filter_replacement_denied\":%s", truth(proof_replacement_denied()));
 #endif

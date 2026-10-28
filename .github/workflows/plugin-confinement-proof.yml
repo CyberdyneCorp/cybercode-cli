@@ -72,6 +72,10 @@ jobs:
             # All five runtimes now require the same pre-target-instruction
             # exec boundary. A diagnostic/traced retry cannot turn failure green.
             args+=(--initial-exec --trace "$RUNNER_TEMP/proof-trace")
+          elif [[ "$PROOF_RUNTIME" == native ]]; then
+            # Candidate staging must pass all eight combinations, including
+            # shell=false before the native constructor runs.
+            args+=(--macos-staged-native)
           fi
           node --experimental-strip-types scripts/probes/plugin-confinement/run.mts "${args[@]}" > "$RUNNER_TEMP/proof.log" 2>&1
       - name: Retain exact-source native evidence
@@ -99,7 +103,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Verify initial exec, literal-rule and platform-subject gaps
+      - name: Verify exec counterexamples, staged candidate and inherited descriptors
         shell: bash
         run: |
           set -euo pipefail

@@ -26,10 +26,31 @@ node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runt
 node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime native --report /tmp/native-initial.json
 ```
 
-The native fixture implies `--initial-exec` on Linux. On macOS it runs the
+The native fixture implies `--initial-exec` on Linux. By default on macOS it runs the
 four `shell: true` filesystem combinations and an unrestricted control; the
 four `shell: false` combinations are explicitly reported as unsupported rather
-than passed. It is an untrusted C executable with no confinement bootstrap; its
+than passed. The separate experimental candidate runs all eight combinations:
+
+```sh
+node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime native --macos-staged-native --report /tmp/native-staged.json
+node --experimental-strip-types scripts/probes/plugin-confinement/macos_native_exec.mts --report /tmp/native-exec-gap.json
+```
+
+The candidate copies the fixture, replaces its signature with an ad-hoc signature
+using a fresh identifier, and verifies every architecture slice. A system platform
+launcher installs the profile before target execution; a platform-subject rule
+intersected with the staged path admits initial execution but denies subsequent
+exec when shell is disabled. Constructor exec, direct `posix_spawn`, platform
+status before/after an attempted status change, and a formerly platform-signed
+system payload are checked separately. The trusted launcher replaces itself
+using `POSIX_SPAWN_SETEXEC | POSIX_SPAWN_CLOEXEC_DEFAULT`, inheriting only open
+stdio descriptors. The gap test includes descriptor 500 above a lowered soft
+limit of 64, with a positive inheritance control. CI now requires this candidate
+on both macOS architectures; a queued or earlier default-subset run is not proof
+of the new matrix. Staging is fixture-only: immutable admission, transformed-image
+integrity, entitlement compatibility and distribution remain unproved.
+
+The native fixture is an untrusted C executable with no confinement bootstrap; its
 ELF/Mach-O constructor tests private reads and forks before `main`. Node headers must be under the selected Node prefix's `include/node`.
 The compiler is discovered through `/usr/bin/xcrun` on macOS; Linux uses `/usr/bin/cc`. No package/runtime is
 downloaded by the probe. Runtime discovery executes the explicitly selected
@@ -95,7 +116,8 @@ trusted startup/dependency resolution, network/secret policy intersections,
 production packaging, crash/revocation tests and actual plugin tool execution.
 The ledger records passing Linux matrices for all five runtimes, passing earlier
 macOS Node/Python/Bun/Deno matrices and the shell-enabled native macOS subset.
-Native macOS no-shell startup remains unproved. Experimental success does not
+A local staged-image candidate now starts native macOS no-shell fixtures;
+general production admission remains unproved. Experimental success does not
 close production or platform acceptance.
 
 ## Linux prototype

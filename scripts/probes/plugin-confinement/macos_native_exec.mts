@@ -1,6 +1,7 @@
 /** Evidence for insufficient pre-exec Seatbelt strategies, not production
  * support and not a proof that no other mechanism can work. */
 import assert from "node:assert/strict";
+import { stageNative } from "./macos_stage.mts";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -28,8 +29,8 @@ const root = realpathSync(mkdtempSync(join(tmpdir(), "cyber-macos-native-exec-")
 try {
   const compiler = success("/usr/bin/xcrun", ["--find", "clang"]);
   const sdk = success("/usr/bin/xcrun", ["--show-sdk-path"]);
-  const fixture = join(root, "untrusted-executable"), launcher = join(root, "trusted-launcher");
-  for (const [input, output] of [["fixture_exec.c", fixture], ["macos_exec.c", launcher]]) {
+  const fixture = join(root, "untrusted-executable"), launcher = join(root, "trusted-launcher"), descriptors = join(root, "descriptor-fixture");
+  for (const [input, output] of [["fixture_exec.c", fixture], ["macos_exec.c", launcher], ["macos_fds.c", descriptors]]) {
     success(compiler, ["-isysroot", sdk, "-O1", "-Wall", "-Wextra", "-Werror", "-Wno-error=deprecated-declarations", join(source, input), "-o", output]);
   }
   const control = JSON.parse(success(launcher, ["-", fixture]));
@@ -59,7 +60,25 @@ try {
   const platformSelfExec = success("/usr/bin/sandbox-exec", ["-p", platformProfile(platformExecutable),
     platformExecutable, "-c", "exec /bin/bash -c 'printf platform-self-exec'"]);
   assert.equal(platformSelfExec, "platform-self-exec", "platform payload must demonstrate the retained exec exception");
-  const sources = ["macos_native_exec.mts", "macos_exec.c", "fixture_exec.c"];
+  // The staged copy deliberately discards the platform signature. Check every
+  // architecture slice, then repeat the counterexample through the actual rule.
+  const stagedPlatform = stageNative(platformExecutable, join(root, "staged-platform-payload"));
+  const stagedArgs = [stagedPlatform.executable, "-c", "printf 'initial-admitted\\n'; exec \"$0\" -c 'printf platform-self-exec'"];
+  const stagedControl = success("/usr/bin/sandbox-exec", ["-p", base + "(allow process-exec)", ...stagedArgs]);
+  assert.equal(stagedControl, "initial-admitted\nplatform-self-exec");
+  const stagedRestricted = run("/usr/bin/sandbox-exec", ["-p", platformProfile(stagedPlatform.executable), ...stagedArgs]);
+  assert.notEqual(stagedRestricted.status, 0, "staged payload cannot retain platform self-exec");
+  assert.equal(stagedRestricted.stdout.trim(), "initial-admitted");
+  assert(!stagedRestricted.stderr.includes("sandbox_init"), "policy startup failure is not exec denial evidence");
+  const ownedFile = join(root, "dummy-private-descriptor");
+  writeFileSync(ownedFile, "fixture only", { mode: 0o600 });
+  const descriptorControl = JSON.parse(success(descriptors, ["-", fixture, ownedFile]));
+  assert.deepEqual(descriptorControl, { inherited_descriptor: true });
+  const descriptorClosed = JSON.parse(success(descriptors, [launcher, fixture, ownedFile]));
+  assert.deepEqual(descriptorClosed, { inherited_descriptor: false }, "descriptor above the lowered soft limit must be closed");
+  const sources = ["macos_native_exec.mts", "macos_exec.c", "fixture_exec.c", "macos_stage.mts", "macos_fds.c"];
+
+
   const digest = createHash("sha256");
   for (const file of sources) digest.update(file + "\0").update(readFileSync(join(source, file)));
   const report = { recorded_at: new Date().toISOString(), platform: process.platform, architecture: process.arch, kernel_release: release(),
@@ -68,7 +87,10 @@ try {
     platform_attribute: { custom_native: platformNative,
       platform_executable: platformExecutable, platform_self_exec: true,
       limitation: "The platform-subject exception is not one-shot for a platform executable; an independently enforced target-admission contract remains unproved." },
-    conclusion: "No tested strategy proves the general independent initial/later-exec contract. The platform predicate distinguishes the custom fixture but retains exec rights for platform payloads; other mechanisms or independently proved target admission remain unproved. Broad reads here are not an fs.read policy." };
+    inherited_above_soft_limit: { descriptor: 500, soft_limit: 64, control: descriptorControl, launcher: descriptorClosed },
+    staged_platform: { ...stagedPlatform, control_self_exec: true, initial_exec: true, self_exec: false,
+      limitation: "Fixture staging resolves this counterexample locally; production immutable-package admission, transformed-image integrity, entitlement compatibility and architecture acceptance remain unproved." },
+    conclusion: "The platform predicate alone is insufficient. An ad-hoc re-signed fixture copy starts and denies self-exec, including a formerly platform-signed input; this is an experimental candidate, not production admission or an fs.read policy." };
   if (values.report) writeFileSync(values.report, JSON.stringify(report, null, 2) + "\n", { mode: 0o600 });
   console.log(JSON.stringify(report, null, 2));
 } finally { rmSync(root, { recursive: true, force: true }); }
