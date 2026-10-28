@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::catalog::profile::ReasoningCarrier;
+use crate::catalog::profile::{ReasoningCarrier, VerbosityLevel};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -300,6 +300,100 @@ pub struct LlmRequest {
     /// reasoning. An adapter never guesses it.
     #[serde(default, skip_serializing_if = "ReasoningCarrier::is_none")]
     pub reasoning_carrier: ReasoningCarrier,
+    /// Optional Responses fields the model's profile allows.
+    #[serde(default, skip_serializing_if = "Shaping::is_default")]
+    pub shaping: Shaping,
+    /// Who the request is for, for the routing headers; `None` outside a Session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing: Option<Routing>,
+}
+
+/// Responses request fields from the model's profile and capabilities
+/// (`provider-catalog` → Responses request shaping). Other protocols ignore them.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Shaping {
+    /// The model reasons, so its encrypted reasoning is requested back.
+    #[serde(default)]
+    pub reasoning: bool,
+    /// The model accepts `reasoning.summary`.
+    #[serde(default)]
+    pub reasoning_summary: bool,
+    /// The model lists the `none` effort, so reasoning off is sent as that effort.
+    #[serde(default)]
+    pub effort_none: bool,
+    /// `text.verbosity`, set only when the model supports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verbosity: Option<VerbosityLevel>,
+    /// `parallel_tool_calls`, sent whenever tools are offered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parallel_tool_calls: Option<bool>,
+}
+
+impl Shaping {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// The Session a request belongs to (`provider-catalog` → Session routing headers).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Routing {
+    /// The root Session ID.
+    pub root: String,
+    /// The requesting Session's ID.
+    pub session: String,
+    /// What a call outside a Turn is for (`compact`, `title`, `recap`), or a subagent's
+    /// agent name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<String>,
+    /// The sticky-routing token of the current Turn; never serialized.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub turn_state: Option<TurnState>,
+}
+
+/// The `x-codex-turn-state` value the backend returned first in a Turn, shared by every
+/// request and retry of that Turn. Clones share one value; [`TurnState::reset`] forgets
+/// it when the next Turn starts.
+#[derive(Clone, Default)]
+pub struct TurnState(std::sync::Arc<std::sync::Mutex<Option<String>>>);
+
+impl TurnState {
+    pub fn get(&self) -> Option<String> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Keep `value` unless the Turn already has one: only the first counts.
+    pub fn offer(&self, value: &str) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_or_insert_with(|| value.to_owned());
+    }
+
+    /// Forget the kept value, for every clone.
+    pub fn reset(&self) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+    }
+}
+
+/// Two handles are equal when they share one Turn's state.
+impl PartialEq for TurnState {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl std::fmt::Debug for TurnState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TurnState(..)")
+    }
 }
 
 fn default_true() -> bool {
@@ -506,5 +600,22 @@ mod tests {
             serde_json::from_value(json!({"id": "c", "name": "n", "arguments": "{}", "input": {}}))
                 .unwrap();
         assert_eq!(call.opaque, None);
+    }
+
+    /// Clones share one Turn's value: the first offer wins, and a reset clears it for all.
+    #[test]
+    fn turn_state_keeps_the_first_value_until_reset() {
+        let state = TurnState::default();
+        let request_copy = state.clone();
+        assert_eq!(state.get(), None);
+        state.offer("abc");
+        request_copy.offer("later");
+        assert_eq!(request_copy.get().as_deref(), Some("abc"));
+        assert_eq!(state, request_copy);
+        assert_ne!(state, TurnState::default());
+        request_copy.reset();
+        assert_eq!(state.get(), None);
+        state.offer("next");
+        assert_eq!(request_copy.get().as_deref(), Some("next"));
     }
 }

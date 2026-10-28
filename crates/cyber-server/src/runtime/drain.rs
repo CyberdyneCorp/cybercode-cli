@@ -365,6 +365,10 @@ async fn prepare_pass(
     if !(continue_tools || promoted || first) {
         return Ok(None);
     }
+    if !continue_tools {
+        // A new prompt's Turns start without the previous one's routing state.
+        handle.turn_state.reset();
+    }
     if inner.needs_compaction(handle, &resolved.model).await? {
         let compaction =
             inner.compact_and_continue(handle, CompactionTrigger::Auto, &resolved.model);
@@ -910,6 +914,32 @@ impl Inner {
         self.fail_step(handle, message_id, error).await
     }
 
+    /// Open a Turn's stream through the retry policy, announcing each retry for the
+    /// Session; `None` when the Drain is cancelled first.
+    async fn open_turn(
+        &self,
+        handle: &Handle,
+        adapter: &dyn cyber_llm::Adapter,
+        request: &cyber_llm::LlmRequest,
+        cancel: &CancellationToken,
+    ) -> Option<Result<cyber_llm::EventStream, cyber_llm::LlmError>> {
+        // Not the cache key: a subagent's is `<root>:<agent>`.
+        let session_id = handle.state.lock().await.info.id.clone();
+        let bus = self.bus.clone();
+        let announce = |attempt, delay: Duration, e: &cyber_llm::LlmError| {
+            bus.publish(LiveEvent::Retry {
+                session_id: session_id.clone(),
+                attempt,
+                delay_ms: delay.as_millis() as u64,
+                error: e.to_string(),
+            });
+        };
+        tokio::select! {
+            _ = cancel.cancelled() => None,
+            r = open_with_retry(adapter, request, &self.options.retry, announce) => Some(r),
+        }
+    }
+
     async fn turn(
         &self,
         handle: &Handle,
@@ -924,19 +954,9 @@ impl Inner {
             return Ok(TurnEnd::SelectionChanged);
         };
         let resolved = &prepared.model;
-        let session_id = request.cache_key.clone().unwrap_or_default();
-        let bus = self.bus.clone();
         let gated = super::budget::GatedAdapter::new(self, handle, resolved, "turn")
             .for_call(message_id.clone());
-        let opened = tokio::select! {
-            _ = cancel.cancelled() => None,
-            r = open_with_retry(&gated, &request, &self.options.retry, |attempt, delay, e| {
-                bus.publish(LiveEvent::Retry {
-                    session_id: session_id.clone(), attempt, delay_ms: delay.as_millis() as u64, error: e.to_string(),
-                });
-            }) => Some(r),
-        };
-        let stream = match opened {
+        let stream = match self.open_turn(handle, &gated, &request, cancel).await {
             None => {
                 gated.flush().await?;
                 return self
@@ -1087,7 +1107,7 @@ impl Inner {
         let mut defs = catalog.callable;
         defs.extend(catalog.deferred);
         request.tools_disabled |= limited;
-        request.cache_key = Some(state.info.id.clone());
+        self.address(&mut request, &state.info, Some(handle.turn_state.clone()));
         request.initiator = Some(initiator(state.user_input_pending));
         let message_id = cyber_core::ids::new_id("msg");
         let origin = super::usage_origin::step_origin(&self.store, &state)?;

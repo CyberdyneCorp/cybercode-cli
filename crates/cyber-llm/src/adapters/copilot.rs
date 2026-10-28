@@ -6,6 +6,7 @@
 
 use futures::future::BoxFuture;
 
+use super::openai_responses::Backend;
 use super::{Adapter, Endpoint, EventStream, OpenAiChatAdapter, OpenAiResponsesAdapter};
 use crate::catalog::profile::ReasoningCarrier;
 use crate::copilot::{CopilotError, EDITOR_VERSION, INTEGRATION_ID, Protocol, Route};
@@ -67,11 +68,15 @@ fn has_images(request: &LlmRequest) -> bool {
 }
 
 /// Copilot's models served by Responses carry reasoning in Responses items; the
-/// `reasoning_opaque` field belongs to its Chat Completions protocol.
+/// `reasoning_opaque` field belongs to its Chat Completions protocol. Copilot lists no
+/// reasoning capability, but the models it serves by Responses all reason. Copilot gets
+/// no Session routing headers.
 fn responses_carrier(mut request: LlmRequest) -> LlmRequest {
     if request.reasoning_carrier == ReasoningCarrier::CopilotOpaque {
         request.reasoning_carrier = ReasoningCarrier::Responses;
+        request.shaping.reasoning = true;
     }
+    request.routing = None;
     request
 }
 
@@ -104,6 +109,7 @@ impl Adapter for CopilotAdapter {
                     let inner = OpenAiResponsesAdapter {
                         endpoint,
                         response_limit,
+                        backend: Backend::Other,
                     };
                     inner.stream(responses_carrier(request)).await
                 }

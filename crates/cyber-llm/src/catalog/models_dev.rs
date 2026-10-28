@@ -52,6 +52,7 @@ fn provider(id: &str, v: &Value) -> Provider {
         api_key: None,
         auth_none: false,
         request: RequestOverlay::default(),
+        idle_ms: None,
         disabled: false,
         models,
     }

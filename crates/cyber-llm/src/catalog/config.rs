@@ -31,6 +31,7 @@ fn custom_provider(id: &str) -> Provider {
         api_key: None,
         auth_none: false,
         request: RequestOverlay::default(),
+        idle_ms: None,
         disabled: false,
         models: BTreeMap::new(),
     }
@@ -51,6 +52,9 @@ fn apply_provider(p: &mut Provider, v: &Value) {
     }
     p.request
         .layer(&RequestOverlay::from_config(v.get("request")));
+    if let Some(idle) = v.pointer("/timeout/idle_ms").and_then(Value::as_u64) {
+        p.idle_ms = Some(idle);
+    }
     if let Some(disabled) = v.get("disabled").and_then(Value::as_bool) {
         p.disabled = disabled;
     }

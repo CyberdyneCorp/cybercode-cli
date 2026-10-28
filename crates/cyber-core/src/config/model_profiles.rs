@@ -25,6 +25,7 @@ enum Shape {
     OneOf(&'static [&'static str]),
     Bool,
     Tokens,
+    Millis,
     Strings,
     Object(&'static [(&'static str, Shape)]),
 }
@@ -49,12 +50,20 @@ const FIELDS: &[(&str, Shape)] = &[
     ("effort_clamp", Shape::OneOf(EFFORT_CLAMP)),
 ];
 
-/// Warn about every invalid key or value of the model profiles under `providers`.
+/// `providers.<p>.timeout` (`provider-catalog` → Stream idle timeout).
+const TIMEOUT_FIELDS: &[(&str, Shape)] = &[("idle_ms", Shape::Millis)];
+
+/// Warn about every invalid key or value of the model profiles and stream timeouts
+/// under `providers`.
 pub fn check(providers: Option<&Value>, warnings: &mut Vec<String>) {
     let Some(providers) = providers.and_then(Value::as_object) else {
         return;
     };
     for (provider, value) in providers {
+        if let Some(timeout) = value.get("timeout") {
+            let path = format!("providers.{provider}.timeout");
+            check_object(&path, timeout, TIMEOUT_FIELDS, warnings);
+        }
         let models = value.get("models").and_then(Value::as_object);
         for (model, value) in models.into_iter().flatten() {
             let Some(profile) = value.get("profile") else {
@@ -89,6 +98,8 @@ fn check_value(path: &str, value: &Value, shape: &Shape, warnings: &mut Vec<Stri
         Shape::Bool => "true or false".into(),
         Shape::Tokens if value.as_u64().is_some_and(|n| u32::try_from(n).is_ok()) => return,
         Shape::Tokens => "a token count".into(),
+        Shape::Millis if value.is_u64() => return,
+        Shape::Millis => "milliseconds (0 turns it off)".into(),
         Shape::Strings if is_strings(value) => return,
         Shape::Strings => "an array of strings".into(),
     };
@@ -143,6 +154,20 @@ mod tests {
                 "providers.corp.models.coder.profile.verbosity.default: expected one of low, medium, high, got \"loud\"; ignored",
                 "providers.corp.models.coder.profile.tool_output.tokens: expected a token count, got -1; ignored",
                 "unknown config key \"providers.corp.models.coder.profile.colour\"; ignored",
+            ]
+        );
+        let mut timeouts = Vec::new();
+        check(
+            Some(
+                &json!({"a": {"timeout": {"idle_ms": 0}}, "b": {"timeout": {"idle_ms": "5m", "connect_ms": 1}}}),
+            ),
+            &mut timeouts,
+        );
+        assert_eq!(
+            timeouts,
+            [
+                "providers.b.timeout.idle_ms: expected milliseconds (0 turns it off), got \"5m\"; ignored",
+                "unknown config key \"providers.b.timeout.connect_ms\"; ignored",
             ]
         );
         assert_eq!(

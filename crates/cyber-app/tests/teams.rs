@@ -137,12 +137,13 @@ fn request_with(app: &ModeApp, needle: &str) -> Value {
         .unwrap_or_else(|| panic!("no request contains {needle:?}"))
 }
 
-/// The model requests of one Session, oldest first.
-fn requests_of(app: &ModeApp, session_id: &str) -> Vec<Value> {
+/// The model requests with one prompt cache key, oldest first: a root Session's ID, or
+/// `<root>:<agent>` for its subagents.
+fn requests_of(app: &ModeApp, cache_key: &str) -> Vec<Value> {
     app.model
         .requests()
         .into_iter()
-        .filter(|body| body["prompt_cache_key"] == session_id)
+        .filter(|body| body["prompt_cache_key"] == cache_key)
         .collect()
 }
 
@@ -2352,13 +2353,15 @@ async fn a_stopped_team_starts_no_turn_of_a_teammates_subagent() {
     let call = r#"TOOL<<agent>>{"prompt": "GATE\u003c\u003csub-1>>", "background": true}"#;
     app.run(&api, call).await;
     held_at_gate(&app).await;
-    let child = app
-        .model
-        .requests()
-        .into_iter()
-        .filter_map(|body| body["prompt_cache_key"].as_str().map(str::to_owned))
-        .find(|id| *id != api && *id != lead)
-        .expect("the subagent's request");
+    let filter = cyber_server::runtime::ListFilter {
+        parent: Some(api.clone()),
+        ..Default::default()
+    };
+    let row = app.app.runtime.list(&filter).unwrap().sessions.pop();
+    let row = row.expect("the subagent's Session");
+    let child = row.id;
+    // A subagent's prompt cache key is `<root>:<agent>`.
+    let child_key = format!("{api}:{}", row.agent);
 
     let stopping = app.app.runtime.team_stop(&team.id).await.unwrap();
     assert_eq!(stopping.status, "stopping", "the subagent still runs");
@@ -2367,11 +2370,18 @@ async fn a_stopped_team_starts_no_turn_of_a_teammates_subagent() {
     team_status(&app, &team.id, "stopped").await;
     app.app.runtime.wait_idle(&child).await;
     app.app.runtime.wait_idle(&api).await;
-    let texts: Vec<String> = requests_of(&app, &child).iter().map(request_text).collect();
+    let texts: Vec<String> = requests_of(&app, &child_key)
+        .iter()
+        .map(request_text)
+        .collect();
     assert_eq!(texts.len(), 1, "{texts:?}");
     prompt(&app, &child, "subagent while stopped").await;
     app.app.runtime.wait_idle(&child).await;
-    assert_eq!(requests_of(&app, &child).len(), 1, "no Turn while stopped");
+    assert_eq!(
+        requests_of(&app, &child_key).len(),
+        1,
+        "no Turn while stopped"
+    );
     assert_eq!(
         requests_of(&app, &api).len(),
         api_requests,

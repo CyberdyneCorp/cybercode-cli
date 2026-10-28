@@ -4,10 +4,10 @@
 use std::time::Duration;
 
 use cyber_llm::adapters::{ApiKind, Endpoint, ScriptStep, ScriptedAdapter, adapter};
-use cyber_llm::catalog::profile::ReasoningCarrier;
+use cyber_llm::catalog::profile::{ReasoningCarrier, VerbosityLevel};
 use cyber_llm::{
     Content, ErrorKind, FinishReason, LlmEvent, LlmRequest, Message, Opaque, OpaqueKind, Reasoning,
-    RetryPolicy, Role, ToolSpec, Usage, collect, open_with_retry,
+    RetryPolicy, Role, Shaping, ToolSpec, Usage, collect, open_with_retry,
 };
 use serde_json::{Value, json};
 use wiremock::matchers::{method, path};
@@ -192,6 +192,7 @@ async fn openai_responses_streams_reasoning_and_function_calls() {
 
     let mut req = request();
     req.reasoning = Some(Reasoning::Effort("high".into()));
+    req.shaping.reasoning_summary = true;
     let (out, sent) = run(ApiKind::OpenaiResponses, &server, "/v1", req).await;
     assert_eq!(out.reasoning, "thinking");
     assert_eq!(out.text, "Hi");
@@ -1008,6 +1009,162 @@ fn tool_loop(carrier: ReasoningCarrier, answer: Vec<Content>) -> LlmRequest {
     }
 }
 
+/// A one-message Responses request with the `clock` tool, shaped by `shaping`.
+fn shaped_request(reasoning: Option<Reasoning>, shaping: Shaping) -> LlmRequest {
+    LlmRequest {
+        model: "gpt-6-sol".into(),
+        messages: vec![Message::user_text("time?")],
+        tools: vec![ToolSpec {
+            name: "clock".into(),
+            description: "Current time".into(),
+            input_schema: json!({"type": "object"}),
+        }],
+        reasoning,
+        reasoning_carrier: ReasoningCarrier::Responses,
+        cache_key: Some("ses_root".into()),
+        cache: true,
+        shaping,
+        ..LlmRequest::default()
+    }
+}
+
+async fn responses_body(req: LlmRequest) -> Value {
+    sent_body(
+        ApiKind::OpenaiResponses,
+        "/v1/responses",
+        responses_done(),
+        req,
+    )
+    .await
+}
+
+const USER_TIME: &str =
+    r#"[{"role": "user", "content": [{"type": "input_text", "text": "time?"}]}]"#;
+
+fn clock_tools() -> Value {
+    json!([{"type": "function", "name": "clock", "description": "Current time",
+        "parameters": {"type": "object"}, "strict": false}])
+}
+
+/// `provider-catalog` → "Request fields for a reasoning model": every field a profile
+/// that supports them turns on.
+#[tokio::test]
+async fn golden_responses_option_set_for_a_supporting_model() {
+    let shaping = Shaping {
+        reasoning: true,
+        reasoning_summary: true,
+        effort_none: true,
+        verbosity: Some(VerbosityLevel::Low),
+        parallel_tool_calls: Some(true),
+    };
+    let req = shaped_request(Some(Reasoning::Effort("medium".into())), shaping);
+    assert_eq!(
+        responses_body(req).await,
+        json!({
+            "model": "gpt-6-sol",
+            "input": serde_json::from_str::<Value>(USER_TIME).unwrap(),
+            "stream": true,
+            "store": false,
+            "tools": clock_tools(),
+            "tool_choice": "auto",
+            "parallel_tool_calls": true,
+            "reasoning": {"effort": "medium", "summary": "auto"},
+            "text": {"verbosity": "low"},
+            "prompt_cache_key": "ses_root",
+            "include": ["reasoning.encrypted_content"],
+        })
+    );
+}
+
+/// `provider-catalog` → "Summary left out where unsupported": a profile without summary
+/// or verbosity, on a model without the reasoning capability, sends neither, nor
+/// `include`.
+#[tokio::test]
+async fn golden_responses_option_set_for_an_unsupporting_model() {
+    let shaping = Shaping {
+        parallel_tool_calls: Some(false),
+        ..Shaping::default()
+    };
+    let req = shaped_request(Some(Reasoning::Effort("high".into())), shaping);
+    assert_eq!(
+        responses_body(req).await,
+        json!({
+            "model": "gpt-6-sol",
+            "input": serde_json::from_str::<Value>(USER_TIME).unwrap(),
+            "stream": true,
+            "store": false,
+            "tools": clock_tools(),
+            "tool_choice": "auto",
+            "parallel_tool_calls": false,
+            "reasoning": {"effort": "high"},
+            "prompt_cache_key": "ses_root",
+        })
+    );
+}
+
+/// Regression: a custom gateway speaking Responses received the OpenAI API's
+/// `session-id`; it gets no routing headers.
+#[tokio::test]
+async fn a_responses_gateway_gets_no_routing_headers() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(ok_stream(responses_done()))
+        .mount(&server)
+        .await;
+    let mut req = shaped_request(None, Shaping::default());
+    req.routing = Some(cyber_llm::Routing {
+        root: "ses_root".into(),
+        session: "ses_root".into(),
+        subagent: Some("title".into()),
+        turn_state: Some(cyber_llm::TurnState::default()),
+    });
+    run(ApiKind::OpenaiResponses, &server, "/v1", req).await;
+    let headers = &server.received_requests().await.unwrap()[0].headers;
+    for name in [
+        "session-id",
+        "thread-id",
+        "x-client-request-id",
+        "x-openai-subagent",
+    ] {
+        assert!(headers.get(name).is_none(), "{name} sent to a gateway");
+    }
+}
+
+/// Reasoning off is the `none` effort only where the model lists it; with tools
+/// disabled `tool_choice` stays `none` and no parallel flag is sent.
+#[tokio::test]
+async fn golden_responses_reasoning_off_and_tools_disabled() {
+    let listed = Shaping {
+        effort_none: true,
+        parallel_tool_calls: Some(true),
+        ..Shaping::default()
+    };
+    let mut req = shaped_request(Some(Reasoning::Off), listed.clone());
+    req.cache = false;
+    let sent = responses_body(req).await;
+    assert_eq!(sent["reasoning"], json!({"effort": "none"}));
+    assert!(sent.get("prompt_cache_key").is_none(), "cache: false");
+
+    let unlisted = Shaping {
+        effort_none: false,
+        ..listed
+    };
+    let mut req = shaped_request(Some(Reasoning::Off), unlisted);
+    req.tools_disabled = true;
+    assert_eq!(
+        responses_body(req).await,
+        json!({
+            "model": "gpt-6-sol",
+            "input": serde_json::from_str::<Value>(USER_TIME).unwrap(),
+            "stream": true,
+            "store": false,
+            "tool_choice": "none",
+            "prompt_cache_key": "ses_root",
+        })
+    );
+}
+
 /// `provider-catalog` → Responses request shaping: encrypted reasoning is requested and
 /// replayed in position, and an ID the API did not issue is left out.
 #[tokio::test]
@@ -1029,7 +1186,8 @@ async fn golden_responses_replays_encrypted_reasoning_in_position() {
         // No encrypted content (dropped as oversized): nothing to replay statelessly.
         reasoning("lost", None),
     ];
-    let req = tool_loop(ReasoningCarrier::Responses, answer);
+    let mut req = tool_loop(ReasoningCarrier::Responses, answer);
+    req.shaping.reasoning = true;
     let sent = sent_body(
         ApiKind::OpenaiResponses,
         "/v1/responses",

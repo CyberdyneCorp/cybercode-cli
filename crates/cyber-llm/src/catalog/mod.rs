@@ -197,6 +197,10 @@ pub struct Provider {
     /// `api.settings.auth: "none"`: no credential needed.
     pub auth_none: bool,
     pub request: RequestOverlay,
+    /// `timeout.idle_ms`: how long a response stream may stay silent; `0` turns the
+    /// timer off and `None` keeps the default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idle_ms: Option<u64>,
     pub disabled: bool,
     pub models: BTreeMap<String, Model>,
 }
@@ -395,6 +399,7 @@ impl Catalog {
                 profile::ReasoningReplay::Never => profile::ReasoningCarrier::None,
                 _ => model.profile.reasoning_carrier,
             },
+            shaping: profile::shaping(model),
             ..LlmRequest::default()
         };
         let kind = model
@@ -402,6 +407,9 @@ impl Catalog {
             .or(provider.kind)
             .expect("checked by availability");
         let mut endpoint = Endpoint::new(url, key);
+        if let Some(idle) = provider.idle_ms {
+            endpoint.idle_timeout = (idle > 0).then(|| std::time::Duration::from_millis(idle));
+        }
         if kind == ApiKind::ChatgptCodex {
             endpoint.login.clone_from(&self.chatgpt);
         }
@@ -490,6 +498,7 @@ fn resolve_profiles(providers: &mut BTreeMap<String, Provider>) {
         for (id, resolved) in profiles {
             if let Some(model) = provider.models.get_mut(&id) {
                 model.profile = resolved;
+                profile::warn_unsupported_verbosity(&provider.id, model);
             }
         }
     }

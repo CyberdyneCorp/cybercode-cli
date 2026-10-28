@@ -1171,6 +1171,113 @@ async fn rate_limits_are_retried_before_output() {
     assert_eq!(retries, 2);
 }
 
+/// Regression: a subagent's retry notice named its prompt cache key
+/// (`<root>:<agent>`) instead of its Session. Its requests carry that key and the
+/// routing of the root Session.
+#[tokio::test]
+async fn a_subagent_retry_names_its_own_session() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![error(ErrorKind::RateLimit, "slow"), text("fine")],
+        )],
+        ..Setup::default()
+    });
+    let root = h.session().await;
+    let child = h
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(root.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let mut live = h.runtime.subscribe();
+    h.runtime
+        .admit(&child, admit("go", Delivery::Steer))
+        .await
+        .unwrap();
+    h.settle(&child).await;
+    let mut retried = Vec::new();
+    while let Ok(e) = live.try_recv() {
+        if let LiveEvent::Retry { session_id, .. } = e {
+            retried.push(session_id);
+        }
+    }
+    assert_eq!(retried, std::slice::from_ref(&child));
+
+    let agent = h.state(&child).await.info.agent;
+    let request = h.models.requests("test/main").pop().unwrap();
+    assert_eq!(request.cache_key, Some(format!("{root}:{agent}")));
+    let routing = request.routing.unwrap();
+    assert_eq!(
+        (routing.root, routing.session, routing.subagent),
+        (root, child, Some(agent))
+    );
+}
+
+/// `provider-catalog` → Session routing headers: the requests answering one prompt share
+/// one Turn state, and the next prompt starts without it.
+#[tokio::test]
+async fn turn_state_spans_one_prompt_and_resets_for_the_next() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![tools(&[("c1", "write", "{}")]), text("done"), text("again")],
+        )],
+        ..Setup::default()
+    });
+    h.tools.set("write", Behavior::Gated);
+    let id = h.session().await;
+    h.runtime
+        .admit(&id, admit("one", Delivery::Steer))
+        .await
+        .unwrap();
+    h.tools.started.notified().await;
+    let state_of = |request: &cyber_llm::LlmRequest| {
+        request
+            .routing
+            .as_ref()
+            .unwrap()
+            .turn_state
+            .clone()
+            .unwrap()
+    };
+    let first = h.models.requests("test/main");
+    // What the backend's first response would leave.
+    state_of(&first[0]).offer("abc");
+    h.tools.release.notify_one();
+    h.settle(&id).await;
+    let requests = h.models.requests("test/main");
+    assert_eq!(requests.len(), 2);
+    assert_eq!(state_of(&requests[1]).get().as_deref(), Some("abc"));
+    let routing = requests[0].routing.clone().unwrap();
+    assert_eq!(
+        (
+            routing.root.as_str(),
+            routing.session.as_str(),
+            routing.subagent
+        ),
+        (id.as_str(), id.as_str(), None)
+    );
+    assert_eq!(requests[0].cache_key.as_deref(), Some(id.as_str()));
+
+    h.runtime
+        .admit(&id, admit("two", Delivery::Steer))
+        .await
+        .unwrap();
+    h.settle(&id).await;
+    let next = h.models.requests("test/main").pop().unwrap();
+    assert_eq!(
+        state_of(&next).get(),
+        None,
+        "a new prompt starts a new Turn state"
+    );
+}
+
 #[tokio::test]
 async fn titles_are_generated_from_the_first_prompt() {
     let h = Harness::new(Setup {

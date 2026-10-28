@@ -285,6 +285,7 @@ mod tests {
         let endpoint = Endpoint::new("https://api.openai.com/v1", None);
         let mut request = request();
         request.reasoning_carrier = ReasoningCarrier::Responses;
+        request.shaping.reasoning = true;
         let mut opaque = Opaque::new(OpaqueKind::EncryptedReasoning, "gAAAA");
         opaque.id = Some("rs_1".into());
         request.messages.push(Message {
@@ -307,6 +308,44 @@ mod tests {
         let mut odd = self::request();
         odd.body = json!({"input": [{"type": "reasoning", "summary": [], "encrypted_content": "x", "content": [{}]}]});
         assert!(prepare(&endpoint, odd, 1000).is_err());
+    }
+
+    /// `provider-catalog` → Responses request shaping: every field the profile adds
+    /// (summary, verbosity, tool choice, parallel calls, include, cache key) still
+    /// reserves.
+    #[test]
+    fn a_fully_shaped_request_is_still_reserved() {
+        use crate::catalog::profile::{ReasoningCarrier, VerbosityLevel};
+        use crate::{Reasoning, Shaping, ToolSpec};
+        let endpoint = Endpoint::new("https://api.openai.com/v1", None);
+        let mut request = request();
+        request.reasoning_carrier = ReasoningCarrier::Responses;
+        request.reasoning = Some(Reasoning::Effort("high".into()));
+        request.cache = true;
+        request.cache_key = Some("ses_1".into());
+        request.tools = vec![ToolSpec {
+            name: "clock".into(),
+            description: "Current time".into(),
+            input_schema: json!({"type": "object"}),
+        }];
+        request.shaping = Shaping {
+            reasoning: true,
+            reasoning_summary: true,
+            effort_none: true,
+            verbosity: Some(VerbosityLevel::Low),
+            parallel_tool_calls: Some(true),
+        };
+        let prepared = prepare(&endpoint, request, 1000).unwrap();
+        let body = super::super::build_body(&prepared.request);
+        assert_eq!(
+            body["reasoning"],
+            json!({"effort": "high", "summary": "auto"})
+        );
+        assert_eq!(body["text"], json!({"verbosity": "low"}));
+        assert_eq!(body["tool_choice"], "auto");
+        assert_eq!(body["parallel_tool_calls"], true);
+        assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+        assert_eq!(body["prompt_cache_key"], "ses_1");
     }
 
     #[test]

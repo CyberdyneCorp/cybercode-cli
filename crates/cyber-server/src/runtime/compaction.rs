@@ -360,6 +360,7 @@ impl Inner {
         ))];
         request.tools = Vec::new();
         request.max_output_tokens = Some(request.max_output_tokens.unwrap_or(4096).min(8192));
+        request.routing = Some(self.routing(&state.info, Some("compact")));
         // Compaction continues the Turn a prompt opened; it is never a new user request.
         request.initiator = Some(cyber_llm::Initiator::Agent);
         let handle = self.handle(&state.info.id).await?;

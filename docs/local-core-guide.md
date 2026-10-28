@@ -59,6 +59,30 @@ Cyber retries retryable provider failures up to four times before assistant outp
 
 An HTTP body failure reports `provider response stream interrupted after N body bytes` followed by the credential-redacted transport error. This identifies where the failure happened; it does not identify whether the provider, network or client caused it. A valid protocol completion is final: Cyber retains its result and usage even if the HTTP tail later stalls or closes incorrectly. A stream that ends before protocol completion still fails.
 
+### Stream idle timeout
+
+A response stream that delivers no bytes for `providers.<p>.timeout.idle_ms` milliseconds (default 300 000, five minutes) fails with a `Transport` error `stream idle for <n>s`. It is retried like any other transport failure when no output had arrived; after output, the partial response is kept as described above. `0` turns the timer off for that provider:
+
+```jsonc
+{ "providers": { "ollama": { "timeout": { "idle_ms": 0 } } } }
+```
+
+### Provider error codes
+
+Known error codes from HTTP bodies and in-stream errors map onto the usual reasons, so retries, fallback and messages follow the code rather than the status alone:
+
+| Code | Reason | What you see |
+|---|---|---|
+| `context_length_exceeded` | `ContextOverflow` | the overflow path (compaction, then the error) |
+| `insufficient_quota`, `credit_balance_exhausted`, `*_spend_limit_exceeded` | `QuotaExceeded` | fallback models are tried |
+| `usage_limit_reached` (ChatGPT plan) | `QuotaExceeded` | `usage limit reached; resets at <local time>` in the TUI status and in `exec` errors, after any fallback |
+| `usage_not_included` | `Authentication` | `plan does not include this model` |
+| `server_is_overloaded`, `slow_down`, `policy_capacity_unavailable` | `ProviderInternal` | retried |
+| `rate_limit_exceeded` | `RateLimit` | retried |
+| `invalid_prompt`, `*_policy` | `ContentPolicy` | not retried |
+
+A retry waits the delay the server advises, taken from `retry-after-ms`, then `Retry-After`, then a message such as "try again in 2.5s", capped at 60 seconds, in place of the usual backoff. A Responses `response.incomplete` finishes as `Stop` for `interrupted`, `Length` for `max_output_tokens` and `ContentFilter` for `content_filter`; any other reason fails the step as `ProviderInternal` with the reason, rather than ending silently.
+
 ## Reasoning replay
 
 An answer keeps its reasoning as separate items, one per reasoning block the provider streamed, each placed among the answer's tool calls where the provider produced it. An item can carry opaque provider state, stored exactly as received. Each provider gets it back in its own field (the profile's `reasoning_carrier`):
@@ -119,6 +143,8 @@ The sign-in uses OpenAI's OAuth flow with the Codex public client, which is what
 - Its models are the ones the backend lists for your account. The list is fetched at login, kept in `chatgpt-models.json` beside the login, and refreshed once a day. Change them under `providers.chatgpt` in `cyber.jsonc`. If the list is empty, run the login again.
 - `localhost:1455` is the port Codex uses too. If another login holds it, finish that login or use `--method code`.
 - Windows is not supported yet, because the login file cannot be made owner-only there.
+- Each request names its Session for routing: `session-id` (the root Session), `thread-id` and `x-client-request-id` (the requesting Session), and `x-openai-subagent` for compaction, titles, recaps and subagents. The first `x-codex-turn-state` the backend returns while answering a prompt is sent back on that prompt's later requests and retries, kept in memory only, and dropped when the next prompt starts. The `openai` provider at its default URL gets `session-id` alone; other providers, including custom Responses gateways, get none of these headers. `prompt_cache_key` is the root Session ID, or `<root>:<agent>` for a subagent.
+- When the plan's usage limit is reached, the fallback models are tried; with none left, the TUI and `exec` report `usage limit reached; resets at <local time>`.
 - OpenAI's acceptance of third-party harnesses is a public statement, not a contract. The `openai` provider with `OPENAI_API_KEY` is not affected by this login.
 
 ## Signing in with a GitHub Copilot subscription

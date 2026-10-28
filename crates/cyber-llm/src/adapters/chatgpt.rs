@@ -5,6 +5,7 @@
 use futures::future::BoxFuture;
 use serde_json::{Value, json};
 
+use super::openai_responses::Backend;
 use super::{Adapter, Endpoint, EventStream, OpenAiResponsesAdapter};
 use crate::chatgpt::{ChatGptError, Login, ORIGINATOR, Session, fetch_models};
 use crate::error::LlmError;
@@ -80,6 +81,7 @@ impl Adapter for ChatGptAdapter {
             let inner = OpenAiResponsesAdapter {
                 endpoint,
                 response_limit: self.response_limit,
+                backend: Backend::ChatGpt,
             };
             inner.stream(shaped(request)).await
         })
@@ -153,6 +155,10 @@ mod tests {
         let request = LlmRequest {
             model: "gpt-5.6-sol".into(),
             reasoning_carrier: ReasoningCarrier::Responses,
+            shaping: crate::types::Shaping {
+                reasoning: true,
+                ..Default::default()
+            },
             messages: vec![Message {
                 role: Role::Assistant,
                 content: vec![Content::Reasoning {

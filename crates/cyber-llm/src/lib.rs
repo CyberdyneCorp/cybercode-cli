@@ -25,6 +25,6 @@ pub use sse::{SseEvent, SseParser};
 pub use turn::{TurnOutput, collect};
 pub use types::{
     AttachmentRef, Content, FinishReason, Initiator, LlmEvent, LlmRequest, Message,
-    OPAQUE_MAX_BYTES, OPAQUE_REDACTED, Opaque, OpaqueKind, Reasoning, Role, ToolCall, ToolSpec,
-    Usage, redact_opaque_fields,
+    OPAQUE_MAX_BYTES, OPAQUE_REDACTED, Opaque, OpaqueKind, Reasoning, Role, Routing, Shaping,
+    ToolCall, ToolSpec, TurnState, Usage, redact_opaque_fields,
 };

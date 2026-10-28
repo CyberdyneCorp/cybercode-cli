@@ -67,19 +67,22 @@
 
 ## 5. Request shaping, headers, timeout, errors
 
-- [ ] 5.1 Responses shaping:
+- [x] 5.1 Responses shaping:
   - `reasoning.summary` gating, and `effort: "none"` only when the model lists it;
   - `text.verbosity`, `tool_choice`, `parallel_tool_calls`;
   - `prompt_cache_key` from the root Session.
   
   Add `include` to the reserved-request allowed keys (`reservation.rs`), with a test that a reserved request still passes.
-- [ ] 5.2 ChatGPT routing headers and `x-codex-turn-state` echo, scoped to one Turn.
+  - Only the default OpenAI API URL is the API backend; a custom Responses gateway gets no routing headers (regression test).
+- [x] 5.2 ChatGPT routing headers and `x-codex-turn-state` echo, scoped to one Turn.
   - Test with a mock backend: "Turn state echoed within a Turn only".
-- [ ] 5.3 Idle timeout in `sse.rs` (`provider.timeout.idle_ms`).
+  - The Turn state spans the requests answering one prompt (its tool loop and retries) and resets when the next prompt starts; `tests/runtime.rs` covers the reset and the subagent's Session ID in retry notices.
+- [x] 5.3 Idle timeout in `sse.rs` (`provider.timeout.idle_ms`).
   - Test in `tests/transport_faults.rs` using a paused clock.
-- [ ] 5.4 Error code table, server-advised delay parsing (capped at 60 s), `usage_limit_reached` with `resets_at`, and the `response.incomplete` mapping.
+- [x] 5.4 Error code table, server-advised delay parsing (capped at 60 s), `usage_limit_reached` with `resets_at`, and the `response.incomplete` mapping.
   - Unit tests for each code.
   - Show `resets_at` in the TUI status and in `exec` errors, with a screen test.
+  - The reset time is formatted into the error message where the adapter runs (the local server), so every client shows the same text.
 
 ## 6. Tools
 
@@ -102,8 +105,8 @@
 
 ## 8. Evidence
 
-- [ ] 8.1 Golden request fixtures in `tests/adapters.rs`, one per carrier and per Responses option set, pinning the exact JSON.
-  - Done for every carrier (`golden_*` in `tests/adapters.rs`, Copilot in `tests/copilot.rs`); the Responses option sets wait for 5.1.
+- [x] 8.1 Golden request fixtures in `tests/adapters.rs`, one per carrier and per Responses option set, pinning the exact JSON.
+  - Done for every carrier (`golden_*` in `tests/adapters.rs`, Copilot in `tests/copilot.rs`) and for the Responses option sets (supporting model, unsupporting model, reasoning off and tools disabled).
 - [ ] 8.2 Live tests (`tests/live.rs`, ignored by default, run with keys):
   - an OpenAI tool loop with encrypted reasoning replayed;
   - an Anthropic interleaved-thinking loop;

@@ -8,12 +8,12 @@ use super::{
     ensure_resolved, parse_json,
 };
 use crate::catalog::profile::ReasoningCarrier;
-use crate::error::{LlmError, classify_stream_error};
+use crate::error::{ErrorKind, LlmError, stream_error};
 use crate::json::{deep_merge, force_no_tools, str_at, strip_credentials};
 use crate::sse::SseEvent;
 use crate::types::{
     Content, FinishReason, LlmEvent, LlmRequest, Message, Opaque, OpaqueKind, Reasoning, Role,
-    Usage,
+    TurnState, Usage,
 };
 
 mod reservation;
@@ -21,13 +21,76 @@ mod reservation;
 pub struct OpenAiResponsesAdapter {
     pub(super) endpoint: Endpoint,
     pub(super) response_limit: Option<usize>,
+    pub(super) backend: Backend,
 }
+
+/// Who serves the Responses protocol, which decides the routing headers
+/// (`provider-catalog` → Session routing headers).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Backend {
+    /// The OpenAI API with a key: `session-id` only.
+    Api,
+    /// The ChatGPT subscription backend: every routing header and the Turn state.
+    ChatGpt,
+    /// Any other gateway: none.
+    Other,
+}
+
+impl Backend {
+    /// The OpenAI API only at its default URL; a custom gateway speaking Responses gets
+    /// no routing headers.
+    fn for_url(base_url: &str) -> Self {
+        let default = super::ApiKind::OpenaiResponses.default_url();
+        if Some(base_url.trim_end_matches('/')) == default {
+            Self::Api
+        } else {
+            Self::Other
+        }
+    }
+}
+
+const TURN_STATE: &str = "x-codex-turn-state";
 
 impl OpenAiResponsesAdapter {
     pub fn new(endpoint: Endpoint) -> Self {
         Self {
+            backend: Backend::for_url(&endpoint.base_url),
             endpoint,
             response_limit: None,
+        }
+    }
+
+    /// The routing headers of `request` for this backend.
+    fn routing_headers(&self, request: &LlmRequest) -> Vec<(String, String)> {
+        let Some(routing) = request.routing.as_ref() else {
+            return Vec::new();
+        };
+        let mut headers = match self.backend {
+            Backend::Other => return Vec::new(),
+            Backend::Api | Backend::ChatGpt => vec![("session-id", routing.root.clone())],
+        };
+        if self.backend == Backend::ChatGpt {
+            headers.push(("thread-id", routing.session.clone()));
+            headers.push(("x-client-request-id", routing.session.clone()));
+            headers.extend(routing.subagent.clone().map(|s| ("x-openai-subagent", s)));
+            let state = routing.turn_state.as_ref().and_then(TurnState::get);
+            headers.extend(state.map(|s| (TURN_STATE, s)));
+        }
+        headers
+            .into_iter()
+            .map(|(name, value)| (name.to_string(), value))
+            .collect()
+    }
+
+    /// Keep the Turn's first `x-codex-turn-state`, from the ChatGPT backend only.
+    fn keep_turn_state(&self, request: &LlmRequest, response: &reqwest::Response) {
+        let state = request.routing.as_ref().and_then(|r| r.turn_state.as_ref());
+        let value = response
+            .headers()
+            .get(TURN_STATE)
+            .and_then(|v| v.to_str().ok());
+        if let (Backend::ChatGpt, Some(state), Some(value)) = (self.backend, state, value) {
+            state.offer(value);
         }
     }
 }
@@ -51,6 +114,7 @@ impl Adapter for OpenAiResponsesAdapter {
         Some(Box::new(Self {
             endpoint,
             response_limit: Some(response_limit),
+            backend: self.backend,
         }))
     }
 
@@ -64,16 +128,13 @@ impl Adapter for OpenAiResponsesAdapter {
                 .iter()
                 .map(|k| ("authorization".to_string(), format!("Bearer {k}")))
                 .collect();
+            let mut headers = self.routing_headers(&request);
+            headers.extend(request.headers.iter().cloned());
             let resp = self
                 .endpoint
-                .post_stream(
-                    "responses",
-                    &body,
-                    auth,
-                    &request.headers,
-                    self.response_limit,
-                )
+                .post_stream("responses", &body, auth, &headers, self.response_limit)
                 .await?;
+            self.keep_turn_state(&request, &resp);
             Ok(decode_sse(
                 resp,
                 ResponsesDecoder::default(),
@@ -99,10 +160,19 @@ pub(crate) fn build_body(request: &LlmRequest) -> Value {
             .map(|t| json!({ "type": "function", "name": t.name, "description": t.description, "parameters": t.input_schema, "strict": false }))
             .collect();
         map.insert("tools".into(), Value::Array(tools));
+        map.insert("tool_choice".into(), json!("auto"));
+        if let Some(parallel) = request.shaping.parallel_tool_calls {
+            map.insert("parallel_tool_calls".into(), json!(parallel));
+        }
     }
     optional_fields(request, map);
     deep_merge(&mut body, &request.body);
     force_no_tools(&mut body, request.tools_disabled, json!("none"));
+    if request.tools_disabled
+        && let Some(map) = body.as_object_mut()
+    {
+        map.remove("parallel_tool_calls");
+    }
     strip_credentials(&mut body);
     body
 }
@@ -114,24 +184,31 @@ fn optional_fields(request: &LlmRequest, map: &mut Map<String, Value>) {
     if let Some(t) = request.temperature {
         map.insert("temperature".into(), json!(t));
     }
-    match &request.reasoning {
-        Some(Reasoning::Effort(effort)) => {
-            map.insert(
-                "reasoning".into(),
-                json!({ "effort": effort, "summary": "auto" }),
-            );
-        }
-        Some(Reasoning::Off) => {
-            map.insert("reasoning".into(), json!({ "effort": "none" }));
-        }
-        _ => {}
+    if let Some(reasoning) = reasoning_field(request) {
+        map.insert("reasoning".into(), reasoning);
+    }
+    if let Some(verbosity) = request.shaping.verbosity {
+        map.insert("text".into(), json!({ "verbosity": verbosity }));
     }
     if let (Some(key), true) = (&request.cache_key, request.cache) {
         map.insert("prompt_cache_key".into(), json!(key));
     }
     // With `store: false` the encrypted reasoning is the only way to keep it across calls.
-    if request.reasoning_carrier == ReasoningCarrier::Responses {
+    if request.shaping.reasoning && request.reasoning_carrier == ReasoningCarrier::Responses {
         map.insert("include".into(), json!(["reasoning.encrypted_content"]));
+    }
+}
+
+/// `reasoning`: a summary only where the model accepts one, and reasoning off as the
+/// `none` effort only where the model lists it; otherwise the field is left out.
+fn reasoning_field(request: &LlmRequest) -> Option<Value> {
+    match &request.reasoning {
+        Some(Reasoning::Effort(effort)) if request.shaping.reasoning_summary => {
+            Some(json!({ "effort": effort, "summary": "auto" }))
+        }
+        Some(Reasoning::Effort(effort)) => Some(json!({ "effort": effort })),
+        Some(Reasoning::Off) if request.shaping.effort_none => Some(json!({ "effort": "none" })),
+        _ => None,
     }
 }
 
@@ -350,28 +427,33 @@ impl ResponsesDecoder {
         if let Some(usage) = usage_from(&response["usage"]) {
             out.push(Ok(LlmEvent::Usage(usage)));
         }
-        let reason = match str_at(response, "/incomplete_details/reason") {
-            "max_output_tokens" => FinishReason::Length,
-            "content_filter" => FinishReason::ContentFilter,
-            _ if self.tools.any() => FinishReason::ToolCalls,
-            _ => FinishReason::Stop,
-        };
-        out.push(Ok(LlmEvent::Finish { reason }));
+        out.push(finish(response, self.tools.any()));
     }
 
     fn fail(&mut self, error: &Value, out: &mut Vec<Result<LlmEvent, LlmError>>) {
         self.done = true;
-        let message = str_at(error, "/message");
-        let code = error
-            .get("code")
-            .and_then(Value::as_str)
-            .or_else(|| error.get("type").and_then(Value::as_str))
-            .unwrap_or_default();
-        out.push(Err(LlmError::new(
-            classify_stream_error(code, message),
-            message,
-        )));
+        out.push(Err(stream_error(error)));
     }
+}
+
+/// How a completed or incomplete response finishes (`provider-catalog` →
+/// Provider-specific error codes): an unknown incomplete reason fails the step rather
+/// than passing for a normal stop.
+fn finish(response: &Value, tool_calls: bool) -> Result<LlmEvent, LlmError> {
+    let reason = match str_at(response, "/incomplete_details/reason") {
+        "max_output_tokens" => FinishReason::Length,
+        "content_filter" => FinishReason::ContentFilter,
+        "interrupted" => FinishReason::Stop,
+        "" if tool_calls => FinishReason::ToolCalls,
+        "" => FinishReason::Stop,
+        other => {
+            return Err(LlmError::new(
+                ErrorKind::ProviderInternal,
+                format!("response incomplete: {other}"),
+            ));
+        }
+    };
+    Ok(LlmEvent::Finish { reason })
 }
 
 fn usage_from(u: &Value) -> Option<Usage> {
@@ -439,5 +521,94 @@ mod tests {
             build_body(&request)["input"][0]["content"][0],
             json!({ "type": "input_file", "filename": "spec.pdf", "file_data": "data:application/pdf;base64,JVBERi0=" })
         );
+    }
+
+    /// `provider-catalog` → Provider-specific error codes: the `response.incomplete`
+    /// reasons, and an unknown one failing the step instead of a silent stop.
+    #[test]
+    fn incomplete_reasons_map_to_finishes_or_a_failure() {
+        let finish_of = |reason: &str, tools: bool| {
+            let response = json!({"incomplete_details": {"reason": reason}});
+            match finish(&response, tools) {
+                Ok(LlmEvent::Finish { reason }) => Ok(reason),
+                Ok(other) => panic!("{other:?}"),
+                Err(e) => Err((e.kind, e.message)),
+            }
+        };
+        assert_eq!(finish_of("interrupted", true), Ok(FinishReason::Stop));
+        assert_eq!(
+            finish_of("max_output_tokens", false),
+            Ok(FinishReason::Length)
+        );
+        assert_eq!(
+            finish_of("content_filter", false),
+            Ok(FinishReason::ContentFilter)
+        );
+        assert_eq!(finish_of("", true), Ok(FinishReason::ToolCalls));
+        assert_eq!(finish_of("", false), Ok(FinishReason::Stop));
+        assert_eq!(
+            finish_of("server_shutdown", false),
+            Err((
+                ErrorKind::ProviderInternal,
+                "response incomplete: server_shutdown".into()
+            ))
+        );
+    }
+
+    /// Regression: every Responses endpoint was treated as the OpenAI API, so a custom
+    /// gateway received `session-id`.
+    #[test]
+    fn only_the_default_openai_url_is_the_api_backend() {
+        for (url, backend) in [
+            ("https://api.openai.com/v1", Backend::Api),
+            ("https://api.openai.com/v1/", Backend::Api),
+            ("https://gateway.corp.example/v1", Backend::Other),
+            ("http://127.0.0.1:4000/v1", Backend::Other),
+        ] {
+            let adapter = OpenAiResponsesAdapter::new(Endpoint::new(url, None));
+            assert_eq!(adapter.backend, backend, "{url}");
+        }
+    }
+
+    /// `provider-catalog` → Session routing headers, per backend.
+    #[test]
+    fn routing_headers_follow_the_backend() {
+        let state = TurnState::default();
+        state.offer("abc");
+        let request = LlmRequest {
+            routing: Some(crate::types::Routing {
+                root: "ses_root".into(),
+                session: "ses_child".into(),
+                subagent: Some("explore".into()),
+                turn_state: Some(state),
+            }),
+            ..LlmRequest::default()
+        };
+        let headers = |backend| {
+            let mut adapter =
+                OpenAiResponsesAdapter::new(Endpoint::new("https://api.openai.com/v1", None));
+            adapter.backend = backend;
+            adapter.routing_headers(&request)
+        };
+        let pairs = |list: &[(&str, &str)]| -> Vec<(String, String)> {
+            list.iter()
+                .map(|(n, v)| ((*n).to_string(), (*v).to_string()))
+                .collect()
+        };
+        assert_eq!(
+            headers(Backend::ChatGpt),
+            pairs(&[
+                ("session-id", "ses_root"),
+                ("thread-id", "ses_child"),
+                ("x-client-request-id", "ses_child"),
+                ("x-openai-subagent", "explore"),
+                ("x-codex-turn-state", "abc"),
+            ])
+        );
+        assert_eq!(headers(Backend::Api), pairs(&[("session-id", "ses_root")]));
+        assert!(headers(Backend::Other).is_empty());
+        let unrouted =
+            OpenAiResponsesAdapter::new(Endpoint::new("https://api.openai.com/v1", None));
+        assert!(unrouted.routing_headers(&LlmRequest::default()).is_empty());
     }
 }

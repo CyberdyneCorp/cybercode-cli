@@ -110,6 +110,7 @@ pub mod deferred_tools;
 mod model;
 mod requests;
 mod rewind;
+mod routing;
 mod sandbox_events;
 pub use sandbox_events::SandboxEvent;
 mod selection;
@@ -733,6 +734,8 @@ pub(crate) struct Handle {
     pub compacting: std::sync::atomic::AtomicUsize,
     /// Attachment blobs read for this Drain's Turns, cleared when the Drain ends.
     pub attachment_cache: StdMutex<attachments::Cache>,
+    /// The sticky-routing state of the Turns answering the latest prompt; in memory only.
+    pub turn_state: cyber_llm::TurnState,
 }
 
 impl Handle {
@@ -2454,6 +2457,7 @@ impl Inner {
             location_lease: StdMutex::default(),
             compacting: std::sync::atomic::AtomicUsize::new(0),
             attachment_cache: StdMutex::default(),
+            turn_state: cyber_llm::TurnState::default(),
         });
         let mut sessions = self.sessions.lock().unwrap_or_else(PoisonError::into_inner);
         Ok(Arc::clone(sessions.entry(id.into()).or_insert(handle)))

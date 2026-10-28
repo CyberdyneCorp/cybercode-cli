@@ -332,6 +332,45 @@ pub fn resolve(provider: &Provider, model: &Model) -> ModelProfile {
     profile
 }
 
+/// The Responses request fields `model`'s resolved profile allows
+/// (`provider-catalog` → Responses request shaping).
+pub(super) fn shaping(model: &Model) -> crate::types::Shaping {
+    let profile = &model.profile;
+    crate::types::Shaping {
+        reasoning: model.capabilities.reasoning,
+        reasoning_summary: profile.reasoning_summary,
+        effort_none: profile.efforts.iter().any(|e| e == "none"),
+        verbosity: profile
+            .verbosity
+            .supported
+            .then_some(profile.verbosity.default)
+            .flatten(),
+        parallel_tool_calls: Some(profile.parallel_tool_calls),
+    }
+}
+
+/// Warn, once per model and process, about a configured verbosity default the model
+/// does not support; it is never sent.
+pub(super) fn warn_unsupported_verbosity(provider: &str, model: &Model) {
+    static WARNED: std::sync::Mutex<std::collections::BTreeSet<String>> =
+        std::sync::Mutex::new(std::collections::BTreeSet::new());
+    if model.profile_config.verbosity_default.is_none() || model.profile.verbosity.supported {
+        return;
+    }
+    let id = format!("{provider}/{}", model.id);
+    let fresh = WARNED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(id.clone());
+    if fresh {
+        cyber_core::log::warn(
+            "catalog",
+            "configured verbosity default ignored: the model does not support verbosity",
+            serde_json::json!({ "model": id }),
+        );
+    }
+}
+
 /// Layer 1: the protocol's carrier, and the patch tool for a model whose family edits
 /// with it (today's `prefers_apply_patch`).
 fn defaults(provider: &Provider, model: &Model, kind: Option<ApiKind>) -> ModelProfile {

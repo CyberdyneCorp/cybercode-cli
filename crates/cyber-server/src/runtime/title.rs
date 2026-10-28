@@ -33,13 +33,18 @@ impl Inner {
     }
 
     async fn generate_title(&self, handle: &Handle) -> Result<(), String> {
-        let (prompt, model) = {
+        let (prompt, model, routing) = {
             let state = handle.state.lock().await;
             let prompt = state.entries.iter().find_map(|e| match e {
                 Entry::User { parts, .. } => Some(text_of(parts)),
                 _ => None,
             });
-            (prompt.ok_or("no prompt")?, state.info.model.clone())
+            let routing = self.routing(&state.info, Some("title"));
+            (
+                prompt.ok_or("no prompt")?,
+                state.info.model.clone(),
+                routing,
+            )
         };
         let model = self.resolver.role(ModelRole::Title).unwrap_or(model);
         let resolved = self.resolver.resolve(&model)?;
@@ -49,6 +54,7 @@ impl Inner {
         request.tools = Vec::new();
         request.reasoning = None;
         request.max_output_tokens = Some(80);
+        request.routing = Some(routing);
         // The title belongs to the Turn the first prompt opened; it is not a new request.
         request.initiator = Some(cyber_llm::Initiator::Agent);
         self.check_budget(handle).await.map_err(|e| e.to_string())?;

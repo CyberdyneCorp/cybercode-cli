@@ -6,7 +6,7 @@ use serde_json::{Map, Value, json};
 use super::{
     Adapter, Decoder, Endpoint, EventStream, ToolCalls, decode_sse, ensure_resolved, parse_json,
 };
-use crate::error::{LlmError, classify_stream_error};
+use crate::error::{LlmError, stream_error};
 use crate::json::{deep_merge, force_no_tools, str_at, strip_credentials, u64_at};
 use crate::sse::SseEvent;
 use crate::types::{
@@ -337,11 +337,7 @@ impl AnthropicDecoder {
             "message_stop" => self.complete(out),
             "error" => {
                 self.done = true;
-                let message = str_at(data, "/error/message");
-                out.push(Err(LlmError::new(
-                    classify_stream_error(str_at(data, "/error/type"), message),
-                    message,
-                )));
+                out.push(Err(stream_error(&data["error"])));
             }
             _ => {}
         }

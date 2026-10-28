@@ -168,6 +168,61 @@ fn local_custom_provider_needs_no_key() {
     assert_eq!(resolved.request.max_output_tokens, Some(4096));
 }
 
+/// `provider-catalog` → Responses request shaping: the resolved request carries what the
+/// model's profile and capabilities allow; an unsupported verbosity default is not sent.
+#[test]
+fn resolved_requests_carry_the_profile_shaping() {
+    use cyber_llm::Shaping;
+    use cyber_llm::catalog::profile::VerbosityLevel;
+    let config = json!({"providers": {"openai": {"models": {
+        "gpt-6": {"profile": {"verbosity": {"default": "low"}}},
+        "gpt-6-mini": {"profile": {"verbosity": {"supported": false, "default": "high"},
+            "parallel_tool_calls": false}}
+    }}}});
+    let c = catalog(config, &env(&[("OPENAI_API_KEY", "sk-env")]));
+    let shaping = |id: &str| c.resolve(&model_ref(id), None).unwrap().request.shaping;
+    assert_eq!(
+        shaping("openai/gpt-6"),
+        Shaping {
+            reasoning: true,
+            reasoning_summary: true,
+            effort_none: true,
+            verbosity: Some(VerbosityLevel::Low),
+            parallel_tool_calls: Some(true),
+        }
+    );
+    let mini = shaping("openai/gpt-6-mini");
+    assert!(!mini.reasoning, "no reasoning capability, so no include");
+    assert_eq!(
+        (mini.verbosity, mini.parallel_tool_calls),
+        (None, Some(false))
+    );
+}
+
+/// `provider-catalog` → Stream idle timeout: `timeout.idle_ms` sets the window, `0`
+/// turns it off, and the default is five minutes.
+#[test]
+fn idle_timeout_follows_the_provider_config() {
+    let idle = |timeout: Value| {
+        let config = json!({"providers": {"ollama": {
+            "api": {"type": "openai-compatible", "url": "http://127.0.0.1:11434/v1"},
+            "timeout": timeout,
+            "models": {"qwen3-coder": {}}
+        }}});
+        let c = catalog(config, &env(&[]));
+        c.resolve(&model_ref("ollama/qwen3-coder"), None)
+            .unwrap()
+            .endpoint
+            .idle_timeout
+    };
+    assert_eq!(idle(json!({})), Some(Duration::from_secs(300)));
+    assert_eq!(
+        idle(json!({"idle_ms": 1500})),
+        Some(Duration::from_millis(1500))
+    );
+    assert_eq!(idle(json!({"idle_ms": 0})), None);
+}
+
 #[test]
 fn remote_custom_provider_without_key_is_unavailable() {
     let config = json!({"providers": {"corp": {"api": {"type": "openai-compatible", "url": "https://llm.corp/v1"}, "models": {"coder": {}}}}});
