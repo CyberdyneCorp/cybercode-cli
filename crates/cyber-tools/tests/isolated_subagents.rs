@@ -2889,3 +2889,380 @@ async fn worktree_remove_hook_observes_removal() {
         path.as_path()
     );
 }
+
+/// A real HTTP veto with a barrier for admission/shutdown race tests.
+struct CreationHook {
+    url: String,
+    seen: Arc<std::sync::Mutex<Vec<Value>>>,
+    started: Arc<tokio::sync::Notify>,
+    release: CancellationToken,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl CreationHook {
+    async fn start(decision: Value, held: bool) -> Self {
+        use axum::{Json, Router, routing::post};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/hook", listener.local_addr().unwrap());
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = CancellationToken::new();
+        let (recorded, entered, gate) = (seen.clone(), started.clone(), release.clone());
+        let router = Router::new().route(
+            "/hook",
+            post(move |Json(body): Json<Value>| {
+                let (recorded, entered, gate, decision) = (
+                    recorded.clone(),
+                    entered.clone(),
+                    gate.clone(),
+                    decision.clone(),
+                );
+                async move {
+                    recorded.lock().unwrap().push(body);
+                    entered.notify_one();
+                    if held {
+                        gate.cancelled().await;
+                    }
+                    Json(decision)
+                }
+            }),
+        );
+        let task = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        Self {
+            url,
+            seen,
+            started,
+            release,
+            task,
+        }
+    }
+
+    fn attach(&self, flow: &Flow) {
+        flow.f.global_hooks(json!({"WorktreeCreate":[{"hooks":[
+            {"type":"http","url":self.url,"id":"child-guard","fail_closed":true}
+        ]}]}));
+    }
+
+    async fn entered(&self) {
+        tokio::time::timeout(std::time::Duration::from_secs(20), self.started.notified())
+            .await
+            .expect("isolated creation reaches its pre-effect hook");
+    }
+}
+
+impl Drop for CreationHook {
+    fn drop(&mut self) {
+        self.release.cancel();
+        self.task.abort();
+    }
+}
+
+/// Refs, registered checkouts and persistent checkout records must not change
+/// when admission refuses an operation. Hook receipts in the DB are allowed.
+#[derive(Debug, PartialEq)]
+struct CheckoutEffects {
+    refs: String,
+    checkouts: String,
+    records: std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>,
+}
+
+fn checkout_effects(flow: &Flow) -> CheckoutEffects {
+    fn snapshot(
+        path: &std::path::Path,
+        out: &mut std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>,
+    ) {
+        if !path.exists() {
+            return;
+        }
+        if path.is_dir() {
+            out.insert(path.to_owned(), Vec::new());
+            for entry in std::fs::read_dir(path).unwrap() {
+                snapshot(&entry.unwrap().path(), out);
+            }
+        } else {
+            out.insert(path.to_owned(), std::fs::read(path).unwrap());
+        }
+    }
+    let mut records = std::collections::BTreeMap::new();
+    for path in [
+        flow.f.repo.join(".git/cyber-worktrees"),
+        flow.f.repo.join(".git/worktrees"),
+        flow.f.dir.path().join("worktrees"),
+    ] {
+        snapshot(&path, &mut records);
+    }
+    CheckoutEffects {
+        refs: git(
+            &flow.f.repo,
+            &["for-each-ref", "--format=%(refname):%(objectname)"],
+        ),
+        checkouts: git(&flow.f.repo, &["worktree", "list", "--porcelain"]),
+        records,
+    }
+}
+
+#[tokio::test]
+async fn isolated_creation_hook_veto_has_no_git_child_or_model_effects() {
+    let flow = flow(vec![text("must not run")], false);
+    let hook = CreationHook::start(
+        json!({"decision":"deny","reason":"no isolated checkout"}),
+        false,
+    )
+    .await;
+    hook.attach(&flow);
+    let parent = flow.session("bypass").await;
+    let before = checkout_effects(&flow);
+    let error = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"inspect","name":"vetoed","isolation":"worktree"}),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        error.contains("blocked by hook child-guard: no isolated checkout"),
+        "{error}"
+    );
+    assert_eq!(checkout_effects(&flow), before);
+    assert!(flow.main.requests().is_empty());
+    assert_eq!(
+        flow.runtime
+            .list(&Default::default())
+            .unwrap()
+            .sessions
+            .len(),
+        1
+    );
+    let seen = hook.seen.lock().unwrap();
+    assert_eq!(seen.len(), 1, "{seen:?}");
+    assert_eq!(seen[0]["event"], "WorktreeCreate");
+    assert_eq!(seen[0]["session_id"], parent);
+    assert_eq!(
+        std::path::Path::new(seen[0]["location"]["directory"].as_str().unwrap()),
+        flow.f.repo.as_path()
+    );
+    assert!(seen[0]["name"].as_str().unwrap().starts_with("child-"));
+}
+
+#[tokio::test]
+async fn isolated_worktree_permission_denial_does_not_run_creation_hooks() {
+    let flow = flow(vec![], false);
+    let hook = CreationHook::start(json!({}), false).await;
+    hook.attach(&flow);
+    flow.f
+        .set_config(json!({"permissions":{"agent":"allow","worktree":"deny"}}));
+    let parent = flow.session("bypass").await;
+    let before = checkout_effects(&flow);
+    assert!(
+        invoke(
+            &flow,
+            &parent,
+            json!({"prompt":"inspect","isolation":"worktree"})
+        )
+        .await
+        .is_err()
+    );
+    assert!(hook.seen.lock().unwrap().is_empty());
+    assert_eq!(checkout_effects(&flow), before);
+    assert!(flow.main.requests().is_empty());
+}
+
+#[tokio::test]
+async fn removed_child_checkout_veto_blocks_agent_and_public_continuation_before_rebinding() {
+    use cyber_server::runtime::{Admission, Delivery};
+    for public in [false, true] {
+        let flow = flow(vec![text("first"), text("must not resume")], false);
+        let parent = flow.session("bypass").await;
+        let first = invoke(
+            &flow,
+            &parent,
+            json!({"prompt":"inspect","name":"removed-guard","isolation":"worktree"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(first["worktree"]["kept"], false);
+        let child = first["id"].as_str().unwrap();
+        let state = flow.runtime.state(child).await.unwrap();
+        let before = checkout_effects(&flow);
+        let hook =
+            CreationHook::start(json!({"decision":"deny","reason":"no recreation"}), false).await;
+        hook.attach(&flow);
+        let error = if public {
+            flow.runtime
+                .admit_user(child, Admission::text("continue", Delivery::Steer))
+                .await
+                .unwrap_err()
+                .to_string()
+        } else {
+            invoke(
+                &flow,
+                &parent,
+                json!({"prompt":"continue","resume":"removed-guard"}),
+            )
+            .await
+            .unwrap_err()
+        };
+        assert!(
+            error.contains("blocked by hook child-guard: no recreation"),
+            "public={public}: {error}"
+        );
+        assert_eq!(checkout_effects(&flow), before);
+        let after = flow.runtime.state(child).await.unwrap();
+        assert_eq!(after.info.worktree_id, state.info.worktree_id);
+        assert_eq!(after.inbox, state.inbox);
+        assert!(!after.child_worktree_setup_pending());
+        assert_eq!(flow.main.requests().len(), 1);
+        let seen = hook.seen.lock().unwrap();
+        assert_eq!(seen.len(), 1, "public={public}: {seen:?}");
+        assert_eq!(seen[0]["session_id"], parent);
+        assert_eq!(
+            std::path::Path::new(seen[0]["location"]["directory"].as_str().unwrap()),
+            flow.f.repo.as_path()
+        );
+    }
+}
+
+#[tokio::test]
+async fn retained_child_checkout_does_not_repeat_creation_hooks_on_resume() {
+    let flow = flow(vec![text("first"), text("second")], false);
+    flow.f.set_config(
+        json!({"permissions":{"agent":"allow","worktree":"allow"},"worktrees":{"keep":"always"}}),
+    );
+    let hook = CreationHook::start(json!({}), false).await;
+    hook.attach(&flow);
+    let parent = flow.session("bypass").await;
+    let first = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"inspect","name":"retained-guard","isolation":"worktree"}),
+    )
+    .await
+    .unwrap();
+    let second = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"continue","resume":"retained-guard"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(first["worktree"]["id"], second["worktree"]["id"]);
+    assert_eq!(hook.seen.lock().unwrap().len(), 1);
+    assert_eq!(flow.main.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn isolated_creation_rechecks_permission_after_a_held_hook() {
+    let flow = flow(vec![text("must not run")], false);
+    let hook = CreationHook::start(json!({}), true).await;
+    hook.attach(&flow);
+    let parent = flow.session("bypass").await;
+    let before = checkout_effects(&flow);
+    let creation = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"inspect","isolation":"worktree"}),
+    );
+    let revoke = async {
+        hook.entered().await;
+        flow.f
+            .set_config(json!({"permissions":{"agent":"allow","worktree":"deny"}}));
+        hook.release.cancel();
+    };
+    let (created, ()) = tokio::join!(creation, revoke);
+    assert!(created.unwrap_err().contains("denied"));
+    assert_eq!(checkout_effects(&flow), before);
+    assert!(flow.main.requests().is_empty());
+}
+
+#[tokio::test]
+async fn shutdown_during_isolated_creation_hook_settles_before_git_effects() {
+    let flow = flow(vec![text("must not run")], false);
+    let hook = CreationHook::start(json!({}), true).await;
+    hook.attach(&flow);
+    let parent = flow.session("bypass").await;
+    let before = checkout_effects(&flow);
+    let creation = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"inspect","isolation":"worktree"}),
+    );
+    let shutdown = async {
+        hook.entered().await;
+        tokio::time::timeout(std::time::Duration::from_secs(20), flow.runtime.shutdown())
+            .await
+            .expect("shutdown must cancel a held pre-creation hook");
+    };
+    let (created, ()) = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        tokio::join!(creation, shutdown)
+    })
+    .await
+    .expect("isolated creation and shutdown must settle");
+    assert!(created.is_err());
+    assert_eq!(checkout_effects(&flow), before);
+    assert!(flow.main.requests().is_empty());
+}
+
+#[tokio::test]
+async fn recreation_hook_allows_agent_and_public_continuation_at_the_delegating_location() {
+    use cyber_server::runtime::{Admission, Delivery};
+    for public in [false, true] {
+        let flow = flow(vec![text("first"), text("second")], false);
+        let parent = flow.session("bypass").await;
+        let first = invoke(
+            &flow,
+            &parent,
+            json!({"prompt":"inspect","name":"recreate-guard","isolation":"worktree"}),
+        )
+        .await
+        .unwrap();
+        let child = first["id"].as_str().unwrap();
+        let old = flow.runtime.state(child).await.unwrap();
+        let managed = old.child_worktree().unwrap();
+        assert!(!managed.path.exists());
+        let before = checkout_effects(&flow);
+        let hook = CreationHook::start(json!({}), true).await;
+        hook.attach(&flow);
+        let continuation = async {
+            if public {
+                flow.runtime
+                    .admit_user(child, Admission::text("continue", Delivery::Steer))
+                    .await
+                    .unwrap();
+                flow.settle(child).await;
+            } else {
+                invoke(
+                    &flow,
+                    &parent,
+                    json!({"prompt":"continue","resume":"recreate-guard"}),
+                )
+                .await
+                .unwrap();
+            }
+        };
+        let allow = async {
+            hook.entered().await;
+            assert!(!managed.path.exists(), "creation hook precedes recreation");
+            assert_eq!(checkout_effects(&flow), before);
+            hook.release.cancel();
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            tokio::join!(continuation, allow)
+        })
+        .await
+        .expect("permitted recreation and continuation settle");
+        let current = flow.runtime.state(child).await.unwrap();
+        assert_ne!(current.info.worktree_id, old.info.worktree_id);
+        assert!(!current.child_worktree_setup_pending());
+        assert_eq!(flow.main.requests().len(), 2);
+        let seen = hook.seen.lock().unwrap();
+        assert_eq!(seen.len(), 1, "public={public}: {seen:?}");
+        assert_eq!(seen[0]["session_id"], parent);
+        assert_eq!(seen[0]["name"], managed.name);
+        assert_eq!(
+            std::path::Path::new(seen[0]["location"]["directory"].as_str().unwrap()),
+            flow.f.repo.as_path()
+        );
+    }
+}

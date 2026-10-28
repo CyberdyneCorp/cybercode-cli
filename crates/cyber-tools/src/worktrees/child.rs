@@ -246,6 +246,15 @@ impl BuiltinHost {
             name,
             session: request,
         };
+        self.admit_child_checkout(
+            inv,
+            cancel.child_token(),
+            &worktree_request,
+            &branch,
+            user_requested,
+            None,
+        )
+        .await?;
         let lock = self.path_lock(
             &worktree_request
                 .data
@@ -265,7 +274,6 @@ impl BuiltinHost {
                     cancel.child_token(),
                     &worktree_request,
                     &branch,
-                    user_requested,
                     run.filter(|tree| tree.base.is_some())
                         .map_or(ChildBase::Configured, ChildBase::Pinned),
                 ),
@@ -335,27 +343,12 @@ impl BuiltinHost {
         })
     }
 
-    async fn create_child_checkout(
-        &self,
-        inv: &Invocation,
+    async fn child_checkout_context<'a>(
+        &'a self,
+        inv: &'a Invocation,
         cancel: CancellationToken,
-        request: &WorktreeSessionRequest,
-        branch: &str,
-        user_requested: bool,
-        base: ChildBase<'_>,
-    ) -> io::Result<(Repository, Managed, SetupRecipe)> {
-        let ctx = Ctx {
-            skill_paths: Default::default(),
-            loaded_skill: Default::default(),
-            compiler_feedback: Default::default(),
-            hook_decision: None,
-            denial: Default::default(),
-            host: self,
-            inv,
-            policy: self.policy(inv).await.map_err(io::Error::other)?,
-            location: Path::new(&inv.directory).canonicalize()?,
-            cancel,
-        };
+    ) -> io::Result<(Ctx<'a>, Value)> {
+        let ctx = self.worktree_ctx(inv, cancel).await?;
         let (config, sources) = (self.opts.config)(&ctx.location).map_err(io::Error::other)?;
         let sandbox = cyber_sandbox::SandboxConfig::resolve(
             &config,
@@ -369,6 +362,33 @@ impl BuiltinHost {
                 "Read-only sandbox refuses isolated creation",
             ));
         }
+        Ok((ctx, config))
+    }
+
+    async fn require_child_checkout_policy(&self, inv: &Invocation, name: &Name) -> io::Result<()> {
+        let current = self.policy(inv).await.map_err(io::Error::other)?;
+        if let crate::permissions::Decision::Deny(reason) = current.user_delegation(&Request {
+            action: "worktree".into(),
+            resources: vec![name.as_str().into()],
+            ..Default::default()
+        }) {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, reason));
+        }
+        Ok(())
+    }
+
+    /// Permission and WorktreeCreate veto run without the lifecycle mutex or
+    /// runtime shutdown admission. Hook dispatch can need both again.
+    async fn admit_child_checkout(
+        &self,
+        inv: &Invocation,
+        cancel: CancellationToken,
+        request: &WorktreeSessionRequest,
+        branch: &str,
+        user_requested: bool,
+        hook_source: Option<&SessionInfo>,
+    ) -> io::Result<()> {
+        let (ctx, _) = self.child_checkout_context(inv, cancel).await?;
         let admission = Request {
             action: "worktree".into(),
             resources: vec![request.name.as_str().into()],
@@ -386,14 +406,35 @@ impl BuiltinHost {
             .await
             .map_err(tool_error)?;
         }
-        let current = self.policy(inv).await.map_err(io::Error::other)?;
-        if let crate::permissions::Decision::Deny(reason) = current.user_delegation(&Request {
-            action: "worktree".into(),
-            resources: vec![request.name.as_str().into()],
-            ..Default::default()
-        }) {
-            return Err(io::Error::new(io::ErrorKind::PermissionDenied, reason));
+        self.require_child_checkout_policy(inv, &request.name)
+            .await?;
+        let mut hook_inv = inv.clone();
+        if let Some(source) = hook_source {
+            // Public child input recreates from the delegating Session's
+            // repository. Keep permission checks on the child's invocation,
+            // but never fabricate a child envelope at its parent's Location.
+            hook_inv.session_id = source.id.clone();
+            hook_inv.directory = source.directory.clone();
+            hook_inv.agent = source.agent.clone();
+            hook_inv.mode = source.mode.clone();
+            hook_inv.rules = source.rules.clone();
         }
+        self.worktree_create_hooks(&hook_inv, request.name.as_str(), ctx.cancel.clone())
+            .await
+            .map_err(tool_error)
+    }
+
+    async fn create_child_checkout(
+        &self,
+        inv: &Invocation,
+        cancel: CancellationToken,
+        request: &WorktreeSessionRequest,
+        branch: &str,
+        base: ChildBase<'_>,
+    ) -> io::Result<(Repository, Managed, SetupRecipe)> {
+        let (ctx, config) = self.child_checkout_context(inv, cancel).await?;
+        self.require_child_checkout_policy(inv, &request.name)
+            .await?;
         let mut settings = Settings::from_config(&config).map_err(io::Error::other)?;
         if let ChildBase::Pinned(tree) = &base {
             settings.base = tree
@@ -484,7 +525,7 @@ impl BuiltinHost {
         child: &cyber_server::runtime::SessionInfo,
         removed: Managed,
     ) -> io::Result<ChildWorktree> {
-        self.resume_child_worktree_authorized(inv, cancel, owner, child, removed, false)
+        self.resume_child_worktree_authorized(inv, cancel, owner, child, removed, None)
             .await
     }
 
@@ -495,12 +536,21 @@ impl BuiltinHost {
         owner: &cyber_server::runtime::ChildExecution,
         child: &cyber_server::runtime::SessionInfo,
         removed: Managed,
-        user_requested: bool,
+        source: Option<&SessionInfo>,
     ) -> io::Result<ChildWorktree> {
         let runtime = self
             .runtime()
             .ok_or_else(|| io::Error::other("Runtime stopped"))?;
         owner.verify(&runtime).map_err(io::Error::other)?;
+        if let Some(source) = source
+            && (child.parent_id.as_deref() != Some(source.id.as_str())
+                || source.directory != inv.directory)
+        {
+            return Err(io::Error::other(
+                "Worktree hook source differs from the delegating Session",
+            ));
+        }
+        let user_requested = source.is_some();
         if runtime
             .state(&child.id)
             .await
@@ -525,6 +575,15 @@ impl BuiltinHost {
             name: Name::parse(&removed.name).map_err(io::Error::other)?,
             session: CreateSession::default(),
         };
+        self.admit_child_checkout(
+            inv,
+            cancel.child_token(),
+            &request,
+            &removed.branch,
+            user_requested,
+            source,
+        )
+        .await?;
         let lock = self.path_lock(
             &request
                 .data
@@ -543,7 +602,6 @@ impl BuiltinHost {
                     cancel.clone(),
                     &request,
                     &removed.branch,
-                    user_requested,
                     ChildBase::Removed(&removed),
                 ),
             )
