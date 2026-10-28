@@ -311,3 +311,35 @@ the real integration test target; it did not execute HTTP tests or the full
 workspace suite. Native acceptance for the refactored revision still requires CI.
 The cognitive-complexity skill does not provide a Rust analyzer; the project's
 Clippy result is the authoritative check for this refactor.
+
+
+## Observation identity in readmission acceptance
+
+At `70224077`, native focused CI passed on macOS and Windows. Linux passed 21 of
+22 HTTP tests and failed the readmission test's filename assertion. That log
+reported the path, not observation IDs, so it could not establish which batch
+was delivered. A local control deliberately changed the same file after readmission
+while the first callback was held. The filename assertion failed even though the
+retained member received observations A/B and the readmitted member received only
+new observation B. This reproduced an invalid assertion without old-batch revival;
+it does not establish the original Linux notification sequence's cause.
+
+The regression now captures the first held `observation_id` before membership
+ends and requires its absence from the ended/readmitted member's delivery. The
+readmission case also deliberately changes that same pathname and requires an
+observation with a different ID, proving that valid future delivery continues.
+The missing-cancellation controls for both ended and readmitted cases still
+execute and fail at the identity assertion, showing the held ID among delivered
+IDs. Source is restored before the positive suite. All 22 actual HTTP tests then
+passed locally; scoped actual-target Clippy passed with the configured complexity
+and unsafe-code lints.
+
+The full focused local set at `70224077` also passed 148 tests: core records 13,
+envelope 1, native components 57, runtime roots 6, durable server 17, HTTP 22,
+AppHost 2 and MCP 30. Two subprocess helpers are ignored in parent suites and
+explicitly exercised by their SQLite regressions. The existing App plugin suite
+passed 14 cases on that integration revision and on unchanged main `2ae7957d`;
+see [the baseline evidence](baseline.md#passing-unchanged-main-native-baseline-2026-10-28).
+Those local native runs are on Darwin 25.6.0 arm64, with CI/platform results tracked
+separately. Full CI for the identity-precise regression remains required before
+this draft is ready.

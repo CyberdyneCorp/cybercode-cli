@@ -3,7 +3,7 @@
 - [x] 1.1 Inspect canonical plugin/hook contracts, SDK protocol, host confinement and explicit unsupported paths at `097b6278`.
 - [x] 1.2 Draft the proposal, design, supplemental scenarios and ordered implementation tasks.
 - [x] 1.3 Review proposal/design/tasks with the user before security-sensitive or capability implementation. Record approved scope and platform/runtime decisions. Approved on 2026-10-27: after PRs #53/#54 merged, the user explicitly requested implementation of both merged plans and then instructed goal resume. Native proof, baseline and acceptance gates remain required.
-- [ ] 1.4 Inventory actual producers and protocol operations; map existing tests and stale parent tasks. Run relevant unchanged-main baseline checks and record outcomes. Source findings and the failed Rust compile/SDK results are recorded in [baseline.md](baseline.md); this task remains open for a passing native baseline.
+- [x] 1.4 Inventory actual producers and protocol operations; map existing tests and stale parent tasks. Run relevant unchanged-main baseline checks and record outcomes. [baseline.md](baseline.md) records the initial failed compilation and SDK results, followed by 14 real-process plugin tests passing on unchanged main `2ae7957d` on macOS arm64 and the same 14 passing on the integration revision. This completes the baseline inventory, not native capability enforcement or later acceptance gates.
 
 ## 2. Native capability enforcement
 

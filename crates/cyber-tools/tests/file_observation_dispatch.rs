@@ -1486,13 +1486,23 @@ enum MemberEnd {
     Held,
     Readmitted,
 }
-fn recorded_file_event(recorder: &Recorder, session: &str, path: &str) -> bool {
+fn recorded_file_observations(recorder: &Recorder, session: &str, path: &str) -> Vec<String> {
     recorder
         .seen
         .lock()
         .unwrap()
         .iter()
-        .any(|event| event["session_id"] == session && event["file_path"] == path)
+        .filter(|event| event["session_id"] == session && event["file_path"] == path)
+        .map(|event| {
+            event["observation_id"]
+                .as_str()
+                .expect("FileChanged has an observation ID")
+                .to_owned()
+        })
+        .collect()
+}
+fn recorded_file_event(recorder: &Recorder, session: &str, path: &str) -> bool {
+    !recorded_file_observations(recorder, session, path).is_empty()
 }
 
 async fn remove_member_during_delivery(
@@ -1517,6 +1527,8 @@ async fn remove_member_during_delivery(
             )
             .await
             .unwrap();
+        // A fresh change to the same pathname is a valid future observation.
+        std::fs::write(flow.f.repo.join("held-membership"), "fresh observation").unwrap();
     }
     if matches!(end, MemberEnd::Held) {
         // Keep the first HTTP response held: cancellation must settle its owned
@@ -1536,6 +1548,7 @@ async fn verify_delivery_after_member_end(
     recorder: &Recorder,
     removed: &str,
     retained: &str,
+    held_observation: &str,
     end: MemberEnd,
 ) {
     std::fs::write(flow.f.repo.join("after-member-end"), "fixture").unwrap();
@@ -1548,13 +1561,23 @@ async fn verify_delivery_after_member_end(
             recorded_file_event(recorder, removed, "after-member-end")
         })
         .await;
+        await_condition(
+            "readmitted member observes a new change at the same pathname",
+            || {
+                recorded_file_observations(recorder, removed, "held-membership")
+                    .iter()
+                    .any(|id| id != held_observation)
+            },
+        )
+        .await;
     } else {
         assert!(!recorded_file_event(recorder, removed, "after-member-end"));
     }
     if !matches!(end, MemberEnd::Held) {
+        let delivered = recorded_file_observations(recorder, removed, "held-membership");
         assert!(
-            !recorded_file_event(recorder, removed, "held-membership"),
-            "a captured Session list cannot revive ended membership"
+            delivered.iter().all(|id| id != held_observation),
+            "a captured Session list cannot revive ended membership: held={held_observation}, delivered={delivered:?}"
         );
     }
 }
@@ -1577,9 +1600,21 @@ async fn end_membership_during_held_delivery(end: MemberEnd) {
         recorded_file_event(&recorder, &sessions[0], "held-membership")
     })
     .await;
+    let held_observation = recorded_file_observations(&recorder, &sessions[0], "held-membership")
+        .into_iter()
+        .next()
+        .expect("the gated callback has a source observation");
     let (removed, retained) =
         remove_member_during_delivery(&flow, &recorder, &gate, &sessions, end).await;
-    verify_delivery_after_member_end(&flow, &recorder, &removed, &retained, end).await;
+    verify_delivery_after_member_end(
+        &flow,
+        &recorder,
+        &removed,
+        &retained,
+        &held_observation,
+        end,
+    )
+    .await;
     gate.notify_one();
     assert!(flow.requests("test/main").is_empty());
     tokio::time::timeout(Duration::from_secs(10), flow.runtime.shutdown())
