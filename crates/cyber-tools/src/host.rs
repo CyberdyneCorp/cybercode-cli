@@ -86,6 +86,10 @@ pub struct BuiltinHost {
     /// MCP annotations of registered calls in flight, by (Session, call), for hook
     /// envelopes.
     pub(crate) tool_annotations: Mutex<HashMap<(String, String), Value>>,
+    /// Notes on settled runs awaiting their settlement, by (Session, call).
+    call_metadata: Mutex<HashMap<(String, String), Value>>,
+    /// The tool-output budget of each Session's current model.
+    output_profiles: Mutex<HashMap<String, cyber_llm::catalog::ToolOutput>>,
     pub(crate) search_cooldowns: tools::websearch::Cooldowns,
     /// Domains approved for sandboxed network access, by Session.
     network: Mutex<HashMap<String, Arc<Mutex<HashSet<String>>>>>,
@@ -187,6 +191,8 @@ impl BuiltinHost {
             hook_notices: Mutex::default(),
             hook_effects: Default::default(),
             tool_annotations: Mutex::default(),
+            call_metadata: Mutex::default(),
+            output_profiles: Mutex::default(),
             search_cooldowns: tools::websearch::Cooldowns::default(),
             network: Mutex::default(),
             subagents: crate::subagents::Slots::default(),
@@ -230,7 +236,11 @@ impl BuiltinHost {
         } else {
             None
         };
-        match self.budget(&ctx.location).apply(output, keep_tail) {
+        let profile = self.output_profile(&ctx.inv.session_id);
+        match self
+            .budget(&ctx.location)
+            .apply_for(output, keep_tail, profile)
+        {
             Ok(output) => match value {
                 Some(value) => ToolOutcome::Structured { output, value },
                 None => match ctx
@@ -668,6 +678,23 @@ impl BuiltinHost {
         })
     }
 
+    fn output_profile(&self, session_id: &str) -> cyber_llm::catalog::ToolOutput {
+        self.output_profiles
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(session_id)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// Note `metadata` on a call's settlement record.
+    pub(crate) fn note_call_metadata(&self, session_id: &str, call_id: &str, metadata: Value) {
+        self.call_metadata
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert((session_id.into(), call_id.into()), metadata);
+    }
+
     pub(crate) fn budget(&self, location: &Path) -> Budget {
         let config = self.config_for(location);
         let get = |k: &str, d: usize| {
@@ -757,6 +784,20 @@ impl ToolHost for BuiltinHost {
         call_id: &str,
     ) -> cyber_server::runtime::HookEffects {
         self.take_tool_hook_effects(session_id, call_id)
+    }
+
+    fn take_call_metadata(&self, session_id: &str, call_id: &str) -> Option<Value> {
+        self.call_metadata
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&(session_id.to_owned(), call_id.to_owned()))
+    }
+
+    fn set_output_profile(&self, session_id: &str, output: cyber_llm::catalog::ToolOutput) {
+        self.output_profiles
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(session_id.into(), output);
     }
 
     fn file_decisions<'a>(

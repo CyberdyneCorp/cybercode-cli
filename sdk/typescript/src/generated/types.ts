@@ -276,6 +276,11 @@ export type CallState = {
   attempt: number;
   status: CallStatus;
   output?: string | null;
+  /**
+   * The tool host's notes on the settled run (`builtin-tools` → apply_patch through
+   * the shell).
+   */
+  metadata?: unknown;
 };
 
 export type CallStatus = "ok" | "error" | "called" | "dispatched" | "interrupted" | "outcome_unknown";

@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{Model, Provider, model_family};
+use super::{Model, Provider};
 use crate::adapters::ApiKind;
 use crate::types::Reasoning;
 
@@ -303,7 +303,7 @@ const RULES: &[Rule] = &[
 /// The profile of `model`: defaults, rules, catalog metadata, then config.
 pub fn resolve(provider: &Provider, model: &Model) -> ModelProfile {
     let kind = model.api_kind.or(provider.kind);
-    let mut profile = defaults(provider, model, kind);
+    let mut profile = defaults(model, kind);
     let name = model
         .api_id
         .rsplit('/')
@@ -346,6 +346,7 @@ pub(super) fn shaping(model: &Model) -> crate::types::Shaping {
             .then_some(profile.verbosity.default)
             .flatten(),
         parallel_tool_calls: Some(profile.parallel_tool_calls),
+        freeform_patch: profile.edit_tool == EditTool::FreeformPatch,
     }
 }
 
@@ -371,9 +372,9 @@ pub(super) fn warn_unsupported_verbosity(provider: &str, model: &Model) {
     }
 }
 
-/// Layer 1: the protocol's carrier, and the patch tool for a model whose family edits
-/// with it (today's `prefers_apply_patch`).
-fn defaults(provider: &Provider, model: &Model, kind: Option<ApiKind>) -> ModelProfile {
+/// Layer 1: the protocol's carrier, and the JSON patch tool for a model whose catalog
+/// entry prefers it (`capabilities.prefers_apply_patch`).
+fn defaults(model: &Model, kind: Option<ApiKind>) -> ModelProfile {
     let mut profile = ModelProfile::default();
     let native = match kind {
         Some(ApiKind::OpenaiResponses | ApiKind::ChatgptCodex) => Some(ReasoningCarrier::Responses),
@@ -384,8 +385,7 @@ fn defaults(provider: &Provider, model: &Model, kind: Option<ApiKind>) -> ModelP
         profile.reasoning_carrier = carrier;
         profile.reasoning_replay = ReasoningReplay::Always;
     }
-    let openai = model_family(provider, model) == cyber_core::prompts::ModelFamily::Openai;
-    if openai && model.capabilities.prefers_apply_patch {
+    if model.capabilities.prefers_apply_patch {
         profile.edit_tool = EditTool::JsonPatch;
     }
     profile

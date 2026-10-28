@@ -129,3 +129,42 @@ async fn hook_stop_ends_the_drain_after_the_turn_with_a_durable_reason() {
     assert_eq!(noticed, [("guard".to_string(), "policy stop".to_string())]);
     assert!(!h.runtime.is_running(&id));
 }
+
+/// `builtin-tools` → apply_patch through the shell: the host's notes on a call land on
+/// its settlement and call record, and the step's calls learn the model's output budget.
+#[tokio::test]
+async fn call_metadata_commits_with_the_settlement() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![tools(&[("c1", "read", "{}")]), text("done")],
+        )],
+        ..Setup::default()
+    });
+    h.tools.call_metadata.lock().unwrap().insert(
+        "c1".into(),
+        serde_json::json!({"intercepted": "apply_patch"}),
+    );
+    let id = h.session().await;
+    h.runtime.admit(&id, admit("read it")).await.unwrap();
+    h.settle(&id).await;
+    let events = kinds(&h, &id);
+    let (_, settled) = events
+        .iter()
+        .find(|(kind, data)| kind == "session.tool.settled.1" && data["call_id"] == "c1")
+        .expect("settled");
+    assert_eq!(
+        settled["metadata"],
+        serde_json::json!({"intercepted": "apply_patch"})
+    );
+    let state = h.runtime.state(&id).await.unwrap();
+    assert_eq!(
+        state.calls["c1"].metadata,
+        Some(serde_json::json!({"intercepted": "apply_patch"}))
+    );
+    assert!(
+        h.tools.call_metadata.lock().unwrap().is_empty(),
+        "taken once"
+    );
+    assert!(h.tools.output_profiles.lock().unwrap().contains_key(&id));
+}

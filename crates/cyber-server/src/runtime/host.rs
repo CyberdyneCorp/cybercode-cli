@@ -91,7 +91,8 @@ pub struct ResolvedModel {
     /// Context window in tokens; 0 when unknown.
     pub context_limit: u64,
     pub cost: Option<Cost>,
-    /// The model edits better with `apply_patch` than with `edit`/`write`.
+    /// The model edits with `apply_patch` rather than `edit`/`write`: its profile's
+    /// `edit_tool` is a patch tool (`provider-catalog` → Model behavior profiles).
     pub prefers_apply_patch: bool,
     /// Which base prompt the model gets (`system-context` → Provider base prompts).
     pub family: ModelFamily,
@@ -198,7 +199,7 @@ impl ModelResolver for CatalogResolver {
             model: r.model.clone(),
             context_limit: model.limits.context,
             cost: model.cost.clone(),
-            prefers_apply_patch: model.capabilities.prefers_apply_patch,
+            prefers_apply_patch: model.profile.edit_tool != cyber_llm::catalog::EditTool::Edit,
             family: cyber_llm::catalog::model_family(provider, model),
             vision: model.capabilities.vision,
             pdf: model.capabilities.pdf,
@@ -1158,6 +1159,16 @@ pub trait ToolHost: Send + Sync {
     fn take_hook_effects(&self, _session_id: &str, _call_id: &str) -> HookEffects {
         HookEffects::default()
     }
+
+    /// Take, once, what the host noted about a call's run; the runtime records it as
+    /// the settlement's `metadata`. Hosts that note nothing return `None`.
+    fn take_call_metadata(&self, _session_id: &str, _call_id: &str) -> Option<Value> {
+        None
+    }
+
+    /// The tool-output budget of the model a Session's next calls answer
+    /// (`tool-registry` → Profile output budgets). Hosts without a budget ignore it.
+    fn set_output_profile(&self, _session_id: &str, _output: cyber_llm::catalog::ToolOutput) {}
 
     /// Establish, without side effects, whether a dispatched call took effect.
     /// `directory` is the Session's Location, for resolving relative paths.

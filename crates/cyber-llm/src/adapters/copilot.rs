@@ -70,13 +70,15 @@ fn has_images(request: &LlmRequest) -> bool {
 /// Copilot's models served by Responses carry reasoning in Responses items; the
 /// `reasoning_opaque` field belongs to its Chat Completions protocol. Copilot lists no
 /// reasoning capability, but the models it serves by Responses all reason. Copilot gets
-/// no Session routing headers.
+/// no Session routing headers, and the JSON `apply_patch` tool: the freeform tool is
+/// offered on OpenAI's own Responses backends only.
 fn responses_carrier(mut request: LlmRequest) -> LlmRequest {
     if request.reasoning_carrier == ReasoningCarrier::CopilotOpaque {
         request.reasoning_carrier = ReasoningCarrier::Responses;
         request.shaping.reasoning = true;
     }
     request.routing = None;
+    request.shaping.freeform_patch = false;
     request
 }
 
@@ -160,6 +162,15 @@ mod tests {
             value(&with_image, "Openai-Intent"),
             Some("conversation-edits")
         );
+    }
+
+    /// `builtin-tools` → Freeform apply_patch: Copilot's Responses models keep the JSON
+    /// patch tool.
+    #[test]
+    fn copilot_responses_keep_the_json_patch_tool() {
+        let mut request = LlmRequest::default();
+        request.shaping.freeform_patch = true;
+        assert!(!responses_carrier(request).shaping.freeform_patch);
     }
 
     #[test]

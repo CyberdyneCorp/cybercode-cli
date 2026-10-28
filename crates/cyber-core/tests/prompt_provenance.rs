@@ -83,6 +83,10 @@ fn no_asset_shares_a_twelve_word_run_with_the_reference_assets() {
         .filter(|path| path.extension().is_some_and(|ext| ext == "md"))
         .count();
     assert_eq!(prompts, 5, "core plus four family addenda");
+    assert!(
+        assets.iter().any(|path| path.ends_with("apply_patch.lark")),
+        "the apply_patch grammar is checked: {assets:?}"
+    );
     for path in &assets {
         let run = words(&std::fs::read_to_string(path).unwrap());
         for window in run.windows(WIDTH) {

@@ -4,6 +4,8 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use cyber_llm::catalog::{ToolOutput, Truncation};
+
 #[derive(Debug, Clone)]
 pub struct Budget {
     pub max_lines: usize,
@@ -17,6 +19,46 @@ impl Budget {
     /// Failure to write the file fails the call rather than returning lossy output.
     pub fn apply(&self, text: String, keep_tail: bool) -> Result<String, String> {
         self.apply_with_token_limit(text, keep_tail, None)
+    }
+
+    /// [`Budget::apply`] narrowed by the model's profile (`tool-registry` → Profile
+    /// output budgets): a token budget caps the bytes at 4 per token, and `middle` keeps
+    /// the head and the tail of a long output instead of one end.
+    pub fn apply_for(
+        &self,
+        text: String,
+        keep_tail: bool,
+        profile: ToolOutput,
+    ) -> Result<String, String> {
+        let budget = Budget {
+            max_bytes: profile.tokens.map_or(self.max_bytes, |tokens| {
+                self.max_bytes.min((tokens as usize).saturating_mul(4))
+            }),
+            ..self.clone()
+        };
+        match profile.truncation {
+            Truncation::Middle => budget.apply_middle(text),
+            Truncation::Head | Truncation::Tail => budget.apply(text, keep_tail),
+        }
+    }
+
+    /// Keep the first and last lines, half the limits each, around one omission marker.
+    fn apply_middle(&self, text: String) -> Result<String, String> {
+        let lines = text.lines().count();
+        if lines <= self.max_lines && text.len() <= self.max_bytes {
+            return Ok(text);
+        }
+        let path = self.store(&text)?;
+        let (max_lines, max_bytes) = (self.max_lines / 2, self.max_bytes / 2);
+        let first = head(&text, max_lines, max_bytes);
+        let last = tail(&text, max_lines, max_bytes);
+        let kept_lines = first.lines().count() + last.lines().count();
+        let omitted_lines = lines.saturating_sub(kept_lines);
+        let omitted_bytes = text.len().saturating_sub(first.len() + last.len());
+        Ok(format!(
+            "{first}\n…[{omitted_lines} lines / {omitted_bytes} bytes omitted; full output at {}]…\n{last}",
+            path.display()
+        ))
     }
 
     pub(crate) fn apply_with_token_limit(
@@ -164,6 +206,83 @@ mod tests {
         assert_eq!(std::fs::read_to_string(path).unwrap(), text);
         let tail = budget.apply(text, true).unwrap();
         assert!(tail.starts_with("line 8\nline 9\nline 10\n"));
+    }
+
+    fn overflow_path(output: &str) -> &str {
+        output
+            .split("full output at ")
+            .nth(1)
+            .unwrap()
+            .split(']')
+            .next()
+            .unwrap()
+    }
+
+    /// `tool-registry` → Profile output budgets, "Long build log for an OpenAI model":
+    /// 200 KB at 10 000 tokens keeps about 20 KB of each end around one marker line,
+    /// and the overflow file holds the full log.
+    #[test]
+    fn long_build_log_keeps_head_and_tail_for_a_middle_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let budget = Budget {
+            max_lines: 2000,
+            max_bytes: 51_200,
+            dir: dir.path().into(),
+        };
+        let log: String = (0..4000)
+            .map(|i| format!("{i:05} compiling crate number {i:05} of the workspace\n"))
+            .collect();
+        assert!(log.len() >= 200_000);
+        let profile = ToolOutput {
+            tokens: Some(10_000),
+            truncation: Truncation::Middle,
+        };
+        let out = budget.apply_for(log.clone(), true, profile).unwrap();
+        let markers: Vec<&str> = out.lines().filter(|l| l.starts_with("…[")).collect();
+        assert_eq!(markers.len(), 1, "{markers:?}");
+        assert!(markers[0].ends_with("]…"), "{}", markers[0]);
+        let (first, last) = out.split_once(markers[0]).unwrap();
+        assert!(first.starts_with("00000 compiling"));
+        assert!(last.trim_end().ends_with("03999 of the workspace"));
+        for part in [first, last] {
+            assert!((19_000..=20_000).contains(&part.len()), "{}", part.len());
+        }
+        assert_eq!(std::fs::read_to_string(overflow_path(&out)).unwrap(), log);
+        let lines = log.lines().count() - first.lines().count() - last.trim_start().lines().count();
+        assert!(
+            markers[0].starts_with(&format!("…[{lines} lines / ")),
+            "{}",
+            markers[0]
+        );
+    }
+
+    /// Without a middle profile the token budget only narrows the byte limit; a profile
+    /// with no budget changes nothing, and a fitting output is untouched.
+    #[test]
+    fn head_and_tail_profiles_keep_the_existing_truncation() {
+        let dir = tempfile::tempdir().unwrap();
+        let budget = Budget {
+            max_lines: 2000,
+            max_bytes: 1000,
+            dir: dir.path().into(),
+        };
+        let text: String = (0..200).map(|i| format!("line {i:03}\n")).collect();
+        let narrowed = ToolOutput {
+            tokens: Some(50),
+            truncation: Truncation::Head,
+        };
+        let out = budget.apply_for(text.clone(), true, narrowed).unwrap();
+        let kept = out.split("\n[output truncated").next().unwrap();
+        assert!(kept.len() <= 200 && kept.ends_with("line 199"), "{kept}");
+        let plain = budget
+            .apply_for(text.clone(), false, ToolOutput::default())
+            .unwrap();
+        assert!(plain.starts_with("line 000\n") && plain.contains("[output truncated"));
+        let middle = ToolOutput {
+            tokens: None,
+            truncation: Truncation::Middle,
+        };
+        assert_eq!(budget.apply_for("ok".into(), false, middle).unwrap(), "ok");
     }
 
     #[test]

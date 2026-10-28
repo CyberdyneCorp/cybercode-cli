@@ -74,6 +74,8 @@ fn official_route(endpoint: &Endpoint, request: &LlmRequest) -> Result<(), Bound
 }
 
 fn pin_contract(request: &mut LlmRequest) -> Result<(), BoundUnavailable> {
+    // The reserved contract admits function tools only, so the patch tool stays JSON.
+    request.shaping.freeform_patch = false;
     if request.body.is_null() {
         request.body = json!({});
     }
@@ -334,6 +336,7 @@ mod tests {
             effort_none: true,
             verbosity: Some(VerbosityLevel::Low),
             parallel_tool_calls: Some(true),
+            freeform_patch: false,
         };
         let prepared = prepare(&endpoint, request, 1000).unwrap();
         let body = super::super::build_body(&prepared.request);
@@ -346,6 +349,34 @@ mod tests {
         assert_eq!(body["parallel_tool_calls"], true);
         assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
         assert_eq!(body["prompt_cache_key"], "ses_1");
+    }
+
+    /// A profile with the freeform patch tool still reserves: the reserved request
+    /// offers the JSON tool instead of the custom one.
+    #[test]
+    fn a_freeform_patch_profile_reserves_with_the_json_tool() {
+        use crate::{Content, Message, Role, ToolSpec};
+        let endpoint = Endpoint::new("https://api.openai.com/v1", None);
+        let mut request = request();
+        request.shaping.freeform_patch = true;
+        request.tools = vec![ToolSpec {
+            name: "apply_patch".into(),
+            description: "Apply a patch".into(),
+            input_schema: json!({"type": "object"}),
+        }];
+        request.messages.push(Message {
+            role: Role::Assistant,
+            content: vec![Content::ToolCall {
+                id: "call_1".into(),
+                name: "apply_patch".into(),
+                input: json!({"patch": "*** Begin Patch\n*** End Patch"}),
+                opaque: None,
+            }],
+        });
+        let prepared = prepare(&endpoint, request, 1000).unwrap();
+        let body = super::super::build_body(&prepared.request);
+        assert_eq!(body["tools"][0]["type"], "function");
+        assert_eq!(body["input"][1]["type"], "function_call");
     }
 
     #[test]

@@ -20,6 +20,7 @@ fn call(name: &str, input: Value) -> CallState {
         attempt: 1,
         status: CallStatus::Dispatched,
         output: None,
+        metadata: None,
     }
 }
 

@@ -309,6 +309,14 @@ impl ToolHost for AppHost {
         self.builtin.take_hook_effects(session_id, call_id)
     }
 
+    fn take_call_metadata(&self, session_id: &str, call_id: &str) -> Option<serde_json::Value> {
+        self.builtin.take_call_metadata(session_id, call_id)
+    }
+
+    fn set_output_profile(&self, session_id: &str, output: cyber_llm::catalog::ToolOutput) {
+        self.builtin.set_output_profile(session_id, output);
+    }
+
     fn file_decisions<'a>(
         &'a self,
         turn: &'a TurnContext,

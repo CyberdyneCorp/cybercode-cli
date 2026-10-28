@@ -634,6 +634,19 @@ fn queue_head<'a>(mut rows: impl Iterator<Item = &'a super::model::InboxRow>) ->
 }
 
 impl Inner {
+    /// `settled` with the tool host's notes on the call, when it made any.
+    pub(super) fn with_call_metadata(
+        &self,
+        session_id: &str,
+        call_id: &str,
+        mut settled: cyber_store::NewEvent,
+    ) -> cyber_store::NewEvent {
+        if let Some(metadata) = self.tools.take_call_metadata(session_id, call_id) {
+            settled.data["metadata"] = metadata;
+        }
+        settled
+    }
+
     /// Take a settled call's tool-hook effects and append them after its settlement:
     /// an input rewrite as `hook_rewrite`, the context as `hook_context`, a
     /// `continue: false` as `hook_stop`. Returns the stop reason, which the caller
@@ -1483,6 +1496,8 @@ impl Inner {
             turn.agent = state.effective_agent(true).into();
             (turn, paused)
         };
+        self.tools
+            .set_output_profile(&turn.session_id, resolved.profile.tool_output);
         let groups = groups(calls, defs);
         // A hook's `continue: false` ends the Drain after this Turn's calls settle.
         let mut hook_stopped = false;
@@ -1593,7 +1608,7 @@ impl Inner {
                         .finalize_skill_output(&directory, output, reminder)
                 },
             );
-            events.push(settled);
+            events.push(self.with_call_metadata(&session_id, &run.call_id, settled));
             loaded.extend(instructions);
             stops.extend(self.take_call_hook_effects(&session_id, &run.call_id, &mut events));
         }
@@ -2059,6 +2074,7 @@ fn settled(
         status,
         output: output.into(),
         detail: detail.map(str::to_string),
+        metadata: None,
     };
     event(TOOL_SETTLED, &payload)
 }
@@ -2179,6 +2195,7 @@ pub(super) fn settlement_with_reminders(
             },
             output,
             detail: None,
+            metadata: None,
         },
     );
     (settled, loaded)
@@ -2264,6 +2281,7 @@ pub(super) fn settlement(
                 status: CallStatus::Ok,
                 output,
                 detail: None,
+                metadata: None,
             },
         ),
         ToolOutcome::SkillSuggestions {
@@ -2293,6 +2311,7 @@ pub(super) fn settlement(
                 status: CallStatus::Ok,
                 output,
                 detail: None,
+                metadata: None,
             },
         ),
         ToolOutcome::Failed(message) => settled(call_id, CallStatus::Error, &message, None),

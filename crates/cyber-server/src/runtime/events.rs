@@ -367,6 +367,10 @@ pub struct ToolSettled {
     /// Operator-only detail (crash reports, reconciliation evidence).
     #[serde(default)]
     pub detail: Option<String>,
+    /// What the tool host noted about the run, such as `{"intercepted": "apply_patch"}`
+    /// for a shell call run as a patch (`builtin-tools` → apply_patch through the shell).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
 }
 
 pub(crate) fn present_value<'de, D: serde::Deserializer<'de>>(

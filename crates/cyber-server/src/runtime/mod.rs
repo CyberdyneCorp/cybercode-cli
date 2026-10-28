@@ -2131,6 +2131,7 @@ impl Runtime {
             status,
             output,
             detail: Some("resolved by user".into()),
+            metadata: None,
         };
         self.inner
             .commit_locked(&mut state, vec![event(TOOL_SETTLED, &payload)])?;

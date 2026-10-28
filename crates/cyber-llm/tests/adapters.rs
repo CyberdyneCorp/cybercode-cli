@@ -1056,6 +1056,7 @@ async fn golden_responses_option_set_for_a_supporting_model() {
         effort_none: true,
         verbosity: Some(VerbosityLevel::Low),
         parallel_tool_calls: Some(true),
+        freeform_patch: false,
     };
     let req = shaped_request(Some(Reasoning::Effort("medium".into())), shaping);
     assert_eq!(

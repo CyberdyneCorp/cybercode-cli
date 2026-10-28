@@ -297,6 +297,10 @@ pub struct CallState {
     pub attempt: u32,
     pub status: CallStatus,
     pub output: Option<String>,
+    /// The tool host's notes on the settled run (`builtin-tools` → apply_patch through
+    /// the shell).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -1374,6 +1378,7 @@ impl SessionState {
                 attempt: 0,
                 status: CallStatus::Called,
                 output: None,
+                metadata: None,
             },
         );
     }
@@ -1401,6 +1406,7 @@ impl SessionState {
             call.status = s.status;
             call.output = Some(s.output);
             call.structured_output = s.structured_output;
+            call.metadata = s.metadata;
             self.result.settle(call);
         }
     }

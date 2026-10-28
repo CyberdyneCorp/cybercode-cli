@@ -86,16 +86,20 @@
 
 ## 6. Tools
 
-- [ ] 6.1 Our own Lark grammar for the patch envelope.
+- [x] 6.1 Our own Lark grammar for the patch envelope.
   - Freeform `apply_patch` on Responses when `edit_tool = freeform_patch`, plus decoding and replay of `custom_tool_call` / `custom_tool_call_output`.
   - The other adapters keep the JSON tool.
-- [ ] 6.2 Tolerant matching levels and heredoc-wrapped envelopes in `tools/patch.rs`.
+  - Done: `adapters/openai_responses/apply_patch.lark` (in the provenance scan), `Shaping.freeform_patch`; Copilot and reserved requests keep the JSON tool; `ResolvedModel.prefers_apply_patch` now follows the profile's `edit_tool`. Tests `freeform_patch_offers_a_grammar_tool_and_replays_custom_items`, `custom_tool_calls_decode_to_the_patch_input`, `a_freeform_patch_profile_reserves_with_the_json_tool`, `copilot_responses_keep_the_json_patch_tool`.
+- [x] 6.2 Tolerant matching levels and heredoc-wrapped envelopes in `tools/patch.rs`.
   - Tests: "Smart quotes in context", "Ambiguous loose match", trailing-whitespace, heredoc.
-- [ ] 6.3 Shell interception of `apply_patch` heredocs (bash, powershell, `cd <dir> &&`), only when no `apply_patch` binary is on `PATH`.
+  - Done: an exact match keeps taking the first place after the cursor; the looser levels must be unique (spec: "Exact hunk matches keep their order"). Tests `smart_quotes_in_context_match_ascii_quotes`, `ambiguous_loose_match_fails_naming_the_hunk`, `trailing_whitespace_and_exact_matches`, `heredoc_wrapped_envelopes_parse`.
+- [x] 6.3 Shell interception of `apply_patch` heredocs (bash, powershell, `cd <dir> &&`), only when no `apply_patch` binary is on `PATH`.
   - The `edit` permission is checked, with `metadata.intercepted`.
   - Tests, including the binary-present case.
-- [ ] 6.4 Profile output budgets and `middle` truncation in the tool output budget.
+  - Done: `tools/patch_shell.rs`; `metadata` on `session.tool.settled.1` and `CallState` through `ToolHost::take_call_metadata`. Tests in `cyber-tools/tests/shell_patch.rs` (bash, `cd`, edit denied, PowerShell here-string on Windows, installed program) and `patch_shell` unit tests.
+- [x] 6.4 Profile output budgets and `middle` truncation in the tool output budget.
   - Test: "Long build log for an OpenAI model". Existing truncation tests must still pass.
+  - Done: `Budget::apply_for`, fed per Session by `ToolHost::set_output_profile` before each step's calls. Tests `long_build_log_keeps_head_and_tail_for_a_middle_profile`, `head_and_tail_profiles_keep_the_existing_truncation`, `a_middle_profile_keeps_both_ends_of_a_long_log`.
 
 ## 7. Base prompts
 

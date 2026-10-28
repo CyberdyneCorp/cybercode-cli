@@ -44,11 +44,14 @@ impl Tool for PowerShell {
             }
             let background = super::background::requested(input)?;
             let ready = super::dev_server::Readiness::parse(input, background)?;
+            let raw = text(input, "workdir");
+            let workdir = ctx.resolve(if raw.is_empty() { "." } else { raw });
+            if let Some(found) = bash::intercepted_patch(ctx, command) {
+                return super::patch_shell::run(ctx, found, &workdir).await;
+            }
             let program = installed(&ctx.location).ok_or_else(|| {
                 failed("Neither pwsh.exe nor powershell.exe is installed outside the checkout")
             })?;
-            let raw = text(input, "workdir");
-            let workdir = ctx.resolve(if raw.is_empty() { "." } else { raw });
             let project = cyber_core::config::project_root(&ctx.location);
             let native_home = std::env::var_os("USERPROFILE")
                 .map(PathBuf::from)

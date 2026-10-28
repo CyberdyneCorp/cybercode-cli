@@ -19,6 +19,7 @@ pub(crate) mod messaging;
 mod monitor;
 mod notebook;
 pub(crate) mod patch;
+pub(crate) mod patch_shell;
 pub(crate) mod powershell;
 mod pr_links;
 pub(crate) mod process;

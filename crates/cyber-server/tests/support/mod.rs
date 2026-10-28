@@ -184,6 +184,10 @@ pub struct Tools {
     pub reconcile: Mutex<Reconciliation>,
     /// Hook effects a call leaves for its settlement, by call id; taken once.
     pub hook_effects: Mutex<HashMap<String, HookEffects>>,
+    /// Notes a call leaves on its settlement, by call id; taken once.
+    pub call_metadata: Mutex<HashMap<String, serde_json::Value>>,
+    /// The output budgets the runtime announced, by Session.
+    pub output_profiles: Mutex<HashMap<String, cyber_llm::catalog::ToolOutput>>,
     /// A `UserPromptSubmit` hook denying every prompt with this reason.
     pub prompt_denial: Mutex<Option<String>>,
     /// A `UserPromptSubmit` hook that holds each prompt until notified.
@@ -241,6 +245,8 @@ impl Tools {
             executed: Mutex::default(),
             reconcile: Mutex::new(Reconciliation::Unknown),
             hook_effects: Mutex::default(),
+            call_metadata: Mutex::default(),
+            output_profiles: Mutex::default(),
             prompt_denial: Mutex::default(),
             prompt_hold: Mutex::default(),
             prompt_reached: tokio::sync::Semaphore::new(0),
@@ -521,6 +527,17 @@ impl ToolHost for Tools {
             .unwrap()
             .remove(call_id)
             .unwrap_or_default()
+    }
+
+    fn take_call_metadata(&self, _session_id: &str, call_id: &str) -> Option<serde_json::Value> {
+        self.call_metadata.lock().unwrap().remove(call_id)
+    }
+
+    fn set_output_profile(&self, session_id: &str, output: cyber_llm::catalog::ToolOutput) {
+        self.output_profiles
+            .lock()
+            .unwrap()
+            .insert(session_id.into(), output);
     }
 
     fn reconcile(&self, _directory: &str, _call: &CallState) -> BoxFuture<'_, Reconciliation> {

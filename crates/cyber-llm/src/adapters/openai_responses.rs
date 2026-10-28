@@ -146,7 +146,12 @@ impl Adapter for OpenAiResponsesAdapter {
 }
 
 pub(crate) fn build_body(request: &LlmRequest) -> Value {
-    let input: Vec<Value> = request.messages.iter().flat_map(input_items).collect();
+    let custom = custom_calls(request);
+    let input: Vec<Value> = request
+        .messages
+        .iter()
+        .flat_map(|message| input_items(message, &custom))
+        .collect();
     let mut body =
         json!({ "model": request.model, "input": input, "stream": true, "store": false });
     let map = body.as_object_mut().expect("object literal");
@@ -157,7 +162,7 @@ pub(crate) fn build_body(request: &LlmRequest) -> Value {
         let tools: Vec<Value> = request
             .tools
             .iter()
-            .map(|t| json!({ "type": "function", "name": t.name, "description": t.description, "parameters": t.input_schema, "strict": false }))
+            .map(|t| tool_entry(t, request.shaping.freeform_patch))
             .collect();
         map.insert("tools".into(), Value::Array(tools));
         map.insert("tool_choice".into(), json!("auto"));
@@ -212,15 +217,50 @@ fn reasoning_field(request: &LlmRequest) -> Option<Value> {
     }
 }
 
-fn input_items(message: &Message) -> Vec<Value> {
+/// The tool the freeform patch replaces (`builtin-tools` → Freeform apply_patch).
+const PATCH_TOOL: &str = "apply_patch";
+/// Our grammar of the patch envelope; the model's raw input must match it.
+const PATCH_GRAMMAR: &str = include_str!("openai_responses/apply_patch.lark");
+
+/// A function tool, or the patch tool as a grammar-constrained custom tool.
+fn tool_entry(tool: &crate::types::ToolSpec, freeform_patch: bool) -> Value {
+    if freeform_patch && tool.name == PATCH_TOOL {
+        return json!({
+            "type": "custom",
+            "name": tool.name,
+            "description": tool.description,
+            "format": { "type": "grammar", "syntax": "lark", "definition": PATCH_GRAMMAR },
+        });
+    }
+    json!({ "type": "function", "name": tool.name, "description": tool.description, "parameters": tool.input_schema, "strict": false })
+}
+
+/// IDs of the patch calls replayed as custom tool calls: with the freeform tool offered,
+/// every earlier `apply_patch` call and its result take the custom item shapes.
+fn custom_calls(request: &LlmRequest) -> std::collections::HashSet<&str> {
+    if !request.shaping.freeform_patch {
+        return Default::default();
+    }
+    request
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .filter_map(|content| match content {
+            Content::ToolCall { id, name, .. } if name == PATCH_TOOL => Some(id.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn input_items(message: &Message, custom: &std::collections::HashSet<&str>) -> Vec<Value> {
     match message.role {
-        Role::User => user_items(message),
-        Role::Assistant => assistant_items(message),
+        Role::User => user_items(message, custom),
+        Role::Assistant => assistant_items(message, custom),
     }
 }
 
 /// Function call outputs answer the previous assistant turn, so they come first.
-fn user_items(message: &Message) -> Vec<Value> {
+fn user_items(message: &Message, custom: &std::collections::HashSet<&str>) -> Vec<Value> {
     let mut items = Vec::new();
     let mut parts = Vec::new();
     for content in &message.content {
@@ -228,9 +268,12 @@ fn user_items(message: &Message) -> Vec<Value> {
             Content::ToolResult {
                 call_id, output, ..
             } => {
-                items.push(
-                    json!({ "type": "function_call_output", "call_id": call_id, "output": output }),
-                );
+                let kind = if custom.contains(call_id.as_str()) {
+                    "custom_tool_call_output"
+                } else {
+                    "function_call_output"
+                };
+                items.push(json!({ "type": kind, "call_id": call_id, "output": output }));
             }
             Content::Text { text } => parts.push(json!({ "type": "input_text", "text": text })),
             other => parts.extend(media_part(other)),
@@ -245,7 +288,7 @@ fn user_items(message: &Message) -> Vec<Value> {
 /// An answer's items in the order the model produced them: reasoning, its message, and
 /// the function calls with the reasoning that came between them
 /// (`provider-catalog` → Responses request shaping).
-fn assistant_items(message: &Message) -> Vec<Value> {
+fn assistant_items(message: &Message, custom: &std::collections::HashSet<&str>) -> Vec<Value> {
     let mut items = Vec::new();
     let mut parts = Vec::new();
     for content in &message.content {
@@ -254,6 +297,11 @@ fn assistant_items(message: &Message) -> Vec<Value> {
                 parts.push(json!({ "type": "output_text", "text": text }));
                 continue;
             }
+            Content::ToolCall {
+                id, name, input, ..
+            } if custom.contains(id.as_str()) => Some(
+                json!({ "type": "custom_tool_call", "call_id": id, "name": name, "input": str_at(input, "/patch") }),
+            ),
             Content::ToolCall {
                 id, name, input, ..
             } => Some(
@@ -364,7 +412,12 @@ impl ResponsesDecoder {
                     text: str_at(data, "/delta").into(),
                 }));
             }
-            "response.output_item.added" if str_at(data, "/item/type") == "function_call" => {
+            "response.output_item.added"
+                if matches!(
+                    str_at(data, "/item/type"),
+                    "function_call" | "custom_tool_call"
+                ) =>
+            {
                 self.tools.start(
                     str_at(data, "/item/id"),
                     str_at(data, "/item/call_id"),
@@ -385,6 +438,9 @@ impl ResponsesDecoder {
                     out.push(Ok(LlmEvent::ToolCallDone(call)));
                 }
             }
+            "response.output_item.done" if str_at(data, "/item/type") == "custom_tool_call" => {
+                out.extend(self.custom_call(&data["item"]).map(Ok));
+            }
             "response.output_item.done" if str_at(data, "/item/type") == "reasoning" => {
                 out.push(Ok(self.reasoning_item(&data["item"])));
             }
@@ -393,6 +449,17 @@ impl ResponsesDecoder {
             "error" => self.fail(data, out),
             _ => {}
         }
+    }
+
+    /// A finished custom tool call: its raw text becomes the `patch` input, so it runs
+    /// as the JSON tool would (`builtin-tools` → Freeform apply_patch).
+    fn custom_call(&mut self, item: &Value) -> Option<LlmEvent> {
+        let key = str_at(item, "/id");
+        self.tools
+            .start(key, str_at(item, "/call_id"), str_at(item, "/name"));
+        let input = json!({ "patch": str_at(item, "/input") }).to_string();
+        let call = self.tools.finish(key, Some(&input))?;
+        Some(LlmEvent::ToolCallDone(call))
     }
 
     /// A finished reasoning item: its summary parts as the item text, and its encrypted
@@ -552,6 +619,127 @@ mod tests {
                 ErrorKind::ProviderInternal,
                 "response incomplete: server_shutdown".into()
             ))
+        );
+    }
+
+    fn patch_tool() -> crate::types::ToolSpec {
+        crate::types::ToolSpec {
+            name: "apply_patch".into(),
+            description: "Apply a patch".into(),
+            input_schema: json!({"type": "object", "properties": {"patch": {"type": "string"}}}),
+        }
+    }
+
+    /// `builtin-tools` → Freeform apply_patch: with the profile's freeform patch, the
+    /// patch tool is a custom tool carrying our grammar, and its earlier calls and
+    /// results replay as custom items; other tools stay functions.
+    #[test]
+    fn freeform_patch_offers_a_grammar_tool_and_replays_custom_items() {
+        let read = crate::types::ToolSpec {
+            name: "read".into(),
+            description: "Read".into(),
+            input_schema: json!({"type": "object"}),
+        };
+        let patch = "*** Begin Patch\n*** Delete File: a.txt\n*** End Patch\n";
+        let mut request = LlmRequest {
+            tools: vec![patch_tool(), read],
+            messages: vec![
+                Message::user_text("remove a.txt"),
+                Message {
+                    role: Role::Assistant,
+                    content: vec![Content::ToolCall {
+                        id: "call_1".into(),
+                        name: "apply_patch".into(),
+                        input: json!({ "patch": patch }),
+                        opaque: None,
+                    }],
+                },
+                Message {
+                    role: Role::User,
+                    content: vec![Content::ToolResult {
+                        call_id: "call_1".into(),
+                        output: "D a.txt".into(),
+                        is_error: false,
+                    }],
+                },
+            ],
+            ..LlmRequest::default()
+        };
+        request.shaping.freeform_patch = true;
+        let body = build_body(&request);
+        let tool = &body["tools"][0];
+        assert_eq!(tool["type"], "custom");
+        assert_eq!(tool["name"], "apply_patch");
+        assert_eq!(tool["format"]["type"], "grammar");
+        assert_eq!(tool["format"]["syntax"], "lark");
+        assert_eq!(tool["format"]["definition"], PATCH_GRAMMAR);
+        assert_eq!(body["tools"][1]["type"], "function");
+        assert_eq!(
+            body["input"][1],
+            json!({"type": "custom_tool_call", "call_id": "call_1", "name": "apply_patch", "input": patch})
+        );
+        assert_eq!(
+            body["input"][2],
+            json!({"type": "custom_tool_call_output", "call_id": "call_1", "output": "D a.txt"})
+        );
+        request.shaping.freeform_patch = false;
+        let body = build_body(&request);
+        assert_eq!(body["tools"][0]["type"], "function");
+        assert_eq!(body["input"][1]["type"], "function_call");
+        assert_eq!(body["input"][2]["type"], "function_call_output");
+    }
+
+    /// A streamed custom tool call decodes to `apply_patch { patch }` and finishes the
+    /// response as a tool call.
+    #[test]
+    fn custom_tool_calls_decode_to_the_patch_input() {
+        let patch = "*** Begin Patch\n*** Add File: b.txt\n+hi\n*** End Patch";
+        let item = json!({"type": "custom_tool_call", "id": "ctc_1", "call_id": "call_9", "name": "apply_patch"});
+        let mut done = item.clone();
+        done["input"] = json!(patch);
+        let mut decoder = ResponsesDecoder::default();
+        let mut out = Vec::new();
+        decoder.dispatch(
+            "response.output_item.added",
+            &json!({ "item": item }),
+            &mut out,
+        );
+        decoder.dispatch(
+            "response.custom_tool_call_input.delta",
+            &json!({"item_id": "ctc_1", "delta": "*** Begin"}),
+            &mut out,
+        );
+        decoder.dispatch(
+            "response.output_item.done",
+            &json!({ "item": done }),
+            &mut out,
+        );
+        decoder.dispatch("response.completed", &json!({"response": {}}), &mut out);
+        let events: Vec<LlmEvent> = out.into_iter().map(Result::unwrap).collect();
+        let call = events
+            .iter()
+            .find_map(|event| match event {
+                LlmEvent::ToolCallDone(call) => Some(call),
+                _ => None,
+            })
+            .expect("a finished call");
+        assert_eq!(
+            (call.id.as_str(), call.name.as_str()),
+            ("call_9", "apply_patch")
+        );
+        assert_eq!(call.input, Some(json!({ "patch": patch })));
+        assert!(matches!(
+            events.last(),
+            Some(LlmEvent::Finish {
+                reason: FinishReason::ToolCalls
+            })
+        ));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e, LlmEvent::ToolCallDone(_)))
+                .count(),
+            1
         );
     }
 

@@ -189,6 +189,7 @@ fn resolved_requests_carry_the_profile_shaping() {
             effort_none: true,
             verbosity: Some(VerbosityLevel::Low),
             parallel_tool_calls: Some(true),
+            freeform_patch: true,
         }
     );
     let mini = shaping("openai/gpt-6-mini");

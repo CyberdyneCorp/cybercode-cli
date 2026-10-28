@@ -26,7 +26,7 @@ pub use cost::compute as compute_cost;
 pub use credentials::{Credential, CredentialSource};
 pub use family::model_family;
 pub use model_ref::ModelRef;
-pub use profile::{ModelProfile, ProfilePatch};
+pub use profile::{EditTool, ModelProfile, ProfilePatch, ToolOutput, Truncation};
 pub use roles::{ModelRole, default_model, recent_models, record_recent, role_ref, tier_role_ref};
 pub use source::{Loaded, Origin, SourceOptions, load as load_source};
 

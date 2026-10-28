@@ -53,6 +53,9 @@ impl Tool for Bash {
             let escalation = escalation(input)?;
             let raw = text(input, "workdir");
             let workdir = ctx.resolve(if raw.is_empty() { "." } else { raw });
+            if let Some(found) = intercepted_patch(ctx, command) {
+                return super::patch_shell::run(ctx, found, &workdir).await;
+            }
             let analysis = analyze(command, &workdir);
             let excluded = excluded(ctx, command);
             authorize(ctx, command, &workdir, &analysis, excluded).await?;
@@ -86,6 +89,17 @@ impl Tool for Bash {
             Ok(output)
         })
     }
+}
+
+/// `command` as an `apply_patch` heredoc to run as the patch tool, unless an
+/// `apply_patch` program is installed (`builtin-tools` → apply_patch through the shell).
+pub(super) fn intercepted_patch<'c>(
+    ctx: &Ctx<'_>,
+    command: &'c str,
+) -> Option<super::patch_shell::ShellPatch<'c>> {
+    let found = super::patch_shell::shell_patch(command)?;
+    let path = ctx.host.opts.env.get("PATH").unwrap_or_default();
+    (!super::patch_shell::program_installed(&path)).then_some(found)
 }
 
 /// A user shell command (`!`): sandboxed, but never asks for permission. A PR it

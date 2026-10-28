@@ -327,6 +327,10 @@ pub struct Shaping {
     /// `parallel_tool_calls`, sent whenever tools are offered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parallel_tool_calls: Option<bool>,
+    /// Offer `apply_patch` as a grammar-constrained custom tool taking the raw patch
+    /// (`builtin-tools` → Freeform apply_patch).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub freeform_patch: bool,
 }
 
 impl Shaping {

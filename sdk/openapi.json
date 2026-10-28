@@ -7745,6 +7745,9 @@
               "string",
               "null"
             ]
+          },
+          "metadata": {
+            "description": "The tool host's notes on the settled run (`builtin-tools` → apply_patch through\nthe shell)."
           }
         },
         "required": [
