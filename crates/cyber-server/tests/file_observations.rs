@@ -32,6 +32,262 @@ fn aggregate(h: &Harness) -> String {
     format!("file-watch:{:x}", Sha256::digest(directory(h).as_bytes()))
 }
 
+fn opened_directory(path: &std::path::Path) -> std::fs::File {
+    cap_std::fs::Dir::open_ambient_dir(path, cap_std::ambient_authority())
+        .unwrap()
+        .into_std_file()
+}
+
+fn alias_spelling(path: &std::path::Path) -> String {
+    let path = path.canonicalize().unwrap().display().to_string();
+    let path = path.strip_prefix(r"\\?\").unwrap_or(&path);
+    let path = path
+        .strip_prefix(r"UNC\")
+        .map_or_else(|| path.to_owned(), |unc| format!(r"\\{unc}"));
+    format!("{path}/.")
+}
+
+#[tokio::test]
+async fn pinned_alias_scope_admits_its_handler_and_retains_credit_across_spelling_changes() {
+    let h = Harness::new(Setup::default());
+    let alias = h
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: alias_spelling(&h.repo),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let mut watch = h
+        .runtime
+        .claim_pinned_file_watch(h.repo.clone(), opened_directory(&h.repo), BTreeMap::new())
+        .await
+        .unwrap();
+    assert!(watch.state().requires_native_lease);
+    watch.admit_session_scope(&alias.id).await.unwrap();
+    let source = watch
+        .record(update(
+            &watch.state().generation,
+            records::FEEDBACK_LIMIT - 1,
+        ))
+        .await
+        .unwrap();
+    let event = file_event(&h, &alias.id, &source)
+        .await
+        .with_observation_directory(h.repo.canonicalize().unwrap())
+        .unwrap();
+    let mut owner = h
+        .runtime
+        .try_start_hook_execution(&event, &file_definition(&h), false)
+        .await
+        .unwrap()
+        .unwrap();
+    owner.verify(&h.runtime).unwrap();
+    let new = h
+        .runtime
+        .claim_pinned_file_watch(
+            alias.directory.clone().into(),
+            opened_directory(&h.repo),
+            BTreeMap::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        new.state().directory,
+        h.repo.canonicalize().unwrap().display().to_string()
+    );
+    assert_eq!(new.state().remaining, records::FEEDBACK_LIMIT - 1);
+    assert!(
+        owner.mark_launch(&h.runtime).is_err(),
+        "a new generation fences an admitted but unlaunched native effect"
+    );
+    assert!(watch.admit_session_scope(&alias.id).await.is_err());
+}
+
+#[tokio::test]
+async fn dropped_native_owner_cannot_fall_back_to_legacy_canonical_admission() {
+    let h = Harness::new(Setup::default());
+    let id = h
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: h.repo.canonicalize().unwrap().display().to_string(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let mut watch = h
+        .runtime
+        .claim_pinned_file_watch(h.repo.clone(), opened_directory(&h.repo), BTreeMap::new())
+        .await
+        .unwrap();
+    watch.admit_session_scope(&id).await.unwrap();
+    let source = watch
+        .record(update(
+            &watch.state().generation,
+            records::FEEDBACK_LIMIT - 1,
+        ))
+        .await
+        .unwrap();
+    let event = file_event(&h, &id, &source).await;
+    drop(watch);
+    assert!(
+        h.runtime
+            .try_start_hook_execution(&event, &file_definition(&h), false)
+            .await
+            .is_err()
+    );
+    assert!(h.runtime.hook_executions(&id, 10).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn an_admitted_handler_pin_does_not_keep_a_dropped_watch_authoritative() {
+    let h = Harness::new(Setup::default());
+    let id = h
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: h.repo.canonicalize().unwrap().display().to_string(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let mut watch = h
+        .runtime
+        .claim_pinned_file_watch(h.repo.clone(), opened_directory(&h.repo), BTreeMap::new())
+        .await
+        .unwrap();
+    watch.admit_session_scope(&id).await.unwrap();
+    let source = watch
+        .record(update(
+            &watch.state().generation,
+            records::FEEDBACK_LIMIT - 1,
+        ))
+        .await
+        .unwrap();
+    let event = file_event(&h, &id, &source).await;
+    let mut owner = h
+        .runtime
+        .try_start_hook_execution(&event, &file_definition(&h), false)
+        .await
+        .unwrap()
+        .unwrap();
+    drop(watch);
+    assert!(owner.mark_launch(&h.runtime).is_err());
+    assert!(
+        h.runtime
+            .try_start_hook_execution(&event, &file_definition(&h), false)
+            .await
+            .is_err(),
+        "retaining a descriptor for receipt settlement cannot authorize another handler"
+    );
+}
+
+#[tokio::test]
+async fn exhausted_pinned_feedback_survives_alias_restart_and_requires_owned_user_input() {
+    let h = Harness::new(Setup::default());
+    let alias = h
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: alias_spelling(&h.repo),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let mut watch = h
+        .runtime
+        .claim_pinned_file_watch(h.repo.clone(), opened_directory(&h.repo), BTreeMap::new())
+        .await
+        .unwrap();
+    let mut spent = update(&watch.state().generation, 0);
+    for index in 1..records::FEEDBACK_LIMIT {
+        let mut update = spent.updates[0].clone();
+        update.path = format!("budget-{index}");
+        spent.updates.push(update);
+    }
+    watch.record(spent).await.unwrap();
+    drop(watch);
+    let mut resumed = h
+        .runtime
+        .claim_pinned_file_watch(
+            alias.directory.clone().into(),
+            opened_directory(&h.repo),
+            BTreeMap::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resumed.state().remaining, 0);
+    let hook = admission_event(&h, &alias.id, "hook").await;
+    assert!(
+        resumed
+            .record(renewal(&resumed.state().generation, &alias.id, &hook))
+            .await
+            .is_err()
+    );
+    assert_eq!(resumed.state().remaining, 0);
+    let user = admission_event(&h, &alias.id, "user").await;
+    resumed
+        .record(renewal(&resumed.state().generation, &alias.id, &user))
+        .await
+        .unwrap();
+    assert_eq!(resumed.state().remaining, records::FEEDBACK_LIMIT);
+    assert!(
+        resumed
+            .record(renewal(&resumed.state().generation, &alias.id, &user))
+            .await
+            .is_err()
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn unused_user_acknowledgement_cannot_follow_a_retargeted_alias() {
+    let h = Harness::new(Setup::default());
+    let alias = h.dir.path().join("alias");
+    let other = h.dir.path().join("other");
+    std::fs::create_dir(&other).unwrap();
+    std::os::unix::fs::symlink(&h.repo, &alias).unwrap();
+    let session = h
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: alias.display().to_string(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let _old = h
+        .runtime
+        .claim_pinned_file_watch(h.repo.clone(), opened_directory(&h.repo), BTreeMap::new())
+        .await
+        .unwrap();
+    let original = admission_event(&h, &session.id, "user").await;
+    std::fs::remove_file(&alias).unwrap();
+    std::os::unix::fs::symlink(&other, &alias).unwrap();
+    let mut current = h
+        .runtime
+        .claim_pinned_file_watch(other.clone(), opened_directory(&other), BTreeMap::new())
+        .await
+        .unwrap();
+    current.admit_session_scope(&session.id).await.unwrap();
+    assert!(
+        current
+            .record(renewal(&current.state().generation, &session.id, &original))
+            .await
+            .is_err(),
+        "raw Session directory equality cannot move an unused old-root acknowledgement"
+    );
+    let fresh = admission_event(&h, &session.id, "user").await;
+    current
+        .record(renewal(&current.state().generation, &session.id, &fresh))
+        .await
+        .unwrap();
+}
+
 fn session_scope(
     watch: &cyber_server::runtime::file_observations::FileWatch,
     id: &str,

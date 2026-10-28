@@ -1081,3 +1081,160 @@ async fn directory_registration_limit_is_visible_and_reconciliation_covers_its_t
         .await
         .expect("partial native coverage must still settle its owner");
 }
+
+#[tokio::test]
+async fn alias_joining_first_shares_the_canonical_owner_and_preserves_raw_session_envelopes() {
+    let flow = support::flow::Flow::new(vec![], false);
+    let recorder = Recorder::start().await;
+    automatic_hooks(&flow, &recorder);
+    let canonical = flow.f.repo.display().to_string();
+    let normal = canonical.strip_prefix(r"\\?\").unwrap_or(&canonical);
+    let normal = normal
+        .strip_prefix(r"UNC\")
+        .map_or_else(|| normal.to_owned(), |unc| format!(r"\\{unc}"));
+    let spelling = format!("{normal}/.");
+    let alias = flow
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: spelling.clone(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    await_condition("alias-first canonical journal", || {
+        journal_count(&flow, records::CHECKPOINT) == 1
+    })
+    .await;
+    let direct = flow.session("default").await;
+    std::fs::write(
+        flow.f.repo.join("shared-alias-file"),
+        "observed once per Session",
+    )
+    .unwrap();
+    await_condition(
+        "both spellings receive their own real scoped callback",
+        || {
+            let seen = recorder.seen.lock().unwrap();
+            [
+                (&alias.id, spelling.as_str()),
+                (&direct, canonical.as_str()),
+            ]
+            .into_iter()
+            .all(|(session, directory)| {
+                seen.iter().any(|event| {
+                    event["session_id"] == *session
+                        && event["file_path"] == "shared-alias-file"
+                        && event["location"]["directory"] == directory
+                })
+            })
+        },
+    )
+    .await;
+    assert_eq!(journal_count(&flow, records::CHECKPOINT), 1);
+    {
+        let seen = recorder.seen.lock().unwrap();
+        let generations: std::collections::BTreeSet<_> = seen
+            .iter()
+            .map(|event| event["watch_generation"].as_str().unwrap())
+            .collect();
+        assert_eq!(generations.len(), 1);
+    }
+    flow.runtime.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn symlink_retarget_loses_old_delivery_and_user_input_admits_the_new_physical_scope() {
+    let flow = support::flow::Flow::new(vec![], false);
+    initialize_project(&flow.f.repo, "https://example.test/alias-original.git");
+    let other = flow.f.dir.path().join("other-repo");
+    std::fs::create_dir(&other).unwrap();
+    initialize_project(&other, "https://example.test/alias-retarget.git");
+    let new_project = cyber_core::project::identify(&other).id;
+    let alias_path = flow.f.dir.path().join("location-alias");
+    std::os::unix::fs::symlink(&flow.f.repo, &alias_path).unwrap();
+    let recorder = Recorder::start().await;
+    automatic_hooks(&flow, &recorder);
+    let alias = flow
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: alias_path.display().to_string(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let direct = flow.session("default").await;
+    await_condition("symlink alias baseline", || {
+        journal_count(&flow, records::CHECKPOINT) == 1
+    })
+    .await;
+    std::fs::write(flow.f.repo.join("before-retarget"), "original").unwrap();
+    await_condition("original alias callback", || {
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["session_id"] == alias.id && event["file_path"] == "before-retarget")
+    })
+    .await;
+    std::fs::remove_file(&alias_path).unwrap();
+    std::os::unix::fs::symlink(&other, &alias_path).unwrap();
+    std::fs::write(
+        flow.f.repo.join("old-root-only"),
+        "other Session still observes this",
+    )
+    .unwrap();
+    await_condition("unmoved Session retains original coverage", || {
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["session_id"] == direct && event["file_path"] == "old-root-only")
+    })
+    .await;
+    assert!(
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|event| event["session_id"] != alias.id || event["file_path"] != "old-root-only")
+    );
+    flow.runtime
+        .admit(
+            &alias.id,
+            cyber_server::runtime::Admission::text(
+                "observe the current root",
+                cyber_server::runtime::Delivery::Hold,
+            ),
+        )
+        .await
+        .unwrap();
+    await_condition("new physical Location baseline and input renewal", || {
+        journal_count(&flow, records::CHECKPOINT) == 2 && flow.f.store.read(|db| Ok(db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM event WHERE type=?1 AND json_extract(data,'$.renewal.session_id')=?2)",
+            rusqlite::params![records::CHANGED,alias.id], |row| row.get::<_,bool>(0))?)).unwrap()
+    }).await;
+    std::fs::write(other.join("new-root-only"), "new scope").unwrap();
+    await_condition("new scope has fresh project identity", || {
+        recorder.seen.lock().unwrap().iter().any(|event| {
+            event["session_id"] == alias.id
+                && event["file_path"] == "new-root-only"
+                && event["project_id"] == new_project
+        })
+    })
+    .await;
+    assert!(
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|event| event["session_id"] != direct || event["file_path"] != "new-root-only")
+    );
+    flow.runtime.shutdown().await;
+}

@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 pub const CHECKPOINT: &str = "file.watch.checkpoint.1";
@@ -14,6 +15,23 @@ pub const MAX_BATCH: usize = 256;
 pub const MAX_RECORD_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_REPLAY: usize = 128;
 pub const FEEDBACK_LIMIT: u32 = 64;
+
+/// One stable encoding shared by the native scanner and the retained runtime
+/// lease. The caller supplies an OS identity; this helper performs no IO.
+pub fn root_identity(identity: &impl Hash) -> String {
+    struct IdentityHash(Sha256);
+    impl Hasher for IdentityHash {
+        fn finish(&self) -> u64 {
+            0
+        }
+        fn write(&mut self, bytes: &[u8]) {
+            self.0.update(bytes);
+        }
+    }
+    let mut hash = IdentityHash(Sha256::new());
+    identity.hash(&mut hash);
+    format!("file-id-v1:{:x}", hash.0.finalize())
+}
 
 /// Mint a generation in the same module that validates its serialized shape.
 pub fn new_generation() -> String {
@@ -55,6 +73,10 @@ pub struct Checkpoint {
     pub generation: String,
     pub files: BTreeMap<String, Stamp>,
     pub remaining: u32,
+    /// A native generation cannot regain legacy authority after its live lease
+    /// is dropped. Old exact-directory journal ports default to legacy mode.
+    #[serde(default)]
+    pub requires_native_lease: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,6 +105,33 @@ pub struct SessionScope {
     pub directory: String,
     pub root_identity: String,
     pub generation: String,
+}
+
+/// Physical Location captured for newly committed user input. This private
+/// provenance never comes from a hook/plugin callback payload.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InputScope {
+    pub session_directory: String,
+    pub directory: String,
+    pub root_identity: String,
+}
+impl InputScope {
+    pub fn validate(&self) -> Result<(), String> {
+        if [&self.session_directory, &self.directory]
+            .into_iter()
+            .any(|directory| {
+                !Path::new(directory).is_absolute()
+                    || directory.len() > 4096
+                    || directory.contains('\0')
+            })
+            || self.root_identity.is_empty()
+            || self.root_identity.len() > 256
+        {
+            return Err("invalid user acknowledgement observation scope".into());
+        }
+        bounded(self)
+    }
 }
 
 impl SessionScope {
@@ -172,6 +221,8 @@ impl Checkpoint {
             || self.remaining != previous.remaining
             || (self.generation == previous.generation
                 && self.root_identity != previous.root_identity)
+            || (self.generation == previous.generation
+                && self.requires_native_lease != previous.requires_native_lease)
             || (self.root_identity == previous.root_identity && self.files != previous.files)
         {
             return Err(
@@ -281,6 +332,7 @@ impl Replay {
             root_identity: state.root_identity.clone(),
             generation: state.generation.clone(),
             remaining: state.remaining,
+            requires_native_lease: state.requires_native_lease,
         };
         let header_bytes = serde_json::to_vec(&header)
             .map_err(|error| error.to_string())?
@@ -361,7 +413,41 @@ mod tests {
             generation: new_generation(),
             files: BTreeMap::new(),
             remaining: FEEDBACK_LIMIT,
+            requires_native_lease: false,
         }
+    }
+    #[test]
+    fn input_scope_rejects_unbounded_or_relative_locations_and_extra_authority_fields() {
+        let state = checkpoint();
+        let mut scope = InputScope {
+            session_directory: state.directory.clone(),
+            directory: state.directory,
+            root_identity: state.root_identity,
+        };
+        scope.validate().unwrap();
+        let valid = serde_json::to_value(&scope).unwrap();
+        scope.directory = "relative".into();
+        assert!(scope.validate().is_err());
+        scope.directory = format!("/{}", "x".repeat(4096));
+        assert!(scope.validate().is_err());
+        let mut forged = valid;
+        forged["permission"] = serde_json::json!("allow");
+        assert!(serde_json::from_value::<InputScope>(forged).is_err());
+    }
+    #[test]
+    fn native_lease_requirement_cannot_be_downgraded_in_the_same_generation() {
+        let mut native = checkpoint();
+        native.requires_native_lease = true;
+        let mut downgraded = native.clone();
+        downgraded.requires_native_lease = false;
+        assert!(downgraded.follows(&native).is_err());
+        let mut legacy = serde_json::to_value(checkpoint()).unwrap();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("requires_native_lease");
+        let decoded: Checkpoint = serde_json::from_value(legacy).unwrap();
+        assert!(!decoded.requires_native_lease);
     }
     #[test]
     fn session_scope_is_bounded_and_distinct_from_metadata_or_permissions() {

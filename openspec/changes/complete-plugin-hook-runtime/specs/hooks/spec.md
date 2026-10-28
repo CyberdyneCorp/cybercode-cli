@@ -27,6 +27,18 @@
 - **AND** the single writer rejects wrong aggregate, Session-directory, root and generation bindings
 - **AND** scope metadata alone grants neither filesystem access nor alias admission; alias delivery additionally requires live pinned native proof
 
+#### Scenario: Canonical observation owner with Session aliases
+- **WHEN** live Sessions use different spellings or symlinks of one canonical Location, including when an alias joins first
+- **THEN** one canonical journal and watcher serve their separately scoped callbacks while preserving their raw Session envelopes
+- **AND** configuration, path matching and native command cwd use the checked canonical root, and new handler admission and launch require its retained native lease
+- **AND** retargeting an alias, dropping its watch owner or superseding its generation cannot authorize new old-root effects through a stale descriptor or a legacy fallback
+
+#### Scenario: User acknowledgement follows its admitted physical Location
+- **WHEN** user input is admitted and the Session's alias is subsequently retargeted
+- **THEN** native feedback renewal checks the physical Location captured with the real input as well as its current live scope and historical Session directory
+- **AND** an unused old-root acknowledgement cannot renew another physical root solely because the raw Session path is unchanged
+- **AND** a committed acknowledgement can be consumed only once across observation Locations
+
 #### Scenario: Duplicate or stale file observation delivery
 - **WHEN** an observation is delivered twice to a Session or its watcher generation was replaced before handler admission
 - **THEN** the same handler is not run again after a consumed or unknown receipt, and a stale generation cannot admit a new handler
@@ -63,6 +75,10 @@
 - **WHEN** a directory-registration bound leaves native coverage incomplete across successive scans
 - **THEN** partial coverage remains visible and bounded periodic reconciliation continues without manufacturing a fresh notification-loss signal on every actor tick
 - **AND** new callback queue or backend loss still requests immediate reconciliation
+
+#### Scenario: Wide metadata traversal
+- **WHEN** a shallow tree has many sibling directories within the metadata entry bound
+- **THEN** retained traversal descriptors follow the depth bound rather than the tree width, and reconciliation can inspect the tail without permanent descriptor exhaustion
 
 
 #### Scenario: Owner storage nested under a Location

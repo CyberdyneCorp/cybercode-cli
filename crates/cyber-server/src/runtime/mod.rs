@@ -52,6 +52,7 @@ mod hooks;
 mod installation;
 pub use installation::{InstallationNotice, UpdateStatus};
 mod file_observation_hooks;
+mod file_observation_roots;
 mod file_observation_scopes;
 pub mod file_observations;
 mod lifecycle;
@@ -783,6 +784,7 @@ pub(crate) struct Inner {
     pub tools: Arc<dyn ToolHost>,
     pub bus: Bus,
     pub options: RuntimeOptions,
+    file_observation_roots: file_observation_roots::Roots,
     sessions: StdMutex<HashMap<String, Arc<Handle>>>,
     drains: StdMutex<HashMap<String, DrainEntry>>,
     /// MCP serve recursion depth by Session, for the run (Drain) it was raised in.
@@ -913,6 +915,7 @@ impl Runtime {
             tools: Arc::clone(&options.tools),
             bus: Bus::new(),
             options,
+            file_observation_roots: file_observation_roots::Roots::default(),
             sessions: StdMutex::default(),
             drains: StdMutex::default(),
             mcp_depths: StdMutex::default(),
@@ -1582,6 +1585,11 @@ impl Runtime {
         let genuine = prompt || admission.source != "hook";
         // Blobs read for `file` parts are removed unless the prompt is admitted.
         let blobs = attachments.blobs;
+        // Capture outside Session/writer locks after prompt hooks. The handle
+        // stays alive through commit; a reused path cannot rebind this input.
+        let observation_scope = self
+            .capture_observation_input(&handle, prompt && admission.source == "user")
+            .await;
         let (receipt, observed_input) = {
             let mut state = handle.state.lock().await;
             state.ensure_worktree_ready()?;
@@ -1594,6 +1602,10 @@ impl Runtime {
                 return Err(RuntimeError::Busy(session_id.into()));
             }
             let payload = Admitted {
+                observation_scope: observation_scope
+                    .as_ref()
+                    .filter(|captured| captured.scope.session_directory == state.info.directory)
+                    .map(|captured| captured.scope.clone()),
                 skill_command: admission.skill_command,
                 admission_bindings,
                 wake: state.info.parent_id.is_some()

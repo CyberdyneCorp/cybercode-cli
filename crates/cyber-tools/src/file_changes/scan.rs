@@ -61,6 +61,24 @@ fn stamp(metadata: &Metadata) -> Stamp {
     }
 }
 
+struct Frame {
+    directory: Dir,
+    entries: cap_std::fs::ReadDir,
+    relative: PathBuf,
+    depth: usize,
+}
+impl Frame {
+    fn new(directory: Dir, relative: PathBuf, depth: usize) -> std::io::Result<Self> {
+        let entries = directory.entries()?;
+        Ok(Self {
+            directory,
+            entries,
+            relative,
+            depth,
+        })
+    }
+}
+
 pub(super) fn scan(
     root: &Dir,
     excluded: &dyn Fn(&Path) -> bool,
@@ -71,69 +89,77 @@ pub(super) fn scan(
         complete: true,
         ..Scan::default()
     };
-    let Ok(root) = root.try_clone() else {
+    let root = root
+        .try_clone()
+        .and_then(|root| Frame::new(root, PathBuf::new(), 0));
+    let Ok(root) = root else {
         out.complete = false;
         return out;
     };
     out.directories.insert(PathBuf::new());
-    let mut pending = vec![(root, PathBuf::new(), 0usize)];
+    // Retain only the open ancestor chain. Opening all siblings before visiting
+    // them lets a shallow wide tree exhaust process descriptors and permanently
+    // omit its tail on every reconciliation pass.
+    let mut pending = vec![root];
     let mut inspected = 0usize;
     let mut aliases = Aliases::default();
-    while let Some((directory, relative, depth)) = pending.pop() {
+    while let Some(frame) = pending.last_mut() {
         if cancelled.load(Ordering::Acquire) {
             out.complete = false;
             return finish(out, aliases);
         }
-        let Ok(entries) = directory.entries() else {
+        let Some(entry) = frame.entries.next() else {
+            pending.pop();
+            continue;
+        };
+        if inspected >= limits.entries {
+            out.complete = false;
+            return finish(out, aliases);
+        }
+        inspected += 1;
+        let Ok(entry) = entry else {
             out.complete = false;
             continue;
         };
-        for entry in entries {
-            if cancelled.load(Ordering::Acquire) || inspected >= limits.entries {
+        let name = entry.file_name();
+        let path = frame.relative.join(&name);
+        if excluded(&path) {
+            continue;
+        }
+        let Some(text) = path.to_str() else {
+            out.complete = false;
+            continue;
+        };
+        let relative_name = text.replace(std::path::MAIN_SEPARATOR, "/");
+        if text.len() > limits.path_bytes
+            || !cyber_core::hooks::file_observations::relative_name(&relative_name)
+        {
+            out.complete = false;
+            continue;
+        }
+        let Ok(metadata) = frame.directory.symlink_metadata(&name) else {
+            out.complete = false;
+            continue;
+        };
+        if metadata.is_dir() {
+            if frame.depth >= limits.depth {
                 out.complete = false;
-                return finish(out, aliases);
+                continue;
             }
-            inspected += 1;
-            let Ok(entry) = entry else {
-                out.complete = false;
-                continue;
-            };
-            let name = entry.file_name();
-            let path = relative.join(&name);
-            if excluded(&path) {
-                continue;
-            }
-            let Some(text) = path.to_str() else {
-                out.complete = false;
-                continue;
-            };
-            let relative_name = text.replace(std::path::MAIN_SEPARATOR, "/");
-            if text.len() > limits.path_bytes
-                || !cyber_core::hooks::file_observations::relative_name(&relative_name)
-            {
-                out.complete = false;
-                continue;
-            }
-            let Ok(metadata) = directory.symlink_metadata(&name) else {
-                out.complete = false;
-                continue;
-            };
-            if metadata.is_dir() {
-                if depth >= limits.depth {
-                    out.complete = false;
-                    continue;
+            let child = frame
+                .directory
+                .open_dir_nofollow(&name)
+                .and_then(|child| Frame::new(child, path.clone(), frame.depth + 1));
+            match child {
+                Ok(child) => {
+                    out.directories.insert(path);
+                    pending.push(child);
                 }
-                match directory.open_dir_nofollow(&name) {
-                    Ok(child) => {
-                        out.directories.insert(path.clone());
-                        pending.push((child, path, depth + 1));
-                    }
-                    Err(_) => out.complete = false,
-                }
-            } else if metadata.is_file() {
-                aliases.observe(&path, &metadata);
-                out.files.insert(path, stamp(&metadata));
+                Err(_) => out.complete = false,
             }
+        } else if metadata.is_file() {
+            aliases.observe(&path, &metadata);
+            out.files.insert(path, stamp(&metadata));
         }
     }
     finish(out, aliases)
@@ -157,6 +183,59 @@ mod tests {
     }
     fn root(path: &Path) -> Dir {
         Dir::open_ambient_dir(path, cap_std::ambient_authority()).unwrap()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wide_tree_uses_depth_bounded_descriptors_and_keeps_tail_coverage() {
+        // Isolate process-wide FD measurements from parallel native-watch tests.
+        if std::env::var_os("CYBER_FILE_SCAN_FD_CHILD").is_none() {
+            let name = std::thread::current().name().unwrap().to_owned();
+            let child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", &name, "--nocapture"])
+                .env("CYBER_FILE_SCAN_FD_CHILD", "1")
+                .output()
+                .unwrap();
+            assert!(
+                child.status.success(),
+                "isolated scanner failed: {} {}",
+                String::from_utf8_lossy(&child.stdout),
+                String::from_utf8_lossy(&child.stderr)
+            );
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        for index in 0..512 {
+            let path = temp.path().join(format!("tree-{index:03}"));
+            std::fs::create_dir(&path).unwrap();
+            std::fs::write(path.join("public"), "metadata").unwrap();
+        }
+        let count = || std::fs::read_dir("/dev/fd").unwrap().count();
+        let before = count();
+        let peak = std::cell::Cell::new(before);
+        let actual = scan(
+            &root(temp.path()),
+            &|_| {
+                peak.set(peak.get().max(count()));
+                false
+            },
+            &Limits {
+                entries: 2048,
+                depth: 8,
+                path_bytes: 4096,
+            },
+            &AtomicBool::new(false),
+        );
+        assert!(
+            actual.complete,
+            "a wide shallow tree must not lose its tail through descriptor pressure"
+        );
+        assert_eq!(actual.files.len(), 512);
+        assert!(
+            peak.get() <= before + 16,
+            "descriptor count grew with tree width: before={before}, peak={}",
+            peak.get()
+        );
     }
 
     #[tokio::test]

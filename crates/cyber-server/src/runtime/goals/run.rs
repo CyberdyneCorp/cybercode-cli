@@ -477,6 +477,7 @@ fn activated(goal_id: &str, cost: f64, tokens: u64) -> NewEvent {
 fn steer(goal: &Goal, text: String) -> NewEvent {
     let message_id = cyber_core::ids::new_id("msg");
     let admitted = Admitted {
+        observation_scope: None,
         skill_command: None,
         admission_bindings: None,
         wake: false,

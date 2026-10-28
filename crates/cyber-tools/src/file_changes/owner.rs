@@ -30,6 +30,7 @@ struct Membership {
     /// Keep only the newest committed acknowledgement per current Session.
     /// Both maps share the 256-Session bound; input bursts cannot grow a queue.
     renewals: BTreeMap<String, Renewal>,
+    scopes: BTreeSet<String>,
     explicit: Hints,
 }
 type Members = Arc<Mutex<Membership>>;
@@ -37,6 +38,7 @@ impl Membership {
     fn remove(&mut self, session: &str) {
         self.sessions.remove(session);
         self.renewals.remove(session);
+        self.scopes.remove(session);
     }
     fn is_empty(&self) -> bool {
         self.sessions.is_empty()
@@ -75,6 +77,7 @@ impl Entry {
         let mut members = self.members.lock().unwrap_or_else(PoisonError::into_inner);
         if members.sessions.contains(session) || members.sessions.len() < MAX_SESSIONS {
             members.sessions.insert(session.into());
+            members.scopes.insert(session.into());
         } else {
             notice(
                 host,
@@ -123,12 +126,13 @@ impl Observers {
         let members = Arc::new(Mutex::new(Membership {
             sessions: BTreeSet::from([info.id.clone()]),
             renewals: BTreeMap::new(),
+            scopes: BTreeSet::new(),
             explicit: Hints::default(),
         }));
         let cancel = CancellationToken::new();
         let weak = host.weak.clone();
         let root = path.clone();
-        let directory = info.directory.clone();
+        let directory = path.display().to_string();
         let membership = Arc::clone(&members);
         let owner = cancel.clone();
         let task = executor.spawn(async move {
@@ -353,7 +357,6 @@ impl Observation {
     async fn start(
         host: &BuiltinHost,
         path: &Path,
-        directory: &str,
         cancel: &CancellationToken,
     ) -> Result<Self, String> {
         let root = Root::open(path).map_err(|error| error.to_string())?;
@@ -371,9 +374,19 @@ impl Observation {
         }
         let runtime = host.runtime().ok_or("runtime unavailable")?;
         let journal = runtime
-            .claim_file_watch(directory.into(), root.identity.clone(), names(&initial))
+            .claim_pinned_file_watch(
+                root.path.clone(),
+                root.directory
+                    .try_clone()
+                    .map_err(|error| error.to_string())?
+                    .into_std_file(),
+                names(&initial),
+            )
             .await
             .map_err(|error| error.to_string())?;
+        if journal.state().root_identity != root.identity {
+            return Err("observation native identity differs from pinned scanner root".into());
+        }
         Ok(Self {
             root,
             native,
@@ -382,6 +395,29 @@ impl Observation {
             warned_partial: false,
             warned_budget: false,
         })
+    }
+    async fn refresh_scopes(
+        &self,
+        host: &BuiltinHost,
+        membership: &Members,
+        cancel: &CancellationToken,
+    ) {
+        let scopes = {
+            let mut members = membership.lock().unwrap_or_else(PoisonError::into_inner);
+            std::mem::take(&mut members.scopes)
+        };
+        for session in scopes {
+            if cancel.is_cancelled() {
+                break;
+            }
+            if let Err(error) = self.journal.admit_session_scope(&session).await {
+                notice(
+                    host,
+                    &session,
+                    &format!("FileChanged Session scope unavailable: {error}"),
+                );
+            }
+        }
     }
     async fn renew(
         &mut self,
@@ -667,12 +703,12 @@ impl RunState {
         }
         if self.observer.is_none() {
             self.observer =
-                start_observation(host, path, directory, &sessions, &mut self.failure, cancel)
-                    .await;
+                start_observation(host, path, &sessions, &mut self.failure, cancel).await;
         }
         let Some(current) = self.observer.as_mut() else {
             return true;
         };
+        current.refresh_scopes(host, membership, cancel).await;
         current.renew(host, membership, cancel).await;
         if let Err(error) = current.reconcile(host, &sessions, membership, cancel).await {
             if cancel.is_cancelled() {
@@ -716,13 +752,24 @@ async fn run(
 async fn start_observation(
     host: &BuiltinHost,
     path: &Path,
-    directory: &str,
     sessions: &[String],
     failure: &mut Option<String>,
     cancel: &CancellationToken,
 ) -> Option<Observation> {
-    match Observation::start(host, path, directory, cancel).await {
+    match Observation::start(host, path, cancel).await {
         Ok(started) => {
+            for session in sessions {
+                if cancel.is_cancelled() {
+                    return None;
+                }
+                if let Err(error) = started.journal.admit_session_scope(session).await {
+                    notice(
+                        host,
+                        session,
+                        &format!("FileChanged initial Session scope unavailable: {error}"),
+                    );
+                }
+            }
             *failure = None;
             Some(started)
         }

@@ -1,12 +1,10 @@
 # File observation implementation notes
 
-Status: **in progress; task 5.2 remains open**. The production observer and its
-focused application suite at `f0c5a743` passed Linux, macOS and Windows. The
-additional native formatter, foreground/background shell and self-mutating-hook
-regressions at `413d10ad` passed the Linux/macOS HTTP suites at `da891bc2`;
-Windows needs its shell fixture correction below and the complete macOS job
-remains pending. Broader workspace verification, remaining
-scope/resource/lifecycle acceptance and substantive review are still required.
+Status: **in progress; task 5.2 remains open**. The focused suite at `1e31e2f6`
+passed Linux, macOS and Windows. The newer pinned alias, physical input-scope
+and traversal-descriptor integration has 52 passing local macOS component tests
+and awaits full application/platform CI. Remaining acceptance, broader workspace
+verification and substantive review are still required.
 
 ## Ownership and native observation
 
@@ -232,3 +230,53 @@ approval fixture timed out because enabling interaction while retaining bypass
 Mode still refuses uncertain PowerShell expressions. The fixture now uses default
 Mode on Windows and includes tool outputs if a request is missing. That correction
 and the scope increment require a new platform run.
+
+## Pinned native Session integration under verification
+
+At `1e31e2f6`, the entire focused workflow passed on Linux, macOS and Windows,
+including all twelve Store/runtime and twelve HTTP/scripted-runtime scenarios
+and both real AppHost checks. That includes the corrected default-Mode Windows
+shell fixture and the durable exact-directory scope ledger. The newer native
+alias integration described below has not yet passed application/platform CI.
+
+Production observers now claim the canonical journal with a clone of the pinned
+root descriptor. The runtime keeps bounded weak generation registrations; the
+FileWatch owns the descriptor and admitted handlers retain it through settlement.
+Dropping the watch revokes new admission even while a handler retains its pin.
+Native checkpoints explicitly require a live lease, including for canonical
+paths; they cannot fall back to the legacy metadata-only port after owner loss.
+
+Session aliases prepare durable scope records only after physical identity
+checks. Handler admission and launch recheck native ownership; configuration,
+path matching and command cwd use the canonical root without changing public
+Session envelopes. Membership refresh and root generation startup prepare
+bounded scope updates. A changed physical scope invalidates cached project
+envelopes with the existing epoch fence. Native user renewal also checks the
+private physical-root snapshot captured in its actual user admission, current
+and historical raw Session scope, and global single-use consumption. A new
+partial expression index supports that global check. Projectors do no FS IO.
+
+The local actual-source harness passes 52 tests and Clippy at threshold 15. It
+now includes native lease-registry tests but still excludes the complete runtime,
+owner and application integration. New Store/runtime tests cover alias handler
+admission, generation/spelling changes, exhausted-credit restart and real input,
+retargeting an unused acknowledgement, dropped owners and retained-handler pins.
+New real application tests cover alias-first sharing, raw envelopes, symlink
+retarget refusal, fresh project identity and user-input renewal. These await CI;
+Unix symlink tests are explicitly gated, while spelling tests run on Windows too.
+The private event execution hint also has a core regression in platform CI.
+
+A separate real-source regression reproduced 519 open descriptors when scanning
+512 sibling directories. The scanner now retains only its open ancestor chain,
+so descriptor use follows the depth bound rather than tree width. The isolated
+child-process FD regression now passes with full tail coverage. This supplements
+the production application registration-tail test; it does not close remaining
+nested-move, overflow/resource/lifecycle acceptance or final review obligations.
+
+The invalid UTF-8 root fixture is Linux-only: the local macOS filesystem rejects
+the byte sequence before native observation can inspect it. Unix symlink/FD tests
+run on macOS/Linux; Windows runs spelling and real application coverage without
+those Unix-only fixtures. No skipped platform fixture is counted as executed.
+The renewal-index migration and exact consumption query were checked against
+5,000 in-memory SQL events; SQLite selected the new expression index. This is
+SQL-plan evidence, not full Store/runtime migration acceptance.

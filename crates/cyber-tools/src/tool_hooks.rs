@@ -334,11 +334,12 @@ impl BuiltinHost {
     async fn hook_catalog_at(
         &self,
         owner: &HookOwner,
+        directory: &Path,
     ) -> Result<Option<(Resolved, HookCatalog)>, ToolError> {
         let Some(config) = self.hook_config.get() else {
             return Ok(None);
         };
-        let resolved = (config.resolve)(Path::new(&owner.directory)).map_err(ToolError::Failed)?;
+        let resolved = (config.resolve)(directory).map_err(ToolError::Failed)?;
         let catalog = HookCatalog::from_config(&resolved).map_err(ToolError::Failed)?;
         let client = self.client_definitions(&owner.session_id).await;
         Ok(Some((resolved, catalog.with_client(client))))
@@ -378,7 +379,11 @@ impl BuiltinHost {
         cancel: CancellationToken,
     ) -> futures::future::BoxFuture<'a, Result<Option<(HookDecision, usize)>, ToolError>> {
         Box::pin(async move {
-            let Some((resolved, catalog)) = self.hook_catalog_at(owner).await? else {
+            let observation_directory = self.observation_directory(kind, owner, &fields)?;
+            let directory = observation_directory
+                .as_deref()
+                .unwrap_or(Path::new(&owner.directory));
+            let Some((resolved, catalog)) = self.hook_catalog_at(owner, directory).await? else {
                 return Ok(None);
             };
             if !catalog
@@ -390,13 +395,43 @@ impl BuiltinHost {
                 return Ok(None);
             }
             let identity = self.hook_identity(owner).await?;
-            let event = lifecycle_event(kind, identity, fields)?;
+            let mut event = lifecycle_event(kind, identity, fields)?;
+            if let Some(directory) = observation_directory {
+                event = event
+                    .with_observation_directory(directory)
+                    .map_err(ToolError::Failed)?;
+            }
             let cap = catalog.settings.max_stop_continuations;
             let decision = self
                 .dispatch_catalog(event, subject, &resolved, catalog, cancel)
                 .await?;
             Ok(Some((decision, cap)))
         })
+    }
+
+    fn observation_directory(
+        &self,
+        kind: &str,
+        owner: &HookOwner,
+        fields: &serde_json::Map<String, Value>,
+    ) -> Result<Option<std::path::PathBuf>, ToolError> {
+        if kind != "FileChanged" {
+            return Ok(None);
+        }
+        let field = |name: &str| {
+            fields
+                .get(name)
+                .and_then(Value::as_str)
+                .ok_or_else(|| ToolError::Failed(format!("FileChanged lacks {name}")))
+        };
+        self.runtime()
+            .ok_or_else(|| ToolError::Failed("FileChanged requires runtime ownership".into()))?
+            .file_observation_directory(
+                field("observation_id")?,
+                field("watch_generation")?,
+                Path::new(&owner.directory),
+            )
+            .map_err(|error| ToolError::Failed(error.to_string()))
     }
 
     pub(crate) async fn dispatch_catalog(
@@ -881,13 +916,13 @@ pub(crate) fn target_paths(event: &HookEvent, home: &Path) -> Vec<String> {
     } else {
         &event.as_json()["tool_input"]
     };
-    let location = crate::host::canonical(&event.identity().location.directory);
+    let location = crate::host::canonical(event.execution_directory());
     ["file_path", "path"]
         .into_iter()
         .filter_map(|key| input[key].as_str())
         .filter_map(|path| {
             let target = crate::host::canonical(&crate::host::resolve_path(
-                &event.identity().location.directory,
+                event.execution_directory(),
                 home,
                 path,
             ));

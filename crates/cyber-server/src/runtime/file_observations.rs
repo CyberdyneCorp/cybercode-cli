@@ -18,6 +18,20 @@ pub struct FileWatch {
     sequence: i64,
     since_checkpoint: usize,
     state: Checkpoint,
+    pinned_root: Option<Arc<super::file_observation_roots::PinnedRoot>>,
+}
+
+impl Drop for FileWatch {
+    fn drop(&mut self) {
+        if self.pinned_root.is_some()
+            && let Some(runtime) = self.runtime.upgrade()
+        {
+            runtime
+                .inner
+                .file_observation_roots
+                .remove(&self.state.generation);
+        }
+    }
 }
 
 struct Recorded {
@@ -78,6 +92,143 @@ fn load(db: &Connection, id: &str, before: i64) -> Result<Option<Recorded>, Stor
 }
 
 impl Runtime {
+    pub(super) async fn capture_observation_input(
+        &self,
+        handle: &super::Handle,
+        user: bool,
+    ) -> Option<super::file_observation_roots::CapturedInput> {
+        if !user {
+            return None;
+        }
+        let directory = handle.state.lock().await.info.directory.clone();
+        tokio::task::spawn_blocking(move || {
+            super::file_observation_roots::CapturedInput::new(&directory).ok()
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+    /// Recheck every new real handler against the retained native generation.
+    /// Only metadata is read under the database connection; OS identity probes
+    /// happen after that read and after the native registry lock is released.
+    pub(super) fn validate_native_file_hook(
+        &self,
+        event: &cyber_core::hooks::HookEvent,
+    ) -> Result<Option<super::file_observation_roots::Lease>, RuntimeError> {
+        if event.is_synthetic() || event.event() != "FileChanged" {
+            return Ok(None);
+        }
+        let field = |name: &str| {
+            event.as_json()[name]
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| RuntimeError::Invalid(format!("FileChanged lacks {name}")))
+        };
+        let observation = field("observation_id")?;
+        let generation = field("watch_generation")?;
+        let raw = &event.identity().location.directory;
+        let lease = self.native_file_scope(&observation, &generation, raw)?;
+        let expected = lease
+            .as_ref()
+            .map_or(raw.as_path(), |lease| lease.root.path.as_path());
+        if event.execution_directory() != expected {
+            return Err(RuntimeError::Invalid(
+                "file observation execution directory differs from its native owner".into(),
+            ));
+        }
+        Ok(lease)
+    }
+
+    /// The host uses this checked location for configuration and native command
+    /// cwd while preserving the raw Session envelope. It is not effect authority;
+    /// each actual handler must obtain and retain its own admission lease.
+    pub fn file_observation_directory(
+        &self,
+        observation: &str,
+        generation: &str,
+        directory: &std::path::Path,
+    ) -> Result<Option<std::path::PathBuf>, RuntimeError> {
+        Ok(self
+            .native_file_scope(observation, generation, directory)?
+            .map(|lease| lease.root.path.clone()))
+    }
+
+    fn native_file_scope(
+        &self,
+        observation: &str,
+        generation: &str,
+        raw: &std::path::Path,
+    ) -> Result<Option<super::file_observation_roots::Lease>, RuntimeError> {
+        let observation = observation.to_owned();
+        let generation = generation.to_owned();
+        let expected_generation = generation.clone();
+        let owner: Option<(String, String, String, bool)> = self.inner.store.read(move |db| {
+            Ok(db.query_row(
+                "SELECT json_extract(c.data,'$.directory'),json_extract(c.data,'$.root_identity'),json_extract(c.data,'$.generation'),COALESCE(json_extract(c.data,'$.requires_native_lease'),0)
+                 FROM event source JOIN event c ON c.aggregate_id=source.aggregate_id
+                 WHERE source.id=?1 AND source.type=?2 AND json_extract(source.data,'$.generation')=?3 AND c.type=?4
+                 ORDER BY c.seq DESC LIMIT 1",
+                params![observation,records::CHANGED,expected_generation,records::CHECKPOINT],
+                |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
+            ).optional()?)
+        })?;
+        let (directory, identity, current_generation, requires_native_lease) =
+            owner.ok_or_else(|| {
+                RuntimeError::Invalid("file observation source is unavailable".into())
+            })?;
+        if current_generation != generation {
+            return Err(RuntimeError::Invalid(
+                "file observation native generation is stale".into(),
+            ));
+        }
+        if let Some(root) = self.inner.file_observation_roots.get(&generation) {
+            if root.path != std::path::Path::new(&directory)
+                || root.identity != identity
+                || !root.matches(raw)
+            {
+                return Err(RuntimeError::Invalid(
+                    "file observation no longer belongs to the pinned native root".into(),
+                ));
+            }
+            return Ok(Some(super::file_observation_roots::Lease {
+                generation,
+                root,
+            }));
+        } else if requires_native_lease || raw != std::path::Path::new(&directory) {
+            return Err(RuntimeError::Invalid(
+                "file observation lacks its required live native lease".into(),
+            ));
+        }
+        Ok(None)
+    }
+    /// Claim from an owned, already opened native directory. Its canonical path
+    /// is the journal key; the descriptor supplies physical identity and remains
+    /// alive until this FileWatch and its in-flight callbacks have settled.
+    pub async fn claim_pinned_file_watch(
+        &self,
+        directory: std::path::PathBuf,
+        file: std::fs::File,
+        baseline: BTreeMap<String, Stamp>,
+    ) -> Result<FileWatch, RuntimeError> {
+        let root = Arc::new(
+            super::file_observation_roots::PinnedRoot::new(&directory, file)
+                .map_err(|error| RuntimeError::Invalid(error.to_string()))?,
+        );
+        let mut watch = self
+            .claim_file_watch_mode(
+                root.path.display().to_string(),
+                root.identity.clone(),
+                baseline,
+                true,
+            )
+            .await?;
+        self.inner
+            .file_observation_roots
+            .register(watch.state.generation.clone(), &root)
+            .map_err(RuntimeError::Invalid)?;
+        watch.pinned_root = Some(root);
+        Ok(watch)
+    }
     /// The host supplies metadata from its already pinned, policy-filtered root.
     /// Claiming a new generation fences any previous writer through exact-seq CAS.
     pub async fn claim_file_watch(
@@ -85,6 +236,17 @@ impl Runtime {
         directory: String,
         root_identity: String,
         baseline: BTreeMap<String, Stamp>,
+    ) -> Result<FileWatch, RuntimeError> {
+        self.claim_file_watch_mode(directory, root_identity, baseline, false)
+            .await
+    }
+
+    async fn claim_file_watch_mode(
+        &self,
+        directory: String,
+        root_identity: String,
+        baseline: BTreeMap<String, Stamp>,
+        requires_native_lease: bool,
     ) -> Result<FileWatch, RuntimeError> {
         let _open = self.inner.open().await?;
         let id = aggregate(&directory);
@@ -109,6 +271,7 @@ impl Runtime {
             remaining: previous
                 .as_ref()
                 .map_or(records::FEEDBACK_LIMIT, |row| row.state.remaining),
+            requires_native_lease,
         };
         state.validate().map_err(RuntimeError::Invalid)?;
         let stored = self.inner.store.append(
@@ -120,6 +283,9 @@ impl Runtime {
                     .map_err(|error| RuntimeError::Invalid(error.to_string()))?,
             )],
         )?;
+        self.inner
+            .file_observation_roots
+            .revoke(std::path::Path::new(&state.directory));
         if replaced {
             self.invalidate_observed_location(&state.directory).await;
         }
@@ -130,6 +296,7 @@ impl Runtime {
             sequence: stored[0].seq,
             since_checkpoint: 0,
             state,
+            pinned_root: None,
         })
     }
 
@@ -158,6 +325,20 @@ impl Runtime {
 }
 
 impl FileWatch {
+    pub(super) fn validate_native_scope(&self, directory: &str) -> Result<(), RuntimeError> {
+        if let Some(root) = &self.pinned_root {
+            if !root.matches(std::path::Path::new(directory)) {
+                return Err(RuntimeError::Invalid(
+                    "observing Session no longer names the pinned root".into(),
+                ));
+            }
+        } else if self.state.requires_native_lease || directory != self.state.directory {
+            return Err(RuntimeError::Invalid(
+                "alias admission requires live pinned native proof".into(),
+            ));
+        }
+        Ok(())
+    }
     pub fn state(&self) -> &Checkpoint {
         &self.state
     }
@@ -179,6 +360,11 @@ impl FileWatch {
     }
 
     pub async fn record(&mut self, delta: Delta) -> Result<StoredEvent, RuntimeError> {
+        // Prepare native provenance before taking the lifecycle admission read
+        // lease: nested acquisition could deadlock behind a shutdown writer.
+        if let Some(renewal) = &delta.renewal {
+            self.admit_session_scope(&renewal.session_id).await?;
+        }
         let runtime = self.runtime()?;
         let _open = runtime.inner.open().await?;
         let next = self.state.apply(&delta).map_err(RuntimeError::Invalid)?;
@@ -233,17 +419,42 @@ fn verify_renewal(
     state: &Checkpoint,
     renewal: &Renewal,
 ) -> Result<(), String> {
-    let valid: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM event e JOIN session s ON s.id=e.aggregate_id WHERE e.id=?1 AND e.aggregate_id=?2 AND e.type='session.prompt.admitted.1' AND json_extract(e.data,'$.source')='user' AND s.directory=?3 AND s.archived=0
-         AND (SELECT COALESCE(json_extract(location.data,'$.to.path'),json_extract(location.data,'$.info.directory'))
+    let location: Option<(String, Option<String>, Option<String>)> = tx.query_row(
+        "SELECT s.directory, (SELECT COALESCE(json_extract(location.data,'$.to.path'),json_extract(location.data,'$.info.directory'))
               FROM event location WHERE location.aggregate_id=e.aggregate_id AND location.seq<=e.seq
               AND location.type IN ('session.created.1','session.worktree.entered.1','session.worktree.exited.1','session.worktree.rebound.1')
-              ORDER BY location.seq DESC LIMIT 1)=?3)",
-        params![renewal.event_id,renewal.session_id,state.directory], |row|row.get(0),
-    ).map_err(|error|error.to_string())?;
+              ORDER BY location.seq DESC LIMIT 1), json_extract(e.data,'$.observation_scope')
+         FROM event e JOIN session s ON s.id=e.aggregate_id WHERE e.id=?1 AND e.aggregate_id=?2 AND e.type='session.prompt.admitted.1' AND json_extract(e.data,'$.source')='user' AND s.archived=0",
+        params![renewal.event_id,renewal.session_id], |row|Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    ).optional().map_err(|error|error.to_string())?;
+    let valid = match location {
+        Some((directory, Some(history), snapshot)) if history == directory => {
+            let physical = if state.requires_native_lease {
+                snapshot
+                    .and_then(|snapshot| {
+                        serde_json::from_str::<records::InputScope>(&snapshot).ok()
+                    })
+                    .is_some_and(|scope| {
+                        scope.session_directory == directory
+                            && scope.directory == state.directory
+                            && scope.root_identity == state.root_identity
+                    })
+            } else {
+                true
+            };
+            physical
+                && super::file_observation_scopes::matches(
+                    tx,
+                    state,
+                    &renewal.session_id,
+                    &directory,
+                )?
+        }
+        _ => false,
+    };
     let used: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM event WHERE aggregate_id=?1 AND seq<?2 AND type=?3 AND json_extract(data,'$.renewal.event_id')=?4)",
-        params![event.aggregate_id,event.seq,records::CHANGED,renewal.event_id],|row|row.get(0),
+        "SELECT EXISTS(SELECT 1 FROM event WHERE id!=?1 AND type='file.watch.changed.1' AND json_type(data,'$.renewal.event_id')='text' AND json_extract(data,'$.renewal.event_id')=?2)",
+        params![event.id,renewal.event_id],|row|row.get(0),
     ).map_err(|error|error.to_string())?;
     if !valid || used {
         return Err("file watcher renewal lacks fresh owned user input".into());
@@ -252,6 +463,9 @@ fn verify_renewal(
 }
 
 pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), String> {
+    if event.kind == super::events::ADMITTED {
+        return super::file_observation_scopes::project_input(tx, event);
+    }
     if event.kind == records::SCOPE {
         return super::file_observation_scopes::project(tx, event);
     }
@@ -306,6 +520,7 @@ pub(super) fn verify_scope_generation(
 pub(super) fn verify_hook_source(
     db: &Connection,
     directory: &str,
+    session_id: &str,
     observation_id: &str,
     generation: &str,
     file_path: &str,
@@ -327,7 +542,7 @@ pub(super) fn verify_hook_source(
     let current = load(db, &id, i64::MAX)
         .map_err(|error| error.to_string())?
         .ok_or("file watch is unavailable")?;
-    if current.state.directory != directory
+    if !super::file_observation_scopes::matches(db, &current.state, session_id, directory)?
         || current.state.generation != generation
         || delta.generation != generation
         || !delta.dispatch
@@ -384,17 +599,18 @@ impl FileWatch {
         }
         self.admit_session_scope(session_id).await?;
         let handle = runtime.inner.handle(session_id).await?;
-        let hooks = {
+        let (directory, hooks) = {
             let state = handle.state.lock().await;
-            if state.info.archived || state.info.directory != self.state.directory {
+            if state.info.archived {
                 return Err(RuntimeError::Invalid(
                     "observing Session changed Location or is archived".into(),
                 ));
             }
-            delta.updates.iter().map(|update|super::lifecycle::lifecycle(&state,"FileChanged",update.path.clone(),
+            (state.info.directory.clone(), delta.updates.iter().map(|update|super::lifecycle::lifecycle(&state,"FileChanged",update.path.clone(),
                 serde_json::json!({"file_path":update.path,"change":if update.stamp.is_some(){"changed"}else{"removed"},
-                    "observation_id":observation.id,"watch_generation":delta.generation}))).collect::<Vec<_>>()
+                    "observation_id":observation.id,"watch_generation":delta.generation}))).collect::<Vec<_>>())
         };
+        self.validate_native_scope(&directory)?;
         let mut failure = None;
         for hook in hooks {
             if cancel.is_cancelled() {

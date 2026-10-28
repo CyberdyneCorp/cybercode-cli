@@ -1,11 +1,9 @@
 //! Pinned root incarnation and private-state exclusions for metadata observation.
-use std::hash::{Hash, Hasher};
 use std::io;
 use std::path::{Path, PathBuf};
 
 use cap_std::fs::Dir;
 use same_file::Handle;
-use sha2::{Digest, Sha256};
 
 pub(super) struct Root {
     pub path: PathBuf,
@@ -14,15 +12,6 @@ pub(super) struct Root {
     pub identity: String,
 }
 
-struct IdentityHash(Sha256);
-impl Hasher for IdentityHash {
-    fn finish(&self) -> u64 {
-        0
-    }
-    fn write(&mut self, bytes: &[u8]) {
-        self.0.update(bytes);
-    }
-}
 #[cfg(not(windows))]
 fn open_directory(path: &Path) -> io::Result<Dir> {
     Dir::open_ambient_dir(path, cap_std::ambient_authority())
@@ -56,9 +45,7 @@ impl Root {
         let path = path.canonicalize()?;
         let directory = open_directory(&path)?;
         let handle = Handle::from_file(directory.try_clone()?.into_std_file())?;
-        let mut hash = IdentityHash(Sha256::new());
-        handle.hash(&mut hash);
-        let identity = format!("file-id-v1:{:x}", hash.0.finalize());
+        let identity = cyber_core::hooks::file_observations::root_identity(&handle);
         let root = Self {
             path,
             directory,

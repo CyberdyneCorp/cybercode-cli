@@ -87,6 +87,7 @@ pub(super) fn project(
     super::file_observations::verify_hook_source(
         tx,
         &record.directory,
+        &record.session_id,
         &binding.observation_id,
         &binding.generation,
         &binding.file_path,

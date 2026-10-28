@@ -1,9 +1,11 @@
 # File observation Session scope integration
 
-Status: implementation increment within approved producer task 5.2. Durable scope
-records and exact-directory dispatch are being connected first. Native pinned
-alias admission, renewal and per-handler checks remain unimplemented; this
-increment does not claim working alias delivery or change Session path semantics.
+Status: implementation increment within approved producer task 5.2. The scope
+ledger at `1e31e2f6` passed focused Linux/macOS/Windows CI. Pinned claims, native
+lease fencing, canonical journal identity, raw-alias dispatch, canonical handler
+configuration/cwd, physical input binding and cache refresh are implemented in
+the newer increment and await application/platform acceptance. Session path
+semantics remain unchanged; task 5.2 is still open.
 
 ## Problem and required behavior
 
@@ -36,7 +38,7 @@ Session directory, source watch generation/root and aggregate identity. It does
 not perform filesystem IO. Scope metadata alone grants neither alias admission
 nor execution authority; a native owner supplies physical proof outside replay.
 
-## Remaining native integration
+## Native integration under verification
 
 1. Add a pinned-watch claim accepting an owned clone of the already opened root
    directory handle. Derive physical identity with one shared pure hash helper;
@@ -84,3 +86,31 @@ nor execution authority; a native owner supplies physical proof outside replay.
   effects keep existing cancellation/Unknown/no-replay behavior.
 - Run actual Store/runtime and real application tests on Linux, macOS and
   Windows, with explicit supported alias mechanisms and skips if unavailable.
+
+## Physical input and descriptor ownership
+
+A fresh hook-checked source=user admission captures its physical Location after
+prompt hooks and outside Session/writer locks. The opened native handle stays
+alive through the input commit. A private optional observation scope is stored
+with that admission; internal hook/Goal/continuation/rewind admissions supply no
+such proof. The writer validates its Session directory and user source. Native
+renewal compares canonical Location and root identity with this historical
+snapshot as well as checking current live native membership. An unused old
+acknowledgement cannot follow a retargeted alias merely because the raw Session
+directory string is unchanged. Consumption is global across observation
+Locations, with a partial expression index keeping the lookup bounded.
+
+Native checkpoints record `requires_native_lease`. A missing descriptor lease
+cannot silently recover legacy authority for a canonical path. FileWatch drop
+explicitly revokes its generation, even when an admitted handler retains the
+physical descriptor for settlement. Every handler admission and native launch
+rechecks its lease; a superseding generation fences unlaunched old effects.
+
+A private, non-serialized event hint selects the canonical native configuration,
+matcher root and command cwd while leaving the public Session envelope intact.
+Runtime admission checks that hint against its real live root; it is not an
+alternative path authority supplied by an event payload.
+
+Canonical paths that cannot be represented by the Location API's UTF-8 strings
+are explicitly unavailable for native observation rather than recorded lossily.
+The ordinary prompt remains admissible without a usable observation snapshot.

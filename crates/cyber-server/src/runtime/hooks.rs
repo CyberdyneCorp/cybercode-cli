@@ -147,6 +147,7 @@ pub struct HookExecution {
     record: HookExecutionRecord,
     started: Instant,
     settled: bool,
+    native_observation: Option<super::file_observation_roots::Lease>,
 }
 
 impl HookExecution {
@@ -155,7 +156,18 @@ impl HookExecution {
     }
 
     pub fn verify(&self, runtime: &Runtime) -> Result<(), RuntimeError> {
-        self.authority.verify(runtime, &self.record.session_id)
+        self.authority.verify(runtime, &self.record.session_id)?;
+        if let Some(lease) = &self.native_observation
+            && !lease.current(
+                &runtime.inner.file_observation_roots,
+                std::path::Path::new(&self.record.directory),
+            )
+        {
+            return Err(RuntimeError::Conflict(
+                "file observation native scope changed before effect".into(),
+            ));
+        }
+        Ok(())
     }
 
     pub fn cancellation(&self) -> tokio_util::sync::CancellationToken {
@@ -331,6 +343,7 @@ impl Runtime {
                 "Hook event identity does not match its Session".into(),
             ));
         }
+        let native_observation = self.validate_native_file_hook(event)?;
         let activity = super::activity::Scope::reserve(&self.inner, &handle).await?;
         let authority = activity.authority();
         authority.verify(self, &event.identity().session_id)?;
@@ -358,6 +371,7 @@ impl Runtime {
         }
         publish_receipt(&self.inner.bus, &record);
         Ok(Some(HookExecution {
+            native_observation,
             store: Arc::clone(&self.inner.store),
             bus: self.inner.bus.clone(),
             authority,

@@ -4,6 +4,7 @@ on:
     paths:
       - crates/cyber-core/src/hooks.rs
       - crates/cyber-core/src/hooks/file_observations.rs
+      - crates/cyber-core/src/hooks/envelope.rs
       - crates/cyber-server/src/runtime/file_observations.rs
       - crates/cyber-server/src/runtime/events.rs
       - crates/cyber-server/src/runtime/mod.rs
@@ -12,6 +13,7 @@ on:
       - crates/cyber-tools/tests/file_observation_dispatch.rs
       - crates/cyber-server/src/runtime/file_observation_hooks.rs
       - crates/cyber-server/src/runtime/file_observation_scopes.rs
+      - crates/cyber-server/src/runtime/file_observation_roots.rs
       - crates/cyber-server/src/runtime/hooks.rs
       - crates/cyber-tools/src/lifecycle_hooks.rs
       - crates/cyber-tools/src/host.rs
@@ -21,7 +23,9 @@ on:
       - crates/cyber-server/src/runtime/lifecycle.rs
       - crates/cyber-server/src/runtime/host.rs
       - crates/cyber-server/src/runtime/lifecycle_events.rs
+      - crates/cyber-store/migrations/**
       - crates/cyber-tools/src/tool_hooks.rs
+      - crates/cyber-tools/src/hook_commands/**
       - crates/cyber-tools/src/tools/intelligence.rs
       - crates/cyber-tools/src/lib.rs
       - crates/cyber-tools/Cargo.toml
@@ -56,11 +60,14 @@ jobs:
       - name: Validate bounded observation records
         run: |
           cargo test --locked -p cyber-core --lib hooks::file_observations::
+          cargo test --locked -p cyber-core --lib hooks::envelope::
       - name: Exercise actual native hints and safe reconciliation
         run: |
           cargo test --locked -p cyber-tools --lib file_changes::
       - name: Exercise actual durable store and runtime ownership
-        run: cargo test --locked -p cyber-server --test file_observations
+        run: |
+          cargo test --locked -p cyber-server --lib file_observation_roots::
+          cargo test --locked -p cyber-server --test file_observations
       - name: Exercise real scoped HTTP-hook dispatch
         run: cargo test --locked -p cyber-tools --test file_observation_dispatch
       - name: Verify application host forwards observation notifications

@@ -150,6 +150,8 @@ pub struct Created {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Admitted {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) observation_scope: Option<cyber_core::hooks::file_observations::InputScope>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skill_command: Option<super::SkillCommand>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) admission_bindings: Option<Vec<super::admission_authority::Binding>>,
