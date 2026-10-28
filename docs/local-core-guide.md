@@ -65,6 +65,20 @@ An answer keeps its reasoning as separate items, one per reasoning block the pro
 
 Opaque state never leaves the store: exports (JSON, Markdown and HTML), the messages and history routes, the event streams (including a fork's `session.created.1`) and telemetry show `[opaque reasoning]` instead, and an imported document never supplies any. A value over 1 MiB is dropped when it arrives, with one warning per step in the log. Context estimates count opaque state at 3 tokens per 4 bytes.
 
+## Model behavior profiles
+
+Every model has a behavior profile: how its reasoning is replayed and in which request field (`reasoning_replay`, `reasoning_carrier`), whether it takes reasoning summaries and a verbosity, whether it makes parallel tool calls, which edit tool suits it (`freeform_patch`, `json_patch` or `edit`), its tool-output budget and truncation, its effort levels, and what happens to an effort it does not list (`effort_clamp`). `cyber models --json` and `GET /api/v1/models` show the resolved `profile` of each model.
+
+The profile is resolved field by field, a later layer winning: defaults by family and protocol; built-in rules by model name (for example `deepseek`, `kimi`, `glm` and `qwen` on a Chat Completions endpoint use `reasoning_content` within a tool loop, and `gpt-5`, `gpt-6`, `o3` and `o4` use the freeform patch tool with middle truncation at 10 000 tokens) and by provider (OpenRouter, Ollama, LM Studio, Copilot); the provider's catalog metadata (the ChatGPT model list, models.dev `reasoning` and `tool_call`); then configuration:
+
+```jsonc
+{ "providers": { "corp": { "models": { "coder": {
+  "profile": { "reasoning_replay": "never", "tool_output": { "tokens": 8000, "truncation": "middle" } }
+} } } } }
+```
+
+An unknown key or an invalid value warns, naming the key, and is ignored. When an agent, a workflow tier or a model role asks for an effort the model does not list, the nearest lower listed effort is used and one `info` log line names both; an effort you name yourself (`provider/model#xhigh`) still fails with `VariantUnavailableError`, as does any effort under `effort_clamp: "fail"`.
+
 ## Signing in with a ChatGPT subscription
 
 A ChatGPT Plus or Pro plan can pay for OpenAI models instead of an API key:

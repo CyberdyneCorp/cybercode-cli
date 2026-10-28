@@ -122,6 +122,13 @@ pub trait ModelResolver: Send + Sync {
     /// The configured model for a role, following the role fallbacks.
     fn role(&self, role: ModelRole) -> Option<String>;
 
+    /// A reference whose variant came from an agent, a workflow tier or a role, with an
+    /// effort the model lacks moved to the nearest lower one it lists (`provider-catalog`
+    /// → Model behavior profiles). An explicit user variant never goes through this.
+    fn clamp_effort(&self, model_ref: &str) -> String {
+        model_ref.to_owned()
+    }
+
     /// The latest usage window readings the providers of resolved models reported
     /// (`observability-costs` → Provider-reported limits); empty when none reported.
     fn limits(&self) -> Vec<cyber_llm::limits::LimitReading> {
@@ -197,7 +204,22 @@ impl ModelResolver for CatalogResolver {
     }
 
     fn role(&self, role: ModelRole) -> Option<String> {
-        role_ref(&self.config, role)
+        role_ref(&self.config, role).map(|reference| self.clamp_effort(&reference))
+    }
+
+    fn clamp_effort(&self, model_ref: &str) -> String {
+        let Ok(parsed) = ModelRef::parse(model_ref) else {
+            return model_ref.to_owned();
+        };
+        let Some(clamped) = self.catalog().clamp_effort(&parsed) else {
+            return model_ref.to_owned();
+        };
+        cyber_core::log::info(
+            "model-profile",
+            "effort clamped to the nearest lower level the model lists",
+            serde_json::json!({"model": parsed.base(), "requested": clamped.from, "used": clamped.to}),
+        );
+        clamped.model_ref.to_string()
     }
 
     fn limits(&self) -> Vec<cyber_llm::limits::LimitReading> {
@@ -1236,5 +1258,38 @@ impl Snapshots for NoSnapshots {
         _: &str,
     ) -> BoxFuture<'_, Result<Vec<String>, RestoreError>> {
         Box::pin(async { Err(RestoreError::Failed("snapshots are disabled".into())) })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use serde_json::json;
+
+    use super::*;
+
+    /// `provider-catalog` → Model behavior profiles: "Effort clamped for a workflow tier".
+    /// A role's (and a tier's) effort clamps; an explicit reference still fails.
+    #[test]
+    fn derived_efforts_clamp_and_explicit_ones_fail() {
+        let config = json!({
+            "model_roles": {"small": "corp/coder#xhigh"},
+            "providers": {"corp": {
+                "api": {"type": "openai-compatible", "url": "https://llm.corp.example/v1",
+                    "settings": {"api_key": "k"}},
+                "models": {"coder": {"variants": {"low": {"effort": "low"},
+                    "medium": {"effort": "medium"}, "high": {"effort": "high"}}}},
+            }},
+        });
+        let resolver = CatalogResolver::new(&json!({}), config, &HashMap::<String, String>::new());
+        assert_eq!(
+            resolver.role(ModelRole::Small).as_deref(),
+            Some("corp/coder#high")
+        );
+        assert_eq!(resolver.clamp_effort("corp/coder#xhigh"), "corp/coder#high");
+        assert_eq!(resolver.clamp_effort("corp/coder#low"), "corp/coder#low");
+        let explicit = resolver.resolve("corp/coder#xhigh").err().unwrap();
+        assert!(explicit.contains("VariantUnavailableError"), "{explicit}");
     }
 }

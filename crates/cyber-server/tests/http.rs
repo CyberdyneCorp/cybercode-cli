@@ -46,6 +46,7 @@ impl Services for FakeServices {
                 available: true,
                 context_limit: 200_000,
                 reasoning: false,
+                profile: Default::default(),
             }])
         })
     }

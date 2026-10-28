@@ -1009,6 +1009,12 @@ export type EditGoal = {
   budget?: Budget | null;
 };
 
+/** The tool shape the model edits files with. */
+export type EditTool = "freeform_patch" | "json_patch" | "edit";
+
+/** What happens to a derived effort the model does not list. */
+export type EffortClamp = "nearest_lower" | "fail";
+
 export type Enforcement = "soft" | "reserved";
 
 /**
@@ -3000,6 +3006,23 @@ export type ModelInfo = {
   available: boolean;
   context_limit: number;
   reasoning: boolean;
+  /** The resolved behavior profile (`provider-catalog` → Model behavior profiles). */
+  profile: ModelProfile;
+};
+
+/** A model's resolved behavior profile. */
+export type ModelProfile = {
+  reasoning_replay: ReasoningReplay;
+  reasoning_carrier: ReasoningCarrier;
+  /** The model accepts a reasoning summary request. */
+  reasoning_summary: boolean;
+  verbosity: Verbosity;
+  parallel_tool_calls: boolean;
+  edit_tool: EditTool;
+  tool_output: ToolOutput;
+  /** Reasoning efforts the model accepts, lowest first. */
+  efforts: string[];
+  effort_clamp: EffortClamp;
 };
 
 /** One provider and model of the Session tree. */
@@ -3424,6 +3447,12 @@ export type ReasoningBlock = {
   opaque?: Opaque | null;
   after_calls?: number;
 };
+
+/** The request field that carries reasoning state back to the provider. */
+export type ReasoningCarrier = "none" | "responses" | "anthropic" | "reasoning_content" | "reasoning" | "reasoning_details" | "gemini_signature" | "copilot_opaque";
+
+/** Which assistant messages get their reasoning items back natively. */
+export type ReasoningReplay = "never" | "tool_loop" | "always";
 
 /** The latest Session recap. */
 export type Recap = {
@@ -4620,6 +4649,12 @@ export type ToolInfo = {
   concurrency_safe: boolean;
 };
 
+export type ToolOutput = {
+  /** Token budget of a model-facing tool output; `None` keeps the byte limit alone. */
+  tokens?: number | null;
+  truncation: Truncation;
+};
+
 export type Totals = {
   usage: Usage;
   cost: number;
@@ -4627,6 +4662,9 @@ export type Totals = {
   unpriced_steps: number;
   steps: number;
 };
+
+/** Which part of a long tool output the model sees. */
+export type Truncation = "head" | "tail" | "middle";
 
 export type UpdateBody = {
   title?: string | null;
@@ -4751,6 +4789,13 @@ export type UsageStats = {
 export type Vcs = {
   vcs?: GitState | null;
 };
+
+export type Verbosity = {
+  supported: boolean;
+  default?: VerbosityLevel | null;
+};
+
+export type VerbosityLevel = "low" | "medium" | "high";
 
 /** An evaluator verdict. */
 export type Verdict = "met" | "not_met" | "impossible";

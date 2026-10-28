@@ -4,7 +4,9 @@
 
 use std::collections::BTreeMap;
 
-use super::{Capabilities, Limits, Model, Provider, RequestOverlay, Variant};
+use super::{
+    Capabilities, Limits, Model, ModelProfile, ProfilePatch, Provider, RequestOverlay, Variant,
+};
 use crate::adapters::ApiKind;
 use crate::chatgpt::{PROVIDER_ID, PlanModel, Session};
 use crate::types::Reasoning;
@@ -74,5 +76,8 @@ fn model(plan: &PlanModel) -> Model {
         released_at: None,
         disabled: false,
         request: RequestOverlay::default(),
+        profile: ModelProfile::default(),
+        profile_catalog: plan.profile.clone(),
+        profile_config: ProfilePatch::default(),
     }
 }

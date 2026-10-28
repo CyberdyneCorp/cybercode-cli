@@ -228,3 +228,34 @@ pub fn estimate_tokens(
         + serde_json::to_string(tools).map_or(0, |s| s.len());
     (chars.saturating_sub(opaque) / 4) as u64 + Opaque::tokens(opaque)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cyber_llm::OpaqueKind;
+
+    fn assistant(content: Vec<Content>) -> Message {
+        Message {
+            role: Role::Assistant,
+            content,
+        }
+    }
+
+    #[test]
+    fn opaque_bytes_count_three_tokens_per_four() {
+        let text_only = assistant(vec![Content::Reasoning {
+            text: "plan".into(),
+            opaque: None,
+        }]);
+        let base = estimate_tokens(&[], std::slice::from_ref(&text_only), &[]);
+        let blob = "A".repeat(4000);
+        let with_blob = assistant(vec![Content::Reasoning {
+            text: "plan".into(),
+            opaque: Some(Opaque::new(OpaqueKind::EncryptedReasoning, blob)),
+        }]);
+        let estimate = estimate_tokens(&[], &[with_blob], &[]);
+        // The blob adds 3000 tokens, plus a few for the `opaque` object's other fields.
+        let added = estimate - base;
+        assert!((3000..3020).contains(&added), "added {added} tokens");
+    }
+}

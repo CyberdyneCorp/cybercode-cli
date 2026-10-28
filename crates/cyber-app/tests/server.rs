@@ -6762,3 +6762,35 @@ async fn a_socket_outside_private_state_is_rejected_before_readiness_or_unlink()
     assert!(!paths(tmp.path()).state.join("server.json").exists());
     assert_eq!(std::fs::read_to_string(marker).unwrap(), "keep me");
 }
+
+/// `provider-catalog` → Model behavior profiles: `GET /api/v1/models` carries the resolved
+/// profile of each model, config overrides included.
+#[tokio::test]
+async fn the_model_listing_carries_each_resolved_profile() {
+    let tmp = tempfile::tempdir().unwrap();
+    let p = paths(tmp.path());
+    p.ensure().unwrap();
+    std::fs::write(
+        p.config.join("cyber.json"),
+        r#"{"providers":{"corp":{"api":{"type":"openai-compatible","url":"https://llm.corp.example/v1"},
+            "models":{"coder":{"profile":{"reasoning_replay":"never"}},"kimi-k2-thinking":{}}}}}"#,
+    )
+    .unwrap();
+    let application = app(tmp.path()).await;
+    let rows = application.state.services.models(tmp.path()).await.unwrap();
+    let rows = serde_json::to_value(rows).unwrap();
+    let profile = |id: &str| {
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == id)
+            .unwrap_or_else(|| panic!("{id} missing"))["profile"]
+            .clone()
+    };
+    assert_eq!(profile("corp/coder")["reasoning_replay"], "never");
+    assert_eq!(
+        profile("corp/kimi-k2-thinking")["reasoning_carrier"],
+        "reasoning_content"
+    );
+    application.runtime.shutdown().await;
+}

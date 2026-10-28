@@ -459,3 +459,101 @@ fn later_agent_layer_matches_catalog_layering_and_empty_layers_preserve_template
         json!({"provider":true,"model":true,"variant":true,"agent":true,"choice":"agent"})
     );
 }
+
+/// `provider-catalog` → Model behavior profiles: "Built-in rule for a compatible provider".
+#[test]
+fn a_compatible_provider_gets_the_built_in_rule() {
+    use cyber_llm::catalog::profile::{ReasoningCarrier, ReasoningReplay};
+    let config = json!({"providers": {"corp": {
+        "api": {"type": "openai-compatible", "url": "https://llm.corp.example/v1"},
+        "models": {"kimi-k2-thinking": {}},
+    }}});
+    let c = catalog(config, &env(&[]));
+    let (_, model) = c.find(&model_ref("corp/kimi-k2-thinking")).unwrap();
+    assert_eq!(
+        model.profile.reasoning_carrier,
+        ReasoningCarrier::ReasoningContent
+    );
+    assert_eq!(model.profile.reasoning_replay, ReasoningReplay::ToolLoop);
+}
+
+/// `provider-catalog` → Model behavior profiles: "Config overrides a field".
+#[test]
+fn config_overrides_one_profile_field() {
+    use cyber_llm::catalog::profile::ReasoningReplay;
+    let built_in = catalog(json!({}), &env(&[]));
+    let config = json!({"providers": {"openai": {"models": {"gpt-6": {
+        "profile": {"reasoning_replay": "never"},
+    }}}}});
+    let configured = catalog(config, &env(&[]));
+    let profile_of = |c: &Catalog| {
+        c.find(&model_ref("openai/gpt-6"))
+            .unwrap()
+            .1
+            .profile
+            .clone()
+    };
+    let (before, after) = (profile_of(&built_in), profile_of(&configured));
+    assert_eq!(before.reasoning_replay, ReasoningReplay::Always);
+    assert_eq!(after.reasoning_replay, ReasoningReplay::Never);
+    let mut expected = before;
+    expected.reasoning_replay = ReasoningReplay::Never;
+    assert_eq!(
+        after, expected,
+        "the other fields keep their built-in values"
+    );
+    let listed = serde_json::to_value(configured.list(Some("openai")).unwrap()).unwrap();
+    let row = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["ref"] == "openai/gpt-6")
+        .unwrap();
+    assert_eq!(row["model"]["profile"]["reasoning_replay"], "never");
+}
+
+/// `provider-catalog` → Model behavior profiles: "Effort clamped for a workflow tier".
+#[test]
+fn a_derived_effort_clamps_to_the_nearest_lower_level() {
+    let config = json!({"providers": {"corp": {
+        "api": {"type": "openai-compatible", "url": "https://llm.corp.example/v1",
+            "settings": {"api_key": "k"}},
+        "models": {
+            "coder": {"variants": {"low": {"effort": "low"}, "medium": {"effort": "medium"},
+                "high": {"effort": "high"}}},
+            "strict": {"variants": {"low": {"effort": "low"}}, "profile": {"effort_clamp": "fail"}},
+        },
+    }}});
+    let c = catalog(config, &env(&[]));
+    let clamped = c.clamp_effort(&model_ref("corp/coder#xhigh")).unwrap();
+    assert_eq!(
+        (clamped.from.as_str(), clamped.to.as_str()),
+        ("xhigh", "high")
+    );
+    assert_eq!(clamped.model_ref.to_string(), "corp/coder#high");
+    assert_eq!(
+        c.clamp_effort(&model_ref("corp/coder#high")),
+        None,
+        "listed"
+    );
+    assert_eq!(
+        c.clamp_effort(&model_ref("corp/coder#minimal")),
+        None,
+        "nothing lower"
+    );
+    assert_eq!(
+        c.clamp_effort(&model_ref("corp/coder#deep")),
+        None,
+        "not an effort"
+    );
+    assert_eq!(
+        c.clamp_effort(&model_ref("corp/strict#high")),
+        None,
+        "effort_clamp: fail"
+    );
+    // An explicit variant is never clamped: resolution still fails.
+    assert!(matches!(
+        c.resolve(&model_ref("corp/coder#xhigh"), None),
+        Err(CatalogError::VariantUnavailable { .. })
+    ));
+}

@@ -8585,6 +8585,10 @@
           },
           "reasoning": {
             "type": "boolean"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/ModelProfile",
+            "description": "The resolved behavior profile (`provider-catalog` → Model behavior profiles)."
           }
         },
         "required": [
@@ -8593,9 +8597,168 @@
           "name",
           "available",
           "context_limit",
-          "reasoning"
+          "reasoning",
+          "profile"
         ],
         "description": "A model offered to clients."
+      },
+      "ModelProfile": {
+        "type": "object",
+        "properties": {
+          "reasoning_replay": {
+            "$ref": "#/components/schemas/ReasoningReplay"
+          },
+          "reasoning_carrier": {
+            "$ref": "#/components/schemas/ReasoningCarrier"
+          },
+          "reasoning_summary": {
+            "type": "boolean",
+            "description": "The model accepts a reasoning summary request."
+          },
+          "verbosity": {
+            "$ref": "#/components/schemas/Verbosity"
+          },
+          "parallel_tool_calls": {
+            "type": "boolean"
+          },
+          "edit_tool": {
+            "$ref": "#/components/schemas/EditTool"
+          },
+          "tool_output": {
+            "$ref": "#/components/schemas/ToolOutput"
+          },
+          "efforts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Reasoning efforts the model accepts, lowest first."
+          },
+          "effort_clamp": {
+            "$ref": "#/components/schemas/EffortClamp"
+          }
+        },
+        "required": [
+          "reasoning_replay",
+          "reasoning_carrier",
+          "reasoning_summary",
+          "verbosity",
+          "parallel_tool_calls",
+          "edit_tool",
+          "tool_output",
+          "efforts",
+          "effort_clamp"
+        ],
+        "description": "A model's resolved behavior profile."
+      },
+      "ReasoningReplay": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "never",
+            "description": "Lower reasoning to text."
+          },
+          {
+            "type": "string",
+            "const": "tool_loop",
+            "description": "Native items for the assistant messages after the latest user message."
+          },
+          {
+            "type": "string",
+            "const": "always",
+            "description": "Native items for the whole history."
+          }
+        ],
+        "description": "Which assistant messages get their reasoning items back natively."
+      },
+      "ReasoningCarrier": {
+        "type": "string",
+        "enum": [
+          "none",
+          "responses",
+          "anthropic",
+          "reasoning_content",
+          "reasoning",
+          "reasoning_details",
+          "gemini_signature",
+          "copilot_opaque"
+        ],
+        "description": "The request field that carries reasoning state back to the provider."
+      },
+      "Verbosity": {
+        "type": "object",
+        "properties": {
+          "supported": {
+            "type": "boolean"
+          },
+          "default": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerbosityLevel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "supported"
+        ]
+      },
+      "VerbosityLevel": {
+        "type": "string",
+        "enum": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "EditTool": {
+        "type": "string",
+        "enum": [
+          "freeform_patch",
+          "json_patch",
+          "edit"
+        ],
+        "description": "The tool shape the model edits files with."
+      },
+      "ToolOutput": {
+        "type": "object",
+        "properties": {
+          "tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Token budget of a model-facing tool output; `None` keeps the byte limit alone."
+          },
+          "truncation": {
+            "$ref": "#/components/schemas/Truncation"
+          }
+        },
+        "required": [
+          "truncation"
+        ]
+      },
+      "Truncation": {
+        "type": "string",
+        "enum": [
+          "head",
+          "tail",
+          "middle"
+        ],
+        "description": "Which part of a long tool output the model sees."
+      },
+      "EffortClamp": {
+        "type": "string",
+        "enum": [
+          "nearest_lower",
+          "fail"
+        ],
+        "description": "What happens to a derived effort the model does not list."
       },
       "Located_PluginList": {
         "type": "object",

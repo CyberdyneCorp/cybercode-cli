@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{ChatGptError, Login, ORIGINATOR};
+use crate::catalog::ProfilePatch;
 use crate::subscription::ModelCache;
 
 /// The backend filters its list by the Codex client version it is told; Cyber Code asks
@@ -28,6 +29,10 @@ pub struct PlanModel {
     pub vision: bool,
     /// Reasoning efforts the model accepts, in the backend's order.
     pub efforts: Vec<String>,
+    /// Behavior profile fields the backend lists (verbosity, summaries, patch tool type,
+    /// output truncation); absent from caches written before they were read.
+    #[serde(default)]
+    pub profile: ProfilePatch,
 }
 
 /// `<data>/chatgpt-models.json`.
@@ -136,6 +141,7 @@ fn parse(document: &Value) -> Vec<PlanModel> {
                     .filter(|effort| valid_slug(effort))
                     .map(str::to_owned)
                     .collect(),
+                profile: crate::catalog::profile::from_chatgpt(m),
             })
         })
         .collect()
@@ -155,13 +161,18 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::catalog::profile::{EditTool, Truncation, VerbosityLevel};
 
     #[test]
     fn only_listed_models_with_simple_slugs_are_kept() {
         let models = parse(&json!({"models": [
             {"slug": "gpt-6-sol", "display_name": "GPT-6-Sol", "visibility": "list",
              "context_window": 272000, "input_modalities": ["text", "image"],
-             "supported_reasoning_levels": [{"effort": "low"}, {"effort": "max"}]},
+             "supported_reasoning_levels": [{"effort": "low"}, {"effort": "max"}],
+             "support_verbosity": true, "default_verbosity": "low",
+             "supports_reasoning_summary_parameter": false,
+             "apply_patch_tool_type": "freeform",
+             "truncation_policy": {"mode": "tokens", "limit": 10000}},
             {"slug": "gpt-reserve", "visibility": "hide"},
             {"slug": "bad/slug", "visibility": "list"},
             {"slug": "gpt-plain", "visibility": "list"}
@@ -175,6 +186,15 @@ mod tests {
                     context_window: 272_000,
                     vision: true,
                     efforts: vec!["low".into(), "max".into()],
+                    profile: ProfilePatch {
+                        verbosity_supported: Some(true),
+                        verbosity_default: Some(VerbosityLevel::Low),
+                        reasoning_summary: Some(false),
+                        edit_tool: Some(EditTool::FreeformPatch),
+                        tool_output_tokens: Some(10_000),
+                        truncation: Some(Truncation::Middle),
+                        ..ProfilePatch::default()
+                    },
                 },
                 PlanModel {
                     slug: "gpt-plain".into(),
@@ -182,6 +202,7 @@ mod tests {
                     context_window: 0,
                     vision: false,
                     efforts: Vec::new(),
+                    profile: ProfilePatch::default(),
                 },
             ]
         );
@@ -199,6 +220,7 @@ mod tests {
             context_window: 1,
             vision: false,
             efforts: Vec::new(),
+            profile: ProfilePatch::default(),
         };
         file.save(vec![model.clone()]).unwrap();
         assert!(!file.stale());

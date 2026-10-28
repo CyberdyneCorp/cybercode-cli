@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{Capabilities, Limits, Model, Provider, RequestOverlay};
+use super::{Capabilities, Limits, Model, ModelProfile, ProfilePatch, Provider, RequestOverlay};
 use crate::adapters::ApiKind;
 use crate::copilot::{API_URL, CopilotModel, PROVIDER_ID, Protocol, Session};
 
@@ -67,5 +67,8 @@ fn model(listed: &CopilotModel) -> Model {
         released_at: None,
         disabled: false,
         request: RequestOverlay::default(),
+        profile: ModelProfile::default(),
+        profile_catalog: ProfilePatch::default(),
+        profile_config: ProfilePatch::default(),
     }
 }

@@ -5,7 +5,10 @@ use std::collections::HashMap;
 
 use base64::Engine;
 use cyber_llm::adapters::{ApiKind, adapter};
-use cyber_llm::catalog::{BuildInputs, Catalog, CatalogError, CredentialSource, ModelRef};
+use cyber_llm::catalog::profile::{ReasoningCarrier, VerbosityLevel};
+use cyber_llm::catalog::{
+    BuildInputs, Catalog, CatalogError, CredentialSource, ModelRef, ProfilePatch,
+};
 use cyber_llm::chatgpt::{AuthFile, Issuer, Login, ModelsFile, PlanModel, Session};
 use cyber_llm::{Endpoint, ErrorKind, LlmRequest, Message, collect};
 use serde_json::{Value, json};
@@ -260,6 +263,13 @@ fn catalog(env: &HashMap<String, String>, config: Value) -> Catalog {
     })
 }
 
+/// The listed `/models` profile fields reach the catalog profile (layer 3).
+fn assert_listed_profile(profile: &cyber_llm::catalog::ModelProfile) {
+    assert_eq!(profile.reasoning_carrier, ReasoningCarrier::Responses);
+    assert_eq!(profile.verbosity.default, Some(VerbosityLevel::Low));
+    assert_eq!(profile.efforts, ["low", "max"]);
+}
+
 #[test]
 fn the_provider_lists_the_plans_models_after_login() {
     let dir = tempfile::tempdir().unwrap();
@@ -280,6 +290,11 @@ fn the_provider_lists_the_plans_models_after_login() {
             context_window: 272_000,
             vision: true,
             efforts: vec!["low".into(), "max".into()],
+            profile: ProfilePatch {
+                verbosity_supported: Some(true),
+                verbosity_default: Some(VerbosityLevel::Low),
+                ..ProfilePatch::default()
+            },
         }])
         .unwrap();
     let catalog = catalog(&env, json!({}));
@@ -293,6 +308,7 @@ fn the_provider_lists_the_plans_models_after_login() {
         rows[0].model.variants.keys().collect::<Vec<_>>(),
         ["low", "max"]
     );
+    assert_listed_profile(&rows[0].model.profile);
     assert_eq!(
         catalog.credential("chatgpt").unwrap().source,
         CredentialSource::Login

@@ -512,12 +512,17 @@ impl RunHost {
         if requested.contains('/') {
             return Ok(Some(requested.to_owned()));
         }
-        self.tiers.get(requested).cloned().ok_or_else(|| {
+        let tier = self.tiers.get(requested).cloned().ok_or_else(|| {
             Diagnostic::new(
                 DiagnosticKind::ModelUnavailable,
                 format!("unknown model tier {requested:?}"),
             )
-        })
+        })?;
+        // A tier's effort is configuration, not the script's choice: clamp it to the model.
+        Ok(tier.map(|reference| match self.runtime.upgrade() {
+            Some(runtime) => runtime.inner.resolver.clamp_effort(&reference),
+            None => reference,
+        }))
     }
 
     /// `sha256(prompt + canonical options)` and the ordinal of that key in this run.

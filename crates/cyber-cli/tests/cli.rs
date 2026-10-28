@@ -4557,3 +4557,47 @@ fn ci_true_exec_defaults_to_text() {
     assert_eq!(stdout(&output).trim(), "ci answer");
     assert!(serde_json::from_slice::<Value>(&output.stdout).is_err());
 }
+
+/// `provider-catalog` → Model behavior profiles: "Config overrides a field", through
+/// `cyber models <provider> --json`.
+#[test]
+fn models_json_shows_the_resolved_profile_with_a_config_override() {
+    let e = Env::new();
+    let global = e.root.join("cyber-home").join("config");
+    std::fs::create_dir_all(&global).unwrap();
+    std::fs::write(
+        global.join("cyber.jsonc"),
+        r#"{ "providers": { "corp": {
+            "api": { "type": "openai-compatible", "url": "https://llm.corp.example/v1" },
+            "models": {
+                "coder": { "profile": { "reasoning_replay": "never" } },
+                "kimi-k2-thinking": {}
+            }
+        } } }"#,
+    )
+    .unwrap();
+    std::fs::write(e.root.join("models.json"), "{}").unwrap();
+    let o = e
+        .command(&["--format", "json", "models", "corp"])
+        .env("CYBER_MODELS_PATH", e.root.join("models.json"))
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", stderr(&o));
+    let listing = json(&o);
+    let profile = |reference: &str| {
+        listing["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["ref"] == reference)
+            .unwrap_or_else(|| panic!("{reference} missing: {listing}"))["profile"]
+            .clone()
+    };
+    let coder = profile("corp/coder");
+    assert_eq!(coder["reasoning_replay"], "never");
+    assert_eq!(coder["edit_tool"], "edit");
+    assert_eq!(coder["tool_output"]["truncation"], "head");
+    let kimi = profile("corp/kimi-k2-thinking");
+    assert_eq!(kimi["reasoning_carrier"], "reasoning_content");
+    assert_eq!(kimi["reasoning_replay"], "tool_loop");
+}

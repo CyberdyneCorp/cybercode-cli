@@ -10,7 +10,7 @@
   - rebuild the ordered items in `SessionState`.
   
   Regression test: an old event log replays as one item.
-- [ ] 1.3 Redaction and size:
+- [x] 1.3 Redaction and size:
   - `[opaque reasoning]` in exports (HTML/JSON), shares, logs and OTel attributes;
   - context estimate at 3 tokens per 4 bytes;
   - drop values over 1 MiB, with one warning.
@@ -51,19 +51,19 @@
 
 ## 4. Model behavior profiles
 
-- [ ] 4.1 `catalog/profile.rs`:
+- [x] 4.1 `catalog/profile.rs`:
   - the `ModelProfile` type;
   - family defaults;
   - the built-in prefix and provider rule table (OpenAI `gpt-5*`/`gpt-6*`/`o3`/`o4`, DeepSeek, Kimi, GLM, Qwen, Gemini 3, OpenRouter, Copilot, Ollama/LM Studio);
   - field-wise layering.
   
   Unit tests: each layer wins over the one before it.
-- [ ] 4.2 Catalog metadata: read the ChatGPT `/models` profile fields in `chatgpt/models.rs`, and `reasoning`/`tool_call` from models.dev.
-- [ ] 4.3 Config: `providers.<p>.models.<m>.profile` parsed and validated in `cyber-core` config, warning on an invalid key or value.
+- [x] 4.2 Catalog metadata: read the ChatGPT `/models` profile fields in `chatgpt/models.rs`, and `reasoning`/`tool_call` from models.dev.
+- [x] 4.3 Config: `providers.<p>.models.<m>.profile` parsed and validated in `cyber-core` config, warning on an invalid key or value.
   - Tests: "Config overrides a field", and the invalid-value warning.
-- [ ] 4.4 Effort clamping (`nearest_lower`) for agent, workflow tier and role efforts; explicit user variants still fail.
+- [x] 4.4 Effort clamping (`nearest_lower`) for agent, workflow tier and role efforts; explicit user variants still fail.
   - Scenario test.
-- [ ] 4.5 `profile` in `cyber models --json` and `GET /api/v1/models`; regenerate `sdk/openapi.json`, the TS SDK and `docs/cli.md`.
+- [x] 4.5 `profile` in `cyber models --json` and `GET /api/v1/models`; regenerate `sdk/openapi.json`, the TS SDK and `docs/cli.md`.
 
 ## 5. Request shaping, headers, timeout, errors
 

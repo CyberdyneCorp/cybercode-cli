@@ -19,7 +19,9 @@ impl ModelSelection {
         }
     }
 
-    pub fn resolve(&self, options: &AgentInference) -> Result<String, RuntimeError> {
+    /// The reference to use. Its variant is `derived` when an agent profile chose it or the
+    /// whole reference is the agent's default, so an effort the model lacks is clamped.
+    pub fn resolve(&self, options: &AgentInference) -> Result<Chosen, RuntimeError> {
         let reference = if self.agent_default {
             options.model.as_deref().unwrap_or(&self.reference)
         } else {
@@ -33,15 +35,24 @@ impl ModelSelection {
         }
         let mut model =
             ModelRef::parse(reference).map_err(|error| RuntimeError::Model(error.to_string()))?;
-        if (self.agent_default || model.variant.is_none()) && options.variant.is_some() {
+        let derived = (self.agent_default || model.variant.is_none()) && options.variant.is_some();
+        if derived {
             model.variant.clone_from(&options.variant);
         }
-        Ok(model.to_string())
+        Ok(Chosen {
+            reference: model.to_string(),
+            derived: derived || self.agent_default,
+        })
     }
 
     pub fn persisted(&self, effective: &str) -> Option<Self> {
         (self.agent_default || self.reference != effective).then(|| self.clone())
     }
+}
+
+pub(crate) struct Chosen {
+    pub reference: String,
+    pub derived: bool,
 }
 
 pub(crate) struct SelectedModel {
@@ -71,7 +82,12 @@ impl Inner {
         selection: &ModelSelection,
         options: &AgentInference,
     ) -> Result<SelectedModel, RuntimeError> {
-        let reference = selection.resolve(options)?;
+        let chosen = selection.resolve(options)?;
+        let reference = if chosen.derived {
+            self.resolver.clamp_effort(&chosen.reference)
+        } else {
+            chosen.reference
+        };
         let mut model = self.resolve(&reference)?;
         options.request.apply_to(&mut model.template);
         Ok(SelectedModel {
@@ -93,5 +109,40 @@ pub(crate) fn validate_mode(mode: &str) -> Result<(), RuntimeError> {
         Ok(())
     } else {
         Err(RuntimeError::Invalid(format!("unknown mode {mode}")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn agent(variant: Option<&str>) -> AgentInference {
+        AgentInference {
+            variant: variant.map(str::to_owned),
+            ..AgentInference::default()
+        }
+    }
+
+    /// Only an agent's variant, or the agent's default model, may be clamped to the model.
+    #[test]
+    fn a_variant_is_derived_only_when_the_agent_chose_it() {
+        let explicit = ModelSelection::explicit("corp/coder#xhigh".into());
+        let chosen = explicit.resolve(&agent(Some("low"))).unwrap();
+        assert_eq!(
+            (chosen.reference.as_str(), chosen.derived),
+            ("corp/coder#xhigh", false)
+        );
+        let bare = ModelSelection::explicit("corp/coder".into());
+        let chosen = bare.resolve(&agent(Some("xhigh"))).unwrap();
+        assert_eq!(
+            (chosen.reference.as_str(), chosen.derived),
+            ("corp/coder#xhigh", true)
+        );
+        assert!(!bare.resolve(&agent(None)).unwrap().derived);
+        let default = ModelSelection {
+            reference: "corp/coder#xhigh".into(),
+            agent_default: true,
+        };
+        assert!(default.resolve(&agent(None)).unwrap().derived);
     }
 }
