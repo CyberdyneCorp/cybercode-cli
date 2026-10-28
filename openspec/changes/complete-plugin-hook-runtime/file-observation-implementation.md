@@ -3,8 +3,9 @@
 Status: **in progress; task 5.2 remains open**. The full focused suite at
 `3e852288` passed Linux, macOS and Windows, including pinned native alias/input
 scope integration and the directory-move guard (the latter's new fixtures were
-Unix-only at that revision). The later Session-capacity recovery test and
-Windows directory-move fixtures await a fresh platform run. Remaining resource,
+Unix-only at that revision). Session-capacity recovery also passed Linux at
+`8c32f621`. Revised Windows finalization/lock-release fixtures await a fresh
+platform run. Remaining resource,
 lifecycle and broader workspace verification and substantive review are still
 required.
 
@@ -294,11 +295,11 @@ than inventing deletions. Cancellation discards the candidate scan.
 
 A second regression verifies that a moved directory's files cannot count as
 permitted hard-link aliases of files remaining inside the Location. Scope
-filtering precedes link-proof finalization. Both regressions use portable
-filesystem operations and are configured for Linux/macOS/Windows CI; only their
-local macOS execution is verified so far.
-The actual-source macOS harness now passes 54 tests and Clippy with threshold 15
-and warnings denied, excluding the complete owner, runtime and application.
+filtering precedes link-proof finalization. Both in-flight-move regressions pass
+on Unix; enabling those fixtures on Windows exposed its deliberate cap-std
+sharing lock, addressed by the finalization/lock-release coverage below. The
+actual-source macOS harness now passes 55 library tests and scoped Clippy with
+threshold 15, excluding the complete owner, runtime and application.
 
 The focused run at `5af61f59` failed. Linux and macOS logs identify a borrowed
 Session ID captured by a Store closure requiring a static lifetime in the new
@@ -333,3 +334,28 @@ macOS and Windows as well:
 https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40634040263.
 Broader CI at that revision remains a separate run and was still in progress:
 https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40634040407.
+
+## Windows move-fixture correction and current acceptance
+
+At `8c32f621`, the full focused Linux job passed, including the actual
+257-Session refusal/release/readmission scenario (15 HTTP/runtime tests total).
+Windows failed the two newly enabled in-flight move fixtures with native sharing
+violation 32, before their observation assertions. Inspection of cap-std 4.0.3
+shows its Windows directory opens deliberately omit FILE_SHARE_DELETE to protect
+its path-based resolution while those traversal handles exist. Relaxing that
+upstream safety property is not part of this correction.
+
+The Unix in-flight-move regressions retain their platform gate. A new portable
+regression records real directory/file metadata, closes traversal child handles,
+moves the directory outside the Location and invokes the production finalizer.
+Both complete and partial candidates must discard moved subtree metadata and
+exclude those names from remaining hard-link proofs, preserving healthy sibling
+observations. This tests the finalization race Windows can reach. A Windows-only
+actual-scanner test requires the expected transient sharing refusal and then
+requires rename to succeed after scan settlement, followed by a clean scan with
+no outside metadata. Windows execution of these new fixtures is pending CI.
+
+The local actual-source harness passes 55 library tests plus scoped Clippy at
+threshold 15 with warnings denied (unused-code lint is disabled only for the
+standalone harness, which omits production consumers). Complete runtime/owner
+and application checks still come from platform CI, not this harness.

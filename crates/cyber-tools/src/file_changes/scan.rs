@@ -198,6 +198,9 @@ mod tests {
         Dir::open_ambient_dir(path, cap_std::ambient_authority()).unwrap()
     }
 
+    // cap-std deliberately prevents this in-flight rename on Windows. The
+    // portable finalization test below covers moves after traversal pins close.
+    #[cfg(unix)]
     #[test]
     fn directories_moved_out_during_full_or_limited_traversal_publish_no_new_metadata() {
         for entries in [100, 2] {
@@ -250,6 +253,9 @@ mod tests {
         }
     }
 
+    // cap-std deliberately prevents this in-flight rename on Windows. The
+    // portable finalization test below covers moves after traversal pins close.
+    #[cfg(unix)]
     #[test]
     fn moved_directory_links_do_not_count_as_scoped_aliases_of_remaining_files() {
         let inside = tempfile::tempdir().unwrap();
@@ -277,6 +283,105 @@ mod tests {
         );
         assert!(actual.suppressed.contains(Path::new("remaining")));
         assert!(!actual.suppressed.contains(Path::new("public/linked")));
+    }
+
+    #[test]
+    fn finalization_discards_moved_subtrees_before_counting_remaining_hard_links() {
+        for complete in [true, false] {
+            let inside = tempfile::tempdir().unwrap();
+            let outside = tempfile::tempdir().unwrap();
+            std::fs::create_dir(inside.path().join("public")).unwrap();
+            std::fs::write(inside.path().join("remaining"), "linked").unwrap();
+            std::fs::hard_link(
+                inside.path().join("remaining"),
+                inside.path().join("public/linked"),
+            )
+            .unwrap();
+            std::fs::write(inside.path().join("public/standalone"), "scoped initially").unwrap();
+            std::fs::write(inside.path().join("healthy"), "still scoped").unwrap();
+            let root = root(inside.path());
+            let child = root.open_dir_nofollow("public").unwrap();
+            let mut scopes = scopes::Catalog::new(&root);
+            scopes.record("public".into(), &child);
+            let mut candidate = Scan {
+                complete,
+                ..Scan::default()
+            };
+            candidate
+                .directories
+                .extend([PathBuf::new(), "public".into()]);
+            let mut aliases = Aliases::default();
+            // Capture real metadata while both aliases are in scope, then close
+            // traversal pins exactly as scan() does before calling finish().
+            for (directory, name, path) in [
+                (&root, "remaining", "remaining"),
+                (&root, "healthy", "healthy"),
+                (&child, "linked", "public/linked"),
+                (&child, "standalone", "public/standalone"),
+            ] {
+                let metadata = directory.symlink_metadata(name).unwrap();
+                aliases.observe(Path::new(path), &metadata);
+                candidate.files.insert(path.into(), stamp(&metadata));
+            }
+            drop(child);
+            std::fs::rename(inside.path().join("public"), outside.path().join("private")).unwrap();
+            let actual = finish(candidate, aliases, scopes, &root, &AtomicBool::new(false));
+            assert!(!actual.complete);
+            assert_eq!(
+                actual.files.keys().cloned().collect::<Vec<_>>(),
+                vec![PathBuf::from("healthy")]
+            );
+            assert!(!actual.directories.contains(Path::new("public")));
+            assert_eq!(
+                actual.suppressed,
+                std::collections::BTreeSet::from([PathBuf::from("remaining")])
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_traversal_sharing_lock_releases_when_the_scan_settles() {
+        let inside = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let public = inside.path().join("public");
+        let private = outside.path().join("private");
+        std::fs::create_dir(&public).unwrap();
+        std::fs::write(public.join("data"), "scoped").unwrap();
+        let checked = std::cell::Cell::new(false);
+        let actual = scan(
+            &root(inside.path()),
+            &|path| {
+                if path == Path::new("public/data") {
+                    let error = std::fs::rename(&public, &private).unwrap_err();
+                    assert_eq!(
+                        error.raw_os_error(),
+                        Some(32),
+                        "unexpected rename refusal: {error}"
+                    );
+                    checked.set(true);
+                }
+                false
+            },
+            &limits(),
+            &AtomicBool::new(false),
+        );
+        assert!(checked.get());
+        assert!(actual.complete);
+        assert!(actual.files.contains_key(Path::new("public/data")));
+        std::fs::rename(&public, &private)
+            .expect("settled scans must release transient rename locks");
+        let after = scan(
+            &root(inside.path()),
+            &|_| false,
+            &limits(),
+            &AtomicBool::new(false),
+        );
+        assert!(after.complete);
+        assert!(
+            after.files.is_empty(),
+            "outside metadata must not follow the moved directory"
+        );
     }
 
     #[cfg(unix)]
