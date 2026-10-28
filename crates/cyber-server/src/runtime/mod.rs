@@ -52,6 +52,7 @@ mod hooks;
 mod installation;
 pub use installation::{InstallationNotice, UpdateStatus};
 mod file_observation_hooks;
+mod file_observation_scopes;
 pub mod file_observations;
 mod lifecycle;
 mod lifecycle_events;

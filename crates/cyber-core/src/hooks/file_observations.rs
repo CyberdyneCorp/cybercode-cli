@@ -8,6 +8,7 @@ use std::path::Path;
 
 pub const CHECKPOINT: &str = "file.watch.checkpoint.1";
 pub const CHANGED: &str = "file.watch.changed.1";
+pub const SCOPE: &str = "file.watch.scope.1";
 pub const MAX_FILES: usize = 10_000;
 pub const MAX_BATCH: usize = 256;
 pub const MAX_RECORD_BYTES: usize = 4 * 1024 * 1024;
@@ -69,6 +70,46 @@ pub struct Update {
 pub struct Renewal {
     pub session_id: String,
     pub event_id: String,
+}
+
+/// The current Session scope acknowledged by an observation owner. This is
+/// provenance, not filesystem proof or execution authority. A native owner must
+/// retain and recheck its root before any future alias-aware admission.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionScope {
+    pub session_id: String,
+    pub session_directory: String,
+    pub directory: String,
+    pub root_identity: String,
+    pub generation: String,
+}
+
+impl SessionScope {
+    pub fn aggregate(&self) -> String {
+        format!(
+            "file-watch-scope:{:x}",
+            Sha256::digest(self.session_id.as_bytes())
+        )
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        generation(&self.generation)?;
+        if !crate::ids::has_prefix(&self.session_id, "ses")
+            || [&self.directory, &self.session_directory]
+                .into_iter()
+                .any(|directory| {
+                    !Path::new(directory).is_absolute()
+                        || directory.len() > 4096
+                        || directory.contains('\0')
+                })
+            || self.root_identity.is_empty()
+            || self.root_identity.len() > 256
+        {
+            return Err("invalid file observation Session scope".into());
+        }
+        bounded(self)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -299,6 +340,9 @@ pub fn validate_record(kind: &str, value: &serde_json::Value) -> Result<(), Stri
         CHANGED => serde_json::from_value::<Delta>(value.clone())
             .map_err(|error| error.to_string())?
             .validate(),
+        SCOPE => serde_json::from_value::<SessionScope>(value.clone())
+            .map_err(|error| error.to_string())?
+            .validate(),
         _ => Err("unknown file observation record".into()),
     }
 }
@@ -318,6 +362,37 @@ mod tests {
             files: BTreeMap::new(),
             remaining: FEEDBACK_LIMIT,
         }
+    }
+    #[test]
+    fn session_scope_is_bounded_and_distinct_from_metadata_or_permissions() {
+        let state = checkpoint();
+        let scope = SessionScope {
+            session_id: crate::ids::new_id("ses"),
+            session_directory: state.directory.clone(),
+            directory: state.directory,
+            root_identity: state.root_identity,
+            generation: state.generation,
+        };
+        assert!(scope.validate().is_ok());
+        let mut invalid = scope.clone();
+        invalid.session_directory = "relative".into();
+        assert!(invalid.validate().is_err());
+        invalid.session_directory = scope.session_directory.clone();
+        invalid.root_identity = "x".repeat(257);
+        assert!(invalid.validate().is_err());
+        let mut other = scope.clone();
+        other.session_id = crate::ids::new_id("ses");
+        assert_ne!(scope.aggregate(), other.aggregate());
+        other.session_id = scope.session_id.clone();
+        other.generation = new_generation();
+        assert_eq!(
+            scope.aggregate(),
+            other.aggregate(),
+            "one current scope per Session across generations"
+        );
+        let mut forged = serde_json::to_value(&scope).unwrap();
+        forged["permission"] = serde_json::json!("allow");
+        assert!(validate_record(SCOPE, &forged).is_err());
     }
     fn delta(state: &Checkpoint) -> Delta {
         Delta {

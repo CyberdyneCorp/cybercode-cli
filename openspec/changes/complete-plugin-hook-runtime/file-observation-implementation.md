@@ -164,14 +164,14 @@ in the [expanded workflow](https://github.com/CyberdyneCorp/cybercode-cli/action
 Windows passed nine of ten scenarios, including the real formatter and
 self-mutating hook, but the shell fixture attempted member calls/control flow
 non-interactively. Those expressions deliberately require manual confirmation
-even in bypass mode. The fixture now enables interaction on Windows and replies
+and are refused outright in bypass mode. The fixture enables interaction and default Mode on Windows and replies
 Once only after matching each exact command through the real permission API;
 it also uses absolute fixture paths and reports tool output on missing effects.
 That correction and the remaining macOS application-facade step remain unverified. These results precede
 the scanner cancellation and 32-Location acceptance additions described here.
 
 A temporary local Cargo harness loads the actual core/native/root/scanner/state
-sources by path and passes 45 tests plus Clippy with warnings denied and the
+sources by path and passes 46 tests plus Clippy with warnings denied and the
 project complexity threshold of 15. It does not compile the complete owner,
 Store/Runtime, AppHost or application tests. Formatting and whitespace checks
 pass; strict OpenSpec validation passes all 106 items, and spec lint reports
@@ -208,3 +208,27 @@ replay. This measures the model algorithm, not SQLite/application latency.
    substantive code/security review, update evidence and keep task 5.2 open until
    all approved requirements are verified. This producer work does not close the
    separate plugin-enforcement/protocol support gates or the overall goal.
+
+## Session-scope provenance increment
+
+`file.watch.scope.1` now records one current scope per Session in a separate
+aggregate, with expected-sequence append and writer checks for live Session
+directory, watch generation/root and aggregate identity. Exact-directory dispatch
+prepares this provenance idempotently before starting callbacks. Scope records
+advance neither metadata CAS nor feedback credit, and do not grant filesystem
+access or alias authority. Three new actual Store/runtime regressions cover
+idempotence/fencing, malformed scope bindings and absence of a cross-directory
+grant. Their application/platform execution is pending; the new bounded core
+record test passes in the 46-test local harness.
+
+[The scope integration design](file-observation-scope-design.md) specifies the
+remaining pinned native lease, canonical journal key, per-handler/renewal checks
+and project-cache work. Alias delivery remains unimplemented until those pieces
+are connected; the current exact-directory source checks remain intact.
+
+At `04deb581`, the full focused Linux job passed, including both new resource-limit
+application scenarios. Windows passed eleven of twelve HTTP scenarios; its
+approval fixture timed out because enabling interaction while retaining bypass
+Mode still refuses uncertain PowerShell expressions. The fixture now uses default
+Mode on Windows and includes tool outputs if a request is missing. That correction
+and the scope increment require a new platform run.

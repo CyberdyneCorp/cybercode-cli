@@ -21,6 +21,12 @@
 - **AND** a failed observation commit does not consume metadata changes or dispatch allowance
 - **AND** renewing a feedback allowance requires a separate, single-use committed user acknowledgement owned by a live Session at that Location
 
+#### Scenario: Durable Session scope provenance
+- **WHEN** an observation owner records a live Session's current scope
+- **THEN** a separate idempotent record binds its Session directory to the owner directory, physical-root identity and current generation without advancing metadata state or feedback credit
+- **AND** the single writer rejects wrong aggregate, Session-directory, root and generation bindings
+- **AND** scope metadata alone grants neither filesystem access nor alias admission; alias delivery additionally requires live pinned native proof
+
 #### Scenario: Duplicate or stale file observation delivery
 - **WHEN** an observation is delivered twice to a Session or its watcher generation was replaced before handler admission
 - **THEN** the same handler is not run again after a consumed or unknown receipt, and a stale generation cannot admit a new handler

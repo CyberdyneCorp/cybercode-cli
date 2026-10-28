@@ -32,6 +32,125 @@ fn aggregate(h: &Harness) -> String {
     format!("file-watch:{:x}", Sha256::digest(directory(h).as_bytes()))
 }
 
+fn session_scope(
+    watch: &cyber_server::runtime::file_observations::FileWatch,
+    id: &str,
+) -> records::SessionScope {
+    records::SessionScope {
+        session_id: id.into(),
+        session_directory: watch.state().directory.clone(),
+        directory: watch.state().directory.clone(),
+        root_identity: watch.state().root_identity.clone(),
+        generation: watch.state().generation.clone(),
+    }
+}
+
+#[tokio::test]
+async fn session_scope_is_idempotent_fenced_and_separate_from_metadata_credit() {
+    let h = Harness::new(Setup::default());
+    let id = h.session().await;
+    let watch = h
+        .runtime
+        .claim_file_watch(directory(&h), "root-one".into(), BTreeMap::new())
+        .await
+        .unwrap();
+    let scope = session_scope(&watch, &id);
+    watch.admit_session_scope(&id).await.unwrap();
+    watch.admit_session_scope(&id).await.unwrap();
+    assert_eq!(h.store.aggregate_seq(&scope.aggregate()).unwrap(), Some(0));
+    assert!(
+        watch.current().unwrap(),
+        "scope records cannot advance metadata CAS"
+    );
+    assert_eq!(watch.state().remaining, records::FEEDBACK_LIMIT);
+    let replacement = h
+        .runtime
+        .claim_file_watch(directory(&h), "root-one".into(), BTreeMap::new())
+        .await
+        .unwrap();
+    assert!(watch.admit_session_scope(&id).await.is_err());
+    replacement.admit_session_scope(&id).await.unwrap();
+    assert_eq!(h.store.aggregate_seq(&scope.aggregate()).unwrap(), Some(1));
+    h.runtime.archive(&id, true).await.unwrap();
+    assert!(replacement.admit_session_scope(&id).await.is_err());
+    assert_eq!(h.store.aggregate_seq(&scope.aggregate()).unwrap(), Some(1));
+}
+
+#[tokio::test]
+async fn scope_projector_rejects_wrong_owner_generation_session_and_aggregate() {
+    let h = Harness::new(Setup::default());
+    let id = h.session().await;
+    let watch = h
+        .runtime
+        .claim_file_watch(directory(&h), "root-one".into(), BTreeMap::new())
+        .await
+        .unwrap();
+    let scope = session_scope(&watch, &id);
+    for field in ["root", "generation", "session_directory", "aggregate"] {
+        let mut forged = scope.clone();
+        let mut key = scope.aggregate();
+        match field {
+            "root" => forged.root_identity = "other-root".into(),
+            "generation" => forged.generation = records::new_generation(),
+            "session_directory" => forged.session_directory = h.dir.path().display().to_string(),
+            "aggregate" => key.push_str("-wrong"),
+            _ => unreachable!(),
+        }
+        assert!(
+            h.store
+                .append(
+                    &key,
+                    Expected::Seq(-1),
+                    vec![NewEvent::new(
+                        records::SCOPE,
+                        serde_json::to_value(forged).unwrap()
+                    )]
+                )
+                .is_err(),
+            "{field}"
+        );
+    }
+    assert_eq!(h.store.aggregate_seq(&scope.aggregate()).unwrap(), None);
+    assert!(watch.current().unwrap());
+}
+
+#[tokio::test]
+async fn scope_metadata_does_not_grant_cross_directory_admission() {
+    let h = Harness::new(Setup::default());
+    let elsewhere = h.dir.path().join("elsewhere");
+    std::fs::create_dir(&elsewhere).unwrap();
+    let session = h
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: elsewhere.display().to_string(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let watch = h
+        .runtime
+        .claim_file_watch(directory(&h), "root-one".into(), BTreeMap::new())
+        .await
+        .unwrap();
+    let mut scope = session_scope(&watch, &session.id);
+    scope.session_directory = session.directory;
+    // A persisted metadata description is not native proof. Until native root
+    // ownership is connected, the producer must keep its exact-directory gate.
+    h.store
+        .append(
+            &scope.aggregate(),
+            Expected::Seq(-1),
+            vec![NewEvent::new(
+                records::SCOPE,
+                serde_json::to_value(&scope).unwrap(),
+            )],
+        )
+        .unwrap();
+    assert!(watch.admit_session_scope(&session.id).await.is_err());
+    assert!(h.models.requests("test/main").is_empty());
+}
+
 #[tokio::test]
 async fn restart_claim_fences_previous_worker_and_retains_metadata_and_allowance() {
     let h = Harness::new(Setup::default());

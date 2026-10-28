@@ -162,6 +162,12 @@ impl FileWatch {
         &self.state
     }
 
+    /// A scope record is provenance; native alias admission additionally needs
+    /// a live pinned root. This port currently retains exact-directory scope.
+    pub async fn admit_session_scope(&self, session_id: &str) -> Result<(), RuntimeError> {
+        super::file_observation_scopes::admit(self, self.runtime()?, &self.store, session_id).await
+    }
+
     fn runtime(&self) -> Result<Runtime, RuntimeError> {
         self.runtime.upgrade().ok_or(RuntimeError::ShuttingDown)
     }
@@ -211,7 +217,7 @@ impl FileWatch {
 }
 
 pub(super) fn register(registry: &mut EventRegistry) {
-    for kind in [records::CHECKPOINT, records::CHANGED] {
+    for kind in [records::CHECKPOINT, records::CHANGED, records::SCOPE] {
         registry
             .register_with(kind, move |value| records::validate_record(kind, value))
             .expect("valid file observation event");
@@ -246,6 +252,9 @@ fn verify_renewal(
 }
 
 pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), String> {
+    if event.kind == records::SCOPE {
+        return super::file_observation_scopes::project(tx, event);
+    }
     if ![records::CHECKPOINT, records::CHANGED].contains(&event.kind.as_str()) {
         return Ok(());
     }
@@ -273,6 +282,22 @@ pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), S
             previous.state.apply(&delta)?;
         }
         _ => unreachable!(),
+    }
+    Ok(())
+}
+
+pub(super) fn verify_scope_generation(
+    db: &Connection,
+    scope: &records::SessionScope,
+) -> Result<(), String> {
+    let current = load(db, &aggregate(&scope.directory), i64::MAX)
+        .map_err(|error| error.to_string())?
+        .ok_or("file observation scope lacks its watch owner")?;
+    if current.state.directory != scope.directory
+        || current.state.root_identity != scope.root_identity
+        || current.state.generation != scope.generation
+    {
+        return Err("file observation scope belongs to a stale or different root".into());
     }
     Ok(())
 }
@@ -354,6 +379,10 @@ impl FileWatch {
                 "observation is not eligible for dispatch".into(),
             ));
         }
+        if cancel.is_cancelled() {
+            return Ok(());
+        }
+        self.admit_session_scope(session_id).await?;
         let handle = runtime.inner.handle(session_id).await?;
         let hooks = {
             let state = handle.state.lock().await;
