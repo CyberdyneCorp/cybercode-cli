@@ -1,10 +1,12 @@
 # File observation implementation notes
 
-Status: **in progress; task 5.2 remains open**. The focused suite at `1e31e2f6`
-passed Linux, macOS and Windows. The newer pinned alias, physical input-scope
-and traversal-descriptor integration, including nested-directory move guards,
-has 54 passing local macOS component tests and awaits full application/platform
-CI. Remaining acceptance, broader workspace verification and substantive review are still required.
+Status: **in progress; task 5.2 remains open**. The full focused suite at
+`3e852288` passed Linux, macOS and Windows, including pinned native alias/input
+scope integration and the directory-move guard (the latter's new fixtures were
+Unix-only at that revision). The later Session-capacity recovery test and
+Windows directory-move fixtures await a fresh platform run. Remaining resource,
+lifecycle and broader workspace verification and substantive review are still
+required.
 
 ## Ownership and native observation
 
@@ -182,11 +184,11 @@ replay. This measures the model algorithm, not SQLite/application latency.
 
 ## Remaining acceptance and implementation
 
-1. **Alias-aware Session acceptance:** the native lease, canonical journal key,
-   Session scope and user-renewal integration below is implemented but awaits
-   application/platform acceptance. Verify shared aliases, retargeting refusal,
-   moved/archived Session eligibility and project-cache invalidation before
-   closing this item.
+1. **Alias-aware Session coverage:** the native lease, canonical journal key,
+   Session scope and user-renewal integration passed its focused platform suite
+   at `3e852288`, including shared aliases, retargeting refusal and project-cache
+   identity. Additional moved/archived membership transition coverage and final
+   review remain part of acceptance.
 2. **Resource/overflow/lifecycle acceptance:** exercise global Location/Session
    limits and visible incomplete coverage through the actual application, native
    queue loss/registration limits and bounded recovery, inaccessible/large trees,
@@ -318,3 +320,16 @@ requires committed input to prepare its durable scope and verifies shared
 observation delivery and joined shutdown. The test uses the production owner
 and HTTP hook, not a substitute registry. Execution is pending platform CI;
 formatting alone does not establish that this acceptance passes.
+
+At production revision `3e852288`, the full focused Linux job passed: 13 core
+record tests, one envelope test, 38 observer component tests, four native root
+registry tests, 17 Store/runtime scenarios, 14 HTTP/runtime scenarios and both
+AppHost tests. This verifies the pinned alias integration and directory-move
+correction on Linux. The added Session-capacity recovery scenario and Windows
+directory-move fixtures are later changes and still require a new platform run.
+
+The same focused workflow at `3e852288` subsequently completed successfully on
+macOS and Windows as well:
+https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40634040263.
+Broader CI at that revision remains a separate run and was still in progress:
+https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40634040407.
