@@ -1,7 +1,10 @@
 //! Handle-relative, metadata-only traversal. Directory symlinks are never followed;
 //! a failed, cancelled or limited traversal cannot prove absent files were deleted.
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::UNIX_EPOCH;
 
 use super::{
@@ -15,6 +18,34 @@ pub(super) struct Limits {
     pub entries: usize,
     pub depth: usize,
     pub path_bytes: usize,
+}
+
+/// Keep ownership of blocking traversal until it settles. Dropping the blocking
+/// task handle on cancellation would leave filesystem work behind the actor.
+pub(super) async fn run(
+    root: Dir,
+    excluded: impl Fn(&Path) -> bool + Send + 'static,
+    limits: Limits,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> Result<Scan, String> {
+    if cancel.is_cancelled() {
+        return Err("file observation scan cancelled".into());
+    }
+    let interrupted = Arc::new(AtomicBool::new(false));
+    let worker_flag = Arc::clone(&interrupted);
+    let mut task =
+        tokio::task::spawn_blocking(move || scan(&root, &excluded, &limits, &worker_flag));
+    tokio::select! {
+        biased;
+        () = cancel.cancelled() => {
+            interrupted.store(true, Ordering::Release);
+            // A synchronous metadata operation already in flight cannot be
+            // interrupted, but traversal stops at the next cancellation check.
+            task.await.map_err(|error| error.to_string())?;
+            Err("file observation scan cancelled".into())
+        }
+        result = &mut task => result.map_err(|error| error.to_string()),
+    }
 }
 
 fn stamp(metadata: &Metadata) -> Stamp {
@@ -49,6 +80,10 @@ pub(super) fn scan(
     let mut inspected = 0usize;
     let mut aliases = Aliases::default();
     while let Some((directory, relative, depth)) = pending.pop() {
+        if cancelled.load(Ordering::Acquire) {
+            out.complete = false;
+            return finish(out, aliases);
+        }
         let Ok(entries) = directory.entries() else {
             out.complete = false;
             continue;
@@ -122,6 +157,85 @@ mod tests {
     }
     fn root(path: &Path) -> Dir {
         Dir::open_ambient_dir(path, cap_std::ambient_authority()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn normal_worker_returns_metadata_and_pre_cancelled_worker_does_not_traverse() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("public"), "metadata").unwrap();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let actual = run(root(temp.path()), |_| false, limits(), &cancel)
+            .await
+            .unwrap();
+        assert!(actual.complete);
+        assert!(actual.files.contains_key(Path::new("public")));
+        cancel.cancel();
+        let cancelled = run(
+            root(temp.path()),
+            |_| panic!("cancelled worker must not traverse"),
+            limits(),
+            &cancel,
+        )
+        .await;
+        assert!(cancelled.is_err());
+    }
+
+    #[tokio::test]
+    async fn cancellation_interrupts_traversal_but_joins_the_in_flight_metadata_step() {
+        use std::sync::atomic::AtomicUsize;
+        use std::time::Duration;
+        let temp = tempfile::tempdir().unwrap();
+        for index in 0..20 {
+            std::fs::write(temp.path().join(format!("entry-{index}")), "metadata").unwrap();
+        }
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let inspected = Arc::new(AtomicUsize::new(0));
+        let (release, held) = std::sync::mpsc::channel();
+        let directory = root(temp.path());
+        let task = tokio::spawn({
+            let cancel = cancel.clone();
+            let entered = Arc::clone(&entered);
+            let inspected = Arc::clone(&inspected);
+            async move {
+                run(
+                    directory,
+                    move |_| {
+                        if inspected.fetch_add(1, Ordering::SeqCst) == 0 {
+                            entered.notify_one();
+                            held.recv_timeout(Duration::from_secs(5)).unwrap();
+                        }
+                        false
+                    },
+                    limits(),
+                    &cancel,
+                )
+                .await
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(5), entered.notified())
+            .await
+            .unwrap();
+        cancel.cancel();
+        tokio::task::yield_now().await;
+        assert!(
+            !task.is_finished(),
+            "cancellation must join the in-flight step"
+        );
+        release.send(()).unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            result.is_err(),
+            "a cancelled scan cannot supply a baseline or delta"
+        );
+        assert_eq!(
+            inspected.load(Ordering::SeqCst),
+            1,
+            "do not continue traversal after cancellation"
+        );
     }
 
     #[test]

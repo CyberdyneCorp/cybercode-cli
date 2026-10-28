@@ -2,7 +2,7 @@
 //! append, hook callback or task join. The journal is the acknowledged baseline.
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError, Weak, atomic::AtomicBool};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
 use cyber_core::hooks::{
@@ -310,25 +310,26 @@ impl BuiltinHost {
     }
 }
 
-async fn snapshot(root: &Root, excluded: Exclusions) -> Result<Scan, String> {
+async fn snapshot(
+    root: &Root,
+    excluded: Exclusions,
+    cancel: &CancellationToken,
+) -> Result<Scan, String> {
     let directory = root
         .directory
         .try_clone()
         .map_err(|error| error.to_string())?;
-    tokio::task::spawn_blocking(move || {
-        scan::scan(
-            &directory,
-            &|path| excluded.excludes(path),
-            &Limits {
-                entries: records::MAX_FILES,
-                depth: 64,
-                path_bytes: 4096,
-            },
-            &AtomicBool::new(false),
-        )
-    })
+    scan::run(
+        directory,
+        move |path| excluded.excludes(path),
+        Limits {
+            entries: records::MAX_FILES,
+            depth: 64,
+            path_bytes: 4096,
+        },
+        cancel,
+    )
     .await
-    .map_err(|error| error.to_string())
 }
 fn names(scan: &Scan) -> BTreeMap<String, records::Stamp> {
     scan.files
@@ -349,14 +350,25 @@ struct Observation {
     warned_budget: bool,
 }
 impl Observation {
-    async fn start(host: &BuiltinHost, path: &Path, directory: &str) -> Result<Self, String> {
+    async fn start(
+        host: &BuiltinHost,
+        path: &Path,
+        directory: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Self, String> {
         let root = Root::open(path).map_err(|error| error.to_string())?;
         let mut native = Native::start(&root.path, 32).map_err(|error| error.to_string())?;
-        let initial = snapshot(&root, host.observation_exclusions(path)).await?;
+        let initial = snapshot(&root, host.observation_exclusions(path), cancel).await?;
+        if cancel.is_cancelled() {
+            return Err("file observation startup cancelled".into());
+        }
         if !root.current() {
             return Err("root changed before initial observation".into());
         }
         native.update_directories(&initial.directories, initial.complete);
+        if cancel.is_cancelled() || !root.current() {
+            return Err("Location changed or observation cancelled before baseline claim".into());
+        }
         let runtime = host.runtime().ok_or("runtime unavailable")?;
         let journal = runtime
             .claim_file_watch(directory.into(), root.identity.clone(), names(&initial))
@@ -435,7 +447,7 @@ impl Observation {
             return Ok(());
         }
         let excluded = host.observation_exclusions(&self.root.path);
-        let scan = snapshot(&self.root, excluded.clone()).await?;
+        let scan = snapshot(&self.root, excluded.clone(), cancel).await?;
         self.last_scan = Instant::now();
         if cancel.is_cancelled() {
             return Ok(());
@@ -646,7 +658,7 @@ impl RunState {
         cancel: &CancellationToken,
     ) -> bool {
         let sessions = members(membership);
-        if sessions.is_empty() {
+        if sessions.is_empty() || cancel.is_cancelled() {
             return false;
         }
         if !host.observes_files(directory, &sessions).await {
@@ -655,13 +667,17 @@ impl RunState {
         }
         if self.observer.is_none() {
             self.observer =
-                start_observation(host, path, directory, &sessions, &mut self.failure).await;
+                start_observation(host, path, directory, &sessions, &mut self.failure, cancel)
+                    .await;
         }
         let Some(current) = self.observer.as_mut() else {
             return true;
         };
         current.renew(host, membership, cancel).await;
         if let Err(error) = current.reconcile(host, &sessions, membership, cancel).await {
+            if cancel.is_cancelled() {
+                return false;
+            }
             announce(
                 host,
                 &sessions,
@@ -703,14 +719,15 @@ async fn start_observation(
     directory: &str,
     sessions: &[String],
     failure: &mut Option<String>,
+    cancel: &CancellationToken,
 ) -> Option<Observation> {
-    match Observation::start(host, path, directory).await {
+    match Observation::start(host, path, directory, cancel).await {
         Ok(started) => {
             *failure = None;
             Some(started)
         }
         Err(error) => {
-            if failure.as_ref() != Some(&error) {
+            if !cancel.is_cancelled() && failure.as_ref() != Some(&error) {
                 announce(
                     host,
                     sessions,

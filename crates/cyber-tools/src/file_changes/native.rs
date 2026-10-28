@@ -60,6 +60,7 @@ pub(super) struct Native {
     root: PathBuf,
     directories: BTreeSet<PathBuf>,
     directory_limit: usize,
+    partial: bool,
     receiver: Receiver<Hints>,
     overflow: Arc<AtomicBool>,
 }
@@ -139,6 +140,7 @@ impl Native {
             root,
             directories: BTreeSet::from([PathBuf::new()]),
             directory_limit,
+            partial: false,
             receiver,
             overflow,
         })
@@ -199,9 +201,14 @@ impl Native {
                 complete = false;
             }
         }
-        if !complete {
+        // The first loss requests immediate reconciliation. A known resource or
+        // traversal limit persists until periodic reconciliation can resolve it;
+        // turning it into fresh loss each tick would create a busy scan loop.
+        // Callback queue/backend loss still sets `overflow` independently.
+        if !complete && !self.partial {
             self.overflow.store(true, Ordering::Release);
         }
+        self.partial = !complete;
         complete
     }
 
@@ -218,6 +225,30 @@ impl Native {
 mod tests {
     use super::*;
     use std::time::Instant;
+
+    #[test]
+    fn persistent_registration_limit_does_not_manufacture_repeated_native_loss() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        for name in ["one", "two"] {
+            std::fs::create_dir(root.join(name)).unwrap();
+        }
+        let mut native = Native::with_limit(&root, 32, 2).unwrap();
+        let directories = BTreeSet::from([PathBuf::new(), "one".into(), "two".into()]);
+        assert!(!native.update_directories(&directories, true));
+        assert!(native.receive(Duration::ZERO).rescan);
+        assert!(!native.update_directories(&directories, true));
+        assert!(
+            !native.receive(Duration::ZERO).rescan,
+            "known partial coverage must use periodic reconciliation, not a synthetic loss every tick"
+        );
+        assert!(native.update_directories(&BTreeSet::from([PathBuf::new(), "one".into()]), true));
+        assert!(!native.update_directories(&directories, true));
+        assert!(
+            native.receive(Duration::ZERO).rescan,
+            "new coverage loss must still request reconciliation"
+        );
+    }
 
     #[test]
     fn coalesced_tool_and_native_hints_stay_bounded_and_signal_lost_names() {

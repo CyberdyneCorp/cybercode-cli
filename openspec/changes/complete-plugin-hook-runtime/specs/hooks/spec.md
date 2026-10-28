@@ -48,6 +48,16 @@
 - **THEN** the local callback owner settles before the observer is joined, its durable receipt remains available, and the old observation is not replayed solely to obtain another result
 - **AND** the reopened Location can receive a fresh observation with its preserved feedback accounting
 
+#### Scenario: Cancellation during metadata reconciliation
+- **WHEN** owner cancellation arrives while a blocking metadata traversal is in progress
+- **THEN** cancellation is forwarded to the traversal and the owner waits for the in-flight traversal step to settle instead of detaching the blocking worker
+- **AND** a cancelled scan cannot supply a new journal baseline or delta
+
+#### Scenario: Persistent native registration limit
+- **WHEN** a directory-registration bound leaves native coverage incomplete across successive scans
+- **THEN** partial coverage remains visible and bounded periodic reconciliation continues without manufacturing a fresh notification-loss signal on every actor tick
+- **AND** new callback queue or backend loss still requests immediate reconciliation
+
 
 #### Scenario: Owner storage nested under a Location
 - **WHEN** owner data, configuration, state, cache or temporary roots lie below an observed Location

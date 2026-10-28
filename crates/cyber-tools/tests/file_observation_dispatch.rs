@@ -801,27 +801,77 @@ async fn native_formatter_settlement_produces_a_file_observation() {
 }
 
 #[cfg(unix)]
-fn observation_shell_commands() -> (&'static str, &'static str, &'static str) {
+fn observation_shell_commands(_fixture: &support::Fixture) -> (&'static str, String, String) {
     (
         "bash",
-        "printf foreground > shell-observed",
-        "n=0; while [ ! -f release-background ] && [ \"$n\" -lt 1200 ]; do sleep 0.05; n=$((n+1)); done; test -f release-background && printf background > background-observed",
+        "printf foreground > shell-observed".into(),
+        "n=0; while [ ! -f release-background ] && [ \"$n\" -lt 1200 ]; do sleep 0.05; n=$((n+1)); done; test -f release-background && printf background > background-observed".into(),
     )
 }
 #[cfg(windows)]
-fn observation_shell_commands() -> (&'static str, &'static str, &'static str) {
+fn observation_shell_commands(fixture: &support::Fixture) -> (&'static str, String, String) {
+    let quoted = |name: &str| {
+        format!(
+            "'{}'",
+            fixture
+                .repo
+                .join(name)
+                .display()
+                .to_string()
+                .replace('\'', "''")
+        )
+    };
     (
         "powershell",
-        "[System.IO.File]::WriteAllText('shell-observed', 'foreground')",
-        "$limit=[DateTime]::UtcNow.AddSeconds(60); while (-not (Test-Path -LiteralPath 'release-background') -and ([DateTime]::UtcNow -lt $limit)) { Start-Sleep -Milliseconds 50 }; if (Test-Path -LiteralPath 'release-background') { [System.IO.File]::WriteAllText('background-observed', 'background') } else { exit 1 }",
+        format!("[System.IO.File]::WriteAllText({}, 'foreground')", quoted("shell-observed")),
+        "$limit=[DateTime]::UtcNow.AddSeconds(60); while (-not (Test-Path -LiteralPath 'release-background') -and ([DateTime]::UtcNow -lt $limit)) { Start-Sleep -Milliseconds 50 }; if (Test-Path -LiteralPath 'release-background') { [System.IO.File]::WriteAllText('background-observed', 'background') } else { exit 1 }"
+            .replace("'release-background'", &quoted("release-background"))
+            .replace("'background-observed'", &quoted("background-observed")),
     )
+}
+
+#[cfg(windows)]
+async fn approve_observation_commands(
+    flow: &support::flow::Flow,
+    session: &str,
+    commands: [&str; 2],
+) {
+    use cyber_server::runtime::{PendingKind, PermissionReply};
+    for command in commands {
+        let pending = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                if let Some(pending) = flow
+                    .runtime
+                    .pending_requests(Some(session))
+                    .into_iter()
+                    .next()
+                {
+                    break pending;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("native fixture command must request its individual approval");
+        let PendingKind::Permission(ask) = &pending.kind else {
+            panic!("expected native command confirmation")
+        };
+        assert_eq!(ask.action, "bash");
+        assert_eq!(ask.metadata["requires_confirmation"], true);
+        assert_eq!(ask.metadata["command"], command);
+        flow.runtime
+            .reply_permission(&pending.id, PermissionReply::Once)
+            .await
+            .unwrap();
+    }
 }
 
 #[tokio::test]
 async fn native_foreground_and_background_shell_writes_are_observed_after_the_turn() {
-    let (tool, foreground, background) = observation_shell_commands();
+    let fixture = full_access_fixture();
+    let (tool, foreground, background) = observation_shell_commands(&fixture);
     let flow = support::flow::Flow::with(
-        full_access_fixture(),
+        fixture,
         vec![
             support::flow::call("shell-write", tool, json!({"command":foreground})),
             support::flow::call(
@@ -831,7 +881,7 @@ async fn native_foreground_and_background_shell_writes_are_observed_after_the_tu
             ),
             support::flow::text("background started"),
         ],
-        false,
+        cfg!(windows),
         Arc::new(cyber_server::runtime::NoSnapshots),
     );
     let recorder = Recorder::start().await;
@@ -843,8 +893,20 @@ async fn native_foreground_and_background_shell_writes_are_observed_after_the_tu
     .await;
     flow.prompt(&session, "run foreground and background fixture commands")
         .await;
+    // Member calls/control flow deliberately retain manual confirmation even
+    // in bypass mode. Approve only these exact fixture commands, as a real user.
+    #[cfg(windows)]
+    approve_observation_commands(&flow, &session, [&foreground, &background]).await;
     flow.settle_within(&session, Duration::from_secs(30)).await;
-    assert_eq!(flow.f.read("shell-observed"), "foreground");
+    let foreground_output = flow.output(&session, "shell-write").await;
+    let foreground_content = std::fs::read_to_string(flow.f.repo.join("shell-observed"))
+        .unwrap_or_else(|error| {
+            panic!("foreground file unavailable ({error}); tool output: {foreground_output}")
+        });
+    assert_eq!(
+        foreground_content, "foreground",
+        "foreground effect missing; tool output: {foreground_output}"
+    );
     assert!(
         flow.output(&session, "background-write")
             .await
@@ -873,4 +935,134 @@ async fn native_foreground_and_background_shell_writes_are_observed_after_the_tu
             .all(|event| event.get("writer").is_none())
     );
     flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn location_limit_is_visible_without_disabling_other_location_observations() {
+    use cyber_server::runtime::{Admission, CreateSession, Delivery, LiveEvent};
+    let flow = support::flow::Flow::new(vec![], false);
+    let recorder = Recorder::start().await;
+    automatic_hooks(&flow, &recorder);
+    let mut events = flow.runtime.subscribe();
+    let mut locations = Vec::new();
+    // Public owner limit: these are real Sessions and native watchers rather
+    // than a stand-in registry. The extra Session remains usable without a watch.
+    for index in 0..33 {
+        let directory = flow.f.dir.path().join(format!("location-{index:02}"));
+        std::fs::create_dir(&directory).unwrap();
+        let directory = directory.canonicalize().unwrap();
+        let session = flow
+            .runtime
+            .create_session(CreateSession {
+                directory: directory.display().to_string(),
+                model: "test/main".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        locations.push((directory, session.id));
+    }
+    let (unwatched, unobserved_session) = &locations[32];
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let LiveEvent::HookNotice {
+                session_id,
+                hook_id,
+                message,
+            } = events.recv().await.unwrap()
+                && session_id == *unobserved_session
+                && hook_id == "FileChanged"
+                && message.contains("active Location limit reached")
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("coverage refusal must be visible to the affected Session");
+    await_condition("all admitted Location baselines", || {
+        journal_count(&flow, records::CHECKPOINT) == 32
+    })
+    .await;
+    flow.runtime
+        .admit(
+            unobserved_session,
+            Admission::text("continue without file coverage", Delivery::Hold),
+        )
+        .await
+        .expect("watcher saturation must not prevent ordinary user input");
+    std::fs::write(unwatched.join("uncovered"), "outside current coverage").unwrap();
+    let (watched, observed_session) = &locations[0];
+    std::fs::write(watched.join("public"), "still covered").unwrap();
+    await_condition("Location refusal preserves other live coverage", || {
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["session_id"] == *observed_session && event["file_path"] == "public")
+    })
+    .await;
+    assert_eq!(journal_count(&flow, records::CHECKPOINT), 32);
+    assert!(recorder.seen.lock().unwrap().iter().all(|event| {
+        event["session_id"] != *unobserved_session && event["file_path"] != "uncovered"
+    }));
+    assert!(flow.requests("test/main").is_empty());
+    tokio::time::timeout(Duration::from_secs(10), flow.runtime.shutdown())
+        .await
+        .expect("all admitted observer owners must settle at shutdown");
+}
+
+#[tokio::test]
+async fn directory_registration_limit_is_visible_and_reconciliation_covers_its_tail() {
+    use cyber_server::runtime::LiveEvent;
+    let flow = support::flow::Flow::new(vec![], false);
+    // Exceed the production 256-directory native registration bound without
+    // exceeding the metadata inventory bound. Initial files consume no credit.
+    for index in 0..260 {
+        let directory = flow.f.repo.join(format!("tree-{index:03}"));
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::write(directory.join("public"), "initial").unwrap();
+    }
+    let recorder = Recorder::start().await;
+    automatic_hooks(&flow, &recorder);
+    let mut events = flow.runtime.subscribe();
+    let session = flow.session("default").await;
+    tokio::time::timeout(Duration::from_secs(45), async {
+        loop {
+            if let LiveEvent::HookNotice {
+                session_id,
+                hook_id,
+                message,
+            } = events.recv().await.unwrap()
+                && session_id == session
+                && hook_id == "FileChanged"
+                && message.contains("partial coverage")
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("incomplete native registration must be visible");
+    std::fs::write(
+        flow.f.repo.join("tree-259/public"),
+        "changed beyond native directory budget",
+    )
+    .unwrap();
+    await_condition(
+        "reconciliation still observes the registration tail",
+        || {
+            recorder.seen.lock().unwrap().iter().any(|event| {
+                event["session_id"] == session
+                    && event["file_path"] == "tree-259/public"
+                    && event["change"] == "changed"
+            })
+        },
+    )
+    .await;
+    assert!(flow.requests("test/main").is_empty());
+    tokio::time::timeout(Duration::from_secs(10), flow.runtime.shutdown())
+        .await
+        .expect("partial native coverage must still settle its owner");
 }

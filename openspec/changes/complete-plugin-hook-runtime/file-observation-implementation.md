@@ -3,7 +3,9 @@
 Status: **in progress; task 5.2 remains open**. The production observer and its
 focused application suite at `f0c5a743` passed Linux, macOS and Windows. The
 additional native formatter, foreground/background shell and self-mutating-hook
-regressions at `413d10ad` await CI. Broader workspace verification, remaining
+regressions at `413d10ad` passed the Linux/macOS HTTP suites at `da891bc2`;
+Windows needs its shell fixture correction below and the complete macOS job
+remains pending. Broader workspace verification, remaining
 scope/resource/lifecycle acceptance and substantive review are still required.
 
 ## Ownership and native observation
@@ -16,12 +18,26 @@ eligible handlers before acquiring native observation resources. Shutdown cancel
 and joins workers outside registry locks; already launched callbacks receive
 cooperative cancellation and settle through the existing receipt machinery.
 
+Metadata traversal now also receives owner cancellation through a shared atomic
+flag. Its async adapter retains and joins the blocking worker, which stops at
+the next traversal boundary after any synchronous operation already in flight.
+A cancelled result is rejected rather than used for a baseline or delta. The
+source regression failed with the previous non-cancellable adapter and passes
+with this change; full owner/platform verification of this increment is pending.
+
 `native.rs` uses notify 8.2.0 with a bounded queue of 32 hints. Each hint retains
 at most 128 relative paths of at most 4,096 bytes; coalescing retains at most
 1,024 names. Loss, invalid names, oversized payloads and backend rescan flags
 request reconciliation. Native registrations are non-recursive, supplied by the
 safe scanner and capped at 256 directories. Missing coverage is reported rather
 than interpreted as complete evidence. Access-only events are ignored.
+
+A persistent registration/traversal limit now requests immediate reconciliation
+only when entering partial coverage. It then relies on periodic reconciliation;
+real callback queue/backend loss independently requests a rescan. The previous
+adapter reasserted loss on every limited scan and drove a scan at every actor
+tick. A source regression reproduced that loop and passes with the transition
+tracking; full platform verification of this correction is pending.
 
 Native notifications may be coalesced or lost and have editor-dependent shapes.
 A three-second reconciliation supplements notifications and successful mutation
@@ -142,10 +158,20 @@ must still be recorded without restarting the hook loop. The workflow builds
 the production native process-ownership helper first. Windows uses PowerShell;
 Unix uses its shell. These tests explicitly select full access to verify
 observation/process lifecycle and are **not plugin-confinement evidence**.
-Their platform results remain pending.
+At `da891bc2`, Linux passed the complete focused job, and macOS passed all
+ten HTTP/scripted-runtime scenarios while its AppHost step was still running
+in the [expanded workflow](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40611521520).
+Windows passed nine of ten scenarios, including the real formatter and
+self-mutating hook, but the shell fixture attempted member calls/control flow
+non-interactively. Those expressions deliberately require manual confirmation
+even in bypass mode. The fixture now enables interaction on Windows and replies
+Once only after matching each exact command through the real permission API;
+it also uses absolute fixture paths and reports tool output on missing effects.
+That correction and the remaining macOS application-facade step remain unverified. These results precede
+the scanner cancellation and 32-Location acceptance additions described here.
 
 A temporary local Cargo harness loads the actual core/native/root/scanner/state
-sources by path and passes 42 tests plus Clippy with warnings denied and the
+sources by path and passes 45 tests plus Clippy with warnings denied and the
 project complexity threshold of 15. It does not compile the complete owner,
 Store/Runtime, AppHost or application tests. Formatting and whitespace checks
 pass; strict OpenSpec validation passes all 106 items, and spec lint reports
@@ -169,6 +195,13 @@ replay. This measures the model algorithm, not SQLite/application latency.
    queue loss/registration limits and bounded recovery, inaccessible/large trees,
    membership transitions and shutdown during reconciliation. Component tests
    cover several bounds but do not prove their full owner integration.
+   A new real-runtime regression opens 33 distinct Location Sessions, requires
+   visible refusal at the 32-Location watch limit, verifies another Location
+   still delivers its edit, and joins all admitted owners at shutdown. Its
+   application/platform results are pending. A second real-runtime regression
+   exceeds the 256-directory native registration cap, requires a visible partial
+   coverage notice and observes a later edit in the registration tail through
+   ongoing reconciliation. Its platform results are also pending.
 3. **Native-effect verification:** obtain Linux/macOS/Windows results for the
    three tests introduced at `413d10ad` and correct any failures.
 4. **Delivery checks:** complete relevant broader workspace checks and a
