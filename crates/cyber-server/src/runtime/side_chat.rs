@@ -152,6 +152,7 @@ impl Inner {
                 id: call.id.clone(),
                 name: call.name.clone(),
                 input: input.clone(),
+                opaque: None,
             });
             let (output, is_error) = match defs.iter().find(|def| def.spec.name == call.name) {
                 Some(def) => {

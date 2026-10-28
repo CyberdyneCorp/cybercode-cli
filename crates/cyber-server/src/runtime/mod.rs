@@ -205,8 +205,8 @@ pub use host::{
 };
 pub use model::{
     AssistantEntry, CallState, CallStatus, Delivery, Entry, InboxRow, InputStatus, LastStep,
-    RetrySafety, RevertState, RevertTarget, SessionInfo, SessionState, Sourced, StepSnapshot,
-    TaskState, Totals,
+    ReasoningBlock, RetrySafety, RevertState, RevertTarget, SessionInfo, SessionState, Sourced,
+    StepSnapshot, TaskState, Totals,
 };
 pub use requests::{
     Asker, NO_WORKFLOW_APPROVER, PendingKind, PendingRequest, PermissionAsk, PermissionReply,

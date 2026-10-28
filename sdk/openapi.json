@@ -7387,10 +7387,14 @@
               "text": {
                 "type": "string"
               },
-              "signature": {
-                "type": [
-                  "string",
-                  "null"
+              "opaque": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Opaque"
+                  },
+                  {
+                    "type": "null"
+                  }
                 ]
               },
               "type": {
@@ -7402,7 +7406,7 @@
               "type",
               "text"
             ],
-            "description": "Reasoning from an earlier Turn. `signature` is sent back only to the provider that\nproduced it; the runtime lowers reasoning to text across providers."
+            "description": "One reasoning item from an earlier Turn (`session-runtime` → Reasoning items).\n`opaque` is sent back only to the provider and model that produced it; the runtime\nlowers reasoning to text across models. The legacy `signature` string reads as\n[`OpaqueKind::Signature`] state."
           },
           {
             "type": "object",
@@ -7414,6 +7418,17 @@
                 "type": "string"
               },
               "input": true,
+              "opaque": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Opaque"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "State of this one call, such as a Gemini thought signature."
+              },
               "type": {
                 "type": "string",
                 "const": "tool_call"
@@ -7516,6 +7531,90 @@
         ],
         "description": "The durable reference to a content-addressed attachment blob of one Session."
       },
+      "Opaque": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "default": ""
+          },
+          "model": {
+            "type": "string",
+            "default": ""
+          },
+          "kind": {
+            "$ref": "#/components/schemas/OpaqueKind"
+          },
+          "data": {
+            "type": "string"
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The provider's item ID, when it issued one."
+          }
+        },
+        "required": [
+          "kind",
+          "data"
+        ],
+        "description": "Provider state that must travel back with reasoning or a tool call. `data` is stored\nexactly as received and never decoded; `provider` and `model` name its producer, so\nonly that model receives it back. `Debug` never prints `data`."
+      },
+      "OpaqueKind": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "encrypted_reasoning",
+            "description": "OpenAI Responses `encrypted_content`."
+          },
+          {
+            "type": "string",
+            "const": "signature",
+            "description": "An Anthropic thinking signature, or a per-call thought signature."
+          },
+          {
+            "type": "string",
+            "const": "redacted",
+            "description": "An Anthropic `redacted_thinking` block; the item has no text."
+          },
+          {
+            "type": "string",
+            "const": "details",
+            "description": "Provider reasoning details (OpenRouter `reasoning_details`), as JSON text."
+          }
+        ],
+        "description": "The kind of provider state an [`Opaque`] carries."
+      },
+      "ReasoningBlock": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "opaque": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Opaque"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "after_calls": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 0
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "description": "One reasoning item of an answer: its text, the provider state to replay with it, and\nhow many of the answer's tool calls the provider produced before it."
+      },
       "AssistantEntry": {
         "type": "object",
         "properties": {
@@ -7532,13 +7631,15 @@
             "type": "string"
           },
           "reasoning": {
-            "type": "string"
+            "type": "string",
+            "description": "The text of every reasoning item, for display."
           },
-          "signature": {
-            "type": [
-              "string",
-              "null"
-            ]
+          "reasoning_items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReasoningBlock"
+            },
+            "description": "Reasoning items in stream order (`session-runtime` → Reasoning items)."
           },
           "calls": {
             "type": "array",
@@ -7617,6 +7718,17 @@
             "type": "string"
           },
           "input": true,
+          "opaque": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Opaque"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Provider state of this call (`session-runtime` → Reasoning items)."
+          },
           "retry_safety": {
             "$ref": "#/components/schemas/RetrySafety"
           },

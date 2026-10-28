@@ -429,6 +429,7 @@ impl Inner {
             name: call.name.clone(),
             arguments: call.arguments.clone(),
             input: Some(input.clone()),
+            opaque: None,
         };
         let mut consumed = record.clone();
         consumed.status = "consumed".into();
@@ -444,6 +445,7 @@ impl Inner {
                         name: replay.name.clone(),
                         arguments: replay.arguments.clone(),
                         input: Some(input.clone()),
+                        opaque: None,
                         retry_safety: def.retry_safety,
                     },
                 ),

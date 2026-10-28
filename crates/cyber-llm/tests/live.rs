@@ -97,6 +97,7 @@ async fn round_trip(catalog: &Catalog, model: &str) {
             id: call.id.clone(),
             name: call.name.clone(),
             input: json!({}),
+            opaque: None,
         }],
     });
     request.messages.push(Message {

@@ -59,6 +59,12 @@ Cyber retries retryable provider failures up to four times before assistant outp
 
 An HTTP body failure reports `provider response stream interrupted after N body bytes` followed by the credential-redacted transport error. This identifies where the failure happened; it does not identify whether the provider, network or client caused it. A valid protocol completion is final: Cyber retains its result and usage even if the HTTP tail later stalls or closes incorrectly. A stream that ends before protocol completion still fails.
 
+## Reasoning replay
+
+An answer keeps its reasoning as separate items, one per reasoning block the provider streamed, each placed among the answer's tool calls where the provider produced it. An item can carry opaque provider state, such as an Anthropic thinking signature or a `redacted_thinking` block, stored exactly as received. The state goes back only to the provider and model that produced it: on Anthropic, signed `thinking` and `redacted_thinking` blocks are replayed in their original order between the `tool_use` blocks. A Turn on another model gets the item's text as assistant text and drops an item without text. An item whose state was dropped is also replayed as text. Sessions recorded before reasoning items read their one reasoning string and signature as a single item.
+
+Opaque state never leaves the store: exports (JSON, Markdown and HTML), the messages and history routes, the event streams (including a fork's `session.created.1`) and telemetry show `[opaque reasoning]` instead, and an imported document never supplies any. A value over 1 MiB is dropped when it arrives, with one warning per step in the log. Context estimates count opaque state at 3 tokens per 4 bytes.
+
 ## Signing in with a ChatGPT subscription
 
 A ChatGPT Plus or Pro plan can pay for OpenAI models instead of an API key:

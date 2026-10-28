@@ -33,17 +33,28 @@ pub enum Content {
     /// resolves it to [`Content::Image`] or [`Content::Document`] before a request; an
     /// adapter that receives one fails the request.
     Attachment(AttachmentRef),
-    /// Reasoning from an earlier Turn. `signature` is sent back only to the provider that
-    /// produced it; the runtime lowers reasoning to text across providers.
+    /// One reasoning item from an earlier Turn (`session-runtime` → Reasoning items).
+    /// `opaque` is sent back only to the provider and model that produced it; the runtime
+    /// lowers reasoning to text across models. The legacy `signature` string reads as
+    /// [`OpaqueKind::Signature`] state.
     Reasoning {
         text: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        signature: Option<String>,
+        #[serde(
+            default,
+            alias = "signature",
+            deserialize_with = "opaque_or_signature",
+            skip_serializing_if = "Option::is_none"
+        )]
+        #[schemars(with = "Option<Opaque>")]
+        opaque: Option<Opaque>,
     },
     ToolCall {
         id: String,
         name: String,
         input: Value,
+        /// State of this one call, such as a Gemini thought signature.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        opaque: Option<Opaque>,
     },
     ToolResult {
         call_id: String,
@@ -51,6 +62,131 @@ pub enum Content {
         #[serde(default)]
         is_error: bool,
     },
+}
+
+impl Content {
+    /// The opaque provider state this part carries.
+    pub fn opaque(&self) -> Option<&Opaque> {
+        match self {
+            Self::Reasoning { opaque, .. } | Self::ToolCall { opaque, .. } => opaque.as_ref(),
+            _ => None,
+        }
+    }
+}
+
+/// What stands in for opaque data in exports, logs and telemetry.
+pub const OPAQUE_REDACTED: &str = "[opaque reasoning]";
+/// The largest opaque value kept; a larger one is dropped when received.
+pub const OPAQUE_MAX_BYTES: usize = 1024 * 1024;
+
+/// The kind of provider state an [`Opaque`] carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OpaqueKind {
+    /// OpenAI Responses `encrypted_content`.
+    EncryptedReasoning,
+    /// An Anthropic thinking signature, or a per-call thought signature.
+    Signature,
+    /// An Anthropic `redacted_thinking` block; the item has no text.
+    Redacted,
+    /// Provider reasoning details (OpenRouter `reasoning_details`), as JSON text.
+    Details,
+}
+
+/// Provider state that must travel back with reasoning or a tool call. `data` is stored
+/// exactly as received and never decoded; `provider` and `model` name its producer, so
+/// only that model receives it back. `Debug` never prints `data`.
+#[derive(Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Opaque {
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub model: String,
+    pub kind: OpaqueKind,
+    pub data: String,
+    /// The provider's item ID, when it issued one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+}
+
+impl Opaque {
+    /// State an adapter decoded; the runtime stamps its provider and model.
+    pub fn new(kind: OpaqueKind, data: impl Into<String>) -> Self {
+        Self {
+            provider: String::new(),
+            model: String::new(),
+            kind,
+            data: data.into(),
+            id: None,
+        }
+    }
+
+    /// Whether `provider`/`model` produced this state.
+    pub fn is_from(&self, provider: &str, model: &str) -> bool {
+        self.provider == provider && self.model == model
+    }
+
+    /// Replace the data with [`OPAQUE_REDACTED`], for anything that leaves the store.
+    pub fn redact(&mut self) {
+        self.data = OPAQUE_REDACTED.into();
+    }
+
+    /// Context tokens of opaque bytes: 3 tokens per 4 bytes.
+    pub fn tokens(bytes: usize) -> u64 {
+        (bytes as u64).saturating_mul(3) / 4
+    }
+}
+
+/// Redact every `opaque` object of a serialized event or part, at any depth, for what
+/// leaves the store: a forked Session's creation event carries whole entries and calls.
+pub fn redact_opaque_fields(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            for (key, field) in map.iter_mut() {
+                match field.get_mut("data") {
+                    Some(data) if key == "opaque" && data.is_string() => {
+                        *data = Value::String(OPAQUE_REDACTED.into());
+                    }
+                    _ => redact_opaque_fields(field),
+                }
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(redact_opaque_fields),
+        _ => {}
+    }
+}
+
+impl std::fmt::Debug for Opaque {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Opaque")
+            .field("provider", &self.provider)
+            .field("model", &self.model)
+            .field("kind", &self.kind)
+            .field(
+                "data",
+                &format_args!("{OPAQUE_REDACTED} ({} bytes)", self.data.len()),
+            )
+            .field("id", &self.id)
+            .finish()
+    }
+}
+
+/// A reasoning `opaque` object, or the legacy `signature` string.
+fn opaque_or_signature<'de, D>(deserializer: D) -> Result<Option<Opaque>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Stored {
+        Signature(String),
+        Opaque(Opaque),
+    }
+    Ok(match Option::<Stored>::deserialize(deserializer)? {
+        Some(Stored::Signature(signature)) => Some(Opaque::new(OpaqueKind::Signature, signature)),
+        Some(Stored::Opaque(opaque)) => Some(opaque),
+        None => None,
+    })
 }
 
 /// The durable reference to a content-addressed attachment blob of one Session.
@@ -209,10 +345,14 @@ pub struct ToolCall {
     pub name: String,
     pub arguments: String,
     pub input: Option<Value>,
+    /// State of this one call, such as a Gemini thought signature.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opaque: Option<Opaque>,
 }
 
-/// The provider-neutral stream: `text.delta`, `reasoning.delta`, `tool_call.delta`,
-/// `tool_call.done`, `usage` and `finish`. Errors are the stream's `Err` items.
+/// The provider-neutral stream: `text.delta`, `reasoning.delta`, `reasoning_item`,
+/// `tool_call.delta`, `tool_call.done`, `usage` and `finish`. Errors are the stream's
+/// `Err` items.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LlmEvent {
@@ -222,9 +362,19 @@ pub enum LlmEvent {
     ReasoningDelta {
         text: String,
     },
-    /// Provider metadata that must accompany the reasoning when replayed natively.
+    /// A signature that closes the reasoning block streamed since the last one.
     ReasoningSignature {
         signature: String,
+    },
+    /// Closes the reasoning block streamed since the last one: `index` is its position
+    /// among the response's reasoning blocks, `text` its full text when the adapter has it
+    /// (empty keeps the streamed text), and `opaque` the state to replay with it.
+    ReasoningItem {
+        index: u32,
+        #[serde(default)]
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        opaque: Option<Opaque>,
     },
     ToolCallDelta {
         id: String,
@@ -242,5 +392,112 @@ impl LlmEvent {
     /// Whether the event is assistant output (anything but usage).
     pub fn is_output(&self) -> bool {
         !matches!(self, Self::Usage(_))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn legacy_reasoning_signature_reads_as_signature_state() {
+        let old = json!({"type": "reasoning", "text": "think", "signature": "sig=="});
+        let Content::Reasoning { text, opaque } = serde_json::from_value(old).unwrap() else {
+            panic!("not reasoning");
+        };
+        assert_eq!(text, "think");
+        let opaque = opaque.unwrap();
+        assert_eq!(
+            (opaque.kind, opaque.data.as_str()),
+            (OpaqueKind::Signature, "sig==")
+        );
+        let bare: Content =
+            serde_json::from_value(json!({"type": "reasoning", "text": "t"})).unwrap();
+        assert_eq!(bare.opaque(), None);
+    }
+
+    #[test]
+    fn reasoning_items_and_call_state_round_trip() {
+        let mut opaque = Opaque::new(OpaqueKind::EncryptedReasoning, "gAAAA");
+        opaque.provider = "openai".into();
+        opaque.model = "gpt-6-sol".into();
+        opaque.id = Some("rs_1".into());
+        let parts = vec![
+            Content::Reasoning {
+                text: "plan".into(),
+                opaque: Some(opaque.clone()),
+            },
+            Content::ToolCall {
+                id: "c1".into(),
+                name: "read".into(),
+                input: json!({}),
+                opaque: Some(Opaque::new(OpaqueKind::Signature, "ts")),
+            },
+        ];
+        let value = serde_json::to_value(&parts).unwrap();
+        assert_eq!(value[0]["opaque"]["kind"], "encrypted_reasoning");
+        assert_eq!(value[0]["opaque"]["id"], "rs_1");
+        let back: Vec<Content> = serde_json::from_value(value).unwrap();
+        assert_eq!(back, parts);
+        let plain = serde_json::to_value(Content::Reasoning {
+            text: "t".into(),
+            opaque: None,
+        })
+        .unwrap();
+        assert_eq!(plain, json!({"type": "reasoning", "text": "t"}));
+    }
+
+    #[test]
+    fn opaque_debug_and_redaction_hide_the_data() {
+        let mut opaque = Opaque::new(OpaqueKind::Redacted, "secret-blob");
+        assert!(!format!("{opaque:?}").contains("secret-blob"));
+        opaque.redact();
+        assert_eq!(opaque.data, OPAQUE_REDACTED);
+        assert_eq!(Opaque::tokens(4000), 3000);
+    }
+
+    #[test]
+    fn serialized_opaque_fields_are_redacted() {
+        let mut event = json!({"text": "t", "opaque": {"kind": "signature", "data": "blob"}});
+        redact_opaque_fields(&mut event);
+        assert_eq!(event["opaque"]["data"], OPAQUE_REDACTED);
+        let mut plain = json!({"text": "t", "data": "kept"});
+        redact_opaque_fields(&mut plain);
+        assert_eq!(plain, json!({"text": "t", "data": "kept"}));
+    }
+
+    /// Regression: only a top-level `opaque` was redacted, so a fork's creation event
+    /// streamed the nested entries' and calls' blobs.
+    #[test]
+    fn nested_opaque_fields_are_redacted() {
+        let blob = json!({"kind": "encrypted_reasoning", "data": "gAAAA"});
+        let mut created = json!({
+            "history": [{"reasoning_items": [{"text": "t", "opaque": blob}]}],
+            "calls": [{"call_id": "c", "opaque": blob}],
+        });
+        redact_opaque_fields(&mut created);
+        assert!(!created.to_string().contains("gAAAA"));
+        assert_eq!(
+            created["history"][0]["reasoning_items"][0]["opaque"]["data"],
+            OPAQUE_REDACTED
+        );
+        assert_eq!(created["calls"][0]["opaque"]["data"], OPAQUE_REDACTED);
+    }
+
+    #[test]
+    fn reasoning_item_event_round_trips() {
+        let event = LlmEvent::ReasoningItem {
+            index: 1,
+            text: String::new(),
+            opaque: Some(Opaque::new(OpaqueKind::Signature, "B")),
+        };
+        let value = serde_json::to_value(&event).unwrap();
+        assert_eq!(value["type"], "reasoning_item");
+        assert_eq!(serde_json::from_value::<LlmEvent>(value).unwrap(), event);
+        let call: ToolCall =
+            serde_json::from_value(json!({"id": "c", "name": "n", "arguments": "{}", "input": {}}))
+                .unwrap();
+        assert_eq!(call.opaque, None);
     }
 }

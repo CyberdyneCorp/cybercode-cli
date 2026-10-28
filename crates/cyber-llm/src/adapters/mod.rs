@@ -440,6 +440,7 @@ fn to_call(p: &Pending) -> ToolCall {
         name: p.name.clone(),
         arguments: p.arguments.clone(),
         input,
+        opaque: None,
     }
 }
 

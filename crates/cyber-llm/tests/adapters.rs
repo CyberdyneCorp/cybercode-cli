@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use cyber_llm::adapters::{ApiKind, Endpoint, ScriptStep, ScriptedAdapter, adapter};
 use cyber_llm::{
-    Content, ErrorKind, FinishReason, LlmEvent, LlmRequest, Message, Reasoning, RetryPolicy, Role,
-    ToolSpec, Usage, collect, open_with_retry,
+    Content, ErrorKind, FinishReason, LlmEvent, LlmRequest, Message, Opaque, OpaqueKind, Reasoning,
+    RetryPolicy, Role, ToolSpec, Usage, collect, open_with_retry,
 };
 use serde_json::{Value, json};
 use wiremock::matchers::{method, path};
@@ -41,6 +41,7 @@ fn request() -> LlmRequest {
                     id: "call_0".into(),
                     name: "clock".into(),
                     input: json!({"tz": "UTC"}),
+                    opaque: None,
                 }],
             },
             Message {
@@ -335,6 +336,148 @@ async fn anthropic_streams_thinking_tools_and_cache_usage() {
     let headers = &server.received_requests().await.unwrap()[0].headers;
     assert_eq!(headers.get("x-api-key").unwrap(), "sk-secret-key");
     assert_eq!(headers.get("anthropic-version").unwrap(), "2023-06-01");
+}
+
+fn block_start(index: u32, block: Value) -> (&'static str, Value) {
+    (
+        "content_block_start",
+        json!({"index": index, "content_block": block}),
+    )
+}
+
+fn block_delta(index: u32, delta: Value) -> (&'static str, Value) {
+    (
+        "content_block_delta",
+        json!({"index": index, "delta": delta}),
+    )
+}
+
+/// Regression (`session-runtime` → Reasoning items): every signed thinking block and every
+/// `redacted_thinking` block is decoded as its own item, in stream order between the calls.
+#[tokio::test]
+async fn anthropic_decodes_interleaved_and_redacted_thinking_in_order() {
+    let server = MockServer::start().await;
+    let body = sse(&[
+        (
+            "message_start",
+            json!({"message": {"usage": {"input_tokens": 1, "output_tokens": 1}}}),
+        ),
+        block_start(0, json!({"type": "thinking"})),
+        block_delta(0, json!({"type": "thinking_delta", "thinking": "A"})),
+        block_delta(0, json!({"type": "signature_delta", "signature": "sigA"})),
+        ("content_block_stop", json!({"index": 0})),
+        block_start(1, json!({"type": "tool_use", "id": "c1", "name": "clock"})),
+        block_delta(1, json!({"type": "input_json_delta", "partial_json": "{}"})),
+        ("content_block_stop", json!({"index": 1})),
+        block_start(2, json!({"type": "redacted_thinking", "data": "blob"})),
+        ("content_block_stop", json!({"index": 2})),
+        block_start(3, json!({"type": "tool_use", "id": "c2", "name": "clock"})),
+        block_delta(3, json!({"type": "input_json_delta", "partial_json": "{}"})),
+        ("content_block_stop", json!({"index": 3})),
+        (
+            "message_delta",
+            json!({"delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 9}}),
+        ),
+        ("message_stop", json!({})),
+    ]);
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ok_stream(body))
+        .mount(&server)
+        .await;
+    let a = adapter(
+        ApiKind::Anthropic,
+        Endpoint::new(format!("{}/v1", server.uri()), Some("k".into())),
+    );
+    let mut seen = Vec::new();
+    let stream = a.stream(request()).await.unwrap();
+    collect(stream, |event| match event {
+        LlmEvent::ReasoningSignature { signature } => seen.push(format!("sig:{signature}")),
+        LlmEvent::ReasoningItem { index, opaque, .. } => {
+            let opaque = opaque.as_ref().unwrap();
+            assert_eq!(opaque.kind, OpaqueKind::Redacted);
+            seen.push(format!("redacted{index}:{}", opaque.data));
+        }
+        LlmEvent::ToolCallDone(call) => seen.push(format!("call:{}", call.id)),
+        _ => {}
+    })
+    .await
+    .unwrap();
+    assert_eq!(seen, ["sig:sigA", "call:c1", "redacted1:blob", "call:c2"]);
+}
+
+/// Regression (`session-runtime` → Interleaved thinking keeps every signed block): thinking
+/// was hoisted ahead of every `tool_use`, so signed blocks went out in an order the model
+/// never produced. Only tool results lead a message; thinking keeps its place.
+#[tokio::test]
+async fn anthropic_replays_thinking_blocks_in_block_order() {
+    let server = MockServer::start().await;
+    let body = sse(&[
+        (
+            "message_start",
+            json!({"message": {"usage": {"input_tokens": 1, "output_tokens": 1}}}),
+        ),
+        (
+            "message_delta",
+            json!({"delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 1}}),
+        ),
+        ("message_stop", json!({})),
+    ]);
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ok_stream(body))
+        .mount(&server)
+        .await;
+    let call = |id: &str| Content::ToolCall {
+        id: id.into(),
+        name: "clock".into(),
+        input: json!({}),
+        opaque: None,
+    };
+    let thinking = |text: &str, opaque: Opaque| Content::Reasoning {
+        text: text.into(),
+        opaque: Some(opaque),
+    };
+    let mut req = request();
+    req.reasoning = Some(Reasoning::BudgetTokens(4096));
+    req.messages = vec![
+        Message::user_text("time?"),
+        Message {
+            role: Role::Assistant,
+            content: vec![
+                thinking("A", Opaque::new(OpaqueKind::Signature, "sigA")),
+                Content::Text {
+                    text: "Checking.".into(),
+                },
+                call("c1"),
+                thinking("", Opaque::new(OpaqueKind::Redacted, "blob")),
+                thinking("B", Opaque::new(OpaqueKind::Signature, "sigB")),
+                call("c2"),
+                // Its state was dropped (over 1 MiB): it replays as text.
+                Content::Reasoning {
+                    text: "C".into(),
+                    opaque: None,
+                },
+            ],
+        },
+    ];
+    let (_, sent) = run(ApiKind::Anthropic, &server, "/v1", req).await;
+    let mut blocks = sent["messages"][1]["content"].as_array().unwrap().clone();
+    for block in &mut blocks {
+        block.as_object_mut().unwrap().remove("cache_control");
+    }
+    assert_eq!(
+        blocks,
+        [
+            json!({"type": "thinking", "thinking": "A", "signature": "sigA"}),
+            json!({"type": "text", "text": "Checking."}),
+            json!({"type": "tool_use", "id": "c1", "name": "clock", "input": {}}),
+            json!({"type": "redacted_thinking", "data": "blob"}),
+            json!({"type": "thinking", "thinking": "B", "signature": "sigB"}),
+            json!({"type": "tool_use", "id": "c2", "name": "clock", "input": {}}),
+            json!({"type": "text", "text": "C"}),
+        ]
+    );
 }
 
 /// Regression: effort-only models (Sonnet 5.5) reject `thinking.type: enabled`; an effort

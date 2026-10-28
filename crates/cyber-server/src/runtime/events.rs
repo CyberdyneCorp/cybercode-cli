@@ -308,8 +308,15 @@ pub struct Reverted {
 pub struct ContentEnded {
     pub message_id: String,
     pub text: String,
-    #[serde(default)]
+    /// The signature of a reasoning event written before reasoning items.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
+    /// The block's position among its step's reasoning blocks (`session-runtime` →
+    /// Reasoning items); absent on events written before them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opaque: Option<cyber_llm::Opaque>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -319,6 +326,9 @@ pub struct ToolCalled {
     pub name: String,
     pub arguments: String,
     pub input: Option<Value>,
+    /// Provider state of this call, such as a thought signature.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opaque: Option<cyber_llm::Opaque>,
     pub retry_safety: RetrySafety,
 }
 

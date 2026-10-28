@@ -36,7 +36,7 @@ Opaque { provider: String, model: String, kind: OpaqueKind, data: String, id: Op
 OpaqueKind = EncryptedReasoning | Signature | Redacted | Details
 ```
 
-- A message holds as many items as the provider produced, in stream order. They can be interleaved with text and tool calls: Anthropic interleaved thinking is `thinking → tool_use → thinking → tool_use`, and order matters for its signature checks.
+- A message holds as many items as the provider produced, in stream order. They can be interleaved with tool calls: Anthropic interleaved thinking is `thinking → tool_use → thinking → tool_use`, and order matters for its signature checks. Each item records how many of the message's calls came before it. The text stays one segment, replayed after the first reasoning and before the calls, since providers emit a response's text ahead of its calls.
 - `Content::ToolCall` gains `opaque: Option<Opaque>` for state that belongs to one call. This is the Gemini thought signature in `extra_content.google.thought_signature`. Only the first parallel call carries one, so we keep it on that call.
 - `signature` serializes as before. Reading an old `{text, signature}` produces one item with `kind: Signature`, so stored Sessions still replay to Anthropic.
 - **Events:**

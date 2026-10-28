@@ -43,6 +43,7 @@ pub fn tools(calls: &[(&str, &str, &str)]) -> Vec<ScriptStep> {
                 name: (*name).into(),
                 arguments: (*args).into(),
                 input: serde_json::from_str(args).ok(),
+                opaque: None,
             }))
         })
         .collect();

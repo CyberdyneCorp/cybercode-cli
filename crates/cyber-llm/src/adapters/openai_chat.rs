@@ -157,7 +157,7 @@ fn assistant(message: &Message) -> Value {
     for content in &message.content {
         match content {
             Content::Text { text: t } => text.push_str(t),
-            Content::ToolCall { id, name, input } => calls.push(
+            Content::ToolCall { id, name, input, .. } => calls.push(
                 json!({ "id": id, "type": "function", "function": { "name": name, "arguments": input.to_string() } }),
             ),
             _ => {}

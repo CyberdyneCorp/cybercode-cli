@@ -32,6 +32,7 @@ async fn transport_failure_preserves_tool_outcomes_without_replaying_actions() {
             name: "write".into(),
             arguments: "{}".into(),
             input: Some(serde_json::json!({})),
+            opaque: None,
         })),
         ScriptStep::Error {
             error: ErrorKind::Transport,
@@ -790,6 +791,230 @@ async fn a_recap_is_the_agents_request() {
     assert_eq!(recaps[0].initiator, Some(cyber_llm::Initiator::Agent));
 }
 
+fn signature(data: &str) -> cyber_llm::Opaque {
+    cyber_llm::Opaque::new(cyber_llm::OpaqueKind::Signature, data)
+}
+
+fn stamped(data: &str) -> cyber_llm::Opaque {
+    cyber_llm::Opaque {
+        provider: "test".into(),
+        model: "main".into(),
+        ..signature(data)
+    }
+}
+
+/// `thinking(sig A) → tool_use → thinking(sig B) → tool_use`, as interleaved thinking streams.
+fn interleaved_reasoning() -> Vec<cyber_llm::adapters::ScriptStep> {
+    use cyber_llm::adapters::ScriptStep;
+    use cyber_llm::{FinishReason, LlmEvent, ToolCall};
+    let call = |id: &str, opaque: Option<cyber_llm::Opaque>| {
+        ScriptStep::Event(LlmEvent::ToolCallDone(ToolCall {
+            id: id.into(),
+            name: "read".into(),
+            arguments: "{}".into(),
+            input: Some(serde_json::json!({})),
+            opaque,
+        }))
+    };
+    vec![
+        ScriptStep::Event(LlmEvent::ReasoningDelta { text: "A".into() }),
+        ScriptStep::Event(LlmEvent::ReasoningSignature {
+            signature: "sigA".into(),
+        }),
+        call("c1", Some(signature("ts1"))),
+        ScriptStep::Event(LlmEvent::ReasoningDelta { text: "B".into() }),
+        ScriptStep::Event(LlmEvent::ReasoningItem {
+            index: 1,
+            text: String::new(),
+            opaque: Some(signature("sigB")),
+        }),
+        call("c2", None),
+        ScriptStep::Event(LlmEvent::Finish {
+            reason: FinishReason::ToolCalls,
+        }),
+    ]
+}
+
+#[tokio::test]
+async fn interleaved_reasoning_blocks_are_recorded_per_block_and_replayed_in_order() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![interleaved_reasoning(), text("done")])],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    h.runtime
+        .admit(&id, admit("go", Delivery::Steer))
+        .await
+        .unwrap();
+    h.settle(&id).await;
+
+    let events = h.store.read_events(&id, -1, 200).unwrap().events;
+    let order: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == "session.reasoning.ended.1" || e.kind == "session.tool.called.1")
+        .map(|e| {
+            let label = e.data["text"].as_str().or(e.data["call_id"].as_str());
+            (label.unwrap().to_string(), e.data["index"].clone())
+        })
+        .collect();
+    use serde_json::{Value, json};
+    assert_eq!(
+        order,
+        [
+            ("A".to_string(), json!(0)),
+            ("c1".to_string(), Value::Null),
+            ("B".to_string(), json!(1)),
+            ("c2".to_string(), Value::Null),
+        ]
+    );
+    let called = events.iter().find(|e| e.data["call_id"] == "c1").unwrap();
+    assert_eq!(called.data["opaque"]["data"], "ts1");
+    assert_eq!(called.data["opaque"]["provider"], "test");
+
+    let follow_up = &h.models.requests("test/main")[1].messages[1].content;
+    let reasoning = |text: &str, sig: &str| Content::Reasoning {
+        text: text.into(),
+        opaque: Some(stamped(sig)),
+    };
+    let call = |id: &str, opaque: Option<cyber_llm::Opaque>| Content::ToolCall {
+        id: id.into(),
+        name: "read".into(),
+        input: serde_json::json!({}),
+        opaque,
+    };
+    assert_eq!(
+        follow_up,
+        &vec![
+            reasoning("A", "sigA"),
+            call("c1", Some(stamped("ts1"))),
+            reasoning("B", "sigB"),
+            call("c2", None),
+        ]
+    );
+    // A restart rebuilds the same items from the log.
+    let restarted = h.restart().state(&id).await.unwrap();
+    assert_eq!(restarted.entries, h.state(&id).await.entries);
+}
+
+#[tokio::test]
+async fn an_old_reasoning_event_replays_as_one_signed_item() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![reasoning_then_text("I think", "answer")])],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    h.runtime
+        .admit(&id, admit("q1", Delivery::Steer))
+        .await
+        .unwrap();
+    h.settle(&id).await;
+    // Rewrite the log as a binary from before reasoning items wrote it.
+    let mut events = h.store.read_events(&id, -1, 200).unwrap().events;
+    let ended = events
+        .iter_mut()
+        .find(|e| e.kind == "session.reasoning.ended.1")
+        .unwrap();
+    let message_id = ended.data["message_id"].clone();
+    ended.data =
+        serde_json::json!({"message_id": message_id, "text": "I think", "signature": "sig"});
+    let replayed = cyber_server::runtime::SessionState::replay(&events).unwrap();
+    let Some(cyber_server::runtime::Entry::Assistant(answer)) = replayed.entries.get(1) else {
+        panic!("no answer");
+    };
+    assert_eq!(answer.reasoning, "I think");
+    assert_eq!(
+        answer.reasoning_items,
+        [cyber_server::runtime::ReasoningBlock {
+            text: "I think".into(),
+            opaque: Some(stamped("sig")),
+            after_calls: 0,
+        }]
+    );
+    assert_eq!(
+        answer,
+        &match &h.state(&id).await.entries[1] {
+            cyber_server::runtime::Entry::Assistant(a) => a.clone(),
+            _ => panic!("no answer"),
+        }
+    );
+}
+
+#[tokio::test]
+async fn opaque_state_over_one_mebibyte_is_dropped_and_the_item_kept_as_text() {
+    use cyber_llm::LlmEvent;
+    use cyber_llm::adapters::ScriptStep;
+    let huge = "x".repeat(cyber_llm::OPAQUE_MAX_BYTES + 1);
+    let mut steps = vec![
+        ScriptStep::Event(LlmEvent::ReasoningDelta { text: "big".into() }),
+        ScriptStep::Event(LlmEvent::ReasoningItem {
+            index: 0,
+            text: String::new(),
+            opaque: Some(cyber_llm::Opaque::new(
+                cyber_llm::OpaqueKind::EncryptedReasoning,
+                huge.clone(),
+            )),
+        }),
+        // A second oversized value in the same step logs no second warning.
+        ScriptStep::Event(LlmEvent::ReasoningItem {
+            index: 1,
+            text: "bigger".into(),
+            opaque: Some(cyber_llm::Opaque::new(
+                cyber_llm::OpaqueKind::EncryptedReasoning,
+                huge,
+            )),
+        }),
+    ];
+    steps.extend(text("answer"));
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![steps, text("again")])],
+        ..Setup::default()
+    });
+    cyber_core::log::init(
+        &h.dir.path().join("log"),
+        cyber_core::log::Level::Info,
+        false,
+    );
+    let warnings = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = Arc::clone(&warnings);
+    cyber_core::log::set_sink(Some(Arc::new(move |record| {
+        if record.level == cyber_core::log::Level::Warn {
+            seen.lock().unwrap().push(record.msg.to_string());
+        }
+    })));
+    let id = h.session().await;
+    for prompt in ["q1", "q2"] {
+        h.runtime
+            .admit(&id, admit(prompt, Delivery::Steer))
+            .await
+            .unwrap();
+        h.settle(&id).await;
+    }
+    let events = h.store.read_events(&id, -1, 200).unwrap().events;
+    let ended = events
+        .iter()
+        .find(|e| e.kind == "session.reasoning.ended.1")
+        .unwrap();
+    assert_eq!(ended.data["text"], "big");
+    assert!(ended.data.get("opaque").is_none());
+    let dropped = warnings.lock().unwrap().clone();
+    assert_eq!(
+        dropped
+            .iter()
+            .filter(|msg| msg.contains("over 1 MiB dropped"))
+            .count(),
+        1
+    );
+    // The item has no state left, so the adapter sends its text as text
+    // (`anthropic_replays_thinking_blocks_in_block_order` in cyber-llm).
+    assert_eq!(
+        h.models.requests("test/main")[1].messages[1].content[0],
+        Content::Reasoning {
+            text: "big".into(),
+            opaque: None,
+        }
+    );
+}
+
 #[tokio::test]
 async fn reasoning_is_native_for_the_same_model_and_lowered_otherwise() {
     let h = Harness::new(Setup {
@@ -818,7 +1043,11 @@ async fn reasoning_is_native_for_the_same_model_and_lowered_otherwise() {
         native,
         &Content::Reasoning {
             text: "I think".into(),
-            signature: Some("sig".into())
+            opaque: Some(cyber_llm::Opaque {
+                provider: "test".into(),
+                model: "main".into(),
+                ..cyber_llm::Opaque::new(cyber_llm::OpaqueKind::Signature, "sig")
+            })
         }
     );
 
@@ -2079,6 +2308,7 @@ impl cyber_llm::Adapter for HeldStreamModel {
                 name: "read".into(),
                 arguments: "{}".into(),
                 input: Some(serde_json::json!({})),
+                opaque: None,
             });
             let held = futures::stream::once(async move {
                 release.notified().await;

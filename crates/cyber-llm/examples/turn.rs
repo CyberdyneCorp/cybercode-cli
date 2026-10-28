@@ -102,6 +102,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 id: call.id.clone(),
                 name: call.name.clone(),
                 input: call.input.clone().unwrap_or(json!({})),
+                opaque: None,
             });
             results.push(Content::ToolResult {
                 call_id: call.id.clone(),

@@ -530,6 +530,7 @@ async fn unexpected_tool_calls_incomplete_finish_and_response_overflow_never_aut
         name: "write".into(),
         arguments: "{}".into(),
         input: Some(json!({})),
+        opaque: None,
     };
     let variants = [
         vec![

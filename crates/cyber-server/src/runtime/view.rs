@@ -1,9 +1,9 @@
 //! The model's view of a Session (`session-runtime` → Turn assembly,
 //! `compaction` → Model view after compaction).
 
-use cyber_llm::{Content, Message, Role};
+use cyber_llm::{Content, Message, Opaque, Role};
 
-use super::model::{AssistantEntry, CallStatus, Entry, SessionState, TaskState};
+use super::model::{AssistantEntry, CallState, CallStatus, Entry, SessionState, TaskState};
 
 pub const INTERRUPTED: &str = "[Tool execution was interrupted]";
 pub const UNKNOWN: &str = "[Tool outcome unknown; reconcile before retrying]";
@@ -20,11 +20,12 @@ pub fn messages(state: &SessionState, provider: &str, model: &str) -> Vec<Messag
     for entry in &state.entries[start.min(state.entries.len())..] {
         match entry {
             Entry::User { parts, .. } => {
-                let parts = if strip_media {
-                    strip(parts)
-                } else {
-                    parts.clone()
-                };
+                let parts: Vec<Content> = parts
+                    .iter()
+                    .filter(|part| !is_model_part(part))
+                    .cloned()
+                    .collect();
+                let parts = if strip_media { strip(&parts) } else { parts };
                 out.push(Message {
                     role: Role::User,
                     content: parts,
@@ -52,40 +53,21 @@ fn push_assistant(
     strip_media: bool,
     out: &mut Vec<Message>,
 ) {
-    let mut content = Vec::new();
-    if !a.reasoning.is_empty() {
-        let native = a.provider == provider && a.model == model;
-        content.push(if native {
-            Content::Reasoning {
-                text: a.reasoning.clone(),
-                signature: a.signature.clone(),
-            }
-        } else {
-            Content::Text {
-                text: a.reasoning.clone(),
-            }
-        });
-    }
-    if !a.text.is_empty() {
-        content.push(Content::Text {
-            text: a.text.clone(),
-        });
-    }
     let calls: Vec<_> = a
         .calls
         .iter()
         .filter_map(|id| state.calls.get(id))
         .collect();
-    for call in &calls {
-        let input = call
-            .input
-            .clone()
-            .unwrap_or_else(|| serde_json::Value::String(call.arguments.clone()));
-        content.push(Content::ToolCall {
-            id: call.call_id.clone(),
-            name: call.name.clone(),
-            input,
+    let mut content = Vec::new();
+    push_reasoning(a, 0, calls.len(), (provider, model), &mut content);
+    if !a.text.is_empty() {
+        content.push(Content::Text {
+            text: a.text.clone(),
         });
+    }
+    for (index, call) in calls.iter().enumerate() {
+        content.push(tool_call(call, provider, model));
+        push_reasoning(a, index + 1, calls.len(), (provider, model), &mut content);
     }
     if content.is_empty() {
         return;
@@ -150,6 +132,61 @@ fn push_assistant(
     }
 }
 
+/// The reasoning items the provider produced after `position` of the answer's calls, in
+/// stream order. Items of the Turn's own model are sent natively with their opaque state;
+/// any other model's are lowered to text, and an item without text is dropped.
+fn push_reasoning(
+    a: &AssistantEntry,
+    position: usize,
+    calls: usize,
+    (provider, model): (&str, &str),
+    out: &mut Vec<Content>,
+) {
+    let native = a.provider == provider && a.model == model;
+    let items = a
+        .reasoning_items
+        .iter()
+        .filter(|item| item.after_calls.min(calls) == position);
+    for item in items {
+        let opaque = item
+            .opaque
+            .clone()
+            .filter(|opaque| opaque.is_from(provider, model));
+        if native && (opaque.is_some() || !item.text.is_empty()) {
+            out.push(Content::Reasoning {
+                text: item.text.clone(),
+                opaque,
+            });
+        } else if !native && !item.text.is_empty() {
+            out.push(Content::Text {
+                text: item.text.clone(),
+            });
+        }
+    }
+}
+
+fn tool_call(call: &CallState, provider: &str, model: &str) -> Content {
+    let input = call
+        .input
+        .clone()
+        .unwrap_or_else(|| serde_json::Value::String(call.arguments.clone()));
+    Content::ToolCall {
+        id: call.call_id.clone(),
+        name: call.name.clone(),
+        input,
+        opaque: call
+            .opaque
+            .clone()
+            .filter(|opaque| opaque.is_from(provider, model)),
+    }
+}
+
+/// Reasoning and tool calls are the model's own output, with provider state only the
+/// model's answers carry; a user entry never replays them.
+pub(super) fn is_model_part(part: &Content) -> bool {
+    matches!(part, Content::Reasoning { .. } | Content::ToolCall { .. })
+}
+
 fn strip(parts: &[Content]) -> Vec<Content> {
     parts
         .iter()
@@ -173,14 +210,21 @@ fn summary_text(summary: &str, task: &TaskState) -> String {
     text
 }
 
-/// Rough token estimate: 4 characters per token.
+/// Rough token estimate: 4 characters per token, and 3 tokens per 4 bytes of opaque
+/// provider state, which does not compress like text.
 pub fn estimate_tokens(
     system: &[String],
     messages: &[Message],
     tools: &[cyber_llm::ToolSpec],
 ) -> u64 {
+    let opaque: usize = messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .filter_map(Content::opaque)
+        .map(|opaque| opaque.data.len())
+        .sum();
     let chars = system.iter().map(String::len).sum::<usize>()
         + serde_json::to_string(messages).map_or(0, |s| s.len())
         + serde_json::to_string(tools).map_or(0, |s| s.len());
-    (chars / 4) as u64
+    (chars.saturating_sub(opaque) / 4) as u64 + Opaque::tokens(opaque)
 }

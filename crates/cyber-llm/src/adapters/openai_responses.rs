@@ -142,7 +142,9 @@ fn input_items(message: &Message) -> Vec<Value> {
                     json!({ "type": "input_image", "image_url": data_url(media_type, data) }),
                 );
             }
-            Content::ToolCall { id, name, input } => {
+            Content::ToolCall {
+                id, name, input, ..
+            } => {
                 items.push(json!({ "type": "function_call", "call_id": id, "name": name, "arguments": input.to_string() }));
             }
             Content::ToolResult {

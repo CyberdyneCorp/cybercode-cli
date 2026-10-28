@@ -81,8 +81,10 @@ export type AssistantEntry = {
   provider: string;
   model: string;
   text: string;
+  /** The text of every reasoning item, for display. */
   reasoning: string;
-  signature?: string | null;
+  /** Reasoning items in stream order (`session-runtime` → Reasoning items). */
+  reasoning_items?: ReasoningBlock[];
   calls: string[];
   finished: boolean;
   error?: string | null;
@@ -268,6 +270,8 @@ export type CallState = {
   name: string;
   arguments: string;
   input?: unknown;
+  /** Provider state of this call (`session-runtime` → Reasoning items). */
+  opaque?: Opaque | null;
   retry_safety: RetrySafety;
   attempt: number;
   status: CallStatus;
@@ -519,12 +523,14 @@ export type Content = {
   type: "attachment";
 }) | {
   text: string;
-  signature?: string | null;
+  opaque?: Opaque | null;
   type: "reasoning";
 } | {
   id: string;
   name: string;
   input: unknown;
+  /** State of this one call, such as a Gemini thought signature. */
+  opaque?: Opaque | null;
   type: "tool_call";
 } | {
   call_id: string;
@@ -3019,6 +3025,23 @@ export type NetworkCapability = {
   hosts: string[];
 };
 
+/**
+ * Provider state that must travel back with reasoning or a tool call. `data` is stored
+ * exactly as received and never decoded; `provider` and `model` name its producer, so
+ * only that model receives it back. `Debug` never prints `data`.
+ */
+export type Opaque = {
+  provider?: string;
+  model?: string;
+  kind: OpaqueKind;
+  data: string;
+  /** The provider's item ID, when it issued one. */
+  id?: string | null;
+};
+
+/** The kind of provider state an [`Opaque`] carries. */
+export type OpaqueKind = "encrypted_reasoning" | "signature" | "redacted" | "details";
+
 export type Organization = {
   id: string;
   short_name?: string | null;
@@ -3391,6 +3414,16 @@ export type ReachableSession = {
 
 /** What a reachable Session is doing. */
 export type ReachableState = "idle" | "running" | "waiting_input" | "offline";
+
+/**
+ * One reasoning item of an answer: its text, the provider state to replay with it, and
+ * how many of the answer's tool calls the provider produced before it.
+ */
+export type ReasoningBlock = {
+  text: string;
+  opaque?: Opaque | null;
+  after_calls?: number;
+};
 
 /** The latest Session recap. */
 export type Recap = {

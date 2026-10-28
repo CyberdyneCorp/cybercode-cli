@@ -9,7 +9,10 @@ use super::{
 use crate::error::{LlmError, classify_stream_error};
 use crate::json::{deep_merge, force_no_tools, str_at, strip_credentials, u64_at};
 use crate::sse::SseEvent;
-use crate::types::{Content, FinishReason, LlmEvent, LlmRequest, Message, Reasoning, Role, Usage};
+use crate::types::{
+    Content, FinishReason, LlmEvent, LlmRequest, Message, Opaque, OpaqueKind, Reasoning, Role,
+    Usage,
+};
 
 const API_VERSION: &str = "2023-06-01";
 const DEFAULT_MAX_TOKENS: u32 = 8192;
@@ -220,18 +223,17 @@ fn messages(history: &[Message]) -> Vec<Value> {
         .collect()
 }
 
+/// A message's blocks in content order, except that tool results lead (the API requires
+/// it). Thinking keeps its place between text and tool calls, as the model produced it.
 fn blocks(message: &Message) -> Vec<Value> {
     let mut first = Vec::new();
     let mut rest = Vec::new();
     for content in &message.content {
         match content {
-            // Tool results and signed thinking must lead their message.
             Content::ToolResult { call_id, output, is_error } => {
                 first.push(json!({ "type": "tool_result", "tool_use_id": call_id, "content": output, "is_error": is_error }));
             }
-            Content::Reasoning { text, signature: Some(sig) } => {
-                first.push(json!({ "type": "thinking", "thinking": text, "signature": sig }));
-            }
+            Content::Reasoning { text, opaque } => rest.extend(reasoning_block(text, opaque.as_ref())),
             Content::Text { text } if !text.is_empty() => rest.push(json!({ "type": "text", "text": text })),
             Content::Image { media_type, data } => rest.push(
                 json!({ "type": "image", "source": { "type": "base64", "media_type": media_type, "data": data } }),
@@ -239,18 +241,36 @@ fn blocks(message: &Message) -> Vec<Value> {
             Content::Document { media_type, data, .. } => rest.push(
                 json!({ "type": "document", "source": { "type": "base64", "media_type": media_type, "data": data } }),
             ),
-            Content::ToolCall { id, name, input } => rest.push(json!({ "type": "tool_use", "id": id, "name": name, "input": input })),
+            Content::ToolCall { id, name, input, .. } => rest.push(json!({ "type": "tool_use", "id": id, "name": name, "input": input })),
             // References are resolved before a request (`ensure_resolved`).
-            Content::Text { .. } | Content::Reasoning { signature: None, .. } | Content::Attachment(_) => {}
+            Content::Text { .. } | Content::Attachment(_) => {}
         }
     }
     first.extend(rest);
     first
 }
 
+/// A reasoning item as a `thinking` or `redacted_thinking` block. Thinking without a
+/// signature cannot be replayed natively, so its text is sent as text, and an item with
+/// neither is dropped.
+fn reasoning_block(text: &str, opaque: Option<&Opaque>) -> Option<Value> {
+    match opaque.map(|opaque| (opaque.kind, opaque.data.as_str())) {
+        Some((OpaqueKind::Signature, sig)) => {
+            Some(json!({ "type": "thinking", "thinking": text, "signature": sig }))
+        }
+        Some((OpaqueKind::Redacted, data)) => {
+            Some(json!({ "type": "redacted_thinking", "data": data }))
+        }
+        _ if !text.is_empty() => Some(json!({ "type": "text", "text": text })),
+        _ => None,
+    }
+}
+
 #[derive(Default)]
 struct AnthropicDecoder {
     tools: ToolCalls,
+    /// Reasoning blocks closed so far, for [`LlmEvent::ReasoningItem`] indexes.
+    reasoning_blocks: u32,
     usage: Usage,
     stop_reason: Option<String>,
     done: bool,
@@ -292,6 +312,14 @@ impl AnthropicDecoder {
                     str_at(data, "/content_block/name"),
                 );
             }
+            "content_block_start" if str_at(data, "/content_block/type") == "redacted_thinking" => {
+                let opaque = Opaque::new(OpaqueKind::Redacted, str_at(data, "/content_block/data"));
+                out.push(Ok(LlmEvent::ReasoningItem {
+                    index: self.next_reasoning(),
+                    text: String::new(),
+                    opaque: Some(opaque),
+                }));
+            }
             "content_block_delta" => self.delta(data, out),
             "content_block_stop" => {
                 if let Some(call) = self.tools.finish(&data["index"].to_string(), None) {
@@ -319,6 +347,11 @@ impl AnthropicDecoder {
         }
     }
 
+    fn next_reasoning(&mut self) -> u32 {
+        self.reasoning_blocks += 1;
+        self.reasoning_blocks - 1
+    }
+
     fn start_usage(&mut self, u: &Value) {
         self.usage = Usage {
             input: u64_at(u, "/input_tokens"),
@@ -338,9 +371,12 @@ impl AnthropicDecoder {
             "thinking_delta" => Some(LlmEvent::ReasoningDelta {
                 text: str_at(delta, "/thinking").into(),
             }),
-            "signature_delta" => Some(LlmEvent::ReasoningSignature {
-                signature: str_at(delta, "/signature").into(),
-            }),
+            "signature_delta" => {
+                self.next_reasoning();
+                Some(LlmEvent::ReasoningSignature {
+                    signature: str_at(delta, "/signature").into(),
+                })
+            }
             "input_json_delta" => self
                 .tools
                 .append(&data["index"].to_string(), str_at(delta, "/partial_json")),

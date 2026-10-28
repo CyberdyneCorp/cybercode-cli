@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Reasoning items
-(P1) The system SHALL keep the reasoning of an assistant message as an ordered list of reasoning items in stream order, interleaved with text and tool calls as the provider produced them. Each item SHALL hold its text and optional opaque provider state: `encrypted_reasoning`, `signature`, `redacted` or `details`, together with the producing provider and model and an optional provider item ID. A tool call SHALL be able to carry opaque state of its own, such as a Gemini thought signature.
+(P1) The system SHALL keep the reasoning of an assistant message as an ordered list of reasoning items in stream order, each placed among the message's tool calls as the provider produced it. The message's text SHALL be kept as one segment that replays after the reasoning produced before the first call and ahead of the calls. Each item SHALL hold its text and optional opaque provider state: `encrypted_reasoning`, `signature`, `redacted` or `details`, together with the producing provider and model and an optional provider item ID. A tool call SHALL be able to carry opaque state of its own, such as a Gemini thought signature.
 
 Each reasoning block SHALL be persisted as one `session.reasoning.ended.1` event with optional `index` and `opaque` fields. Opaque state on a tool call SHALL be an optional `opaque` field of `session.tool.called.1`. An event without these fields SHALL read as one text item, whose `signature` (when present) is `signature` state of the message's provider and model.
 

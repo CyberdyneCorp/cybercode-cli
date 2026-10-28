@@ -1,10 +1,10 @@
 ## 1. Reasoning items (data model)
 
-- [ ] 1.1 Change `Content::Reasoning` to `{ text, opaque: Option<Opaque> }`, and add `opaque` to `Content::ToolCall` (`cyber-llm/src/types.rs`).
+- [x] 1.1 Change `Content::Reasoning` to `{ text, opaque: Option<Opaque> }`, and add `opaque` to `Content::ToolCall` (`cyber-llm/src/types.rs`).
   - Reading the old `{text, signature}` shape must keep working.
   - Add `LlmEvent::ReasoningItem { index, text, opaque }` and `ToolCallDone.opaque`.
   - Unit tests: round-trips of the old and new shapes.
-- [ ] 1.2 Runtime, in `runtime/drain.rs`, `model.rs` and `events.rs`:
+- [x] 1.2 Runtime, in `runtime/drain.rs`, `model.rs` and `events.rs`:
   - accumulate reasoning per block index;
   - write one `session.reasoning.ended.1` for each block, with `index`/`opaque`, and `opaque` on `session.tool.called.1`;
   - rebuild the ordered items in `SessionState`.

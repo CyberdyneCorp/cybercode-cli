@@ -29,6 +29,11 @@ pub async fn collect(
             LlmEvent::TextDelta { text } => out.text.push_str(&text),
             LlmEvent::ReasoningDelta { text } => out.reasoning.push_str(&text),
             LlmEvent::ReasoningSignature { signature } => out.reasoning_signature = Some(signature),
+            // The streamed deltas already hold an item's text unless the adapter sent none.
+            LlmEvent::ReasoningItem { text, .. } if out.reasoning.is_empty() => {
+                out.reasoning = text;
+            }
+            LlmEvent::ReasoningItem { .. } => {}
             LlmEvent::ToolCallDone(call) => out.tool_calls.push(call),
             LlmEvent::Usage(usage) => out.usage.add(&usage),
             LlmEvent::Finish { reason } => out.finish = Some(reason),

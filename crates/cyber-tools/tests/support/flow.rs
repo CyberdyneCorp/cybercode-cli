@@ -31,6 +31,7 @@ pub fn call(id: &str, name: &str, input: serde_json::Value) -> Vec<ScriptStep> {
             name: name.into(),
             arguments: input.to_string(),
             input: Some(input),
+            opaque: None,
         })),
         ScriptStep::Event(LlmEvent::Usage(Usage {
             input: 100,
