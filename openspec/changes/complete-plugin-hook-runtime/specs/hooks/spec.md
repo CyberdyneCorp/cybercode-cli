@@ -86,6 +86,21 @@
 - **THEN** new metadata from that directory subtree is omitted and coverage is incomplete, retaining prior stamps without synthetic deletion
 - **AND** omitted paths cannot count as permitted hard-link aliases for files remaining in the Location
 
+#### Scenario: Native burst during a held observation effect
+- **WHEN** external writes exceed native hint budgets while a launched FileChanged callback is held
+- **THEN** bounded reconciliation records the changed tail even after handler feedback allowance is exhausted, with coverage uncertainty and paused delivery visible
+- **AND** callback delivery remains within the durable allowance and shutdown joins the observer
+
+#### Scenario: Idle Session returns from an entered worktree
+- **WHEN** idle management acknowledges a Session's return to its original Location
+- **THEN** host-owned observation membership refreshes after the durable transition and outside the Session lock without requiring another model Turn
+- **AND** future observations follow the returned Location while the previous worktree loses eligibility
+
+#### Scenario: Archived observation membership resumes
+- **WHEN** a Session sharing a Location is archived while another member remains active
+- **THEN** the active member continues observing and the archived member receives no new file effects
+- **AND** explicit user input after unarchiving restores future observation without replaying effects recorded during its absence
+
 #### Scenario: Owner storage nested under a Location
 - **WHEN** owner data, configuration, state, cache or temporary roots lie below an observed Location
 - **THEN** owner-supplied private roots and their canonical aliases are excluded before traversing those subtrees, from both initial metadata and subsequent deltas

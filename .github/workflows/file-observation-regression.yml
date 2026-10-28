@@ -5,6 +5,7 @@ on:
       - crates/cyber-core/src/hooks.rs
       - crates/cyber-core/src/hooks/file_observations.rs
       - crates/cyber-core/src/hooks/envelope.rs
+      - crates/cyber-server/src/runtime/worktree_events.rs
       - crates/cyber-server/src/runtime/file_observations.rs
       - crates/cyber-server/src/runtime/events.rs
       - crates/cyber-server/src/runtime/mod.rs
@@ -51,6 +52,8 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: line-tables-only
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -68,6 +71,37 @@ jobs:
         run: |
           cargo test --locked -p cyber-server --lib file_observation_roots::
           cargo test --locked -p cyber-server --test file_observations
+      - name: Verify idle membership regression against unchanged base production source
+        if: runner.os == 'Linux'
+        env:
+          BASE_SOURCE: ${{ github.event.pull_request.base.sha || 'origin/main' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          worktree_source=crates/cyber-server/src/runtime/worktree_events.rs
+          cp "$worktree_source" "$RUNNER_TEMP/observation-worktree-events.rs"
+          restore() { cp "$RUNNER_TEMP/observation-worktree-events.rs" "$worktree_source"; }
+          trap restore EXIT
+          git show "$BASE_SOURCE:$worktree_source" > "$worktree_source"
+          if cargo test --locked -p cyber-tools --test file_observation_dispatch idle_worktree_return_refreshes_observation_membership_without_another_turn -- --exact > "$RUNNER_TEMP/observation-idle-base.log" 2>&1; then
+            echo 'Idle observer membership regression unexpectedly passed on unchanged base production source.'
+            exit 1
+          fi
+          python3 - <<'PY'
+          import os,re
+          from pathlib import Path
+          log=Path(os.environ['RUNNER_TEMP'],'observation-idle-base.log').read_text()
+          assert re.search(r'^test idle_worktree_return_refreshes_observation_membership_without_another_turn \.\.\. FAILED$',log,re.M), log[-8000:]
+          assert 'timed out waiting for returned membership observes without a new Turn' in log, log[-8000:]
+          PY
+      - name: Preserve idle observer baseline evidence
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: idle-observer-membership-baseline
+          path: ${{ runner.temp }}/observation-idle-base.log
+          if-no-files-found: error
+          retention-days: 14
       - name: Exercise real scoped HTTP-hook dispatch
         run: cargo test --locked -p cyber-tools --test file_observation_dispatch
       - name: Verify application host forwards observation notifications

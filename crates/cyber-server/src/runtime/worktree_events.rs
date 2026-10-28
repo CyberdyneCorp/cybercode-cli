@@ -254,6 +254,7 @@ impl Runtime {
         }
         let ids = [id.to_owned()];
         self.fence_deletion(id, &ids)?;
+        let mut observed = None;
         let exited = {
             let mut state = handle.state.lock().await;
             match state.entered_worktree.as_deref().cloned() {
@@ -270,11 +271,17 @@ impl Runtime {
                         },
                     );
                     self.inner.commit_locked(&mut state, vec![event])?;
+                    observed = Some(state.info.clone());
                     Ok(Some((from, WorktreeExit { origin, created })))
                 }),
             }
         };
         self.lift_deletion_fence(&ids);
+        if let Some(info) = observed {
+            // Idle management has no next Turn to refresh host-owned resources.
+            // The path transition is committed and the Session lock is released.
+            self.inner.tools.refresh_location(&info);
+        }
         exited
     }
 

@@ -4,8 +4,9 @@ Status: **in progress; task 5.2 remains open**. The full focused suite at
 `3e852288` passed Linux, macOS and Windows, including pinned native alias/input
 scope integration and the directory-move guard (the latter's new fixtures were
 Unix-only at that revision). Session-capacity recovery also passed Linux at
-`8c32f621`. Revised Windows finalization/lock-release fixtures await a fresh
-platform run. Remaining resource,
+`8c32f621`. Revised Windows finalization/lock-release fixtures passed the full
+focused Windows and Linux jobs at `6d065e1c`; macOS remained queued. Later
+lifecycle changes still require a fresh platform run. Remaining resource,
 lifecycle and broader workspace verification and substantive review are still
 required.
 
@@ -359,3 +360,49 @@ The local actual-source harness passes 55 library tests plus scoped Clippy at
 threshold 15 with warnings denied (unused-code lint is disabled only for the
 standalone harness, which omits production consumers). Complete runtime/owner
 and application checks still come from platform CI, not this harness.
+
+## Archive/resume and held-callback burst acceptance pending
+
+Two additional real-runtime/HTTP scenarios are configured for platform CI. The
+archive/resume case verifies shared-owner continuity, no delivery while archived,
+explicit held user-input readmission and future delivery without absent-effect
+replay. It places a distinct post-admission file barrier before the final write
+to separate a membership captured by an already in-flight reconciliation.
+
+The burst case holds only the first actual HTTP callback while the native
+watcher continues, writes 800 distinct files plus a lexically last tail, then
+releases that callback after batched backends can flush. It requires a visible
+coverage-uncertainty notice, durable tail recording without dispatch after the
+64-path feedback allowance is exhausted, bounded receipts/effects and joined
+shutdown. This exercises native loss/coalescing recovery through the production
+owner; it does not identify an exact number of OS notifications dropped. These
+new application scenarios have not run locally; full workspace builds remain
+unavailable with the current free disk. Formatting and OpenSpec checks alone do
+not prove these scenarios pass.
+
+## Idle worktree-return ownership correction under verification
+
+The source audit found that normal Turn preparation refreshes host Location
+resources, but `exit_idle_worktree` committed its return without that refresh.
+An idle Session could therefore retain its old observer membership and miss
+future observations at its returned Location until another Turn or input.
+The runtime now captures the resulting Session info only after successful
+commit, releases the Session lock and deletion fence, then refreshes the host.
+Refused/no-op returns do not manufacture a refresh or observation.
+
+The new actual-runtime regression enters a real Git worktree through a scripted
+model/tool, proves both Location scopes, returns through idle management and
+requires future shared-base delivery without another Turn, no old-scope effect
+and joined shutdown. The focused Linux workflow first restores the unchanged
+base production worktree source and requires this specific regression to fail
+at the missing returned-membership assertion, preserving its log, then runs the
+full suite with the fix. Native Git fixtures use explicit full access and do not
+prove plugin confinement. Both baseline failure and fixed platform results are
+pending; local formatting cannot establish this ownership behavior.
+
+At `6d065e1c`, both full focused Linux and Windows jobs completed successfully,
+including the portable finalization fixture and the Windows transient-lock
+release fixture, plus Session-capacity recovery and AppHost forwarding/privacy:
+https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40636145681.
+The macOS job was still queued when checked. These results precede the three
+new lifecycle/burst/idle-return scenarios and runtime refresh correction above.

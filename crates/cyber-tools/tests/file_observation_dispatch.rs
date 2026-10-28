@@ -17,16 +17,21 @@ impl Recorder {
         Self::with_gate(None).await
     }
     async fn with_gate(gate: Option<Arc<tokio::sync::Notify>>) -> Self {
-        Self::configured(gate, None).await
+        Self::configured(gate, None, false).await
     }
     async fn with_effect(effect: Arc<dyn Fn() + Send + Sync>) -> Self {
-        Self::configured(None, Some(effect)).await
+        Self::configured(None, Some(effect), false).await
+    }
+    async fn with_first_gate(gate: Arc<tokio::sync::Notify>) -> Self {
+        Self::configured(Some(gate), None, true).await
     }
     async fn configured(
         gate: Option<Arc<tokio::sync::Notify>>,
         effect: Option<Arc<dyn Fn() + Send + Sync>>,
+        gate_once: bool,
     ) -> Self {
         let seen = Arc::new(Mutex::new(Vec::new()));
+        let gated = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/hook", listener.local_addr().unwrap());
         let router=axum::Router::new().route("/hook",axum::routing::post({
@@ -35,10 +40,13 @@ impl Recorder {
                 let seen=Arc::clone(&seen);
                 let gate=gate.clone();
                 let effect=effect.clone();
+                let gated=Arc::clone(&gated);
                 async move {
                     seen.lock().unwrap().push(event);
                     if let Some(effect) = effect { effect(); }
-                    if let Some(gate) = gate { gate.notified().await; }
+                    if let Some(gate) = gate
+                        && (!gate_once || !gated.swap(true, std::sync::atomic::Ordering::AcqRel))
+                    { gate.notified().await; }
                     axum::Json(json!({"decision":"deny","reason":"observation cannot veto a committed write"}))
                 }
             }
@@ -246,6 +254,287 @@ async fn native_owner_delivers_external_edits_rename_removal_to_shared_sessions_
     tokio::time::sleep(Duration::from_millis(400)).await;
     assert_eq!(recorder.seen.lock().unwrap().len(), settled);
     assert!(flow.requests("test/main").is_empty());
+}
+
+#[tokio::test]
+async fn idle_worktree_return_refreshes_observation_membership_without_another_turn() {
+    use support::flow::{call, text};
+    let fixture = full_access_fixture();
+    initialize_project(
+        &fixture.repo,
+        "https://example.invalid/observation-idle-return",
+    );
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&fixture.repo)
+        .args([
+            "-c",
+            "user.name=Observation test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "--quiet",
+            "--allow-empty",
+            "-m",
+            "baseline",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let flow = support::flow::Flow::with(
+        fixture,
+        vec![
+            call(
+                "enter",
+                "enter_worktree",
+                json!({"name":"observation-scope"}),
+            ),
+            text("idle in worktree"),
+        ],
+        false,
+        Arc::new(cyber_server::runtime::NoSnapshots),
+    );
+    flow.f
+        .set_config(json!({"permissions":{"worktree":"allow","edit":"allow"}}));
+    let recorder = Recorder::start().await;
+    automatic_hooks(&flow, &recorder);
+    let active = flow.session("default").await;
+    let moved = flow.session("default").await;
+    flow.prompt(&moved, "enter a worktree").await;
+    flow.settle_within(&moved, Duration::from_secs(60)).await;
+    let current = flow.runtime.session_info(&moved).await.unwrap();
+    let worktree = std::path::PathBuf::from(&current.directory);
+    let entered = flow.output(&moved, "enter").await;
+    assert_ne!(worktree, flow.f.repo, "{entered}");
+    await_condition("both Location observers are live", || {
+        journal_count(&flow, records::CHECKPOINT) == 2
+    })
+    .await;
+    let has = |session: &str, path: &str| {
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["session_id"] == session && event["file_path"] == path)
+    };
+    std::fs::write(worktree.join("worktree-only"), "entered scope").unwrap();
+    std::fs::write(flow.f.repo.join("base-before-return"), "base scope").unwrap();
+    await_condition("effective scopes before idle return", || {
+        has(&moved, "worktree-only") && has(&active, "base-before-return")
+    })
+    .await;
+    assert!(!has(&moved, "base-before-return"));
+    flow.runtime
+        .exit_idle_worktree(&moved)
+        .await
+        .unwrap()
+        .expect("entered idle Session returns");
+    assert_eq!(
+        flow.runtime.session_info(&moved).await.unwrap().directory,
+        flow.f.repo.display().to_string()
+    );
+    std::fs::write(
+        flow.f.repo.join("idle-return-barrier"),
+        "settle any already captured membership",
+    )
+    .unwrap();
+    await_condition("old active member reaches the return barrier", || {
+        has(&active, "idle-return-barrier")
+    })
+    .await;
+    std::fs::write(
+        worktree.join("old-scope-after-return"),
+        "must not reach returned Session",
+    )
+    .unwrap();
+    std::fs::write(flow.f.repo.join("after-idle-return"), "new shared scope").unwrap();
+    await_condition("returned membership observes without a new Turn", || {
+        has(&active, "after-idle-return") && has(&moved, "after-idle-return")
+    })
+    .await;
+    assert!(!has(&moved, "old-scope-after-return"));
+    assert_eq!(
+        flow.requests("test/main").len(),
+        2,
+        "observations cannot manufacture a Turn"
+    );
+    tokio::time::timeout(Duration::from_secs(10), flow.runtime.shutdown())
+        .await
+        .expect("relocated observers must join at shutdown");
+}
+
+#[tokio::test]
+async fn archived_membership_resumes_future_observations_without_replaying_absent_effects() {
+    use cyber_server::runtime::{Admission, Delivery};
+    let flow = support::flow::Flow::new(vec![], false);
+    let recorder = Recorder::start().await;
+    automatic_hooks(&flow, &recorder);
+    let active = flow.session("default").await;
+    let resumed = flow.session("default").await;
+    await_condition("shared baseline before archive", || {
+        journal_count(&flow, records::CHECKPOINT) == 1
+    })
+    .await;
+    let has = |session: &str, path: &str| {
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["session_id"] == session && event["file_path"] == path)
+    };
+    std::fs::write(flow.f.repo.join("before-archive"), "shared").unwrap();
+    await_condition("both memberships initially deliver", || {
+        has(&active, "before-archive") && has(&resumed, "before-archive")
+    })
+    .await;
+    flow.runtime.archive(&resumed, true).await.unwrap();
+    std::fs::write(flow.f.repo.join("while-archived"), "active Session only").unwrap();
+    await_condition(
+        "active membership still delivers while peer is archived",
+        || has(&active, "while-archived"),
+    )
+    .await;
+    assert!(!has(&resumed, "while-archived"));
+    flow.runtime.archive(&resumed, false).await.unwrap();
+    flow.runtime
+        .admit(
+            &resumed,
+            Admission::text("resume file coverage", Delivery::Hold),
+        )
+        .await
+        .unwrap();
+    // The actor may already have captured its membership for an in-flight scan.
+    // Observe a barrier, then create a separate file for the next reconciliation.
+    std::fs::write(
+        flow.f.repo.join("resume-barrier"),
+        "settle the current scan",
+    )
+    .unwrap();
+    await_condition("post-admission scan barrier", || {
+        has(&active, "resume-barrier")
+    })
+    .await;
+    std::fs::write(flow.f.repo.join("after-resume"), "future shared effect").unwrap();
+    await_condition(
+        "explicitly resumed membership receives future observations",
+        || has(&active, "after-resume") && has(&resumed, "after-resume"),
+    )
+    .await;
+    assert!(
+        !has(&resumed, "while-archived"),
+        "resume must not replay absent effects"
+    );
+    assert_eq!(
+        journal_count(&flow, records::CHECKPOINT),
+        1,
+        "archiving one member must preserve the shared owner generation"
+    );
+    assert!(flow.requests("test/main").is_empty());
+    tokio::time::timeout(Duration::from_secs(10), flow.runtime.shutdown())
+        .await
+        .expect("archive/resume must preserve joined owner shutdown");
+}
+
+#[tokio::test]
+async fn native_burst_during_a_held_callback_reconciles_the_tail_under_feedback_bounds() {
+    use cyber_server::runtime::LiveEvent;
+    let flow = support::flow::Flow::new(vec![], false);
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let recorder = Recorder::with_first_gate(Arc::clone(&gate)).await;
+    automatic_hooks(&flow, &recorder);
+    let session = flow.session("default").await;
+    await_condition("native burst baseline", || {
+        journal_count(&flow, records::CHECKPOINT) == 1
+    })
+    .await;
+    let mut notices = flow.runtime.subscribe();
+    std::fs::write(
+        flow.f.repo.join("held-before-burst"),
+        "hold the actor in its real HTTP effect",
+    )
+    .unwrap();
+    await_condition("first callback holds the real native consumer", || {
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["file_path"] == "held-before-burst")
+    })
+    .await;
+    // The OS watcher continues on its native thread while the actor awaits HTTP.
+    // This exceeds the queue/path budgets without exceeding the file inventory.
+    for index in 0..800 {
+        std::fs::write(
+            flow.f.repo.join(format!("burst-{index:04}")),
+            "external burst",
+        )
+        .unwrap();
+    }
+    std::fs::write(
+        flow.f.repo.join("zzz-overflow-tail"),
+        "reconcile beyond the hint/credit tail",
+    )
+    .unwrap();
+    // Allow batched native backends to flush while consumption remains blocked.
+    tokio::time::sleep(Duration::from_millis(2100)).await;
+    gate.notify_one();
+    await_condition("durable tail survives native loss and exhausted hook credit", || {
+        flow.f.store.read(|db| Ok(db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM event,json_each(event.data,'$.updates') AS item WHERE event.type=?1 AND json_extract(item.value,'$.path')='zzz-overflow-tail' AND json_extract(event.data,'$.dispatch')=0)",
+            [records::CHANGED], |row| row.get::<_, bool>(0),
+        )?)).unwrap()
+    }).await;
+    let mut partial = false;
+    let mut paused = false;
+    while let Ok(event) = notices.try_recv() {
+        if let LiveEvent::HookNotice {
+            session_id,
+            hook_id,
+            message,
+        } = event
+            && session_id == session
+            && hook_id == "FileChanged"
+        {
+            partial |= message.contains("partial coverage");
+            paused |= message.contains("feedback allowance exhausted");
+        }
+    }
+    assert!(
+        partial,
+        "native loss/coalescing must surface reconciliation uncertainty"
+    );
+    assert!(
+        paused,
+        "exhausted feedback must pause visibly while recording continues"
+    );
+    assert_eq!(
+        recorder.seen.lock().unwrap().len(),
+        records::FEEDBACK_LIMIT as usize
+    );
+    assert!(
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|event| event["file_path"] != "zzz-overflow-tail")
+    );
+    assert_eq!(
+        flow.runtime.hook_executions(&session, 100).unwrap().len(),
+        records::FEEDBACK_LIMIT as usize
+    );
+    assert_eq!(journal_count(&flow, records::CHECKPOINT), 1);
+    assert!(flow.requests("test/main").is_empty());
+    tokio::time::timeout(Duration::from_secs(10), flow.runtime.shutdown())
+        .await
+        .expect("burst recovery must preserve joined observer shutdown");
 }
 
 #[tokio::test]
