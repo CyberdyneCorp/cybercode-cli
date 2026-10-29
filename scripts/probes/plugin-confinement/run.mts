@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 type Runtime = { kind: "python" | "node" | "bun" | "deno" | "native"; executable: string; prefix: string; include: string; libdir: string; library?: string; version: string };
-type Artifacts = { executable: string; addon?: string; landlock?: string; initialExec: boolean; stagedPlatform?: boolean; signingIdentifier?: string; trace?: string; packaged?: boolean };
+type Artifacts = { executable: string; addon?: string; landlock?: string; initialExec: boolean; stagedPlatform?: boolean; signingIdentifier?: string; trace?: string; packaged?: boolean; unixScratch?: boolean };
 type Flags = { read: boolean; write: boolean; shell: boolean; unrestricted?: boolean };
 type Observation = Record<string, boolean | null | boolean[]>;
 const source = dirname(fileURLToPath(import.meta.url));
@@ -180,7 +180,7 @@ function fixture(root: string): Record<string, string> {
 
 function linuxLaunch(artifacts: Artifacts, runtime: Runtime, paths: Record<string, string>, profile: string, flags: Flags, args: string[]) {
   const grants: string[] = [];
-  const grant = (right: "R" | "W", path: string) => {
+  const grant = (right: "R" | "W" | "U", path: string) => {
     assert(path.startsWith("/") && path !== "/" && !/[\t\n\r\0]/.test(path), "bounded absolute native proof root required");
     if (existsSync(path)) grants.push(`${right}\t${path}`);
   };
@@ -199,6 +199,7 @@ function linuxLaunch(artifacts: Artifacts, runtime: Runtime, paths: Record<strin
   }
   grant("W", "/dev/null");
   grant("W", paths.scratch);
+  if (artifacts.unixScratch) grant("U", paths.scratch);
   if (flags.read) grant("R", paths.project);
   if (flags.write) grant("W", paths.project);
   const policyPath = profile + ".landlock";
@@ -363,7 +364,7 @@ function check(root: string, artifacts: Artifacts, runtime: Runtime, name: strin
 
 function main() {
   assert(["darwin", "linux"].includes(process.platform), "native proof requires macOS or Linux; other platforms are unproved");
-  const { values } = parseArgs({ options: { runtime: { type: "string", default: "python" }, "packaged-helper": { type: "string" }, python: { type: "string" }, executable: { type: "string" }, report: { type: "string" }, trace: { type: "string" }, "initial-exec": { type: "boolean", default: false }, "macos-staged-native": { type: "boolean", default: false }, "macos-signing-native": { type: "boolean", default: false }, "macos-signing-runtime": { type: "boolean", default: false } } });
+  const { values } = parseArgs({ options: { runtime: { type: "string", default: "python" }, "packaged-helper": { type: "string" }, python: { type: "string" }, executable: { type: "string" }, report: { type: "string" }, trace: { type: "string" }, "initial-exec": { type: "boolean", default: false }, "unix-scratch-policy": { type: "boolean", default: false }, "macos-staged-native": { type: "boolean", default: false }, "macos-signing-native": { type: "boolean", default: false }, "macos-signing-runtime": { type: "boolean", default: false } } });
   assert(["python", "node", "bun", "deno", "native"].includes(values.runtime), "runtime must be python, node, bun, deno or native");
   if (values.runtime === "bun" || values.runtime === "deno") assert(values.executable, "supply an explicit trusted Bun/Deno executable");
   const stagedPlatform = values["macos-staged-native"];
@@ -380,6 +381,7 @@ function main() {
   const initialExec = values["initial-exec"] || (values.runtime === "native" && isLinux);
   assert(!initialExec || isLinux, "initial-exec proof currently requires Linux");
   if (values.runtime === "python") assert(values.python, "supply an explicit trusted Python; embedding additionally requires development headers and a dynamic library");
+  assert(!values["unix-scratch-policy"] || (isLinux && initialExec && packagedHelper), "unix scratch experiment requires a Linux packaged initial-exec helper");
   const root = realpathSync(mkdtempSync(join(tmpdir(), "cyber-plugin-native-proof-")));
   try {
     const runtime: Runtime = values.runtime === "node" ? nodeInfo() : values.runtime === "bun" || values.runtime === "deno"
@@ -394,7 +396,7 @@ function main() {
     // Literal exec admission must name the same physical executable the kernel
     // resolves, including framework Python's executable symlinks.
     if (signingRuntime && runtime.kind !== "native") runtime.executable = realpathSync(runtime.executable);
-    const artifacts: Artifacts = { ...build(root, runtime, initialExec, signingRuntime, packagedHelper), trace: values.trace, packaged: Boolean(packagedHelper) };
+    const artifacts: Artifacts = { ...build(root, runtime, initialExec, signingRuntime, packagedHelper), trace: values.trace, packaged: Boolean(packagedHelper), unixScratch: values["unix-scratch-policy"] };
     if (signingRuntime) {
       artifacts.signingIdentifier = `com.cyberdyne.probe.bootstrap.${randomUUID()}`;
       command("/usr/bin/codesign", ["--force", "--sign", "-", "--identifier", artifacts.signingIdentifier, "--timestamp=none", artifacts.executable]);

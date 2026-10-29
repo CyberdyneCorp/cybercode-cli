@@ -8,6 +8,8 @@ on:
       - .github/workflows/plugin-linux-ipc.yml
       - scripts/probes/plugin-native-entry/linux_socket_candidate.h
       - scripts/probes/plugin-native-entry/build_socket_candidate.py
+      - scripts/probes/plugin-native-entry/linux_socket_landlock9.h
+      - scripts/probes/plugin-native-entry/linux_unix9_policy.h
 permissions:
   contents: read
 concurrency:
@@ -55,12 +57,31 @@ jobs:
           set -euo pipefail
           cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec --example plugin_unix_socket_probe
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-candidate"
+          python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/unix9-candidate" landlock9
+          python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/unix9-missing-resolve" landlock9-no-resolve
       - name: Observe fixture-only host socket reachability
         shell: bash
         run: |
           set -euo pipefail
           target/debug/examples/plugin_unix_socket_probe "$PWD/target/debug/cyber-sandbox-exec" "$RUNNER_TEMP/linux-ipc.json"
           target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-candidate" "$RUNNER_TEMP/linux-ipc-candidate.json" --candidate
+          target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/unix9-candidate" "$RUNNER_TEMP/linux-ipc-unix9.json" --landlock9
+      - name: Verify pathname policy counterexample control
+        shell: bash
+        run: |
+          set -euo pipefail
+          if target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/unix9-missing-resolve" "$RUNNER_TEMP/linux-ipc-unix9-control.json" --landlock9 > "$RUNNER_TEMP/unix9-missing-resolve.log" 2>&1; then
+            cat "$RUNNER_TEMP/unix9-missing-resolve.log"
+            echo 'Missing pathname policy unexpectedly passed' >&2
+            exit 1
+          fi
+          python3 - "$RUNNER_TEMP/unix9-missing-resolve.log" <<'PY'
+          from pathlib import Path
+          import sys
+          text = Path(sys.argv[1]).read_text()
+          assert 'socket denial: outside:' in text, text
+          assert '"connected":true' in text and '"sent":true' in text, text
+          PY
       - name: Verify candidate runtime compatibility
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: bash
@@ -68,17 +89,23 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/socket-runtime"
           status=0
-          for runtime in node python bun deno native; do
-            args=(--runtime "$runtime" --initial-exec --packaged-helper "$RUNNER_TEMP/socket-candidate" --report "$RUNNER_TEMP/socket-runtime/$runtime.json" --trace "$RUNNER_TEMP/socket-runtime/trace-$runtime")
+          for policy in seccomp unix9; do
+            mkdir -p "$RUNNER_TEMP/socket-runtime/$policy"
+            helper="$RUNNER_TEMP/socket-candidate"
+            if [[ "$policy" == unix9 ]]; then helper="$RUNNER_TEMP/unix9-candidate"; fi
+            for runtime in node python bun deno native; do
+            args=(--runtime "$runtime" --initial-exec --packaged-helper "$helper" --report "$RUNNER_TEMP/socket-runtime/$policy/$runtime.json" --trace "$RUNNER_TEMP/socket-runtime/$policy/trace-$runtime")
+            if [[ "$policy" == unix9 ]]; then args+=(--unix-scratch-policy); fi
             if [[ "$runtime" == python ]]; then
               args+=(--python "$(command -v python3)")
             elif [[ "$runtime" == bun || "$runtime" == deno ]]; then
               args+=(--executable "$(command -v "$runtime")")
             fi
-            if ! node --experimental-strip-types scripts/probes/plugin-confinement/run.mts "${args[@]}" > "$RUNNER_TEMP/socket-runtime/$runtime.log" 2>&1; then
-              cat "$RUNNER_TEMP/socket-runtime/$runtime.log"
+            if ! node --experimental-strip-types scripts/probes/plugin-confinement/run.mts "${args[@]}" > "$RUNNER_TEMP/socket-runtime/$policy/$runtime.log" 2>&1; then
+              cat "$RUNNER_TEMP/socket-runtime/$policy/$runtime.log"
               status=1
             fi
+          done
           done
           exit "$status"
       - name: Retain diagnostic observations
@@ -89,5 +116,6 @@ jobs:
           path: |
             ${{ runner.temp }}/linux-ipc*.json
             ${{ runner.temp }}/socket-runtime/
+            ${{ runner.temp }}/unix9-missing-resolve.log
           if-no-files-found: warn
           retention-days: 14

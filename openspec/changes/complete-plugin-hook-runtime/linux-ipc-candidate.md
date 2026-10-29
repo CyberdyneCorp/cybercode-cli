@@ -65,8 +65,9 @@ At `ccde59d4`, both Linux jobs reject the candidate's pair assertion. The x64
 shows internal roundtrip succeeds, direct/disconnect/reconnect attempts fail,
 datagram/seqpacket creation fails, but both `pair_bind` and `pair_listen` succeed
 with project reads disabled. This refutes the assumption that a connected stream
-pair cannot become an ambient listener. No host service or descriptor escalation
-was attempted, and no failed candidate row is counted as isolation acceptance.
+pair must reject bind/listen. Host reachability of that newly listening pair was
+not tested; no actual incoming host connection or descriptor escalation is
+claimed. No failed candidate row is counted as isolation acceptance.
 
 The revised copy adds unconditional bind/listen denials and requires pair bind
 to fail too. Both native denial and runtime suites must run again. This candidate
@@ -74,3 +75,32 @@ still needs explicit design/support review because those syscall denials also
 restrict legitimate IP servers and explicit client binds. A narrower production
 policy, stronger primitive or reviewed support revision remains necessary; green
 fixture tests alone cannot select this restriction as the final feature contract.
+
+## Revised native component results
+
+At `15e1ef85b1fbff552c980b50c7d22e4b35251608`, both
+[x64 job 123743126666](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40958015885/job/123743126666)
+and [arm64 job 123743126191](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40958015885/job/123743126191)
+pass. Per architecture, all 16 ordinary host-socket attempts deny, all 16 stream
+pair cases retain internal token exchange while rejecting bind/listen/reconnect,
+and project reads independently match their capability. The unmodified production
+helper still delivers the 12 public/outside/symlink tokens per architecture,
+preserving the counterexample rather than concealing it behind candidate results.
+
+The five runtime drivers each pass nine cases per architecture (90 cases total),
+with no unsupported cases. Every runtime's input and executed helper SHA-256
+matches its architecture's candidate helper hash. This proves the fixture matrix,
+not all runtime applications, IP server support or production network acceptance.
+
+[Retained original reports](../../../scripts/probes/plugin-native-entry/evidence/linux-ipc-candidate-15e1ef85/)
+refer to merge checkout `a4ce695bcb8d591bb2b4f39fe55df1c9e6ede048`, whose parents
+are `18791fbe0089c95708956da0f3c4a47e3035c31d` and
+`15e1ef85b1fbff552c980b50c7d22e4b35251608`. Independent recomputation of each
+manifest path, NUL and exact checkout bytes matches diagnostic source hash
+`38213834f9fbd04afb435af7f5b173ed00ba3ab042fede482c48c30c7bd61f09` and each
+runtime source report (runtime paths are relative to `plugin-confinement`). The
+job-reported candidate helper hashes are
+`7792832e9f12b58942eba0b0e2797b1089beb38dd03fed4b9e7bb6edfbbf58c1` (x64)
+and `909a09be86ab2173c489e75a0a1b3bd4b75a0902ea511d4598518490535f3766`
+(arm64). Binaries were not retained for independent rehashing. The support/design
+gate and the explicit bind/listen limitation remain open despite these passes.

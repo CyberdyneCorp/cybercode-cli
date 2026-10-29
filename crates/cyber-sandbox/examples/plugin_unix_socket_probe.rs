@@ -59,25 +59,48 @@ mod probe {
         }
     }
 
-    fn pair_row(policy: LinuxPolicy<'_>, listener: &UnixListener, label: &str) -> Value {
-        let pair_args = [
-            policy.target_args[0].clone(),
-            policy.target_args[1].clone(),
-            "pair".into(),
-        ];
-        let pair_policy = LinuxPolicy {
-            target_args: &pair_args,
-            ..policy
-        };
-        let plan = pair_policy.compose().unwrap();
-        std::fs::write(pair_policy.profile, plan.landlock).unwrap();
-        let observed: Value = serde_json::from_slice(
+    #[derive(Clone, Copy, PartialEq)]
+    enum Mode {
+        Baseline,
+        Seccomp,
+        Unix9,
+    }
+
+    fn observe(policy: &LinuxPolicy<'_>, mode: Mode) -> Value {
+        let mut plan = policy.compose().unwrap();
+        if mode == Mode::Unix9 {
+            plan.landlock
+                .push_str(&format!("U\t{}\n", policy.scratch.display()));
+        }
+        std::fs::write(policy.profile, plan.landlock).unwrap();
+        serde_json::from_slice(
             &run(Command::new("/usr/bin/bwrap")
                 .args(plan.arguments)
                 .env_clear())
             .stdout,
         )
-        .unwrap();
+        .unwrap()
+    }
+
+    fn pair_row(
+        policy: LinuxPolicy<'_>,
+        listener: &UnixListener,
+        label: &str,
+        mode: Mode,
+    ) -> Value {
+        let mut pair_args = vec![
+            policy.target_args[0].clone(),
+            policy.target_args[1].clone(),
+            "pair".into(),
+        ];
+        if mode == Mode::Unix9 {
+            pair_args.push(policy.scratch.join("local.sock").to_str().unwrap().into());
+        }
+        let pair_policy = LinuxPolicy {
+            target_args: &pair_args,
+            ..policy
+        };
+        let observed = observe(&pair_policy, mode);
         assert_eq!(
             observed["project_read"], pair_policy.fs_read,
             "native pair read control: {observed}"
@@ -86,18 +109,26 @@ mod probe {
             observed["pair_roundtrip"], true,
             "private pair communication: {observed}"
         );
-        for key in [
-            "connected",
-            "pair_reconnect",
-            "pair_bind",
-            "pair_listen",
-            "datagram_pair",
-            "seqpacket_pair",
-        ] {
+        for key in ["connected", "pair_reconnect", "pair_bind"] {
             assert_eq!(
                 observed[key], false,
                 "private pair escape: {key}: {observed}"
             );
+        }
+        for key in [
+            "datagram_pair",
+            "seqpacket_pair",
+            "tcp_roundtrip",
+            "scratch_unix_roundtrip",
+        ] {
+            assert_eq!(
+                observed[key],
+                mode == Mode::Unix9,
+                "pair/local support: {key}: {observed}"
+            );
+        }
+        if mode == Mode::Seccomp {
+            assert_eq!(observed["pair_listen"], false, "pair listener: {observed}");
         }
         let delivered = receipt(listener, &observed);
         assert!(!delivered, "pair reached host: {observed}");
@@ -105,7 +136,7 @@ mod probe {
                         "shell": false, "mode": "pair", "host_received_fixture": delivered, "observed": observed})
     }
 
-    fn options() -> (PathBuf, PathBuf, bool) {
+    fn options() -> (PathBuf, PathBuf, Mode) {
         assert_eq!(
             std::env::consts::OS,
             "linux",
@@ -116,16 +147,19 @@ mod probe {
             matches!(args.len(), 2 | 3),
             "expected helper, report and optional candidate flag"
         );
-        let candidate = args.len() == 3;
-        if candidate {
-            assert_eq!(args[2], "--candidate");
-        }
+        let mode = match args.get(2).and_then(|arg| arg.to_str()) {
+            None => Mode::Baseline,
+            Some("--candidate") => Mode::Seccomp,
+            Some("--landlock9") => Mode::Unix9,
+            _ => panic!("unknown candidate mode"),
+        };
         let helper = std::fs::canonicalize(&args[0]).unwrap();
-        (helper, PathBuf::from(&args[1]), candidate)
+        (helper, PathBuf::from(&args[1]), mode)
     }
 
     pub fn main() {
-        let (helper, report_path, candidate) = options();
+        let (helper, report_path, mode) = options();
+        let candidate = mode != Mode::Baseline;
         let temporary = tempfile::tempdir().unwrap();
         let root = temporary.path().canonicalize().unwrap();
         let project = root.join("project");
@@ -209,15 +243,7 @@ mod probe {
                     shell: false,
                     namespace_proc: false,
                 };
-                let plan = policy.compose().unwrap();
-                std::fs::write(&profile, plan.landlock).unwrap();
-                let observed: Value = serde_json::from_slice(
-                    &run(Command::new("/usr/bin/bwrap")
-                        .args(plan.arguments)
-                        .env_clear())
-                    .stdout,
-                )
-                .unwrap();
+                let observed = observe(&policy, mode);
                 assert_eq!(observed["project_read"], read, "native read control");
                 let delivered = receipt(&listeners[index], &observed);
                 if candidate || label == "private-mask" {
@@ -226,7 +252,7 @@ mod probe {
                 rows.push(json!({"socket": label, "fs_read": read, "fs_write": write,
                     "shell": false, "host_received_fixture": delivered, "observed": observed}));
                 if candidate {
-                    rows.push(pair_row(policy, &listeners[index], label));
+                    rows.push(pair_row(policy, &listeners[index], label, mode));
                 }
             }
         }
@@ -245,6 +271,8 @@ mod probe {
             "Cargo.lock",
             ".github/workflows/plugin-linux-ipc.yml",
             "scripts/probes/plugin-native-entry/linux_socket_candidate.h",
+            "scripts/probes/plugin-native-entry/linux_socket_landlock9.h",
+            "scripts/probes/plugin-native-entry/linux_unix9_policy.h",
             "scripts/probes/plugin-native-entry/build_socket_candidate.py",
         ];
         let mut hash = Sha256::new();
@@ -255,7 +283,7 @@ mod probe {
         }
         let report = json!({"platform": std::env::consts::OS, "architecture": std::env::consts::ARCH,
             "checkout": std::env::var("GITHUB_SHA").ok(), "run_id": std::env::var("GITHUB_RUN_ID").ok(),
-            "candidate": candidate, "sources": sources, "source_sha256": format!("{:x}", hash.finalize()),
+            "candidate": candidate, "landlock9": mode == Mode::Unix9, "sources": sources, "source_sha256": format!("{:x}", hash.finalize()),
             "helper_sha256": format!("{:x}", Sha256::digest(std::fs::read(helper).unwrap())),
             "rows": rows, "scope": "Diagnostic host UNIX-socket reachability only. Fixture messages only; no real broker, filesystem/shell escalation or capability acceptance."});
         std::fs::write(
