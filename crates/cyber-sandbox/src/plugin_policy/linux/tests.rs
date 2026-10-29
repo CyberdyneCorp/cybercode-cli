@@ -104,11 +104,6 @@ fn linux_inputs_refuse_unsafe_overlap_injection_and_argument_overflow() {
 }
 
 #[test]
-fn linux_public_composition_is_unavailable_on_this_host() {
-    assert_eq!(policy(&[]).compose(), Err(Error::Unavailable));
-}
-
-#[test]
 fn linux_private_parents_cover_children_without_inner_mount_creation() {
     let masks = [
         MaskPath::File(Path::new("/project/private/child/secret")),

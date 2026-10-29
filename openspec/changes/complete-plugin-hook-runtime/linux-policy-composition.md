@@ -49,7 +49,7 @@ sandbox or App host behavior.
 
 ## Verification status
 
-On local macOS arm64, all 11 policy unit tests pass, including the pure Linux
+On local macOS arm64, all 10 policy unit tests pass, including the pure Linux
 backend and explicit public unavailability on this host. All eight existing
 packaged macOS entry regressions pass. Sandbox all-target Clippy passes with Rust
 warnings denied; the C compiler reports two deprecated Seatbelt SDK calls, without
@@ -103,3 +103,14 @@ rebound over the new namespace objects. Positive native assertions, exact failin
 control reasons and restored checks are configured rather than waived. Review
 found no remaining local source issue within this component; native results are
 still pending and production activation remains blocked by the obligations above.
+
+
+## Initial hosted test-scope correction
+
+At `27f1a908`, both Linux packaged jobs failed a duplicate unsupported-host unit
+assertion. The intended non-Linux check already lives in the common test module
+behind `cfg(not(target_os = "linux"))`; an old unguarded copy remained in the
+backend tests and incorrectly expected unavailable on Linux itself. That duplicate
+is removed. The jobs stopped before the new native integration/controls, so none
+of those native checks is counted as passing for that revision. Fresh hosted
+execution remains required after this test-only correction.
