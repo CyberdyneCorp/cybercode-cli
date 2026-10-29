@@ -47,11 +47,48 @@ jobs:
           node-version: 22
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Verify native musl C compilation
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.*
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          arch=$(uname -m)
+          musl-gcc -Wall -Wextra -Werror -idirafter "/usr/include/$arch-linux-gnu" -idirafter /usr/include -c crates/cyber-sandbox/native/linux_plugin_exec.c -o "$RUNNER_TEMP/linux-native-musl.o"
       - name: Verify packaged entry and explicit unsupported-mode behavior
         shell: bash
         run: |
           set -euo pipefail
           cargo test --locked -p cyber-sandbox --bin cyber-sandbox-exec native_exec
+          cargo test --locked -p cyber-sandbox --test native_exec
+      - name: Verify high-descriptor regression detects missing cleanup
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          source=crates/cyber-sandbox/native/linux_plugin_exec.c
+          cp "$source" "$RUNNER_TEMP/linux-native-original.c"
+          trap 'cp "$RUNNER_TEMP/linux-native-original.c" "$source"' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('crates/cyber-sandbox/native/linux_plugin_exec.c')
+          text = path.read_text()
+          original = 'syscall(SYS_close_range, 3U, UINT_MAX, 0) != 0'
+          assert text.count(original) == 1
+          path.write_text(text.replace(original, '0 /* missing-cleanup control */'))
+          PY
+          if cargo test --locked -p cyber-sandbox --test native_exec inherited_descriptors_above_lowered_limit_are_closed > "$RUNNER_TEMP/native-fd-control.log" 2>&1; then
+            cat "$RUNNER_TEMP/native-fd-control.log"
+            echo 'Missing-cleanup control unexpectedly passed' >&2
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/native-fd-control.log"
+          rg 'linux::inherited_descriptors_above_lowered_limit_are_closed .* FAILED' "$RUNNER_TEMP/native-fd-control.log"
+          rg -F 'left: Bool(true)' "$RUNNER_TEMP/native-fd-control.log"
+          rg -F 'right: Bool(false)' "$RUNNER_TEMP/native-fd-control.log"
+          cp "$RUNNER_TEMP/linux-native-original.c" "$source"
           cargo test --locked -p cyber-sandbox --test native_exec
       - name: Record exact source and built helper provenance
         if: always()

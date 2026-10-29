@@ -7,6 +7,8 @@ import { parseArgs } from "node:util";
 const { values } = parseArgs({ options: { binary: { type: "string" }, out: { type: "string" } } });
 if (!values.binary || !values.out) throw new Error("--binary and --out are required");
 const sources = [
+  "crates/cyber-sandbox/native/linux_plugin_exec.c", "crates/cyber-sandbox/native/linux_filter.h",
+  "crates/cyber-sandbox/native/linux_initial_exec.h", "crates/cyber-sandbox/tests/support/native_exec_linux.rs",
   "Cargo.lock", "crates/cyber-sandbox/Cargo.toml", "crates/cyber-sandbox/build.rs",
   "crates/cyber-sandbox/native/macos_plugin_exec.c", "crates/cyber-sandbox/src/native_exec.rs",
   "crates/cyber-sandbox/src/bin/cyber-sandbox-exec.rs", "crates/cyber-sandbox/tests/native_exec.rs",
@@ -27,7 +29,7 @@ const report = {
   recorded_at: new Date().toISOString(), platform: process.platform, architecture: process.arch,
   checkout: process.env.GITHUB_SHA ?? null, run_id: process.env.GITHUB_RUN_ID ?? null,
   sources, source_sha256: sourceHash.digest("hex"), packaged_binary: image,
-  scope: "Build provenance. macOS tests execute private copies signed with fresh identifiers; read the job for outcomes. This does not establish plugin launch admission or Linux native packaging.",
+  scope: "Build provenance. macOS tests execute private copies signed with fresh identifiers; read the job for outcomes. This does not establish plugin launch admission or runtime compatibility beyond the tested fixtures.",
 };
 mkdirSync(dirname(resolve(values.out)), { recursive: true });
 writeFileSync(values.out, JSON.stringify(report, null, 2) + "\n", { mode: 0o600 });

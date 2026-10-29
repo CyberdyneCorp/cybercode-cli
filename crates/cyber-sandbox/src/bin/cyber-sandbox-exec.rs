@@ -3,7 +3,7 @@
 
 use std::process::ExitCode;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[path = "../native_exec.rs"]
 mod native_exec;
 
@@ -20,9 +20,9 @@ fn main() -> ExitCode {
         .nth(1)
         .is_some_and(|arg| arg == "--plugin-native-exec")
     {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         return native_exec::run(std::env::args_os().skip(1));
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
             eprintln!(
                 "cyber-sandbox-exec: native plugin exec entry is unavailable on this platform"

@@ -14,7 +14,11 @@ fn bypass_or_unsupported_native_mode_never_starts_the_target() {
         .unwrap();
     assert_eq!(
         output.status.code(),
-        Some(if cfg!(target_os = "macos") { 64 } else { 69 })
+        Some(if cfg!(any(target_os = "macos", target_os = "linux")) {
+            64
+        } else {
+            69
+        })
     );
     assert!(output.stdout.is_empty());
     assert!(!String::from_utf8_lossy(&output.stderr).contains("TARGET-MUST-NOT-RUN"));
@@ -312,3 +316,7 @@ mod macos {
         assert!(output.stdout.is_empty());
     }
 }
+
+#[cfg(target_os = "linux")]
+#[path = "support/native_exec_linux.rs"]
+mod linux;
