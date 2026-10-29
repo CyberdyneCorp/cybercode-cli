@@ -216,6 +216,20 @@ fn worker_source_io_preserves_owner_sqlite_locks() {
         );
     };
     check();
+    // Metadata-only private inventory must not open/close this locked database.
+    let inventory = cyber_sandbox::plugin_image::private_roots::Inventory::capture(
+        std::slice::from_ref(&source),
+    )
+    .unwrap();
+    inventory.recheck().unwrap();
+    check();
+    drop(inventory);
+    check();
+    assert!(
+        cyber_sandbox::plugin_image::private_roots::Inventory::capture(&[path.join("child")])
+            .is_err()
+    );
+    check();
     let result = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "source_digest_probe", "--ignored", "--nocapture"])
         .env("CYBER_PLUGIN_COPY_SOURCE", &source)

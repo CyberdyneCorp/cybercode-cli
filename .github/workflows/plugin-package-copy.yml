@@ -109,6 +109,60 @@ jobs:
           grep -F 'owner lock was released' "$RUNNER_TEMP/owner-control.log"
           # Restore the positive check after the intentional failing control.
           cargo test --locked -p cyber-sandbox --test plugin_copy worker_source_io_preserves_owner_sqlite_locks -- --exact
+      - name: Verify private inventory failure controls
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          source=crates/cyber-sandbox/src/plugin_image/private_roots.rs
+          cp "$source" "$RUNNER_TEMP/private-inventory-positive.rs"
+          trap 'cp "$RUNNER_TEMP/private-inventory-positive.rs" "$source"' EXIT
+          for control in alias recheck io; do
+            cp "$RUNNER_TEMP/private-inventory-positive.rs" "$source"
+            python3 - "$source" "$control" <<'PY'
+          from pathlib import Path
+          import sys
+          path = Path(sys.argv[1])
+          text = path.read_text()
+          control = sys.argv[2]
+          if control == 'alias':
+              before, after = '|| (metadata.is_file() && metadata.nlink() != 1)', ''
+          elif control == 'recheck':
+              before, after = 'if current.records != self.records {', 'if false {'
+          else:
+              before = '            let is_directory = state.directory;'
+              after = '            if !state.directory { drop(parent.open(name).map_err(|_| Error::Io)?); }\n' + before
+          assert text.count(before) == 1
+          path.write_text(text.replace(before, after))
+          PY
+            if [[ "$control" == alias ]]; then
+              name=private_inventory_refuses_external_and_internal_hard_links_before_and_after_capture
+              args=(--lib "plugin_image::private_roots::tests::$name")
+            elif [[ "$control" == recheck ]]; then
+              name=private_inventory_accepts_nested_roots_and_detects_changed_bytes_names_and_modes
+              args=(--lib "plugin_image::private_roots::tests::$name")
+            else
+              name=worker_source_io_preserves_owner_sqlite_locks
+              args=(--test plugin_copy "$name")
+            fi
+            if cargo test --locked -p cyber-sandbox "${args[@]}" -- --exact > "$RUNNER_TEMP/private-$control-control.log" 2>&1; then
+              cat "$RUNNER_TEMP/private-$control-control.log"
+              echo "Private $control control unexpectedly passed" >&2
+              exit 1
+            fi
+            cat "$RUNNER_TEMP/private-$control-control.log"
+            python3 - "$RUNNER_TEMP/private-$control-control.log" "$name" "$control" <<'PY'
+          from pathlib import Path
+          import re, sys
+          text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', Path(sys.argv[1]).read_text())
+          assert f'{sys.argv[2]} ... FAILED' in text
+          expected = {'alias': 'unwrap_err()', 'recheck': 'assertion failed: inventory.recheck().is_err()', 'io': 'owner lock was released'}
+          assert expected[sys.argv[3]] in text
+          PY
+          done
+          cp "$RUNNER_TEMP/private-inventory-positive.rs" "$source"
+          cargo test --locked -p cyber-sandbox --lib plugin_image
+          cargo test --locked -p cyber-sandbox --test plugin_copy
       - name: Retain owner IO counterexample
         if: always() && runner.os != 'Windows'
         uses: actions/upload-artifact@v4
@@ -116,6 +170,9 @@ jobs:
           name: package-copy-owner-control-${{ matrix.os }}
           path: |
             ${{ runner.temp }}/owner-control.log
+            ${{ runner.temp }}/private-alias-control.log
+            ${{ runner.temp }}/private-recheck-control.log
+            ${{ runner.temp }}/private-io-control.log
             ${{ runner.temp }}/authority-gate-control.log
             ${{ runner.temp }}/authority-check-control.log
           if-no-files-found: warn

@@ -34,6 +34,7 @@ pub enum Error {
 }
 
 mod authority;
+pub mod private_roots;
 pub use authority::{Generation, Lease};
 
 /// An owned copy, not a sealed or execution-admitted image. Retain this value for

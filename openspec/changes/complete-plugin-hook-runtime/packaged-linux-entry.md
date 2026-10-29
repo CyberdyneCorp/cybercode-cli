@@ -138,3 +138,31 @@ merge with parents `d90f4c16` and `758b86f8`, verified through the commit API.
 These source/binary bindings accompany actual passing tests, rather than being
 substituted for them. macOS hosted packaged matrix execution and the remaining
 production admission/integration gates above remain outstanding.
+
+
+## Complete hosted packaged matrix at `bc850900`
+
+Run [40872011749](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40872011749)
+passed all five platform jobs. Its retained checkout `cc6422cd` has parents
+`d90f4c16` and `bc850900`, independently verified from the fetched commit. All four
+Unix artifacts were downloaded and inspected. Their native-entry source manifests
+independently recompute to
+`19761f2a0dc8b8f107ff0a8b75b93abbbaca4a34b5f50bbbd793676e4f1fe7a7`
+at that checkout; each runtime's probe manifest also recomputes from the exact
+commit. Every runtime's input-helper hash matches its platform's retained
+built-helper hash, including separate executed hashes after fresh macOS signing.
+
+The macOS arm64 and Intel jobs each pass nine rows for Node, Python 3.13, system
+Python, Bun, Deno and native: 54 cases per architecture. Both Linux jobs pass nine
+rows for Node, Python, Bun, Deno and native: 45 per architecture. All 198 rows have
+zero unsupported cases. These reports come from the driver's strict positive
+startup/tool and capability assertions, including self-exec; they are not
+inferred from provenance hashes. The independent native descriptor regression
+remains the descriptor proof, since direct Deno already closes the dummy FD.
+Windows passes explicit unavailable behavior only.
+
+This closes the previously pending hosted packaged-fixture runtime receipts for
+that source. It does not prove the later production package configuration path,
+private inventory, immutable runtime/helper admission, namespace/alias protection,
+network/secret intersections or production launch integration. The explicit
+support/design review gate and parent native-enforcement tasks remain open.
