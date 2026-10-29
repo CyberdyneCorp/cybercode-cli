@@ -1,0 +1,82 @@
+{
+  "recorded_at": "2026-10-28T18:23:18.691Z",
+  "platform": "darwin",
+  "architecture": "x64",
+  "kernel_release": "24.6.0",
+  "sources": [
+    "macos_signing_exec.mts",
+    "macos_exec.c",
+    "fixture_exec.c",
+    "macos_signature.c",
+    "macos_fds.c"
+  ],
+  "source_sha256": "7a06af58c27b8b134dd4833f6947b1a27623c4c3ef34c74542528d05ae284723",
+  "signing_identifier": "com.cyberdyne.probe.helperX.cd24a2f7-0252-4e84-8d13-9e875a765756",
+  "signature": {
+    "status": 0,
+    "signal": null,
+    "stdout": "",
+    "stderr": ""
+  },
+  "native_control": {
+    "initial_exec": true,
+    "self_exec": true
+  },
+  "native": {
+    "initial_exec": true,
+    "self_exec": false
+  },
+  "original_platform_image": {
+    "path": "/bin/bash",
+    "sha256": "c372d1d6d4f07e0a917f3660aa79df00cbb50323972c22c3d90ec17d2096d039",
+    "control": {
+      "status": 0,
+      "signal": null,
+      "stdout": "initial-admitted\nself-exec",
+      "stderr": ""
+    },
+    "restricted": {
+      "status": 1,
+      "signal": null,
+      "stdout": "initial-admitted\n",
+      "stderr": "/bin/bash: /bin/bash: Operation not permitted\n/bin/bash: /bin/bash: Undefined error: 0\n"
+    }
+  },
+  "same_identifier_counterexample": {
+    "initial_exec": true,
+    "self_exec": true
+  },
+  "detached_signature": {
+    "control": [
+      {
+        "initial_exec": true,
+        "add_signature_result": 0,
+        "add_signature_errno": 0
+      },
+      {
+        "self_exec": true
+      }
+    ],
+    "restricted": [
+      {
+        "initial_exec": true,
+        "add_signature_result": 0,
+        "add_signature_errno": 0
+      },
+      {
+        "self_exec": false,
+        "exec_errno": 1
+      }
+    ],
+    "original_image_unchanged": true
+  },
+  "inherited_above_soft_limit": {
+    "control": {
+      "inherited_descriptor": true
+    },
+    "launcher": {
+      "inherited_descriptor": false
+    }
+  },
+  "limitation": "Experimental exec-only candidate. Identifier collision is an observed bypass. Immutable package/helper identity admission across all slices, other kernel mutation interfaces, packaging and owner integration remain unproved; no production support change."
+}

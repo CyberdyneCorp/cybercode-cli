@@ -1,0 +1,62 @@
+{
+  "recorded_at": "2026-10-28T07:17:51.090Z",
+  "platform": "darwin",
+  "architecture": "arm64",
+  "kernel_release": "25.6.0",
+  "sources": [
+    "macos_native_exec.mts",
+    "macos_exec.c",
+    "fixture_exec.c",
+    "macos_stage.mts",
+    "macos_fds.c"
+  ],
+  "source_sha256": "392ab27738098b637073e7fb5843c7143b118f6dda8c8c521b21f3882a29b18c",
+  "control": {
+    "initial_exec": true,
+    "self_exec": true
+  },
+  "no_exec_policy": {
+    "initial_exec": false,
+    "exit_status": 13
+  },
+  "literal_exception": {
+    "initial_exec": true,
+    "self_exec": true
+  },
+  "platform_attribute": {
+    "custom_native": {
+      "initial_exec": true,
+      "self_exec": false
+    },
+    "platform_executable": "/bin/bash",
+    "platform_self_exec": true,
+    "limitation": "The platform-subject exception is not one-shot for a platform executable; an independently enforced target-admission contract remains unproved."
+  },
+  "inherited_above_soft_limit": {
+    "descriptor": 500,
+    "soft_limit": 64,
+    "control": {
+      "inherited_descriptor": true
+    },
+    "launcher": {
+      "inherited_descriptor": false
+    }
+  },
+  "staged_platform": {
+    "executable": "/private/var/folders/zh/yw02jfzx4bdbc439_qtcg7740000gn/T/cyber-macos-native-exec-Aoqwtw/staged-platform-payload",
+    "source_sha256": "67e853b740606c0cb92fc8b7186a98d327d783f7e7cd911773bb83f73f3d6583",
+    "staged_sha256": "efa1db2080beb184149cf25650c9dd4a30090f397db2509887fb5581795fd3ae",
+    "signature": "adhoc",
+    "identifier": "cyber.proof.staged.56e4124e-5f59-4a94-9dde-410c38f58943",
+    "architectures": [
+      "x86_64",
+      "arm64e"
+    ],
+    "all_architectures_verified": true,
+    "control_self_exec": true,
+    "initial_exec": true,
+    "self_exec": false,
+    "limitation": "Fixture staging resolves this counterexample locally; production immutable-package admission, transformed-image integrity, entitlement compatibility and architecture acceptance remain unproved."
+  },
+  "conclusion": "The platform predicate alone is insufficient. An ad-hoc re-signed fixture copy starts and denies self-exec, including a formerly platform-signed input; this is an experimental candidate, not production admission or an fs.read policy."
+}

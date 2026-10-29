@@ -1,0 +1,23 @@
+{"experiment":"staged-platform-positive-control","platform":"darwin","architecture":"arm64","kernel_release":"24.6.0","staging":{"executable":"/private/var/folders/nj/vtw8zd2j31d1gdrtntc5y4600000gn/T/cyber-macos-native-exec-MWBOhn/staged-platform-payload","source_sha256":"c372d1d6d4f07e0a917f3660aa79df00cbb50323972c22c3d90ec17d2096d039","staged_sha256":"2ad366fd31d66e2d7b485d75b04f6919235bd38e6a18f7cb1c4e95ceb901c3d4","signature":"adhoc","identifier":"cyber.proof.staged.c920d0b0-4a6b-4c5e-9928-95c8743b2e6e","architectures":["x86_64","arm64e"],"all_architectures_verified":true}}
+node:internal/modules/run_main:123
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: /usr/bin/sandbox-exec: {"status":null,"signal":"SIGKILL","stdout":"","stderr":""}
+
+null !== 0
+
+    at success (file:///Users/runner/work/cybercode-cli/cybercode-cli/scripts/probes/plugin-confinement/macos_native_exec.mts:22:10)
+    at file:///Users/runner/work/cybercode-cli/cybercode-cli/scripts/probes/plugin-confinement/macos_native_exec.mts:69:25
+    at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: null,
+  expected: 0,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v22.23.2

@@ -1,0 +1,220 @@
+name: Plugin confinement proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      staged_system_diagnostic:
+        description: Run the historical re-signed system-image experiment (known arm64 startup failure)
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - scripts/probes/plugin-confinement/**
+      - .github/workflows/plugin-confinement-proof.yml
+  push:
+    branches: [main]
+    paths:
+      - scripts/probes/plugin-confinement/**
+      - .github/workflows/plugin-confinement-proof.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plugin-confinement-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: Native proof (${{ matrix.os }}, ${{ matrix.runtime }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel, ubuntu-24.04, ubuntu-24.04-arm]
+        runtime: [node, python, bun, deno, native]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        if: matrix.runtime == 'python'
+        with:
+          python-version: '3.13'
+      - uses: oven-sh/setup-bun@v2
+        if: matrix.runtime == 'bun'
+        with:
+          bun-version: '1.4.4'
+      - uses: denoland/setup-deno@v2
+        if: matrix.runtime == 'deno'
+        with:
+          deno-version: 'v2.9.8'
+      - name: Linux native prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.*
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap linux-libc-dev strace
+          # Match the project's native sandbox test setup; failed namespace
+          # admission remains a test failure, never an unconfined fallback.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - name: Run native capability matrix
+        env:
+          PROOF_RUNTIME: ${{ matrix.runtime }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(--runtime "$PROOF_RUNTIME" --report "$RUNNER_TEMP/proof.json")
+          if [[ "$PROOF_RUNTIME" == python ]]; then
+            args+=(--python "$(command -v python3)")
+          fi
+          if [[ "$PROOF_RUNTIME" == bun || "$PROOF_RUNTIME" == deno ]]; then
+            args+=(--executable "$(command -v "$PROOF_RUNTIME")")
+          fi
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            # All five runtimes now require the same pre-target-instruction
+            # exec boundary. A diagnostic/traced retry cannot turn failure green.
+            args+=(--initial-exec --trace "$RUNNER_TEMP/proof-trace")
+          elif [[ "$PROOF_RUNTIME" == native ]]; then
+            # Preserve the target signature; the same pre-runtime boundary
+            # must cover shell=false before the native constructor runs.
+            args+=(--macos-signing-native)
+          fi
+          node --experimental-strip-types scripts/probes/plugin-confinement/run.mts "${args[@]}" > "$RUNNER_TEMP/proof.log" 2>&1
+      - name: Retain exact-source native evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-proof-${{ matrix.os }}-${{ matrix.runtime }}
+          path: |
+            ${{ runner.temp }}/proof.json
+            ${{ runner.temp }}/proof.log
+            ${{ runner.temp }}/proof-trace/
+          if-no-files-found: error
+          retention-days: 14
+
+  macos-native-gap:
+    if: github.event_name == 'workflow_dispatch' && inputs.staged_system_diagnostic
+    name: Historical staged-system diagnostic (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify exec counterexamples, staged candidate and inherited descriptors
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --experimental-strip-types scripts/probes/plugin-confinement/macos_native_exec.mts --report "$RUNNER_TEMP/proof.json" > "$RUNNER_TEMP/proof.log" 2>&1
+      - name: Retain native exec gap evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-exec-gap-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/proof.json
+            ${{ runner.temp }}/proof.log
+          if-no-files-found: error
+          retention-days: 14
+
+  macos-signing-candidate:
+    name: Native signing-identity candidate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify capability matrix and original-signature exec controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Acceptance requires original-image positive startup, denied self-exec,
+          # matching-identity counterexamples and descriptor isolation.
+          # The historical re-signing experiment remains an opt-in diagnostic;
+          # its failed startup control is never counted as confinement.
+          node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime native --macos-signing-native --report "$RUNNER_TEMP/matrix.json" > "$RUNNER_TEMP/matrix.log" 2>&1
+          node --experimental-strip-types scripts/probes/plugin-confinement/macos_signing_exec.mts --report "$RUNNER_TEMP/exec.json" > "$RUNNER_TEMP/exec.log" 2>&1
+      - name: Retain signing-identity candidate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-signing-candidate-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/matrix.json
+            ${{ runner.temp }}/matrix.log
+            ${{ runner.temp }}/exec.json
+            ${{ runner.temp }}/exec.log
+          if-no-files-found: error
+          retention-days: 14
+
+  macos-signing-runtime:
+    name: Runtime signing-identity candidate (${{ matrix.os }}, ${{ matrix.runtime }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+        runtime: [node, python, python-system, bun, deno]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        if: matrix.runtime == 'python'
+        with:
+          python-version: '3.13'
+      - uses: oven-sh/setup-bun@v2
+        if: matrix.runtime == 'bun'
+        with:
+          bun-version: '1.4.4'
+      - uses: denoland/setup-deno@v2
+        if: matrix.runtime == 'deno'
+        with:
+          deno-version: 'v2.9.8'
+      - name: Verify policy precedes runtime startup
+        env:
+          PROOF_RUNTIME: ${{ matrix.runtime }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime="$PROOF_RUNTIME"
+          if [[ "$runtime" == python-system ]]; then
+            runtime=python
+          fi
+          args=(--runtime "$runtime" --macos-signing-runtime --report "$RUNNER_TEMP/proof.json")
+          if [[ "$PROOF_RUNTIME" == python ]]; then
+            args+=(--python "$(command -v python3)")
+          elif [[ "$PROOF_RUNTIME" == python-system ]]; then
+            # Exercise framework-image discovery without an embedding library.
+            args+=(--python /usr/bin/python3)
+          fi
+          if [[ "$PROOF_RUNTIME" == bun || "$PROOF_RUNTIME" == deno ]]; then
+            args+=(--executable "$(command -v "$PROOF_RUNTIME")")
+          fi
+          node --experimental-strip-types scripts/probes/plugin-confinement/run.mts "${args[@]}" > "$RUNNER_TEMP/proof.log" 2>&1
+      - name: Retain pre-runtime policy evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-signing-candidate-${{ matrix.os }}-${{ matrix.runtime }}
+          path: |
+            ${{ runner.temp }}/proof.json
+            ${{ runner.temp }}/proof.log
+          if-no-files-found: error
+          retention-days: 14
