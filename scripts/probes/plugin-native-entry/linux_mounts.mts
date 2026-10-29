@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 import { parseArgs } from "node:util";
 
 const actor = String.raw`
-import errno, json, os, sys
+import errno, json, os, stat, sys
 from pathlib import Path
 p = json.loads(sys.argv[1])
 def attempt(action):
@@ -39,7 +39,13 @@ for label, root in p["roots"].items():
 immutable = [attempt(lambda path=path: Path(path).write_bytes(b"must-not-write"))
              for path in p["immutable_data"]]
 public = Path(p["project"]) / "public"
-result = {"started": True, "renames": renames, "siblings": siblings,
+mask_metadata = os.stat(p["roots"]["private_file"])
+mask_flags = os.statvfs(p["roots"]["private_file"]).f_flag
+result = {"started": True,
+          "mask_info": {"character": stat.S_ISCHR(mask_metadata.st_mode),
+                        "regular": stat.S_ISREG(mask_metadata.st_mode),
+                        "mode": stat.S_IMODE(mask_metadata.st_mode),
+                        "nodev": bool(mask_flags & os.ST_NODEV)}, "renames": renames, "siblings": siblings,
           "immutable_writes": immutable,
           "private_directory_read": read_kind(p["private_data"]),
           "private_file_read": read_kind(p["roots"]["private_file"]),
@@ -109,9 +115,12 @@ function verify(observed: any, write: boolean, anchored: boolean, deviceMask: bo
   for (const entry of observed.siblings) assert.equal(entry.ok, write, "ancestor anchors must preserve sibling writes");
   for (const entry of observed.immutable_writes) assert.deepEqual(entry, { ok: false, errno: 30 }, "immutable data must be on read-only mounts");
   assert.equal(observed.private_directory_read, "denied");
-  assert.equal(observed.private_file_read, deviceMask ? "empty" : "denied");
+  assert.equal(observed.private_file_read, "denied");
+  assert.equal(observed.mask_info.character, deviceMask);
+  assert.equal(observed.mask_info.regular, !deviceMask);
   assert.equal(observed.private_writes[0].ok, false);
-  assert.equal(observed.private_writes[1].ok, deviceMask, "a device mask is not a read-only regular file");
+  assert.equal(observed.private_writes[1].ok, false);
+  if (deviceMask) assert.equal(observed.private_writes[1].errno, 13, "retain the observed device-mask denial");
   assert.equal(observed.symlink_private_read, "denied");
   assert.equal(observed.workspace_write.ok, write);
   assert.equal(observed.public_rename.ok, write, "ordinary public renames must remain usable");

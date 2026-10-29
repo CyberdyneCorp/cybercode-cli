@@ -16,8 +16,8 @@ masking private objects. Writable anchors must keep public sibling writes usable
 readonly Location uses readonly anchors. A protected ancestor should itself be a
 busy mountpoint rather than relying on the child's read/write mode to protect it.
 
-A separate character-device mask control tests whether binding /dev/null over a
-private file can still report a successful write. The candidate instead uses an
+A separate character-device mask comparison records binding /dev/null over a
+private file. The candidate uses an
 owner-created, empty, mode-000 regular file on a readonly bind mount. Both views
 must leave the owner's actual private bytes intact. This file is new owned
 metadata; no private regular file is opened in an owner holding SQLite locks.
@@ -33,7 +33,7 @@ explicit pass/fail outcome, and are retained even if a later assertion fails.
 
 Five cases are required: writable unanchored control, writable anchored candidate,
 readonly unanchored/anchored cases, and the writable anchored character-mask
-counterexample. No failed bootstrap can count as a denial. The actor has a
+comparison. No failed bootstrap can count as a denial. The actor has a
 15-second subprocess timeout and bounded output; each temporary fixture is owned
 by the driver and removed after its actor settles.
 
@@ -53,3 +53,23 @@ provisioning, generation lifetime or actual App/server enforcement. A successful
 experiment must be followed by production Linux composition and real-helper
 regressions. The approved support/design gates and all parent acceptance tasks
 remain open.
+
+
+## First native observations at `ee7268c6`
+
+Run [40943429793](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40943429793)
+failed both Linux jobs on the diagnostic's expected empty device read: both
+observed a denial instead. The retained x64 report contains all five rows. Its
+first four cases satisfy their expected mount assertions: all eight unanchored
+writable ancestor renames succeed; all eight anchored writable attempts return
+EBUSY; sibling/public writes and public renames remain usable; readonly cases
+refuse workspace writes; regular-file masks refuse private reads/writes; all
+owner bytes remain unchanged. This partial evidence does not turn a failed job
+into acceptance.
+
+The expected successful device write/empty read was an unproved hypothesis and
+is not claimed as an observed bypass. The comparison now requires the observed
+read/write denial and records file kind, mode and nodev mount flag to explain the
+actual view without assigning a cause merely from EACCES. Candidate regular-file
+requirements and the successful unanchored rename counterexample are unchanged.
+Fresh complete native runs are required after this diagnostic correction.
