@@ -43,3 +43,24 @@ The private directory negative control and independent project-read assertion
 prevent a failed bootstrap or broad read from being credited as an IPC result.
 This review finds no additional source issue in the diagnostic; it does not
 approve the unresolved production IPC/network boundary.
+
+## Observed native counterexample
+
+At PR head `505537ff0cfe3ff2999f3335d58df17292c9bac9`, both diagnostic jobs
+complete successfully: [x64](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40956201103/job/123736839891)
+and [arm64](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40956201103/job/123736839593).
+All 12 public/outside/symlink rows per architecture deliver the fixed token to
+the host owner, including read/write/shell all disabled. All four private-mask
+rows per architecture deny connection. Independent project reads match the read
+flag. This proves host pathname-socket reachability through this component;
+it does not demonstrate a real broker escalation or private-file read.
+
+[Retained observations](../../../scripts/probes/plugin-native-entry/evidence/linux-ipc-505537ff/)
+record merge checkout `f43bd778adc2a5849d512e4a6fe4f4863cf57eb4`, with parents
+`856a70f05aea8f43390f8823122402a9c4b16a32` and
+`505537ff0cfe3ff2999f3335d58df17292c9bac9`. Independent recomputation from every
+manifest path, NUL and exact checkout bytes matches source SHA-256
+`0045db0a0dde19c015947db3a9c029572c39ad87a3f27718a96b05b258c2c289`.
+Helper hashes match the prior composed-policy jobs; these remain job-reported
+hashes, since no binary download was retained. A green diagnostic job records a
+confinement gap here, not network acceptance. Production activation remains gated.
