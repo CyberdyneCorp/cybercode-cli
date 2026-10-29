@@ -114,6 +114,7 @@ pub fn validate(
     if let Some(Value::Object(profiles)) = map.get("profiles") {
         check_profiles(profiles, &mut issues);
     }
+    super::model_profiles::check(map.get("providers"), warnings);
     issues.extend(settings_issues(value));
     issues
 }

@@ -121,5 +121,6 @@ fn row_json(row: &Listing<'_>) -> Value {
         "capabilities": m.capabilities,
         "variants": m.variants.keys().collect::<Vec<_>>(),
         "released_at": m.released_at,
+        "profile": m.profile,
     })
 }

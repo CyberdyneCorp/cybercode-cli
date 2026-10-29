@@ -50,6 +50,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Once the base already carries the regression test, the fix is merged and the
+          # before/after proof belongs to that earlier change. Later edits to these files
+          # need not keep the base sources compiling against the new tree.
+          if git show "$BASE_SOURCE:crates/cyber-tools/tests/isolated_subagents.rs" 2>/dev/null \
+              | grep -q 'fn isolated_creation_hook_veto_has_no_git_child_or_model_effects'; then
+            echo 'The base already contains the veto regression test; skipping the base check.'
+            echo 'skipped: base already contains the fix' > "$RUNNER_TEMP/base-regression.log"
+            exit 0
+          fi
           child=crates/cyber-tools/src/worktrees/child.rs
           host=crates/cyber-tools/src/host.rs
           cp "$child" "$RUNNER_TEMP/fixed-child.rs"

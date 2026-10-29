@@ -272,3 +272,41 @@ async fn repeated_body_faults_stop_at_the_retry_limit() {
         "{error}"
     );
 }
+
+/// `provider-catalog` → "Stalled stream": headers and one event, then silence for the
+/// idle window, fails as a transport error, and the partial output is not replayed.
+#[tokio::test]
+async fn a_stalled_stream_fails_after_the_idle_window() {
+    let server = FaultServer::start_with_held_tail(vec![(text(), false)], true).await;
+    // No client-wide timeout: under the paused clock only the idle timer may fire.
+    let mut endpoint = Endpoint::new(server.url.clone(), None);
+    endpoint.client = reqwest::Client::builder().no_proxy().build().unwrap();
+    assert_eq!(
+        endpoint.idle_timeout,
+        Some(cyber_llm::adapters::DEFAULT_IDLE_TIMEOUT)
+    );
+    let adapter = adapter(ApiKind::OpenaiResponses, endpoint);
+    let mut stream = open_with_retry(
+        adapter.as_ref(),
+        &LlmRequest::default(),
+        &policy(),
+        |_, _, _| panic!("partial output must not be replayed"),
+    )
+    .await
+    .unwrap();
+    use futures::StreamExt;
+    let first = stream.next().await.unwrap().unwrap();
+    assert!(first.is_output(), "{first:?}");
+
+    tokio::time::pause();
+    let started = tokio::time::Instant::now();
+    let error = stream.next().await.unwrap().unwrap_err();
+    assert_eq!(error.kind, ErrorKind::Transport);
+    assert_eq!(error.message, "stream idle for 300s");
+    assert!(started.elapsed() >= Duration::from_secs(300));
+    assert!(
+        stream.next().await.is_none(),
+        "the stream ends with the failure"
+    );
+    assert_eq!(server.requests.load(Ordering::SeqCst), 1);
+}

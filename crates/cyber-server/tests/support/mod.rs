@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use cyber_core::paths::DatabaseLocation;
 use cyber_llm::adapters::{ScriptStep, ScriptedAdapter};
-use cyber_llm::catalog::{Cost, ModelRole};
+use cyber_llm::catalog::{Cost, ModelProfile, ModelRole};
 use cyber_llm::{
     ErrorKind, FinishReason, LlmEvent, LlmRequest, RetryPolicy, ToolCall, ToolSpec, Usage,
 };
@@ -43,6 +43,7 @@ pub fn tools(calls: &[(&str, &str, &str)]) -> Vec<ScriptStep> {
                 name: (*name).into(),
                 arguments: (*args).into(),
                 input: serde_json::from_str(args).ok(),
+                opaque: None,
             }))
         })
         .collect();
@@ -60,8 +61,12 @@ pub fn tools(calls: &[(&str, &str, &str)]) -> Vec<ScriptStep> {
 pub fn reasoning_then_text(r: &str, t: &str) -> Vec<ScriptStep> {
     let mut steps = vec![
         ScriptStep::Event(LlmEvent::ReasoningDelta { text: r.into() }),
-        ScriptStep::Event(LlmEvent::ReasoningSignature {
-            signature: "sig".into(),
+        ScriptStep::Event(LlmEvent::ReasoningItem {
+            text: String::new(),
+            opaque: Some(cyber_llm::Opaque::new(
+                cyber_llm::OpaqueKind::Signature,
+                "sig",
+            )),
         }),
     ];
     steps.extend(text(t));
@@ -73,6 +78,28 @@ pub fn error(kind: ErrorKind, message: &str) -> Vec<ScriptStep> {
         error: kind,
         message: message.into(),
     }]
+}
+
+/// The behavior profile of a scripted provider: `anthropic` speaks the Anthropic
+/// carrier (with thinking on), `deepseek` replays `reasoning_content` within a tool loop,
+/// `plain` never replays reasoning, and every other provider replays its reasoning
+/// natively for the whole history.
+pub fn profile(provider: &str) -> ModelProfile {
+    use cyber_llm::catalog::profile::{ReasoningCarrier, ReasoningReplay};
+    let (reasoning_carrier, reasoning_replay) = match provider {
+        "anthropic" => (ReasoningCarrier::Anthropic, ReasoningReplay::Always),
+        "deepseek" => (
+            ReasoningCarrier::ReasoningContent,
+            ReasoningReplay::ToolLoop,
+        ),
+        "plain" => (ReasoningCarrier::None, ReasoningReplay::Never),
+        _ => (ReasoningCarrier::Responses, ReasoningReplay::Always),
+    };
+    ModelProfile {
+        reasoning_carrier,
+        reasoning_replay,
+        ..ModelProfile::default()
+    }
 }
 
 /// Models by reference: `test/main`, `other/main`, `test/title`, `test/summary`.
@@ -105,6 +132,9 @@ impl ModelResolver for Models {
                 model: model.into(),
                 max_output_tokens: Some(1000),
                 cache: true,
+                reasoning_carrier: profile(provider).reasoning_carrier,
+                reasoning: (provider == "anthropic")
+                    .then_some(cyber_llm::Reasoning::BudgetTokens(1024)),
                 ..LlmRequest::default()
             },
             provider: provider.into(),
@@ -115,15 +145,23 @@ impl ModelResolver for Models {
                 output: 2.0,
                 ..Cost::default()
             }),
-            prefers_apply_patch: false,
             family: cyber_core::prompts::ModelFamily::Default,
             vision: true,
             pdf: true,
+            profile: profile(provider),
         })
     }
 
     fn role(&self, role: ModelRole) -> Option<String> {
         self.roles.get(role.key()).cloned()
+    }
+
+    /// No test model lists `xhigh`: a derived `xhigh` falls to `high`.
+    fn clamp_effort(&self, model_ref: &str) -> String {
+        match model_ref.strip_suffix("#xhigh") {
+            Some(base) => format!("{base}#high"),
+            None => model_ref.to_owned(),
+        }
     }
 }
 
@@ -157,6 +195,8 @@ pub struct Tools {
     pub reconcile: Mutex<Reconciliation>,
     /// Hook effects a call leaves for its settlement, by call id; taken once.
     pub hook_effects: Mutex<HashMap<String, HookEffects>>,
+    /// Notes a call leaves on its settlement, by call id; taken once.
+    pub call_metadata: Mutex<HashMap<String, serde_json::Value>>,
     /// A `UserPromptSubmit` hook denying every prompt with this reason.
     pub prompt_denial: Mutex<Option<String>>,
     /// A `UserPromptSubmit` hook that holds each prompt until notified.
@@ -214,6 +254,7 @@ impl Tools {
             executed: Mutex::default(),
             reconcile: Mutex::new(Reconciliation::Unknown),
             hook_effects: Mutex::default(),
+            call_metadata: Mutex::default(),
             prompt_denial: Mutex::default(),
             prompt_hold: Mutex::default(),
             prompt_reached: tokio::sync::Semaphore::new(0),
@@ -494,6 +535,10 @@ impl ToolHost for Tools {
             .unwrap()
             .remove(call_id)
             .unwrap_or_default()
+    }
+
+    fn take_call_metadata(&self, _session_id: &str, call_id: &str) -> Option<serde_json::Value> {
+        self.call_metadata.lock().unwrap().remove(call_id)
     }
 
     fn reconcile(&self, _directory: &str, _call: &CallState) -> BoxFuture<'_, Reconciliation> {

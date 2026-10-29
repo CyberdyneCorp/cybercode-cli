@@ -217,6 +217,10 @@ pub struct EpochStarted {
     /// The model family of `system_prefix`; absent on epochs from before families.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub family: Option<String>,
+    /// The base prompt version of `system_prefix`; absent on epochs from before
+    /// versions, which were built with version 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_version: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -308,8 +312,15 @@ pub struct Reverted {
 pub struct ContentEnded {
     pub message_id: String,
     pub text: String,
-    #[serde(default)]
+    /// The signature of a reasoning event written before reasoning items.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
+    /// The block's position among its step's reasoning blocks (`session-runtime` →
+    /// Reasoning items); absent on events written before them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opaque: Option<cyber_llm::Opaque>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -319,6 +330,9 @@ pub struct ToolCalled {
     pub name: String,
     pub arguments: String,
     pub input: Option<Value>,
+    /// Provider state of this call, such as a thought signature.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opaque: Option<cyber_llm::Opaque>,
     pub retry_safety: RetrySafety,
 }
 
@@ -353,6 +367,10 @@ pub struct ToolSettled {
     /// Operator-only detail (crash reports, reconciliation evidence).
     #[serde(default)]
     pub detail: Option<String>,
+    /// What the tool host noted about the run, such as `{"intercepted": "apply_patch"}`
+    /// for a shell call run as a patch (`builtin-tools` → apply_patch through the shell).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
 }
 
 pub(crate) fn present_value<'de, D: serde::Deserializer<'de>>(

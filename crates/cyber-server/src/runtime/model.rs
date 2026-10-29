@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use cyber_llm::{Content, Usage};
+use cyber_llm::{Content, Opaque, OpaqueKind, Usage};
 use cyber_store::StoredEvent;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -100,9 +100,11 @@ pub struct SessionInfo {
     pub output_style: Option<String>,
 }
 
-/// One entry of model-visible history.
+/// One entry of model-visible history. Answers are about half of all entries, so boxing
+/// them would cost an allocation each to save little memory.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum Entry {
     User {
         id: String,
@@ -137,7 +139,14 @@ pub struct AssistantEntry {
     pub provider: String,
     pub model: String,
     pub text: String,
+    /// The text of every reasoning item, for display.
     pub reasoning: String,
+    /// Reasoning items in stream order (`session-runtime` → Reasoning items).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasoning_items: Vec<ReasoningBlock>,
+    /// The one signature of an entry copied before reasoning items; read, never written.
+    #[serde(default, skip_serializing)]
+    #[schemars(skip)]
     pub signature: Option<String>,
     pub calls: Vec<String>,
     pub finished: bool,
@@ -154,6 +163,86 @@ pub struct AssistantEntry {
     /// Time of `session.step.ended.1` or `session.step.failed.1`; null while running.
     #[serde(default)]
     pub ended_ms: Option<i64>,
+}
+
+/// One reasoning item of an answer: its text, the provider state to replay with it, and
+/// how many of the answer's tool calls the provider produced before it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ReasoningBlock {
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opaque: Option<Opaque>,
+    #[serde(default)]
+    pub after_calls: usize,
+}
+
+impl AssistantEntry {
+    /// Apply one `session.reasoning.ended.1`. An event without `index` comes from before
+    /// reasoning items: it is the answer's whole reasoning, ahead of its calls, and its
+    /// `signature` belongs to the answer's provider and model.
+    fn on_reasoning(&mut self, c: ContentEnded) {
+        let legacy = c.index.is_none();
+        let opaque = c.opaque.or_else(|| self.signed(c.signature));
+        if legacy {
+            self.reasoning_items.clear();
+        }
+        let after_calls = if legacy { 0 } else { self.calls.len() };
+        self.reasoning_items.push(ReasoningBlock {
+            text: c.text,
+            opaque,
+            after_calls,
+        });
+        self.reasoning = self.reasoning_text();
+    }
+
+    /// A copied entry from before reasoning items holds its reasoning as one item.
+    fn upgrade_legacy_reasoning(&mut self) {
+        let signature = self.signature.take();
+        if self.reasoning_items.is_empty() && !self.reasoning.is_empty() {
+            let opaque = self.signed(signature);
+            self.reasoning_items.push(ReasoningBlock {
+                text: self.reasoning.clone(),
+                opaque,
+                after_calls: 0,
+            });
+        }
+    }
+
+    fn signed(&self, signature: Option<String>) -> Option<Opaque> {
+        signature.map(|data| Opaque {
+            provider: self.provider.clone(),
+            model: self.model.clone(),
+            ..Opaque::new(OpaqueKind::Signature, data)
+        })
+    }
+
+    fn reasoning_text(&self) -> String {
+        let texts: Vec<&str> = self
+            .reasoning_items
+            .iter()
+            .map(|item| item.text.as_str())
+            .filter(|text| !text.is_empty())
+            .collect();
+        texts.join("\n\n")
+    }
+
+    /// Replace every opaque value with the redaction marker, for what leaves the store.
+    pub fn redact_opaque(&mut self) {
+        for item in &mut self.reasoning_items {
+            if let Some(opaque) = &mut item.opaque {
+                opaque.redact();
+            }
+        }
+    }
+
+    /// Drop every opaque value, for history from an untrusted document.
+    pub fn strip_opaque(&mut self) {
+        self.signature = None;
+        self.reasoning_items.retain_mut(|item| {
+            item.opaque = None;
+            !item.text.is_empty()
+        });
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -201,10 +290,17 @@ pub struct CallState {
     pub name: String,
     pub arguments: String,
     pub input: Option<Value>,
+    /// Provider state of this call (`session-runtime` → Reasoning items).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opaque: Option<Opaque>,
     pub retry_safety: RetrySafety,
     pub attempt: u32,
     pub status: CallStatus,
     pub output: Option<String>,
+    /// The tool host's notes on the settled run (`builtin-tools` → apply_patch through
+    /// the shell).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -223,6 +319,23 @@ pub struct Epoch {
     /// See [`EpochStarted::family`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub family: Option<String>,
+    /// See [`EpochStarted::prompt_version`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_version: Option<u32>,
+}
+
+impl Epoch {
+    /// Whether this epoch's prefix still serves a Turn on `provider` with a `family`
+    /// model and base prompt `version`. An epoch from before families compares by
+    /// provider only, so a restart never rebuilds its prefix; one with a family but no
+    /// version was built with version 1.
+    pub(crate) fn serves(&self, provider: &str, family: &str, version: u32) -> bool {
+        self.provider == provider
+            && self
+                .family
+                .as_deref()
+                .is_none_or(|built| built == family && self.prompt_version.unwrap_or(1) == version)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -674,6 +787,11 @@ impl SessionState {
         state.child_worktree_setup_pending = created.child_worktree_setup_pending;
         state.child_worktree = created.child_worktree;
         state.entries = created.history;
+        for entry in &mut state.entries {
+            if let Entry::Assistant(a) = entry {
+                a.upgrade_legacy_reasoning();
+            }
+        }
         state.attach_history();
         state.calls = created
             .calls
@@ -1175,6 +1293,7 @@ impl SessionState {
             provider: e.provider,
             system_prefix: e.system_prefix,
             family: e.family,
+            prompt_version: e.prompt_version,
         });
         self.epoch_stale = false;
     }
@@ -1233,8 +1352,7 @@ impl SessionState {
         let reasoning = kind == "session.reasoning.ended";
         if let Some(a) = self.assistant(&c.message_id) {
             if reasoning {
-                a.reasoning = c.text;
-                a.signature = c.signature;
+                a.on_reasoning(c);
             } else {
                 a.text = c.text;
             }
@@ -1255,10 +1373,12 @@ impl SessionState {
                 name: c.name,
                 arguments: c.arguments,
                 input: c.input,
+                opaque: c.opaque,
                 retry_safety: c.retry_safety,
                 attempt: 0,
                 status: CallStatus::Called,
                 output: None,
+                metadata: None,
             },
         );
     }
@@ -1286,6 +1406,7 @@ impl SessionState {
             call.status = s.status;
             call.output = Some(s.output);
             call.structured_output = s.structured_output;
+            call.metadata = s.metadata;
             self.result.settle(call);
         }
     }

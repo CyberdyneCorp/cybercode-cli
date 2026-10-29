@@ -932,3 +932,32 @@ fn a_hook_without_a_following_turn_ends_the_span_it_opened() {
     f.mapper.shutdown();
     assert_eq!(f.named("cyber.session").len(), 2, "nothing was left open");
 }
+
+#[test]
+fn opaque_reasoning_state_never_reaches_a_signal() {
+    let mut f = fixture(Content::new(true, []));
+    let opaque = json!({"provider": "openai", "model": "gpt-6-sol",
+        "kind": "encrypted_reasoning", "data": "gAAAA-opaque-blob"});
+    f.feed([
+        created("ses_a", None, None, None),
+        admitted("ses_a", "msg_1", "go"),
+        promoted("ses_a", "msg_1"),
+        step("ses_a"),
+        durable(
+            "ses_a",
+            "session.reasoning.ended.1",
+            json!({"message_id": "msg_a", "text": "plan", "index": 0, "opaque": opaque}),
+        ),
+        durable(
+            "ses_a",
+            "session.tool.called.1",
+            json!({"message_id": "msg_a", "call_id": "call_1", "name": "read",
+                "arguments": "{}", "input": {}, "opaque": opaque, "retry_safety": "read_only"}),
+        ),
+        settled("ses_a", "call_1", "ok"),
+        step_ended("ses_a", None),
+        idle("ses_a"),
+    ]);
+    assert!(f.spans().iter().any(|span| span.name == "cyber.tool"));
+    assert!(!format!("{:?}", f.spans()).contains("gAAAA-opaque-blob"));
+}

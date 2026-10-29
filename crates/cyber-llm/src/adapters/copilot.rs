@@ -6,6 +6,7 @@
 
 use futures::future::BoxFuture;
 
+use super::openai_responses::Backend;
 use super::{Adapter, Endpoint, EventStream, OpenAiChatAdapter, OpenAiResponsesAdapter};
 use crate::copilot::{CopilotError, EDITOR_VERSION, INTEGRATION_ID, Protocol, Route};
 use crate::error::LlmError;
@@ -94,6 +95,7 @@ impl Adapter for CopilotAdapter {
                     let inner = OpenAiResponsesAdapter {
                         endpoint,
                         response_limit,
+                        backend: Backend::Other,
                     };
                     inner.stream(request).await
                 }

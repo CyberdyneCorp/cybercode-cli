@@ -377,6 +377,7 @@ mod tests {
 
     fn invocation(registration: Option<String>) -> Invocation {
         Invocation {
+            tool_output: Default::default(),
             registration,
             session_id: "ses_test".into(),
             directory: "/tmp".into(),

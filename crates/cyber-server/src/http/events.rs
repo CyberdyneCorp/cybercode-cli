@@ -75,7 +75,9 @@ fn version_of(kind: &str) -> u32 {
         .unwrap_or(1)
 }
 
-fn durable(session_id: &str, seq: i64, kind: &str, data: Value) -> EventEnvelope {
+/// A stored event as clients see it: opaque provider state is never streamed.
+fn durable(session_id: &str, seq: i64, kind: &str, mut data: Value) -> EventEnvelope {
+    cyber_llm::redact_opaque_fields(&mut data);
     EventEnvelope {
         id: format!("{session_id}:{seq}"),
         kind: kind.to_string(),

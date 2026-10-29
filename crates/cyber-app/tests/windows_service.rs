@@ -41,10 +41,10 @@ impl ModelResolver for Model {
             model: "scripted".into(),
             context_limit: 200_000,
             cost: None,
-            prefers_apply_patch: false,
             family: cyber_core::prompts::ModelFamily::Default,
             vision: false,
             pdf: false,
+            profile: Default::default(),
         })
     }
 

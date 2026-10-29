@@ -15,10 +15,12 @@ fn call(name: &str, input: Value) -> CallState {
         name: name.into(),
         arguments: input.to_string(),
         input: Some(input),
+        opaque: None,
         retry_safety: RetrySafety::Reconcile,
         attempt: 1,
         status: CallStatus::Dispatched,
         output: None,
+        metadata: None,
     }
 }
 

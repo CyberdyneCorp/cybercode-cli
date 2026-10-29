@@ -2002,6 +2002,7 @@ mod cancellation {
             .find(|definition| definition.spec.name == "mcp__remote__echo")
             .unwrap();
         let invocation = Invocation {
+            tool_output: Default::default(),
             registration: definition.registration,
             session_id: id.into(),
             directory: turn.directory.clone(),

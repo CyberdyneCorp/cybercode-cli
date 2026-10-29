@@ -304,11 +304,11 @@ impl BuiltinHost {
         match outcome {
             ToolOutcome::Ok(output) => self
                 .budget(&ctx.location)
-                .apply_with_token_limit(output, false, token_limit)
+                .apply_registered(output, ctx.inv.tool_output, token_limit)
                 .map_or_else(ToolOutcome::Crashed, ToolOutcome::Ok),
             ToolOutcome::Structured { output, value } => self
                 .budget(&ctx.location)
-                .apply_with_token_limit(output, false, token_limit)
+                .apply_registered(output, ctx.inv.tool_output, token_limit)
                 .map_or_else(ToolOutcome::Crashed, |output| ToolOutcome::Structured {
                     output,
                     value,
@@ -320,7 +320,7 @@ impl BuiltinHost {
                 skills,
             } => self
                 .budget(&ctx.location)
-                .apply_with_token_limit(output, false, token_limit)
+                .apply_registered(output, ctx.inv.tool_output, token_limit)
                 .map_or_else(ToolOutcome::Crashed, |output| {
                     ToolOutcome::SkillSuggestions {
                         failed,
@@ -331,7 +331,7 @@ impl BuiltinHost {
                 }),
             ToolOutcome::Failed(output) => self
                 .budget(&ctx.location)
-                .apply_with_token_limit(output, false, token_limit)
+                .apply_registered(output, ctx.inv.tool_output, token_limit)
                 .map_or_else(ToolOutcome::Crashed, ToolOutcome::Failed),
             other => other,
         }

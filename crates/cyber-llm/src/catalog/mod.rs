@@ -8,6 +8,7 @@ mod credentials;
 mod family;
 mod model_ref;
 mod models_dev;
+pub mod profile;
 mod roles;
 mod source;
 
@@ -25,6 +26,7 @@ pub use cost::compute as compute_cost;
 pub use credentials::{Credential, CredentialSource};
 pub use family::model_family;
 pub use model_ref::ModelRef;
+pub use profile::{EditTool, ModelProfile, ProfilePatch, ToolOutput, Truncation};
 pub use roles::{ModelRole, default_model, recent_models, record_recent, role_ref, tier_role_ref};
 pub use source::{Loaded, Origin, SourceOptions, load as load_source};
 
@@ -152,7 +154,7 @@ pub struct Variant {
     pub request: RequestOverlay,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct Model {
     pub id: String,
     pub provider_id: String,
@@ -172,9 +174,17 @@ pub struct Model {
     pub released_at: Option<String>,
     pub disabled: bool,
     pub request: RequestOverlay,
+    /// The resolved behavior profile (`provider-catalog` → Model behavior profiles).
+    pub profile: ModelProfile,
+    /// Profile fields the provider's catalog metadata sets (layer 3).
+    #[serde(skip)]
+    pub profile_catalog: ProfilePatch,
+    /// Profile fields `providers.<p>.models.<m>.profile` sets (layer 4).
+    #[serde(skip)]
+    pub profile_config: ProfilePatch,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct Provider {
     pub id: String,
     pub name: String,
@@ -187,6 +197,10 @@ pub struct Provider {
     /// `api.settings.auth: "none"`: no credential needed.
     pub auth_none: bool,
     pub request: RequestOverlay,
+    /// `timeout.idle_ms`: how long a response stream may stay silent; `0` turns the
+    /// timer off and `None` keeps the default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idle_ms: Option<u64>,
     pub disabled: bool,
     pub models: BTreeMap<String, Model>,
 }
@@ -206,6 +220,15 @@ pub struct Listing<'a> {
     pub model_ref: String,
     pub availability: Availability,
     pub model: &'a Model,
+}
+
+/// A derived effort [`Catalog::clamp_effort`] moved down: `from` the requested variant `to`
+/// the one `model_ref` now names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffortClamped {
+    pub model_ref: ModelRef,
+    pub from: String,
+    pub to: String,
 }
 
 /// Fully resolved target for one request.
@@ -255,6 +278,7 @@ impl Catalog {
         if let Some(configured) = inputs.config.get("providers").and_then(Value::as_object) {
             config::apply(&mut providers, configured);
         }
+        resolve_profiles(&mut providers);
         let credentials = credentials::resolve_all(&providers, inputs.env);
         Self {
             providers,
@@ -371,6 +395,11 @@ impl Catalog {
             body: overlay.body,
             headers: overlay.headers.into_iter().collect(),
             cache: true,
+            reasoning_carrier: match model.profile.reasoning_replay {
+                profile::ReasoningReplay::Never => profile::ReasoningCarrier::None,
+                _ => model.profile.reasoning_carrier,
+            },
+            shaping: profile::shaping(model),
             ..LlmRequest::default()
         };
         let kind = model
@@ -378,6 +407,9 @@ impl Catalog {
             .or(provider.kind)
             .expect("checked by availability");
         let mut endpoint = Endpoint::new(url, key);
+        if let Some(idle) = provider.idle_ms {
+            endpoint.idle_timeout = (idle > 0).then(|| std::time::Duration::from_millis(idle));
+        }
         if kind == ApiKind::ChatgptCodex {
             endpoint.login.clone_from(&self.chatgpt);
         }
@@ -392,6 +424,41 @@ impl Catalog {
             kind,
             endpoint,
             request,
+        })
+    }
+
+    /// For a reference whose variant comes from an agent, a workflow tier or a role, never
+    /// from the user: when the model lacks that variant and it names an effort, the
+    /// reference moved to the nearest lower effort the model lists. `None` leaves the
+    /// reference as it is, so resolution fails as before (`effort_clamp: fail`, no lower
+    /// level, or not an effort).
+    pub fn clamp_effort(&self, model_ref: &ModelRef) -> Option<EffortClamped> {
+        let requested = model_ref.variant.as_deref()?;
+        let (_, model) = self.find(model_ref).ok()?;
+        if model.variants.contains_key(requested)
+            || model.profile.effort_clamp == profile::EffortClamp::Fail
+        {
+            return None;
+        }
+        let ceiling = profile::effort_rank(requested)?;
+        let listed = |effort: &str| {
+            model.profile.efforts.is_empty() || model.profile.efforts.iter().any(|e| e == effort)
+        };
+        let (name, _) = model
+            .variants
+            .iter()
+            .filter_map(|(name, variant)| {
+                let effort = profile::effort_of(&variant.reasoning).unwrap_or(name);
+                let rank = profile::effort_rank(effort)?;
+                (rank < ceiling && listed(effort)).then_some((name, rank))
+            })
+            .max_by_key(|&(_, rank)| rank)?;
+        let mut clamped = model_ref.clone();
+        clamped.variant = Some(name.clone());
+        Some(EffortClamped {
+            model_ref: clamped,
+            from: requested.into(),
+            to: name.clone(),
         })
     }
 
@@ -417,6 +484,23 @@ impl Catalog {
                     .collect::<Vec<_>>()
                     .join(", "),
             })
+    }
+}
+
+/// Resolve every model's profile once its catalog and config layers are in place.
+fn resolve_profiles(providers: &mut BTreeMap<String, Provider>) {
+    for provider in providers.values_mut() {
+        let profiles: Vec<(String, ModelProfile)> = provider
+            .models
+            .iter()
+            .map(|(id, model)| (id.clone(), profile::resolve(provider, model)))
+            .collect();
+        for (id, resolved) in profiles {
+            if let Some(model) = provider.models.get_mut(&id) {
+                model.profile = resolved;
+                profile::warn_unsupported_verbosity(&provider.id, model);
+            }
+        }
     }
 }
 

@@ -18,7 +18,7 @@ use serde_json::Value;
 
 use crate::error::LlmError;
 use crate::sse::{SseEvent, SseParser};
-use crate::types::{Content, LlmEvent, LlmRequest, ToolCall};
+use crate::types::{Content, LlmEvent, LlmRequest, Opaque, ToolCall};
 
 pub use anthropic::AnthropicAdapter;
 pub use chatgpt::ChatGptAdapter;
@@ -141,7 +141,13 @@ pub struct Endpoint {
     /// The stored GitHub Copilot login and model protocol behind a
     /// [`ApiKind::CopilotChat`] endpoint.
     pub copilot: Option<crate::copilot::Route>,
+    /// How long a response stream may deliver no bytes before it fails
+    /// (`provider-catalog` → Stream idle timeout); `None` waits forever.
+    pub idle_timeout: Option<Duration>,
 }
+
+/// The default stream idle window, `provider.timeout.idle_ms` = 300 000.
+pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 
 impl Endpoint {
     pub fn new(base_url: impl Into<String>, api_key: Option<String>) -> Self {
@@ -154,6 +160,7 @@ impl Endpoint {
             limits: None,
             login: None,
             copilot: None,
+            idle_timeout: Some(DEFAULT_IDLE_TIMEOUT),
         }
     }
 
@@ -258,6 +265,7 @@ struct DecodeState<D> {
     response_limit: Option<usize>,
     response_bytes: usize,
     secrets: Vec<String>,
+    idle_timeout: Option<Duration>,
 }
 
 impl<D: Decoder> DecodeState<D> {
@@ -297,6 +305,29 @@ impl<D: Decoder> DecodeState<D> {
         self.queue.extend(out);
     }
 
+    /// The next body chunk, or a transport failure once the stream stays silent for the
+    /// idle window. Partial output already streamed keeps the retry policy from
+    /// replaying the request.
+    async fn next_chunk(&mut self) -> Option<Result<bytes::Bytes, reqwest::Error>> {
+        let Some(window) = self.idle_timeout else {
+            return self.body.next().await;
+        };
+        match tokio::time::timeout(window, self.body.next()).await {
+            Ok(chunk) => chunk,
+            Err(_) => {
+                let idle = if window.subsec_millis() == 0 {
+                    format!("{}s", window.as_secs())
+                } else {
+                    format!("{}ms", window.as_millis())
+                };
+                self.queue
+                    .push_back(Err(LlmError::transport(format!("stream idle for {idle}"))));
+                self.finished = true;
+                None
+            }
+        }
+    }
+
     fn pop(&mut self) -> Option<Result<LlmEvent, LlmError>> {
         let item = self.queue.pop_front()?;
         if item.is_err() || matches!(item, Ok(LlmEvent::Finish { .. })) {
@@ -325,6 +356,7 @@ pub(crate) fn decode_sse<D: Decoder>(
         response_limit,
         response_bytes: 0,
         secrets: endpoint.api_key.iter().cloned().collect(),
+        idle_timeout: endpoint.idle_timeout,
     };
     stream::unfold(state, |mut s| async move {
         loop {
@@ -334,7 +366,10 @@ pub(crate) fn decode_sse<D: Decoder>(
             if s.finished {
                 return None;
             }
-            let chunk = s.body.next().await;
+            let chunk = s.next_chunk().await;
+            if s.finished {
+                continue;
+            }
             s.feed(chunk);
         }
     })
@@ -354,6 +389,7 @@ struct Pending {
     id: String,
     name: String,
     arguments: String,
+    opaque: Option<Opaque>,
     done: bool,
 }
 
@@ -367,8 +403,16 @@ impl ToolCalls {
             id: id.into(),
             name: name.into(),
             arguments: String::new(),
+            opaque: None,
             done: false,
         });
+    }
+
+    /// Attach provider state to the open call with `key`, such as a thought signature.
+    pub fn set_opaque(&mut self, key: &str, opaque: Opaque) {
+        if let Some(p) = self.pending.iter_mut().find(|p| p.key == key && !p.done) {
+            p.opaque = Some(opaque);
+        }
     }
 
     pub fn append(&mut self, key: &str, fragment: &str) -> Option<LlmEvent> {
@@ -440,6 +484,7 @@ fn to_call(p: &Pending) -> ToolCall {
         name: p.name.clone(),
         arguments: p.arguments.clone(),
         input,
+        opaque: p.opaque.clone(),
     }
 }
 

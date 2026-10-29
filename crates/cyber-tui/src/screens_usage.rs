@@ -472,3 +472,62 @@ async fn provider_reported_windows_with_reset_age_and_day_week_views() {
         "{rows:#?}"
     );
 }
+
+/// A ChatGPT-plan usage limit, as the provider answers it: 429 `usage_limit_reached`
+/// with the reset time 40 minutes ahead.
+fn usage_limit(_: &Value) -> Value {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    json!({ "fail": 429, "error": {
+        "type": "usage_limit_reached", "message": "The usage limit has been reached",
+        "plan_type": "plus", "resets_at": now + 40 * 60
+    }})
+}
+
+/// `provider-catalog` → "Subscription limit reached": with no fallback model, the TUI
+/// shows when the limit resets, in the failed answer and in the status toast.
+#[tokio::test]
+async fn a_usage_limit_shows_when_it_resets() {
+    use cyber_server::runtime::LiveEvent;
+    let server = Server::start_reply(usage_limit, json!({ "main": {} }), json!({}), false).await;
+    let mut live = server.host.runtime.subscribe();
+    let id = server.session().await;
+    server.prompt(&id, "hello").await;
+    let event = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            match live.recv().await.unwrap() {
+                LiveEvent::Error {
+                    session_id,
+                    kind,
+                    message,
+                } if session_id == id => break json!({ "kind": kind, "message": message }),
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("the Turn fails");
+    assert_eq!(event["kind"], "quota_exceeded", "{event}");
+    server.host.runtime.wait_idle(&id).await;
+
+    let mut app = server.load(&id).await;
+    // `HH:MM`, or `YYYY-MM-DD HH:MM` when the reset falls after midnight.
+    let reset = |shown: &str| {
+        let at = shown.find("usage limit reached; resets at ")? + 31;
+        let after: Vec<u8> = shown[at..].bytes().take(16).collect();
+        let clock = |w: &[u8]| w[2] == b':' && [0, 1, 3, 4].iter().all(|&i| w[i].is_ascii_digit());
+        after.windows(5).any(clock).then_some(())
+    };
+    let shown = render(&mut app, 100, 30, &Opts::default());
+    assert!(reset(&shown).is_some(), "the failed answer: {shown}");
+
+    app.on_event("session.error", &event);
+    let shown = render(&mut app, 100, 30, &Opts::default());
+    let toast = shown
+        .lines()
+        .find(|l| l.contains("error: QuotaExceeded: usage limit reached"))
+        .unwrap_or_else(|| panic!("the status toast: {shown}"));
+    assert!(reset(toast).is_some(), "{toast}");
+}

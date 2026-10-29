@@ -5,7 +5,9 @@ use std::collections::BTreeMap;
 
 use serde_json::{Map, Value};
 
-use super::{Capabilities, Limits, Model, Provider, RequestOverlay, Variant, models_dev};
+use super::{
+    Capabilities, Limits, Model, ProfilePatch, Provider, RequestOverlay, Variant, models_dev,
+};
 use crate::adapters::ApiKind;
 use crate::types::Reasoning;
 
@@ -30,6 +32,7 @@ fn custom_provider(id: &str) -> Provider {
         request: RequestOverlay::default(),
         disabled: false,
         models: BTreeMap::new(),
+        ..Provider::default()
     }
 }
 
@@ -48,6 +51,9 @@ fn apply_provider(p: &mut Provider, v: &Value) {
     }
     p.request
         .layer(&RequestOverlay::from_config(v.get("request")));
+    if let Some(idle) = v.pointer("/timeout/idle_ms").and_then(Value::as_u64) {
+        p.idle_ms = Some(idle);
+    }
     if let Some(disabled) = v.get("disabled").and_then(Value::as_bool) {
         p.disabled = disabled;
     }
@@ -109,6 +115,7 @@ fn custom_model(provider_id: &str, id: &str, kind: Option<ApiKind>) -> Model {
         released_at: None,
         disabled: false,
         request: RequestOverlay::default(),
+        ..Model::default()
     }
 }
 
@@ -129,6 +136,9 @@ fn apply_model(m: &mut Model, v: &Value) {
     }
     m.request
         .layer(&RequestOverlay::from_config(v.get("request")));
+    if let Some(profile) = v.get("profile") {
+        m.profile_config = ProfilePatch::from_config(Some(profile));
+    }
     for (name, variant) in v
         .get("variants")
         .and_then(Value::as_object)

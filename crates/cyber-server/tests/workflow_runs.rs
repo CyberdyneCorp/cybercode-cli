@@ -794,11 +794,12 @@ async fn tiers_resolve_models_and_unknown_tiers_are_model_unavailable() {
         ("fast".to_string(), Some("p/small".to_string())),
         ("verify".to_string(), Some("p/big".to_string())),
         ("smart".to_string(), None),
+        ("deep".to_string(), Some("p/big#xhigh".to_string())),
     ]);
     let run = f
         .start_with(
             &owner,
-            "export default async () => {\n  await agent('a', { model: 'fast' });\n  await agent('b', { model: 'verify' });\n  await agent('c', { model: 'smart' });\n  await agent('d', { model: 'p/explicit' });\n  await agent('e');\n  try { await agent('f', { model: 'galaxy' }); } catch (e) { return [e.kind, e.message]; }\n};\n",
+            "export default async () => {\n  await agent('a', { model: 'fast' });\n  await agent('b', { model: 'verify' });\n  await agent('c', { model: 'smart' });\n  await agent('d', { model: 'p/explicit' });\n  await agent('e');\n  await agent('g', { model: 'deep' });\n  try { await agent('f', { model: 'galaxy' }); } catch (e) { return [e.kind, e.message]; }\n};\n",
             tiers,
         )
         .await;
@@ -815,7 +816,10 @@ async fn tiers_resolve_models_and_unknown_tiers_are_model_unavailable() {
             Some("p/big".into()),
             None,
             Some("p/explicit".into()),
-            None
+            None,
+            // "Effort clamped for a workflow tier": the tier's effort is moved to the
+            // nearest lower level the model lists.
+            Some("p/big#high".into()),
         ]
     );
 }

@@ -86,6 +86,8 @@ pub struct BuiltinHost {
     /// MCP annotations of registered calls in flight, by (Session, call), for hook
     /// envelopes.
     pub(crate) tool_annotations: Mutex<HashMap<(String, String), Value>>,
+    /// Notes on settled runs awaiting their settlement, by (Session, call).
+    call_metadata: Mutex<HashMap<(String, String), Value>>,
     pub(crate) search_cooldowns: tools::websearch::Cooldowns,
     /// Domains approved for sandboxed network access, by Session.
     network: Mutex<HashMap<String, Arc<Mutex<HashSet<String>>>>>,
@@ -187,6 +189,7 @@ impl BuiltinHost {
             hook_notices: Mutex::default(),
             hook_effects: Default::default(),
             tool_annotations: Mutex::default(),
+            call_metadata: Mutex::default(),
             search_cooldowns: tools::websearch::Cooldowns::default(),
             network: Mutex::default(),
             subagents: crate::subagents::Slots::default(),
@@ -230,7 +233,10 @@ impl BuiltinHost {
         } else {
             None
         };
-        match self.budget(&ctx.location).apply(output, keep_tail) {
+        match self
+            .budget(&ctx.location)
+            .apply_for(output, keep_tail, ctx.inv.tool_output)
+        {
             Ok(output) => match value {
                 Some(value) => ToolOutcome::Structured { output, value },
                 None => match ctx
@@ -668,6 +674,14 @@ impl BuiltinHost {
         })
     }
 
+    /// Note `metadata` on a call's settlement record.
+    pub(crate) fn note_call_metadata(&self, session_id: &str, call_id: &str, metadata: Value) {
+        self.call_metadata
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert((session_id.into(), call_id.into()), metadata);
+    }
+
     pub(crate) fn budget(&self, location: &Path) -> Budget {
         let config = self.config_for(location);
         let get = |k: &str, d: usize| {
@@ -757,6 +771,13 @@ impl ToolHost for BuiltinHost {
         call_id: &str,
     ) -> cyber_server::runtime::HookEffects {
         self.take_tool_hook_effects(session_id, call_id)
+    }
+
+    fn take_call_metadata(&self, session_id: &str, call_id: &str) -> Option<Value> {
+        self.call_metadata
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&(session_id.to_owned(), call_id.to_owned()))
     }
 
     fn file_decisions<'a>(
@@ -1119,6 +1140,7 @@ impl ToolHost for BuiltinHost {
             };
             let info = &child.info;
             let inv = Invocation {
+                tool_output: Default::default(),
                 registration: None,
                 session_id: info.id.clone(),
                 directory: parent.directory.clone(),
@@ -1443,6 +1465,7 @@ impl ToolHost for BuiltinHost {
                 input["output_schema"] = schema.clone();
             }
             let inv = Invocation {
+                tool_output: Default::default(),
                 registration: None,
                 session_id: turn.session_id,
                 directory: turn.directory,
@@ -1564,6 +1587,7 @@ impl ToolHost for BuiltinHost {
 /// A user shell command (`!` or `&`): the `user` agent in `bypass`, never asking.
 fn user_invocation(directory: &str, session_id: &str, command: &str) -> Invocation {
     Invocation {
+        tool_output: Default::default(),
         registration: None,
         session_id: session_id.into(),
         directory: directory.into(),
@@ -1880,11 +1904,27 @@ impl Ctx<'_> {
 
     pub async fn authorize(
         &self,
+        req: Request,
+        always: Vec<String>,
+        metadata: Value,
+    ) -> Result<(), ToolError> {
+        let tool = self.inv.name.clone();
+        self.authorize_as(&tool, req, always, metadata).await
+    }
+
+    /// As [`Ctx::authorize`], for a request made on behalf of `tool`: a shell call run as
+    /// `apply_patch` is decided by `apply_patch` rules, and a hook's Allow for the shell
+    /// command does not approve the edit.
+    pub async fn authorize_as(
+        &self,
+        tool: &str,
         mut req: Request,
         always: Vec<String>,
         mut metadata: Value,
     ) -> Result<(), ToolError> {
-        req.tool = Some(self.inv.name.clone());
+        req.tool = Some(tool.to_owned());
+        let hook_allowed = tool == self.inv.name
+            && self.hook_decision == Some(cyber_core::hooks::HookAction::Allow);
         if self
             .host
             .solve_isolation(&self.inv.session_id)
@@ -1914,9 +1954,8 @@ impl Ctx<'_> {
             self.auto_gate(&req, &mut metadata, false).await?;
             return self.ask(req, always, metadata).await;
         }
-        let needs_approval = (decision == Decision::Ask
-            && self.hook_decision != Some(cyber_core::hooks::HookAction::Allow))
-            || self.policy.forces_classifier(&req);
+        let needs_approval =
+            (decision == Decision::Ask && !hook_allowed) || self.policy.forces_classifier(&req);
         if self.auto_gate(&req, &mut metadata, needs_approval).await? || !needs_approval {
             return Ok(());
         }

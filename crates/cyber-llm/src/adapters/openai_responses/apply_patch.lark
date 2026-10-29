@@ -1,0 +1,29 @@
+// The apply_patch envelope (builtin-tools -> apply_patch tool), written for Cyber Code.
+// It constrains the raw text a model sends to the freeform apply_patch tool.
+
+start: begin_marker change+ end_marker
+
+begin_marker: "*** Begin Patch" EOL
+end_marker: "*** End Patch" EOL?
+
+change: new_file | removed_file | edited_file
+
+// A new file: every content line starts with "+".
+new_file: "*** Add File: " FILE_PATH EOL plus_line*
+plus_line: "+" LINE_TEXT EOL
+
+removed_file: "*** Delete File: " FILE_PATH EOL
+
+// An edited file, optionally renamed, as one or more sections. A section opens with
+// "@@", optionally followed by a line that locates it, and holds context (" "),
+// removed ("-") and added ("+") lines.
+edited_file: "*** Update File: " FILE_PATH EOL rename? section+
+rename: "*** Move to: " FILE_PATH EOL
+section: "@@" ANCHOR_TEXT? EOL body_line+ eof_marker?
+body_line: (" " | "-" | "+") LINE_TEXT EOL
+eof_marker: "*** End of File" EOL
+
+FILE_PATH: /[^\r\n]+/
+ANCHOR_TEXT: / [^\r\n]*/
+LINE_TEXT: /[^\r\n]*/
+EOL: /\r?\n/

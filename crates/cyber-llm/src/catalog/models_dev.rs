@@ -51,6 +51,7 @@ fn provider(id: &str, v: &Value) -> Provider {
         request: RequestOverlay::default(),
         disabled: false,
         models,
+        ..Provider::default()
     }
 }
 
@@ -109,6 +110,8 @@ fn model(provider_id: &str, id: &str, v: &Value, provider_kind: Option<ApiKind>)
             .map(str::to_string),
         disabled: false,
         request: RequestOverlay::default(),
+        profile_catalog: super::profile::from_models_dev(v),
+        ..Model::default()
     }
 }
 

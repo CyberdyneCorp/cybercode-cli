@@ -425,6 +425,7 @@ pub(super) fn command_invocation(
     input: serde_json::Value,
 ) -> Invocation {
     Invocation {
+        tool_output: Default::default(),
         registration: None,
         session_id: turn.session_id.clone(),
         directory: turn.directory.clone(),

@@ -59,6 +59,70 @@ Cyber retries retryable provider failures up to four times before assistant outp
 
 An HTTP body failure reports `provider response stream interrupted after N body bytes` followed by the credential-redacted transport error. This identifies where the failure happened; it does not identify whether the provider, network or client caused it. A valid protocol completion is final: Cyber retains its result and usage even if the HTTP tail later stalls or closes incorrectly. A stream that ends before protocol completion still fails.
 
+### Stream idle timeout
+
+A response stream that delivers no bytes for `providers.<p>.timeout.idle_ms` milliseconds (default 300 000, five minutes) fails with a `Transport` error `stream idle for <n>s`. It is retried like any other transport failure when no output had arrived; after output, the partial response is kept as described above. `0` turns the timer off for that provider:
+
+```jsonc
+{ "providers": { "ollama": { "timeout": { "idle_ms": 0 } } } }
+```
+
+### Provider error codes
+
+Known error codes from HTTP bodies and in-stream errors map onto the usual reasons, so retries, fallback and messages follow the code rather than the status alone:
+
+| Code | Reason | What you see |
+|---|---|---|
+| `context_length_exceeded` | `ContextOverflow` | the overflow path (compaction, then the error) |
+| `insufficient_quota`, `credit_balance_exhausted`, `*_spend_limit_exceeded` | `QuotaExceeded` | fallback models are tried |
+| `usage_limit_reached` (ChatGPT plan) | `QuotaExceeded` | `usage limit reached; resets at <local time>` in the TUI status and in `exec` errors, after any fallback |
+| `usage_not_included` | `Authentication` | `plan does not include this model` |
+| `server_is_overloaded`, `slow_down`, `policy_capacity_unavailable` | `ProviderInternal` | retried |
+| `rate_limit_exceeded` | `RateLimit` | retried |
+| `invalid_prompt`, `*_policy` | `ContentPolicy` | not retried |
+
+A retry waits the delay the server advises, taken from `retry-after-ms`, then `Retry-After`, then a message such as "try again in 2.5s", capped at 60 seconds, in place of the usual backoff. A Responses `response.incomplete` finishes as `Stop` for `interrupted`, `Length` for `max_output_tokens` and `ContentFilter` for `content_filter`; any other reason fails the step as `ProviderInternal` with the reason, rather than ending silently.
+
+## Reasoning replay
+
+An answer keeps its reasoning as separate items, one per reasoning block the provider streamed, each placed among the answer's tool calls where the provider produced it. An item can carry opaque provider state, stored exactly as received. Each provider gets it back in its own field (the profile's `reasoning_carrier`):
+
+| Carrier | Sent back as |
+|---|---|
+| `responses` (OpenAI, the ChatGPT subscription, Copilot models served by Responses) | `reasoning` input items with `encrypted_content`, before the calls they preceded; requests ask for it with `include: ["reasoning.encrypted_content"]`. An item ID the API did not issue is left out. |
+| `anthropic` | signed `thinking` and `redacted_thinking` blocks, in their original order between the `tool_use` blocks |
+| `reasoning_content` (DeepSeek, Kimi, GLM, Qwen, vLLM) | the assistant message's `reasoning_content`; a single space when the reasoning is empty, or when a tool-calling message of the current tool loop has none (another model's reasoning went as text) |
+| `reasoning` (Ollama, LM Studio) | the assistant message's `reasoning` |
+| `reasoning_details` (OpenRouter) | the streamed `reasoning_details` entries, merged by index, unchanged |
+| `gemini_signature` | `extra_content.google.thought_signature` on the tool call that carried it |
+| `copilot_opaque` (Copilot Chat Completions models) | `reasoning_text` and `reasoning_opaque` on the assistant message |
+
+How much reasoning goes back follows the profile's `reasoning_replay`: `always` replays it for the whole history (the default for OpenAI Responses and Anthropic), `tool_loop` only for the answers after the latest user message and drops older reasoning (the Chat Completions carriers and Gemini), and `never` sends reasoning as assistant text. Native state goes back only to the provider and model that produced it. A Turn on another model gets an item's text as assistant text and drops an item without text, such as a redacted block. An item whose state was dropped is also replayed as text, except on OpenAI Responses, which cannot replay reasoning without its encrypted content and leaves it out. When a tool loop continues on an Anthropic model with thinking on, but the answer it continues came from another model, the rest of that tool loop goes out with thinking off (the API would reject it otherwise; an answer given with thinking off has no thinking block to continue from either) and one `info` log line says so. The next prompt has thinking on again. A compaction summary carries no opaque state; the reasoning in the kept tail still replays. Sessions recorded before reasoning items read their one reasoning string and signature as a single item.
+
+Opaque state never leaves the store: exports (JSON, Markdown and HTML), the messages and history routes, the event streams (including a fork's `session.created.1`) and telemetry show `[opaque reasoning]` instead, and an imported document never supplies any. A value over 1 MiB is dropped when it arrives, with one warning per step in the log. Context estimates count opaque state at 3 tokens per 4 bytes.
+
+## Model behavior profiles
+
+Every model has a behavior profile: how its reasoning is replayed and in which request field (`reasoning_replay`, `reasoning_carrier`), whether it takes reasoning summaries and a verbosity, whether it makes parallel tool calls, which edit tool suits it (`freeform_patch`, `json_patch` or `edit`), its tool-output budget and truncation, its effort levels, and what happens to an effort it does not list (`effort_clamp`). `cyber models --json` and `GET /api/v1/models` show the resolved `profile` of each model.
+
+The profile's `edit_tool` picks the edit tools a Turn offers: `freeform_patch` and `json_patch` offer `apply_patch` instead of `edit` and `write`, and `edit` offers `edit` and `write`. A catalog entry with `capabilities.prefers_apply_patch: true` starts at `json_patch`, and `providers.<p>.models.<m>.profile.edit_tool` overrides it. With `freeform_patch` on OpenAI Responses (the API and a ChatGPT sign-in), `apply_patch` is a custom tool whose input is the raw `*** Begin Patch` text, constrained by our own Lark grammar of the envelope (`crates/cyber-llm/src/adapters/openai_responses/apply_patch.lark`). Its calls run as `apply_patch { patch }`, with the same permission checks and result lines, and they replay as `custom_tool_call` / `custom_tool_call_output` items. Every other adapter, any other Responses endpoint (a compatible gateway, Copilot's Responses models) and reserved (budgeted) requests get the JSON `apply_patch` tool.
+
+`apply_patch` matches each hunk's context and removed lines at the first of these levels that finds them: exact; trailing whitespace ignored; surrounding whitespace ignored; and curly quotes, dashes and non-breaking spaces folded to ASCII. An exact match takes the first place after the previous hunk. A looser level must find exactly one place: when it finds more, nothing is written and the error names the hunk (`Hunk 2 is ambiguous in lib.rs: it matches 2 places …`). A patch wrapped in a heredoc (`<<'EOF'` … `EOF`) or in blank lines parses as the bare envelope.
+
+When no `apply_patch` program is on the `PATH` the shell starts with (`sandbox.env.set.PATH` when set), a `bash` or `powershell` call whose whole script is `apply_patch <<'EOF'` … `EOF` (a PowerShell here-string `@'` … `'@` too), optionally after `cd <dir> &&`, runs as `apply_patch` relative to that directory. It is approved as an `apply_patch` edit, not as a shell command (permission rules scoped to `apply_patch` decide it, and a hook's Allow for the shell command does not approve the edit), returns the `apply_patch` result (`M <path>`), and its call keeps the name `bash` with `metadata: {"intercepted": "apply_patch"}` on its settlement and call record. A `cd` to anything the shell would expand (`$HOME`, `~`), a `<<-` heredoc (the shell would strip its tabs) and any script under `sandbox.env.login_shell` (whose profile may change `PATH`) run as written.
+
+The profile's `tool_output` narrows the model-facing output budget: with `tokens` set, the byte limit is the smaller of `tool_output.max_bytes` and 4 bytes per token. With `truncation: "middle"`, a long result keeps its first and last lines, half the byte and line limits each, around one marker line `…[<n> lines / <m> bytes omitted; full output at <path>]…`; the full text is still in the overflow file. `default` keeps the usual cut (the end of shell output, the start of anything else), and `head` or `tail` keeps that end for every tool. Registered and MCP tool results follow the same budget; a server's `output_token_limit` still caps them further. OpenAI reasoning models (`gpt-5`, `gpt-6`, `o3`, `o4`) default to 10 000 tokens with `middle`, so a 200 KB build log reaches them as about 20 KB of its start and 20 KB of its end.
+
+The profile is resolved field by field, a later layer winning: defaults by family and protocol; built-in rules by model name (for example `deepseek`, `kimi`, `glm` and `qwen` on a Chat Completions endpoint use `reasoning_content` within a tool loop, and `gpt-5`, `gpt-6`, `o3` and `o4` are profiled for the freeform patch tool with middle truncation at 10 000 tokens) and by provider (OpenRouter, Ollama, LM Studio, Copilot); the provider's catalog metadata (the ChatGPT model list, models.dev `reasoning` and `tool_call`); then configuration:
+
+```jsonc
+{ "providers": { "corp": { "models": { "coder": {
+  "profile": { "reasoning_replay": "never", "tool_output": { "tokens": 8000, "truncation": "middle" } }
+} } } } }
+```
+
+An unknown key or an invalid value warns, naming the key, and is ignored. When an agent, a workflow tier or a model role asks for an effort the model does not list, the nearest lower listed effort is used and one `info` log line names both; an effort you name yourself (`provider/model#xhigh`) still fails with `VariantUnavailableError`, as does any effort under `effort_clamp: "fail"`.
+
 ## Signing in with a ChatGPT subscription
 
 A ChatGPT Plus or Pro plan can pay for OpenAI models instead of an API key:
@@ -87,6 +151,8 @@ The sign-in uses OpenAI's OAuth flow with the Codex public client, which is what
 - Its models are the ones the backend lists for your account. The list is fetched at login, kept in `chatgpt-models.json` beside the login, and refreshed once a day. Change them under `providers.chatgpt` in `cyber.jsonc`. If the list is empty, run the login again.
 - `localhost:1455` is the port Codex uses too. If another login holds it, finish that login or use `--method code`.
 - Windows is not supported yet, because the login file cannot be made owner-only there.
+- Each request names its Session for routing: `session-id` (the root Session), `thread-id` and `x-client-request-id` (the requesting Session), and `x-openai-subagent` for compaction, titles, recaps and subagents. The first `x-codex-turn-state` the backend returns while answering a prompt is sent back on that prompt's later requests and retries, kept in memory only, and dropped when the next prompt starts. The `openai` provider at its default URL gets `session-id` alone; other providers, including custom Responses gateways, get none of these headers. `prompt_cache_key` is the root Session ID, or `<root>:<agent>` for a subagent.
+- When the plan's usage limit is reached, the fallback models are tried; with none left, the TUI and `exec` report `usage limit reached; resets at <local time>`.
 - OpenAI's acceptance of third-party harnesses is a public statement, not a contract. The `openai` provider with `OPENAI_API_KEY` is not affected by this login.
 
 ## Signing in with a GitHub Copilot subscription
@@ -894,18 +960,20 @@ Not implemented yet: `.cyber/rules/*.md` and `.claude/rules/*.md`, `.claude/CLAU
 
 ## Base prompts and output styles
 
-The system prompt starts with the agent's `system` text when the agent sets one. Otherwise it starts with a short base prompt chosen by the model's family, followed by the Session's output style. The base prompts and the built-in styles are embedded in the binary (`crates/cyber-core/prompts/`).
+The system prompt starts with the agent's `system` text when the agent sets one. Otherwise it starts with a base prompt chosen by the model's family, followed by the Session's output style. The base prompts and the built-in styles are embedded in the binary (`crates/cyber-core/prompts/`).
 
 ### Base prompts by model family
 
-Every base prompt is one shared core text plus a family addendum: `openai`, `anthropic`, `gemini`, `local` (open-weights models) or `default` (the core text alone). The family comes from the catalog model, not the provider id, so `openrouter/anthropic/claude-sonnet` gets the Anthropic prompt and `groq/gpt-oss-120b` the local one. The order is:
+Every base prompt is one shared core text plus a family addendum: `openai`, `anthropic`, `gemini`, `local` (open-weights models) or `default` (the core text alone). The core text is a short operating manual: scope, reading before editing and making the smallest sufficient change, editing only through the edit tools (never shell redirection), fast search and parallel independent reads, carrying the task to a verified result and asking only when a real decision is blocked, leaving changes it did not make alone, care before destructive actions, brief progress notes during long work, and a final answer that leads with the result and cites `path:line`. The addenda tune it to the family: OpenAI and local models edit with `apply_patch` and batch reads, Anthropic models edit with `edit` and call tools in parallel, and Gemini models make small sequential edits and verify each one explicitly. The family comes from the catalog model, not the provider id, so `openrouter/anthropic/claude-sonnet` gets the Anthropic prompt and `groq/gpt-oss-120b` the local one. The order is:
 
 1. Open-weights names (`gpt-oss`, `llama`, `qwen`, `mistral`, `deepseek`, `gemma`, `phi`, `glm`, `kimi`, …) select `local`.
 2. `claude` selects `anthropic`; `gpt`, `o1`, `o3`, `o4`, `codex` and `chatgpt` select `openai`; `gemini` selects `gemini`. The catalog family name is checked first, then the last `/` segment of the model id.
 3. Otherwise the protocol decides: Anthropic Messages is `anthropic`, OpenAI Responses and the ChatGPT plan are `openai`.
 4. Otherwise a provider without authentication or with a loopback URL is `local`, and anything else is `default`.
 
-A model switch that changes the family starts a new Context Epoch on the next Turn. Epochs recorded before families existed compare by provider only, so a restart never rebuilds their prefix.
+A model switch that changes the family starts a new Context Epoch on the next Turn. So does a new version of the base prompts (`prompts/base/VERSION`, recorded on each epoch as `prompt_version`): a Session resumed by a newer binary picks up the new text at its next Turn. An epoch with a family but no version was built with version 1. Epochs recorded before families existed compare by provider only, so a restart never rebuilds their prefix.
+
+The prompts are written for Cyber Code. `scripts/prompt_shingles.py` builds `crates/cyber-core/tests/fixtures/reference_prompt_shingles.txt`: hashes of every 12-word run of a reference product's text assets (every `.md`, `.lark` and `.txt` file of its `codex-rs` tree, the text files of any `assets`, `templates` or `prompts` folder, and each string literal of its non-test Rust sources), with no text stored, and `reference_grammar_shingles.txt` with the 6-word runs of its grammars. The `prompt_provenance` test (and `python3 scripts/prompt_shingles.py check`) fails if any 12-word run of a base prompt, of any `.lark` grammar under `crates/`, or of a string literal in `crates/cyber-tools/src/tools/*.rs` (tool descriptions and messages to the model) matches one, or any 6-word run of a grammar does. Words are lowercased ASCII letters and digits, so punctuation, case and Markdown do not hide a copy. Regenerate the fixture with `python3 scripts/prompt_shingles.py generate <checkout>`.
 
 ### Output styles
 

@@ -110,6 +110,7 @@ pub mod deferred_tools;
 mod model;
 mod requests;
 mod rewind;
+mod routing;
 mod sandbox_events;
 pub use sandbox_events::SandboxEvent;
 mod selection;
@@ -205,8 +206,8 @@ pub use host::{
 };
 pub use model::{
     AssistantEntry, CallState, CallStatus, Delivery, Entry, InboxRow, InputStatus, LastStep,
-    RetrySafety, RevertState, RevertTarget, SessionInfo, SessionState, Sourced, StepSnapshot,
-    TaskState, Totals,
+    ReasoningBlock, RetrySafety, RevertState, RevertTarget, SessionInfo, SessionState, Sourced,
+    StepSnapshot, TaskState, Totals,
 };
 pub use requests::{
     Asker, NO_WORKFLOW_APPROVER, PendingKind, PendingRequest, PermissionAsk, PermissionReply,
@@ -733,6 +734,11 @@ pub(crate) struct Handle {
     pub compacting: std::sync::atomic::AtomicUsize,
     /// Attachment blobs read for this Drain's Turns, cleared when the Drain ends.
     pub attachment_cache: StdMutex<attachments::Cache>,
+    /// The sticky-routing state of the Turns answering the latest prompt; in memory only.
+    pub turn_state: cyber_llm::TurnState,
+    /// Whether the tool loop answering the latest prompt already logged that it runs
+    /// with Anthropic thinking off (`session-runtime` → Reasoning replay policy).
+    pub thinking_off_logged: std::sync::atomic::AtomicBool,
 }
 
 impl Handle {
@@ -2128,6 +2134,7 @@ impl Runtime {
             status,
             output,
             detail: Some("resolved by user".into()),
+            metadata: None,
         };
         self.inner
             .commit_locked(&mut state, vec![event(TOOL_SETTLED, &payload)])?;
@@ -2454,6 +2461,8 @@ impl Inner {
             location_lease: StdMutex::default(),
             compacting: std::sync::atomic::AtomicUsize::new(0),
             attachment_cache: StdMutex::default(),
+            turn_state: cyber_llm::TurnState::default(),
+            thinking_off_logged: std::sync::atomic::AtomicBool::new(false),
         });
         let mut sessions = self.sessions.lock().unwrap_or_else(PoisonError::into_inner);
         Ok(Arc::clone(sessions.entry(id.into()).or_insert(handle)))

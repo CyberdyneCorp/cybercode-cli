@@ -6,7 +6,8 @@ use std::time::Duration;
 
 use cyber_llm::catalog::compute_cost;
 use cyber_llm::{
-    ErrorKind, EventStream, FinishReason, LlmError, LlmEvent, ToolCall, Usage, open_with_retry,
+    ErrorKind, EventStream, FinishReason, LlmError, LlmEvent, Opaque, ToolCall, Usage,
+    open_with_retry,
 };
 use futures::future::join_all;
 use futures::{FutureExt, StreamExt};
@@ -364,6 +365,13 @@ async fn prepare_pass(
     if !(continue_tools || promoted || first) {
         return Ok(None);
     }
+    if !continue_tools {
+        // A new prompt's Turns start without the previous one's routing state.
+        handle.turn_state.reset();
+        handle
+            .thinking_off_logged
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+    }
     if inner.needs_compaction(handle, &resolved.model).await? {
         let compaction =
             inner.compact_and_continue(handle, CompactionTrigger::Auto, &resolved.model);
@@ -629,6 +637,19 @@ fn queue_head<'a>(mut rows: impl Iterator<Item = &'a super::model::InboxRow>) ->
 }
 
 impl Inner {
+    /// `settled` with the tool host's notes on the call, when it made any.
+    pub(super) fn with_call_metadata(
+        &self,
+        session_id: &str,
+        call_id: &str,
+        mut settled: cyber_store::NewEvent,
+    ) -> cyber_store::NewEvent {
+        if let Some(metadata) = self.tools.take_call_metadata(session_id, call_id) {
+            settled.data["metadata"] = metadata;
+        }
+        settled
+    }
+
     /// Take a settled call's tool-hook effects and append them after its settlement:
     /// an input rewrite as `hook_rewrite`, the context as `hook_context`, a
     /// `continue: false` as `hook_stop`. Returns the stop reason, which the caller
@@ -671,17 +692,23 @@ fn system(text: String, reason: &str) -> cyber_store::NewEvent {
 
 struct Accum {
     text: String,
-    reasoning: String,
-    signature: Option<String>,
+    /// The producer stamped on opaque state.
+    provider: String,
+    model: String,
+    /// The reasoning block being streamed, not yet recorded.
+    reasoning: Option<Reasoned>,
+    /// Reasoning blocks of the step recorded so far.
+    blocks: u32,
+    /// Whether this step already warned about dropped opaque state.
+    dropped_warned: bool,
     calls: Vec<ToolCall>,
     usage: Usage,
     finish: Option<FinishReason>,
 }
 
 impl Inner {
-    /// Start a Context Epoch when there is none, it is stale, or the provider or model
-    /// family changed. An epoch without a family (from before families) compares by
-    /// provider only, so a restart never rebuilds its prefix.
+    /// Start a Context Epoch when there is none, it is stale, or the provider, model
+    /// family or base prompt version changed (see [`super::model::Epoch::serves`]).
     pub(crate) async fn ensure_epoch(
         &self,
         handle: &Handle,
@@ -689,13 +716,10 @@ impl Inner {
     ) -> Result<(), RuntimeError> {
         {
             let state = handle.state.lock().await;
+            let version = cyber_core::prompts::base_prompt_version();
             if let Some(epoch) = &state.epoch
                 && !state.epoch_stale
-                && epoch.provider == resolved.provider
-                && epoch
-                    .family
-                    .as_deref()
-                    .is_none_or(|family| family == resolved.family.as_str())
+                && epoch.serves(&resolved.provider, resolved.family.as_str(), version)
             {
                 return Ok(());
             }
@@ -727,6 +751,7 @@ impl Inner {
             provider: resolved.provider.clone(),
             system_prefix: Some(system_prefix),
             family: Some(resolved.family.as_str().into()),
+            prompt_version: Some(cyber_core::prompts::base_prompt_version()),
         };
         self.commit_locked(&mut state, vec![event(EPOCH_STARTED, &payload)])?;
         drop(state);
@@ -902,6 +927,32 @@ impl Inner {
         self.fail_step(handle, message_id, error).await
     }
 
+    /// Open a Turn's stream through the retry policy, announcing each retry for the
+    /// Session; `None` when the Drain is cancelled first.
+    async fn open_turn(
+        &self,
+        handle: &Handle,
+        adapter: &dyn cyber_llm::Adapter,
+        request: &cyber_llm::LlmRequest,
+        cancel: &CancellationToken,
+    ) -> Option<Result<cyber_llm::EventStream, cyber_llm::LlmError>> {
+        // Not the cache key: a subagent's is `<root>:<agent>`.
+        let session_id = handle.state.lock().await.info.id.clone();
+        let bus = self.bus.clone();
+        let announce = |attempt, delay: Duration, e: &cyber_llm::LlmError| {
+            bus.publish(LiveEvent::Retry {
+                session_id: session_id.clone(),
+                attempt,
+                delay_ms: delay.as_millis() as u64,
+                error: e.to_string(),
+            });
+        };
+        tokio::select! {
+            _ = cancel.cancelled() => None,
+            r = open_with_retry(adapter, request, &self.options.retry, announce) => Some(r),
+        }
+    }
+
     async fn turn(
         &self,
         handle: &Handle,
@@ -916,19 +967,9 @@ impl Inner {
             return Ok(TurnEnd::SelectionChanged);
         };
         let resolved = &prepared.model;
-        let session_id = request.cache_key.clone().unwrap_or_default();
-        let bus = self.bus.clone();
         let gated = super::budget::GatedAdapter::new(self, handle, resolved, "turn")
             .for_call(message_id.clone());
-        let opened = tokio::select! {
-            _ = cancel.cancelled() => None,
-            r = open_with_retry(&gated, &request, &self.options.retry, |attempt, delay, e| {
-                bus.publish(LiveEvent::Retry {
-                    session_id: session_id.clone(), attempt, delay_ms: delay.as_millis() as u64, error: e.to_string(),
-                });
-            }) => Some(r),
-        };
-        let stream = match opened {
+        let stream = match self.open_turn(handle, &gated, &request, cancel).await {
             None => {
                 gated.flush().await?;
                 return self
@@ -945,17 +986,18 @@ impl Inner {
             Some(Ok(stream)) => stream,
         };
         let consumed = self
-            .consume(handle, &message_id, &defs, stream, cancel)
+            .consume(handle, &message_id, &defs, stream, cancel, resolved)
             .await;
         gated.flush().await?;
         if let Some(error) = gated.take_error() {
             return Err(error);
         }
-        let acc = match consumed? {
+        let mut acc = match consumed? {
             Ok(acc) => acc,
             Err(end) => return Ok(end),
         };
-        self.end_step(handle, &message_id, &acc, resolved).await?;
+        self.end_step(handle, &message_id, &mut acc, resolved)
+            .await?;
         if acc.calls.is_empty() {
             return Ok(if limited {
                 TurnEnd::Limited
@@ -1051,7 +1093,18 @@ impl Inner {
                 .unwrap_or_else(|| context::base_prompt(resolved.family)),
             epoch.baseline.clone(),
         ];
-        request.messages = view::messages(&state, &resolved.provider, &resolved.model);
+        request.messages = view::messages(&state, &view::Replay::of(resolved));
+        if view::thinking_guard(&mut request, resolved.profile.reasoning_carrier)
+            && !handle
+                .thinking_off_logged
+                .swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            cyber_core::log::info(
+                "reasoning",
+                "thinking off for the rest of this tool loop: it continues an answer with no native thinking block",
+                serde_json::json!({"session_id": state.info.id, "model": resolved.model}),
+            );
+        }
         self.project_attachments(
             &state.info.id,
             &mut request.messages,
@@ -1071,7 +1124,7 @@ impl Inner {
         let mut defs = catalog.callable;
         defs.extend(catalog.deferred);
         request.tools_disabled |= limited;
-        request.cache_key = Some(state.info.id.clone());
+        self.address(&mut request, &state.info, Some(handle.turn_state.clone()));
         request.initiator = Some(initiator(state.user_input_pending));
         let message_id = cyber_core::ids::new_id("msg");
         let origin = super::usage_origin::step_origin(&self.store, &state)?;
@@ -1097,9 +1150,10 @@ impl Inner {
         defs: &[ToolDef],
         mut stream: EventStream,
         cancel: &CancellationToken,
+        resolved: &ResolvedModel,
     ) -> Result<Result<Accum, TurnEnd>, RuntimeError> {
         let session_id = handle.state.lock().await.info.id.clone();
-        let mut acc = Accum::empty();
+        let mut acc = Accum::for_model(resolved);
         loop {
             let next = tokio::select! {
                 _ = cancel.cancelled() => None,
@@ -1185,10 +1239,16 @@ impl Inner {
                 self.bus.publish(live(text, false));
             }
             LlmEvent::ReasoningDelta { text } => {
-                acc.reasoning.push_str(&text);
+                acc.reasoning
+                    .get_or_insert_with(Reasoned::default)
+                    .text
+                    .push_str(&text);
                 self.bus.publish(live(text, true));
             }
-            LlmEvent::ReasoningSignature { signature } => acc.signature = Some(signature),
+            LlmEvent::ReasoningItem { text, opaque } => {
+                self.close_reasoning(handle, message_id, acc, text, opaque)
+                    .await?;
+            }
             LlmEvent::ToolCallDelta {
                 id,
                 name,
@@ -1203,7 +1263,12 @@ impl Inner {
                     arguments,
                 });
             }
-            LlmEvent::ToolCallDone(call) => {
+            LlmEvent::ToolCallDone(mut call) => {
+                // Reasoning streamed before the call is recorded ahead of it.
+                if let Some(events) = acc.take_reasoning(message_id) {
+                    self.commit(handle, vec![events]).await?;
+                }
+                call.opaque = acc.stamped(call.opaque.take());
                 let retry_safety =
                     find_def(defs, &call.name).map_or(RetrySafety::Never, |d| d.retry_safety);
                 let payload = ToolCalled {
@@ -1220,6 +1285,7 @@ impl Inner {
                     } else {
                         call.input.clone()
                     },
+                    opaque: call.opaque.clone(),
                     retry_safety,
                 };
                 self.commit(handle, vec![event(TOOL_CALLED, &payload)])
@@ -1232,11 +1298,31 @@ impl Inner {
         Ok(())
     }
 
+    /// Record the reasoning block streamed so far, completed by an item or a signature.
+    async fn close_reasoning(
+        &self,
+        handle: &Handle,
+        message_id: &str,
+        acc: &mut Accum,
+        text: String,
+        opaque: Option<Opaque>,
+    ) -> Result<(), RuntimeError> {
+        let block = acc.reasoning.get_or_insert_with(Reasoned::default);
+        if !text.is_empty() {
+            block.text = text;
+        }
+        block.opaque = opaque;
+        if let Some(event) = acc.take_reasoning(message_id) {
+            self.commit(handle, vec![event]).await?;
+        }
+        Ok(())
+    }
+
     async fn end_step(
         &self,
         handle: &Handle,
         message_id: &str,
-        acc: &Accum,
+        acc: &mut Accum,
         resolved: &ResolvedModel,
     ) -> Result<(), RuntimeError> {
         let mut events = content_events(message_id, acc);
@@ -1330,12 +1416,12 @@ impl Inner {
         &self,
         handle: &Handle,
         message_id: &str,
-        acc: Accum,
+        mut acc: Accum,
         kind: &str,
         message: &str,
     ) -> Result<TurnEnd, RuntimeError> {
         let mut state = handle.state.lock().await;
-        let mut events = content_events(message_id, &acc);
+        let mut events = content_events(message_id, &mut acc);
         let mut failed = event(
             STEP_FAILED,
             &StepFailed {
@@ -1459,9 +1545,10 @@ impl Inner {
                             .await?;
                     }
                     Ok((def, input)) => {
-                        let invocation = self
+                        let mut invocation = self
                             .dispatch(handle, &turn, message_id, call, &def, input)
                             .await?;
+                        invocation.tool_output = resolved.profile.tool_output;
                         runs.push(self.run_tool(handle, def, invocation, cancel.child_token()));
                     }
                 }
@@ -1522,7 +1609,7 @@ impl Inner {
                         .finalize_skill_output(&directory, output, reminder)
                 },
             );
-            events.push(settled);
+            events.push(self.with_call_metadata(&session_id, &run.call_id, settled));
             loaded.extend(instructions);
             stops.extend(self.take_call_hook_effects(&session_id, &run.call_id, &mut events));
         }
@@ -1695,6 +1782,7 @@ impl Inner {
             .await?;
         let inner = self.me.upgrade().expect("runtime alive");
         Ok(Invocation {
+            tool_output: Default::default(),
             registration: def.registration.clone(),
             session_id: turn.session_id.clone(),
             directory: turn.directory.clone(),
@@ -1885,29 +1973,79 @@ impl Inner {
     }
 }
 
+/// One reasoning block while it streams.
+#[derive(Default)]
+struct Reasoned {
+    text: String,
+    opaque: Option<Opaque>,
+}
+
 impl Accum {
     fn empty() -> Self {
         Self {
             text: String::new(),
-            reasoning: String::new(),
-            signature: None,
+            provider: String::new(),
+            model: String::new(),
+            reasoning: None,
+            blocks: 0,
+            dropped_warned: false,
             calls: Vec::new(),
             usage: Usage::default(),
             finish: None,
         }
     }
-}
 
-fn content_events(message_id: &str, acc: &Accum) -> Vec<cyber_store::NewEvent> {
-    let mut events = Vec::new();
-    if !acc.reasoning.is_empty() {
+    fn for_model(resolved: &ResolvedModel) -> Self {
+        Self {
+            provider: resolved.provider.clone(),
+            model: resolved.model.clone(),
+            ..Self::empty()
+        }
+    }
+
+    /// `opaque` with this step's producer, or nothing when it is over
+    /// [`cyber_llm::OPAQUE_MAX_BYTES`]: that item then replays as text. A step logs one
+    /// warning however many values it drops.
+    fn stamped(&mut self, opaque: Option<Opaque>) -> Option<Opaque> {
+        let mut opaque = opaque?;
+        if opaque.data.len() > cyber_llm::OPAQUE_MAX_BYTES {
+            if !std::mem::replace(&mut self.dropped_warned, true) {
+                cyber_core::log::warn(
+                    "runtime",
+                    "opaque reasoning state over 1 MiB dropped; the item replays as text",
+                    serde_json::json!({ "bytes": opaque.data.len(), "provider": self.provider }),
+                );
+            }
+            return None;
+        }
+        if opaque.provider.is_empty() {
+            opaque.provider.clone_from(&self.provider);
+            opaque.model.clone_from(&self.model);
+        }
+        Some(opaque)
+    }
+
+    /// The `session.reasoning.ended.1` of the streamed block, if it has any content.
+    fn take_reasoning(&mut self, message_id: &str) -> Option<cyber_store::NewEvent> {
+        let block = self.reasoning.take()?;
+        let opaque = self.stamped(block.opaque);
+        if block.text.is_empty() && opaque.is_none() {
+            return None;
+        }
         let payload = ContentEnded {
             message_id: message_id.into(),
-            text: acc.reasoning.clone(),
-            signature: acc.signature.clone(),
+            text: block.text,
+            signature: None,
+            index: Some(self.blocks),
+            opaque,
         };
-        events.push(event(REASONING_ENDED, &payload));
+        self.blocks += 1;
+        Some(event(REASONING_ENDED, &payload))
     }
+}
+
+fn content_events(message_id: &str, acc: &mut Accum) -> Vec<cyber_store::NewEvent> {
+    let mut events: Vec<_> = acc.take_reasoning(message_id).into_iter().collect();
     if !acc.text.is_empty() {
         events.push(event(
             TEXT_ENDED,
@@ -1915,6 +2053,8 @@ fn content_events(message_id: &str, acc: &Accum) -> Vec<cyber_store::NewEvent> {
                 message_id: message_id.into(),
                 text: acc.text.clone(),
                 signature: None,
+                index: None,
+                opaque: None,
             },
         ));
     }
@@ -1936,6 +2076,7 @@ fn settled(
         status,
         output: output.into(),
         detail: detail.map(str::to_string),
+        metadata: None,
     };
     event(TOOL_SETTLED, &payload)
 }
@@ -2056,6 +2197,7 @@ pub(super) fn settlement_with_reminders(
             },
             output,
             detail: None,
+            metadata: None,
         },
     );
     (settled, loaded)
@@ -2141,6 +2283,7 @@ pub(super) fn settlement(
                 status: CallStatus::Ok,
                 output,
                 detail: None,
+                metadata: None,
             },
         ),
         ToolOutcome::SkillSuggestions {
@@ -2170,6 +2313,7 @@ pub(super) fn settlement(
                 status: CallStatus::Ok,
                 output,
                 detail: None,
+                metadata: None,
             },
         ),
         ToolOutcome::Failed(message) => settled(call_id, CallStatus::Error, &message, None),
@@ -2249,7 +2393,7 @@ fn kind_name(kind: ErrorKind) -> &'static str {
 }
 
 pub(crate) fn turn_context(state: &SessionState, resolved: &ResolvedModel) -> TurnContext {
-    turn_context_for(state, resolved.prefers_apply_patch)
+    turn_context_for(state, resolved.prefers_apply_patch())
 }
 
 pub(crate) fn turn_context_for(state: &SessionState, prefers_apply_patch: bool) -> TurnContext {

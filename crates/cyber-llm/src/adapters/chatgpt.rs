@@ -5,6 +5,7 @@
 use futures::future::BoxFuture;
 use serde_json::{Value, json};
 
+use super::openai_responses::Backend;
 use super::{Adapter, Endpoint, EventStream, OpenAiResponsesAdapter};
 use crate::chatgpt::{ChatGptError, Login, ORIGINATOR, Session, fetch_models};
 use crate::error::LlmError;
@@ -80,6 +81,7 @@ impl Adapter for ChatGptAdapter {
             let inner = OpenAiResponsesAdapter {
                 endpoint,
                 response_limit: self.response_limit,
+                backend: Backend::ChatGpt,
             };
             inner.stream(shaped(request)).await
         })
@@ -112,7 +114,7 @@ mod tests {
             max_output_tokens: Some(32_000),
             ..LlmRequest::default()
         };
-        let body = build_body(&shaped(request));
+        let body = build_body(&shaped(request), Backend::ChatGpt);
         assert!(body.get("max_output_tokens").is_none());
         assert_eq!(body["instructions"], "");
         assert_eq!(body["store"], false);
@@ -121,7 +123,10 @@ mod tests {
             system: vec!["be brief".into()],
             ..LlmRequest::default()
         };
-        assert_eq!(build_body(&shaped(request))["instructions"], "be brief");
+        assert_eq!(
+            build_body(&shaped(request), Backend::ChatGpt)["instructions"],
+            "be brief"
+        );
     }
 
     #[test]
@@ -138,8 +143,40 @@ mod tests {
             ..LlmRequest::default()
         };
         assert_eq!(
-            build_body(&shaped(request))["input"][0]["content"][0],
+            build_body(&shaped(request), Backend::ChatGpt)["input"][0]["content"][0],
             json!({ "type": "input_file", "filename": "spec.pdf", "file_data": "data:application/pdf;base64,JVBERi0=" })
+        );
+    }
+
+    /// The subscription backend gets the same encrypted reasoning items as the API.
+    #[test]
+    fn encrypted_reasoning_is_requested_and_replayed() {
+        use crate::catalog::profile::ReasoningCarrier;
+        use crate::types::{Content, Message, Opaque, OpaqueKind, Role};
+        let mut opaque = Opaque::new(OpaqueKind::EncryptedReasoning, "gAAA");
+        opaque.id = Some("rs_1".into());
+        let request = LlmRequest {
+            model: "gpt-5.6-sol".into(),
+            reasoning_carrier: ReasoningCarrier::Responses,
+            shaping: crate::types::Shaping {
+                reasoning: true,
+                ..Default::default()
+            },
+            messages: vec![Message {
+                role: Role::Assistant,
+                content: vec![Content::Reasoning {
+                    text: "plan".into(),
+                    opaque: Some(opaque),
+                }],
+            }],
+            ..LlmRequest::default()
+        };
+        let body = build_body(&shaped(request), Backend::ChatGpt);
+        assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+        assert_eq!(
+            body["input"][0],
+            json!({"type": "reasoning", "id": "rs_1", "encrypted_content": "gAAA",
+                "summary": [{"type": "summary_text", "text": "plan"}]})
         );
     }
 }

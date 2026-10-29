@@ -10,9 +10,11 @@ use super::{Adapter, EventStream};
 use crate::error::{ErrorKind, LlmError};
 use crate::types::{LlmEvent, LlmRequest};
 
-/// One scripted stream item.
+/// One scripted stream item. Scripts are short fixtures, so the size of an event with
+/// opaque state is not worth boxing every step for.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
 pub enum ScriptStep {
     Event(LlmEvent),
     Error { error: ErrorKind, message: String },
