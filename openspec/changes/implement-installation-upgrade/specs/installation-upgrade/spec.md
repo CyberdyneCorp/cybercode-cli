@@ -205,6 +205,11 @@ Reason for change: the safety limits of the deletion are now explicit, and the c
 - **WHEN** `CYBER_CONFIG_DIR` is the user's home directory and the user runs `cyber uninstall --force`
 - **THEN** the command refuses to remove the home directory and exits 1 without deleting anything
 
+#### Scenario: Windows handles close after service shutdown
+- **WHEN** the registered server has stopped and Windows temporarily reports a sharing or lock violation while its final handles close
+- **THEN** uninstall retries directory removal for at most five seconds, rechecking directory safety on each attempt
+- **AND** other IO failures and safety refusals are reported without retrying them
+
 ### Requirement: Self-update integrity
 (P0) Every in-place upgrade SHALL verify the downloaded artifact's SHA-256 against a `SHA256SUMS` whose Sigstore bundle validates, against the trusted root embedded in the binary, for the release source's identity `<identity prefix>v<version>` (by default `https://github.com/CyberdyneCorp/cybercode-cli/.github/workflows/release.yml@refs/tags/v<version>`) and issuer (by default `https://token.actions.githubusercontent.com`), including the certificate chain, the transparency-log inclusion and the SCT. On failure it SHALL abort without replacing the binary, printing `signature verification failed` or `checksum verification failed`.
 

@@ -9,6 +9,7 @@ mod cache_refs;
 mod capabilities;
 mod components;
 mod digest;
+pub mod image;
 mod install;
 mod manage;
 mod manifest;

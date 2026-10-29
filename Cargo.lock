@@ -1207,11 +1207,14 @@ name = "cyber-sandbox"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "cap-fs-ext",
+ "cap-std",
  "cyber-core",
  "futures",
  "git2",
  "libc",
  "regex",
+ "rusqlite",
  "serde_json",
  "sha2 0.10.9",
  "tempfile",

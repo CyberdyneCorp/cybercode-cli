@@ -771,6 +771,28 @@ async fn interactive_solve_checks_route_approval_after_solver_submission() {
     server.close().await;
 }
 
+/// Release only after settlement assertions, including on assertion failure.
+struct DetachedCheckRelease(Vec<std::path::PathBuf>);
+impl Drop for DetachedCheckRelease {
+    fn drop(&mut self) {
+        for directory in &self.0 {
+            let _ = std::fs::write(directory.join("release-detached-fixture"), []);
+        }
+        // The native child runs independently of this test's Tokio executor.
+        // Give it the release before the test removes its temporary checkout.
+        for _ in 0..100 {
+            if self
+                .0
+                .iter()
+                .all(|path| path.join("detached-fixture-finished").exists())
+            {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
 #[tokio::test]
 async fn solve_unknown_native_settlement_fences_later_checks_and_the_checkout_lease() {
     let model = ScriptedModel::start(solve_reply);
@@ -778,7 +800,11 @@ async fn solve_unknown_native_settlement_fences_later_checks_and_the_checkout_le
     config["permissions"] = json!("allow");
     let temp = repository();
     let root = temp.path().canonicalize().unwrap();
-    std::fs::write(root.join("detach.c"), "#include <unistd.h>\n#include <stdlib.h>\nint main(void) { if (fork() == 0) { setsid(); sleep(4); _exit(0); } return 0; }\n").unwrap();
+    std::fs::write(
+        root.join("detach.c"),
+        include_str!("fixtures/solve_detach.c"),
+    )
+    .unwrap();
     let compiled = std::process::Command::new("cc")
         .args(["detach.c", "-o", "detach"])
         .current_dir(&root)
@@ -788,8 +814,9 @@ async fn solve_unknown_native_settlement_fences_later_checks_and_the_checkout_le
     git(&root, &["add", "detach.c", "detach"]);
     git(&root, &["commit", "--quiet", "-m", "add process fixture"]);
     let server = open(temp, config).await;
-    // The detached descendant retains the output pipes after its leader exits. The
-    // host cannot establish complete settlement and must not infer success from exit 0.
+    // A pipe receipt proves setsid completed before the leader can exit. The
+    // descendant then retains stdio until this test releases it, so neither the
+    // process-group cleanup race nor a four-second sleep can fake settlement.
     let run = solve_run(
         &server,
         json!([{"argv":["./detach"]},
@@ -802,6 +829,19 @@ async fn solve_unknown_native_settlement_fences_later_checks_and_the_checkout_le
         .solve_evidence(run["id"].as_str().unwrap())
         .unwrap()
         .unwrap();
+    let releases = (!cfg!(target_os = "linux")).then(|| {
+        DetachedCheckRelease(
+            evidence
+                .candidates
+                .iter()
+                .filter_map(|row| {
+                    row.checks.first()?["cwd"]
+                        .as_str()
+                        .map(std::path::PathBuf::from)
+                })
+                .collect(),
+        )
+    });
     if cfg!(target_os = "linux") {
         // Bubblewrap settles the entire namespace, including setsid descendants.
         assert_eq!(run["result"]["verification_status"], "no_candidate_passed");
@@ -817,6 +857,8 @@ async fn solve_unknown_native_settlement_fences_later_checks_and_the_checkout_le
     assert_eq!(run["result"]["verification_status"], "incomplete", "{run}");
     for row in &evidence.candidates {
         assert_eq!(row.checks[0]["outcome"], "unknown", "{row:?}");
+        assert_eq!(row.checks[0]["settled"], false, "{row:?}");
+        assert_eq!(row.checks[0]["source_unchanged"], true, "{row:?}");
         assert!(!row.host_verified);
         assert_eq!(row.checks[1]["outcome"], "not_run");
         let cwd = std::path::Path::new(row.checks[0]["cwd"].as_str().unwrap());
@@ -830,6 +872,7 @@ async fn solve_unknown_native_settlement_fences_later_checks_and_the_checkout_le
                 .is_err()
         );
     }
+    drop(releases);
     server.close().await;
 }
 
