@@ -315,12 +315,29 @@ async fn owned_copy_pins_the_actual_worker_result_and_cleans_it_on_drop() {
     );
     assert_eq!(package.digest(), digest);
     assert_eq!(
+        cyber_core::plugins::tree_digest(package.path().unwrap()).unwrap(),
+        digest
+    );
+    let boundary = package
+        .path()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("package.json");
+    let boundary_metadata = std::fs::metadata(&boundary).unwrap();
+    assert_eq!(boundary_metadata.permissions().mode() & 0o777, 0o400);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&std::fs::read(&boundary).unwrap()).unwrap(),
+        serde_json::json!({"private": true, "workspaces": []})
+    );
+    assert_eq!(
         std::fs::read(package.path().unwrap().join("main")).unwrap(),
         b"approved bytes"
     );
     let path = package.path().unwrap().to_owned();
     drop(package);
     assert!(!path.exists());
+    assert!(!boundary.exists());
     assert_eq!(std::fs::read_dir(&base).unwrap().count(), 0);
 }
 

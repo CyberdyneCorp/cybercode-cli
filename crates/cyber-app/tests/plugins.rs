@@ -90,6 +90,7 @@ while True:
                         "private_home": bool(home) and os.path.isdir(home) and home == os.environ.get("TMPDIR"),
                         "private_paths": bool(home) and all(path and os.path.commonpath([home, path]) == home for path in paths),
                         "plugin_root": os.environ.get("CYBER_PLUGIN_ROOT") == plugin_root,
+                        "package_cwd": os.getcwd() == plugin_root,
                         "plugin_name": os.environ.get("CYBER_PLUGIN_NAME") == "env-kit",
                         "fixed_path": os.environ.get("PATH") == "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
                         "stdout_utf8": sys.stdout.encoding.lower().replace("-", "") == "utf8"}
@@ -481,7 +482,7 @@ async fn plugin_bootstrap_environment_ignores_tool_overlays_and_owns_home() {
     let observed = observed.unwrap().unwrap();
     assert_eq!(
         observed,
-        json!({"managed_proxy": true, "untrusted_absent": true, "private_home": true, "private_paths": true,
+        json!({"package_cwd": true, "managed_proxy": true, "untrusted_absent": true, "private_home": true, "private_paths": true,
         "plugin_root": true, "plugin_name": true, "fixed_path": true, "stdout_utf8": true})
     );
 }

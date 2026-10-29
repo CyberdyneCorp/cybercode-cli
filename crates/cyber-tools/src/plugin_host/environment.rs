@@ -25,6 +25,7 @@ pub(super) fn build(
         ("XDG_DATA_HOME".into(), text(&scratch.join("data"))),
         ("XDG_STATE_HOME".into(), text(&scratch.join("state"))),
         ("DENO_DIR".into(), text(&scratch.join("deno-cache"))),
+        ("DENO_NO_UPDATE_CHECK".into(), "1".into()),
         (
             "BUN_RUNTIME_TRANSPILER_CACHE_PATH".into(),
             text(&scratch.join("bun-cache")),

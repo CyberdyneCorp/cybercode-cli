@@ -16,6 +16,12 @@
 - **THEN** the plugin host receives only its explicit bootstrap environment and owner-created proxy settings, with its home and cache paths inside private scratch
 - **AND** plugin configuration and authorized secrets continue through the host protocol rather than implicit environment inheritance
 
+#### Scenario: Package startup does not borrow workspace configuration
+- **WHEN** a Bun or Deno host starts for a Location containing unrelated runtime configuration or dotenv files
+- **THEN** startup uses its package working directory and explicit package configuration or reviewed empty configuration
+- **AND** permitted bundled preloads, imports and frozen package locks remain usable without rewriting the approved package
+- **AND** prepared Deno packages retain an owner-created boundary against ancestor workspace discovery while the workspace Location remains in the initialize envelope
+
 ### Requirement: Runtime contribution generation ownership
 (P1) Runtime hooks, providers and catalog transforms SHALL be validated and owned by plugin identity, digest, Location and host generation. Revocation SHALL remove only that generation before later dispatch, and stale results SHALL NOT restore it. Runtime hooks SHALL follow ordinary plugin hook scope and managed-only policy. Provider streams SHALL use normal usage/cancellation paths and SHALL NOT supply trusted reserved bounds by declaration alone. Catalog transforms SHALL be bounded and ordered, preserve policy/configuration ceilings and leave the previous valid view intact on failure.
 

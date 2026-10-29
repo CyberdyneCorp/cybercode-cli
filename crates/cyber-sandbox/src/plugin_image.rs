@@ -43,6 +43,10 @@ pub use authority::{Generation, Lease};
 pub struct Package {
     #[cfg(unix)]
     _root: cap_std::fs::Dir,
+    #[cfg(unix)]
+    _namespace: cap_std::fs::Dir,
+    #[cfg(unix)]
+    _workspace: cap_std::fs::File,
     _parent: tempfile::TempDir,
     report: PreparedCopy,
     lease: Lease,
@@ -253,12 +257,38 @@ fn bind(
     if (metadata.dev(), metadata.ino()) != report.root_identity {
         return Err(Error::Binding);
     }
+    // A Deno package config otherwise searches arbitrary ancestors for a
+    // workspace, even when selected by an absolute --config argument. Keep this
+    // static boundary outside the approved image, so its digest stays unchanged.
+    // The caller's protected-namespace obligation applies to this file too.
+    let workspace = bootstrap_boundary(&directory)?;
     Ok(Package {
         _root: root,
+        _namespace: directory,
+        _workspace: workspace,
         _parent: parent,
         report,
         lease,
     })
+}
+
+#[cfg(unix)]
+fn bootstrap_boundary(directory: &cap_std::fs::Dir) -> Result<cap_std::fs::File, Error> {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    const NAME: &str = "package.json";
+    let mut options = cap_std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    let mut file = directory.open_with(NAME, &options).map_err(|_| Error::Io)?;
+    file.write_all(b"{\"private\":true,\"workspaces\":[]}\n")
+        .map_err(|_| Error::Io)?;
+    file.sync_all().map_err(|_| Error::Io)?;
+    file.set_permissions(cap_std::fs::Permissions::from_std(
+        std::fs::Permissions::from_mode(0o400),
+    ))
+    .map_err(|_| Error::Io)?;
+    drop(file);
+    directory.open(NAME).map_err(|_| Error::Io)
 }
 
 /// Runtime shutdown can drop the supervisor before its asynchronous reap ends.
@@ -278,6 +308,25 @@ impl Drop for RetainUntilReaped {
 mod tests {
     use super::*;
     use std::os::unix::fs::MetadataExt;
+
+    #[test]
+    fn workspace_boundary_refuses_existing_files_and_symlinks_without_modifying_them() {
+        let namespace = tempfile::tempdir().unwrap();
+        let directory =
+            cap_std::fs::Dir::open_ambient_dir(namespace.path(), cap_std::ambient_authority())
+                .unwrap();
+        let boundary = namespace.path().join("package.json");
+        std::fs::write(&boundary, b"existing metadata").unwrap();
+        assert!(matches!(bootstrap_boundary(&directory), Err(Error::Io)));
+        assert_eq!(std::fs::read(&boundary).unwrap(), b"existing metadata");
+        std::fs::remove_file(&boundary).unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(outside.path(), b"outside metadata").unwrap();
+        std::os::unix::fs::symlink(outside.path(), &boundary).unwrap();
+        assert!(matches!(bootstrap_boundary(&directory), Err(Error::Io)));
+        assert_eq!(std::fs::read(outside.path()).unwrap(), b"outside metadata");
+        assert!(std::fs::symlink_metadata(&boundary).unwrap().is_symlink());
+    }
 
     fn worker(root: &Path, control: u8) -> PathBuf {
         let helper = root.join(format!("helper-{control}"));

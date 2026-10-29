@@ -66,3 +66,14 @@ variables are not passed through. Home, temporary and runtime cache paths point
 inside the host's private scratch, which is removed when the host stops. The
 owner supplies any permitted proxy endpoint. This does not complete native
 filesystem/subprocess capability enforcement or runtime admission.
+
+Host working directories are package directories. Use the Location supplied in
+`initialize.location.directory` for workspace operations. Bun package config and
+Deno package JSON/JSONC config remain available. Automatic dotenv loading,
+automatic dependency installation and ambient lock discovery are disabled.
+Deno disables config discovery when the package has no config.
+Provide bundled dependencies and an up-to-date package lock when one is needed.
+Prepared Deno images also need their retained private workspace boundary; selecting
+an absolute config path alone does not prevent ancestor workspace discovery.
+Production launch still uses the source package; prepared-image integration and
+complete native admission remain outstanding.

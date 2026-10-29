@@ -83,7 +83,7 @@ impl LaunchContext<'_> {
                 child
                     .env_clear()
                     .envs(&environment)
-                    .current_dir(self.location)
+                    .current_dir(plugin.root)
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
@@ -193,8 +193,8 @@ fn command(plugin: &PluginLaunch<'_>) -> Result<(String, Vec<String>), String> {
     let (candidates, args): (&[&str], Vec<String>) = match plugin.host.runtime {
         Runtime::Native => return Ok((main_arg, Vec::new())),
         Runtime::Node => (&["node"], vec![main_arg]),
-        Runtime::Bun => (&["bun"], vec!["run".into(), main_arg]),
-        Runtime::Deno => (&["deno"], vec!["run".into(), "-A".into(), main_arg]),
+        Runtime::Bun => (&["bun"], bun_arguments(plugin, main_arg)?),
+        Runtime::Deno => (&["deno"], deno_arguments(plugin, main_arg)?),
         Runtime::Python => (&["python3", "python"], vec!["-u".into(), main_arg]),
     };
     let program = candidates
@@ -208,6 +208,62 @@ fn command(plugin: &PluginLaunch<'_>) -> Result<(String, Vec<String>), String> {
             )
         })?;
     Ok((program.display().to_string(), args))
+}
+
+fn bun_arguments(plugin: &PluginLaunch<'_>, main: String) -> Result<Vec<String>, String> {
+    let config = runtime_config(plugin, &["bunfig.toml"])?
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| {
+            if cfg!(windows) {
+                "NUL".into()
+            } else {
+                "/dev/null".into()
+            }
+        });
+    Ok(vec![
+        format!("--config={config}"),
+        "--no-env-file".into(),
+        "--no-install".into(),
+        main,
+    ])
+}
+
+fn deno_arguments(plugin: &PluginLaunch<'_>, main: String) -> Result<Vec<String>, String> {
+    let configuration = match runtime_config(plugin, &["deno.json", "deno.jsonc"])? {
+        Some(path) => vec![format!("--config={}", path.display())],
+        None => vec!["--no-config".into()],
+    };
+    let lock = match runtime_config(plugin, &["deno.lock"])? {
+        Some(path) => vec![
+            format!("--lock={}", path.display()),
+            "--frozen-lockfile".into(),
+        ],
+        None => vec!["--no-lock".into()],
+    };
+    let mut args = vec!["run".into(), "-A".into()];
+    args.extend(configuration);
+    args.extend(lock);
+    args.extend(["--node-modules-dir=manual".into(), main]);
+    Ok(args)
+}
+
+/// Select configuration only inside the approved package. This metadata check
+/// does not replace immutable package/ancestor admission at the final launch.
+fn runtime_config(plugin: &PluginLaunch<'_>, names: &[&str]) -> Result<Option<PathBuf>, String> {
+    for name in names {
+        let path = plugin.root.join(name);
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.is_file() => return Ok(Some(path)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            _ => {
+                return Err(format!(
+                    "plugin {}: runtime configuration must be a regular package file",
+                    plugin.name
+                ));
+            }
+        }
+    }
+    Ok(None)
 }
 
 fn find_program(name: &str) -> Option<PathBuf> {
@@ -313,6 +369,38 @@ mod tests {
     }
 
     #[test]
+    fn runtime_configuration_directories_are_refused_before_startup() {
+        for (runtime, name) in [
+            (Runtime::Bun, "bunfig.toml"),
+            (Runtime::Deno, "deno.json"),
+            (Runtime::Deno, "deno.lock"),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            std::fs::write(root.path().join("host"), "").unwrap();
+            std::fs::create_dir(root.path().join(name)).unwrap();
+            assert!(
+                launch_of(root.path(), "host", runtime)
+                    .unwrap_err()
+                    .contains("runtime configuration must be a regular package file")
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runtime_configuration_symlinks_are_refused_before_startup() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("host"), "").unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("bunfig.toml")).unwrap();
+        assert!(
+            launch_of(root.path(), "host", Runtime::Bun)
+                .unwrap_err()
+                .contains("runtime configuration must be a regular package file")
+        );
+    }
+
+    #[test]
     fn each_runtime_starts_main_and_main_must_be_a_regular_file_inside_the_root() {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("host"), "").unwrap();
@@ -322,8 +410,29 @@ mod tests {
             (main.clone(), Vec::new())
         );
         for (runtime, args) in [
-            (Runtime::Bun, vec!["run".to_owned(), main.clone()]),
-            (Runtime::Deno, vec!["run".into(), "-A".into(), main.clone()]),
+            (
+                Runtime::Bun,
+                vec![
+                    format!(
+                        "--config={}",
+                        if cfg!(windows) { "NUL" } else { "/dev/null" }
+                    ),
+                    "--no-env-file".into(),
+                    "--no-install".into(),
+                    main.clone(),
+                ],
+            ),
+            (
+                Runtime::Deno,
+                vec![
+                    "run".into(),
+                    "-A".into(),
+                    "--no-config".into(),
+                    "--no-lock".into(),
+                    "--node-modules-dir=manual".into(),
+                    main.clone(),
+                ],
+            ),
             (Runtime::Python, vec!["-u".into(), main.clone()]),
             (Runtime::Node, vec![main.clone()]),
         ] {
@@ -346,3 +455,7 @@ mod tests {
         assert!(launch_of(root.path(), "dir", Runtime::Native).is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "startup_tests.rs"]
+mod startup_tests;
