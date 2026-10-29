@@ -169,3 +169,30 @@ receiver-drop cancellation, reaping before cleanup, runtime-shutdown retention,
 bounded error handling and directory-only identity verification. These results
 do not complete private-root provenance, generation admission, native launcher
 integration or hosted OS acceptance.
+
+## macOS workflow CI fixture correction
+
+At `47453b14`, 23 checks passed and the broad macOS Rust job failed
+[solve settlement](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40807803387/job/123230844927).
+Its native fixture returned from the parent immediately after `fork`, before the
+child necessarily called `setsid`. The host could terminate that still-attached
+child and correctly report a settled leader exit, while the test expected an
+unknown detached descendant. Its four-second child sleep also made the expected
+open-pipe state depend on scheduling.
+
+The focused unchanged test passed locally on main `a0199b34` and on the PR
+revision. Those passes do not reproduce or dismiss the observed CI failure.
+The fixture now checks `pipe`, `fork` and `setsid`, and requires a readiness
+receipt before its parent exits. A short adversarial child delay exercises that
+parent/child ordering; synchronization depends on the receipt. The descendant
+keeps its output pipes open until the test owner releases it after the settlement
+assertions. A bounded fallback and drop guard provide failure cleanup. The test
+also requires `settled=false` and unchanged source, so source mutation cannot
+stand in for unknown native settlement. Linux retains its namespace-wide
+settlement expectations; Windows does not run this Unix-only fixture.
+
+The corrected focused test passes locally on macOS arm64. The same linker
+unwind-table warning was observed during both unchanged-main and PR test builds;
+it is not a failed test. Hosted CI must rerun the updated fixture before the PR
+is accepted. This changes test synchronization, not production settlement policy
+or the native plugin capability scope.
