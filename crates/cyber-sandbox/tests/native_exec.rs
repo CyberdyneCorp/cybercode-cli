@@ -82,6 +82,11 @@ mod macos {
                     "-Werror",
                     "-Wno-error=deprecated-declarations",
                 ])
+                .arg("-I")
+                .arg(
+                    Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../scripts/probes/plugin-confinement"),
+                )
                 .arg(&input)
                 .arg("-o")
                 .arg(&output),
@@ -142,6 +147,9 @@ mod macos {
                 .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
             command
         }
+    }
+    mod policy {
+        include!("support/native_policy_macos.rs");
     }
     fn packet(output: std::process::Output) -> Value {
         assert!(

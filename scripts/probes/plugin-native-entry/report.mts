@@ -13,6 +13,8 @@ const sources = [
   "Cargo.lock", "crates/cyber-sandbox/Cargo.toml", "crates/cyber-sandbox/build.rs",
   "crates/cyber-sandbox/native/macos_plugin_exec.c", "crates/cyber-sandbox/src/native_exec.rs",
   "crates/cyber-sandbox/src/bin/cyber-sandbox-exec.rs", "crates/cyber-sandbox/tests/native_exec.rs",
+  "crates/cyber-sandbox/src/lib.rs", "crates/cyber-sandbox/src/plugin_policy.rs",
+  "crates/cyber-sandbox/src/plugin_policy/tests.rs", "crates/cyber-sandbox/tests/support/native_policy_macos.rs",
   "crates/cyber-sandbox/tests/fixtures/plugin_native_fds.c",
   "scripts/probes/plugin-confinement/fixture_exec.c", "scripts/probes/plugin-confinement/fixture_native.c",
   "scripts/probes/plugin-confinement/process_policy.h", "scripts/probes/plugin-native-entry/report.mts",
