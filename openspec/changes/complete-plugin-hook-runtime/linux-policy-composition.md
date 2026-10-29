@@ -114,3 +114,14 @@ backend tests and incorrectly expected unavailable on Linux itself. That duplica
 is removed. The jobs stopped before the new native integration/controls, so none
 of those native checks is counted as passing for that revision. Fresh hosted
 execution remains required after this test-only correction.
+
+
+At `b4822f2e`, both Linux jobs compile the new tests and pass private-procfs and
+ancestor/positive-rename regressions. The matrix then fails `private_list`: its
+primary private-file argument was under a public parent, while the shared native
+fixture deliberately measures the parent directory's listing. A file mask does
+not make its public parent an opaque directory. The matrix now supplies the
+actual private-directory file for that directory assertion, while constructor and
+symlink probes retain the private-file target. Separate direct file-read/write
+assertions are added to the mutation regression. No directory or file denial is
+removed; full fresh matrix and control execution remains required.

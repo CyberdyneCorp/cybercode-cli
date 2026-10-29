@@ -108,7 +108,7 @@ impl Composed {
         for path in [
             self.package.join("data"),
             self.project.join("data"),
-            self.private_file.clone(),
+            self.private_dir.join("secret"),
             scratch.join("roundtrip"),
             self.project.join("written"),
             self.package.join("alias"),
@@ -263,6 +263,16 @@ fn rust_linux_policy_protects_ancestors_and_preserves_public_renames() {
             );
         }
     }
+    assert_eq!(
+        mutation(&f, &target, "read", &f.private_file, &f.private_file),
+        serde_json::json!({"ok":false,"errno":13}),
+        "private file read"
+    );
+    assert_eq!(
+        mutation(&f, &target, "write", &f.private_file, &f.private_file),
+        serde_json::json!({"ok":false,"errno":30}),
+        "private file write"
+    );
     let data = f.package.join("data");
     assert_eq!(
         mutation(&f, &target, "write", &data, &data),

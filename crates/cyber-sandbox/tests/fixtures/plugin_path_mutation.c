@@ -8,6 +8,14 @@ int main(int argc, char **argv) {
     if (argc != 4) return 2;
     int result;
     if (strcmp(argv[1], "rename") == 0) result = rename(argv[2], argv[3]);
+    else if (strcmp(argv[1], "read") == 0) {
+        char byte;
+        int fd = open(argv[2], O_RDONLY);
+        result = fd < 0 ? -1 : (read(fd, &byte, 1) == 1 ? 0 : -1);
+        int saved = errno;
+        if (fd >= 0) close(fd);
+        errno = saved;
+    }
     else if (strcmp(argv[1], "write") == 0) {
         int fd = open(argv[2], O_WRONLY | O_TRUNC);
         result = fd < 0 ? -1 : (write(fd, "changed-fixture", 15) == 15 ? 0 : -1);
