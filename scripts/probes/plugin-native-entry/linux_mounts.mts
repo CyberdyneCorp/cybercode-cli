@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { release, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { parseArgs } from "node:util";
@@ -131,6 +131,12 @@ selfTest();
 if (!values["self-test"]) {
   assert.equal(process.platform, "linux", "native mount receipts require Linux");
   assert(values.report, "--report is required for native receipts");
+  const bwrap = spawnSync("/usr/bin/bwrap", ["--version"],
+    { encoding: "utf8", timeout: 10_000, maxBuffer: 4096, env: { PATH: "/usr/bin:/bin" } });
+  assert.equal(bwrap.status, 0, "bubblewrap version query failed");
+  const python = spawnSync("/usr/bin/python3", ["-I", "-S", "--version"],
+    { encoding: "utf8", timeout: 10_000, maxBuffer: 4096, env: { PATH: "/usr/bin:/bin" } });
+  assert.equal(python.status, 0, "Python version query failed");
   const rows = [];
   let outcome = "failed";
   try {
@@ -158,7 +164,8 @@ if (!values["self-test"]) {
     const sources = ["scripts/probes/plugin-native-entry/linux_mounts.mts", ".github/workflows/plugin-linux-mounts.yml"];
     const hash = createHash("sha256");
     for (const path of sources) hash.update(path + "\0").update(readFileSync(path));
-    const report = { platform: process.platform, architecture: process.arch, checkout: process.env.GITHUB_SHA ?? null,
+    const report = { platform: process.platform, architecture: process.arch, kernel_release: release(),
+      bubblewrap_version: bwrap.stdout.trim(), python_version: python.stdout.trim(), checkout: process.env.GITHUB_SHA ?? null,
       run_id: process.env.GITHUB_RUN_ID ?? null, outcome, sources, source_sha256: hash.digest("hex"), rows,
       scope: "Mount primitive experiment only. No Landlock, native helper/runtime admission, network capability, Windows or production activation proof." };
     mkdirSync(dirname(resolve(values.report)), { recursive: true });
