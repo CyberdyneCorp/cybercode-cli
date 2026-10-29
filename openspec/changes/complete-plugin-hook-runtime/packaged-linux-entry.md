@@ -119,3 +119,22 @@ control behavior, without treating it as evidence for native descriptor cleanup.
 All confined cases still require absence; the separate native FD test and
 missing-cleanup control remain mandatory. The matrix now collects all runtime
 failures before exiting nonzero, so one runtime failure cannot hide later ones.
+
+## Recorded Linux packaged acceptance at `758b86f8`
+
+The focused [Linux x86_64 job](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40870601578/job/123436350500)
+and [Linux arm64 job](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40870601578/job/123436351018)
+both pass: native musl C compilation, all three argument tests, all five packaged
+integration tests, all nine capability combinations for each of Node, Python,
+Bun, Deno and native (45 cases per architecture), the exact missing-cleanup
+assertion, and the restored positive integration suite. Windows' focused job
+passes its explicit unavailable-mode behavior; this is not Windows confinement.
+
+Both retained artifacts were inspected. Each of the five runtime reports has
+nine rows and no unsupported cases; each input helper digest matches the
+retained built-helper digest. Independently recalculated source manifests match
+the checked-out PR sources. The retained checkout `1b54f95b` is GitHub's test
+merge with parents `d90f4c16` and `758b86f8`, verified through the commit API.
+These source/binary bindings accompany actual passing tests, rather than being
+substituted for them. macOS hosted packaged matrix execution and the remaining
+production admission/integration gates above remain outstanding.
