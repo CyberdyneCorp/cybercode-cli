@@ -11,6 +11,11 @@
 - **WHEN** a plugin with `shell` launches a child without Location read or network capability
 - **THEN** the child cannot gain those capabilities through the host's broader Session Mode, inherited descriptors or environment
 
+#### Scenario: Tool environment cannot inject plugin bootstrap
+- **WHEN** the owner environment or ordinary-tool environment policy contains runtime loader options, search paths, proxy overrides or provider credentials
+- **THEN** the plugin host receives only its explicit bootstrap environment and owner-created proxy settings, with its home and cache paths inside private scratch
+- **AND** plugin configuration and authorized secrets continue through the host protocol rather than implicit environment inheritance
+
 ### Requirement: Runtime contribution generation ownership
 (P1) Runtime hooks, providers and catalog transforms SHALL be validated and owned by plugin identity, digest, Location and host generation. Revocation SHALL remove only that generation before later dispatch, and stale results SHALL NOT restore it. Runtime hooks SHALL follow ordinary plugin hook scope and managed-only policy. Provider streams SHALL use normal usage/cancellation paths and SHALL NOT supply trusted reserved bounds by declaration alone. Catalog transforms SHALL be bounded and ordered, preserve policy/configuration ceilings and leave the previous valid view intact on failure.
 

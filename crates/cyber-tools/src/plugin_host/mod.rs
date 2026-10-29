@@ -11,6 +11,7 @@
 //! removes exactly its tools from the next step's list, without a server restart.
 
 mod connection;
+mod environment;
 mod host;
 mod launch;
 pub(crate) mod network;
