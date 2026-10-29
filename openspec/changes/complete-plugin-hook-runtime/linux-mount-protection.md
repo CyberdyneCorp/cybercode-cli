@@ -42,9 +42,8 @@ by the driver and removed after its actor settles.
 Local macOS checks pass TypeScript syntax, the actor's Python AST syntax, portable
 ancestor ordering/sibling-prefix checks, workflow YAML and both Bash blocks, and
 diff checks. Linux execution is unavailable locally. The new lightweight workflow
-requires native Ubuntu x64 and arm64 receipts before the candidate can be treated
-as proved. Expected control/candidate outcomes here remain hypotheses until those
-jobs finish; no Linux native acceptance is claimed by these local checks.
+requires native Ubuntu x64 and arm64 receipts. Those mount-only receipts are now
+recorded below; local checks alone did not establish them.
 
 This is a mount primitive experiment, without Landlock or the packaged native
 entry. It does not prove fs.read/shell/network/secret intersections, immutable
@@ -73,3 +72,36 @@ read/write denial and records file kind, mode and nodev mount flag to explain th
 actual view without assigning a cause merely from EACCES. Candidate regular-file
 requirements and the successful unanchored rename counterexample are unchanged.
 Fresh complete native runs are required after this diagnostic correction.
+
+
+## Verified mount-only receipts at `d4fcf3ee`
+
+The corrected [x64 job](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40943857344/job/123693935943)
+and [arm64 job](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40943857344/job/123693935579)
+both pass all five cases. Both report Linux `7.0.0-1017-azure`, bubblewrap `0.9.0`
+and system Python `3.12.3`. The exact passing reports are preserved at
+[the evidence directory](../../../scripts/probes/plugin-native-entry/evidence/linux-mounts-d4fcf3ee/),
+with the initial x64 failed report retained separately and explicitly marked failed.
+
+Both source manifests independently recompute to
+`fc98524c490a23bc18e373783cdea32b55ceb400dee2d22a9b78c3d3f32660ed`
+from fetched checkout `d6afa580`. Its verified parents are `7261e888` and
+`d4fcf3ee`. The retained initial failed report also matches its own exact source
+checkout and is not counted as passing acceptance.
+
+Every passing report retains positive actor startup and unchanged owner bytes.
+Unanchored writable cases perform all eight protected ancestor moves. Anchored
+writable cases refuse all eight with EBUSY while permitting all sibling writes,
+public writes/renames and scratch writes. Readonly cases reject workspace writes
+but keep scratch usable. Immutable writes refuse with EROFS; private reads and
+writes are refused. The /dev/null comparison records a mode-0666 character device,
+nodev mount flag and EACCES write result, rather than the originally hypothesized
+successful device write. The regular-file candidate remains independent of that
+device-specific outcome.
+
+The scoped review covered driver/actor separation, direct argument passing,
+cleared child environment, namespace/capability flags, shallow-first anchor order,
+positive controls, exact errors and unchanged owner data, bounded receipts and
+source-bound failure reporting. No blocking issue was found within this mount
+experiment. These receipts prove the primitive only: production Linux composition,
+Landlock/helper integration and complete owner admission remain unimplemented.
