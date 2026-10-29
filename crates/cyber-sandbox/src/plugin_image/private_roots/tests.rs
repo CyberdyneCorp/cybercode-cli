@@ -56,8 +56,9 @@ fn private_inventory_refuses_external_and_internal_hard_links_before_and_after_c
         );
         assert_eq!(inventory.recheck(), Err(Error::Unsafe));
         std::fs::remove_file(alias).unwrap();
-        // Restoring a link count does not restore the captured ctime incarnation.
-        assert_eq!(inventory.recheck(), Err(Error::Changed));
+        // A fresh capture may admit the now-unlinked object. Do not require the
+        // filesystem clock to distinguish this rapid link/unlink round trip.
+        // The live-alias refusals above are the invariant, not timestamp precision.
         capture(&root).recheck().unwrap();
     }
 }

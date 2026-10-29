@@ -61,7 +61,9 @@ one extra entry refuses. A separate long-path fixture exceeds the 4 MiB path
 budget before the entry limit.
 
 The independent SQLite connection still observes the owner's exclusive lock
-after inventory capture, recheck and drop. Treating the locked database as an
+after inventory capture, recheck and drop. The hard-link regression verifies
+refusal while the alias exists and safe fresh capture after unlink; it does not
+assume timestamp precision can distinguish a rapid link/unlink round trip. Treating the locked database as an
 expected directory ancestor also refuses without releasing the lock. Three
 behavioral controls execute the named regressions: removing link-count refusal
 allows unsafe capture; removing snapshot comparison misses changed data; adding
