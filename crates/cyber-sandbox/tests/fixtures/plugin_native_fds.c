@@ -19,7 +19,11 @@ int main(int argc, char **argv) {
     if (strcmp(argv[1], "-") == 0) {
         execl(argv[3], argv[3], "fd-check", "500", (char *)NULL);
     } else {
+#ifdef __linux__
+        execl(argv[1], argv[1], "--plugin-native-exec", argv[2], "--initial-shell=0", argv[3], "fd-check", "500", (char *)NULL);
+#else
         execl(argv[1], argv[1], "--plugin-native-exec", argv[2], argv[3], "fd-check", "500", (char *)NULL);
+#endif
     }
     return 2;
 }

@@ -62,8 +62,10 @@ its deadline; it kills/reaps its owned child before reporting that failure. The
 correct code is restored before the positive suite. Other owner/copy regressions
 remain required after this packaging change.
 
-The focused workflow tests macOS arm64/Intel and explicit unsupported internal
-mode behavior on Linux arm64/x86_64 and Windows. It records the checked-out source
+The initial focused workflow tested macOS arm64/Intel and explicit unsupported
+internal mode behavior on Linux arm64/x86_64 and Windows.
+[The Linux packaging follow-up](packaged-linux-entry.md) adds the Linux entry,
+mandatory shell policy and native tests; Windows still reports unavailability. It records the checked-out source
 hash and built helper digest alongside the job. Tests execute private freshly
 signed helper copies, so that build digest identifies their input rather than
 claiming the modified signatures have the same hash. Source provenance is not
@@ -72,12 +74,12 @@ the approved Linux runtime support scope stays required for integration.
 
 ## Remaining integration and gates
 
-The entry is currently implemented for macOS. Other platforms return the explicit
-unavailable-mode result without starting a target. Existing plugin/ordinary-tool
+The entry was introduced for macOS; the linked follow-up adds Linux. Windows
+returns the explicit unavailable-mode result without starting a target. Existing plugin/ordinary-tool
 launches retain their existing behavior in this increment. The strict approved
 platform/runtime contract remains the delivery target.
 
-Task 2.2 remains open for Linux packaging, reviewed runtime resolution, complete
+Task 2.2 remains open for native platform acceptance, reviewed runtime resolution, complete
 private-root/alias composition, immutable image/helper identity, sanitized
 environment and launch lifetime. The owner must bind its generation to the current
 plugin/digest/Location and serialize the final launch check with revocation;

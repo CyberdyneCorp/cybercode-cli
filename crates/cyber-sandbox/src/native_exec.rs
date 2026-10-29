@@ -1,6 +1,6 @@
-//! Dedicated helper-only macOS policy-before-target entry, not execution admission.
+//! Dedicated helper-only native policy-before-target entry, not execution admission.
 //! This private binary module must never be called in the owner process.
-//! Callers must first prove profile/image ownership, signature-identity separation,
+//! Callers must first prove profile/image ownership, platform identity separation,
 //! generation authority, environment/namespace isolation and runtime compatibility.
 use std::ffi::{CString, OsString};
 use std::os::unix::ffi::OsStrExt;
@@ -10,7 +10,8 @@ const MAX_ARGS: usize = 256;
 const MAX_BYTES: usize = 64 * 1024;
 
 /// Arguments include the native mode flag as argv[0], then absolute profile and
-/// target paths and the target's arguments. A successful call replaces this PID.
+/// target paths and the target's arguments. Linux requires --initial-shell=0/1
+/// between the profile and target. A successful call replaces this PID.
 pub fn run(arguments: impl IntoIterator<Item = OsString>) -> ExitCode {
     let Some(arguments) = bounded(arguments) else {
         eprintln!("cyber-sandbox-exec: invalid native plugin exec arguments");
@@ -33,10 +34,18 @@ fn bounded(arguments: impl IntoIterator<Item = OsString>) -> Option<Vec<CString>
         }
         strings.push(CString::new(value).ok()?);
     }
-    if strings.len() < 3 || strings[0].as_bytes() != b"--plugin-native-exec" {
+    let target = if cfg!(target_os = "linux") { 3 } else { 2 };
+    if strings.len() <= target || strings[0].as_bytes() != b"--plugin-native-exec" {
         return None;
     }
-    for argument in &strings[1..3] {
+    #[cfg(target_os = "linux")]
+    if !matches!(
+        strings[2].as_bytes(),
+        b"--initial-shell=0" | b"--initial-shell=1"
+    ) {
+        return None;
+    }
+    for argument in [&strings[1], &strings[target]] {
         if argument.as_bytes().len() > 4096 || !argument.as_bytes().starts_with(b"/") {
             return None;
         }
@@ -64,8 +73,28 @@ fn execute(arguments: &[CString]) -> i32 {
 mod tests {
     use super::*;
     #[test]
+    fn valid_native_arguments_require_platform_policy_shape() {
+        let mut arguments = vec!["--plugin-native-exec", "/profile"];
+        if cfg!(target_os = "linux") {
+            arguments.push("--initial-shell=0");
+        }
+        arguments.extend(["/target", "argument"]);
+        assert!(bounded(arguments.into_iter().map(OsString::from)).is_some());
+        #[cfg(target_os = "linux")]
+        for flag in ["--initial-shell=2", "--initial-shell=", "-"] {
+            assert!(
+                bounded(
+                    ["--plugin-native-exec", "/profile", flag, "/target"]
+                        .into_iter()
+                        .map(OsString::from)
+                )
+                .is_none()
+            );
+        }
+    }
+    #[test]
     fn argument_bounds_refuse_relative_paths_bypass_and_embedded_nul() {
-        for arguments in [
+        for mut arguments in [
             vec!["--plugin-native-exec", "-", "/bin/sh"],
             vec!["--plugin-native-exec", "/profile", "relative"],
             vec!["wrong-mode", "/profile", "/bin/sh"],
@@ -76,21 +105,32 @@ mod tests {
                 "bad\0argument",
             ],
         ] {
+            if cfg!(target_os = "linux") {
+                arguments.insert(2, "--initial-shell=0");
+            }
             assert!(bounded(arguments.into_iter().map(OsString::from)).is_none());
         }
-        let mut arguments = vec![
-            OsString::from("--plugin-native-exec"),
-            "/profile".into(),
-            "/target".into(),
-        ];
-        arguments.extend((0..MAX_ARGS).map(|_| OsString::from("arg")));
-        assert!(bounded(arguments).is_none());
-        let large = vec![
-            OsString::from("--plugin-native-exec"),
-            "/profile".into(),
-            "/target".into(),
-            "x".repeat(MAX_BYTES).into(),
-        ];
-        assert!(bounded(large).is_none());
+    }
+    #[test]
+    fn argument_count_and_byte_limits_accept_boundary_and_refuse_overflow() {
+        let mut prefix = vec![OsString::from("--plugin-native-exec"), "/profile".into()];
+        if cfg!(target_os = "linux") {
+            prefix.push("--initial-shell=0".into());
+        }
+        prefix.push("/target".into());
+        let mut count = prefix.clone();
+        count.resize(MAX_ARGS, "argument".into());
+        assert!(bounded(count.clone()).is_some());
+        count.push("one-too-many".into());
+        assert!(bounded(count).is_none());
+        let prefix_bytes: usize = prefix
+            .iter()
+            .map(|arg| arg.as_os_str().as_bytes().len() + 1)
+            .sum();
+        let mut bytes = prefix.clone();
+        bytes.push("x".repeat(MAX_BYTES - prefix_bytes - 1).into());
+        assert!(bounded(bytes).is_some());
+        prefix.push("x".repeat(MAX_BYTES - prefix_bytes).into());
+        assert!(bounded(prefix).is_none());
     }
 }
