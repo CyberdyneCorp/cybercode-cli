@@ -114,3 +114,20 @@ initial runtime lookup still uses owner PATH; production launch is still the
 legacy sandbox; prepared-image native integration and protected/alias-root
 composition remain unimplemented. Windows fixture receipts prove CLI behavior
 only. These are open parent tasks, not claims of completed capability enforcement.
+
+
+## Intel hosted job budget
+
+At source `9e802ec1`, [Intel job 123660939230](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40934385871/job/123660939230)
+was cancelled by its 30-minute job limit. GitHub's annotation explicitly records
+that maximum execution time. Helper build, environment construction, bundled
+runtime startup, missing-filter controls and the prepared workspace boundary
+step passed. The job was still compiling Rust dependencies for the production App
+plugin tests when cancelled. Those App tests and the later overlay control are
+not passing results for that job.
+
+The workflow job budget is now 60 minutes to accommodate that compilation plus
+the required regressions. Runtime receipt deadlines, control assertions, worker
+limits and source restoration are unchanged. Fresh hosted Intel completion is
+still required; neither the cancellation nor increasing the build allowance
+establishes acceptance.
