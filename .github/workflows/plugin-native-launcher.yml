@@ -1,0 +1,73 @@
+name: Packaged plugin native entry
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - crates/cyber-sandbox/**
+      - scripts/probes/plugin-confinement/fixture_exec.c
+      - scripts/probes/plugin-confinement/fixture_native.c
+      - scripts/probes/plugin-confinement/process_policy.h
+      - Cargo.lock
+      - .github/workflows/plugin-native-launcher.yml
+      - scripts/probes/plugin-native-entry/**
+  push:
+    branches: [main]
+    paths:
+      - crates/cyber-sandbox/**
+      - scripts/probes/plugin-confinement/fixture_exec.c
+      - scripts/probes/plugin-confinement/fixture_native.c
+      - scripts/probes/plugin-confinement/process_policy.h
+      - Cargo.lock
+      - .github/workflows/plugin-native-launcher.yml
+      - scripts/probes/plugin-native-entry/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plugin-native-entry-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  entry:
+    name: Packaged entry (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel, ubuntu-24.04, ubuntu-24.04-arm, windows-latest]
+    env:
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Verify packaged entry and explicit unsupported-mode behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked -p cyber-sandbox --bin cyber-sandbox-exec native_exec
+          cargo test --locked -p cyber-sandbox --test native_exec
+      - name: Record exact source and built helper provenance
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary=target/debug/cyber-sandbox-exec
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            binary+=.exe
+          fi
+          node --experimental-strip-types scripts/probes/plugin-native-entry/report.mts --binary "$binary" --out "$RUNNER_TEMP/native-entry-provenance.json"
+      - name: Retain build provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-entry-provenance-${{ matrix.os }}
+          path: ${{ runner.temp }}/native-entry-provenance.json
+          if-no-files-found: error
+          retention-days: 14
