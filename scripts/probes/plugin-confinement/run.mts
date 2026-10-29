@@ -324,7 +324,9 @@ function check(root: string, artifacts: Artifacts, runtime: Runtime, name: strin
   if (!flags.unrestricted) writeFileSync(profile, isLinux ? `shell=${flags.shell ? 1 : 0}\n` : policy(runtime, paths, flags, artifacts.stagedPlatform, artifacts.signingIdentifier), { mode: 0o600 });
   const actual = observe(artifacts, runtime, paths, profile, "inspect", flags);
   const expectations = expected(flags);
-  if (artifacts.packaged && flags.unrestricted) expectations.inherited_descriptor = true;
+  // Deno's direct unconfined control reports this descriptor absent too. It
+  // cannot establish helper cleanup; the dedicated native FD control does that.
+  if (artifacts.packaged && flags.unrestricted) expectations.inherited_descriptor = runtime.kind !== "deno";
   if (artifacts.addon) expectations.startup_artifacts = false;
   if (isLinux && runtime.kind === "bun") {
     expectations.proc_root_reads = [flags.read, !!flags.unrestricted];

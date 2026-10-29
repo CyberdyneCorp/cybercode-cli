@@ -79,6 +79,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/packaged-runtime"
           helper="$PWD/target/debug/cyber-sandbox-exec"
+          matrix_status=0
           for runtime in node python bun deno native; do
             args=(--runtime "$runtime" --packaged-helper "$helper" --report "$RUNNER_TEMP/packaged-runtime/$runtime.json")
             if [[ "$runtime" == python ]]; then
@@ -91,11 +92,18 @@ jobs:
             else
               args+=(--macos-signing-runtime)
             fi
-            node --experimental-strip-types scripts/probes/plugin-confinement/run.mts "${args[@]}" > "$RUNNER_TEMP/packaged-runtime/$runtime.log" 2>&1
+            if ! node --experimental-strip-types scripts/probes/plugin-confinement/run.mts "${args[@]}" > "$RUNNER_TEMP/packaged-runtime/$runtime.log" 2>&1; then
+              cat "$RUNNER_TEMP/packaged-runtime/$runtime.log"
+              matrix_status=1
+            fi
           done
           if [[ "$RUNNER_OS" == macOS ]]; then
-            node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime python --python /usr/bin/python3 --macos-signing-runtime --packaged-helper "$helper" --report "$RUNNER_TEMP/packaged-runtime/python-system.json" > "$RUNNER_TEMP/packaged-runtime/python-system.log" 2>&1
+            if ! node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime python --python /usr/bin/python3 --macos-signing-runtime --packaged-helper "$helper" --report "$RUNNER_TEMP/packaged-runtime/python-system.json" > "$RUNNER_TEMP/packaged-runtime/python-system.log" 2>&1; then
+              cat "$RUNNER_TEMP/packaged-runtime/python-system.log"
+              matrix_status=1
+            fi
           fi
+          exit "$matrix_status"
       - name: Verify high-descriptor regression detects missing cleanup
         if: runner.os == 'Linux'
         shell: bash

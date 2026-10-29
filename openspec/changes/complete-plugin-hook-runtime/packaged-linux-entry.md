@@ -87,8 +87,10 @@ signatures. On Linux it requires the one-shot initial-exec mode and existing
 private mount/PID/network namespace composition. Python runs its actual reviewed
 executable directly with `-I -S`; it does not use the old embedding launcher.
 
-The unconfined control executes the target directly and must actually retain the
-inherited dummy descriptor. Confined cases require that descriptor to be absent,
+The unconfined control executes the target directly. Native, Node, Python and
+Bun must actually retain the inherited dummy descriptor; Deno reports it absent
+even in this direct control, so that runtime case cannot prove helper cleanup.
+The independent native high-descriptor test remains required for that proof. Confined cases require that descriptor to be absent,
 plus all existing capability expectations. The report records input and executed
 helper hashes (different after macOS signing), exact probe sources, runtime and
 kernel versions and each of nine cases. The workflow's separate provenance also
@@ -109,3 +111,11 @@ missing-cleanup assertion (descriptor present when it must be absent). The jobs
 then failed because their log verifier assumed `rg` was installed. That verifier
 now uses the already required Python standard library. A fully restored positive
 rerun and the expanded packaged-runtime matrix still require current-source CI.
+
+At `95848c1c`, Linux x86_64 completed all nine packaged runtime cases for Node,
+Python and Bun. Deno then failed only the direct unconfined FD expectation:
+it reported the descriptor absent. The driver now records that specific direct
+control behavior, without treating it as evidence for native descriptor cleanup.
+All confined cases still require absence; the separate native FD test and
+missing-cleanup control remain mandatory. The matrix now collects all runtime
+failures before exiting nonzero, so one runtime failure cannot hide later ones.
