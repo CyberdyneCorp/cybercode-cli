@@ -33,61 +33,8 @@ pub enum Error {
     Revoked,
 }
 
-/// A single owner-controlled generation. Issue a fresh authority for every host
-/// incarnation, even when plugin name, location and content digest are unchanged.
-/// Leases cannot renew or revoke authority. Dropping this owner revokes them all.
-#[derive(Debug)]
-pub struct Generation {
-    signal: tokio::sync::watch::Sender<bool>,
-}
-impl Generation {
-    pub fn new() -> Self {
-        let (signal, _) = tokio::sync::watch::channel(false);
-        Self { signal }
-    }
-    pub fn lease(&self) -> Lease {
-        Lease {
-            signal: self.signal.subscribe(),
-        }
-    }
-    pub fn revoke(&self) {
-        self.signal.send_replace(true);
-    }
-}
-impl Default for Generation {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-impl Drop for Generation {
-    fn drop(&mut self) {
-        self.revoke();
-    }
-}
-
-/// Read-only authority for one generation; cloning it does not keep the owner
-/// alive. Re-admission always requires a fresh Generation rather than renewal.
-#[derive(Debug, Clone)]
-pub struct Lease {
-    signal: tokio::sync::watch::Receiver<bool>,
-}
-impl Lease {
-    pub fn is_current(&self) -> bool {
-        !*self.signal.borrow() && self.signal.has_changed().is_ok()
-    }
-    fn check(&self) -> Result<(), Error> {
-        if self.is_current() {
-            Ok(())
-        } else {
-            Err(Error::Revoked)
-        }
-    }
-    #[cfg(unix)]
-    async fn revoked(&self) {
-        let mut signal = self.signal.clone();
-        let _ = signal.wait_for(|revoked| *revoked).await;
-    }
-}
+mod authority;
+pub use authority::{Generation, Lease};
 
 /// An owned copy, not a sealed or execution-admitted image. Retain this value for
 /// as long as a launcher or host uses the copy. Do not publish without checking
@@ -106,6 +53,18 @@ impl Package {
     pub fn path(&self) -> Result<&Path, Error> {
         self.lease.check()?;
         Ok(&self.report.destination)
+    }
+    /// Serialize the final synchronous start with generation revocation. The
+    /// callback must actually perform the start, not return a future to run later.
+    /// This supplies only generation authority: private provenance, immutable
+    /// runtime/helper binding and native OS admission are still caller obligations.
+    /// Do not revoke the same generation from the callback (the gate is held).
+    pub fn commit<T>(
+        &self,
+        owner: &Generation,
+        start: impl FnOnce(&Path) -> T,
+    ) -> Result<T, Error> {
+        owner.commit(&self.lease, || start(&self.report.destination))
     }
     pub fn digest(&self) -> &str {
         &self.report.digest

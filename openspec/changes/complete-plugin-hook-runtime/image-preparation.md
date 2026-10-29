@@ -260,3 +260,8 @@ an execution permit: the native launch commit must serialize its final authority
 check with revocation and ensure already-running processes stop. Complete private
 roots, immutable runtime/helper binding and OS policy integration remain required.
 The existing native proof/design gate and task 2.2 remain open.
+
+
+The [launch-authority follow-up](launch-authority.md) now provides that synchronous
+final commit gate and exact owner/lease binding. It does not supply native
+admission, stop a running process or complete production host reconciliation.
