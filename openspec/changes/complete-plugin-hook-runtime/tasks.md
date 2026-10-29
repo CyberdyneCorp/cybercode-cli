@@ -23,6 +23,11 @@ now excludes project/package directories, relative entries and symlink targets
 back into either tree. It is not fixed reviewed runtime/image admission; the
 parent native enforcement and support gates remain open.
 
+The [same-group host child cleanup](host-process-lifetime.md) routes crash and
+graceful waits through the existing tree-aware Process owner. Live-child and
+missing-fix regressions cover those paths; escaped descendants, startup/cancellation
+settlement and complete native resource lifetime remain open.
+
 ## 3. Host contribution lifecycle
 
 - [ ] 3.1 Validate initialize contributions and add plugin/digest/Location/generation ownership, collision handling, atomic replacement and late-result fences.

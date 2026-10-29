@@ -56,3 +56,13 @@ environment injection out of the tests, and verifies a restored suite after the
 specific failing receipt. No additional source finding remains within the lookup
 guard. The unresolved immutable identity, hard-link and writer-race obligations
 above are not claimed fixed by this increment, and no parent task is closed.
+
+## Hosted control correction at `19cf223c`
+
+The Linux x64/arm64 and Windows bootstrap jobs pass the new search suite and
+the six bundled startup tests. The later Bun/Deno missing-filter control then
+fails before executing a test: its mutation script still used the removed
+`find_program` function as an end marker. This is a workflow refactor error,
+not a passing denial control. It now selects the actual Bun/Deno argument-builder
+functions; both exact mutation scripts are verified against temporary source
+copies locally. Fresh hosted control and restored-source execution remain required.

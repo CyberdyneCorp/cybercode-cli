@@ -267,7 +267,7 @@ async fn supervise(
     entry.set(State::Ready(Arc::clone(&live)));
     let stopped = tokio::select! {
         _ = live.connection.closed.cancelled() => false,
-        _ = started.process.wait() => false,
+        _ = started.process.wait_tree() => false,
         _ = entry.stop.cancelled() => true,
     };
     if stopped {
@@ -275,7 +275,7 @@ async fn supervise(
         return None;
     }
     started.process.terminate();
-    let _ = started.process.wait().await;
+    let _ = started.process.wait_tree().await;
     if let Some(proxy) = started.proxy.take() {
         let _ = proxy.shutdown().await;
     }
@@ -337,12 +337,12 @@ async fn shutdown(live: &Live, mut started: launch::Started) {
             Some(SHUTDOWN_GRACE),
         )
         .await;
-    if tokio::time::timeout(SHUTDOWN_GRACE, started.process.wait())
+    if tokio::time::timeout(SHUTDOWN_GRACE, started.process.wait_tree())
         .await
         .is_err()
     {
         started.process.terminate();
-        let _ = started.process.wait().await;
+        let _ = started.process.wait_tree().await;
     }
     live.connection.closed.cancel();
     if let Some(proxy) = started.proxy.take() {
@@ -711,3 +711,6 @@ async fn log_stderr(name: String, stderr: crate::tools::process::ReadStream) {
         );
     }
 }
+
+#[cfg(all(test, unix))]
+mod settlement_tests;

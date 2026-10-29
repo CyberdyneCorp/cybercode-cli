@@ -100,6 +100,42 @@ jobs:
           PY
           cp "$RUNNER_TEMP/runtime-search-positive.rs" "$source"
           cargo test --locked -p cyber-tools --lib plugin_host::runtime_search
+      - name: Verify same-group plugin child lifetime
+        if: runner.os != 'Windows'
+        shell: bash
+        run: cargo test --locked -p cyber-tools --lib plugin_host::settlement_tests
+      - name: Verify leader-only wait controls fail child lifetime checks
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          source=crates/cyber-tools/src/plugin_host/mod.rs
+          cp "$source" "$RUNNER_TEMP/plugin-settlement-positive.rs"
+          trap 'cp "$RUNNER_TEMP/plugin-settlement-positive.rs" "$source"' EXIT
+          python3 - "$source" <<'PY'
+          from pathlib import Path
+          import sys
+          path = Path(sys.argv[1])
+          text = path.read_text()
+          before = 'started.process.wait_tree()'
+          assert text.count(before) == 4
+          path.write_text(text.replace(before, 'started.process.wait()'))
+          PY
+          if cargo test --locked -p cyber-tools --lib plugin_host::settlement_tests > "$RUNNER_TEMP/plugin-settlement-control.log" 2>&1; then
+            echo 'Leader-only waits unexpectedly passed descendant checks' >&2
+            exit 1
+          fi
+          python3 - "$RUNNER_TEMP/plugin-settlement-control.log" <<'PY'
+          from pathlib import Path
+          import re, sys
+          text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', Path(sys.argv[1]).read_text())
+          for name in ['crashed_host_stops_its_same_group_child_and_releases_scratch',
+                       'acknowledged_shutdown_stops_a_same_group_child_after_leader_exit']:
+              assert name + ' ... FAILED' in text, text
+          assert text.count('plugin descendant retained stdout after host settlement') == 2, text
+          PY
+          cp "$RUNNER_TEMP/plugin-settlement-positive.rs" "$source"
+          cargo test --locked -p cyber-tools --lib plugin_host::settlement_tests
       - name: Verify bundled runtime startup receipts
         shell: bash
         run: |
@@ -121,8 +157,8 @@ jobs:
           from pathlib import Path
           path = Path('crates/cyber-tools/src/plugin_host/launch.rs')
           text = path.read_text()
-          start = text.index('fn command(')
-          end = text.index('\nfn find_program(', start)
+          start = text.index('fn bun_arguments(' if sys.argv[1] == 'bun' else 'fn deno_arguments(')
+          end = text.index('\nfn deno_arguments(' if sys.argv[1] == 'bun' else '\nfn runtime_config(', start)
           body = text[start:end]
           flag, replacement = ('"--no-env-file".into(),', '') if sys.argv[1] == 'bun' else ('vec!["--no-config".into()]', 'Vec::new()')
           assert body.count(flag) == 1
@@ -229,5 +265,6 @@ jobs:
             ${{ runner.temp }}/runtime-deno-control.log
             ${{ runner.temp }}/workspace-boundary-control.log
             ${{ runner.temp }}/runtime-search-control.log
+            ${{ runner.temp }}/plugin-settlement-control.log
           if-no-files-found: warn
           retention-days: 14

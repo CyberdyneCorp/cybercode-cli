@@ -20,6 +20,9 @@ separate review. This changes delivery granularity, not feature scope or accepta
 - Finish and verify a coherent production increment before opening the next PR.
 - Keep related experiments, evidence, implementation fixes and CI fixes in the
   active PR. Do not open a PR for each probe or supporting component.
+- Cancel superseded PR/revision CI runs after verifying their source is retained.
+  Main CI, like the focused workflows, cancels older runs for the same PR/ref;
+  completed evidence remains associated with its actual tested revision.
 - Consolidate the existing #70–#76 stack into draft #76 against `main`, retaining
   the contained commits, source branches and evidence. Close #70–#75 as superseded
   after verifying their heads are contained in the consolidated branch.
