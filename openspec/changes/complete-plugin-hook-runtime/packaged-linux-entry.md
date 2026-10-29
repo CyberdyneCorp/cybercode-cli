@@ -30,11 +30,17 @@ reduction or completion of tasks 2.1–2.4 is implied.
 
 ## Verification
 
-On local macOS arm64: both native argument tests and all six existing packaged
+On local macOS arm64: all three native argument tests and all six existing packaged
 native-entry integration tests passed; scoped sandbox all-target Clippy passed.
 The SDK's two deprecated Seatbelt calls remain explicitly allowed C warnings.
 Linux C compilation and execution cannot run on this macOS host (no local Linux
-container runtime was found); native Linux x86_64/arm64 CI evidence is pending.
+container runtime was found). At `6b349331`, native Linux x86_64 CI compiled the
+packaged entry and its musl C object, passed both then-present argument tests,
+and passed four of five integration tests. The positive shell/descendant fixture
+failed because it opens `/dev/null` with O_RDWR but the test profile granted only
+writes. The profile now grants read/write for that explicit bootstrap device;
+project/private grants remain unchanged. Full current-source Linux x86_64/arm64
+acceptance and the missing-cleanup control remain pending CI.
 
 Linux CI runs four new packaged-entry regressions (plus the shared refusal test):
 

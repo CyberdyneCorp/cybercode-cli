@@ -94,7 +94,7 @@ mod tests {
     }
     #[test]
     fn argument_bounds_refuse_relative_paths_bypass_and_embedded_nul() {
-        for arguments in [
+        for mut arguments in [
             vec!["--plugin-native-exec", "-", "/bin/sh"],
             vec!["--plugin-native-exec", "/profile", "relative"],
             vec!["wrong-mode", "/profile", "/bin/sh"],
@@ -105,21 +105,32 @@ mod tests {
                 "bad\0argument",
             ],
         ] {
+            if cfg!(target_os = "linux") {
+                arguments.insert(2, "--initial-shell=0");
+            }
             assert!(bounded(arguments.into_iter().map(OsString::from)).is_none());
         }
-        let mut arguments = vec![
-            OsString::from("--plugin-native-exec"),
-            "/profile".into(),
-            "/target".into(),
-        ];
-        arguments.extend((0..MAX_ARGS).map(|_| OsString::from("arg")));
-        assert!(bounded(arguments).is_none());
-        let large = vec![
-            OsString::from("--plugin-native-exec"),
-            "/profile".into(),
-            "/target".into(),
-            "x".repeat(MAX_BYTES).into(),
-        ];
-        assert!(bounded(large).is_none());
+    }
+    #[test]
+    fn argument_count_and_byte_limits_accept_boundary_and_refuse_overflow() {
+        let mut prefix = vec![OsString::from("--plugin-native-exec"), "/profile".into()];
+        if cfg!(target_os = "linux") {
+            prefix.push("--initial-shell=0".into());
+        }
+        prefix.push("/target".into());
+        let mut count = prefix.clone();
+        count.resize(MAX_ARGS, "argument".into());
+        assert!(bounded(count.clone()).is_some());
+        count.push("one-too-many".into());
+        assert!(bounded(count).is_none());
+        let prefix_bytes: usize = prefix
+            .iter()
+            .map(|arg| arg.as_os_str().as_bytes().len() + 1)
+            .sum();
+        let mut bytes = prefix.clone();
+        bytes.push("x".repeat(MAX_BYTES - prefix_bytes - 1).into());
+        assert!(bounded(bytes).is_some());
+        prefix.push("x".repeat(MAX_BYTES - prefix_bytes).into());
+        assert!(bounded(prefix).is_none());
     }
 }

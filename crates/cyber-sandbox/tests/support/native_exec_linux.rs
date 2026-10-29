@@ -80,7 +80,7 @@ impl Fixture {
         for path in [&self.payload, &self.root.join("package")] {
             text.push_str(&format!("R\t{}\n", path.display()));
         }
-        text.push_str("W\t/dev/null\n");
+        text.push_str("R\t/dev/null\nW\t/dev/null\n");
         text.push_str(&format!("W\t{}\n", self.root.join("scratch").display()));
         if read {
             text.push_str(&format!("R\t{}\n", self.root.join("project").display()));
