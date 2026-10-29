@@ -224,12 +224,51 @@ impl UninstallPlan {
 }
 
 fn remove_dir(dir: &Path, home: &Path) -> Result<(), UninstallError> {
-    if std::fs::symlink_metadata(dir).is_err() {
-        // Inside a directory removed before it.
-        return Ok(());
+    #[cfg(windows)]
+    return retry_windows_removal(
+        || remove_dir_once(dir, home),
+        std::time::Duration::from_secs(5),
+    );
+    #[cfg(not(windows))]
+    remove_dir_once(dir, home)
+}
+
+fn remove_dir_once(dir: &Path, home: &Path) -> Result<(), UninstallError> {
+    match std::fs::symlink_metadata(dir) {
+        // Inside a directory removed before it, or an already completed retry.
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(io_error(dir)(error)),
+        Ok(_) => {}
     }
+    // A retry may observe a changed binding. Keep the original refusal checks
+    // on every attempt rather than applying them only before the first delete.
     is_safe_root(dir, home)?;
     std::fs::remove_dir_all(dir).map_err(io_error(dir))
+}
+
+/// A stopped Windows process may unregister just before its last handles close.
+/// Retry only sharing/lock violations, never permission or safety refusals.
+#[cfg(any(windows, test))]
+fn retry_windows_removal(
+    mut remove: impl FnMut() -> Result<(), UninstallError>,
+    limit: std::time::Duration,
+) -> Result<(), UninstallError> {
+    let started = std::time::Instant::now();
+    let mut result = remove();
+    while matches!(&result, Err(UninstallError::Io { source, .. })
+        if matches!(source.raw_os_error(), Some(32 | 33)))
+    {
+        let remaining = limit.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            break;
+        }
+        std::thread::sleep(remaining.min(std::time::Duration::from_millis(50)));
+        if started.elapsed() >= limit {
+            break;
+        }
+        result = remove();
+    }
+    result
 }
 
 /// Refuse `dir` unless it is an absolute path without `.` or `..`, not a filesystem or
@@ -624,5 +663,108 @@ mod tests {
         );
         assert_eq!(argv(InstallMethod::Script), None);
         assert_eq!(argv(InstallMethod::Nix), None);
+    }
+    #[test]
+    fn windows_removal_retries_only_transient_handle_errors_and_has_a_deadline() {
+        for code in [5, 32, 33] {
+            let mut attempts = 0;
+            let result = retry_windows_removal(
+                || {
+                    attempts += 1;
+                    if attempts == 1 {
+                        Err(io_error(Path::new("fixture"))(
+                            io::Error::from_raw_os_error(code),
+                        ))
+                    } else {
+                        Ok(())
+                    }
+                },
+                std::time::Duration::from_secs(1),
+            );
+            assert_eq!(result.is_ok(), code != 5);
+            assert_eq!(attempts, if code == 5 { 1 } else { 2 });
+        }
+        let mut attempts = 0;
+        let result = retry_windows_removal(
+            || {
+                attempts += 1;
+                Err(io_error(Path::new("fixture"))(
+                    io::Error::from_raw_os_error(32),
+                ))
+            },
+            std::time::Duration::ZERO,
+        );
+        assert!(result.is_err());
+        assert_eq!(attempts, 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_removal_recovers_after_an_actual_handle_without_delete_sharing_closes() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let l = layout();
+        let path = l.paths.data.join("locked-database");
+        std::fs::write(&path, "dummy fixture only").unwrap();
+        // FILE_SHARE_READ | FILE_SHARE_WRITE; deliberately omit FILE_SHARE_DELETE.
+        let mut held = Some(
+            std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(3)
+                .open(&path)
+                .unwrap(),
+        );
+        let mut attempts = 0;
+        retry_windows_removal(|| {
+            attempts += 1;
+            let result = remove_dir_once(&l.paths.data, &l.home);
+            if attempts == 1 {
+                assert!(matches!(&result, Err(UninstallError::Io { source, .. }) if source.raw_os_error() == Some(32)), "{result:?}");
+                drop(held.take());
+            }
+            result
+        }, std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(attempts, 2);
+        assert!(!l.paths.data.exists());
+        assert!(l.paths.config.is_dir());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_removal_revalidates_safety_after_a_handle_release() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let l = layout();
+        let path = l.paths.data.join("locked-database");
+        std::fs::write(&path, "dummy fixture only").unwrap();
+        let mut held = Some(
+            std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(3)
+                .open(&path)
+                .unwrap(),
+        );
+        let mut attempts = 0;
+        let result = retry_windows_removal(
+            || {
+                attempts += 1;
+                let result = remove_dir_once(&l.paths.data, &l.home);
+                if attempts == 1 {
+                    assert!(
+                        matches!(&result, Err(UninstallError::Io { source, .. }) if source.raw_os_error() == Some(32)),
+                        "{result:?}"
+                    );
+                    drop(held.take());
+                    std::fs::remove_dir_all(&l.paths.data).unwrap();
+                    std::fs::write(&l.paths.data, "replacement must survive").unwrap();
+                }
+                result
+            },
+            std::time::Duration::from_secs(5),
+        );
+        assert!(matches!(result, Err(UninstallError::Refused { .. })));
+        assert_eq!(attempts, 2);
+        assert_eq!(
+            std::fs::read_to_string(&l.paths.data).unwrap(),
+            "replacement must survive"
+        );
     }
 }

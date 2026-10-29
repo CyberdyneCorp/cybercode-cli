@@ -196,3 +196,30 @@ unwind-table warning was observed during both unchanged-main and PR test builds;
 it is not a failed test. Hosted CI must rerun the updated fixture before the PR
 is accepted. This changes test synchronization, not production settlement policy
 or the native plugin capability scope.
+
+## Windows uninstall cleanup in PR CI
+
+The subsequent Windows job
+[123272615530](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40820800042/job/123272615530)
+failed `uninstall_stops_the_registered_server` twice with sharing violation 32
+while removing the data directory. Its summary reports 3,604 tests passed and
+one failed (plus two process-leak reports). This failure is distinct from the
+previous macOS solve-fixture failure.
+
+Service stop waits for authenticated unregistration. The owning CLI process can
+still be closing its final native handles then. Windows directory removal now
+retries only sharing/lock violations 32/33 for up to five seconds, revalidating
+root safety on every attempt. Missing directories remain settled; other metadata
+errors, permission errors and safety refusals propagate. The existing server
+identity/authentication protocol and stale-PID protections are unchanged.
+
+The portable uninstall unit suite passes ten tests locally, including retry/error
+classification and the zero-deadline boundary. Two additional Windows-only
+regressions use actual file handles without delete sharing: one releases after
+the first observed sharing violation and requires successful retry; the other
+replaces the directory with a regular file between attempts and requires refusal
+without deleting that replacement. These native regressions are configured for
+Windows CI and cannot run on the local macOS host. The focused unchanged-main
+Windows baseline is run 40853907380; its result must be read before making any
+claim about whether the original failure reproduces on main. Fresh PR Windows
+unit and CLI integration results remain required.

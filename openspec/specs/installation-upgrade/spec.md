@@ -112,6 +112,11 @@ For `nix`, `aur`, `docker` and `unknown` it SHALL print the manual command inste
 - **WHEN** the user runs `cyber uninstall --keep-data --force`
 - **THEN** `~/.local/share/cyber` remains and everything else listed is removed
 
+#### Scenario: Windows handles close after service shutdown
+- **WHEN** the registered server has stopped and Windows temporarily reports a sharing or lock violation while its final handles close
+- **THEN** uninstall retries directory removal for at most five seconds, rechecking directory safety on each attempt
+- **AND** other IO failures and safety refusals are reported without retrying them
+
 ### Requirement: Self-update integrity
 (P0) Every in-place upgrade SHALL verify the downloaded artifact's SHA-256 against a `SHA256SUMS` whose Sigstore bundle validates against the identity `https://github.com/cyber-code/cyber/.github/workflows/release.yml@refs/tags/v<version>`. On failure it SHALL abort without replacing the binary.
 
