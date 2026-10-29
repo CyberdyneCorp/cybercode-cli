@@ -83,3 +83,26 @@ fn native_profile_accepts_root_limit_and_refuses_rendered_policy_overflow() {
     plan.bootstrap = &bootstrap;
     assert_eq!(plan.render(), Err(Error::Limit));
 }
+
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn linux_public_composition_refuses_unsupported_hosts() {
+    let plan = LinuxPolicy {
+        helper: Path::new("/owned/helper"),
+        target: Path::new("/owned/main"),
+        profile: Path::new("/owned/profile"),
+        package: Path::new("/owned/package"),
+        scratch: Path::new("/owned/scratch"),
+        location: Path::new("/project"),
+        mask_file: Path::new("/owned/mask"),
+        bootstrap: &[],
+        private: &[],
+        read_only: &[],
+        target_args: &[],
+        fs_read: false,
+        fs_write: false,
+        shell: false,
+        namespace_proc: false,
+    };
+    assert_eq!(plan.compose(), Err(Error::Unavailable));
+}

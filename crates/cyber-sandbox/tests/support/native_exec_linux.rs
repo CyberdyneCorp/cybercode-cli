@@ -15,7 +15,13 @@ fn output(command: &mut Command, input: Option<&[u8]>) -> Output {
         .spawn()
         .unwrap();
     if let Some(input) = input {
-        child.stdin.take().unwrap().write_all(input).unwrap();
+        if let Err(error) = child.stdin.take().unwrap().write_all(input)
+            && error.kind() != std::io::ErrorKind::BrokenPipe
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("native fixture input failed: {error}");
+        }
     }
     drop(child.stdin.take());
     let deadline = Instant::now() + Duration::from_secs(15);
@@ -301,3 +307,6 @@ fn invalid_profiles_and_missing_shell_policy_refuse_before_target() {
     assert_eq!(result.status.code(), Some(64));
     assert!(result.stdout.is_empty());
 }
+
+#[path = "native_policy_linux.rs"]
+mod policy;

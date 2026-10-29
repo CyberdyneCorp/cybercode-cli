@@ -131,6 +131,66 @@ jobs:
           cp "$RUNNER_TEMP/native-policy-positive.rs" "$source"
           cargo test --locked -p cyber-sandbox --lib plugin_policy
           cargo test --locked -p cyber-sandbox --test native_exec
+      - name: Verify Linux composed policy controls
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          source=crates/cyber-sandbox/src/plugin_policy/linux.rs
+          cp "$source" "$RUNNER_TEMP/linux-policy-positive.rs"
+          trap 'cp "$RUNNER_TEMP/linux-policy-positive.rs" "$source"' EXIT
+          for control in ancestor immutable private read shell proc; do
+            cp "$RUNNER_TEMP/linux-policy-positive.rs" "$source"
+            python3 - "$source" "$control" <<'PY'
+          from pathlib import Path
+          import sys
+          path = Path(sys.argv[1])
+          text = path.read_text()
+          control = sys.argv[2]
+          if control == 'ancestor':
+              before, after = 'for parent in anchors(p) {', 'for parent in anchors(p).into_iter().take(0) {'
+          elif control == 'immutable':
+              start = text.index('    let readonly: BTreeSet<_> = immutable(p).collect();')
+              end = text.index('    for mask in masks(p) {', start)
+              before, after = text[start:end], ''
+          elif control == 'private':
+              before, after = 'for mask in masks(p) {', 'for mask in masks(p).into_iter().take(0) {'
+          elif control == 'read':
+              before, after = 'if p.fs_read {', 'if true {'
+          elif control == 'shell':
+              before, after = 'if p.shell {', 'if true {'
+          else:
+              before = '    args.bind("--bind", p.scratch)?;'
+              after = '    args.add(["--ro-bind", "/proc", "/proc"])?;\n' + before
+          assert text.count(before) == 1
+          path.write_text(text.replace(before, after))
+          PY
+            if [[ "$control" == ancestor || "$control" == immutable ]]; then
+              name=rust_linux_policy_protects_ancestors_and_preserves_public_renames
+            elif [[ "$control" == proc ]]; then
+              name=rust_linux_policy_private_proc_cannot_restore_host_or_private_file_reads
+            else
+              name=rust_linux_policy_composes_mounts_with_landlock_and_the_packaged_entry
+            fi
+            if cargo test --locked -p cyber-sandbox --test native_exec "linux::policy::$name" -- --exact > "$RUNNER_TEMP/linux-policy-$control-control.log" 2>&1; then
+              cat "$RUNNER_TEMP/linux-policy-$control-control.log"
+              echo "Missing Linux $control safeguard unexpectedly passed" >&2
+              exit 1
+            fi
+            python3 - "$RUNNER_TEMP/linux-policy-$control-control.log" "$name" "$control" <<'PY'
+          from pathlib import Path
+          import re, sys
+          text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', Path(sys.argv[1]).read_text())
+          assert f'{sys.argv[2]} ... FAILED' in text
+          expected = {'ancestor': 'failed: protected ancestor rename:', 'immutable': 'failed: immutable package write',
+              'private': 'failed: private_write:', 'read': 'failed: project_read:', 'shell': 'failed: shell:',
+              'proc': 'failed: private proc visibility:'}
+          assert expected[sys.argv[3]] in text, text
+          PY
+          done
+          cp "$RUNNER_TEMP/linux-policy-positive.rs" "$source"
+          cargo test --locked -p cyber-sandbox --lib plugin_policy
+          cargo test --locked -p cyber-sandbox --test native_exec
       - name: Verify packaged entry across supported runtimes
         if: runner.os != 'Windows'
         shell: bash
@@ -213,6 +273,7 @@ jobs:
             ${{ runner.temp }}/native-entry-provenance.json
             ${{ runner.temp }}/packaged-runtime/
             ${{ runner.temp }}/native-fd-control.log
+            ${{ runner.temp }}/linux-policy-*-control.log
             ${{ runner.temp }}/native-policy-ancestor-control.log
             ${{ runner.temp }}/native-policy-immutable-control.log
             ${{ runner.temp }}/native-policy-private-control.log

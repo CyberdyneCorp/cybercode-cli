@@ -59,6 +59,54 @@ impl MacProfile<'_> {
     }
 }
 
+/// Paths hidden in the Linux mount namespace. The owner attests their kinds.
+#[derive(Debug, Clone, Copy)]
+pub enum MaskPath<'a> {
+    File(&'a Path),
+    Directory(&'a Path),
+}
+
+/// Explicit, owner-bound Linux inputs. Composition performs no filesystem IO.
+/// The mask is a new owned mode-000 regular file, never a credential or device.
+/// All referenced resources must remain protected until the child tree is reaped.
+pub struct LinuxPolicy<'a> {
+    pub helper: &'a Path,
+    pub target: &'a Path,
+    pub profile: &'a Path,
+    pub package: &'a Path,
+    pub scratch: &'a Path,
+    pub location: &'a Path,
+    pub mask_file: &'a Path,
+    pub bootstrap: &'a [&'a Path],
+    pub private: &'a [MaskPath<'a>],
+    pub read_only: &'a [&'a Path],
+    pub target_args: &'a [String],
+    pub fs_read: bool,
+    pub fs_write: bool,
+    pub shell: bool,
+    /// Bun needs private procfs reads; never bind host procfs back over it.
+    pub namespace_proc: bool,
+}
+
+/// Inputs to a reviewed bubblewrap executable, plus the bounded profile bytes the
+/// owner must write at LinuxPolicy::profile before spawning. Not a launch permit.
+#[derive(Debug, PartialEq, Eq)]
+pub struct LinuxPlan {
+    pub arguments: Vec<String>,
+    pub landlock: String,
+}
+impl LinuxPolicy<'_> {
+    pub fn compose(&self) -> Result<LinuxPlan, Error> {
+        #[cfg(target_os = "linux")]
+        return linux::compose(self);
+        #[cfg(not(target_os = "linux"))]
+        Err(Error::Unavailable)
+    }
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+mod linux;
+
 #[cfg(target_os = "macos")]
 mod macos {
     use super::*;
