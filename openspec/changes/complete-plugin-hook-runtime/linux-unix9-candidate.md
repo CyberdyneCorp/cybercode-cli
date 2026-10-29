@@ -63,3 +63,22 @@ and unique. Root receives REFER only. Family filters restore the syscall-number
 register before later checks, and positive internal IPC/IP controls are required
 alongside exact missing-policy failure. These checks are experiment review, not
 production native admission or acceptance of a new support floor.
+
+## Hosted kernel limit at `2f3b3c29`
+
+Both [x64 job 123750657048](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40960197456/job/123750657048)
+and [arm64 job 123750656386](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40960197456/job/123750656386)
+compile the candidates but report Landlock ABI 8. The ABI-9 helper refuses before
+target output, with `requires Landlock ABI >= 9 (observed 8)`. Consequently none
+of its confinement/local-IP/local-UNIX/runtime acceptance passes on these hosts;
+the missing-resolution control does not run. This is a kernel availability result,
+not a proof that the alternative works or that a newer kernel is sufficient.
+
+The workflow now records the actual ABI in a source-bound availability JSON. On
+older hosts it verifies the exact refusal, explicitly records ABI-9 acceptance as
+unverified, and skips its kernel-specific control/runtime matrix. The separate
+ABI-3 socket-family experiment still runs normally. On a capable kernel, all
+ABI-9 positives, denials, exact missing-policy control and runtime checks remain
+mandatory. There is no best-effort downgrade of the policy and no production
+support change. These skips do not close any acceptance gate; a compatible
+mechanism or authoritative execution on a capable host remains required.
