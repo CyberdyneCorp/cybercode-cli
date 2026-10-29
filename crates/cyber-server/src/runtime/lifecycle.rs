@@ -123,6 +123,7 @@ impl Inner {
         }
         let message_id = cyber_core::ids::new_id("msg");
         let admitted = Admitted {
+            observation_scope: None,
             skill_command: None,
             admission_bindings: None,
             wake: false,
@@ -414,26 +415,46 @@ impl Inner {
         &self,
         hook: LifecycleHook,
     ) -> Result<super::host::LifecycleVerdict, String> {
+        self.owned_lifecycle_hooks_cancelled(hook, None).await
+    }
+
+    /// An independent observational owner may cancel its own work. Keep the
+    /// launched future alive until its runner cooperatively settles the receipt.
+    pub(crate) async fn owned_lifecycle_hooks_cancelled(
+        &self,
+        hook: LifecycleHook,
+        owner: Option<tokio_util::sync::CancellationToken>,
+    ) -> Result<super::host::LifecycleVerdict, String> {
         let drain = self
             .drains
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&hook.session_id)
             .map(|entry| entry.cancel.child_token());
-        let Some(cancel) = drain else {
-            return self
-                .tools
-                .lifecycle_hooks(hook, self.closed.child_token())
-                .await;
-        };
-        let handle = self
-            .sessions
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&hook.session_id)
-            .cloned();
+        let handle = drain.as_ref().and_then(|_| {
+            self.sessions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .get(&hook.session_id)
+                .cloned()
+        });
         let _in_flight = handle.map(DrainHook::enter);
-        self.tools.lifecycle_hooks(hook, cancel).await
+        let cancel = drain.unwrap_or_else(|| self.closed.child_token());
+        let Some(owner) = owner else {
+            return self.tools.lifecycle_hooks(hook, cancel).await;
+        };
+        if owner.is_cancelled() {
+            cancel.cancel();
+        }
+        let future = self.tools.lifecycle_hooks(hook, cancel.clone());
+        tokio::pin!(future);
+        tokio::select! {
+            result = &mut future => result,
+            _ = owner.cancelled() => {
+                cancel.cancel();
+                future.await
+            }
+        }
     }
 }
 

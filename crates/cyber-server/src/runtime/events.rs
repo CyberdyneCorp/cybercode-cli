@@ -150,6 +150,8 @@ pub struct Created {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Admitted {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) observation_scope: Option<cyber_core::hooks::file_observations::InputScope>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skill_command: Option<super::SkillCommand>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) admission_bindings: Option<Vec<super::admission_authority::Binding>>,
@@ -524,6 +526,7 @@ pub fn registry() -> EventRegistry {
     super::budget::register(&mut registry);
     super::reservations::register(&mut registry);
     super::hooks::register(&mut registry);
+    super::file_observations::register(&mut registry);
     super::jobs::register(&mut registry);
     super::delegations::register(&mut registry);
     super::mcp::register(&mut registry);
@@ -546,6 +549,7 @@ fn project(tx: &Transaction<'_>, e: &StoredEvent) -> Result<(), String> {
     super::deferred_tools::validate_event(tx, e)?;
     super::admission_authority::project(tx, e)?;
     super::hooks::project(tx, e)?;
+    super::file_observations::project(tx, e)?;
     super::auto_statistics::project(tx, e)?;
     super::auto_override::project(tx, e)?;
     project_event(tx, e).map_err(|err| err.to_string())?;

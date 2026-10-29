@@ -147,6 +147,7 @@ pub struct HookExecution {
     record: HookExecutionRecord,
     started: Instant,
     settled: bool,
+    native_observation: Option<super::file_observation_roots::Lease>,
 }
 
 impl HookExecution {
@@ -155,7 +156,18 @@ impl HookExecution {
     }
 
     pub fn verify(&self, runtime: &Runtime) -> Result<(), RuntimeError> {
-        self.authority.verify(runtime, &self.record.session_id)
+        self.authority.verify(runtime, &self.record.session_id)?;
+        if let Some(lease) = &self.native_observation
+            && !lease.current(
+                &runtime.inner.file_observation_roots,
+                std::path::Path::new(&self.record.directory),
+            )
+        {
+            return Err(RuntimeError::Conflict(
+                "file observation native scope changed before effect".into(),
+            ));
+        }
+        Ok(())
     }
 
     pub fn cancellation(&self) -> tokio_util::sync::CancellationToken {
@@ -331,11 +343,16 @@ impl Runtime {
                 "Hook event identity does not match its Session".into(),
             ));
         }
+        let native_observation = self.validate_native_file_hook(event)?;
         let activity = super::activity::Scope::reserve(&self.inner, &handle).await?;
         let authority = activity.authority();
         authority.verify(self, &event.identity().session_id)?;
-        let record = admission_record(event, definition, log_io);
+        let mut record = admission_record(event, definition, log_io);
+        let observation = super::file_observation_hooks::prepare(event, definition, &mut record)?;
         let mut data = serde_json::to_value(&record).expect("receipt serializes");
+        if let Some(binding) = &observation {
+            data[super::file_observation_hooks::FIELD] = binding.clone();
+        }
         data["admission_bindings"] =
             serde_json::to_value(&authority.bindings).expect("authority serializes");
         match self.inner.store.append(
@@ -349,10 +366,12 @@ impl Runtime {
             {
                 return Ok(None);
             }
+            Err(StoreError::Concurrency { .. }) if observation.is_some() => return Ok(None),
             Err(error) => return Err(error.into()),
         }
         publish_receipt(&self.inner.bus, &record);
         Ok(Some(HookExecution {
+            native_observation,
             store: Arc::clone(&self.inner.store),
             bus: self.inner.bus.clone(),
             authority,
@@ -388,8 +407,12 @@ impl Runtime {
         // The same Session admission fences apply; no activity is reserved.
         let authority = self.capture_child_admission(&event.identity().session_id)?;
         let mut record = admission_record(event, definition, false);
+        let observation = super::file_observation_hooks::prepare(event, definition, &mut record)?;
         record.once = false;
         let mut start = serde_json::to_value(&record).expect("receipt serializes");
+        if let Some(binding) = &observation {
+            start[super::file_observation_hooks::FIELD] = binding.clone();
+        }
         start["admission_bindings"] =
             serde_json::to_value(&authority.bindings).expect("authority serializes");
         record.status = HookExecutionStatus::Completed;
@@ -401,14 +424,18 @@ impl Runtime {
         });
         record.acknowledged = Some(true);
         let terminal = serde_json::to_value(&record).expect("receipt serializes");
-        self.inner.store.append(
+        match self.inner.store.append(
             &record.id,
             Expected::Seq(-1),
             vec![
                 NewEvent::new(STARTED, start),
                 NewEvent::new(EXECUTED, terminal),
             ],
-        )?;
+        ) {
+            Ok(_) => {}
+            Err(StoreError::Concurrency { .. }) if observation.is_some() => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
         let mut admitted = record.clone();
         admitted.duration_ms = None;
         admitted.outcome = None;
@@ -589,6 +616,7 @@ fn decode(data: &serde_json::Value) -> Result<HookExecutionRecord, String> {
     let mut data = data.clone();
     if let Some(object) = data.as_object_mut() {
         object.remove("admission_bindings");
+        object.remove(super::file_observation_hooks::FIELD);
     }
     serde_json::from_value(data).map_err(|error| error.to_string())
 }
@@ -693,6 +721,9 @@ pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), S
     let record = decode(&event.data)?;
     if event.aggregate_id != record.id {
         return Err("Hook execution aggregate differs from receipt".into());
+    }
+    if event.kind == STARTED {
+        super::file_observation_hooks::project(tx, &event.data, &record)?;
     }
     if record.synthetic {
         return super::hook_tests::project(tx, event, &record);

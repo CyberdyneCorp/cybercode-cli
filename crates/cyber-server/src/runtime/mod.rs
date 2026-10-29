@@ -51,6 +51,10 @@ mod hook_tests;
 mod hooks;
 mod installation;
 pub use installation::{InstallationNotice, UpdateStatus};
+mod file_observation_hooks;
+mod file_observation_roots;
+mod file_observation_scopes;
+pub mod file_observations;
 mod lifecycle;
 mod lifecycle_events;
 pub use hook_tests::{
@@ -715,7 +719,8 @@ pub(crate) struct Handle {
     /// Consecutive Stop-hook continuations, reset for each new Drain and user admission.
     pub stop_continuations: std::sync::atomic::AtomicUsize,
     /// Hook envelope identity captured for the Session's current directory.
-    pub envelope: StdMutex<Option<(String, SessionEnvelope)>>,
+    pub envelope: StdMutex<Option<(String, u64, SessionEnvelope)>>,
+    pub envelope_epoch: std::sync::atomic::AtomicU64,
     /// Tagged context from background hooks, committed at the next Safe Boundary.
     pub pending_hook_context: StdMutex<Vec<String>>,
     /// Drain-owned lifecycle hooks in flight; a cancelled boundary waits for them.
@@ -785,6 +790,7 @@ pub(crate) struct Inner {
     pub tools: Arc<dyn ToolHost>,
     pub bus: Bus,
     pub options: RuntimeOptions,
+    file_observation_roots: file_observation_roots::Roots,
     sessions: StdMutex<HashMap<String, Arc<Handle>>>,
     drains: StdMutex<HashMap<String, DrainEntry>>,
     /// MCP serve recursion depth by Session, for the run (Drain) it was raised in.
@@ -915,6 +921,7 @@ impl Runtime {
             tools: Arc::clone(&options.tools),
             bus: Bus::new(),
             options,
+            file_observation_roots: file_observation_roots::Roots::default(),
             sessions: StdMutex::default(),
             drains: StdMutex::default(),
             mcp_depths: StdMutex::default(),
@@ -1584,7 +1591,12 @@ impl Runtime {
         let genuine = prompt || admission.source != "hook";
         // Blobs read for `file` parts are removed unless the prompt is admitted.
         let blobs = attachments.blobs;
-        let receipt = {
+        // Capture outside Session/writer locks after prompt hooks. The handle
+        // stays alive through commit; a reused path cannot rebind this input.
+        let observation_scope = self
+            .capture_observation_input(&handle, prompt && admission.source == "user")
+            .await;
+        let (receipt, observed_input) = {
             let mut state = handle.state.lock().await;
             state.ensure_worktree_ready()?;
             if let Some(receipt) = existing_receipt(&state, &message_id, &digest)? {
@@ -1596,6 +1608,10 @@ impl Runtime {
                 return Err(RuntimeError::Busy(session_id.into()));
             }
             let payload = Admitted {
+                observation_scope: observation_scope
+                    .as_ref()
+                    .filter(|captured| captured.scope.session_directory == state.info.directory)
+                    .map(|captured| captured.scope.clone()),
                 skill_command: admission.skill_command,
                 admission_bindings,
                 wake: state.info.parent_id.is_some()
@@ -1619,8 +1635,16 @@ impl Runtime {
             events.extend(extra);
             let stored = self.inner.commit_locked(&mut state, events)?;
             blobs.keep();
-            receipt_for(&state, &message_id, stored[admitted].seq)
+            let observed_input = (prompt && payload.source == "user")
+                .then(|| (state.info.clone(), stored[admitted].id.clone()));
+            (
+                receipt_for(&state, &message_id, stored[admitted].seq),
+                observed_input,
+            )
         };
+        if let Some((info, event_id)) = observed_input {
+            self.inner.tools.user_input_committed(&info, &event_id);
+        }
         if genuine {
             handle
                 .stop_continuations
@@ -2453,6 +2477,7 @@ impl Inner {
             auto_blocks: Mutex::new(0),
             stop_continuations: std::sync::atomic::AtomicUsize::new(0),
             envelope: StdMutex::default(),
+            envelope_epoch: std::sync::atomic::AtomicU64::new(0),
             pending_hook_context: StdMutex::default(),
             drain_hooks: Default::default(),
             drain_hooks_settled: Notify::new(),

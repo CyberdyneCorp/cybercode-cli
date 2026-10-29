@@ -44,9 +44,7 @@ jobs:
           sudo apt-get install -y bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - run: cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec
-      - name: Verify the veto regression fails against unchanged base production sources
-        env:
-          BASE_SOURCE: ${{ github.event.pull_request.base.sha || 'origin/main' }}
+      - name: Verify the veto regression without WorktreeCreate dispatch
         shell: bash
         run: |
           set -euo pipefail
@@ -60,14 +58,20 @@ jobs:
             exit 0
           fi
           child=crates/cyber-tools/src/worktrees/child.rs
-          host=crates/cyber-tools/src/host.rs
           cp "$child" "$RUNNER_TEMP/fixed-child.rs"
-          cp "$host" "$RUNNER_TEMP/fixed-host.rs"
-          trap 'cp "$RUNNER_TEMP/fixed-child.rs" "$child"; cp "$RUNNER_TEMP/fixed-host.rs" "$host"' EXIT
-          git show "$BASE_SOURCE:$child" > "$child"
-          git show "$BASE_SOURCE:$host" > "$host"
+          trap 'cp "$RUNNER_TEMP/fixed-child.rs" "$child"' EXIT
+          python3 - <<'PYCONTROL'
+          from pathlib import Path
+          p=Path("crates/cyber-tools/src/worktrees/child.rs")
+          s=p.read_text()
+          old="""        self.worktree_create_hooks(&hook_inv, request.name.as_str(), ctx.cancel.clone())
+                      .await
+                      .map_err(tool_error)"""
+          assert s.count(old)==1
+          p.write_text(s.replace(old,"        let _ = (hook_inv, ctx);\n        Ok(())"))
+          PYCONTROL
           if cargo test --locked -p cyber-tools --test isolated_subagents isolated_creation_hook_veto_has_no_git_child_or_model_effects -- --exact > "$RUNNER_TEMP/base-regression.log" 2>&1; then
-            echo 'Regression unexpectedly passed on the unchanged base.'
+            echo 'Regression unexpectedly passed with WorktreeCreate dispatch removed.'
             exit 1
           fi
           python3 - <<'PY'

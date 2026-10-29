@@ -41,3 +41,7 @@ Inventory every declared P1 event and its existing producer before adding code. 
 ## Delivery and verification
 
 Deliver separate reviewable increments: confinement proof and enforcement; generation registry/runtime hooks; providers/transforms; scoped prompt callbacks; missing event producers. Each increment includes regression tests, docs and scoped tests/Clippy. Use real processes and OS denial/positive controls, a real server plus scripted provider, cancellation/restart tests, and SDK protocol tests. Run complete relevant native checks before acceptance. A code/security review must examine process escape paths, callback deadlocks/recursion, secret handling, late generations and unknown effects. Do not archive the broader extensibility change merely because this slice is complete.
+
+### File observation Session scopes
+
+The concrete provenance and native-lease integration is recorded in [file-observation-scope-design.md](file-observation-scope-design.md). Scope records remain metadata-only; alias acceptance requires live pinned native proof outside deterministic projectors. This implements the approved FileChanged producer scope and does not revise the separate plugin capability-support decision gate.

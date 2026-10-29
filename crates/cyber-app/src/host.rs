@@ -53,6 +53,10 @@ impl ToolHost for AppHost {
         self.builtin.refresh_location(info);
     }
 
+    fn user_input_committed(&self, info: &cyber_server::runtime::SessionInfo, event_id: &str) {
+        self.builtin.user_input_committed(info, event_id);
+    }
+
     fn wait_for_required_mcp(
         &self,
         info: &cyber_server::runtime::SessionInfo,

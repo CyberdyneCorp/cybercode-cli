@@ -103,6 +103,7 @@ impl Runtime {
                 event(
                     ADMITTED,
                     &Admitted {
+                        observation_scope: None,
                         skill_command: admission.skill_command,
                         admission_bindings: prepared.admission_bindings(),
                         wake: true,

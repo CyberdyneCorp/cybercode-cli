@@ -183,10 +183,27 @@ test("a server crash during native verification remains unknown and never reexec
     if (result.status !== 0) throw Error(result.stderr);
     return Number(result.stdout.trim());
   };
-  await eventually(
-    async () => intentCount(),
-    (count) => count === 1,
-  );
+  try {
+    await eventually(async () => intentCount(), (count) => count === 1);
+  } catch (error) {
+    // Preserve the real check outcome when setup/source validation settles before
+    // the intended crash point. Do not relax the required single durable intent.
+    const batchState = await dashboard.api<{ status: string }>(
+      `/workflows/integrations/${batch.id}`,
+    );
+    const report = await dashboard.api<{
+      status: string;
+      report?: { host?: { checks?: { outcome?: string; limitation?: string }[]; limitation?: string } };
+    }>(`/workflows/integrations/${batch.id}/report`);
+    throw new Error(`${String(error)}: ${JSON.stringify({
+      evidence_count: intentCount(), batch_status: batchState.status,
+      report_status: report.status,
+      checks: report.report?.host?.checks?.map((check) => ({
+        outcome: check.outcome, limitation: check.limitation?.slice(0, 500),
+      })),
+      limitation: report.report?.host?.limitation?.slice(0, 500),
+    })}`);
+  }
   await dashboard.crash();
   await dashboard.start();
   const interrupted = await dashboard.api<{ status: string }>(

@@ -1,0 +1,12 @@
+//! Bounded host-owned file observation and durable observational hook dispatch.
+mod budget;
+mod links;
+mod native;
+mod owner;
+mod privacy;
+mod root;
+mod scan;
+mod state;
+pub(crate) use owner::Observers;
+
+pub(crate) use privacy::PrivatePins;

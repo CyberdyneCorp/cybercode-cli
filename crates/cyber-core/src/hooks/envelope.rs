@@ -1,6 +1,6 @@
 //! Immutable hook envelopes constructed from an owner's captured execution identity.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Serialize, Serializer};
 use serde_json::{Map, Value};
@@ -87,6 +87,7 @@ pub struct HookEvent {
     identity: HookIdentity,
     event: String,
     payload: Value,
+    observation_directory: Option<PathBuf>,
 }
 
 impl HookEvent {
@@ -153,11 +154,27 @@ impl HookEvent {
             identity,
             event,
             payload,
+            observation_directory: None,
         })
     }
 
     pub fn event(&self) -> &str {
         &self.event
+    }
+    /// A native observation's stable execution/configuration path. This hint is
+    /// not serialized and grants no authority: runtime admission must verify it
+    /// against the live pinned generation. The Session envelope stays unchanged.
+    pub fn with_observation_directory(mut self, directory: PathBuf) -> Result<Self, String> {
+        if self.event != "FileChanged" || self.is_synthetic() || !directory.is_absolute() {
+            return Err("native observation directory requires a real FileChanged event".into());
+        }
+        self.observation_directory = Some(directory);
+        Ok(self)
+    }
+    pub fn execution_directory(&self) -> &Path {
+        self.observation_directory
+            .as_deref()
+            .unwrap_or(&self.identity.location.directory)
     }
     pub fn identity(&self) -> &HookIdentity {
         &self.identity
@@ -195,5 +212,54 @@ impl HookDefinition {
         relative_paths: &[String],
     ) -> bool {
         self.matches(event.event(), subject, relative_paths, event.as_json())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn native_execution_location_preserves_the_session_envelope_and_wire_payload() {
+        let raw = std::env::temp_dir().join("session-alias");
+        let canonical = std::env::temp_dir().join("physical-owner");
+        let identity = HookIdentity {
+            session_id: crate::ids::new_id("ses"),
+            location: HookLocation {
+                directory: raw.clone(),
+                workspace: None,
+            },
+            project_id: "global".into(),
+            agent: "build".into(),
+            mode: "default".into(),
+            parent_session_id: None,
+            workflow_run_id: None,
+        };
+        let event = HookEvent::new("FileChanged", identity.clone(), 1, Map::new()).unwrap();
+        let payload = serde_json::to_value(&event).unwrap();
+        let pinned = event.with_observation_directory(canonical.clone()).unwrap();
+        assert_eq!(pinned.execution_directory(), canonical);
+        assert_eq!(pinned.identity().location.directory, raw);
+        assert_eq!(
+            serde_json::to_value(pinned).unwrap(),
+            payload,
+            "native proof hints never enter hook IO"
+        );
+        assert!(
+            HookEvent::new("Stop", identity.clone(), 1, Map::new())
+                .unwrap()
+                .with_observation_directory(canonical.clone())
+                .is_err()
+        );
+        let synthetic = HookEvent::synthetic(
+            "FileChanged",
+            identity.location,
+            "global".into(),
+            "build".into(),
+            "default".into(),
+            1,
+            serde_json::json!({}),
+        )
+        .unwrap();
+        assert!(synthetic.with_observation_directory(canonical).is_err());
     }
 }
