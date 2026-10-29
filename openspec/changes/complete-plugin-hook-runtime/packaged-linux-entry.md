@@ -76,3 +76,36 @@ from the packaged path. The original probes are preserved as separate evidence.
 Remaining composed-admission and runtime gates above are required before this
 entry can replace production plugin launch. This is an implementation review,
 not an independent security audit or completed plugin acceptance.
+
+## Packaged runtime matrix
+
+The existing confinement driver now accepts an explicit `--packaged-helper`.
+It copies the distributed binary into the private test root and invokes its
+mandatory mode rather than compiling a substitute launcher. On macOS it gives
+that helper copy a fresh signing identifier; targets keep their original
+signatures. On Linux it requires the one-shot initial-exec mode and existing
+private mount/PID/network namespace composition. Python runs its actual reviewed
+executable directly with `-I -S`; it does not use the old embedding launcher.
+
+The unconfined control executes the target directly and must actually retain the
+inherited dummy descriptor. Confined cases require that descriptor to be absent,
+plus all existing capability expectations. The report records input and executed
+helper hashes (different after macOS signing), exact probe sources, runtime and
+kernel versions and each of nine cases. The workflow's separate provenance also
+hashes the native entry sources, matrix driver and workflow. This binds observed
+results without treating build hashes alone as passing enforcement evidence.
+
+Locally, the packaged matrix passed all nine capability combinations for native,
+Node and `/usr/bin/python3` on macOS arm64, with zero unsupported cases. The
+unchanged legacy invocation is separately checked to preserve historical proof
+coverage. CI adds Node, Python 3.13, Bun, Deno and native on macOS/Linux arm64 and
+x86_64, with an additional system Python run on each macOS host. Those hosted
+current-source runtime outcomes remain pending; they cannot be inferred from the
+three local runtimes or from earlier separately compiled probes.
+
+At follow-up `afdf44fe`, both native Linux architectures passed all three argument
+tests and all five packaged integration tests. Both also produced the exact
+missing-cleanup assertion (descriptor present when it must be absent). The jobs
+then failed because their log verifier assumed `rg` was installed. That verifier
+now uses the already required Python standard library. A fully restored positive
+rerun and the expanded packaged-runtime matrix still require current-source CI.

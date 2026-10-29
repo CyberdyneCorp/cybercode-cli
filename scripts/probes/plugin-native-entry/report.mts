@@ -7,6 +7,7 @@ import { parseArgs } from "node:util";
 const { values } = parseArgs({ options: { binary: { type: "string" }, out: { type: "string" } } });
 if (!values.binary || !values.out) throw new Error("--binary and --out are required");
 const sources = [
+  ".github/workflows/plugin-native-launcher.yml", "scripts/probes/plugin-confinement/run.mts",
   "crates/cyber-sandbox/native/linux_plugin_exec.c", "crates/cyber-sandbox/native/linux_filter.h",
   "crates/cyber-sandbox/native/linux_initial_exec.h", "crates/cyber-sandbox/tests/support/native_exec_linux.rs",
   "Cargo.lock", "crates/cyber-sandbox/Cargo.toml", "crates/cyber-sandbox/build.rs",

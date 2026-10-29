@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 type Runtime = { kind: "python" | "node" | "bun" | "deno" | "native"; executable: string; prefix: string; include: string; libdir: string; library?: string; version: string };
-type Artifacts = { executable: string; addon?: string; landlock?: string; initialExec: boolean; stagedPlatform?: boolean; signingIdentifier?: string; trace?: string };
+type Artifacts = { executable: string; addon?: string; landlock?: string; initialExec: boolean; stagedPlatform?: boolean; signingIdentifier?: string; trace?: string; packaged?: boolean };
 type Flags = { read: boolean; write: boolean; shell: boolean; unrestricted?: boolean };
 type Observation = Record<string, boolean | null | boolean[]>;
 const source = dirname(fileURLToPath(import.meta.url));
@@ -30,7 +30,7 @@ function pythonInfo(program: string, embedded = true): Runtime {
   const query = [
     "import json,sys,sysconfig",
     'info={"executable":sys.executable,"prefix":sys.base_prefix,"include":sysconfig.get_path("include"),"libdir":sysconfig.get_config_var("LIBDIR"),"framework":sysconfig.get_config_var("PYTHONFRAMEWORK"),"version":sys.version.split()[0]}',
-    ...embedded ? [] : [
+    ...embedded || isLinux ? [] : [
       // Framework command-line shims may spawn a second interpreter image.
       // Resolve the loaded image instead of granting that shim another exec.
       "import ctypes,os",
@@ -93,26 +93,28 @@ function outside(root: string, allowed: string): boolean {
   return child === ".." || child.startsWith(".." + sep) || isAbsolute(child);
 }
 
-function build(root: string, runtime: Runtime, initialExec: boolean, signingRuntime = false): Artifacts {
+function build(root: string, runtime: Runtime, initialExec: boolean, signingRuntime = false, packagedHelper?: string): Artifacts {
   const clang = isLinux ? "/usr/bin/cc" : command("/usr/bin/xcrun", ["--find", "clang"]).trim();
   const platform = isLinux ? [] : ["-isysroot", command("/usr/bin/xcrun", ["--show-sdk-path"]).trim()];
   const warnings = ["-O1", "-Wall", "-Wextra", "-Werror", ...isLinux ? [] : ["-Wno-error=deprecated-declarations"]];
   const [major, minor] = runtime.version.split(".");
   const executable = join(root, "native-proof");
-  const landlock = isLinux ? join(root, "landlock-proof") : undefined;
-  if (landlock) command(clang, [...warnings, join(source, "linux_exec.c"), "-o", landlock]);
+  const landlock = isLinux ? packagedHelper ? executable : join(root, "landlock-proof") : undefined;
+  if (packagedHelper) copyFileSync(packagedHelper, executable);
+  if (landlock && !packagedHelper) command(clang, [...warnings, join(source, "linux_exec.c"), "-o", landlock]);
   if (runtime.kind === "native") {
     command(clang, [...platform, ...warnings, "-pthread", join(source, "fixture_native.c"), "-o", runtime.executable]);
-    command(clang, [...platform, ...warnings, join(source, isLinux ? "native_exec.c" : "macos_exec.c"), "-o", executable]);
+    if (!packagedHelper) command(clang, [...platform, ...warnings, join(source, isLinux ? "native_exec.c" : "macos_exec.c"), "-o", executable]);
     return { executable, landlock, initialExec };
   }
   if (runtime.kind !== "python") {
     const addon = join(root, "native.node");
-    command(clang, [...platform, ...warnings, join(source, signingRuntime ? "macos_exec.c" : "native_exec.c"), "-o", executable]);
+    if (!packagedHelper) command(clang, [...platform, ...warnings, join(source, signingRuntime ? "macos_exec.c" : "native_exec.c"), "-o", executable]);
     command(clang, [...platform, ...warnings, ...isLinux ? ["-shared", "-fPIC"] : ["-bundle", "-undefined", "dynamic_lookup"],
       `-I${runtime.include}`, join(source, "macos_node.c"), "-o", addon]);
     return { executable, addon, landlock, initialExec };
   }
+  if (packagedHelper) return { executable, landlock, initialExec };
   if (signingRuntime) {
     command(clang, [...platform, ...warnings, join(source, "macos_exec.c"), "-o", executable]);
     return { executable, initialExec };
@@ -215,8 +217,8 @@ function linuxLaunch(artifacts: Artifacts, runtime: Runtime, paths: Record<strin
       bubblewrap.push("--perms", "000", "--tmpfs", privatePath, "--remount-ro", privatePath);
     }
   }
-  const direct = artifacts.initialExec && runtime.kind !== "python";
-  bubblewrap.push("--chdir", paths.cwd, "--", artifacts.landlock!, policyPath);
+  const direct = artifacts.initialExec && (runtime.kind !== "python" || artifacts.packaged);
+  bubblewrap.push("--chdir", paths.cwd, "--", artifacts.landlock!, ...artifacts.packaged ? ["--plugin-native-exec"] : [], policyPath);
   if (artifacts.initialExec) bubblewrap.push(`--initial-shell=${flags.shell ? 1 : 0}`);
   bubblewrap.push(direct ? runtime.executable : artifacts.executable, ...direct ? args.slice(1) : args);
   return { program: "/usr/bin/bwrap", args: bubblewrap };
@@ -243,7 +245,7 @@ function observe(artifacts: Artifacts, runtime: Runtime, paths: Record<string, s
         : [runtime.executable, ...runtime.kind === "deno" ? ["run", "-A", "--no-config", "--no-lock", "--node-modules-dir=manual"]
           : runtime.kind === "bun" ? ["--config=/dev/null", "--no-env-file", "--no-install"] : [],
           join(paths.package, "node_bootstrap.cjs"), workerAddon, bootstrapProfile, join(paths.package, "fixture.cjs"), JSON.stringify(input)];
-    if (artifacts.signingIdentifier && runtime.kind !== "native") {
+    if (artifacts.signingIdentifier && runtime.kind !== "native" && !artifacts.packaged) {
       // Install policy in the native launcher before any interpreter instruction.
       // Runtime code never installs this candidate's boundary or gets an exec
       // exception; the unchanged runtime has a different signing identity.
@@ -256,7 +258,16 @@ function observe(artifacts: Artifacts, runtime: Runtime, paths: Record<string, s
       // platform executable installs policy before entering the re-signed target.
       args = ["-", "/usr/bin/sandbox-exec", "-f", profile, ...args.slice(1)];
     }
-    const launch = isLinux && !flags.unrestricted ? linuxLaunch(artifacts, runtime, paths, profile, flags, args) : { program: artifacts.executable, args };
+    if (artifacts.packaged) {
+      args = runtime.kind === "python"
+        ? [runtime.executable, "-I", "-S", join(paths.package, "fixture.py"), JSON.stringify(input)]
+        : runtime.kind === "native" && !isLinux ? args.slice(1) : args;
+    }
+    const launch = artifacts.packaged && flags.unrestricted
+      ? { program: runtime.executable, args: args.slice(1) }
+      : isLinux && !flags.unrestricted ? linuxLaunch(artifacts, runtime, paths, profile, flags, args)
+      : artifacts.packaged ? { program: artifacts.executable, args: ["--plugin-native-exec", profile, ...args] }
+      : { program: artifacts.executable, args };
     const options = { cwd: paths.cwd, env: { ...environment, HOME: paths.scratch, XDG_CONFIG_HOME: join(paths.scratch, "config"), DENO_DIR: join(paths.scratch, "deno-cache"),
           XDG_CACHE_HOME: join(paths.scratch, "cache"), BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(paths.scratch, "bun-cache"),
           ...runtime.kind === "native" ? { CYBER_PROOF_PRIVATE: input.private_file } : {} },
@@ -313,6 +324,7 @@ function check(root: string, artifacts: Artifacts, runtime: Runtime, name: strin
   if (!flags.unrestricted) writeFileSync(profile, isLinux ? `shell=${flags.shell ? 1 : 0}\n` : policy(runtime, paths, flags, artifacts.stagedPlatform, artifacts.signingIdentifier), { mode: 0o600 });
   const actual = observe(artifacts, runtime, paths, profile, "inspect", flags);
   const expectations = expected(flags);
+  if (artifacts.packaged && flags.unrestricted) expectations.inherited_descriptor = true;
   if (artifacts.addon) expectations.startup_artifacts = false;
   if (isLinux && runtime.kind === "bun") {
     expectations.proc_root_reads = [flags.read, !!flags.unrestricted];
@@ -349,7 +361,7 @@ function check(root: string, artifacts: Artifacts, runtime: Runtime, name: strin
 
 function main() {
   assert(["darwin", "linux"].includes(process.platform), "native proof requires macOS or Linux; other platforms are unproved");
-  const { values } = parseArgs({ options: { runtime: { type: "string", default: "python" }, python: { type: "string" }, executable: { type: "string" }, report: { type: "string" }, trace: { type: "string" }, "initial-exec": { type: "boolean", default: false }, "macos-staged-native": { type: "boolean", default: false }, "macos-signing-native": { type: "boolean", default: false }, "macos-signing-runtime": { type: "boolean", default: false } } });
+  const { values } = parseArgs({ options: { runtime: { type: "string", default: "python" }, "packaged-helper": { type: "string" }, python: { type: "string" }, executable: { type: "string" }, report: { type: "string" }, trace: { type: "string" }, "initial-exec": { type: "boolean", default: false }, "macos-staged-native": { type: "boolean", default: false }, "macos-signing-native": { type: "boolean", default: false }, "macos-signing-runtime": { type: "boolean", default: false } } });
   assert(["python", "node", "bun", "deno", "native"].includes(values.runtime), "runtime must be python, node, bun, deno or native");
   if (values.runtime === "bun" || values.runtime === "deno") assert(values.executable, "supply an explicit trusted Bun/Deno executable");
   const stagedPlatform = values["macos-staged-native"];
@@ -358,6 +370,11 @@ function main() {
   assert(!signingNative || (!isLinux && values.runtime === "native" && !stagedPlatform), "macos-signing-native requires macOS native runtime without staging");
   const signingRuntime = signingNative || values["macos-signing-runtime"];
   assert(!signingRuntime || (!isLinux && !stagedPlatform), "macos-signing-runtime requires macOS without staging");
+  const packagedHelper = values["packaged-helper"];
+  if (packagedHelper) {
+    assert(isAbsolute(packagedHelper), "packaged helper must be absolute");
+    assert(isLinux ? values["initial-exec"] : signingRuntime, "packaged helper requires the pre-runtime mechanism");
+  }
   const initialExec = values["initial-exec"] || (values.runtime === "native" && isLinux);
   assert(!initialExec || isLinux, "initial-exec proof currently requires Linux");
   if (values.runtime === "python") assert(values.python, "supply an explicit trusted Python; embedding additionally requires development headers and a dynamic library");
@@ -366,7 +383,7 @@ function main() {
     const runtime: Runtime = values.runtime === "node" ? nodeInfo() : values.runtime === "bun" || values.runtime === "deno"
       ? javascriptInfo(values.runtime, values.executable!, root) : values.runtime === "native"
       ? { kind: "native", executable: join(root, "native-fixture"), prefix: "/usr", include: "", libdir: "/usr/lib", version: "fixture-v2" }
-      : pythonInfo(values.python!, !signingRuntime);
+      : pythonInfo(values.python!, !signingRuntime && !packagedHelper);
     // A runtime installed straight in /tmp must not accidentally admit all
     // temporary owner fixtures through its directory read grant.
     for (const allowed of [runtime.prefix, runtime.libdir, ...runtime.kind === "native" ? [] : [dirname(runtime.executable)], ...isLinux ? ["/usr", "/lib", "/bin"] : ["/System", "/usr/lib", "/bin", "/usr/bin"]]) {
@@ -375,7 +392,7 @@ function main() {
     // Literal exec admission must name the same physical executable the kernel
     // resolves, including framework Python's executable symlinks.
     if (signingRuntime && runtime.kind !== "native") runtime.executable = realpathSync(runtime.executable);
-    const artifacts: Artifacts = { ...build(root, runtime, initialExec, signingRuntime), trace: values.trace };
+    const artifacts: Artifacts = { ...build(root, runtime, initialExec, signingRuntime, packagedHelper), trace: values.trace, packaged: Boolean(packagedHelper) };
     if (signingRuntime) {
       artifacts.signingIdentifier = `com.cyberdyne.probe.bootstrap.${randomUUID()}`;
       command("/usr/bin/codesign", ["--force", "--sign", "-", "--identifier", artifacts.signingIdentifier, "--timestamp=none", artifacts.executable]);
@@ -407,8 +424,13 @@ function main() {
     }
     const report = { recorded_at: new Date().toISOString(), kernel_release: release(), sources, source_sha256: digest.digest("hex"), platform: process.platform, architecture: process.arch, runtime: runtime.kind, version: runtime.version, startup_control,
       staging, signing_identifier: artifacts.signingIdentifier,
+      packaged_helper: packagedHelper ? {
+        input_sha256: createHash("sha256").update(readFileSync(packagedHelper)).digest("hex"),
+        executed_sha256: createHash("sha256").update(readFileSync(artifacts.executable)).digest("hex"),
+        private_copy: true, direct_runtime: true,
+      } : undefined,
       mechanism: signingRuntime ? "fresh signing identifier on trusted launcher + exact-target Seatbelt exec rule before any runtime instruction; target signature unchanged; experimental subject-identity candidate" : stagedPlatform ? "ad-hoc-staged native image + system platform launcher Seatbelt policy before first target instruction; platform-subject exact-path exec admission" : initialExec ? "bubblewrap private mounts + Landlock/seccomp before first target instruction + one-shot exec admission; closed listener and immutable filter" : isLinux ? "bubblewrap private mounts + Landlock before runtime startup + synchronized seccomp before fixture execution" : "trusted native/runtime bootstrap followed by native sandbox_init before fixture execution",
-      limitation: "experimental native mechanisms; macOS uses deprecated Seatbelt API; not production packaging or Windows acceptance", unsupported_cases, rows };
+      limitation: packagedHelper ? "packaged entry with experimental policy composition; production admission, protected ownership, network/secret integration and Windows acceptance remain required" : "experimental native mechanisms; macOS uses deprecated Seatbelt API; not production packaging or Windows acceptance", unsupported_cases, rows };
     if (values.report) writeFileSync(values.report, JSON.stringify(report, null, 2) + "\n", { mode: 0o600 });
     console.log(JSON.stringify(report, null, 2));
   } finally { rmSync(root, { recursive: true, force: true }); }

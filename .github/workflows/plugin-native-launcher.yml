@@ -5,9 +5,7 @@ on:
   pull_request:
     paths:
       - crates/cyber-sandbox/**
-      - scripts/probes/plugin-confinement/fixture_exec.c
-      - scripts/probes/plugin-confinement/fixture_native.c
-      - scripts/probes/plugin-confinement/process_policy.h
+      - scripts/probes/plugin-confinement/**
       - Cargo.lock
       - .github/workflows/plugin-native-launcher.yml
       - scripts/probes/plugin-native-entry/**
@@ -15,9 +13,7 @@ on:
     branches: [main]
     paths:
       - crates/cyber-sandbox/**
-      - scripts/probes/plugin-confinement/fixture_exec.c
-      - scripts/probes/plugin-confinement/fixture_native.c
-      - scripts/probes/plugin-confinement/process_policy.h
+      - scripts/probes/plugin-confinement/**
       - Cargo.lock
       - .github/workflows/plugin-native-launcher.yml
       - scripts/probes/plugin-native-entry/**
@@ -45,6 +41,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - uses: actions/setup-python@v5
+        if: runner.os != 'Windows'
+        with:
+          python-version: '3.13'
+      - uses: oven-sh/setup-bun@v2
+        if: runner.os != 'Windows'
+        with:
+          bun-version: '1.4.4'
+      - uses: denoland/setup-deno@v2
+        if: runner.os != 'Windows'
+        with:
+          deno-version: 'v2.9.8'
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Verify native musl C compilation
@@ -54,7 +62,8 @@ jobs:
           set -euo pipefail
           sudo rm -f /etc/apt/sources.list.d/microsoft-prod.*
           sudo apt-get update
-          sudo apt-get install -y musl-tools
+          sudo apt-get install -y musl-tools bubblewrap linux-libc-dev strace
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           arch=$(uname -m)
           musl-gcc -Wall -Wextra -Werror -idirafter "/usr/include/$arch-linux-gnu" -idirafter /usr/include -c crates/cyber-sandbox/native/linux_plugin_exec.c -o "$RUNNER_TEMP/linux-native-musl.o"
       - name: Verify packaged entry and explicit unsupported-mode behavior
@@ -63,6 +72,30 @@ jobs:
           set -euo pipefail
           cargo test --locked -p cyber-sandbox --bin cyber-sandbox-exec native_exec
           cargo test --locked -p cyber-sandbox --test native_exec
+      - name: Verify packaged entry across supported runtimes
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/packaged-runtime"
+          helper="$PWD/target/debug/cyber-sandbox-exec"
+          for runtime in node python bun deno native; do
+            args=(--runtime "$runtime" --packaged-helper "$helper" --report "$RUNNER_TEMP/packaged-runtime/$runtime.json")
+            if [[ "$runtime" == python ]]; then
+              args+=(--python "$(command -v python3)")
+            elif [[ "$runtime" == bun || "$runtime" == deno ]]; then
+              args+=(--executable "$(command -v "$runtime")")
+            fi
+            if [[ "$RUNNER_OS" == Linux ]]; then
+              args+=(--initial-exec --trace "$RUNNER_TEMP/packaged-runtime/trace-$runtime")
+            else
+              args+=(--macos-signing-runtime)
+            fi
+            node --experimental-strip-types scripts/probes/plugin-confinement/run.mts "${args[@]}" > "$RUNNER_TEMP/packaged-runtime/$runtime.log" 2>&1
+          done
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime python --python /usr/bin/python3 --macos-signing-runtime --packaged-helper "$helper" --report "$RUNNER_TEMP/packaged-runtime/python-system.json" > "$RUNNER_TEMP/packaged-runtime/python-system.log" 2>&1
+          fi
       - name: Verify high-descriptor regression detects missing cleanup
         if: runner.os == 'Linux'
         shell: bash
@@ -85,9 +118,13 @@ jobs:
             exit 1
           fi
           cat "$RUNNER_TEMP/native-fd-control.log"
-          rg 'linux::inherited_descriptors_above_lowered_limit_are_closed .* FAILED' "$RUNNER_TEMP/native-fd-control.log"
-          rg -F 'left: Bool(true)' "$RUNNER_TEMP/native-fd-control.log"
-          rg -F 'right: Bool(false)' "$RUNNER_TEMP/native-fd-control.log"
+          python3 - "$RUNNER_TEMP/native-fd-control.log" <<'PYCONTROL'
+          import re, sys
+          from pathlib import Path
+          text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', Path(sys.argv[1]).read_text())
+          assert 'test linux::inherited_descriptors_above_lowered_limit_are_closed ... FAILED' in text
+          assert 'left: Bool(true)' in text and 'right: Bool(false)' in text
+          PYCONTROL
           cp "$RUNNER_TEMP/linux-native-original.c" "$source"
           cargo test --locked -p cyber-sandbox --test native_exec
       - name: Record exact source and built helper provenance
@@ -105,6 +142,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: native-entry-provenance-${{ matrix.os }}
-          path: ${{ runner.temp }}/native-entry-provenance.json
+          path: |
+            ${{ runner.temp }}/native-entry-provenance.json
+            ${{ runner.temp }}/packaged-runtime/
+            ${{ runner.temp }}/native-fd-control.log
           if-no-files-found: error
           retention-days: 14
