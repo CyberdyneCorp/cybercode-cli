@@ -1,5 +1,11 @@
 ## 1. Review and baseline
 
+Delivery rule updated by the user on 2026-10-29: normally one open goal PR,
+maximum two only for independently reviewable work. Consolidate #70–#76 into
+draft #76 against `main`; keep related probes, fixes and evidence in that PR.
+The full goal scope, order and acceptance gates remain unchanged. See
+[goal delivery rules](../../../docs/goal-delivery.md).
+
 - [x] 1.1 Inspect canonical plugin/hook contracts, SDK protocol, host confinement and explicit unsupported paths at `097b6278`.
 - [x] 1.2 Draft the proposal, design, supplemental scenarios and ordered implementation tasks.
 - [x] 1.3 Review proposal/design/tasks with the user before security-sensitive or capability implementation. Record approved scope and platform/runtime decisions. Approved on 2026-10-27: after PRs #53/#54 merged, the user explicitly requested implementation of both merged plans and then instructed goal resume. Native proof, baseline and acceptance gates remain required.
