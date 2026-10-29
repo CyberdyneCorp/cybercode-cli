@@ -53,7 +53,7 @@ impl LaunchContext<'_> {
         plugin: &PluginLaunch<'_>,
         denials: &Denials,
     ) -> Result<Started, String> {
-        let (program, args) = command(plugin)?;
+        let (program, args) = command(plugin, self.location)?;
         let mut config = SandboxConfig::resolve(
             &self.resolved.value,
             &self.resolved.sources,
@@ -178,7 +178,7 @@ fn confinement(
 }
 
 /// The program and arguments that run `main` with its runtime.
-fn command(plugin: &PluginLaunch<'_>) -> Result<(String, Vec<String>), String> {
+fn command(plugin: &PluginLaunch<'_>, location: &Path) -> Result<(String, Vec<String>), String> {
     let relative = cyber_core::plugins::manifest_path(&plugin.host.main)
         .ok_or_else(|| format!("plugin {}: main is outside the plugin", plugin.name))?;
     let main = plugin.root.join(relative);
@@ -197,12 +197,10 @@ fn command(plugin: &PluginLaunch<'_>) -> Result<(String, Vec<String>), String> {
         Runtime::Deno => (&["deno"], deno_arguments(plugin, main_arg)?),
         Runtime::Python => (&["python3", "python"], vec!["-u".into(), main_arg]),
     };
-    let program = candidates
-        .iter()
-        .find_map(|name| find_program(name))
+    let program = super::runtime_search::find(candidates, location, plugin.root)
         .ok_or_else(|| {
             format!(
-                "plugin {}: runtime {} is not installed",
+                "plugin {}: runtime {} needs an executable on an absolute PATH outside the Location and package",
                 plugin.name,
                 plugin.host.runtime.as_str()
             )
@@ -266,18 +264,6 @@ fn runtime_config(plugin: &PluginLaunch<'_>, names: &[&str]) -> Result<Option<Pa
     Ok(None)
 }
 
-fn find_program(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    let names: Vec<String> = if cfg!(windows) {
-        vec![format!("{name}.exe"), format!("{name}.cmd")]
-    } else {
-        vec![name.to_owned()]
-    };
-    std::env::split_paths(&path)
-        .flat_map(|dir| names.iter().map(move |name| dir.join(name)))
-        .find(|candidate| candidate.is_file())
-}
-
 /// A host's private temporary directory, removed when the host stops.
 pub(crate) struct Scratch {
     pub path: PathBuf,
@@ -321,12 +307,15 @@ mod tests {
             runtime,
         };
         let capabilities = Capabilities::default();
-        command(&PluginLaunch {
-            name: "kit",
+        command(
+            &PluginLaunch {
+                name: "kit",
+                root,
+                host: &host,
+                capabilities: &capabilities,
+            },
             root,
-            host: &host,
-            capabilities: &capabilities,
-        })
+        )
     }
 
     /// Regression: the Windows AppContainer plan of a host held only its scratch
@@ -443,7 +432,10 @@ mod tests {
                 }
                 Err(error) => assert_eq!(
                     error,
-                    format!("plugin kit: runtime {} is not installed", runtime.as_str())
+                    format!(
+                        "plugin kit: runtime {} needs an executable on an absolute PATH outside the Location and package",
+                        runtime.as_str()
+                    )
                 ),
             }
         }

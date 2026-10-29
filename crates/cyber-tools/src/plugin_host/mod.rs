@@ -16,6 +16,7 @@ mod host;
 mod launch;
 pub(crate) mod network;
 mod restart;
+mod runtime_search;
 pub mod secrets;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};

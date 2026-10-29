@@ -22,6 +22,11 @@
 - **AND** permitted bundled preloads, imports and frozen package locks remain usable without rewriting the approved package
 - **AND** prepared Deno packages retain an owner-created boundary against ancestor workspace discovery while the workspace Location remains in the initialize envelope
 
+#### Scenario: Project PATH entries cannot choose the initial runtime
+- **WHEN** PATH includes a Location/package directory, a relative entry or a shim resolving into either excluded tree
+- **THEN** host runtime lookup ignores that entry and selects a suitable outside executable or refuses with a plugin-named diagnostic
+- **AND** this search guard does not substitute for immutable reviewed runtime and dependency admission
+
 ### Requirement: Runtime contribution generation ownership
 (P1) Runtime hooks, providers and catalog transforms SHALL be validated and owned by plugin identity, digest, Location and host generation. Revocation SHALL remove only that generation before later dispatch, and stale results SHALL NOT restore it. Runtime hooks SHALL follow ordinary plugin hook scope and managed-only policy. Provider streams SHALL use normal usage/cancellation paths and SHALL NOT supply trusted reserved bounds by declaration alone. Catalog transforms SHALL be bounded and ordered, preserve policy/configuration ceilings and leave the previous valid view intact on failure.
 

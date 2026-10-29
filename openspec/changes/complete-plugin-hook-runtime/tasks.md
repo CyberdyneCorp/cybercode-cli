@@ -18,6 +18,11 @@ The full goal scope, order and acceptance gates remain unchanged. See
 - [ ] 2.3 Enforce `fs.read`, `fs.write`, `shell`, network and secret intersections; refuse unsupported confinement with actionable plugin diagnostics. [Linux IPC diagnostic](linux-ipc-proof.md) proves fixture-owned host socket reachability through the composed production boundary; the [isolated socket-family candidate](linux-ipc-candidate.md) passes its fixture matrix but restricts bind/listen, while the [path-scoped ABI-9 alternative](linux-unix9-candidate.md) tests preserving private IP/UNIX functionality without production activation or an approved support-floor change. None closes this task.
 - [ ] 2.4 Add real-process positive/negative tests for native reads, home/Location/symlink bypass, spawning a shell/interpreter/native child, inherited restrictions, protected state, revocation and unsupported hosts. Obtain native macOS/Linux evidence and explicit Windows results/limits.
 
+Runtime-selection follow-up for task 2.2: the [production PATH guard](runtime-search.md)
+now excludes project/package directories, relative entries and symlink targets
+back into either tree. It is not fixed reviewed runtime/image admission; the
+parent native enforcement and support gates remain open.
+
 ## 3. Host contribution lifecycle
 
 - [ ] 3.1 Validate initialize contributions and add plugin/digest/Location/generation ownership, collision handling, atomic replacement and late-result fences.

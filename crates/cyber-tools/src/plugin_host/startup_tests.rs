@@ -273,7 +273,7 @@ fn verify(runtime: Runtime, config_name: Option<&str>) {
         capabilities: &capabilities,
     };
     let (program, args) =
-        command(&plugin).expect("the focused runtime workflow must install this runtime");
+        command(&plugin, &project).expect("the focused runtime workflow must install this runtime");
     let environment =
         crate::plugin_host::environment::build(plugin.name, package, &scratch, &Default::default());
     let result = receipt(

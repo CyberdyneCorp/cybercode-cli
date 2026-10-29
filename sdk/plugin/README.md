@@ -77,3 +77,8 @@ Prepared Deno images also need their retained private workspace boundary; select
 an absolute config path alone does not prevent ancestor workspace discovery.
 Production launch still uses the source package; prepared-image integration and
 complete native admission remain outstanding.
+
+Interpreter runtimes must be executable files on absolute PATH entries outside
+the Location and plugin package. Empty/relative entries and project/package
+symlink targets cannot select the initial interpreter. This search guard does
+not establish immutable runtime/dependency admission or complete native confinement.
