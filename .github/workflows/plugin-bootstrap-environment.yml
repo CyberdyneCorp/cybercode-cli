@@ -6,7 +6,7 @@ on:
     paths:
       - crates/cyber-tools/src/plugin_host/**
       - crates/cyber-app/tests/plugins.rs
-      - crates/cyber-sandbox/src/env.rs
+      - crates/cyber-sandbox/**
       - .github/workflows/plugin-bootstrap-environment.yml
       - Cargo.lock
   push:
@@ -14,7 +14,7 @@ on:
     paths:
       - crates/cyber-tools/src/plugin_host/**
       - crates/cyber-app/tests/plugins.rs
-      - crates/cyber-sandbox/src/env.rs
+      - crates/cyber-sandbox/**
       - .github/workflows/plugin-bootstrap-environment.yml
       - Cargo.lock
 
@@ -49,6 +49,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - name: Build distributed sandbox helper
+        shell: bash
+        run: cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec
       - name: Verify explicit environment construction
         shell: bash
         run: cargo test --locked -p cyber-tools --lib plugin_host::environment

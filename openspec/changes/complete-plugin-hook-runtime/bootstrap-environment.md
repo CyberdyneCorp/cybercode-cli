@@ -64,3 +64,14 @@ macOS Intel and Windows results remain pending. Windows only runs the template
 unit checks; its existing unavailable native-admission scope is not expanded by
 this change. The Unix workflow executes the complete production plugin suite,
 checks the unsafe-overlay counterexample and restores the positive regression.
+
+
+The first focused Linux run at `a4e97c1c` compiled successfully but failed 14 of
+15 production tests because the fresh job had not built `cyber-sandbox-exec`.
+The protocol-version case reported the exact SandboxUnavailableError for the
+missing helper. Local macOS had passed with the existing distributed helper in
+the shared target cache; that did not verify the fresh Linux job dependency.
+The workflow now builds the actual sandbox helper explicitly before environment
+and production tests, and watches sandbox sources as a dependency. No unconfined
+fallback or skipped host acceptance is introduced. Updated native Linux results
+remain required; this correction is not itself a passing Linux execution claim.
