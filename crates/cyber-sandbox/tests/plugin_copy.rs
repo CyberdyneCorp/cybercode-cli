@@ -189,6 +189,7 @@ fn source_digest_probe() {
 #[cfg(unix)]
 #[test]
 fn worker_source_io_preserves_owner_sqlite_locks() {
+    let generation = cyber_sandbox::plugin_image::Generation::new();
     use std::os::unix::fs::PermissionsExt;
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -254,6 +255,7 @@ fn worker_source_io_preserves_owner_sqlite_locks() {
         .unwrap();
     let owned = runtime
         .block_on(cyber_sandbox::plugin_image::prepare(
+            &generation.lease(),
             std::path::Path::new(env!("CARGO_BIN_EXE_cyber-sandbox-exec")),
             &parent,
             &request.source,
@@ -284,6 +286,7 @@ fn windows_refuses_copy_without_creating_output() {
 #[cfg(unix)]
 #[tokio::test]
 async fn owned_copy_pins_the_actual_worker_result_and_cleans_it_on_drop() {
+    let generation = cyber_sandbox::plugin_image::Generation::new();
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();
     let source = root.join("source");
@@ -293,6 +296,7 @@ async fn owned_copy_pins_the_actual_worker_result_and_cleans_it_on_drop() {
     std::fs::write(source.join("main"), b"approved bytes").unwrap();
     let digest = cyber_core::plugins::tree_digest(&source).unwrap();
     let package = cyber_sandbox::plugin_image::prepare(
+        &generation.lease(),
         std::path::Path::new(env!("CARGO_BIN_EXE_cyber-sandbox-exec")),
         &base,
         &source,
@@ -302,7 +306,7 @@ async fn owned_copy_pins_the_actual_worker_result_and_cleans_it_on_drop() {
     .unwrap();
     use std::os::unix::fs::PermissionsExt;
     assert_eq!(
-        std::fs::metadata(package.path().parent().unwrap())
+        std::fs::metadata(package.path().unwrap().parent().unwrap())
             .unwrap()
             .permissions()
             .mode()
@@ -311,10 +315,10 @@ async fn owned_copy_pins_the_actual_worker_result_and_cleans_it_on_drop() {
     );
     assert_eq!(package.digest(), digest);
     assert_eq!(
-        std::fs::read(package.path().join("main")).unwrap(),
+        std::fs::read(package.path().unwrap().join("main")).unwrap(),
         b"approved bytes"
     );
-    let path = package.path().to_owned();
+    let path = package.path().unwrap().to_owned();
     drop(package);
     assert!(!path.exists());
     assert_eq!(std::fs::read_dir(&base).unwrap().count(), 0);
@@ -323,9 +327,11 @@ async fn owned_copy_pins_the_actual_worker_result_and_cleans_it_on_drop() {
 #[cfg(windows)]
 #[tokio::test]
 async fn owner_copy_refuses_windows_without_creating_a_staging_namespace() {
+    let generation = cyber_sandbox::plugin_image::Generation::new();
     let root = tempfile::tempdir().unwrap();
     let base = root.path().join("staging");
     let error = cyber_sandbox::plugin_image::prepare(
+        &generation.lease(),
         &root.path().join("helper.exe"),
         &base,
         &root.path().join("source"),
@@ -335,4 +341,46 @@ async fn owner_copy_refuses_windows_without_creating_a_staging_namespace() {
     .unwrap_err();
     assert_eq!(error, cyber_sandbox::plugin_image::Error::Unavailable);
     assert!(!base.exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn replacing_identical_content_cannot_revive_the_previous_package() {
+    use cyber_sandbox::plugin_image::{Error, Generation, prepare};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let source = root.join("source");
+    let base = root.join("staging");
+    std::fs::create_dir(&source).unwrap();
+    std::fs::create_dir(&base).unwrap();
+    std::fs::write(source.join("main"), b"same content").unwrap();
+    let digest = cyber_core::plugins::tree_digest(&source).unwrap();
+    let helper = std::path::Path::new(env!("CARGO_BIN_EXE_cyber-sandbox-exec"));
+    let previous = Generation::new();
+    let old_lease = previous.lease();
+    let old = prepare(&old_lease, helper, &base, &source, &digest)
+        .await
+        .unwrap();
+    let old_path = old.path().unwrap().to_owned();
+    previous.revoke();
+    assert_eq!(old.path(), Err(Error::Revoked));
+    let current = Generation::new();
+    let new = prepare(&current.lease(), helper, &base, &source, &digest)
+        .await
+        .unwrap();
+    assert_eq!(old.digest(), new.digest());
+    assert_ne!(new.path().unwrap(), old_path);
+    assert_eq!(old.path(), Err(Error::Revoked));
+    assert_eq!(
+        prepare(&old_lease, helper, &base, &source, &digest)
+            .await
+            .unwrap_err(),
+        Error::Revoked
+    );
+    assert_eq!(std::fs::read_dir(&base).unwrap().count(), 2);
+    drop(current);
+    assert_eq!(new.path(), Err(Error::Revoked));
+    drop(old);
+    drop(new);
+    assert_eq!(std::fs::read_dir(&base).unwrap().count(), 0);
 }

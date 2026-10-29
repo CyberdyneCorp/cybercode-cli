@@ -223,3 +223,40 @@ Windows CI and cannot run on the local macOS host. The focused unchanged-main
 Windows baseline is run 40853907380; its result must be read before making any
 claim about whether the original failure reproduces on main. Fresh PR Windows
 unit and CLI integration results remain required.
+
+## Revocable preparation generations
+
+Preparation now requires a read-only `Lease` issued by an owner `Generation`.
+The owner is not cloneable; leases may be cloned but cannot renew or revoke it.
+Explicit revocation and owner drop permanently revoke all old leases. A new
+incarnation always gets a fresh authority, even for identical name/content/Location.
+This authority is process-local, not a plugin-supplied identifier.
+
+The supervisor observes revocation while the trusted copy worker runs and reaps
+it before returning `Revoked`. Authority is also checked before staging/spawn,
+at response binding and before returning a prepared package. `Package::path`
+returns a result and re-checks its retained lease on access; an old package cannot
+borrow the current generation's authority merely because its digest is equal.
+Revocation does not delete an outstanding owned package until it drops, preserving
+resource lifetime for an owner that still has to stop a running host.
+
+Local macOS arm64 verification passes nine owner/authority tests and five actual
+helper tests; the two SQLite fixture entrypoints are explicitly invoked as before.
+A real helper test replaces a package with identical content, verifies the old
+lease/package remain revoked, successfully prepares the fresh package, then
+verifies dropping that fresh authority also revokes its retained package. A live
+native worker test verifies revocation returns only after process disappearance
+and cleanup. Removing the supervisor's revocation listener makes this test fail
+at its revocation deadline; removing the package access check makes the identical
+content replacement test fail by returning the stale path. Both controls execute
+the named tests and fail their assertions; positive code is restored afterward.
+The failing live-worker control explicitly cancels/settles its request as cleanup.
+
+This supplies a mandatory preparation authority primitive, not complete host
+identity reconciliation or native launch admission. The plugin host must still
+own one authority per incarnation, bind it to the current plugin/digest/Location
+and revoke it on replacement/removal. A path borrowed before revocation is not
+an execution permit: the native launch commit must serialize its final authority
+check with revocation and ensure already-running processes stop. Complete private
+roots, immutable runtime/helper binding and OS policy integration remain required.
+The existing native proof/design gate and task 2.2 remain open.
