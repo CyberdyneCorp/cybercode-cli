@@ -6,6 +6,8 @@ on:
       - crates/cyber-sandbox/examples/plugin_unix_socket_probe.rs
       - crates/cyber-sandbox/tests/fixtures/plugin_unix_socket.c
       - .github/workflows/plugin-linux-ipc.yml
+      - scripts/probes/plugin-native-entry/linux_socket_candidate.h
+      - scripts/probes/plugin-native-entry/build_socket_candidate.py
 permissions:
   contents: read
 concurrency:
@@ -24,6 +26,18 @@ jobs:
       CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.4'
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: 'v2.9.8'
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Prepare namespace prerequisites
@@ -32,20 +46,48 @@ jobs:
           set -euo pipefail
           sudo rm -f /etc/apt/sources.list.d/microsoft-prod.*
           sudo apt-get update
-          sudo apt-get install -y bubblewrap build-essential pkg-config cmake
+          sudo apt-get install -y bubblewrap build-essential pkg-config cmake strace
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - name: Build production helper and diagnostic
-        run: cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec --example plugin_unix_socket_probe
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec --example plugin_unix_socket_probe
+          python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-candidate"
       - name: Observe fixture-only host socket reachability
         shell: bash
         run: |
           set -euo pipefail
           target/debug/examples/plugin_unix_socket_probe "$PWD/target/debug/cyber-sandbox-exec" "$RUNNER_TEMP/linux-ipc.json"
+          target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-candidate" "$RUNNER_TEMP/linux-ipc-candidate.json" --candidate
+      - name: Verify candidate runtime compatibility
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/socket-runtime"
+          status=0
+          for runtime in node python bun deno native; do
+            args=(--runtime "$runtime" --initial-exec --packaged-helper "$RUNNER_TEMP/socket-candidate" --report "$RUNNER_TEMP/socket-runtime/$runtime.json" --trace "$RUNNER_TEMP/socket-runtime/trace-$runtime")
+            if [[ "$runtime" == python ]]; then
+              args+=(--python "$(command -v python3)")
+            elif [[ "$runtime" == bun || "$runtime" == deno ]]; then
+              args+=(--executable "$(command -v "$runtime")")
+            fi
+            if ! node --experimental-strip-types scripts/probes/plugin-confinement/run.mts "${args[@]}" > "$RUNNER_TEMP/socket-runtime/$runtime.log" 2>&1; then
+              cat "$RUNNER_TEMP/socket-runtime/$runtime.log"
+              status=1
+            fi
+          done
+          exit "$status"
       - name: Retain diagnostic observations
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: linux-ipc-${{ matrix.os }}
-          path: ${{ runner.temp }}/linux-ipc.json
+          path: |
+            ${{ runner.temp }}/linux-ipc*.json
+            ${{ runner.temp }}/socket-runtime/
           if-no-files-found: warn
           retention-days: 14

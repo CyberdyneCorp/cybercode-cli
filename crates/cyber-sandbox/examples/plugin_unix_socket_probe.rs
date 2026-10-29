@@ -59,19 +59,72 @@ mod probe {
         }
     }
 
-    pub fn main() {
+    fn pair_row(policy: LinuxPolicy<'_>, listener: &UnixListener, label: &str) -> Value {
+        let pair_args = [
+            policy.target_args[0].clone(),
+            policy.target_args[1].clone(),
+            "pair".into(),
+        ];
+        let pair_policy = LinuxPolicy {
+            target_args: &pair_args,
+            ..policy
+        };
+        let plan = pair_policy.compose().unwrap();
+        std::fs::write(pair_policy.profile, plan.landlock).unwrap();
+        let observed: Value = serde_json::from_slice(
+            &run(Command::new("/usr/bin/bwrap")
+                .args(plan.arguments)
+                .env_clear())
+            .stdout,
+        )
+        .unwrap();
+        assert_eq!(
+            observed["project_read"], pair_policy.fs_read,
+            "native pair read control: {observed}"
+        );
+        assert_eq!(
+            observed["pair_roundtrip"], true,
+            "private pair communication: {observed}"
+        );
+        for key in [
+            "connected",
+            "pair_reconnect",
+            "pair_listen",
+            "datagram_pair",
+            "seqpacket_pair",
+        ] {
+            assert_eq!(
+                observed[key], false,
+                "private pair escape: {key}: {observed}"
+            );
+        }
+        let delivered = receipt(listener, &observed);
+        assert!(!delivered, "pair reached host: {observed}");
+        json!({"socket": label, "fs_read": pair_policy.fs_read, "fs_write": pair_policy.fs_write,
+                        "shell": false, "mode": "pair", "host_received_fixture": delivered, "observed": observed})
+    }
+
+    fn options() -> (PathBuf, PathBuf, bool) {
         assert_eq!(
             std::env::consts::OS,
             "linux",
             "native evidence requires Linux"
         );
         let args: Vec<_> = std::env::args_os().skip(1).collect();
-        assert_eq!(
-            args.len(),
-            2,
-            "expected explicit helper path and report path"
+        assert!(
+            matches!(args.len(), 2 | 3),
+            "expected helper, report and optional candidate flag"
         );
+        let candidate = args.len() == 3;
+        if candidate {
+            assert_eq!(args[2], "--candidate");
+        }
         let helper = std::fs::canonicalize(&args[0]).unwrap();
+        (helper, PathBuf::from(&args[1]), candidate)
+    }
+
+    pub fn main() {
+        let (helper, report_path, candidate) = options();
         let temporary = tempfile::tempdir().unwrap();
         let root = temporary.path().canonicalize().unwrap();
         let project = root.join("project");
@@ -138,7 +191,7 @@ mod probe {
                     data.to_str().unwrap().into(),
                 ];
                 let private_paths = [MaskPath::Directory(&private)];
-                let plan = LinuxPolicy {
+                let policy = LinuxPolicy {
                     helper: &helper,
                     target: &target,
                     profile: &profile,
@@ -154,9 +207,8 @@ mod probe {
                     fs_write: write,
                     shell: false,
                     namespace_proc: false,
-                }
-                .compose()
-                .unwrap();
+                };
+                let plan = policy.compose().unwrap();
                 std::fs::write(&profile, plan.landlock).unwrap();
                 let observed: Value = serde_json::from_slice(
                     &run(Command::new("/usr/bin/bwrap")
@@ -167,11 +219,14 @@ mod probe {
                 .unwrap();
                 assert_eq!(observed["project_read"], read, "native read control");
                 let delivered = receipt(&listeners[index], &observed);
-                if label == "private-mask" {
-                    assert!(!delivered, "opaque private directory must hide its socket");
+                if candidate || label == "private-mask" {
+                    assert!(!delivered, "socket denial: {label}: {observed}");
                 }
                 rows.push(json!({"socket": label, "fs_read": read, "fs_write": write,
                     "shell": false, "host_received_fixture": delivered, "observed": observed}));
+                if candidate {
+                    rows.push(pair_row(policy, &listeners[index], label));
+                }
             }
         }
         let sources = [
@@ -188,6 +243,8 @@ mod probe {
             "crates/cyber-sandbox/Cargo.toml",
             "Cargo.lock",
             ".github/workflows/plugin-linux-ipc.yml",
+            "scripts/probes/plugin-native-entry/linux_socket_candidate.h",
+            "scripts/probes/plugin-native-entry/build_socket_candidate.py",
         ];
         let mut hash = Sha256::new();
         for path in sources {
@@ -197,11 +254,11 @@ mod probe {
         }
         let report = json!({"platform": std::env::consts::OS, "architecture": std::env::consts::ARCH,
             "checkout": std::env::var("GITHUB_SHA").ok(), "run_id": std::env::var("GITHUB_RUN_ID").ok(),
-            "sources": sources, "source_sha256": format!("{:x}", hash.finalize()),
+            "candidate": candidate, "sources": sources, "source_sha256": format!("{:x}", hash.finalize()),
             "helper_sha256": format!("{:x}", Sha256::digest(std::fs::read(helper).unwrap())),
             "rows": rows, "scope": "Diagnostic host UNIX-socket reachability only. Fixture messages only; no real broker, filesystem/shell escalation or capability acceptance."});
         std::fs::write(
-            &args[1],
+            report_path,
             format!("{}\n", serde_json::to_string_pretty(&report).unwrap()),
         )
         .unwrap();
