@@ -125,3 +125,36 @@ actual private-directory file for that directory assertion, while constructor an
 symlink probes retain the private-file target. Separate direct file-read/write
 assertions are added to the mutation regression. No directory or file denial is
 removed; full fresh matrix and control execution remains required.
+
+## Hosted component evidence at `546641f9`
+
+Both Linux jobs in [run 40954544764](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40954544764)
+completed successfully: [x64 job 123731111912](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40954544764/job/123731111912)
+and [arm64 job 123731111847](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40954544764/job/123731111847).
+This supersedes the pending Linux component results above, without closing the
+remaining admission or runtime acceptance requirements.
+
+Each job passes seven Linux policy unit tests and all eight native entry tests,
+including the three new composed-policy regressions. The six individual source
+mutations fail their named assertions, verified directly in the retained logs:
+protected ancestor rename, immutable package write, private write, project read,
+shell execution and private proc visibility. Both restored suites pass afterward;
+the later descriptor-cleanup control also fails as intended and its restored
+eight-test native suite passes. A failing mutation is evidence that its specific
+assertion detects the removed safeguard, not a passing production test.
+
+The [retained reports and control logs](../../../scripts/probes/plugin-native-entry/evidence/linux-policy-546641f9/)
+bind these results to merge checkout `d273221de42084d0c0f45d64d7779a42b6ace819`,
+whose parents are base `2548fdeaf68fdfe6e13f8ecfa87e77ae41e5bcd7` and PR head
+`546641f97c0ef4dc539b017ad613397bbc250452`. Independently hashing every manifest
+path plus NUL plus its exact checkout bytes reproduces both reports' source hash
+`21e1e4adca3b9deaefa1a392c1da62c83386bff16c970012b5f6dbd6a4cb9545`.
+The jobs report helper SHA-256 values
+`22ad1c8ddc2828a2ad618dbe1289d30b91b996272cb4b1e279b38f86fb55cbff` (x64)
+and `effbfd2d592bd9bdadbce618f9821a040b80949d0dc8069c8128e577dcd49d28`
+(arm64). The artifacts retain provenance and logs, not helper binaries, so those
+binary hashes are job-reported rather than independently rehashed downloads.
+
+These are native fixture/component results. They do not establish production host
+activation, full runtime/configuration acceptance, UNIX-socket isolation or the
+owner/generation/settlement obligations listed above. Those gates remain open.
