@@ -85,6 +85,7 @@ impl BuiltinHost {
             .first()
             .ok_or("Managed checkout claims are empty")?;
         let inv = Invocation {
+            tool_output: Default::default(),
             registration: None,
             session_id: owner.clone(),
             directory: first.path.to_string_lossy().into(),
@@ -148,6 +149,7 @@ impl BuiltinHost {
             );
         }
         let inv = Invocation {
+            tool_output: Default::default(),
             registration: None,
             session_id: info.id.clone(),
             directory: info.directory.clone(),
@@ -199,6 +201,7 @@ impl BuiltinHost {
         cancel: CancellationToken,
     ) -> Result<cyber_server::runtime::LocationLease, String> {
         let inv = Invocation {
+            tool_output: Default::default(),
             registration: None,
             session_id: info.id.clone(),
             directory: info.directory.clone(),
@@ -228,6 +231,7 @@ impl BuiltinHost {
         }
         let identity = event.identity();
         let inv = Invocation {
+            tool_output: Default::default(),
             registration: None,
             session_id: format!("ses_{receipt_id}"),
             directory: identity.location.directory.display().to_string(),
@@ -320,6 +324,7 @@ impl BuiltinHost {
             .ok_or_else(|| io::Error::other("Runtime is not attached"))?;
         let id = cyber_core::ids::new_id("call");
         let inv = Invocation {
+            tool_output: Default::default(),
             registration: None,
             session_id: cyber_core::ids::new_id("ses"),
             directory: directory.canonicalize()?.display().to_string(),
@@ -476,6 +481,7 @@ impl BuiltinHost {
             .runtime()
             .ok_or_else(|| io::Error::other("Runtime is not attached"))?;
         let inv = Invocation {
+            tool_output: Default::default(),
             registration: None,
             session_id: cyber_core::ids::new_id("ses"),
             directory: directory.canonicalize()?.display().to_string(),

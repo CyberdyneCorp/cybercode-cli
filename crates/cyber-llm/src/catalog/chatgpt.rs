@@ -29,6 +29,7 @@ pub fn insert(providers: &mut BTreeMap<String, Provider>, session: &Session) {
             request: RequestOverlay::default(),
             disabled: false,
             models,
+            ..Provider::default()
         },
     );
 }
@@ -74,5 +75,7 @@ fn model(plan: &PlanModel) -> Model {
         released_at: None,
         disabled: false,
         request: RequestOverlay::default(),
+        profile_catalog: plan.profile.clone(),
+        ..Model::default()
     }
 }

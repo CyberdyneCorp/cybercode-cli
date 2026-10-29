@@ -19,6 +19,8 @@ struct Seen {
     refreshes: Vec<Value>,
     /// `(authorization, chatgpt-account-id)` of each `/responses` request.
     turns: Vec<(String, String)>,
+    /// `(session-id, thread-id)` of each `/responses` request.
+    routing: Vec<(String, String)>,
 }
 
 struct Backend {
@@ -51,6 +53,15 @@ fn completed() -> String {
 impl Backend {
     /// The fake issuer and backend; `refresh_status` answers every token refresh.
     fn start(refresh_status: u16) -> Self {
+        Self::serve(refresh_status, false)
+    }
+
+    /// A backend whose plan has reached its usage limit, resetting in 40 minutes.
+    fn usage_limited() -> Self {
+        Self::serve(200, true)
+    }
+
+    fn serve(refresh_status: u16, limited: bool) -> Self {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
             .enable_all()
@@ -83,10 +94,21 @@ impl Backend {
             .route(
                 "/responses",
                 axum::routing::post(move |headers: HeaderMap| async move {
-                    turns.lock().unwrap().turns.push((
+                    let mut seen = turns.lock().unwrap();
+                    seen.turns.push((
                         header(&headers, "authorization"),
                         header(&headers, "chatgpt-account-id"),
                     ));
+                    seen.routing.push((
+                        header(&headers, "session-id"),
+                        header(&headers, "thread-id"),
+                    ));
+                    if limited {
+                        let error = json!({"error": {"type": "usage_limit_reached",
+                            "message": "The usage limit has been reached",
+                            "plan_type": "plus", "resets_at": now() + 40 * 60}});
+                        return (StatusCode::TOO_MANY_REQUESTS, axum::Json(error)).into_response();
+                    }
                     ([("content-type", "text/event-stream")], completed()).into_response()
                 }),
             );
@@ -206,6 +228,11 @@ fn exec_renews_a_due_login_once_and_stores_it_owner_only() {
         assert_eq!(authorization, &format!("Bearer {renewed}"));
         assert_eq!(account, "acct-1");
     }
+    // `provider-catalog` → Session routing headers: a root Session is its own thread.
+    for (session, thread) in &seen.routing {
+        assert!(session.starts_with("ses_"), "{session}");
+        assert_eq!(session, thread);
+    }
 
     assert_stored(&env.auth_file(), &renewed);
     let transcript = describe(&output);
@@ -244,4 +271,28 @@ fn exec_with_a_revoked_login_fails_closed_and_keeps_the_file() {
     );
     assert_eq!(std::fs::read(env.auth_file()).unwrap(), before);
     assert_eq!(mode(&env.auth_file()), 0o600);
+}
+
+/// `provider-catalog` → "Subscription limit reached": with no fallback model, `exec`
+/// fails with the local time the plan's limit resets.
+#[test]
+fn exec_reports_when_a_usage_limit_resets() {
+    let (env, backend) = (Env::with_due_login(), Backend::usage_limited());
+    let output = env.exec(&backend.origin);
+    let transcript = describe(&output);
+    assert!(!output.status.success(), "{transcript}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let at = stderr
+        .find("usage limit reached; resets at ")
+        .unwrap_or_else(|| panic!("{transcript}"));
+    let after = &stderr[at + 31..];
+    assert!(
+        after
+            .bytes()
+            .take(16)
+            .collect::<Vec<_>>()
+            .windows(5)
+            .any(|w| w[2] == b':' && [0, 1, 3, 4].iter().all(|&i| w[i].is_ascii_digit())),
+        "{transcript}"
+    );
 }

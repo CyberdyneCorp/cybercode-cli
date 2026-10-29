@@ -34,16 +34,17 @@ The existing `crates/cyber-app/tests/plugins.rs` suite uses actual Python plugin
 
 After the failed build was confirmed terminal and no Cargo/rustc processes remained, only disposable `target/debug/incremental` compiler cache was removed. Free space recovered to approximately 3.2 GiB at observation. Binaries, dependencies, model artifacts, databases and project files were retained. This cleanup does not turn the failed Rust check into a pass; a passing native baseline is still required before implementation acceptance. No Linux/Windows or live-provider acceptance was run.
 
-## Review boundary
+## Original planning review boundary (superseded by implementation approval)
 
-Both workstreams await explicit user review of proposal/design/tasks. The early native enforcement prototype remains an approved-implementation task, not an already demonstrated design. This planning PR must not be treated as permission to implement or as closure of the larger extensibility milestone.
+At the planning revision, both workstreams awaited explicit user review of proposal/design/tasks. Task 1.3 now records the subsequent implementation approval. The early native enforcement prototype remains an approved-implementation task, not an already demonstrated design. This planning PR must not be treated as permission to implement or as closure of the larger extensibility milestone.
 
 ## Implementation inventory follow-up (2026-10-27)
 
 At implementation commit `1226aeb5`, production Rust/SDK sources still match
 `79b4171f`; the proof increments do not implement host protocol contributions.
-The following source findings guide the next increments rather than close task
-1.4 or any production acceptance task:
+The following source findings guided the next increments rather than close any
+production acceptance task. The later baseline section records completion of
+task 1.4 and the newer producer inventory:
 
 | Boundary | Actual path | Required follow-up |
 |---|---|---|
@@ -71,3 +72,42 @@ OpenSpec jobs successful. This is PR CI on unchanged production sources, not a
 claim that the earlier local main-branch disk failure passed or a newly added
 behavior is accepted. Remaining job/native results must be inspected before
 completing the baseline or delivery gates.
+
+## Passing unchanged-main native baseline (2026-10-28)
+
+A detached worktree at unchanged main `2ae7957d2223a843c929bc74b25162a9f300b419`
+ran `cargo test --locked -p cyber-app --test plugins` using the shared target cache
+and `CARGO_INCREMENTAL=0`. All 14 tests passed with no failures or ignored cases
+on macOS 26.7 / Darwin 25.6.0 arm64. The same suite passed all 14 cases on integration
+revision `70224077`. The earlier no-space result remains a failed compilation;
+it is not retroactively counted as passing. Generated `cyber-tools` build cache
+was cleaned to make this native execution possible, without changing the baseline
+checkout. Both worktrees were clean after testing.
+
+These tests run actual Python plugin processes through the App HTTP router and
+OS sandbox. They exercise tool forwarding, crash/restart, disable, network and
+policy intersections, protocol mismatch, deferred tools, scoped configuration,
+dummy secrets through MemoryVault, and plugin MCP hosting. SDK/plugin-host/manifest
+sources have no differences between the original baseline `097b6278` and this
+main revision. The previously recorded SDK checks still include the explicit
+binary-acceptance skip; the Unix-only suite supplies no Windows plugin support
+proof. Strict native fs.read/shell enforcement and runtime contribution/callback
+acceptance remain separate tasks.
+
+Current producer inventory:
+
+| Boundary | Main `2ae7957d` | Integration `70224077` |
+|---|---|---|
+| WorktreeCreate | Permission-following pre-effect veto includes isolated creation/recreation after merged #56; retained checkout reuse is excluded | Preserved with current-signature behavioral regression control |
+| Setup | Existing observational first-root-Session dispatch; explicit init/durable-attempt design is specified but not implemented | Preserved; the separate Setup design review gate remains |
+| CwdChanged | No committed-transition producer | Worktree entry/exit, idle return and changed-path child rebind; real scoped regressions |
+| FileChanged | No automatic native producer | Bounded metadata reconciliation, native scope/receipt ownership and shared-membership cancellation; current final acceptance pending |
+| DirectoryAdded | Requires the unimplemented P0 Additional working directories contract | Still open; declarations are not producer evidence |
+| Runtime contributions | Initialize accepts tools and ignores nonempty runtime hooks/providers/catalogTransforms | Still open; these operations are not implemented by the producer integration |
+| Session prompt callback | Capability check followed by method-not-supported | Still open; durable owned callback admission has not been implemented |
+
+Regression anchors are the App plugin suite above, `worktree_setup.rs`,
+`isolated_subagents.rs`, the new real `file_observation_dispatch.rs` suite,
+server observation/provenance tests and AppHost forwarding tests. The parent
+extensibility milestone and tasks 2–6 remain open: a producer declaration, SDK-only
+fixture or this baseline cannot close unimplemented host capability promises.

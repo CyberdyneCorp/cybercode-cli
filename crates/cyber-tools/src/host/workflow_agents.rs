@@ -69,6 +69,7 @@ impl BuiltinHost {
             input["isolation"] = "worktree".into();
         }
         let inv = Invocation {
+            tool_output: Default::default(),
             registration: None,
             session_id: owner.session_id,
             directory: owner.directory,
@@ -127,6 +128,7 @@ impl BuiltinHost {
             _ => Asker::detached(),
         };
         let inv = Invocation {
+            tool_output: Default::default(),
             registration: None,
             session_id: owner.session_id,
             directory: owner.directory,

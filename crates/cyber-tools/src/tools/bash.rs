@@ -53,6 +53,10 @@ impl Tool for Bash {
             let escalation = escalation(input)?;
             let raw = text(input, "workdir");
             let workdir = ctx.resolve(if raw.is_empty() { "." } else { raw });
+            if let Some(patched) = super::patch_shell::intercept(ctx, command, &workdir, true).await
+            {
+                return patched;
+            }
             let analysis = analyze(command, &workdir);
             let excluded = excluded(ctx, command);
             authorize(ctx, command, &workdir, &analysis, excluded).await?;

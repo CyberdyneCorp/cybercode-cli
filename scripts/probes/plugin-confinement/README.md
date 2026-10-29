@@ -318,8 +318,11 @@ F_ADDSIGS alone does not establish that the requested signature was adopted.
 The original descriptor-above-soft-limit closure control is retained.
 
 Local arm64 evidence is in `evidence/signing-identity-local/`. Native macOS 15
-arm64/Intel CI runs the candidate separately from the older staged-system gap
-experiment; no failure in the older experiment is removed or counted as passing.
+arm64/Intel CI requires this candidate, including the native capability matrix
+and original-signature exec controls. The older staged-system gap experiment is
+available only through the workflow dispatch input `staged_system_diagnostic`.
+It retains its strict positive-control assertions and known arm64 startup failure;
+it is not an acceptance mechanism and its failure is not counted as passing.
 These probes do not establish production immutable package admission, distribution,
 all kernel signature-mutation interfaces, owner integration, or Windows support.
 No production confinement or runtime availability changes are made.

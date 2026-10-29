@@ -7387,10 +7387,14 @@
               "text": {
                 "type": "string"
               },
-              "signature": {
-                "type": [
-                  "string",
-                  "null"
+              "opaque": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Opaque"
+                  },
+                  {
+                    "type": "null"
+                  }
                 ]
               },
               "type": {
@@ -7402,7 +7406,7 @@
               "type",
               "text"
             ],
-            "description": "Reasoning from an earlier Turn. `signature` is sent back only to the provider that\nproduced it; the runtime lowers reasoning to text across providers."
+            "description": "One reasoning item from an earlier Turn (`session-runtime` → Reasoning items).\n`opaque` is sent back only to the provider and model that produced it; the runtime\nlowers reasoning to text across models. The legacy `signature` string reads as\n[`OpaqueKind::Signature`] state."
           },
           {
             "type": "object",
@@ -7414,6 +7418,17 @@
                 "type": "string"
               },
               "input": true,
+              "opaque": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Opaque"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "State of this one call, such as a Gemini thought signature."
+              },
               "type": {
                 "type": "string",
                 "const": "tool_call"
@@ -7516,6 +7531,90 @@
         ],
         "description": "The durable reference to a content-addressed attachment blob of one Session."
       },
+      "Opaque": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "default": ""
+          },
+          "model": {
+            "type": "string",
+            "default": ""
+          },
+          "kind": {
+            "$ref": "#/components/schemas/OpaqueKind"
+          },
+          "data": {
+            "type": "string"
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The provider's item ID, when it issued one."
+          }
+        },
+        "required": [
+          "kind",
+          "data"
+        ],
+        "description": "Provider state that must travel back with reasoning or a tool call. `data` is stored\nexactly as received and never decoded; `provider` and `model` name its producer, so\nonly that model receives it back. `Debug` never prints `data`."
+      },
+      "OpaqueKind": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "encrypted_reasoning",
+            "description": "OpenAI Responses `encrypted_content`."
+          },
+          {
+            "type": "string",
+            "const": "signature",
+            "description": "An Anthropic thinking signature, or a per-call thought signature."
+          },
+          {
+            "type": "string",
+            "const": "redacted",
+            "description": "An Anthropic `redacted_thinking` block; the item has no text."
+          },
+          {
+            "type": "string",
+            "const": "details",
+            "description": "Provider reasoning details (OpenRouter `reasoning_details`), as JSON text."
+          }
+        ],
+        "description": "The kind of provider state an [`Opaque`] carries."
+      },
+      "ReasoningBlock": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "opaque": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Opaque"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "after_calls": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 0
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "description": "One reasoning item of an answer: its text, the provider state to replay with it, and\nhow many of the answer's tool calls the provider produced before it."
+      },
       "AssistantEntry": {
         "type": "object",
         "properties": {
@@ -7532,13 +7631,15 @@
             "type": "string"
           },
           "reasoning": {
-            "type": "string"
+            "type": "string",
+            "description": "The text of every reasoning item, for display."
           },
-          "signature": {
-            "type": [
-              "string",
-              "null"
-            ]
+          "reasoning_items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReasoningBlock"
+            },
+            "description": "Reasoning items in stream order (`session-runtime` → Reasoning items)."
           },
           "calls": {
             "type": "array",
@@ -7617,6 +7718,17 @@
             "type": "string"
           },
           "input": true,
+          "opaque": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Opaque"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Provider state of this call (`session-runtime` → Reasoning items)."
+          },
           "retry_safety": {
             "$ref": "#/components/schemas/RetrySafety"
           },
@@ -7633,6 +7745,9 @@
               "string",
               "null"
             ]
+          },
+          "metadata": {
+            "description": "The tool host's notes on the settled run (`builtin-tools` → apply_patch through\nthe shell)."
           }
         },
         "required": [
@@ -8473,6 +8588,10 @@
           },
           "reasoning": {
             "type": "boolean"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/ModelProfile",
+            "description": "The resolved behavior profile (`provider-catalog` → Model behavior profiles)."
           }
         },
         "required": [
@@ -8481,9 +8600,169 @@
           "name",
           "available",
           "context_limit",
-          "reasoning"
+          "reasoning",
+          "profile"
         ],
         "description": "A model offered to clients."
+      },
+      "ModelProfile": {
+        "type": "object",
+        "properties": {
+          "reasoning_replay": {
+            "$ref": "#/components/schemas/ReasoningReplay"
+          },
+          "reasoning_carrier": {
+            "$ref": "#/components/schemas/ReasoningCarrier"
+          },
+          "reasoning_summary": {
+            "type": "boolean",
+            "description": "The model accepts a reasoning summary request."
+          },
+          "verbosity": {
+            "$ref": "#/components/schemas/Verbosity"
+          },
+          "parallel_tool_calls": {
+            "type": "boolean"
+          },
+          "edit_tool": {
+            "$ref": "#/components/schemas/EditTool"
+          },
+          "tool_output": {
+            "$ref": "#/components/schemas/ToolOutput"
+          },
+          "efforts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Reasoning efforts the model accepts, lowest first."
+          },
+          "effort_clamp": {
+            "$ref": "#/components/schemas/EffortClamp"
+          }
+        },
+        "required": [
+          "reasoning_replay",
+          "reasoning_carrier",
+          "reasoning_summary",
+          "verbosity",
+          "parallel_tool_calls",
+          "edit_tool",
+          "tool_output",
+          "efforts",
+          "effort_clamp"
+        ],
+        "description": "A model's resolved behavior profile."
+      },
+      "ReasoningReplay": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "never",
+            "description": "Lower reasoning to text."
+          },
+          {
+            "type": "string",
+            "const": "tool_loop",
+            "description": "Native items for the assistant messages after the latest user message."
+          },
+          {
+            "type": "string",
+            "const": "always",
+            "description": "Native items for the whole history."
+          }
+        ],
+        "description": "Which assistant messages get their reasoning items back natively."
+      },
+      "ReasoningCarrier": {
+        "type": "string",
+        "enum": [
+          "none",
+          "responses",
+          "anthropic",
+          "reasoning_content",
+          "reasoning",
+          "reasoning_details",
+          "gemini_signature",
+          "copilot_opaque"
+        ],
+        "description": "The request field that carries reasoning state back to the provider."
+      },
+      "Verbosity": {
+        "type": "object",
+        "properties": {
+          "supported": {
+            "type": "boolean"
+          },
+          "default": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerbosityLevel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "supported"
+        ]
+      },
+      "VerbosityLevel": {
+        "type": "string",
+        "enum": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "EditTool": {
+        "type": "string",
+        "enum": [
+          "freeform_patch",
+          "json_patch",
+          "edit"
+        ],
+        "description": "The tool shape the model edits files with."
+      },
+      "ToolOutput": {
+        "type": "object",
+        "properties": {
+          "tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Token budget of a model-facing tool output; `None` keeps the byte limit alone."
+          },
+          "truncation": {
+            "$ref": "#/components/schemas/Truncation"
+          }
+        },
+        "required": [
+          "truncation"
+        ]
+      },
+      "Truncation": {
+        "type": "string",
+        "enum": [
+          "default",
+          "head",
+          "tail",
+          "middle"
+        ],
+        "description": "Which part of a long tool output the model sees: `default` is each tool's own end\n(the tail of shell output, the head of anything else), `head` and `tail` force that\nend for every tool, and `middle` keeps both ends."
+      },
+      "EffortClamp": {
+        "type": "string",
+        "enum": [
+          "nearest_lower",
+          "fail"
+        ],
+        "description": "What happens to a derived effort the model does not list."
       },
       "Located_PluginList": {
         "type": "object",

@@ -41,10 +41,10 @@ impl ModelResolver for Models {
                 ..Default::default()
             },
             context_limit: 200000,
-            prefers_apply_patch: false,
             family: cyber_core::prompts::ModelFamily::Default,
             vision: false,
             pdf: false,
+            profile: Default::default(),
             cost: Some(Cost {
                 input: 1.0,
                 output: 2.0,
@@ -530,6 +530,7 @@ async fn unexpected_tool_calls_incomplete_finish_and_response_overflow_never_aut
         name: "write".into(),
         arguments: "{}".into(),
         input: Some(json!({})),
+        opaque: None,
     };
     let variants = [
         vec![

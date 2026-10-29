@@ -71,6 +71,9 @@ pub struct BuiltinHost {
     pub(crate) weak: std::sync::Weak<Self>,
     pub(crate) opts: HostOptions,
     tools: Vec<Box<dyn Tool>>,
+    file_observers: crate::file_changes::Observers,
+    pub(crate) observation_private_roots: OnceLock<Vec<PathBuf>>,
+    pub(crate) observation_private_pins: crate::file_changes::PrivatePins,
     reads: Mutex<HashMap<String, HashSet<PathBuf>>>,
     locks: Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
     runtime: OnceLock<WeakRuntime>,
@@ -86,6 +89,8 @@ pub struct BuiltinHost {
     /// MCP annotations of registered calls in flight, by (Session, call), for hook
     /// envelopes.
     pub(crate) tool_annotations: Mutex<HashMap<(String, String), Value>>,
+    /// Notes on settled runs awaiting their settlement, by (Session, call).
+    call_metadata: Mutex<HashMap<(String, String), Value>>,
     pub(crate) search_cooldowns: tools::websearch::Cooldowns,
     /// Domains approved for sandboxed network access, by Session.
     network: Mutex<HashMap<String, Arc<Mutex<HashSet<String>>>>>,
@@ -170,7 +175,7 @@ impl BuiltinHost {
         Ok(())
     }
     pub fn new(opts: HostOptions) -> Arc<Self> {
-        Arc::new_cyclic(|weak| Self {
+        let host = Arc::new_cyclic(|weak| Self {
             weak: weak.clone(),
             mcp: Default::default(),
             plugins: Default::default(),
@@ -178,6 +183,9 @@ impl BuiltinHost {
             lsp: OnceLock::new(),
             opts,
             tools: tools::all(),
+            file_observers: Default::default(),
+            observation_private_roots: OnceLock::new(),
+            observation_private_pins: Default::default(),
             reads: Mutex::default(),
             locks: Mutex::default(),
             runtime: OnceLock::new(),
@@ -187,6 +195,7 @@ impl BuiltinHost {
             hook_notices: Mutex::default(),
             hook_effects: Default::default(),
             tool_annotations: Mutex::default(),
+            call_metadata: Mutex::default(),
             search_cooldowns: tools::websearch::Cooldowns::default(),
             network: Mutex::default(),
             subagents: crate::subagents::Slots::default(),
@@ -195,7 +204,23 @@ impl BuiltinHost {
             ),
             remote_skills: OnceLock::new(),
             client_hooks: OnceLock::new(),
-        })
+        });
+        host.prime_observation_privacy();
+        host
+    }
+
+    /// Trusted owner storage roots, attached before opening Locations. These
+    /// augment built-in protection even when application state is in a checkout.
+    pub fn attach_observation_private_roots(&self, roots: Vec<PathBuf>) -> Result<(), String> {
+        self.observation_private_roots
+            .set(roots)
+            .map_err(|_| "file observation private roots already attached".to_owned())?;
+        self.prime_observation_privacy();
+        Ok(())
+    }
+
+    pub(crate) fn observe_file_change(&self, location: &Path, path: &Path) {
+        self.file_observers.changed(location, path);
     }
 
     /// Every built-in tool name, offered or not, and the runtime's `return_result`.
@@ -230,7 +255,10 @@ impl BuiltinHost {
         } else {
             None
         };
-        match self.budget(&ctx.location).apply(output, keep_tail) {
+        match self
+            .budget(&ctx.location)
+            .apply_for(output, keep_tail, ctx.inv.tool_output)
+        {
             Ok(output) => match value {
                 Some(value) => ToolOutcome::Structured { output, value },
                 None => match ctx
@@ -668,6 +696,14 @@ impl BuiltinHost {
         })
     }
 
+    /// Note `metadata` on a call's settlement record.
+    pub(crate) fn note_call_metadata(&self, session_id: &str, call_id: &str, metadata: Value) {
+        self.call_metadata
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert((session_id.into(), call_id.into()), metadata);
+    }
+
     pub(crate) fn budget(&self, location: &Path) -> Budget {
         let config = self.config_for(location);
         let get = |k: &str, d: usize| {
@@ -714,15 +750,21 @@ impl BuiltinHost {
 
 impl ToolHost for BuiltinHost {
     fn open_location(&self, info: &cyber_server::runtime::SessionInfo) {
+        self.file_observers.refresh(self, info);
         self.start_mcp(info);
         self.reconcile_plugins(&info.directory, true);
         self.start_browser(info);
     }
 
     fn refresh_location(&self, info: &cyber_server::runtime::SessionInfo) {
+        self.file_observers.refresh(self, info);
         self.refresh_mcp(info);
         self.reconcile_plugins(&info.directory, false);
         self.start_browser(info);
+    }
+
+    fn user_input_committed(&self, info: &cyber_server::runtime::SessionInfo, event_id: &str) {
+        self.file_observers.acknowledge(self, info, event_id);
     }
 
     /// Required MCP servers, then every plugin host of the Location and the Session's
@@ -757,6 +799,13 @@ impl ToolHost for BuiltinHost {
         call_id: &str,
     ) -> cyber_server::runtime::HookEffects {
         self.take_tool_hook_effects(session_id, call_id)
+    }
+
+    fn take_call_metadata(&self, session_id: &str, call_id: &str) -> Option<Value> {
+        self.call_metadata
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&(session_id.to_owned(), call_id.to_owned()))
     }
 
     fn file_decisions<'a>(
@@ -826,6 +875,7 @@ impl ToolHost for BuiltinHost {
                 }
             };
             tokio::join!(
+                self.file_observers.shutdown(),
                 self.shutdown_mcp(),
                 lsp,
                 self.shutdown_plugins(),
@@ -836,6 +886,7 @@ impl ToolHost for BuiltinHost {
 
     fn end_session(&self, session_id: &str) -> BoxFuture<'_, ()> {
         let session_id = session_id.to_string();
+        self.file_observers.remove(&session_id);
         Box::pin(async move { self.end_browser_session(&session_id).await })
     }
     /// A config that fails to load turns `CLAUDE.md` off rather than on: `config_for`'s
@@ -1119,6 +1170,7 @@ impl ToolHost for BuiltinHost {
             };
             let info = &child.info;
             let inv = Invocation {
+                tool_output: Default::default(),
                 registration: None,
                 session_id: info.id.clone(),
                 directory: parent.directory.clone(),
@@ -1134,7 +1186,7 @@ impl ToolHost for BuiltinHost {
                 asker: cyber_server::runtime::Asker::detached(),
             };
             let worktree = self
-                .resume_child_worktree_authorized(&inv, cancel, owner, info, managed, true)
+                .resume_child_worktree_authorized(&inv, cancel, owner, info, managed, Some(parent))
                 .await
                 .map_err(|error| error.to_string())?;
             Ok(Some(
@@ -1443,6 +1495,7 @@ impl ToolHost for BuiltinHost {
                 input["output_schema"] = schema.clone();
             }
             let inv = Invocation {
+                tool_output: Default::default(),
                 registration: None,
                 session_id: turn.session_id,
                 directory: turn.directory,
@@ -1564,6 +1617,7 @@ impl ToolHost for BuiltinHost {
 /// A user shell command (`!` or `&`): the `user` agent in `bypass`, never asking.
 fn user_invocation(directory: &str, session_id: &str, command: &str) -> Invocation {
     Invocation {
+        tool_output: Default::default(),
         registration: None,
         session_id: session_id.into(),
         directory: directory.into(),
@@ -1880,11 +1934,27 @@ impl Ctx<'_> {
 
     pub async fn authorize(
         &self,
+        req: Request,
+        always: Vec<String>,
+        metadata: Value,
+    ) -> Result<(), ToolError> {
+        let tool = self.inv.name.clone();
+        self.authorize_as(&tool, req, always, metadata).await
+    }
+
+    /// As [`Ctx::authorize`], for a request made on behalf of `tool`: a shell call run as
+    /// `apply_patch` is decided by `apply_patch` rules, and a hook's Allow for the shell
+    /// command does not approve the edit.
+    pub async fn authorize_as(
+        &self,
+        tool: &str,
         mut req: Request,
         always: Vec<String>,
         mut metadata: Value,
     ) -> Result<(), ToolError> {
-        req.tool = Some(self.inv.name.clone());
+        req.tool = Some(tool.to_owned());
+        let hook_allowed = tool == self.inv.name
+            && self.hook_decision == Some(cyber_core::hooks::HookAction::Allow);
         if self
             .host
             .solve_isolation(&self.inv.session_id)
@@ -1914,9 +1984,8 @@ impl Ctx<'_> {
             self.auto_gate(&req, &mut metadata, false).await?;
             return self.ask(req, always, metadata).await;
         }
-        let needs_approval = (decision == Decision::Ask
-            && self.hook_decision != Some(cyber_core::hooks::HookAction::Allow))
-            || self.policy.forces_classifier(&req);
+        let needs_approval =
+            (decision == Decision::Ask && !hook_allowed) || self.policy.forces_classifier(&req);
         if self.auto_gate(&req, &mut metadata, needs_approval).await? || !needs_approval {
             return Ok(());
         }

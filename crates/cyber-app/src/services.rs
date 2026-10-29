@@ -618,6 +618,7 @@ impl Services for AppServices {
                     available: matches!(row.availability, Availability::Available),
                     context_limit: row.model.limits.context,
                     reasoning: row.model.capabilities.reasoning,
+                    profile: row.model.profile.clone(),
                     id: row.model_ref,
                 })
                 .collect())

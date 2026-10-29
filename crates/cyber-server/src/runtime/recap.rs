@@ -118,7 +118,7 @@ impl Inner {
     async fn generate_recap(&self, id: &str) -> Result<Recap, RuntimeError> {
         let handle = self.handle(id).await?;
         let _one = handle.recap.lock().await;
-        let (conversation, session_model, through_seq) = {
+        let (conversation, session_model, through_seq, address) = {
             let state = handle.state.lock().await;
             if state.finished_seq == 0 {
                 return Err(RuntimeError::Conflict(NOTHING_TO_RECAP.into()));
@@ -130,7 +130,13 @@ impl Inner {
             {
                 return Ok(recap.clone());
             }
-            (transcript(&state), state.info.model.clone(), state.last_seq)
+            let address = self.address_of(&state.info, Some("recap"));
+            (
+                transcript(&state),
+                state.info.model.clone(),
+                state.last_seq,
+                address,
+            )
         };
         let model = self
             .resolver
@@ -143,6 +149,7 @@ impl Inner {
         request.tools = Vec::new();
         request.reasoning = None;
         request.max_output_tokens = Some(MAX_OUTPUT_TOKENS);
+        address.apply(&mut request);
         // Like a title, a recap is bookkeeping, not a prompt: Copilot does not count it.
         request.initiator = Some(cyber_llm::Initiator::Agent);
         self.check_budget(&handle).await?;

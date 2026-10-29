@@ -281,7 +281,7 @@ impl Inner {
         let execution_location = handle.state.lock().await.info.directory.clone();
         let request = {
             let state = context.state.lock().await;
-            let mut messages = view::messages(&state, &resolved.provider, &resolved.model);
+            let mut messages = view::messages(&state, &view::Replay::of(&resolved));
             messages.drain(..messages.len().saturating_sub(20));
             let evidence = json!({
                 "location": state.info.directory,
@@ -395,7 +395,7 @@ async fn infer(
             }
             LlmEvent::Finish { reason } => finish = Some(reason),
             LlmEvent::ToolCallDone(_) | LlmEvent::ToolCallDelta { .. } => invalid = true,
-            LlmEvent::ReasoningSignature { .. } => {}
+            LlmEvent::ReasoningItem { .. } => {}
         }
         if chars > 65_536 {
             return Err("Evaluator output exceeds the review limit".into());

@@ -168,6 +168,62 @@ fn local_custom_provider_needs_no_key() {
     assert_eq!(resolved.request.max_output_tokens, Some(4096));
 }
 
+/// `provider-catalog` → Responses request shaping: the resolved request carries what the
+/// model's profile and capabilities allow; an unsupported verbosity default is not sent.
+#[test]
+fn resolved_requests_carry_the_profile_shaping() {
+    use cyber_llm::Shaping;
+    use cyber_llm::catalog::profile::VerbosityLevel;
+    let config = json!({"providers": {"openai": {"models": {
+        "gpt-6": {"profile": {"verbosity": {"default": "low"}}},
+        "gpt-6-mini": {"profile": {"verbosity": {"supported": false, "default": "high"},
+            "parallel_tool_calls": false}}
+    }}}});
+    let c = catalog(config, &env(&[("OPENAI_API_KEY", "sk-env")]));
+    let shaping = |id: &str| c.resolve(&model_ref(id), None).unwrap().request.shaping;
+    assert_eq!(
+        shaping("openai/gpt-6"),
+        Shaping {
+            reasoning: true,
+            reasoning_summary: true,
+            effort_none: true,
+            verbosity: Some(VerbosityLevel::Low),
+            parallel_tool_calls: Some(true),
+            freeform_patch: true,
+        }
+    );
+    let mini = shaping("openai/gpt-6-mini");
+    assert!(!mini.reasoning, "no reasoning capability, so no include");
+    assert_eq!(
+        (mini.verbosity, mini.parallel_tool_calls),
+        (None, Some(false))
+    );
+}
+
+/// `provider-catalog` → Stream idle timeout: `timeout.idle_ms` sets the window, `0`
+/// turns it off, and the default is five minutes.
+#[test]
+fn idle_timeout_follows_the_provider_config() {
+    let idle = |timeout: Value| {
+        let config = json!({"providers": {"ollama": {
+            "api": {"type": "openai-compatible", "url": "http://127.0.0.1:11434/v1"},
+            "timeout": timeout,
+            "models": {"qwen3-coder": {}}
+        }}});
+        let c = catalog(config, &env(&[]));
+        c.resolve(&model_ref("ollama/qwen3-coder"), None)
+            .unwrap()
+            .endpoint
+            .idle_timeout
+    };
+    assert_eq!(idle(json!({})), Some(Duration::from_secs(300)));
+    assert_eq!(
+        idle(json!({"idle_ms": 1500})),
+        Some(Duration::from_millis(1500))
+    );
+    assert_eq!(idle(json!({"idle_ms": 0})), None);
+}
+
 #[test]
 fn remote_custom_provider_without_key_is_unavailable() {
     let config = json!({"providers": {"corp": {"api": {"type": "openai-compatible", "url": "https://llm.corp/v1"}, "models": {"coder": {}}}}});
@@ -458,4 +514,129 @@ fn later_agent_layer_matches_catalog_layering_and_empty_layers_preserve_template
         template.body["vendor"],
         json!({"provider":true,"model":true,"variant":true,"agent":true,"choice":"agent"})
     );
+}
+
+/// `provider-catalog` → Model behavior profiles: "Built-in rule for a compatible provider".
+#[test]
+fn a_compatible_provider_gets_the_built_in_rule() {
+    use cyber_llm::catalog::profile::{ReasoningCarrier, ReasoningReplay};
+    let config = json!({"providers": {"corp": {
+        "api": {"type": "openai-compatible", "url": "https://llm.corp.example/v1"},
+        "models": {"kimi-k2-thinking": {}},
+    }}});
+    let c = catalog(config, &env(&[]));
+    let (_, model) = c.find(&model_ref("corp/kimi-k2-thinking")).unwrap();
+    assert_eq!(
+        model.profile.reasoning_carrier,
+        ReasoningCarrier::ReasoningContent
+    );
+    assert_eq!(model.profile.reasoning_replay, ReasoningReplay::ToolLoop);
+}
+
+/// `provider-catalog` → Model behavior profiles: "Config overrides a field".
+#[test]
+fn config_overrides_one_profile_field() {
+    use cyber_llm::catalog::profile::ReasoningReplay;
+    let built_in = catalog(json!({}), &env(&[]));
+    let config = json!({"providers": {"openai": {"models": {"gpt-6": {
+        "profile": {"reasoning_replay": "never"},
+    }}}}});
+    let configured = catalog(config, &env(&[]));
+    let profile_of = |c: &Catalog| {
+        c.find(&model_ref("openai/gpt-6"))
+            .unwrap()
+            .1
+            .profile
+            .clone()
+    };
+    let (before, after) = (profile_of(&built_in), profile_of(&configured));
+    assert_eq!(before.reasoning_replay, ReasoningReplay::Always);
+    assert_eq!(after.reasoning_replay, ReasoningReplay::Never);
+    let mut expected = before;
+    expected.reasoning_replay = ReasoningReplay::Never;
+    assert_eq!(
+        after, expected,
+        "the other fields keep their built-in values"
+    );
+    let listed = serde_json::to_value(configured.list(Some("openai")).unwrap()).unwrap();
+    let row = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["ref"] == "openai/gpt-6")
+        .unwrap();
+    assert_eq!(row["model"]["profile"]["reasoning_replay"], "never");
+}
+
+/// `provider-catalog` → Model behavior profiles: "Effort clamped for a workflow tier".
+#[test]
+fn a_derived_effort_clamps_to_the_nearest_lower_level() {
+    let config = json!({"providers": {"corp": {
+        "api": {"type": "openai-compatible", "url": "https://llm.corp.example/v1",
+            "settings": {"api_key": "k"}},
+        "models": {
+            "coder": {"variants": {"low": {"effort": "low"}, "medium": {"effort": "medium"},
+                "high": {"effort": "high"}}},
+            "strict": {"variants": {"low": {"effort": "low"}}, "profile": {"effort_clamp": "fail"}},
+        },
+    }}});
+    let c = catalog(config, &env(&[]));
+    let clamped = c.clamp_effort(&model_ref("corp/coder#xhigh")).unwrap();
+    assert_eq!(
+        (clamped.from.as_str(), clamped.to.as_str()),
+        ("xhigh", "high")
+    );
+    assert_eq!(clamped.model_ref.to_string(), "corp/coder#high");
+    assert_eq!(
+        c.clamp_effort(&model_ref("corp/coder#high")),
+        None,
+        "listed"
+    );
+    assert_eq!(
+        c.clamp_effort(&model_ref("corp/coder#minimal")),
+        None,
+        "nothing lower"
+    );
+    assert_eq!(
+        c.clamp_effort(&model_ref("corp/coder#deep")),
+        None,
+        "not an effort"
+    );
+    assert_eq!(
+        c.clamp_effort(&model_ref("corp/strict#high")),
+        None,
+        "effort_clamp: fail"
+    );
+    // An explicit variant is never clamped: resolution still fails.
+    assert!(matches!(
+        c.resolve(&model_ref("corp/coder#xhigh"), None),
+        Err(CatalogError::VariantUnavailable { .. })
+    ));
+}
+
+/// The resolved request names the profile's reasoning carrier, and none when the profile
+/// replays no reasoning.
+#[test]
+fn the_request_names_the_carrier_unless_nothing_is_replayed() {
+    use cyber_llm::catalog::profile::ReasoningCarrier;
+    let config = json!({"providers": {"corp": {
+        "api": {"type": "openai-compatible", "url": "https://llm.corp.example/v1",
+            "settings": {"api_key": "k"}},
+        "models": {
+            "deepseek-v4": {},
+            "deepseek-quiet": {"profile": {"reasoning_replay": "never"}},
+        },
+    }}});
+    let c = catalog(config, &env(&[]));
+    let carrier = |model: &str| {
+        c.resolve(&model_ref(model), None)
+            .unwrap()
+            .request
+            .reasoning_carrier
+    };
+    assert_eq!(
+        carrier("corp/deepseek-v4"),
+        ReasoningCarrier::ReasoningContent
+    );
+    assert_eq!(carrier("corp/deepseek-quiet"), ReasoningCarrier::None);
 }

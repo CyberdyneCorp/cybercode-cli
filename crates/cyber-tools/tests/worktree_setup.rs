@@ -2472,3 +2472,277 @@ async fn exit_worktree_is_not_offered_to_isolated_children() {
         "{outcome:?}"
     );
 }
+
+/// Real HTTP hook dispatch, with an optional held response for shutdown ordering.
+#[cfg(unix)]
+struct CwdRecorder {
+    seen: Arc<Mutex<Vec<serde_json::Value>>>,
+    entered: Arc<Notify>,
+    release: CancellationToken,
+    url: String,
+    task: tokio::task::JoinHandle<()>,
+}
+
+#[cfg(unix)]
+impl CwdRecorder {
+    async fn start(held: bool) -> Self {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let entered = Arc::new(Notify::new());
+        let release = CancellationToken::new();
+        if !held {
+            release.cancel();
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/hook", listener.local_addr().unwrap());
+        let router = axum::Router::new().route(
+            "/hook",
+            axum::routing::post({
+                let seen = Arc::clone(&seen);
+                let entered = Arc::clone(&entered);
+                let release = release.clone();
+                move |axum::Json(event): axum::Json<serde_json::Value>| {
+                    let seen = Arc::clone(&seen);
+                    let entered = Arc::clone(&entered);
+                    let release = release.clone();
+                    async move {
+                        seen.lock().unwrap().push(event);
+                        entered.notify_one();
+                        release.cancelled().await;
+                        // An observational decision cannot veto the committed move.
+                        axum::Json(json!({"decision":"deny", "reason":"observation only"}))
+                    }
+                }
+            }),
+        );
+        let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        Self {
+            seen,
+            entered,
+            release,
+            url,
+            task,
+        }
+    }
+
+    fn attach(&self, flow: &support::flow::Flow) {
+        attach_global_hooks(
+            flow,
+            json!({"CwdChanged":[{"hooks":[{
+                "type":"http", "id":"cwd-observer", "url":self.url, "fail_closed":true
+            }]}]}),
+        );
+    }
+
+    fn events(&self) -> Vec<serde_json::Value> {
+        self.seen.lock().unwrap().clone()
+    }
+}
+
+#[cfg(unix)]
+impl Drop for CwdRecorder {
+    fn drop(&mut self) {
+        self.release.cancel();
+        self.task.abort();
+    }
+}
+
+#[cfg(unix)]
+fn cwd_history(flow: &support::flow::Flow, id: &str) -> Vec<cyber_store::StoredEvent> {
+    let mut events = Vec::new();
+    let mut after = -1;
+    loop {
+        let page = flow
+            .f
+            .store
+            .read_events(id, after, cyber_store::MAX_PAGE_LIMIT)
+            .unwrap();
+        if let Some(last) = page.events.last() {
+            after = last.seq;
+        }
+        events.extend(page.events);
+        if !page.has_more {
+            return events;
+        }
+    }
+}
+
+#[cfg(unix)]
+fn assert_cwd_transition(flow: &support::flow::Flow, id: &str, hook: &serde_json::Value) {
+    let events = cwd_history(flow, id);
+    let transition = events
+        .iter()
+        .find(|event| hook["transition_id"] == event.id)
+        .unwrap();
+    assert_eq!(hook["event"], "CwdChanged");
+    assert_eq!(hook["session_id"], id);
+    assert_eq!(hook["transition_sequence"], transition.seq);
+    assert_eq!(hook["transition"], transition.kind);
+    assert_eq!(hook["previous_directory"], transition.data["from"]["path"]);
+    assert_eq!(hook["directory"], transition.data["to"]["path"]);
+    assert_eq!(hook["location"]["directory"], hook["directory"]);
+    assert_ne!(hook["previous_directory"], hook["directory"]);
+    assert_eq!(hook["agent"], "build");
+    assert_eq!(hook["mode"], "default");
+    assert!(hook["timestamp"].is_number());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn cwd_changed_hooks_observe_committed_enter_and_exit_only() {
+    use support::flow::{call, text};
+    let flow = worktree_flow(vec![
+        call("enter", "enter_worktree", json!({"name":"cwd"})),
+        call("again", "enter_worktree", json!({"name":"refused"})),
+        call("exit", "exit_worktree", json!({})),
+        text("done"),
+    ]);
+    let recorder = CwdRecorder::start(false).await;
+    recorder.attach(&flow);
+    let id = flow.session("default").await;
+    flow.prompt(&id, "visit a worktree").await;
+    flow.settle_within(&id, Duration::from_secs(60)).await;
+    let events = recorder.events();
+    assert_eq!(events.len(), 2, "{events:?}");
+    for event in &events {
+        assert_cwd_transition(&flow, &id, event);
+    }
+    assert_eq!(events[0]["transition"], "session.worktree.entered.1");
+    assert_eq!(events[1]["transition"], "session.worktree.exited.1");
+    assert_ne!(events[0]["transition_id"], events[1]["transition_id"]);
+    assert_eq!(events[0]["directory"], events[1]["previous_directory"]);
+    assert_eq!(
+        flow.runtime.state(&id).await.unwrap().info.directory,
+        flow.f.repo.display().to_string()
+    );
+    let receipts = flow.runtime.hook_executions(&id, 20).unwrap();
+    assert_eq!(
+        receipts
+            .iter()
+            .filter(|receipt| receipt.event == "CwdChanged")
+            .count(),
+        2
+    );
+    assert!(
+        receipts
+            .iter()
+            .all(|receipt| receipt.acknowledged == Some(true))
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn cwd_changed_idle_exit_is_committed_once_and_replay_is_silent() {
+    use support::flow::{call, text};
+    let mut flow = worktree_flow(vec![
+        call("enter", "enter_worktree", json!({"name":"idle-cwd"})),
+        text("done"),
+    ]);
+    let recorder = CwdRecorder::start(false).await;
+    recorder.attach(&flow);
+    let id = flow.session("default").await;
+    flow.prompt(&id, "enter and finish").await;
+    flow.settle_within(&id, Duration::from_secs(60)).await;
+    let unrelated = flow.session("default").await;
+    // Forced removal owns shutdown admission while returning entered Sessions.
+    // Dispatch must be deferred past that outer guard, even if removal fails.
+    tokio::time::timeout(
+        Duration::from_secs(30),
+        flow.f.host.remove_worktree(
+            &flow.f.repo,
+            &Name::parse("idle-cwd").unwrap(),
+            true,
+            CancellationToken::new(),
+        ),
+    )
+    .await
+    .expect("idle exit hook and removal settle")
+    .unwrap();
+    assert!(
+        flow.runtime
+            .exit_idle_worktree(&id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let events = recorder.events();
+    assert_eq!(events.len(), 2, "{events:?}");
+    for event in &events {
+        assert_cwd_transition(&flow, &id, event);
+    }
+    assert!(events.iter().all(|event| event["session_id"] != unrelated));
+    let before = cwd_history(&flow, &id);
+    flow.restart_default_runtime().await;
+    recorder.attach(&flow);
+    let state = flow.runtime.state(&id).await.unwrap();
+    assert_eq!(state.info.directory, flow.f.repo.display().to_string());
+    assert!(
+        flow.runtime
+            .exit_idle_worktree(&id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        recorder.events(),
+        events,
+        "loading durable history must not replay handlers"
+    );
+    assert_eq!(cwd_history(&flow, &id), before);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn cwd_changed_does_not_observe_permission_refusal() {
+    use support::flow::{call, text};
+    let flow = worktree_flow(vec![
+        call("enter", "enter_worktree", json!({"name":"denied-cwd"})),
+        text("done"),
+    ]);
+    flow.f
+        .set_config(json!({"permissions":{"worktree":"deny"}}));
+    let recorder = CwdRecorder::start(false).await;
+    recorder.attach(&flow);
+    let id = flow.session("default").await;
+    flow.prompt(&id, "try to enter").await;
+    flow.settle_within(&id, Duration::from_secs(30)).await;
+    assert!(recorder.events().is_empty());
+    assert_eq!(
+        flow.runtime.state(&id).await.unwrap().info.directory,
+        flow.f.repo.display().to_string()
+    );
+    assert!(!branch_exists(&flow.f.repo, "cyber/denied-cwd"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn cwd_changed_hook_shutdown_releases_outer_worktree_admission() {
+    use support::flow::{call, text};
+    let flow = worktree_flow(vec![
+        call("enter", "enter_worktree", json!({"name":"held-cwd"})),
+        text("done"),
+    ]);
+    let id = flow.session("default").await;
+    flow.prompt(&id, "enter and finish").await;
+    flow.settle_within(&id, Duration::from_secs(60)).await;
+    let recorder = CwdRecorder::start(true).await;
+    recorder.attach(&flow);
+    let name = Name::parse("held-cwd").unwrap();
+    let exiting = flow
+        .f
+        .host
+        .remove_worktree(&flow.f.repo, &name, true, CancellationToken::new());
+    let stopping = async {
+        recorder.entered.notified().await;
+        flow.runtime.shutdown().await;
+        recorder.release.cancel();
+    };
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let (result, ()) = tokio::join!(exiting, stopping);
+        result.unwrap();
+    })
+    .await
+    .expect("shutdown and committed observation settle without nested admission deadlock");
+    let events = recorder.events();
+    assert_eq!(events.len(), 1);
+    assert_cwd_transition(&flow, &id, &events[0]);
+}

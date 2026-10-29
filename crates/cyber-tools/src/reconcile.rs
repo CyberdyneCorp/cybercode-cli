@@ -123,9 +123,9 @@ fn op_state(op: &Op, resolve: &dyn Fn(&str) -> PathBuf) -> State {
                 return State::Unknown;
             };
             let lines: Vec<String> = current.lines().map(str::to_string).collect();
-            let new_present = chunks
-                .iter()
-                .all(|c| c.new.is_empty() || patch::find(&lines, &c.new, 0).is_some());
+            let new_present = chunks.iter().all(|c| {
+                c.new.is_empty() || patch::find(&lines, &c.new, 0) != patch::Found::Missing
+            });
             let old_applies = !moved && patch::apply_chunks(&current, chunks, path).is_ok();
             match (new_present, old_applies) {
                 (true, false) => State::Applied,

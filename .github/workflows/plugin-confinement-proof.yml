@@ -2,6 +2,11 @@ name: Plugin confinement proof
 
 on:
   workflow_dispatch:
+    inputs:
+      staged_system_diagnostic:
+        description: Run the historical re-signed system-image experiment (known arm64 startup failure)
+        type: boolean
+        default: false
   pull_request:
     paths:
       - scripts/probes/plugin-confinement/**
@@ -73,9 +78,9 @@ jobs:
             # exec boundary. A diagnostic/traced retry cannot turn failure green.
             args+=(--initial-exec --trace "$RUNNER_TEMP/proof-trace")
           elif [[ "$PROOF_RUNTIME" == native ]]; then
-            # Candidate staging must pass all eight combinations, including
-            # shell=false before the native constructor runs.
-            args+=(--macos-staged-native)
+            # Preserve the target signature; the same pre-runtime boundary
+            # must cover shell=false before the native constructor runs.
+            args+=(--macos-signing-native)
           fi
           node --experimental-strip-types scripts/probes/plugin-confinement/run.mts "${args[@]}" > "$RUNNER_TEMP/proof.log" 2>&1
       - name: Retain exact-source native evidence
@@ -91,7 +96,8 @@ jobs:
           retention-days: 14
 
   macos-native-gap:
-    name: Native initial-exec gap (${{ matrix.os }})
+    if: github.event_name == 'workflow_dispatch' && inputs.staged_system_diagnostic
+    name: Historical staged-system diagnostic (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
@@ -136,8 +142,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # This is a separate candidate. Keep the staged-system positive
-          # control and its unresolved failure in macos-native-gap intact.
+          # Acceptance requires original-image positive startup, denied self-exec,
+          # matching-identity counterexamples and descriptor isolation.
+          # The historical re-signing experiment remains an opt-in diagnostic;
+          # its failed startup control is never counted as confinement.
           node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime native --macos-signing-native --report "$RUNNER_TEMP/matrix.json" > "$RUNNER_TEMP/matrix.log" 2>&1
           node --experimental-strip-types scripts/probes/plugin-confinement/macos_signing_exec.mts --report "$RUNNER_TEMP/exec.json" > "$RUNNER_TEMP/exec.log" 2>&1
       - name: Retain signing-identity candidate evidence

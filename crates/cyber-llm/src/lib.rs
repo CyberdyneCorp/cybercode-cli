@@ -24,6 +24,7 @@ pub use retry::{RetryPolicy, open_with_retry};
 pub use sse::{SseEvent, SseParser};
 pub use turn::{TurnOutput, collect};
 pub use types::{
-    AttachmentRef, Content, FinishReason, Initiator, LlmEvent, LlmRequest, Message, Reasoning,
-    Role, ToolCall, ToolSpec, Usage,
+    AttachmentRef, Content, FinishReason, Initiator, LlmEvent, LlmRequest, Message,
+    OPAQUE_MAX_BYTES, OPAQUE_REDACTED, Opaque, OpaqueKind, Reasoning, Role, Routing, Shaping,
+    ToolCall, ToolSpec, TurnState, Usage, redact_opaque_fields,
 };

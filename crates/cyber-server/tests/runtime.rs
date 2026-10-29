@@ -32,6 +32,7 @@ async fn transport_failure_preserves_tool_outcomes_without_replaying_actions() {
             name: "write".into(),
             arguments: "{}".into(),
             input: Some(serde_json::json!({})),
+            opaque: None,
         })),
         ScriptStep::Error {
             error: ErrorKind::Transport,
@@ -790,6 +791,231 @@ async fn a_recap_is_the_agents_request() {
     assert_eq!(recaps[0].initiator, Some(cyber_llm::Initiator::Agent));
 }
 
+fn signature(data: &str) -> cyber_llm::Opaque {
+    cyber_llm::Opaque::new(cyber_llm::OpaqueKind::Signature, data)
+}
+
+fn stamped(data: &str) -> cyber_llm::Opaque {
+    cyber_llm::Opaque {
+        provider: "test".into(),
+        model: "main".into(),
+        ..signature(data)
+    }
+}
+
+/// `thinking(sig A) → tool_use → thinking(sig B) → tool_use`, as interleaved thinking streams.
+fn interleaved_reasoning() -> Vec<cyber_llm::adapters::ScriptStep> {
+    use cyber_llm::adapters::ScriptStep;
+    use cyber_llm::{FinishReason, LlmEvent, ToolCall};
+    let call = |id: &str, opaque: Option<cyber_llm::Opaque>| {
+        ScriptStep::Event(LlmEvent::ToolCallDone(ToolCall {
+            id: id.into(),
+            name: "read".into(),
+            arguments: "{}".into(),
+            input: Some(serde_json::json!({})),
+            opaque,
+        }))
+    };
+    vec![
+        ScriptStep::Event(LlmEvent::ReasoningDelta { text: "A".into() }),
+        ScriptStep::Event(LlmEvent::ReasoningItem {
+            text: String::new(),
+            opaque: Some(cyber_llm::Opaque::new(
+                cyber_llm::OpaqueKind::Signature,
+                "sigA",
+            )),
+        }),
+        call("c1", Some(signature("ts1"))),
+        ScriptStep::Event(LlmEvent::ReasoningDelta { text: "B".into() }),
+        ScriptStep::Event(LlmEvent::ReasoningItem {
+            text: String::new(),
+            opaque: Some(signature("sigB")),
+        }),
+        call("c2", None),
+        ScriptStep::Event(LlmEvent::Finish {
+            reason: FinishReason::ToolCalls,
+        }),
+    ]
+}
+
+#[tokio::test]
+async fn interleaved_reasoning_blocks_are_recorded_per_block_and_replayed_in_order() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![interleaved_reasoning(), text("done")])],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    h.runtime
+        .admit(&id, admit("go", Delivery::Steer))
+        .await
+        .unwrap();
+    h.settle(&id).await;
+
+    let events = h.store.read_events(&id, -1, 200).unwrap().events;
+    let order: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == "session.reasoning.ended.1" || e.kind == "session.tool.called.1")
+        .map(|e| {
+            let label = e.data["text"].as_str().or(e.data["call_id"].as_str());
+            (label.unwrap().to_string(), e.data["index"].clone())
+        })
+        .collect();
+    use serde_json::{Value, json};
+    assert_eq!(
+        order,
+        [
+            ("A".to_string(), json!(0)),
+            ("c1".to_string(), Value::Null),
+            ("B".to_string(), json!(1)),
+            ("c2".to_string(), Value::Null),
+        ]
+    );
+    let called = events.iter().find(|e| e.data["call_id"] == "c1").unwrap();
+    assert_eq!(called.data["opaque"]["data"], "ts1");
+    assert_eq!(called.data["opaque"]["provider"], "test");
+
+    let follow_up = &h.models.requests("test/main")[1].messages[1].content;
+    let reasoning = |text: &str, sig: &str| Content::Reasoning {
+        text: text.into(),
+        opaque: Some(stamped(sig)),
+    };
+    let call = |id: &str, opaque: Option<cyber_llm::Opaque>| Content::ToolCall {
+        id: id.into(),
+        name: "read".into(),
+        input: serde_json::json!({}),
+        opaque,
+    };
+    assert_eq!(
+        follow_up,
+        &vec![
+            reasoning("A", "sigA"),
+            call("c1", Some(stamped("ts1"))),
+            reasoning("B", "sigB"),
+            call("c2", None),
+        ]
+    );
+    // A restart rebuilds the same items from the log.
+    let restarted = h.restart().state(&id).await.unwrap();
+    assert_eq!(restarted.entries, h.state(&id).await.entries);
+}
+
+#[tokio::test]
+async fn an_old_reasoning_event_replays_as_one_signed_item() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![reasoning_then_text("I think", "answer")])],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    h.runtime
+        .admit(&id, admit("q1", Delivery::Steer))
+        .await
+        .unwrap();
+    h.settle(&id).await;
+    // Rewrite the log as a binary from before reasoning items wrote it.
+    let mut events = h.store.read_events(&id, -1, 200).unwrap().events;
+    let ended = events
+        .iter_mut()
+        .find(|e| e.kind == "session.reasoning.ended.1")
+        .unwrap();
+    let message_id = ended.data["message_id"].clone();
+    ended.data =
+        serde_json::json!({"message_id": message_id, "text": "I think", "signature": "sig"});
+    let replayed = cyber_server::runtime::SessionState::replay(&events).unwrap();
+    let Some(cyber_server::runtime::Entry::Assistant(answer)) = replayed.entries.get(1) else {
+        panic!("no answer");
+    };
+    assert_eq!(answer.reasoning, "I think");
+    assert_eq!(
+        answer.reasoning_items,
+        [cyber_server::runtime::ReasoningBlock {
+            text: "I think".into(),
+            opaque: Some(stamped("sig")),
+            after_calls: 0,
+        }]
+    );
+    assert_eq!(
+        answer,
+        &match &h.state(&id).await.entries[1] {
+            cyber_server::runtime::Entry::Assistant(a) => a.clone(),
+            _ => panic!("no answer"),
+        }
+    );
+}
+
+#[tokio::test]
+async fn opaque_state_over_one_mebibyte_is_dropped_and_the_item_kept_as_text() {
+    use cyber_llm::LlmEvent;
+    use cyber_llm::adapters::ScriptStep;
+    let huge = "x".repeat(cyber_llm::OPAQUE_MAX_BYTES + 1);
+    let mut steps = vec![
+        ScriptStep::Event(LlmEvent::ReasoningDelta { text: "big".into() }),
+        ScriptStep::Event(LlmEvent::ReasoningItem {
+            text: String::new(),
+            opaque: Some(cyber_llm::Opaque::new(
+                cyber_llm::OpaqueKind::EncryptedReasoning,
+                huge.clone(),
+            )),
+        }),
+        // A second oversized value in the same step logs no second warning.
+        ScriptStep::Event(LlmEvent::ReasoningItem {
+            text: "bigger".into(),
+            opaque: Some(cyber_llm::Opaque::new(
+                cyber_llm::OpaqueKind::EncryptedReasoning,
+                huge,
+            )),
+        }),
+    ];
+    steps.extend(text("answer"));
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![steps, text("again")])],
+        ..Setup::default()
+    });
+    cyber_core::log::init(
+        &h.dir.path().join("log"),
+        cyber_core::log::Level::Info,
+        false,
+    );
+    let warnings = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = Arc::clone(&warnings);
+    cyber_core::log::set_sink(Some(Arc::new(move |record| {
+        if record.level == cyber_core::log::Level::Warn {
+            seen.lock().unwrap().push(record.msg.to_string());
+        }
+    })));
+    let id = h.session().await;
+    for prompt in ["q1", "q2"] {
+        h.runtime
+            .admit(&id, admit(prompt, Delivery::Steer))
+            .await
+            .unwrap();
+        h.settle(&id).await;
+    }
+    let events = h.store.read_events(&id, -1, 200).unwrap().events;
+    let ended = events
+        .iter()
+        .find(|e| e.kind == "session.reasoning.ended.1")
+        .unwrap();
+    assert_eq!(ended.data["text"], "big");
+    assert!(ended.data.get("opaque").is_none());
+    let dropped = warnings.lock().unwrap().clone();
+    assert_eq!(
+        dropped
+            .iter()
+            .filter(|msg| msg.contains("over 1 MiB dropped"))
+            .count(),
+        1
+    );
+    // The item has no state left, so the adapter sends its text as text
+    // (`anthropic_replays_thinking_blocks_in_block_order` in cyber-llm).
+    assert_eq!(
+        h.models.requests("test/main")[1].messages[1].content[0],
+        Content::Reasoning {
+            text: "big".into(),
+            opaque: None,
+        }
+    );
+}
+
 #[tokio::test]
 async fn reasoning_is_native_for_the_same_model_and_lowered_otherwise() {
     let h = Harness::new(Setup {
@@ -818,7 +1044,11 @@ async fn reasoning_is_native_for_the_same_model_and_lowered_otherwise() {
         native,
         &Content::Reasoning {
             text: "I think".into(),
-            signature: Some("sig".into())
+            opaque: Some(cyber_llm::Opaque {
+                provider: "test".into(),
+                model: "main".into(),
+                ..cyber_llm::Opaque::new(cyber_llm::OpaqueKind::Signature, "sig")
+            })
         }
     );
 
@@ -940,6 +1170,113 @@ async fn rate_limits_are_retried_before_output() {
         retries += usize::from(matches!(e, LiveEvent::Retry { .. }));
     }
     assert_eq!(retries, 2);
+}
+
+/// Regression: a subagent's retry notice named its prompt cache key
+/// (`<root>:<agent>`) instead of its Session. Its requests carry that key and the
+/// routing of the root Session.
+#[tokio::test]
+async fn a_subagent_retry_names_its_own_session() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![error(ErrorKind::RateLimit, "slow"), text("fine")],
+        )],
+        ..Setup::default()
+    });
+    let root = h.session().await;
+    let child = h
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(root.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let mut live = h.runtime.subscribe();
+    h.runtime
+        .admit(&child, admit("go", Delivery::Steer))
+        .await
+        .unwrap();
+    h.settle(&child).await;
+    let mut retried = Vec::new();
+    while let Ok(e) = live.try_recv() {
+        if let LiveEvent::Retry { session_id, .. } = e {
+            retried.push(session_id);
+        }
+    }
+    assert_eq!(retried, std::slice::from_ref(&child));
+
+    let agent = h.state(&child).await.info.agent;
+    let request = h.models.requests("test/main").pop().unwrap();
+    assert_eq!(request.cache_key, Some(format!("{root}:{agent}")));
+    let routing = request.routing.unwrap();
+    assert_eq!(
+        (routing.root, routing.session, routing.subagent),
+        (root, child, Some(agent))
+    );
+}
+
+/// `provider-catalog` → Session routing headers: the requests answering one prompt share
+/// one Turn state, and the next prompt starts without it.
+#[tokio::test]
+async fn turn_state_spans_one_prompt_and_resets_for_the_next() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![tools(&[("c1", "write", "{}")]), text("done"), text("again")],
+        )],
+        ..Setup::default()
+    });
+    h.tools.set("write", Behavior::Gated);
+    let id = h.session().await;
+    h.runtime
+        .admit(&id, admit("one", Delivery::Steer))
+        .await
+        .unwrap();
+    h.tools.started.notified().await;
+    let state_of = |request: &cyber_llm::LlmRequest| {
+        request
+            .routing
+            .as_ref()
+            .unwrap()
+            .turn_state
+            .clone()
+            .unwrap()
+    };
+    let first = h.models.requests("test/main");
+    // What the backend's first response would leave.
+    state_of(&first[0]).offer("abc");
+    h.tools.release.notify_one();
+    h.settle(&id).await;
+    let requests = h.models.requests("test/main");
+    assert_eq!(requests.len(), 2);
+    assert_eq!(state_of(&requests[1]).get().as_deref(), Some("abc"));
+    let routing = requests[0].routing.clone().unwrap();
+    assert_eq!(
+        (
+            routing.root.as_str(),
+            routing.session.as_str(),
+            routing.subagent
+        ),
+        (id.as_str(), id.as_str(), None)
+    );
+    assert_eq!(requests[0].cache_key.as_deref(), Some(id.as_str()));
+
+    h.runtime
+        .admit(&id, admit("two", Delivery::Steer))
+        .await
+        .unwrap();
+    h.settle(&id).await;
+    let next = h.models.requests("test/main").pop().unwrap();
+    assert_eq!(
+        state_of(&next).get(),
+        None,
+        "a new prompt starts a new Turn state"
+    );
 }
 
 #[tokio::test]
@@ -2079,6 +2416,7 @@ impl cyber_llm::Adapter for HeldStreamModel {
                 name: "read".into(),
                 arguments: "{}".into(),
                 input: Some(serde_json::json!({})),
+                opaque: None,
             });
             let held = futures::stream::once(async move {
                 release.notified().await;
@@ -2195,4 +2533,254 @@ impl cyber_server::runtime::ModelResolver for HeldModels {
     fn role(&self, role: cyber_llm::catalog::ModelRole) -> Option<String> {
         cyber_server::runtime::ModelResolver::role(self.models.as_ref(), role)
     }
+}
+
+/// A scripted step: streamed reasoning, then optional state closing it, then tool calls.
+fn reasoned_calls(
+    reasoning: &str,
+    opaque: Option<cyber_llm::Opaque>,
+    calls: &[(&str, &str)],
+) -> Vec<cyber_llm::adapters::ScriptStep> {
+    use cyber_llm::adapters::ScriptStep;
+    use cyber_llm::{FinishReason, LlmEvent, ToolCall};
+    let mut steps = vec![ScriptStep::Event(LlmEvent::ReasoningDelta {
+        text: reasoning.into(),
+    })];
+    if opaque.is_some() {
+        steps.push(ScriptStep::Event(LlmEvent::ReasoningItem {
+            text: String::new(),
+            opaque,
+        }));
+    }
+    for (id, name) in calls {
+        steps.push(ScriptStep::Event(LlmEvent::ToolCallDone(ToolCall {
+            id: (*id).into(),
+            name: (*name).into(),
+            arguments: "{}".into(),
+            input: Some(serde_json::json!({})),
+            opaque: None,
+        })));
+    }
+    steps.push(ScriptStep::Event(LlmEvent::Finish {
+        reason: FinishReason::ToolCalls,
+    }));
+    steps
+}
+
+fn has_reasoning(message: &cyber_llm::Message) -> bool {
+    message
+        .content
+        .iter()
+        .any(|part| matches!(part, Content::Reasoning { .. }))
+}
+
+/// `session-runtime` → Reasoning replay policy, "DeepSeek tool loop": `tool_loop` replays
+/// the reasoning of the loop's answers, and drops it once a new user message arrives.
+#[tokio::test]
+async fn tool_loop_replays_reasoning_only_after_the_latest_user_message() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "deepseek/main",
+            vec![
+                reasoned_calls("look first", None, &[("c1", "read")]),
+                text("done"),
+                text("again"),
+            ],
+        )],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    h.runtime.switch_model(&id, "deepseek/main").await.unwrap();
+    for prompt in ["q1", "q2"] {
+        h.runtime
+            .admit(&id, admit(prompt, Delivery::Steer))
+            .await
+            .unwrap();
+        h.settle(&id).await;
+    }
+    let requests = h.models.requests("deepseek/main");
+    assert_eq!(
+        requests[1].messages[1].content[0],
+        Content::Reasoning {
+            text: "look first".into(),
+            opaque: None,
+        }
+    );
+    let after_user = &requests[2].messages;
+    assert!(
+        !after_user.iter().any(has_reasoning),
+        "reasoning before the latest user message is dropped"
+    );
+    assert!(
+        !serde_json::to_string(after_user)
+            .unwrap()
+            .contains("look first"),
+        "dropped, not lowered to text"
+    );
+}
+
+/// `never` lowers reasoning to assistant text even for the model that produced it.
+#[tokio::test]
+async fn never_replay_lowers_reasoning_for_the_same_model() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "plain/main",
+            vec![reasoning_then_text("I think", "answer"), text("again")],
+        )],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    h.runtime.switch_model(&id, "plain/main").await.unwrap();
+    for prompt in ["q1", "q2"] {
+        h.runtime
+            .admit(&id, admit(prompt, Delivery::Steer))
+            .await
+            .unwrap();
+        h.settle(&id).await;
+    }
+    assert_eq!(
+        h.models.requests("plain/main")[1].messages[1].content,
+        [
+            Content::Text {
+                text: "I think".into()
+            },
+            Content::Text {
+                text: "answer".into()
+            },
+        ]
+    );
+}
+
+/// A redacted block has no text to lower, so another model never sees it; the text of a
+/// signed block reaches it as assistant text.
+#[tokio::test]
+async fn a_provider_switch_drops_redacted_reasoning_and_lowers_the_rest() {
+    use cyber_llm::adapters::ScriptStep;
+    use cyber_llm::{LlmEvent, OpaqueKind};
+    let mut steps = vec![
+        ScriptStep::Event(LlmEvent::ReasoningItem {
+            text: String::new(),
+            opaque: Some(cyber_llm::Opaque::new(OpaqueKind::Redacted, "blob")),
+        }),
+        ScriptStep::Event(LlmEvent::ReasoningDelta {
+            text: "visible".into(),
+        }),
+        ScriptStep::Event(LlmEvent::ReasoningItem {
+            text: String::new(),
+            opaque: Some(cyber_llm::Opaque::new(
+                cyber_llm::OpaqueKind::Signature,
+                "sig",
+            )),
+        }),
+    ];
+    steps.extend(text("answer"));
+    let h = Harness::new(Setup {
+        scripts: vec![
+            ("test/main", vec![steps]),
+            ("other/main", vec![text("switched")]),
+        ],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    h.runtime
+        .admit(&id, admit("q1", Delivery::Steer))
+        .await
+        .unwrap();
+    h.settle(&id).await;
+    h.runtime.switch_model(&id, "other/main").await.unwrap();
+    h.runtime
+        .admit(&id, admit("q2", Delivery::Steer))
+        .await
+        .unwrap();
+    h.settle(&id).await;
+    assert_eq!(
+        h.models.requests("other/main")[0].messages[1].content,
+        [
+            Content::Text {
+                text: "visible".into()
+            },
+            Content::Text {
+                text: "answer".into()
+            },
+        ]
+    );
+}
+
+/// `session-runtime` → Reasoning replay policy, "Model switch inside a tool loop": the
+/// other model's reasoning is lowered to text, and the Anthropic requests of that loop
+/// go out with thinking off, since an answer to a thinking-off request carries no
+/// thinking block either; one `info` line says so, and the next prompt has thinking on
+/// again.
+#[tokio::test]
+async fn a_model_switch_inside_a_tool_loop_turns_thinking_off_for_the_loop() {
+    use cyber_llm::{OpaqueKind, Reasoning};
+    let encrypted = cyber_llm::Opaque::new(OpaqueKind::EncryptedReasoning, "enc");
+    let h = Harness::new(Setup {
+        scripts: vec![
+            (
+                "test/main",
+                vec![reasoned_calls(
+                    "gpt plan",
+                    Some(encrypted),
+                    &[("c1", "read")],
+                )],
+            ),
+            (
+                "anthropic/main",
+                vec![
+                    // What Anthropic answers a request with thinking off: no thinking.
+                    tools(&[("c2", "grep", "{}")]),
+                    text("done"),
+                    text("again"),
+                ],
+            ),
+        ],
+        ..Setup::default()
+    });
+    h.tools.set("read", Behavior::Gated);
+    cyber_core::log::init(
+        &h.dir.path().join("log"),
+        cyber_core::log::Level::Info,
+        false,
+    );
+    let infos = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = Arc::clone(&infos);
+    cyber_core::log::set_sink(Some(Arc::new(move |record| {
+        if record.level == cyber_core::log::Level::Info {
+            seen.lock().unwrap().push(record.msg.to_string());
+        }
+    })));
+    let id = h.session().await;
+    h.runtime
+        .admit(&id, admit("go", Delivery::Steer))
+        .await
+        .unwrap();
+    h.tools.started.notified().await;
+    h.runtime.switch_model(&id, "anthropic/main").await.unwrap();
+    h.tools.release.notify_one();
+    h.settle(&id).await;
+    h.runtime
+        .admit(&id, admit("next", Delivery::Steer))
+        .await
+        .unwrap();
+    h.settle(&id).await;
+
+    let requests = h.models.requests("anthropic/main");
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[0].reasoning, Some(Reasoning::Off));
+    assert_eq!(
+        requests[0].messages[1].content[0],
+        Content::Text {
+            text: "gpt plan".into()
+        }
+    );
+    assert_eq!(requests[1].reasoning, Some(Reasoning::Off), "same loop");
+    assert_eq!(requests[2].reasoning, Some(Reasoning::BudgetTokens(1024)));
+    let guarded = infos
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|msg| msg.contains("thinking off for the rest of this tool loop"))
+        .count();
+    assert_eq!(guarded, 1);
 }

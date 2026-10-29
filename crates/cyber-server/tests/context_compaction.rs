@@ -84,6 +84,42 @@ async fn epoch_without_a_family_keeps_its_prefix_bytes() {
     assert_eq!((epoch.number, epoch.family), (1, None));
 }
 
+/// `system-context` → Base prompt coverage, "Prompt version change".
+#[tokio::test]
+async fn prompt_version_change_starts_a_new_epoch() {
+    use cyber_server::runtime::{ModelFamily, base_prompt};
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("a"), text("b")])],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    h.runtime.admit(&id, admit("one")).await.unwrap();
+    h.settle(&id).await;
+    let built = h.state(&id).await.epoch.unwrap();
+    let version = cyber_core::prompts::base_prompt_version();
+    assert_eq!((built.number, built.prompt_version), (1, Some(version)));
+    let family = ModelFamily::ALL
+        .into_iter()
+        .find(|f| Some(f.as_str()) == built.family.as_deref())
+        .unwrap();
+
+    // The same family, but built with the version 1 prompt.
+    let seq = h.store.aggregate_seq(&id).unwrap().unwrap();
+    h.store.append(&id, cyber_store::Expected::Seq(seq), vec![cyber_store::NewEvent::new(
+        "session.context.epoch_started.1", serde_json::json!({
+            "epoch":2, "baseline":built.baseline, "snapshot":built.snapshot, "provider":"test",
+            "system_prefix":"Version 1 base prompt.", "family":family.as_str(), "prompt_version":1
+        }),
+    )]).unwrap();
+    let restarted = h.restart();
+    restarted.admit(&id, admit("two")).await.unwrap();
+    restarted.wait_idle(&id).await;
+    let requests = h.models.requests("test/main");
+    assert_eq!(requests.last().unwrap().system[0], base_prompt(family));
+    let epoch = restarted.state(&id).await.unwrap().epoch.unwrap();
+    assert_eq!((epoch.number, epoch.prompt_version), (3, Some(version)));
+}
+
 #[tokio::test]
 async fn baseline_is_byte_stable_within_an_epoch() {
     let h = Harness::new(Setup {
@@ -232,6 +268,17 @@ async fn manual_compaction_keeps_a_verbatim_tail_and_the_task_state() {
     let summary_request = &h.models.requests("test/summary")[0];
     assert!(transcript(summary_request).contains("focus on the parser"));
     assert!(summary_request.tools.is_empty());
+    // Regression: only Turn requests carried the prompt cache key.
+    assert_eq!(summary_request.cache_key.as_deref(), Some(id.as_str()));
+    assert_eq!(
+        summary_request
+            .routing
+            .as_ref()
+            .unwrap()
+            .subagent
+            .as_deref(),
+        Some("compact")
+    );
 
     h.runtime.admit(&id, admit("next")).await.unwrap();
     h.settle(&id).await;
@@ -535,4 +582,58 @@ async fn loaded_schemas_survive_compaction_and_restart() {
             .loaded_tool_names()
             .contains("mcp__jira__read")
     );
+}
+
+/// `session-runtime` → Reasoning replay policy: a compaction summary carries no opaque
+/// state, and the reasoning of the kept tail still replays natively.
+#[tokio::test]
+async fn compaction_summary_carries_no_opaque_state_and_the_tail_replays() {
+    let h = Harness::new(Setup {
+        scripts: vec![
+            (
+                "test/main",
+                vec![
+                    reasoning_then_text("old thought", "a1"),
+                    reasoning_then_text("new thought", "a2"),
+                    text("a3"),
+                ],
+            ),
+            ("test/summary", vec![text("## Objective\nship it")]),
+        ],
+        compaction: small_tail(),
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    for prompt in ["one", "two"] {
+        h.runtime.admit(&id, admit(prompt)).await.unwrap();
+        h.settle(&id).await;
+    }
+    h.runtime.compact(&id, None).await.unwrap();
+    let summary_request = &h.models.requests("test/summary")[0];
+    assert!(
+        summary_request
+            .messages
+            .iter()
+            .flat_map(|m| &m.content)
+            .all(|part| part.opaque().is_none())
+    );
+    h.runtime.admit(&id, admit("three")).await.unwrap();
+    h.settle(&id).await;
+    let next = &h.models.requests("test/main")[2];
+    assert!(
+        next.messages[0]
+            .content
+            .iter()
+            .all(|p| p.opaque().is_none())
+    );
+    assert!(!transcript(next).contains("old thought"));
+    let tail: Vec<_> = next.messages[1..]
+        .iter()
+        .flat_map(|m| &m.content)
+        .filter_map(|part| match part {
+            Content::Reasoning { text, opaque } => Some((text.as_str(), opaque.is_some())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tail, [("new thought", true)]);
 }

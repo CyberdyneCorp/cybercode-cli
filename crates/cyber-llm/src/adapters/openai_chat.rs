@@ -7,10 +7,15 @@ use super::{
     Adapter, Decoder, Endpoint, EventStream, ToolCalls, data_url, decode_sse, document_name,
     ensure_resolved, parse_json,
 };
-use crate::error::{LlmError, classify_stream_error};
+use crate::catalog::profile::ReasoningCarrier;
+use crate::error::{LlmError, stream_error};
 use crate::json::{deep_merge, force_no_tools, str_at, strip_credentials, u64_at};
 use crate::sse::SseEvent;
-use crate::types::{Content, FinishReason, LlmEvent, LlmRequest, Message, Reasoning, Role, Usage};
+use crate::types::{
+    Content, FinishReason, LlmEvent, LlmRequest, Message, Reasoning, Role, ToolCall, Usage,
+};
+
+mod reasoning;
 
 pub struct OpenAiChatAdapter {
     pub(super) endpoint: Endpoint,
@@ -75,10 +80,17 @@ pub(crate) fn build_body(request: &LlmRequest) -> Value {
     if !request.system.is_empty() {
         messages.push(json!({ "role": "system", "content": request.system.join("\n\n") }));
     }
-    for message in &request.messages {
+    let loop_start = tool_loop_start(&request.messages);
+    for (index, message) in request.messages.iter().enumerate() {
         match message.role {
             Role::User => push_user(message, &mut messages),
-            Role::Assistant => messages.push(assistant(message)),
+            Role::Assistant => {
+                let mut value = assistant(message, request.reasoning_carrier);
+                if index > loop_start {
+                    reasoning::hold_tool_loop(&mut value, request.reasoning_carrier);
+                }
+                messages.push(value);
+            }
         }
     }
     let mut body = json!({
@@ -101,6 +113,21 @@ pub(crate) fn build_body(request: &LlmRequest) -> Value {
     force_no_tools(&mut body, request.tools_disabled, json!("none"));
     strip_credentials(&mut body);
     body
+}
+
+/// The index of the latest prompt: a user message that is more than tool results. The
+/// messages after it are the current tool loop.
+fn tool_loop_start(messages: &[Message]) -> usize {
+    messages
+        .iter()
+        .rposition(|message| {
+            message.role == Role::User
+                && message
+                    .content
+                    .iter()
+                    .any(|part| !matches!(part, Content::ToolResult { .. }))
+        })
+        .unwrap_or(0)
 }
 
 fn optional_fields(request: &LlmRequest, map: &mut Map<String, Value>) {
@@ -151,15 +178,26 @@ fn push_user(message: &Message, out: &mut Vec<Value>) {
     }
 }
 
-fn assistant(message: &Message) -> Value {
+fn assistant(message: &Message, carrier: ReasoningCarrier) -> Value {
     let mut text = String::new();
     let mut calls = Vec::new();
+    let mut gathered = reasoning::Gathered::default();
     for content in &message.content {
         match content {
             Content::Text { text: t } => text.push_str(t),
-            Content::ToolCall { id, name, input } => calls.push(
-                json!({ "id": id, "type": "function", "function": { "name": name, "arguments": input.to_string() } }),
-            ),
+            Content::ToolCall {
+                id,
+                name,
+                input,
+                opaque,
+            } => {
+                let mut call = json!({ "id": id, "type": "function", "function": { "name": name, "arguments": input.to_string() } });
+                if let Some(extra) = reasoning::call_extra(opaque.as_ref()) {
+                    call["extra_content"] = extra;
+                }
+                calls.push(call);
+            }
+            Content::Reasoning { text, opaque } => gathered.add(text, opaque.as_ref()),
             _ => {}
         }
     }
@@ -167,12 +205,14 @@ fn assistant(message: &Message) -> Value {
     if !calls.is_empty() {
         value["tool_calls"] = Value::Array(calls);
     }
+    reasoning::carry(&mut value, carrier, &gathered);
     value
 }
 
 #[derive(Default)]
 struct ChatDecoder {
     tools: ToolCalls,
+    reasoning: reasoning::Streamed,
     finish: Option<String>,
     usage: Option<Usage>,
     done: bool,
@@ -210,8 +250,7 @@ impl Decoder for ChatDecoder {
 impl ChatDecoder {
     fn chunk(&mut self, chunk: &Value, out: &mut Vec<Result<LlmEvent, LlmError>>) {
         if let Some(error) = chunk.get("error") {
-            let kind = classify_stream_error(str_at(error, "/code"), str_at(error, "/message"));
-            out.push(Err(LlmError::new(kind, str_at(error, "/message"))));
+            out.push(Err(stream_error(error)));
             return;
         }
         if let Some(usage) = chunk.get("usage").filter(|u| u.is_object()) {
@@ -225,6 +264,7 @@ impl ChatDecoder {
             ("/content", false),
             ("/reasoning_content", true),
             ("/reasoning", true),
+            ("/reasoning_text", true),
         ] {
             if let Some(text) = delta
                 .pointer(pointer)
@@ -242,6 +282,7 @@ impl ChatDecoder {
                 out.push(Ok(event));
             }
         }
+        self.reasoning.absorb(delta);
         for call in delta
             .get("tool_calls")
             .and_then(Value::as_array)
@@ -270,6 +311,9 @@ impl ChatDecoder {
             }
             self.tools.start(&key, id, name);
         }
+        if let Some(signature) = reasoning::thought_signature(call) {
+            self.tools.set_opaque(&key, signature);
+        }
         let fragment = str_at(call, "/function/arguments");
         if let Some(event) = self
             .tools
@@ -281,16 +325,27 @@ impl ChatDecoder {
     }
 
     fn finish_whole(&mut self, except: Option<&str>, out: &mut Vec<Result<LlmEvent, LlmError>>) {
-        for call in self.tools.finish_whole(except) {
-            out.push(Ok(LlmEvent::ToolCallDone(call)));
+        let calls = self.tools.finish_whole(except);
+        self.push_calls(calls, out);
+    }
+
+    /// Completed calls, after the reasoning state that came before them.
+    fn push_calls(&mut self, calls: Vec<ToolCall>, out: &mut Vec<Result<LlmEvent, LlmError>>) {
+        if !calls.is_empty() {
+            out.extend(self.reasoning.take_items().into_iter().map(Ok));
         }
+        out.extend(
+            calls
+                .into_iter()
+                .map(|call| Ok(LlmEvent::ToolCallDone(call))),
+        );
     }
 
     fn complete(&mut self, out: &mut Vec<Result<LlmEvent, LlmError>>) {
         self.done = true;
-        for call in self.tools.finish_all() {
-            out.push(Ok(LlmEvent::ToolCallDone(call)));
-        }
+        let calls = self.tools.finish_all();
+        self.push_calls(calls, out);
+        out.extend(self.reasoning.take_items().into_iter().map(Ok));
         if let Some(usage) = self.usage.take() {
             out.push(Ok(LlmEvent::Usage(usage)));
         }

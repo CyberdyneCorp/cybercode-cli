@@ -29,6 +29,24 @@ pub(crate) enum Op {
     },
 }
 
+impl Op {
+    /// Resolve the operation's relative paths against `base`.
+    fn rebase(&mut self, base: &Path) {
+        let join = |path: &mut String| {
+            if Path::new(path.as_str()).is_relative() {
+                *path = base.join(path.as_str()).display().to_string();
+            }
+        };
+        match self {
+            Op::Add { path, .. } | Op::Delete { path } => join(path),
+            Op::Update { path, move_to, .. } => {
+                join(path);
+                move_to.iter_mut().for_each(join);
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct Chunk {
     pub context: Option<String>,
@@ -36,8 +54,10 @@ pub(crate) struct Chunk {
     pub new: Vec<String>,
 }
 
-/// Parse the `*** Begin Patch` … `*** End Patch` envelope.
+/// Parse the `*** Begin Patch` … `*** End Patch` envelope, also when it comes wrapped
+/// in a shell heredoc (`builtin-tools` → Tolerant patch matching).
 pub(crate) fn parse(patch: &str) -> Result<Vec<Op>, String> {
+    let patch = super::patch_shell::unwrap_heredoc(patch.trim()).unwrap_or(patch);
     let lines: Vec<&str> = patch.trim().lines().collect();
     if lines.first().map(|l| l.trim()) != Some("*** Begin Patch")
         || lines.last().map(|l| l.trim()) != Some("*** End Patch")
@@ -154,16 +174,27 @@ pub(crate) fn apply_chunks(content: &str, chunks: &[Chunk], path: &str) -> Resul
     let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
     let mut cursor = 0;
     for (n, chunk) in chunks.iter().enumerate() {
-        if let Some(ctx) = &chunk.context
-            && let Some(at) = find(&lines, std::slice::from_ref(ctx), cursor)
-        {
-            cursor = at + 1;
+        let hunk_error = |found: Found| match found {
+            Found::Ambiguous(count) => format!(
+                "Hunk {} is ambiguous in {path}: it matches {count} places once whitespace and punctuation are relaxed; add context lines",
+                n + 1
+            ),
+            _ => format!("Hunk {} does not match {path}", n + 1),
+        };
+        if let Some(ctx) = &chunk.context {
+            match find(&lines, std::slice::from_ref(ctx), cursor) {
+                Found::At(at) => cursor = at + 1,
+                Found::Missing => {}
+                ambiguous => return Err(hunk_error(ambiguous)),
+            }
         }
         let at = if chunk.old.is_empty() {
             lines.len()
         } else {
-            find(&lines, &chunk.old, cursor)
-                .ok_or_else(|| format!("Hunk {} does not match {path}", n + 1))?
+            match find(&lines, &chunk.old, cursor) {
+                Found::At(at) => at,
+                other => return Err(hunk_error(other)),
+            }
         };
         lines.splice(at..at + chunk.old.len(), chunk.new.iter().cloned());
         cursor = at + chunk.new.len();
@@ -173,17 +204,59 @@ pub(crate) fn apply_chunks(content: &str, chunks: &[Chunk], path: &str) -> Resul
     Ok(out)
 }
 
-/// Exact match first, then ignoring trailing whitespace, then ignoring surrounding whitespace.
-pub(crate) fn find(lines: &[String], needle: &[String], from: usize) -> Option<usize> {
-    let passes: [fn(&str) -> &str; 3] = [|s| s, str::trim_end, str::trim];
-    passes.iter().find_map(|norm| {
-        (from..=lines.len().saturating_sub(needle.len())).find(|&i| {
-            needle
+/// Where a hunk's lines are in a file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Found {
+    At(usize),
+    /// The loosest level that matched matched this many places.
+    Ambiguous(usize),
+    Missing,
+}
+
+/// How loosely a line may match, tightest first (`builtin-tools` → Tolerant patch
+/// matching): exact, trailing whitespace ignored, surrounding whitespace ignored, then
+/// typographic punctuation folded as well.
+const LEVELS: [fn(&str) -> std::borrow::Cow<'_, str>; 4] = [
+    |s| s.into(),
+    |s| s.trim_end().into(),
+    |s| s.trim().into(),
+    |s| fold_punctuation(s.trim()).into(),
+];
+
+/// Search from `from`, level by level. An exact match takes the first place, as the
+/// cursor already orders the hunks; a looser level must match exactly one place.
+pub(crate) fn find(lines: &[String], needle: &[String], from: usize) -> Found {
+    for (level, norm) in LEVELS.iter().enumerate() {
+        let wanted: Vec<_> = needle.iter().map(|n| norm(n)).collect();
+        let mut places = (from..=lines.len().saturating_sub(needle.len())).filter(|&i| {
+            wanted
                 .iter()
                 .enumerate()
-                .all(|(j, n)| lines.get(i + j).is_some_and(|l| norm(l) == norm(n)))
+                .all(|(j, n)| lines.get(i + j).is_some_and(|l| norm(l) == *n))
+        });
+        let Some(first) = places.next() else {
+            continue;
+        };
+        let others = if level == 0 { 0 } else { places.count() };
+        return match others {
+            0 => Found::At(first),
+            more => Found::Ambiguous(more + 1),
+        };
+    }
+    Found::Missing
+}
+
+/// Curly quotes, dashes and non-breaking or narrow spaces as their ASCII forms.
+fn fold_punctuation(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' | '\u{2032}' => '\'',
+            '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{201F}' | '\u{2033}' => '"',
+            '\u{2010}'..='\u{2015}' | '\u{2212}' => '-',
+            '\u{00A0}' | '\u{2007}' | '\u{2009}' | '\u{200A}' | '\u{202F}' | '\u{3000}' => ' ',
+            other => other,
         })
-    })
+        .collect()
 }
 
 /// One validated file change.
@@ -295,36 +368,48 @@ impl Tool for ApplyPatch {
     }
 
     fn run<'a>(&'a self, ctx: &'a Ctx<'a>) -> BoxFuture<'a, Result<String, ToolError>> {
-        Box::pin(async move {
-            let ops = parse(text(&ctx.inv.input, "patch")).map_err(failed)?;
-            let changes = plan(ctx, ops).await?;
-            let paths: Vec<PathBuf> = changes.iter().map(|c| c.path.clone()).collect();
-            ctx.check_external(&paths).await?;
-            let resources: Vec<String> = paths.iter().map(|p| ctx.resource(p)).collect();
-            let diff: String = changes
-                .iter()
-                .map(|c| {
-                    let text = |b: &Option<Vec<u8>>| {
-                        b.as_deref()
-                            .map(String::from_utf8_lossy)
-                            .unwrap_or_default()
-                            .into_owned()
-                    };
-                    unified_diff(&ctx.resource(&c.path), &text(&c.before), &text(&c.after))
-                })
-                .collect();
-            let req = Request {
-                action: "edit".into(),
-                resources: resources.clone(),
-                mutates: paths,
-                file_edit: true,
-                ..Request::default()
-            };
-            ctx.authorize(req, resources, json!({ "diff": diff }))
-                .await?;
-            write_all(ctx, &changes).await
-        })
+        Box::pin(apply(ctx, text(&ctx.inv.input, "patch"), None))
     }
+}
+
+/// Validate, approve as one `apply_patch` edit (also when a shell call carried it) and
+/// apply `patch`. Relative paths resolve against
+/// `base` when given (a shell call's `cd <dir>`), else against the Location.
+pub(crate) async fn apply(
+    ctx: &Ctx<'_>,
+    patch: &str,
+    base: Option<&Path>,
+) -> Result<String, ToolError> {
+    let mut ops = parse(patch).map_err(failed)?;
+    if let Some(base) = base {
+        ops.iter_mut().for_each(|op| op.rebase(base));
+    }
+    let changes = plan(ctx, ops).await?;
+    let paths: Vec<PathBuf> = changes.iter().map(|c| c.path.clone()).collect();
+    ctx.check_external(&paths).await?;
+    let resources: Vec<String> = paths.iter().map(|p| ctx.resource(p)).collect();
+    let diff: String = changes
+        .iter()
+        .map(|c| {
+            let text = |b: &Option<Vec<u8>>| {
+                b.as_deref()
+                    .map(String::from_utf8_lossy)
+                    .unwrap_or_default()
+                    .into_owned()
+            };
+            unified_diff(&ctx.resource(&c.path), &text(&c.before), &text(&c.after))
+        })
+        .collect();
+    let req = Request {
+        action: "edit".into(),
+        resources: resources.clone(),
+        mutates: paths,
+        file_edit: true,
+        ..Request::default()
+    };
+    ctx.authorize_as("apply_patch", req, resources, json!({ "diff": diff }))
+        .await?;
+    write_all(ctx, &changes).await
 }
 
 async fn write_all(ctx: &Ctx<'_>, changes: &[Change]) -> Result<String, ToolError> {
@@ -447,5 +532,84 @@ mod tests {
             apply_chunks(content, &[bad], "a.rs").unwrap_err(),
             "Hunk 1 does not match a.rs"
         );
+    }
+
+    fn chunk(old: &[&str], new: &[&str]) -> Chunk {
+        Chunk {
+            context: None,
+            old: old.iter().map(|l| l.to_string()).collect(),
+            new: new.iter().map(|l| l.to_string()).collect(),
+        }
+    }
+
+    /// `builtin-tools` → Tolerant patch matching, "Smart quotes in context".
+    #[test]
+    fn smart_quotes_in_context_match_ascii_quotes() {
+        let content = "let a = \"x\";\nlet b = 'y';\nlet c = 1 - 2;\n";
+        let hunk = chunk(
+            &[
+                "let a = \u{201C}x\u{201D};",
+                "let b = \u{2018}y\u{2019};",
+                "let c = 1 \u{2013} 2;",
+            ],
+            &["let a = \"z\";"],
+        );
+        assert_eq!(
+            apply_chunks(content, &[hunk], "a.rs").unwrap(),
+            "let a = \"z\";\n"
+        );
+        let spaced = chunk(&["let\u{00A0}b = 'y';"], &["let b = 'w';"]);
+        assert_eq!(
+            apply_chunks(content, &[spaced], "a.rs").unwrap(),
+            "let a = \"x\";\nlet b = 'w';\nlet c = 1 - 2;\n"
+        );
+    }
+
+    /// "Ambiguous loose match": no exact match and two with whitespace ignored fails,
+    /// naming the hunk.
+    #[test]
+    fn ambiguous_loose_match_fails_naming_the_hunk() {
+        let content = "fn a() {\n    call();  \n}\nfn b() {\n    call();\t\n}\n";
+        let first = chunk(&["fn a() {"], &["fn a() {"]);
+        let loose = chunk(&["    call();"], &["    other();"]);
+        let error = apply_chunks(content, &[first, loose], "lib.rs").unwrap_err();
+        assert!(
+            error.starts_with("Hunk 2 is ambiguous in lib.rs"),
+            "{error}"
+        );
+        assert!(error.contains("2 places"), "{error}");
+    }
+
+    /// Trailing whitespace is ignored before surrounding whitespace, and an exact
+    /// match keeps taking the first place after the cursor.
+    #[test]
+    fn trailing_whitespace_and_exact_matches() {
+        let content = "x\n  value  \nvalue\nx\n";
+        let trailing = chunk(&["  value"], &["  VALUE"]);
+        assert_eq!(
+            apply_chunks(content, &[trailing], "f").unwrap(),
+            "x\n  VALUE\nvalue\nx\n"
+        );
+        let exact = chunk(&["x"], &["y"]);
+        assert_eq!(
+            apply_chunks(content, &[exact], "f").unwrap(),
+            "y\n  value  \nvalue\nx\n"
+        );
+        let lines: Vec<String> = content.lines().map(str::to_string).collect();
+        assert_eq!(find(&lines, &["missing".into()], 0), Found::Missing);
+    }
+
+    /// A patch wrapped in a heredoc, with surrounding whitespace, parses as the bare one.
+    #[test]
+    fn heredoc_wrapped_envelopes_parse() {
+        let bare = "*** Begin Patch\n*** Delete File: gone.txt\n*** End Patch";
+        let expected = parse(bare).unwrap();
+        for wrapped in [
+            format!("\n  <<'EOF'\n{bare}\nEOF\n"),
+            format!("apply_patch <<EOF\n{bare}\nEOF"),
+            format!("\t{bare}\n\n"),
+        ] {
+            assert_eq!(parse(&wrapped).unwrap(), expected, "{wrapped}");
+        }
     }
 }

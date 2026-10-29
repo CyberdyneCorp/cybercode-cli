@@ -1,8 +1,11 @@
 //! Embedded prompt texts (`system-context` → Provider base prompts).
 //!
 //! The base prompt is the shared core text followed by a short addendum for the model
-//! family, whose advice is about tool use and editing, where harnesses differ.
+//! family, whose advice is about tool use and editing, where harnesses differ. The
+//! texts carry one version (`prompts/base/VERSION`); a Context Epoch records it, and a
+//! new version starts a new epoch.
 
+const VERSION: &str = include_str!("../prompts/base/VERSION");
 const CORE: &str = include_str!("../prompts/base/core.md");
 const OPENAI: &str = include_str!("../prompts/base/openai.md");
 const ANTHROPIC: &str = include_str!("../prompts/base/anthropic.md");
@@ -53,6 +56,14 @@ impl ModelFamily {
     }
 }
 
+/// The version of the base prompt texts, bumped whenever any of them changes.
+pub fn base_prompt_version() -> u32 {
+    VERSION
+        .trim()
+        .parse()
+        .expect("prompts/base/VERSION holds a number")
+}
+
 /// The base prompt for a model family: the core text, then a blank line and the addendum.
 pub fn base_prompt(family: ModelFamily) -> String {
     let core = CORE.trim_end();
@@ -86,12 +97,80 @@ mod tests {
     #[test]
     fn default_is_the_core_text_alone_and_families_differ() {
         assert_eq!(base_prompt(ModelFamily::Default), CORE.trim_end());
-        assert!(base_prompt(ModelFamily::Openai).contains("apply_patch"));
-        assert!(base_prompt(ModelFamily::Anthropic).contains("parallel"));
-        assert!(base_prompt(ModelFamily::Gemini).contains("schema"));
-        assert!(base_prompt(ModelFamily::Local).contains("valid JSON"));
         let names: std::collections::BTreeSet<_> =
             ModelFamily::ALL.iter().map(|f| f.as_str()).collect();
         assert_eq!(names.len(), ModelFamily::ALL.len());
+        let prompts: std::collections::BTreeSet<_> =
+            ModelFamily::ALL.into_iter().map(base_prompt).collect();
+        assert_eq!(prompts.len(), ModelFamily::ALL.len());
+    }
+
+    /// `system-context` → Base prompt coverage: every topic is in the core text.
+    #[test]
+    fn core_text_covers_every_required_topic() {
+        let core = CORE.to_lowercase();
+        let topics = [
+            ("identity", "you are cyber code"),
+            ("scope", "your scope is the task"),
+            ("read before editing", "open the files you plan to change"),
+            ("smallest change", "smallest change that fully solves"),
+            ("edit tool", "editing tools you are given"),
+            (
+                "no shell redirection",
+                "never create or modify files through shell",
+            ),
+            ("fast search", "`grep` and `glob`"),
+            ("parallel reads", "parallel tool calls"),
+            ("autonomy", "carry the task through to a verified result"),
+            (
+                "ask only when blocked",
+                "ask the user only when you face a real decision",
+            ),
+            ("dirty worktree", "never revert"),
+            ("destructive actions", "hard to undo"),
+            ("progress updates", "short progress note"),
+            ("lead with the result", "lead with the outcome"),
+            ("file references", "`path:line`"),
+            ("no filler", "no greetings"),
+        ];
+        for (topic, phrase) in topics {
+            assert!(core.contains(phrase), "core prompt lost the {topic} topic");
+        }
+    }
+
+    /// Each addendum is tuned to its family's edit tool and tool-calling habits.
+    #[test]
+    fn addenda_follow_each_family_edit_tool() {
+        let openai = base_prompt(ModelFamily::Openai);
+        assert!(openai.contains("Make file changes with `apply_patch`"));
+        assert!(openai.contains("Read in parallel"));
+        let anthropic = base_prompt(ModelFamily::Anthropic);
+        assert!(anthropic.contains("Make file changes with the `edit` tool"));
+        assert!(anthropic.contains("Use tools in parallel"));
+        let gemini = base_prompt(ModelFamily::Gemini);
+        assert!(gemini.contains("Edit in small steps") && gemini.contains("Verify explicitly"));
+        assert!(gemini.contains("schema"));
+        let local = base_prompt(ModelFamily::Local);
+        assert!(local.contains("valid JSON") && local.contains("`apply_patch`"));
+    }
+
+    /// A version stands for exact texts: an edit to any base prompt fails here until
+    /// `prompts/base/VERSION` is bumped and this digest updated, so no Session keeps a
+    /// stale prefix under an unchanged version.
+    #[test]
+    fn the_version_pins_the_prompt_texts() {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        for text in [CORE, OPENAI, ANTHROPIC, GEMINI, LOCAL] {
+            // A checkout with CRLF line endings holds the same texts.
+            hasher.update(text.replace("\r\n", "\n").as_bytes());
+            hasher.update([0]);
+        }
+        let digest = format!("{:x}", hasher.finalize());
+        assert_eq!(
+            (base_prompt_version(), &digest[..16]),
+            (2, "cf61e2d10d918a9d"),
+            "a base prompt changed: bump prompts/base/VERSION and update this digest"
+        );
     }
 }

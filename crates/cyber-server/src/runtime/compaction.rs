@@ -209,7 +209,7 @@ impl Inner {
             .collect();
         let estimate = view::estimate_tokens(
             &system,
-            &view::messages(&state, &resolved.provider, &resolved.model),
+            &view::messages(&state, &view::Replay::of(resolved)),
             &tools,
         );
         let max_output = u64::from(resolved.template.max_output_tokens.unwrap_or(0));
@@ -360,6 +360,8 @@ impl Inner {
         ))];
         request.tools = Vec::new();
         request.max_output_tokens = Some(request.max_output_tokens.unwrap_or(4096).min(8192));
+        self.address_of(&state.info, Some("compact"))
+            .apply(&mut request);
         // Compaction continues the Turn a prompt opened; it is never a new user request.
         request.initiator = Some(cyber_llm::Initiator::Agent);
         let handle = self.handle(&state.info.id).await?;

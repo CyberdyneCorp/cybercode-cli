@@ -81,8 +81,10 @@ export type AssistantEntry = {
   provider: string;
   model: string;
   text: string;
+  /** The text of every reasoning item, for display. */
   reasoning: string;
-  signature?: string | null;
+  /** Reasoning items in stream order (`session-runtime` → Reasoning items). */
+  reasoning_items?: ReasoningBlock[];
   calls: string[];
   finished: boolean;
   error?: string | null;
@@ -268,10 +270,17 @@ export type CallState = {
   name: string;
   arguments: string;
   input?: unknown;
+  /** Provider state of this call (`session-runtime` → Reasoning items). */
+  opaque?: Opaque | null;
   retry_safety: RetrySafety;
   attempt: number;
   status: CallStatus;
   output?: string | null;
+  /**
+   * The tool host's notes on the settled run (`builtin-tools` → apply_patch through
+   * the shell).
+   */
+  metadata?: unknown;
 };
 
 export type CallStatus = "ok" | "error" | "called" | "dispatched" | "interrupted" | "outcome_unknown";
@@ -519,12 +528,14 @@ export type Content = {
   type: "attachment";
 }) | {
   text: string;
-  signature?: string | null;
+  opaque?: Opaque | null;
   type: "reasoning";
 } | {
   id: string;
   name: string;
   input: unknown;
+  /** State of this one call, such as a Gemini thought signature. */
+  opaque?: Opaque | null;
   type: "tool_call";
 } | {
   call_id: string;
@@ -1002,6 +1013,12 @@ export type EditGoal = {
   check?: string | null;
   budget?: Budget | null;
 };
+
+/** The tool shape the model edits files with. */
+export type EditTool = "freeform_patch" | "json_patch" | "edit";
+
+/** What happens to a derived effort the model does not list. */
+export type EffortClamp = "nearest_lower" | "fail";
 
 export type Enforcement = "soft" | "reserved";
 
@@ -2994,6 +3011,23 @@ export type ModelInfo = {
   available: boolean;
   context_limit: number;
   reasoning: boolean;
+  /** The resolved behavior profile (`provider-catalog` → Model behavior profiles). */
+  profile: ModelProfile;
+};
+
+/** A model's resolved behavior profile. */
+export type ModelProfile = {
+  reasoning_replay: ReasoningReplay;
+  reasoning_carrier: ReasoningCarrier;
+  /** The model accepts a reasoning summary request. */
+  reasoning_summary: boolean;
+  verbosity: Verbosity;
+  parallel_tool_calls: boolean;
+  edit_tool: EditTool;
+  tool_output: ToolOutput;
+  /** Reasoning efforts the model accepts, lowest first. */
+  efforts: string[];
+  effort_clamp: EffortClamp;
 };
 
 /** One provider and model of the Session tree. */
@@ -3018,6 +3052,23 @@ export type NetworkCapability = {
   kind: "hosts";
   hosts: string[];
 };
+
+/**
+ * Provider state that must travel back with reasoning or a tool call. `data` is stored
+ * exactly as received and never decoded; `provider` and `model` name its producer, so
+ * only that model receives it back. `Debug` never prints `data`.
+ */
+export type Opaque = {
+  provider?: string;
+  model?: string;
+  kind: OpaqueKind;
+  data: string;
+  /** The provider's item ID, when it issued one. */
+  id?: string | null;
+};
+
+/** The kind of provider state an [`Opaque`] carries. */
+export type OpaqueKind = "encrypted_reasoning" | "signature" | "redacted" | "details";
 
 export type Organization = {
   id: string;
@@ -3391,6 +3442,22 @@ export type ReachableSession = {
 
 /** What a reachable Session is doing. */
 export type ReachableState = "idle" | "running" | "waiting_input" | "offline";
+
+/**
+ * One reasoning item of an answer: its text, the provider state to replay with it, and
+ * how many of the answer's tool calls the provider produced before it.
+ */
+export type ReasoningBlock = {
+  text: string;
+  opaque?: Opaque | null;
+  after_calls?: number;
+};
+
+/** The request field that carries reasoning state back to the provider. */
+export type ReasoningCarrier = "none" | "responses" | "anthropic" | "reasoning_content" | "reasoning" | "reasoning_details" | "gemini_signature" | "copilot_opaque";
+
+/** Which assistant messages get their reasoning items back natively. */
+export type ReasoningReplay = "never" | "tool_loop" | "always";
 
 /** The latest Session recap. */
 export type Recap = {
@@ -4587,6 +4654,12 @@ export type ToolInfo = {
   concurrency_safe: boolean;
 };
 
+export type ToolOutput = {
+  /** Token budget of a model-facing tool output; `None` keeps the byte limit alone. */
+  tokens?: number | null;
+  truncation: Truncation;
+};
+
 export type Totals = {
   usage: Usage;
   cost: number;
@@ -4594,6 +4667,13 @@ export type Totals = {
   unpriced_steps: number;
   steps: number;
 };
+
+/**
+ * Which part of a long tool output the model sees: `default` is each tool's own end
+ * (the tail of shell output, the head of anything else), `head` and `tail` force that
+ * end for every tool, and `middle` keeps both ends.
+ */
+export type Truncation = "default" | "head" | "tail" | "middle";
 
 export type UpdateBody = {
   title?: string | null;
@@ -4718,6 +4798,13 @@ export type UsageStats = {
 export type Vcs = {
   vcs?: GitState | null;
 };
+
+export type Verbosity = {
+  supported: boolean;
+  default?: VerbosityLevel | null;
+};
+
+export type VerbosityLevel = "low" | "medium" | "high";
 
 /** An evaluator verdict. */
 export type Verdict = "met" | "not_met" | "impossible";

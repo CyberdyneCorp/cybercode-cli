@@ -62,8 +62,9 @@ re-signed x86_64/arm64e system image. At `74ae15f1`, the added direct/unconfined
 control terminated with SIGSEGV and the sandboxed control with SIGKILL, both
 without output. Their cause and portable staged-image admission remain unresolved;
 local success and Intel success do not satisfy that missing positive control.
-The proposed availability table and request for an explicit support decision
-remain unchanged pending that evidence and review.
+This failure remains evidence against the staged-system candidate. The historical
+availability-reduction table below is not selected; the strict approved scope
+and integration review gate remain in force.
 
 ## Signing-identity evidence without reducing availability
 

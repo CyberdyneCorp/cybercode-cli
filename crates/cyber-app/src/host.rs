@@ -53,6 +53,10 @@ impl ToolHost for AppHost {
         self.builtin.refresh_location(info);
     }
 
+    fn user_input_committed(&self, info: &cyber_server::runtime::SessionInfo, event_id: &str) {
+        self.builtin.user_input_committed(info, event_id);
+    }
+
     fn wait_for_required_mcp(
         &self,
         info: &cyber_server::runtime::SessionInfo,
@@ -307,6 +311,10 @@ impl ToolHost for AppHost {
         call_id: &str,
     ) -> cyber_server::runtime::HookEffects {
         self.builtin.take_hook_effects(session_id, call_id)
+    }
+
+    fn take_call_metadata(&self, session_id: &str, call_id: &str) -> Option<serde_json::Value> {
+        self.builtin.take_call_metadata(session_id, call_id)
     }
 
     fn file_decisions<'a>(

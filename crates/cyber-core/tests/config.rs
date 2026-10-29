@@ -464,6 +464,28 @@ fn instructions_concatenate_global_first() {
     );
 }
 
+/// `provider-catalog` → Model behavior profiles: an invalid value warns and is ignored.
+#[test]
+fn an_invalid_model_profile_value_warns_naming_the_key() {
+    let f = Fixture::new();
+    f.write(
+        "global:cyber.json",
+        r#"{ "providers": { "corp": { "models": { "coder": {
+            "profile": { "reasoning_replay": "sometimes", "edit_tool": "edit" } } } } } }"#,
+    );
+    let resolved = f.load().unwrap();
+    let warning = "providers.corp.models.coder.profile.reasoning_replay: expected one of never, \
+                   tool_loop, always, got \"sometimes\"; ignored";
+    assert_eq!(
+        resolved
+            .warnings
+            .iter()
+            .filter(|w| w.contains(".profile"))
+            .collect::<Vec<_>>(),
+        [warning]
+    );
+}
+
 #[test]
 fn unknown_keys_warn_and_tui_keys_are_dropped() {
     let f = Fixture::new();

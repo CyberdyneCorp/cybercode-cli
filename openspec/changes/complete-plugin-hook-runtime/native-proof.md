@@ -641,3 +641,39 @@ binds source SHA-256 `c1da12095226a2802efc3db2b80413747c952c1a98f780f2c592244136
 and passes all assertions. Native Intel and arm64 CI for this corrected fixture
 remain required. The original `a64f380c` local report is retained as historical
 evidence rather than overwritten with results from changed input preparation.
+
+
+## CI acceptance follows the original-signature candidate
+
+At `5563af62`, [run 40753140808](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40753140808)
+passed 33 of 34 jobs, including both original-signature native capability/exec
+controls and all ten pre-runtime Node, Python, system Python, Bun and Deno jobs
+on macOS arm64/Intel. The remaining [staged-system gap job](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40753140808/job/123044871377)
+failed its direct startup control: the copied/re-signed `/bin/bash` terminated
+with SIGSEGV, and its sandboxed control with SIGKILL, both without output. The
+[retained artifact log](../../../scripts/probes/plugin-confinement/evidence/5563af62/macos-arm64-native-exec-gap-failure.log)
+records that compatibility failure. Neither termination is policy-denial evidence.
+The separate [admission run](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40753140869)
+passed both corrected signed-fixture jobs on arm64/Intel.
+
+CI now runs the original-signature mechanism in the macOS native matrix as well
+as its dedicated strict exec controls. The unselected re-signing experiment
+remains available through the explicit workflow-dispatch boolean
+`staged_system_diagnostic`; its assertions are unchanged and it still fails when
+the positive control cannot start. It is excluded from routine PR/push acceptance
+because those jobs exercise the original-signature candidate instead. No
+`continue-on-error`, signal-as-denial shortcut or universal launch refusal is
+introduced. Historical results remain historical; the updated workflow requires
+fresh CI.
+
+The main-branch merge retains the completed unchanged-main baseline and merged
+hook producers. Task 2.1, native admission/design review and production launch
+integration remain open. Passing these probes alone cannot close enforcement.
+
+Local verification after reconciling main passed all nine native capability rows
+and the original-signature exec/counterexample/descriptor controls. Their source
+digests remain `49f0279a6f0c217b1724edf8a98a40a2a12b78ac2be65ec19593b69f200a558a`
+and `7a06af58c27b8b134dd4833f6947b1a27623c4c3ef34c74542528d05ae284723`.
+Workflow YAML, all shell blocks, acceptance/diagnostic configuration assertions,
+strict OpenSpec (107 items) and spec lint (0 errors, 25 warnings) passed.
+This local macOS arm64 run does not replace fresh hosted Linux/Intel/Windows CI.

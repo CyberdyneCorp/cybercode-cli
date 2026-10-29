@@ -5,9 +5,12 @@ use std::collections::HashMap;
 
 use base64::Engine;
 use cyber_llm::adapters::{ApiKind, adapter};
-use cyber_llm::catalog::{BuildInputs, Catalog, CatalogError, CredentialSource, ModelRef};
+use cyber_llm::catalog::profile::{ReasoningCarrier, VerbosityLevel};
+use cyber_llm::catalog::{
+    BuildInputs, Catalog, CatalogError, CredentialSource, ModelRef, ProfilePatch,
+};
 use cyber_llm::chatgpt::{AuthFile, Issuer, Login, ModelsFile, PlanModel, Session};
-use cyber_llm::{Endpoint, ErrorKind, LlmRequest, Message, collect};
+use cyber_llm::{Endpoint, ErrorKind, LlmRequest, Message, Routing, TurnState, collect};
 use serde_json::{Value, json};
 use wiremock::matchers::{body_partial_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -113,6 +116,83 @@ async fn subscription_requests_carry_the_account_and_no_output_cap() {
     assert_eq!(body["store"], false);
     assert_eq!(body["instructions"], "");
     assert!(issuer.received_requests().await.unwrap().is_empty());
+}
+
+/// `provider-catalog` → Session routing headers, "Turn state echoed within a Turn only":
+/// the first `x-codex-turn-state` of a Turn goes back on its later requests, and the
+/// next Turn starts without it.
+#[tokio::test]
+async fn turn_state_is_echoed_within_a_turn_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let (backend, issuer) = (MockServer::start().await, MockServer::start().await);
+    let session = session(dir.path(), &issuer);
+    session.file.save(&login(3600)).unwrap();
+    Mock::given(method("POST"))
+        .and(path("/responses"))
+        .respond_with(completed().append_header("x-codex-turn-state", "abc"))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&backend)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/responses"))
+        .respond_with(completed().append_header("x-codex-turn-state", "later"))
+        .mount(&backend)
+        .await;
+
+    let turn = TurnState::default();
+    let routed = |turn: &TurnState| LlmRequest {
+        routing: Some(Routing {
+            root: "ses_root".into(),
+            session: "ses_child".into(),
+            subagent: Some("explore".into()),
+            turn_state: Some(turn.clone()),
+        }),
+        ..request()
+    };
+    let a = adapter(ApiKind::ChatgptCodex, endpoint(&backend, session));
+    for _ in 0..3 {
+        collect(a.stream(routed(&turn)).await.unwrap(), |_| {})
+            .await
+            .unwrap();
+    }
+    // The runtime resets the state when the next prompt's Turn starts.
+    turn.reset();
+    collect(a.stream(routed(&turn)).await.unwrap(), |_| {})
+        .await
+        .unwrap();
+
+    let received: Vec<_> = backend
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.url.path() == "/responses")
+        .collect();
+    let header_of = |i: usize, name: &str| {
+        received[i]
+            .headers
+            .get(name)
+            .map(|v| v.to_str().unwrap().to_owned())
+    };
+    let states: Vec<_> = (0..4).map(|i| header_of(i, "x-codex-turn-state")).collect();
+    assert_eq!(
+        states,
+        [None, Some("abc".into()), Some("abc".into()), None],
+        "the first value of the Turn, then none in the next Turn"
+    );
+    for i in 0..4 {
+        assert_eq!(header_of(i, "session-id").as_deref(), Some("ses_root"));
+        assert_eq!(header_of(i, "thread-id").as_deref(), Some("ses_child"));
+        assert_eq!(
+            header_of(i, "x-client-request-id").as_deref(),
+            Some("ses_child")
+        );
+        assert_eq!(
+            header_of(i, "x-openai-subagent").as_deref(),
+            Some("explore")
+        );
+    }
 }
 
 #[tokio::test]
@@ -260,6 +340,13 @@ fn catalog(env: &HashMap<String, String>, config: Value) -> Catalog {
     })
 }
 
+/// The listed `/models` profile fields reach the catalog profile (layer 3).
+fn assert_listed_profile(profile: &cyber_llm::catalog::ModelProfile) {
+    assert_eq!(profile.reasoning_carrier, ReasoningCarrier::Responses);
+    assert_eq!(profile.verbosity.default, Some(VerbosityLevel::Low));
+    assert_eq!(profile.efforts, ["low", "max"]);
+}
+
 #[test]
 fn the_provider_lists_the_plans_models_after_login() {
     let dir = tempfile::tempdir().unwrap();
@@ -280,6 +367,11 @@ fn the_provider_lists_the_plans_models_after_login() {
             context_window: 272_000,
             vision: true,
             efforts: vec!["low".into(), "max".into()],
+            profile: ProfilePatch {
+                verbosity_supported: Some(true),
+                verbosity_default: Some(VerbosityLevel::Low),
+                ..ProfilePatch::default()
+            },
         }])
         .unwrap();
     let catalog = catalog(&env, json!({}));
@@ -293,6 +385,7 @@ fn the_provider_lists_the_plans_models_after_login() {
         rows[0].model.variants.keys().collect::<Vec<_>>(),
         ["low", "max"]
     );
+    assert_listed_profile(&rows[0].model.profile);
     assert_eq!(
         catalog.credential("chatgpt").unwrap().source,
         CredentialSource::Login

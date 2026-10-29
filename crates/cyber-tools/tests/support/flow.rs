@@ -31,6 +31,7 @@ pub fn call(id: &str, name: &str, input: serde_json::Value) -> Vec<ScriptStep> {
             name: name.into(),
             arguments: input.to_string(),
             input: Some(input),
+            opaque: None,
         })),
         ScriptStep::Event(LlmEvent::Usage(Usage {
             input: 100,
@@ -65,11 +66,18 @@ impl ModelResolver for Models {
             model: model.into(),
             context_limit: 200_000,
             cost: None,
-            prefers_apply_patch: model == "patch",
             family: cyber_core::prompts::ModelFamily::Default,
             // Scripted stand-ins take images, so delegated screenshots reach them.
             vision: true,
             pdf: false,
+            profile: cyber_llm::catalog::ModelProfile {
+                edit_tool: if model == "patch" {
+                    cyber_llm::catalog::EditTool::JsonPatch
+                } else {
+                    cyber_llm::catalog::EditTool::Edit
+                },
+                ..Default::default()
+            },
         })
     }
 

@@ -914,9 +914,11 @@ async fn background(
     }))
 }
 
+/// A history entry as the API, exports and shares show it: opaque provider state is
+/// `[opaque reasoning]` (`session-runtime` → Reasoning items).
 pub(super) fn message_of(state: &SessionState, entry: &Entry) -> Message {
     let tree = state.branches();
-    let tools = match entry {
+    let mut tools: Vec<CallState> = match entry {
         Entry::Assistant(a) => a
             .calls
             .iter()
@@ -928,10 +930,17 @@ pub(super) fn message_of(state: &SessionState, entry: &Entry) -> Message {
             .collect(),
         _ => Vec::new(),
     };
+    for opaque in tools.iter_mut().filter_map(|call| call.opaque.as_mut()) {
+        opaque.redact();
+    }
+    let mut entry = entry.clone();
+    if let Entry::Assistant(a) = &mut entry {
+        a.redact_opaque();
+    }
     Message {
-        entry: entry.clone(),
-        tools,
         parent_message_id: tree.parent(entry.id()).map(str::to_owned),
+        entry,
+        tools,
     }
 }
 

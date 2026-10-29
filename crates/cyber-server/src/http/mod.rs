@@ -105,6 +105,8 @@ pub struct ModelInfo {
     pub available: bool,
     pub context_limit: u64,
     pub reasoning: bool,
+    /// The resolved behavior profile (`provider-catalog` → Model behavior profiles).
+    pub profile: cyber_llm::catalog::ModelProfile,
 }
 
 /// A slash command or skill for autocomplete.

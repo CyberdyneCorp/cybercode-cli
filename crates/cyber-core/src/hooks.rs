@@ -2,6 +2,7 @@
 
 mod decisions;
 mod envelope;
+pub mod file_observations;
 mod selectors;
 
 pub use decisions::{HookAction, HookDecision, ParsedDecision};

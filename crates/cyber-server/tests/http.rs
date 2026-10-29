@@ -46,6 +46,7 @@ impl Services for FakeServices {
                 available: true,
                 context_limit: 200_000,
                 reasoning: false,
+                profile: Default::default(),
             }])
         })
     }
@@ -661,6 +662,157 @@ async fn history_pages_durable_events() {
     assert_eq!(page["data"][0]["durable"]["seq"], 0);
     let (status, _) = api.get(&format!("/sessions/{id}/history?limit=501")).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// Every `opaque` object in `value` holds only the redaction marker.
+fn assert_opaque_redacted(value: &Value) {
+    match value {
+        Value::Object(map) => {
+            if let Some(opaque) = map.get("opaque").filter(|o| o.is_object()) {
+                assert_eq!(opaque["data"], cyber_llm::OPAQUE_REDACTED, "{opaque}");
+            }
+            map.values().for_each(assert_opaque_redacted);
+        }
+        Value::Array(items) => items.iter().for_each(assert_opaque_redacted),
+        _ => {}
+    }
+}
+
+#[tokio::test]
+async fn opaque_reasoning_never_leaves_through_exports_messages_or_history() {
+    use cyber_llm::adapters::ScriptStep;
+    use cyber_llm::{FinishReason, LlmEvent, Opaque, OpaqueKind, ToolCall};
+    let steps = vec![
+        ScriptStep::Event(LlmEvent::ReasoningDelta {
+            text: "summary of thought".into(),
+        }),
+        ScriptStep::Event(LlmEvent::ReasoningItem {
+            text: String::new(),
+            opaque: Some(Opaque::new(
+                OpaqueKind::EncryptedReasoning,
+                "gAAAA-secret-blob",
+            )),
+        }),
+        // A call's own state (a Gemini thought signature) is opaque too.
+        ScriptStep::Event(LlmEvent::ToolCallDone(ToolCall {
+            id: "c1".into(),
+            name: "read".into(),
+            arguments: "{}".into(),
+            input: Some(json!({})),
+            opaque: Some(Opaque::new(OpaqueKind::Signature, "thought-sig-secret")),
+        })),
+        ScriptStep::Event(LlmEvent::Finish {
+            reason: FinishReason::ToolCalls,
+        }),
+    ];
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![steps, text("answer")])],
+        ..Setup::default()
+    });
+    let api = Api::new(&h);
+    let id = h.session().await;
+    api.post(&format!("/sessions/{id}/prompt"), prompt("hi"))
+        .await;
+    h.settle(&id).await;
+    let (_, export) = api.get(&format!("/sessions/{id}/export")).await;
+    let (_, messages) = api.get(&format!("/sessions/{id}/messages?order=asc")).await;
+    let (_, history) = api.get(&format!("/sessions/{id}/history?limit=100")).await;
+    for body in [&export, &messages, &history] {
+        assert_opaque_redacted(body);
+        let text = body.to_string();
+        assert!(!text.contains("gAAAA-secret-blob"), "{text}");
+        assert!(!text.contains("thought-sig-secret"), "{text}");
+        assert!(text.contains(cyber_llm::OPAQUE_REDACTED), "{text}");
+        assert!(text.contains("summary of thought"), "{text}");
+    }
+    // A document is never a source of opaque state: the import replays the text only.
+    let (status, imported) = api.post("/sessions/import", export["data"].clone()).await;
+    assert_eq!(status, StatusCode::CREATED, "{imported}");
+    let imported = h.state(imported["data"]["id"].as_str().unwrap()).await;
+    let answer = imported
+        .entries
+        .iter()
+        .find_map(|entry| match entry {
+            cyber_server::runtime::Entry::Assistant(a) => Some(a),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(answer.reasoning_items.len(), 1);
+    assert_eq!(answer.reasoning_items[0].text, "summary of thought");
+    assert_eq!(answer.reasoning_items[0].opaque, None);
+}
+
+/// Regression: only a top-level `opaque` was redacted, so a fork's `session.created.1`,
+/// which copies whole entries, streamed the parent's encrypted reasoning.
+#[tokio::test]
+async fn a_forks_creation_event_carries_no_opaque_reasoning() {
+    use cyber_llm::adapters::ScriptStep;
+    use cyber_llm::{LlmEvent, Opaque, OpaqueKind};
+    let mut steps = vec![
+        ScriptStep::Event(LlmEvent::ReasoningDelta {
+            text: "summary of thought".into(),
+        }),
+        ScriptStep::Event(LlmEvent::ReasoningItem {
+            text: String::new(),
+            opaque: Some(Opaque::new(
+                OpaqueKind::EncryptedReasoning,
+                "gAAAA-fork-blob",
+            )),
+        }),
+    ];
+    steps.extend(text("answer"));
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![steps])],
+        ..Setup::default()
+    });
+    let api = Api::new(&h);
+    let id = h.session().await;
+    api.post(&format!("/sessions/{id}/prompt"), prompt("hi"))
+        .await;
+    h.settle(&id).await;
+    let (status, fork) = api.post(&format!("/sessions/{id}/fork"), json!({})).await;
+    assert_eq!(status, StatusCode::CREATED, "{fork}");
+    let fork_id = fork["data"]["id"].as_str().unwrap().to_owned();
+    // The fork keeps the state itself, for replay to the same model.
+    let copied = h.state(&fork_id).await.entries.iter().any(|entry| {
+        matches!(entry, cyber_server::runtime::Entry::Assistant(a)
+            if a.reasoning_items.iter().any(|item| item.opaque.is_some()))
+    });
+    assert!(copied, "the fork keeps its opaque state");
+    // `/event` and `/sessions/{id}/events` build their envelopes the same way.
+    let (_, history) = api
+        .get(&format!("/sessions/{fork_id}/history?limit=100"))
+        .await;
+    let text = history.to_string();
+    assert!(text.contains("session.created"), "{text}");
+    assert!(!text.contains("gAAAA-fork-blob"), "{text}");
+    assert!(text.contains(cyber_llm::OPAQUE_REDACTED), "{text}");
+}
+
+/// Regression: a reasoning event stored before opaque items held its state as a
+/// top-level `signature` string, which `/history` streamed unredacted.
+#[tokio::test]
+async fn a_legacy_reasoning_signature_is_redacted_in_history() {
+    use cyber_store::{Expected, NewEvent};
+    let h = Harness::new(Setup::default());
+    let id = h.session().await;
+    h.store
+        .append(
+            &id,
+            Expected::Any,
+            vec![NewEvent::new(
+                "session.reasoning.ended.1",
+                json!({"text": "thought", "signature": "legacy-sig-blob"}),
+            )],
+        )
+        .unwrap();
+    let (_, history) = Api::new(&h)
+        .get(&format!("/sessions/{id}/history?limit=100"))
+        .await;
+    let text = history.to_string();
+    assert!(text.contains("session.reasoning.ended.1"), "{text}");
+    assert!(!text.contains("legacy-sig-blob"), "{text}");
+    assert!(text.contains(cyber_llm::OPAQUE_REDACTED), "{text}");
 }
 
 #[tokio::test]

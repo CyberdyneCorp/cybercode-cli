@@ -19,7 +19,7 @@ pub(super) fn prepare(
         return Err(unavailable("the model has no declared context ceiling"));
     }
     pin_contract(&mut request)?;
-    let body = super::build_body(&request);
+    let body = super::build_body(&request, super::Backend::Api);
     validate_body(&body, &request.model)?;
     let output = body["max_output_tokens"]
         .as_u64()
@@ -45,17 +45,7 @@ pub(super) fn prepare(
 }
 
 fn official_route(endpoint: &Endpoint, request: &LlmRequest) -> Result<(), BoundUnavailable> {
-    let url = reqwest::Url::parse(&endpoint.base_url)
-        .map_err(|_| unavailable("invalid provider route"))?;
-    if url.scheme() != "https"
-        || url.host_str() != Some("api.openai.com")
-        || url.port().is_some_and(|p| p != 443)
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.path().trim_end_matches('/') != "/v1"
-        || url.query().is_some()
-        || url.fragment().is_some()
-    {
+    if !super::is_official_openai(&endpoint.base_url) {
         return Err(unavailable(
             "reserved Responses requires the official OpenAI route; compatible gateways have no verified bound contract",
         ));
@@ -74,6 +64,8 @@ fn official_route(endpoint: &Endpoint, request: &LlmRequest) -> Result<(), Bound
 }
 
 fn pin_contract(request: &mut LlmRequest) -> Result<(), BoundUnavailable> {
+    // The reserved contract admits function tools only, so the patch tool stays JSON.
+    request.shaping.freeform_patch = false;
     if request.body.is_null() {
         request.body = json!({});
     }
@@ -114,6 +106,7 @@ fn validate_body(body: &Value, model: &str) -> Result<(), BoundUnavailable> {
         "text",
         "tool_choice",
         "parallel_tool_calls",
+        "include",
         "service_tier",
         "truncation",
         "access_programs",
@@ -126,6 +119,12 @@ fn validate_body(body: &Value, model: &str) -> Result<(), BoundUnavailable> {
         return Err(unavailable(
             "opaque extension, state, model override or nonstateless request cannot be reserved",
         ));
+    }
+    if body
+        .get("include")
+        .is_some_and(|v| v != &json!(["reasoning.encrypted_content"]))
+    {
+        return Err(unavailable("only encrypted reasoning may be included"));
     }
     validate_input(&body["input"])?;
     if body.get("tools").is_some_and(|v| {
@@ -156,6 +155,8 @@ fn validate_input(input: &Value) -> Result<(), BoundUnavailable> {
         match item["type"].as_str() {
             Some("function_call") if item["arguments"].is_string() => {}
             Some("function_call_output") if item["output"].is_string() => {}
+            // Replayed reasoning is input the declared context ceiling already bounds.
+            Some("reasoning") if is_replayed_reasoning(item) => {}
             None | Some("message")
                 if matches!(
                     item["role"].as_str(),
@@ -183,6 +184,24 @@ fn validate_input(input: &Value) -> Result<(), BoundUnavailable> {
     Ok(())
 }
 
+/// A stateless reasoning item: encrypted content and text summaries, nothing else.
+fn is_replayed_reasoning(item: &Value) -> bool {
+    let known = item.as_object().is_some_and(|fields| {
+        fields.keys().all(|key| {
+            matches!(
+                key.as_str(),
+                "type" | "id" | "summary" | "encrypted_content"
+            )
+        })
+    });
+    let summaries = item["summary"].as_array().is_some_and(|parts| {
+        parts
+            .iter()
+            .all(|p| p["type"] == "summary_text" && p["text"].is_string())
+    });
+    known && summaries && item["encrypted_content"].is_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,12 +223,16 @@ mod tests {
         assert_eq!(prepared.bound.classes.output, 50);
         assert_eq!(prepared.bound.total_tokens, 1000);
         assert_eq!(
-            super::super::build_body(&prepared.request)["service_tier"],
+            super::super::build_body(&prepared.request, super::super::Backend::Api)["service_tier"],
             "default"
         );
         assert_eq!(
             prepared.bound.normalized_sha256,
-            digest(&super::super::build_body(&prepared.request)).unwrap()
+            digest(&super::super::build_body(
+                &prepared.request,
+                super::super::Backend::Api
+            ))
+            .unwrap()
         );
     }
     #[test]
@@ -250,6 +273,106 @@ mod tests {
         );
         assert!(prepared.bound.total_tokens >= 1000);
     }
+    /// A tool loop that replays encrypted reasoning can still be reserved.
+    #[test]
+    fn replayed_reasoning_and_its_include_are_accepted() {
+        use crate::catalog::profile::ReasoningCarrier;
+        use crate::{Content, Opaque, OpaqueKind, Role};
+        let endpoint = Endpoint::new("https://api.openai.com/v1", None);
+        let mut request = request();
+        request.reasoning_carrier = ReasoningCarrier::Responses;
+        request.shaping.reasoning = true;
+        let mut opaque = Opaque::new(OpaqueKind::EncryptedReasoning, "gAAAA");
+        opaque.id = Some("rs_1".into());
+        request.messages.push(Message {
+            role: Role::Assistant,
+            content: vec![
+                Content::Reasoning {
+                    text: "plan".into(),
+                    opaque: Some(opaque),
+                },
+                Content::Text { text: "hi".into() },
+            ],
+        });
+        let prepared = prepare(&endpoint, request.clone(), 1000).unwrap();
+        let body = super::super::build_body(&prepared.request, super::super::Backend::Api);
+        assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+        assert_eq!(body["input"][1]["type"], "reasoning");
+
+        request.body = json!({"include": ["file_search_call.results"]});
+        assert!(prepare(&endpoint, request, 1000).is_err());
+        let mut odd = self::request();
+        odd.body = json!({"input": [{"type": "reasoning", "summary": [], "encrypted_content": "x", "content": [{}]}]});
+        assert!(prepare(&endpoint, odd, 1000).is_err());
+    }
+
+    /// `provider-catalog` → Responses request shaping: every field the profile adds
+    /// (summary, verbosity, tool choice, parallel calls, include, cache key) still
+    /// reserves.
+    #[test]
+    fn a_fully_shaped_request_is_still_reserved() {
+        use crate::catalog::profile::{ReasoningCarrier, VerbosityLevel};
+        use crate::{Reasoning, Shaping, ToolSpec};
+        let endpoint = Endpoint::new("https://api.openai.com/v1", None);
+        let mut request = request();
+        request.reasoning_carrier = ReasoningCarrier::Responses;
+        request.reasoning = Some(Reasoning::Effort("high".into()));
+        request.cache = true;
+        request.cache_key = Some("ses_1".into());
+        request.tools = vec![ToolSpec {
+            name: "clock".into(),
+            description: "Current time".into(),
+            input_schema: json!({"type": "object"}),
+        }];
+        request.shaping = Shaping {
+            reasoning: true,
+            reasoning_summary: true,
+            effort_none: true,
+            verbosity: Some(VerbosityLevel::Low),
+            parallel_tool_calls: Some(true),
+            freeform_patch: false,
+        };
+        let prepared = prepare(&endpoint, request, 1000).unwrap();
+        let body = super::super::build_body(&prepared.request, super::super::Backend::Api);
+        assert_eq!(
+            body["reasoning"],
+            json!({"effort": "high", "summary": "auto"})
+        );
+        assert_eq!(body["text"], json!({"verbosity": "low"}));
+        assert_eq!(body["tool_choice"], "auto");
+        assert_eq!(body["parallel_tool_calls"], true);
+        assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+        assert_eq!(body["prompt_cache_key"], "ses_1");
+    }
+
+    /// A profile with the freeform patch tool still reserves: the reserved request
+    /// offers the JSON tool instead of the custom one.
+    #[test]
+    fn a_freeform_patch_profile_reserves_with_the_json_tool() {
+        use crate::{Content, Message, Role, ToolSpec};
+        let endpoint = Endpoint::new("https://api.openai.com/v1", None);
+        let mut request = request();
+        request.shaping.freeform_patch = true;
+        request.tools = vec![ToolSpec {
+            name: "apply_patch".into(),
+            description: "Apply a patch".into(),
+            input_schema: json!({"type": "object"}),
+        }];
+        request.messages.push(Message {
+            role: Role::Assistant,
+            content: vec![Content::ToolCall {
+                id: "call_1".into(),
+                name: "apply_patch".into(),
+                input: json!({"patch": "*** Begin Patch\n*** End Patch"}),
+                opaque: None,
+            }],
+        });
+        let prepared = prepare(&endpoint, request, 1000).unwrap();
+        let body = super::super::build_body(&prepared.request, super::super::Backend::Api);
+        assert_eq!(body["tools"][0]["type"], "function");
+        assert_eq!(body["input"][1]["type"], "function_call");
+    }
+
     #[test]
     fn opaque_model_tier_state_tools_and_media_refuse() {
         let endpoint = Endpoint::new("https://api.openai.com/v1", None);

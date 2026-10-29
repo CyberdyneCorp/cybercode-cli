@@ -22,6 +22,7 @@ mod mcp_files;
 mod mcp_serve;
 mod merge;
 mod messaging;
+pub mod model_profiles;
 mod modes;
 mod peers;
 mod subst;

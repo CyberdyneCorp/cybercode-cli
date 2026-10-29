@@ -901,6 +901,7 @@ mod tests {
             isolation: Default::default(),
         });
         let inv = Invocation {
+            tool_output: Default::default(),
             registration: None,
             session_id: "ses_scope".into(),
             directory: source.display().to_string(),

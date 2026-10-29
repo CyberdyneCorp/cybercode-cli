@@ -1,0 +1,93 @@
+name: Isolated worktree hook regression
+
+on:
+  pull_request:
+    paths:
+      - crates/cyber-tools/src/worktrees/child.rs
+      - crates/cyber-tools/src/host.rs
+      - crates/cyber-tools/tests/isolated_subagents.rs
+      - .github/workflows/child-hook-regression.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: child-hook-regression-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: child-hook-regression
+      - name: Linux native prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.*
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - run: cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec
+      - name: Verify the veto regression without WorktreeCreate dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Once the base already carries the regression test, the fix is merged and the
+          # before/after proof belongs to that earlier change. Later edits to these files
+          # need not keep the base sources compiling against the new tree.
+          if git show "$BASE_SOURCE:crates/cyber-tools/tests/isolated_subagents.rs" 2>/dev/null \
+              | grep -q 'fn isolated_creation_hook_veto_has_no_git_child_or_model_effects'; then
+            echo 'The base already contains the veto regression test; skipping the base check.'
+            echo 'skipped: base already contains the fix' > "$RUNNER_TEMP/base-regression.log"
+            exit 0
+          fi
+          child=crates/cyber-tools/src/worktrees/child.rs
+          cp "$child" "$RUNNER_TEMP/fixed-child.rs"
+          trap 'cp "$RUNNER_TEMP/fixed-child.rs" "$child"' EXIT
+          python3 - <<'PYCONTROL'
+          from pathlib import Path
+          p=Path("crates/cyber-tools/src/worktrees/child.rs")
+          s=p.read_text()
+          old="""        self.worktree_create_hooks(&hook_inv, request.name.as_str(), ctx.cancel.clone())
+                      .await
+                      .map_err(tool_error)"""
+          assert s.count(old)==1
+          p.write_text(s.replace(old,"        let _ = (hook_inv, ctx);\n        Ok(())"))
+          PYCONTROL
+          if cargo test --locked -p cyber-tools --test isolated_subagents isolated_creation_hook_veto_has_no_git_child_or_model_effects -- --exact > "$RUNNER_TEMP/base-regression.log" 2>&1; then
+            echo 'Regression unexpectedly passed with WorktreeCreate dispatch removed.'
+            exit 1
+          fi
+          python3 - <<'PY'
+          import os,re
+          from pathlib import Path
+          log=Path(os.environ['RUNNER_TEMP'],'base-regression.log').read_text()
+          assert re.search(r'^test isolated_creation_hook_veto_has_no_git_child_or_model_effects \.\.\. FAILED$',log,re.M), log[-8000:]
+          assert 'unwrap_err()' in log and 'Ok' in log, log[-8000:]
+          PY
+      - name: Run actual isolated child flows with the fix
+        run: cargo test --locked -p cyber-tools --test isolated_subagents
+      - name: Preserve before/after regression evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: child-hook-regression-${{ matrix.os }}
+          path: ${{ runner.temp }}/base-regression.log
+          if-no-files-found: error
+          retention-days: 14

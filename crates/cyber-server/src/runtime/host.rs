@@ -91,14 +91,22 @@ pub struct ResolvedModel {
     /// Context window in tokens; 0 when unknown.
     pub context_limit: u64,
     pub cost: Option<Cost>,
-    /// The model edits better with `apply_patch` than with `edit`/`write`.
-    pub prefers_apply_patch: bool,
     /// Which base prompt the model gets (`system-context` → Provider base prompts).
     pub family: ModelFamily,
     /// The catalog's `capabilities.vision`: the model takes image input.
     pub vision: bool,
     /// The catalog's `capabilities.pdf`: the model takes PDF input.
     pub pdf: bool,
+    /// The model's behavior profile (`provider-catalog` → Model behavior profiles).
+    pub profile: cyber_llm::catalog::ModelProfile,
+}
+
+impl ResolvedModel {
+    /// The model edits with `apply_patch` rather than `edit`/`write`: its profile's
+    /// `edit_tool` is a patch tool (`provider-catalog` → Model behavior profiles).
+    pub fn prefers_apply_patch(&self) -> bool {
+        self.profile.edit_tool != cyber_llm::catalog::EditTool::Edit
+    }
 }
 
 /// Why a `file` prompt part was not read (`server-api` → Prompt attachment parts).
@@ -121,6 +129,13 @@ pub trait ModelResolver: Send + Sync {
 
     /// The configured model for a role, following the role fallbacks.
     fn role(&self, role: ModelRole) -> Option<String>;
+
+    /// A reference whose variant came from an agent, a workflow tier or a role, with an
+    /// effort the model lacks moved to the nearest lower one it lists (`provider-catalog`
+    /// → Model behavior profiles). An explicit user variant never goes through this.
+    fn clamp_effort(&self, model_ref: &str) -> String {
+        model_ref.to_owned()
+    }
 
     /// The latest usage window readings the providers of resolved models reported
     /// (`observability-costs` → Provider-reported limits); empty when none reported.
@@ -189,15 +204,30 @@ impl ModelResolver for CatalogResolver {
             model: r.model.clone(),
             context_limit: model.limits.context,
             cost: model.cost.clone(),
-            prefers_apply_patch: model.capabilities.prefers_apply_patch,
             family: cyber_llm::catalog::model_family(provider, model),
             vision: model.capabilities.vision,
             pdf: model.capabilities.pdf,
+            profile: model.profile.clone(),
         })
     }
 
     fn role(&self, role: ModelRole) -> Option<String> {
-        role_ref(&self.config, role)
+        role_ref(&self.config, role).map(|reference| self.clamp_effort(&reference))
+    }
+
+    fn clamp_effort(&self, model_ref: &str) -> String {
+        let Ok(parsed) = ModelRef::parse(model_ref) else {
+            return model_ref.to_owned();
+        };
+        let Some(clamped) = self.catalog().clamp_effort(&parsed) else {
+            return model_ref.to_owned();
+        };
+        cyber_core::log::info(
+            "model-profile",
+            "effort clamped to the nearest lower level the model lists",
+            serde_json::json!({"model": parsed.base(), "requested": clamped.from, "used": clamped.to}),
+        );
+        clamped.model_ref.to_string()
     }
 
     fn limits(&self) -> Vec<cyber_llm::limits::LimitReading> {
@@ -314,6 +344,8 @@ pub struct Invocation {
     pub asker: super::requests::Asker,
     /// The Session ruleset.
     pub rules: Value,
+    /// The Turn model's output budget (`tool-registry` → Profile output budgets).
+    pub tool_output: cyber_llm::catalog::ToolOutput,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -631,6 +663,11 @@ pub trait ToolHost: Send + Sync {
     fn refresh_location(&self, info: &SessionInfo) {
         self.open_location(info);
     }
+
+    /// A new user prompt was durably admitted. Called outside the Session lock;
+    /// retries, rejected prompts and hook/plugin input never reach this port.
+    /// Adapters may enqueue bounded work but must not wait for callback effects.
+    fn user_input_committed(&self, _info: &SessionInfo, _event_id: &str) {}
 
     /// Readiness of required Location services before this Session's first Turn.
     /// Cancelling the wait does not assert shared native service shutdown.
@@ -1134,6 +1171,12 @@ pub trait ToolHost: Send + Sync {
         HookEffects::default()
     }
 
+    /// Take, once, what the host noted about a call's run; the runtime records it as
+    /// the settlement's `metadata`. Hosts that note nothing return `None`.
+    fn take_call_metadata(&self, _session_id: &str, _call_id: &str) -> Option<Value> {
+        None
+    }
+
     /// Establish, without side effects, whether a dispatched call took effect.
     /// `directory` is the Session's Location, for resolving relative paths.
     fn reconcile(&self, _directory: &str, _call: &CallState) -> BoxFuture<'_, Reconciliation> {
@@ -1236,5 +1279,54 @@ impl Snapshots for NoSnapshots {
         _: &str,
     ) -> BoxFuture<'_, Result<Vec<String>, RestoreError>> {
         Box::pin(async { Err(RestoreError::Failed("snapshots are disabled".into())) })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use serde_json::json;
+
+    use super::*;
+
+    /// `provider-catalog` → Model behavior profiles: "Effort clamped for a workflow tier".
+    /// A role's (and a tier's) effort clamps; an explicit reference still fails.
+    #[test]
+    fn derived_efforts_clamp_and_explicit_ones_fail() {
+        let config = json!({
+            "model_roles": {"small": "corp/coder#xhigh"},
+            "providers": {"corp": {
+                "api": {"type": "openai-compatible", "url": "https://llm.corp.example/v1",
+                    "settings": {"api_key": "k"}},
+                "models": {"coder": {"variants": {"low": {"effort": "low"},
+                    "medium": {"effort": "medium"}, "high": {"effort": "high"}}}},
+            }},
+        });
+        let resolver = CatalogResolver::new(&json!({}), config, &HashMap::<String, String>::new());
+        let dir = tempfile::tempdir().unwrap();
+        cyber_core::log::init(dir.path(), cyber_core::log::Level::Info, false);
+        let clamps = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = Arc::clone(&clamps);
+        cyber_core::log::set_sink(Some(Arc::new(move |record| {
+            if record.component == "model-profile" && record.level == cyber_core::log::Level::Info {
+                seen.lock().unwrap().push(record.fields.clone());
+            }
+        })));
+        assert_eq!(
+            resolver.role(ModelRole::Small).as_deref(),
+            Some("corp/coder#high")
+        );
+        cyber_core::log::set_sink(None);
+        let clamps = clamps.lock().unwrap();
+        assert_eq!(clamps.len(), 1, "one info line names both levels");
+        assert_eq!(
+            (&clamps[0]["requested"], &clamps[0]["used"]),
+            (&json!("xhigh"), &json!("high"))
+        );
+        assert_eq!(resolver.clamp_effort("corp/coder#xhigh"), "corp/coder#high");
+        assert_eq!(resolver.clamp_effort("corp/coder#low"), "corp/coder#low");
+        let explicit = resolver.resolve("corp/coder#xhigh").err().unwrap();
+        assert!(explicit.contains("VariantUnavailableError"), "{explicit}");
     }
 }

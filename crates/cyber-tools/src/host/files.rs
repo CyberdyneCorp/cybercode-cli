@@ -16,6 +16,7 @@ use crate::tools::ToolError;
 fn invocation(turn: &TurnContext, action: &str, path: &Path, asker: Asker) -> Invocation {
     let name = if action == "list" { "list" } else { "read" };
     Invocation {
+        tool_output: Default::default(),
         registration: None,
         session_id: turn.session_id.clone(),
         directory: turn.directory.clone(),
