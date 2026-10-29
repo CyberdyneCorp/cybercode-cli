@@ -1,0 +1,69 @@
+name: Plugin package copy
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - crates/cyber-core/src/plugins/**
+      - crates/cyber-core/src/plugins.rs
+      - crates/cyber-sandbox/**
+      - Cargo.lock
+      - .github/workflows/plugin-package-copy.yml
+  push:
+    branches: [main]
+    paths:
+      - crates/cyber-core/src/plugins/**
+      - crates/cyber-core/src/plugins.rs
+      - crates/cyber-sandbox/**
+      - Cargo.lock
+      - .github/workflows/plugin-package-copy.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plugin-package-copy-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  copy:
+    name: Package copy (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-latest]
+    env:
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Verify package capture and actual helper protocol
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked -p cyber-core --lib plugins::image
+          cargo test --locked -p cyber-sandbox --test plugin_copy
+      - name: Verify owner-process source IO breaks the SQLite lock regression
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if CYBER_PLUGIN_COPY_IN_OWNER_CONTROL=1 cargo test --locked -p cyber-sandbox --test plugin_copy worker_source_io_preserves_owner_sqlite_locks -- --exact > "$RUNNER_TEMP/owner-control.log" 2>&1; then
+            cat "$RUNNER_TEMP/owner-control.log"
+            echo 'Owner-process IO negative control unexpectedly passed'
+            exit 1
+          fi
+          grep -F 'owner lock was released' "$RUNNER_TEMP/owner-control.log"
+          # Restore the positive check after the intentional failing control.
+          cargo test --locked -p cyber-sandbox --test plugin_copy worker_source_io_preserves_owner_sqlite_locks -- --exact
+      - name: Retain owner IO counterexample
+        if: always() && runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-copy-owner-control-${{ matrix.os }}
+          path: ${{ runner.temp }}/owner-control.log
+          if-no-files-found: warn
+          retention-days: 14
