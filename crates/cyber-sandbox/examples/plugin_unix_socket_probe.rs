@@ -1,0 +1,218 @@
+//! Diagnostic evidence, not capability acceptance. Uses only owned test sockets.
+#[cfg(unix)]
+mod probe {
+    use cyber_sandbox::plugin_policy::{LinuxPolicy, MaskPath};
+    use serde_json::{Value, json};
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    use std::os::unix::{fs::PermissionsExt, fs::symlink, net::UnixListener};
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Output, Stdio};
+    use std::time::{Duration, Instant};
+
+    fn run(command: &mut Command) -> Output {
+        let mut child = command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            if child.try_wait().unwrap().is_some() {
+                let output = child.wait_with_output().unwrap();
+                assert!(
+                    output.status.success(),
+                    "fixture bootstrap failed: {output:?}"
+                );
+                return output;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("fixture did not settle");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn receipt(listener: &UnixListener, observed: &Value) -> bool {
+        assert_eq!(observed["started"], true);
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                assert_eq!(observed["connected"], true);
+                assert_eq!(observed["sent"], true);
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(1)))
+                    .unwrap();
+                let mut token = [0; 12];
+                stream.read_exact(&mut token).unwrap();
+                assert_eq!(&token, b"fixture-only");
+                true
+            }
+            Err(error) => {
+                assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
+                assert_eq!(observed["connected"], false);
+                assert_eq!(observed["sent"], false);
+                false
+            }
+        }
+    }
+
+    pub fn main() {
+        assert_eq!(
+            std::env::consts::OS,
+            "linux",
+            "native evidence requires Linux"
+        );
+        let args: Vec<_> = std::env::args_os().skip(1).collect();
+        assert_eq!(
+            args.len(),
+            2,
+            "expected explicit helper path and report path"
+        );
+        let helper = std::fs::canonicalize(&args[0]).unwrap();
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let project = root.join("project");
+        let package = project.join("package");
+        let private = project.join("private");
+        let scratch = root.join("scratch");
+        for directory in [&project, &package, &private, &scratch] {
+            std::fs::create_dir_all(directory).unwrap();
+        }
+        let data = project.join("data");
+        std::fs::write(&data, b"fixture-only").unwrap();
+        let target = package.join("socket-client");
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        run(Command::new("cc")
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .args(["-Wall", "-Wextra", "-Werror"])
+            .arg(workspace.join("crates/cyber-sandbox/tests/fixtures/plugin_unix_socket.c"))
+            .arg("-o")
+            .arg(&target));
+        let mask = root.join("empty-mask");
+        std::fs::write(&mask, []).unwrap();
+        std::fs::set_permissions(&mask, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let profile = root.join("profile");
+        let bootstrap: Vec<PathBuf> = ["/usr", "/lib", "/lib64", "/bin", "/etc/ld.so.cache"]
+            .into_iter()
+            .filter(|path| Path::new(path).exists())
+            .map(|path| std::fs::canonicalize(path).unwrap())
+            .collect();
+        let bootstrap: Vec<_> = bootstrap.iter().map(PathBuf::as_path).collect();
+        let outside = root.join("host.sock");
+        let public = project.join("public.sock");
+        let hidden = private.join("broker.sock");
+        let alias = package.join("socket-alias");
+        symlink(&outside, &alias).unwrap();
+        let listeners: Vec<_> = [&outside, &public, &hidden]
+            .into_iter()
+            .map(|path| {
+                let listener = UnixListener::bind(path).unwrap();
+                listener.set_nonblocking(true).unwrap();
+                listener
+            })
+            .collect();
+        let paths = [
+            (&outside, 0, "outside"),
+            (&public, 1, "public"),
+            (&hidden, 2, "private-mask"),
+            (&alias, 0, "symlink-outside"),
+        ];
+        let mut rows = Vec::new();
+        for (socket, index, label) in paths {
+            let direct: Value = serde_json::from_slice(
+                &run(Command::new(&target).arg(socket).arg(&data).env_clear()).stdout,
+            )
+            .unwrap();
+            assert!(
+                receipt(&listeners[index], &direct),
+                "direct socket control: {label}"
+            );
+            assert_eq!(direct["project_read"], true);
+            for (read, write) in [(false, false), (false, true), (true, false), (true, true)] {
+                let target_args = [
+                    socket.to_str().unwrap().into(),
+                    data.to_str().unwrap().into(),
+                ];
+                let private_paths = [MaskPath::Directory(&private)];
+                let plan = LinuxPolicy {
+                    helper: &helper,
+                    target: &target,
+                    profile: &profile,
+                    package: &package,
+                    scratch: &scratch,
+                    location: &project,
+                    mask_file: &mask,
+                    bootstrap: &bootstrap,
+                    private: &private_paths,
+                    read_only: &[],
+                    target_args: &target_args,
+                    fs_read: read,
+                    fs_write: write,
+                    shell: false,
+                    namespace_proc: false,
+                }
+                .compose()
+                .unwrap();
+                std::fs::write(&profile, plan.landlock).unwrap();
+                let observed: Value = serde_json::from_slice(
+                    &run(Command::new("/usr/bin/bwrap")
+                        .args(plan.arguments)
+                        .env_clear())
+                    .stdout,
+                )
+                .unwrap();
+                assert_eq!(observed["project_read"], read, "native read control");
+                let delivered = receipt(&listeners[index], &observed);
+                if label == "private-mask" {
+                    assert!(!delivered, "opaque private directory must hide its socket");
+                }
+                rows.push(json!({"socket": label, "fs_read": read, "fs_write": write,
+                    "shell": false, "host_received_fixture": delivered, "observed": observed}));
+            }
+        }
+        let sources = [
+            "crates/cyber-sandbox/examples/plugin_unix_socket_probe.rs",
+            "crates/cyber-sandbox/tests/fixtures/plugin_unix_socket.c",
+            "crates/cyber-sandbox/src/plugin_policy.rs",
+            "crates/cyber-sandbox/src/plugin_policy/linux.rs",
+            "crates/cyber-sandbox/native/linux_plugin_exec.c",
+            "crates/cyber-sandbox/native/linux_filter.h",
+            "crates/cyber-sandbox/native/linux_initial_exec.h",
+            "crates/cyber-sandbox/src/native_exec.rs",
+            "crates/cyber-sandbox/src/bin/cyber-sandbox-exec.rs",
+            "crates/cyber-sandbox/build.rs",
+            "crates/cyber-sandbox/Cargo.toml",
+            "Cargo.lock",
+            ".github/workflows/plugin-linux-ipc.yml",
+        ];
+        let mut hash = Sha256::new();
+        for path in sources {
+            hash.update(path.as_bytes());
+            hash.update([0]);
+            hash.update(std::fs::read(workspace.join(path)).unwrap());
+        }
+        let report = json!({"platform": std::env::consts::OS, "architecture": std::env::consts::ARCH,
+            "checkout": std::env::var("GITHUB_SHA").ok(), "run_id": std::env::var("GITHUB_RUN_ID").ok(),
+            "sources": sources, "source_sha256": format!("{:x}", hash.finalize()),
+            "helper_sha256": format!("{:x}", Sha256::digest(std::fs::read(helper).unwrap())),
+            "rows": rows, "scope": "Diagnostic host UNIX-socket reachability only. Fixture messages only; no real broker, filesystem/shell escalation or capability acceptance."});
+        std::fs::write(
+            &args[1],
+            format!("{}\n", serde_json::to_string_pretty(&report).unwrap()),
+        )
+        .unwrap();
+    }
+}
+
+#[cfg(unix)]
+fn main() {
+    probe::main();
+}
+#[cfg(not(unix))]
+fn main() {
+    panic!("native evidence requires Linux");
+}

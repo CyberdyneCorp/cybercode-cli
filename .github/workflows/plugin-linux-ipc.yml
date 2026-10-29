@@ -1,0 +1,51 @@
+name: Linux plugin IPC diagnostic
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - crates/cyber-sandbox/examples/plugin_unix_socket_probe.rs
+      - crates/cyber-sandbox/tests/fixtures/plugin_unix_socket.c
+      - .github/workflows/plugin-linux-ipc.yml
+permissions:
+  contents: read
+concurrency:
+  group: plugin-linux-ipc-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  ipc:
+    name: UNIX socket diagnostic (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Prepare namespace prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.*
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap build-essential pkg-config cmake
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - name: Build production helper and diagnostic
+        run: cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec --example plugin_unix_socket_probe
+      - name: Observe fixture-only host socket reachability
+        shell: bash
+        run: |
+          set -euo pipefail
+          target/debug/examples/plugin_unix_socket_probe "$PWD/target/debug/cyber-sandbox-exec" "$RUNNER_TEMP/linux-ipc.json"
+      - name: Retain diagnostic observations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-ipc-${{ matrix.os }}
+          path: ${{ runner.temp }}/linux-ipc.json
+          if-no-files-found: warn
+          retention-days: 14
