@@ -17,6 +17,9 @@ private network namespace. It permits `socketpair` only for UNIX stream pairs,
 including close-on-exec/nonblocking flags. It denies ambient UNIX sockets, other
 families (including host vsock/netlink endpoints), and datagram/seqpacket pairs.
 All existing initial-exec, architecture and escape denials remain in place.
+The revised experiment also denies `bind` and `listen` for every family. This
+is an explicit candidate limitation: IP server sockets and explicit client
+binding are unavailable. It is not a selected production network contract.
 
 The diagnostic tests all four read/write combinations with shell disabled. In
 addition to denying the three exposed host socket routes and private socket,
@@ -54,3 +57,20 @@ report bindings. It finds no further source issue within the experiment. The
 test setup is partial: local portable tests execute; Linux kernel behavior cannot
 run on this macOS host. Review is not production security acceptance, and the
 explicit support/design gate remains open.
+
+## First native rejection
+
+At `ccde59d4`, both Linux jobs reject the candidate's pair assertion. The x64
+[job log](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40957529698/job/123741379932)
+shows internal roundtrip succeeds, direct/disconnect/reconnect attempts fail,
+datagram/seqpacket creation fails, but both `pair_bind` and `pair_listen` succeed
+with project reads disabled. This refutes the assumption that a connected stream
+pair cannot become an ambient listener. No host service or descriptor escalation
+was attempted, and no failed candidate row is counted as isolation acceptance.
+
+The revised copy adds unconditional bind/listen denials and requires pair bind
+to fail too. Both native denial and runtime suites must run again. This candidate
+still needs explicit design/support review because those syscall denials also
+restrict legitimate IP servers and explicit client binds. A narrower production
+policy, stronger primitive or reviewed support revision remains necessary; green
+fixture tests alone cannot select this restriction as the final feature contract.

@@ -89,6 +89,7 @@ mod probe {
         for key in [
             "connected",
             "pair_reconnect",
+            "pair_bind",
             "pair_listen",
             "datagram_pair",
             "seqpacket_pair",

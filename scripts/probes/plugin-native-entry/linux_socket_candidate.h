@@ -7,6 +7,8 @@
 #include <sys/socket.h>
 
 #define CYBER_SOCKET_FAMILIES \
+    CYBER_DENY(SYS_bind), \
+    CYBER_DENY(SYS_listen), \
     BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_socket, 0, 5), \
     BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[0])), \
     BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, AF_INET, 2, 0), \
