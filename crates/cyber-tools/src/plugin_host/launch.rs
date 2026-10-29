@@ -8,7 +8,6 @@
 //! `network: { hosts }` allows only those hosts through the proxy; `network: true` is
 //! as wide as the resolved sandbox network, never wider ([`super::network`]). A machine without sandbox enforcement does not start plugin hosts.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -77,7 +76,8 @@ impl LaunchContext<'_> {
         );
         let wrapped = cyber_sandbox::wrap(&launch, &program, &args)
             .map_err(|error| format!("plugin {} cannot start: {error}", plugin.name))?;
-        let environment = self.environment(plugin, &launch.config, &scratch, &wrapped.env);
+        let environment =
+            super::environment::build(plugin.name, plugin.root, &scratch.path, &wrapped.env);
         let process =
             Process::spawn_with_stdin(&wrapped.program, &wrapped.args, self.helper, |child| {
                 child
@@ -140,31 +140,6 @@ impl LaunchContext<'_> {
             .map(Some)
             .map_err(|_| format!("plugin {}: network proxy creation failed", plugin.name))
     }
-
-    fn environment(
-        &self,
-        plugin: &PluginLaunch<'_>,
-        config: &SandboxConfig,
-        scratch: &Scratch,
-        wrapped: &BTreeMap<String, String>,
-    ) -> BTreeMap<String, String> {
-        let credentials = crate::sandboxing::credential_env_names(&self.resolved.value);
-        let mut env: BTreeMap<String, String> =
-            cyber_sandbox::policy_env(std::env::vars(), config, &credentials)
-                .into_iter()
-                .filter(|(key, _)| !proxy_variable(key))
-                .collect();
-        env.extend(wrapped.clone());
-        for key in ["TMPDIR", "TEMP", "TMP"] {
-            env.insert(key.into(), scratch.path.display().to_string());
-        }
-        env.insert("CYBER_PLUGIN_NAME".into(), plugin.name.into());
-        env.insert(
-            "CYBER_PLUGIN_ROOT".into(),
-            plugin.root.display().to_string(),
-        );
-        cyber_sandbox::owner_environment(env).into_iter().collect()
-    }
 }
 
 /// The sandbox of one host: it writes only its scratch directory (plus the Location
@@ -200,13 +175,6 @@ fn confinement(
         helper: helper.map(Path::to_path_buf),
         config,
     }
-}
-
-fn proxy_variable(key: &str) -> bool {
-    matches!(
-        key.to_ascii_uppercase().as_str(),
-        "HTTP_PROXY" | "HTTPS_PROXY" | "ALL_PROXY" | "NO_PROXY"
-    )
 }
 
 /// The program and arguments that run `main` with its runtime.
@@ -285,6 +253,7 @@ impl Drop for Scratch {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
 
     fn launch_of(
         root: &Path,

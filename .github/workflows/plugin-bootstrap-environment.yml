@@ -1,0 +1,98 @@
+name: Plugin bootstrap environment
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - crates/cyber-tools/src/plugin_host/**
+      - crates/cyber-app/tests/plugins.rs
+      - crates/cyber-sandbox/src/env.rs
+      - .github/workflows/plugin-bootstrap-environment.yml
+      - Cargo.lock
+  push:
+    branches: [main]
+    paths:
+      - crates/cyber-tools/src/plugin_host/**
+      - crates/cyber-app/tests/plugins.rs
+      - crates/cyber-sandbox/src/env.rs
+      - .github/workflows/plugin-bootstrap-environment.yml
+      - Cargo.lock
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plugin-bootstrap-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bootstrap:
+    name: Host bootstrap (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-latest]
+    env:
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux sandbox prerequisites
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.*
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - name: Verify explicit environment construction
+        shell: bash
+        run: cargo test --locked -p cyber-tools --lib plugin_host::environment
+      - name: Verify real production plugin hosts
+        if: runner.os != 'Windows'
+        shell: bash
+        run: cargo test --locked -p cyber-app --test plugins
+      - name: Verify unsafe tool overlays fail the production regression
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          source=crates/cyber-tools/src/plugin_host/launch.rs
+          cp "$source" "$RUNNER_TEMP/plugin-launch-positive.rs"
+          trap 'cp "$RUNNER_TEMP/plugin-launch-positive.rs" "$source"' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('crates/cyber-tools/src/plugin_host/launch.rs')
+          text = path.read_text()
+          original = '        let environment =\n            super::environment::build(plugin.name, plugin.root, &scratch.path, &wrapped.env);'
+          assert text.count(original) == 1
+          replacement = original.replace('let environment =', 'let mut environment =') + '\n        environment.extend(launch.config.env.set.clone());'
+          path.write_text(text.replace(original, replacement))
+          PY
+          if cargo test --locked -p cyber-app --test plugins plugin_bootstrap_environment_ignores_tool_overlays_and_owns_home -- --exact > "$RUNNER_TEMP/plugin-overlay-control.log" 2>&1; then
+            cat "$RUNNER_TEMP/plugin-overlay-control.log"
+            echo 'Unsafe-overlay control unexpectedly passed' >&2
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/plugin-overlay-control.log"
+          python3 - "$RUNNER_TEMP/plugin-overlay-control.log" <<'PY'
+          import re, sys
+          from pathlib import Path
+          text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', Path(sys.argv[1]).read_text())
+          assert 'plugin_bootstrap_environment_ignores_tool_overlays_and_owns_home ... FAILED' in text
+          assert 'inspect_bootstrap was not advertised' in text or 'assertion `left == right` failed' in text
+          PY
+          cp "$RUNNER_TEMP/plugin-launch-positive.rs" "$source"
+          cargo test --locked -p cyber-app --test plugins plugin_bootstrap_environment_ignores_tool_overlays_and_owns_home -- --exact
+      - name: Retain unsafe-overlay counterexample
+        if: always() && runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-overlay-control-${{ matrix.os }}
+          path: ${{ runner.temp }}/plugin-overlay-control.log
+          if-no-files-found: warn
+          retention-days: 14
