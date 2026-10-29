@@ -45,6 +45,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo test --locked -p cyber-core --lib plugins::image
+          cargo test --locked -p cyber-sandbox --lib plugin_image
           cargo test --locked -p cyber-sandbox --test plugin_copy
       - name: Verify owner-process source IO breaks the SQLite lock regression
         if: runner.os != 'Windows'

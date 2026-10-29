@@ -24,6 +24,8 @@ thiserror.workspace = true
 tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "time", "macros", "process"] }
 
 [target.'cfg(unix)'.dependencies]
+cap-std = "4.0"
+cap-fs-ext = "4.0"
 libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]

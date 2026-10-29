@@ -114,3 +114,58 @@ filesystem adapter with explicit owner preconditions. Existing ordinary launch
 modes are unchanged. Owner provenance/generation, full confinement and runtime
 compatibility remain required integration work, rather than review exceptions
 that authorize an unconfined launch.
+
+## Supervised owner-side preparation
+
+`cyber-sandbox::plugin_image::prepare` now invokes the trusted worker with a
+cleared environment, null stdin, bounded stdout (32 KiB) and stderr (8 KiB), and a
+30-second deadline. Shared request validation performs no source IO. Invalid
+frames and source/destination overlap are refused before spawning. Temporary
+parents are created with mode 0700 explicitly; `tempfile`'s default directory
+permissions do not provide that guarantee. The owner-side integration test
+failed with worker refusal before this explicit mode was applied, then passed.
+
+A supervisor owns the child and staging parent. Dropping the awaiting future
+closes its reply receiver; the supervisor kills and reaps the exact trusted
+no-descendant worker before cleanup. Timeout, malformed response, refusal and
+stream overflow use the same settle-before-cleanup path. Captured helper payloads
+are not included in errors. Uninterruptible OS IO can delay reaping and cleanup.
+If the runtime drops the supervisor or reaping itself fails, its guard retains
+the protected directory instead of deleting a possible live writer's namespace.
+This exceptional retention is not normal cancellation cleanup or successful
+preparation, and requires later owner startup housekeeping after authority to
+remove stale generations is established.
+
+A successful response must match the request destination, approved digest and
+bounds. The owner opens only directories, with no-follow on the image child,
+and compares the returned native directory identity. The resulting `Package`
+retains the directory handle and private parent until drop; dropping a response
+whose caller has already left also releases that settled package. Reading or
+closing private regular files in the owner remains prohibited by the SQLite
+lock invariant. The actual helper/SQLite regression checks locks before and after
+the owner wrapper and after dropping its directory handles.
+
+Six owner tests cover invalid requests before staging, live-worker cancellation and process disappearance,
+timeout, malformed/nonzero/flooding workers, forged identity and the dropped
+supervisor guard. Real helper integration covers positive copying, a pinned
+result and cleanup on Package drop. Windows explicitly refuses the owner API
+without creating staging. The focused five-platform workflow includes these
+tests. Local macOS tests do not supply hosted platform acceptance.
+
+The caller must still supply a trusted immutable helper binding and protect the
+staging base and its ancestors from every admitted untrusted writer. This wrapper
+is not yet wired to plugin launch. Plugin generation/session/location ownership,
+complete private roots/aliases, native runtime compatibility and first-instruction
+OS enforcement remain open; retaining a directory handle alone cannot authorize
+execution. Task 2.2 and all later native acceptance tasks stay open.
+
+Local verification of the supervised wrapper passed 26 core plugin tests, six
+owner tests and four real helper integration tests (plus the two explicitly
+invoked SQLite/digest subprocess fixture entrypoints). Scoped library/helper and
+sandbox-test Clippy passed with warnings denied. Formatting, diff, workflow
+YAML/shell, Windows test-profile parsing, all 107 strict OpenSpec items and spec
+lint (0 errors, 25 warnings) passed. The scoped review additionally checked
+receiver-drop cancellation, reaping before cleanup, runtime-shutdown retention,
+bounded error handling and directory-only identity verification. These results
+do not complete private-root provenance, generation admission, native launcher
+integration or hosted OS acceptance.

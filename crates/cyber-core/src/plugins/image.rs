@@ -60,39 +60,47 @@ pub enum Error {
 /// Copy without executing anything from the package. The result is a prepared
 /// copy, not an admitted/sealed image or a declaration of native OS compatibility.
 pub fn prepare(request: &Request) -> Result<PreparedCopy, Error> {
-    let valid_path = |path: &std::path::Path| {
-        path.is_absolute()
-            && path
-                .to_str()
-                .is_some_and(|text| text.len() <= 4096 && !text.contains('\0'))
-            && path.components().all(|part| {
-                matches!(
-                    part,
-                    std::path::Component::RootDir
-                        | std::path::Component::Prefix(_)
-                        | std::path::Component::Normal(_)
-                )
-            })
-    };
-    let digest = request
-        .expected_digest
-        .strip_prefix("sha256:")
-        .ok_or(Error::Request)?;
-    if !valid_path(&request.source)
-        || !valid_path(&request.destination)
-        || digest.len() != 64
-        || !digest
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        || request.source.starts_with(&request.destination)
-        || request.destination.starts_with(&request.source)
-    {
-        return Err(Error::Request);
-    }
+    request.validate()?;
     #[cfg(unix)]
     return unix::prepare(request);
     #[cfg(not(unix))]
     Err(Error::Unavailable)
+}
+
+impl Request {
+    /// Validate the bounded wire values without opening any source file.
+    pub fn validate(&self) -> Result<(), Error> {
+        let valid_path = |path: &std::path::Path| {
+            path.is_absolute()
+                && path
+                    .to_str()
+                    .is_some_and(|text| text.len() <= 4096 && !text.contains('\0'))
+                && path.components().all(|part| {
+                    matches!(
+                        part,
+                        std::path::Component::RootDir
+                            | std::path::Component::Prefix(_)
+                            | std::path::Component::Normal(_)
+                    )
+                })
+        };
+        let digest = self
+            .expected_digest
+            .strip_prefix("sha256:")
+            .ok_or(Error::Request)?;
+        if !valid_path(&self.source)
+            || !valid_path(&self.destination)
+            || digest.len() != 64
+            || !digest
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            || self.source.starts_with(&self.destination)
+            || self.destination.starts_with(&self.source)
+        {
+            return Err(Error::Request);
+        }
+        Ok(())
+    }
 }
 
 #[cfg(unix)]

@@ -248,6 +248,21 @@ fn worker_source_io_preserves_owner_sqlite_locks() {
     };
     assert!(report.files >= 1);
     check();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let owned = runtime
+        .block_on(cyber_sandbox::plugin_image::prepare(
+            std::path::Path::new(env!("CARGO_BIN_EXE_cyber-sandbox-exec")),
+            &parent,
+            &request.source,
+            &request.expected_digest,
+        ))
+        .unwrap();
+    check();
+    drop(owned);
+    check();
 }
 
 #[cfg(windows)]
@@ -264,4 +279,60 @@ fn windows_refuses_copy_without_creating_output() {
     assert!(String::from_utf8_lossy(&result.stderr).contains("unavailable on this platform"));
     assert!(result.stdout.is_empty());
     assert!(!request.destination.exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn owned_copy_pins_the_actual_worker_result_and_cleans_it_on_drop() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let source = root.join("source");
+    let base = root.join("staging");
+    std::fs::create_dir(&source).unwrap();
+    std::fs::create_dir(&base).unwrap();
+    std::fs::write(source.join("main"), b"approved bytes").unwrap();
+    let digest = cyber_core::plugins::tree_digest(&source).unwrap();
+    let package = cyber_sandbox::plugin_image::prepare(
+        std::path::Path::new(env!("CARGO_BIN_EXE_cyber-sandbox-exec")),
+        &base,
+        &source,
+        &digest,
+    )
+    .await
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(
+        std::fs::metadata(package.path().parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+    assert_eq!(package.digest(), digest);
+    assert_eq!(
+        std::fs::read(package.path().join("main")).unwrap(),
+        b"approved bytes"
+    );
+    let path = package.path().to_owned();
+    drop(package);
+    assert!(!path.exists());
+    assert_eq!(std::fs::read_dir(&base).unwrap().count(), 0);
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn owner_copy_refuses_windows_without_creating_a_staging_namespace() {
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path().join("staging");
+    let error = cyber_sandbox::plugin_image::prepare(
+        &root.path().join("helper.exe"),
+        &base,
+        &root.path().join("source"),
+        "invalid",
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error, cyber_sandbox::plugin_image::Error::Unavailable);
+    assert!(!base.exists());
 }
