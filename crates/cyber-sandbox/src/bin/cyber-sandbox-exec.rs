@@ -14,6 +14,12 @@ mod windows_job;
 fn main() -> ExitCode {
     if std::env::args_os()
         .nth(1)
+        .is_some_and(|arg| arg == "--plugin-copy")
+    {
+        return plugin_copy();
+    }
+    if std::env::args_os()
+        .nth(1)
         .is_some_and(|arg| arg == "--git-inspect")
     {
         return git_inspect();
@@ -49,6 +55,25 @@ fn main() -> ExitCode {
         eprintln!("cyber-sandbox-exec: the Unix proxy bridge is unavailable on this platform");
         ExitCode::from(69)
     }
+}
+
+/// Prepare bytes in a separate process: opening/closing a raced source alias
+/// must not release the owner's process-wide SQLite record locks.
+fn plugin_copy() -> ExitCode {
+    use cyber_core::plugins::image::{MAX_REQUEST, MAX_RESPONSE, Request, prepare};
+    let result = (|| -> Result<Vec<u8>, String> {
+        let input = request(MAX_REQUEST).map_err(|_| "invalid package copy request")?;
+        let request: Request =
+            serde_json::from_str(&input).map_err(|_| "invalid package copy request")?;
+        let copy = prepare(&request).map_err(|error| error.to_string())?;
+        let response =
+            serde_json::to_vec(&copy).map_err(|_| "package copy response unavailable")?;
+        if response.len() > MAX_RESPONSE {
+            return Err("package copy response exceeds supported size".into());
+        }
+        Ok(response)
+    })();
+    respond(result.map_err(Failure::Internal))
 }
 
 fn git_inspect() -> ExitCode {
