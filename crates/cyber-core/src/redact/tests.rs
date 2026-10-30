@@ -359,3 +359,51 @@ fn one_mebibyte_is_redacted_quickly() {
     let limit = if cfg!(debug_assertions) { 50 } else { 10 };
     assert!(best.as_millis() < limit, "{best:?}");
 }
+
+#[test]
+fn overlapping_known_values_hide_the_complete_union() {
+    let cases = [
+        (
+            vec!["12345678-suffix".to_string()],
+            "ghp_abcdefgh12345678-suffix",
+        ),
+        (
+            vec!["prefix-12345678".to_string(), "12345678-suffix".to_string()],
+            "prefix-12345678-suffix",
+        ),
+        (vec!["abababab".to_string()], "abababababab"),
+        (
+            vec!["é12345678".to_string(), "12345678-end".to_string()],
+            "é12345678-end",
+        ),
+    ];
+    let actual = cases.map(|(known, text)| {
+        Redactor::new(&RedactSettings::default(), known)
+            .redact(text)
+            .text
+            .into_owned()
+    });
+    assert_eq!(
+        actual,
+        [
+            "[REDACTED:github_token]",
+            "[REDACTED:known_secret]",
+            "[REDACTED:known_secret]",
+            "[REDACTED:known_secret]"
+        ],
+        "overlapping detections must not expose a known secret suffix"
+    );
+}
+
+#[test]
+fn overlapping_allowed_values_remain_visible() {
+    let known = vec!["prefix-12345678".to_string(), "12345678-suffix".to_string()];
+    let settings = RedactSettings {
+        allow: known.clone(),
+        ..Default::default()
+    };
+    let redactor = Redactor::new(&settings, known);
+    let redacted = redactor.redact("prefix-12345678-suffix");
+    assert_eq!(redacted.text, "prefix-12345678-suffix");
+    assert!(redacted.redactions.is_empty());
+}

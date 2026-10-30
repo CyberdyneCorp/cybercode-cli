@@ -124,3 +124,15 @@ Measured on a dev machine for 1 MiB, with cyber-core unoptimized: 3 ms for log l
 ## Migration
 
 None. The prompt version bump starts a new Context Epoch for Sessions that continue.
+
+## Overlapping detection correction
+
+Merge review reproduced known-secret suffix exposure when a built-in token and
+an exact known value intersect, and when two known values intersect. Nonoverlapping
+literal matching followed by dropping intersecting spans left the unmatched tail
+visible. Detection now enumerates overlapping known values and coalesces the full
+coverage before reconstruction, retaining the most specific detector kind.
+Known coverage coalesces during enumeration instead of storing every overlapping
+match. Existing markers and allow entries are filtered before coalescing, so
+allowed individual values remain exempt. Regressions include built-in/known,
+known/known, self-overlapping and Unicode values, plus overlapping allow entries.

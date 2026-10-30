@@ -179,7 +179,7 @@ impl Redactor {
         known.dedup();
         let known = (!known.is_empty()).then(|| {
             AhoCorasickBuilder::new()
-                .match_kind(MatchKind::LeftmostLongest)
+                .match_kind(MatchKind::Standard)
                 .build(&known)
                 .expect("literal secret automaton")
         });
@@ -233,25 +233,23 @@ impl Redactor {
         if !self.enabled || text.is_empty() {
             return unchanged();
         }
-        let mut spans = self.detect(text);
-        if spans.is_empty() {
-            return unchanged();
-        }
-        spans.sort_unstable_by_key(|span| (span.start, Reverse(span.end), span.priority));
         let existing: Vec<(usize, usize)> = MARKER
             .find_iter(text)
             .map(|found| (found.start(), found.end()))
             .collect();
+        let mut spans = self.detect(text, &existing);
+        if spans.is_empty() {
+            return unchanged();
+        }
+        spans.sort_unstable_by_key(|span| (span.start, Reverse(span.end), span.priority));
+        let mut covered = Vec::new();
+        for span in spans {
+            cover(&mut covered, span);
+        }
         let mut out = String::with_capacity(text.len());
         let mut redactions = Redactions::default();
         let mut last = 0;
-        for span in spans {
-            if span.start < last
-                || overlaps(&existing, span)
-                || self.allowed(&text[span.start..span.end])
-            {
-                continue;
-            }
+        for span in covered {
             out.push_str(&text[last..span.start]);
             match fixed {
                 Some(fixed) => out.push_str(fixed),
@@ -278,18 +276,10 @@ impl Redactor {
         }
     }
 
-    fn detect(&self, text: &str) -> Vec<Span> {
+    fn detect(&self, text: &str, existing: &[(usize, usize)]) -> Vec<Span> {
         let mut spans = Vec::new();
         for (index, detector) in DETECTORS.iter().enumerate() {
             self.scan(detector, detectors::priority(index), text, &mut spans);
-        }
-        if let Some(known) = &self.known {
-            spans.extend(known.find_iter(text).map(|found| Span {
-                start: found.start(),
-                end: found.end(),
-                priority: KNOWN_PRIORITY,
-                kind: "known_secret",
-            }));
         }
         for pattern in &self.custom {
             spans.extend(pattern.find_iter(text).map(|found| Span {
@@ -298,6 +288,26 @@ impl Redactor {
                 priority: CUSTOM_PRIORITY,
                 kind: "custom",
             }));
+        }
+        spans.retain(|span| {
+            !overlaps(existing, *span) && !self.allowed(&text[span.start..span.end])
+        });
+        if let Some(known) = &self.known {
+            // Standard overlapping matches arrive in end order. Coalesce as they
+            // arrive instead of retaining one span per pattern at every position.
+            let mut covered = Vec::new();
+            for found in known.find_overlapping_iter(text) {
+                let span = Span {
+                    start: found.start(),
+                    end: found.end(),
+                    priority: KNOWN_PRIORITY,
+                    kind: "known_secret",
+                };
+                if !overlaps(existing, span) && !self.allowed(&text[span.start..span.end]) {
+                    cover(&mut covered, span);
+                }
+            }
+            spans.extend(covered);
         }
         spans
     }
@@ -366,6 +376,24 @@ impl Redactor {
                 .iter()
                 .any(|pattern| pattern.is_match(secret))
     }
+}
+
+/// Add a span in start order or end order, coalescing intersecting coverage.
+/// Keep the most specific detector kind; adjacent secrets remain separate.
+fn cover(covered: &mut Vec<Span>, mut span: Span) {
+    while covered
+        .last()
+        .is_some_and(|previous| span.start < previous.end)
+    {
+        let previous = covered.pop().expect("intersecting span");
+        span.start = span.start.min(previous.start);
+        span.end = span.end.max(previous.end);
+        if previous.priority < span.priority {
+            span.priority = previous.priority;
+            span.kind = previous.kind;
+        }
+    }
+    covered.push(span);
 }
 
 /// Whether `span` overlaps one of the sorted, disjoint `existing` marker ranges.
