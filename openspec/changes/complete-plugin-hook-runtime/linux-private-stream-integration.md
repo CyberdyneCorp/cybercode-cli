@@ -54,8 +54,37 @@ Local checks pass Rust example Clippy with warnings denied, portable fixture C
 syntax (excluding its Linux-only branches), TypeScript/Python syntax, workflow
 shell/embedded Python, formatting/diff and all 16 temporary builder transformations
 with compiler interception. The native SDK emits two Seatbelt deprecation
-warnings. Linux C compilation, kernel behavior and the new controls require
-fresh hosted x64/arm64 results; no such result is claimed yet.
+warnings. The hosted result below supplies Linux compilation/kernel evidence for
+the exact tested source, rather than assigning local macOS checks that scope.
+
+## Native result for 2b86ac8b
+
+[Run 41058437042](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41058437042)
+passed on Linux x64 and arm64. Each architecture's private-stream report contains
+32 cases: 16 ambient endpoint denials and 16 pair cases with successful scratch
+stream/IP/thread-local exchanges, independent read/write expectations and regular
+file moves matching `fs.write`. Both writable public-socket cases observe EXDEV
+for the cross-mount alias attempt. The exact missing-MAKE_SOCK and missing-REFER
+controls fail their named assertions after positive startup and scratch exchange.
+
+Each architecture's five private-stream runtime reports contain nine cases,
+including an unconfined control, with no unsupported rows: 45 cases per
+architecture. These are startup/capability regressions, not full runtime IPC
+acceptance. The workflow also passes its existing broker cancellation, mutation,
+descendant and worker-capacity checks after the worker descriptor changes.
+
+Original reports, both control logs and the five runtime JSON reports are retained
+under `scripts/probes/plugin-native-entry/evidence/linux-private-stream-2b86ac8b/{x64,arm64}`.
+They bind original checkout `2b86ac8b8ea70bb2c5030ca6b22e948b345e3f7b`, kernel
+`7.0.0-1017-azure`, socket source manifest SHA-256
+`1f096940494d0a1bb9756ff4c020fc7fd75a591f377557b1cd791c8d837f9b59`
+and runtime source manifest SHA-256
+`52bcf7e1df59d36b59b85de1181c2e85d7dfcc79bfa3cf728c06e65b75831630`.
+Both manifests were independently recomputed from that exact Git tree. Every
+runtime report's input/executed helper digest matches its architecture's socket
+report. The tested commits remain on `evidence/plugin-native-host-pre-76-merge`
+when the implementation branch is rebased onto the #76 squash merge. These
+original receipts are not relabeled as execution of the rebased head.
 
 Still required before complete IPC/production acceptance: actual post-pin
 pathname replacement in this broker, relative/alias forms, datagram/seqpacket and

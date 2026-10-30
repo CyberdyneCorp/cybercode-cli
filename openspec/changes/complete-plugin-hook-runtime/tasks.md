@@ -4,6 +4,9 @@ Delivery rule updated by the user on 2026-10-29: normally one open goal PR,
 maximum two only for independently reviewable work. #70–#75 were consolidated into
 #76 against `main`. On 2026-10-30 the user authorized merging that foundations
 milestone after green CI and merge review, then continuing in one follow-up PR.
+PR #76 merged at `ec31ff9f` after 70 passing checks and one intentional diagnostic
+skip. Its tree matches the tested `e6fd3d2f` tree. Continue on the single native
+host admission follow-up; the foundations milestone does not complete task 2.
 The full goal scope, order and acceptance gates remain unchanged. See
 [goal delivery rules](../../../docs/goal-delivery.md).
 
