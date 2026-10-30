@@ -59,6 +59,14 @@ impl LlmError {
         Self::new(ErrorKind::Transport, message)
     }
 
+    /// A subscription usage limit that resets at `resets_at` (Unix seconds), as
+    /// `usage_limit_reached` maps it.
+    pub fn usage_limit(resets_at: Option<i64>) -> Self {
+        let mut e = Self::new(ErrorKind::QuotaExceeded, usage_limit_message(resets_at));
+        e.resets_at = resets_at;
+        e
+    }
+
     pub(crate) fn from_http(
         status: u16,
         headers: &HeaderMap,
@@ -221,13 +229,25 @@ fn usage_limit_message(resets_at: Option<i64>) -> String {
 
 /// [`usage_limit_message`] for a reset at `at`, seen at `now` in `zone`.
 fn reset_message(at: jiff::Timestamp, now: jiff::Timestamp, zone: &jiff::tz::TimeZone) -> String {
+    format!("usage limit reached; resets at {}", clock_at(at, now, zone))
+}
+
+/// `14:20` in local time, or `2026-10-29 14:20` on another day, for a Unix time in ms.
+pub fn local_clock(ms: i64) -> String {
+    match jiff::Timestamp::from_millisecond(ms) {
+        Ok(at) => clock_at(at, jiff::Timestamp::now(), &jiff::tz::TimeZone::system()),
+        Err(_) => ms.to_string(),
+    }
+}
+
+fn clock_at(at: jiff::Timestamp, now: jiff::Timestamp, zone: &jiff::tz::TimeZone) -> String {
     let (at, now) = (at.to_zoned(zone.clone()), now.to_zoned(zone.clone()));
     let format = if at.date() == now.date() {
         "%H:%M"
     } else {
         "%Y-%m-%d %H:%M"
     };
-    format!("usage limit reached; resets at {}", at.strftime(format))
+    at.strftime(format).to_string()
 }
 
 fn retry_after(headers: &HeaderMap) -> Option<Duration> {
