@@ -14,14 +14,13 @@ fn output(command: &mut Command, input: Option<&[u8]>) -> Output {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    if let Some(input) = input {
-        if let Err(error) = child.stdin.take().unwrap().write_all(input)
-            && error.kind() != std::io::ErrorKind::BrokenPipe
-        {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!("native fixture input failed: {error}");
-        }
+    if let Some(input) = input
+        && let Err(error) = child.stdin.take().unwrap().write_all(input)
+        && error.kind() != std::io::ErrorKind::BrokenPipe
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+        panic!("native fixture input failed: {error}");
     }
     drop(child.stdin.take());
     let deadline = Instant::now() + Duration::from_secs(15);
