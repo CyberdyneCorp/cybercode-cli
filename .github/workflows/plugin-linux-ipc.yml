@@ -23,6 +23,8 @@ on:
       - scripts/probes/plugin-native-entry/linux_unix9_policy.h
       - scripts/probes/plugin-native-entry/linux_pidfd_probe.c
       - scripts/probes/plugin-native-entry/pidfd.mts
+      - scripts/probes/plugin-native-entry/linux_unix_endpoint_pin.c
+      - scripts/probes/plugin-native-entry/unix-endpoint.mts
 permissions:
   contents: read
 concurrency:
@@ -69,6 +71,20 @@ jobs:
           set -euo pipefail
           cc -Wall -Wextra -Werror -pthread scripts/probes/plugin-native-entry/linux_pidfd_probe.c -o "$RUNNER_TEMP/pidfd-probe"
           node --experimental-strip-types scripts/probes/plugin-native-entry/pidfd.mts --probe "$RUNNER_TEMP/pidfd-probe" --report "$RUNNER_TEMP/linux-pidfd.json"
+      - name: Observe pinned private UNIX endpoint identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -Wall -Wextra -Werror scripts/probes/plugin-native-entry/linux_unix_endpoint_pin.c -o "$RUNNER_TEMP/unix-endpoint-pin"
+          node --experimental-strip-types scripts/probes/plugin-native-entry/unix-endpoint.mts --probe "$RUNNER_TEMP/unix-endpoint-pin" --report "$RUNNER_TEMP/linux-unix-endpoint.json"
+      - name: Retain UNIX endpoint identity observations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-unix-endpoint-${{ matrix.os }}
+          path: ${{ runner.temp }}/linux-unix-endpoint.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Retain descriptor prerequisite observations
         if: always()
         uses: actions/upload-artifact@v4

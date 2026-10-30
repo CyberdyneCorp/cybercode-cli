@@ -81,7 +81,9 @@ three controls have source-bound native receipts on both architectures.
 The [escaped-descendant namespace fixture](linux-plugin-descendant-proof.md)
 has source-bound native receipts on both architectures.
 The [trusted-worker capacity/recovery fixture](linux-socket-broker-capacity.md)
-still requires native execution.
+has source-bound passing x64/arm64 receipts. The approved
+[production integration direction](native-host-integration.md) keeps complete
+private IPC/network compatibility and native acceptance required before activation.
 
 The kernel's [seccomp notification documentation](https://docs.kernel.org/userspace-api/seccomp_filter.html)
 requires copied tracee arguments to avoid policy decisions on mutable memory.
@@ -97,7 +99,7 @@ shell blocks and embedded Python parse; formatting/diff checks, all 107
 strict OpenSpec items and spec lint (zero errors, 25 warnings) pass. The native C
 SDK build emits two Seatbelt deprecation warnings. Linux candidate compilation,
 kernel behavior for each revision requires corresponding hosted x64/arm64 jobs.
-The new trusted-worker capacity/recovery case/control still requires hosted results. The separate
+The capacity/recovery document records the later hosted results. The separate
 thread-specific receipts below establish that earlier case and corrected report
 label; the first candidate receipts cannot prove those later changes.
 
