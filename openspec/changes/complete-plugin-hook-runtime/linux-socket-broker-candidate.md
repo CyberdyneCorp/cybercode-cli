@@ -64,21 +64,32 @@ denial in the otherwise identical candidate. It must fail the actual TCP token
 exchange assertion. A missing server capability therefore cannot count as this
 candidate's successful confinement/compatibility result.
 
+The next real-notification case creates a pthread that detaches its file table
+using close_range with CLOSE_RANGE_UNSHARE. Its leader retains a UNIX socket at
+the same descriptor number where that worker installs an IP server. The worker
+must perform a full TCP token exchange through the broker; after joining, the
+leader must still see its original UNIX object. This covers the broker's real
+thread selection, beyond the earlier standalone prerequisite fixture. A copied
+control removes PIDFD_THREAD and must fail this assertion while the ordinary
+single-thread TCP exchange still succeeds. Descriptor/address mutation during
+an already admitted operation and cancellation/saturation cases remain open.
+
 The kernel's [seccomp notification documentation](https://docs.kernel.org/userspace-api/seccomp_filter.html)
 requires copied tracee arguments to avoid policy decisions on mutable memory.
 This experiment additionally pins the actual socket object and emulates the
 operation instead of using CONTINUE. Native checks must establish its behavior;
 source review and successful compilation are insufficient acceptance evidence.
 
-Local verification on macOS: all five builder modes produce their expected
+Local verification on macOS: builder modes produce their expected
 temporary source transformations without changing production native source
 hashes; this check intercepts the compiler and does not compile Linux C. The
 Rust diagnostic example passes Clippy with Rust warnings denied. Workflow YAML,
-ten shell blocks and embedded Python parse; formatting/diff checks, all 107
+shell blocks and embedded Python parse; formatting/diff checks, all 107
 strict OpenSpec items and spec lint (zero errors, 25 warnings) pass. The native C
 SDK build emits two Seatbelt deprecation warnings. Linux candidate compilation,
-kernel behavior, the positive TCP cases, missing-bind control and runtime matrix
-remain unverified until the corresponding hosted x64/arm64 jobs complete.
+kernel behavior for each revision requires corresponding hosted x64/arm64 jobs.
+The new thread-specific case/control and corrected runtime report label still
+require fresh hosted results; earlier receipts below cannot prove those changes.
 
 Scoped source/security review rejected the nested-listener design, corrected a
 potential second signal after guest reaping, drains worker replies before
@@ -86,3 +97,38 @@ reaping their identities, unblocks the receive-watchdog signal, and ensures the
 child closes bootstrap/listener descriptors before executing target code.
 These source corrections are not native evidence. In particular the unified
 startup decision and adversarial lifetime cases remain explicit review gates.
+
+## First native candidate receipts
+
+[Run 41006793275](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41006793275)
+completed successfully on x64 (job 123903409605) and arm64 (job 123903409514).
+The retained [x64](../../../scripts/probes/plugin-native-entry/evidence/linux-socket-broker-f84c3942/x64/linux-ipc-broker.json)
+and [arm64](../../../scripts/probes/plugin-native-entry/evidence/linux-socket-broker-f84c3942/arm64/linux-ipc-broker.json)
+reports each contain 32 socket cases: 16 direct ambient-endpoint denials and 16
+pair cases requiring private stream-pair communication and an actual IP server/
+client exchange across all four read/write combinations. Forbidden UNIX pair
+bind/listen/reconnect and other pair types remain denied in this candidate.
+Both missing-bind controls fail the named TCP assertion. These are fixture
+messages only, with no ambient service or credential access.
+
+Merge checkout `23eb5e490ffbc9733bac39d187e9d10c680ca05e` binds source SHA-256
+`fdbae19e0c20cc4b0035f7f2399284260eb896f3be2da6b219f5174d74720f22`.
+It was independently recomputed from that checkout before retaining the reports.
+The recorded helper hashes are x64
+`4ee0a18077a90e3dc2db1a990ba8bc52b7a3a380e89dec2ea550f1d7b9abe179`
+and arm64 `c3f587c520b222abb506e026074fa980a8992eb20bcf039fa2d808adbd50624d`.
+Each architecture's five adjacent runtime JSON reports contain nine cases per
+runtime (including its unconfined control), with no unsupported cases. Their
+input/executed-helper hashes match that architecture's socket report. The runtime
+source manifest hash `07a4cdbfba834bb2c367745240a1cfd924a279954692ba796c48b59b629b011a`
+was also independently recomputed. All report kernel `7.0.0-1017-azure`.
+
+The retained runtime reports are unmodified originals. Their shared driver's
+static mechanism label incorrectly says the listener is closed; that statement
+describes the exec-only launcher and is not evidence about this broker. Here the
+listener stays live for socket operations and startup authority is a consumed
+parent budget. The next workflow passes an explicit socket-broker reporting flag
+to label that mechanism accurately. Source/binary bindings and observed cases
+support only the specific tested candidate, not that inaccurate label or the
+unperformed adversarial cases. Production admission and support/design review
+remain open.

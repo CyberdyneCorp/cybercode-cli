@@ -33,10 +33,13 @@ scratch through asynchronous cleanup and unconfirmed waits while revoking its
 proxy. Native containment, staging ancestry, quarantine and generation/retry
 fencing still gate complete host lifetime acceptance.
 
-The next compatible Linux IPC investigation starts with [descriptor-pinning
+The compatible Linux IPC investigation includes [descriptor-pinning
 prerequisites](linux-pidfd-proof.md), including independent thread file tables,
 descriptor-number replacement, copied arguments and actual private TCP exchange.
-This experiment changes no production policy or accepted support floor.
+The [broker candidate](linux-socket-broker-candidate.md) has source-bound initial
+socket/runtime receipts on x64 and arm64; its real thread-local descriptor case
+and precise missing-thread control still require fresh native execution. These
+experiments change no production policy or accepted support floor.
 
 ## 3. Host contribution lifecycle
 
