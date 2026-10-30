@@ -7,6 +7,7 @@ on:
       - crates/cyber-sandbox/tests/fixtures/plugin_unix_socket.c
       - crates/cyber-sandbox/tests/fixtures/plugin_socket_cancel.h
       - crates/cyber-sandbox/tests/fixtures/plugin_socket_mutation.h
+      - crates/cyber-sandbox/tests/fixtures/plugin_process_escape.h
       - crates/cyber-sandbox/examples/support/plugin_socket_cancel.rs
       - crates/cyber-sandbox/native/**
       - crates/cyber-sandbox/src/plugin_policy.rs
@@ -101,6 +102,7 @@ jobs:
           target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker" "$RUNNER_TEMP/linux-ipc-broker.json" --broker
           target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker-audit" "$RUNNER_TEMP/linux-ipc-broker-cancel.json" --broker-cancel
           target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker-mutation" "$RUNNER_TEMP/linux-ipc-broker-mutation.json" --broker-mutation
+          target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker" "$RUNNER_TEMP/linux-ipc-broker-escape.json" --broker-escape
       - name: Reject blanket bind denial as broker acceptance
         shell: bash
         run: |
@@ -170,6 +172,22 @@ jobs:
               assert '"bound_original":false' in text, text
           PY
           done
+      - name: Reject missing private PID namespace settlement
+        shell: bash
+        run: |
+          set -euo pipefail
+          if target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker" "$RUNNER_TEMP/linux-ipc-broker-escape-control.json" --broker-escape-no-pid > "$RUNNER_TEMP/broker-no-pid.log" 2>&1; then
+            echo 'Missing private PID namespace unexpectedly settled the escaped descendant' >&2
+            exit 1
+          fi
+          python3 - "$RUNNER_TEMP/broker-no-pid.log" <<'PY'
+          from pathlib import Path
+          import sys
+          text = Path(sys.argv[1]).read_text()
+          assert 'escaped descendant retained stdout after namespace owner exited' in text, text
+          for token in ['"escaped_session":true', '"controlled_stdin":true', '"stdout_closed_before_cleanup":false', '"owner_exited_before_cleanup":true']:
+              assert token in text, text
+          PY
       - name: Record pathname policy kernel availability
         id: abi
         shell: bash
@@ -281,5 +299,6 @@ jobs:
             ${{ runner.temp }}/broker-no-thread.log
             ${{ runner.temp }}/broker-no-cancel.log
             ${{ runner.temp }}/broker-mutation-*.log
+            ${{ runner.temp }}/broker-no-pid.log
           if-no-files-found: warn
           retention-days: 14

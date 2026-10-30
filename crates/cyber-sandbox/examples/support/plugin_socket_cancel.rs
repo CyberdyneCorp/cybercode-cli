@@ -11,17 +11,20 @@ enum Message {
     Stdout(String),
     Stderr(String),
     Fault(String),
+    Eof(bool),
 }
 #[derive(Clone, Copy)]
 enum Case {
     Cancellation,
     Mutation,
+    Escape,
 }
 impl Case {
     fn argument(self) -> &'static str {
         match self {
             Self::Cancellation => "cancel",
             Self::Mutation => "mutation",
+            Self::Escape => "escape",
         }
     }
 }
@@ -36,7 +39,10 @@ fn reader(
         for _ in 0..128 {
             let mut bytes = Vec::new();
             match (&mut input).take(2049).read_until(b'\n', &mut bytes) {
-                Ok(0) => return,
+                Ok(0) => {
+                    let _ = tx.send(Message::Eof(stdout));
+                    return;
+                }
                 Ok(_) if bytes.len() <= 2048 && bytes.ends_with(b"\n") => {}
                 result => {
                     let _ = tx.send(Message::Fault(format!(
@@ -71,6 +77,9 @@ struct Trace {
     started: BTreeSet<u32>,
     reaped: BTreeSet<u32>,
     audit: Vec<String>,
+    stdout_closed: bool,
+    closed_before_cleanup: Option<bool>,
+    owner_exited_before_cleanup: Option<bool>,
 }
 impl Trace {
     fn record(&mut self, message: Message) -> Result<(), String> {
@@ -78,12 +87,16 @@ impl Trace {
             Message::Stdout(line) => self.output(&line),
             Message::Stderr(line) => self.event(&line),
             Message::Fault(error) => Err(error),
+            Message::Eof(stdout) => {
+                self.stdout_closed |= stdout;
+                Ok(())
+            }
         }
     }
     fn output(&mut self, line: &str) -> Result<(), String> {
         let value: Value = serde_json::from_str(line).map_err(|e| e.to_string())?;
         let slot = match value["phase"].as_str() {
-            Some("cancel-ready" | "mutation-ready") => &mut self.ready,
+            Some("cancel-ready" | "mutation-ready" | "escape-ready") => &mut self.ready,
             Some("cancel-finished" | "mutation-finished") => &mut self.finished,
             _ => return Err(format!("unexpected fixture phase: {value}")),
         };
@@ -122,6 +135,9 @@ impl Trace {
         Ok(())
     }
     fn can_release(&self, case: Case) -> bool {
+        if matches!(case, Case::Escape) {
+            return false;
+        }
         if matches!(case, Case::Mutation) {
             let Some(tid) = self.pinned else {
                 return false;
@@ -142,12 +158,14 @@ impl Trace {
     }
     fn report(&self) -> Value {
         json!({"ready":self.ready,"finished":self.finished,"cancelled_pid":self.cancelled,
-            "pinned_tid":self.pinned,"started":self.started,"reaped":self.reaped,"audit":self.audit})
+            "pinned_tid":self.pinned,"started":self.started,"reaped":self.reaped,"audit":self.audit,
+            "stdout_closed_before_cleanup":self.closed_before_cleanup,"owner_exited_before_cleanup":self.owner_exited_before_cleanup})
     }
     fn verify(&self, case: Case, released: bool, status: ExitStatus) {
         match case {
             Case::Cancellation => self.verify_cancel(released, status),
             Case::Mutation => self.verify_mutation(released, status),
+            Case::Escape => self.verify_escape(status),
         }
     }
     fn verify_cancel(&self, released: bool, status: ExitStatus) {
@@ -194,6 +212,49 @@ impl Trace {
             self.report()
         );
     }
+    fn verify_escape(&self, status: ExitStatus) {
+        assert_eq!(
+            self.ready.as_ref().expect("missing descendant receipt")["controlled_stdin"],
+            true,
+            "fixture stdin was not the controlled blocking pipe"
+        );
+        assert_eq!(
+            self.ready.as_ref().expect("missing descendant receipt")["escaped_session"],
+            true,
+            "fixture did not escape its original process group"
+        );
+        assert!(
+            status.success() && self.owner_exited_before_cleanup == Some(true),
+            "namespace owner did not finish after plugin leader exit: {}",
+            self.report()
+        );
+        assert!(
+            self.closed_before_cleanup == Some(true),
+            "escaped descendant retained stdout after namespace owner exited: {}",
+            self.report()
+        );
+    }
+}
+
+fn settled(
+    child: &mut Child,
+    trace: &Trace,
+    case: Case,
+    exit: &mut Option<(ExitStatus, Instant)>,
+) -> Result<Option<ExitStatus>, String> {
+    if exit.is_none()
+        && let Some(status) = child.try_wait().map_err(|e| e.to_string())?
+    {
+        *exit = Some((status, Instant::now()));
+    }
+    let Some((status, at)) = exit.as_ref() else {
+        return Ok(None);
+    };
+    let complete = match case {
+        Case::Escape => trace.stdout_closed || at.elapsed() >= Duration::from_secs(10),
+        _ => true,
+    };
+    Ok(complete.then_some(*status))
 }
 
 fn drive(
@@ -205,6 +266,7 @@ fn drive(
     case: Case,
 ) -> Result<Option<ExitStatus>, String> {
     let deadline = Instant::now() + Duration::from_secs(30);
+    let mut exit = None;
     while Instant::now() < deadline {
         if let Ok(message) = rx.recv_timeout(Duration::from_millis(30)) {
             trace.record(message)?;
@@ -217,7 +279,7 @@ fn drive(
                 .map_err(|e| e.to_string())?;
             *released = true;
         }
-        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+        if let Some(status) = settled(child, trace, case, &mut exit)? {
             return Ok(Some(status));
         }
         std::thread::sleep(Duration::from_millis(1));
@@ -226,12 +288,15 @@ fn drive(
 }
 
 pub fn observe(policy: &LinuxPolicy<'_>) -> Value {
-    observe_case(policy, Case::Cancellation)
+    observe_case(policy, Case::Cancellation, true)
 }
 pub fn observe_mutation(policy: &LinuxPolicy<'_>) -> Value {
-    observe_case(policy, Case::Mutation)
+    observe_case(policy, Case::Mutation, true)
 }
-fn observe_case(policy: &LinuxPolicy<'_>, case: Case) -> Value {
+pub fn observe_escape(policy: &LinuxPolicy<'_>, private_pid: bool) -> Value {
+    observe_case(policy, Case::Escape, private_pid)
+}
+fn observe_case(policy: &LinuxPolicy<'_>, case: Case, private_pid: bool) -> Value {
     let args = [
         policy.target_args[0].clone(),
         policy.target_args[1].clone(),
@@ -239,9 +304,30 @@ fn observe_case(policy: &LinuxPolicy<'_>, case: Case) -> Value {
     ];
     let policy = LinuxPolicy {
         target_args: &args,
+        shell: matches!(case, Case::Escape) || policy.shell,
         ..*policy
     };
-    let plan = policy.compose().unwrap();
+    let mut plan = policy.compose().unwrap();
+    if !private_pid {
+        assert_eq!(
+            plan.arguments
+                .iter()
+                .filter(|arg| *arg == "--unshare-pid")
+                .count(),
+            1
+        );
+        plan.arguments.retain(|arg| arg != "--unshare-pid");
+        let proc = plan
+            .arguments
+            .iter()
+            .position(|arg| arg == "--proc")
+            .unwrap();
+        assert_eq!(plan.arguments[proc + 1], "/proc");
+        plan.arguments.splice(
+            proc..proc + 2,
+            ["--ro-bind".into(), "/proc".into(), "/proc".into()],
+        );
+    }
     std::fs::write(policy.profile, plan.landlock).unwrap();
     let mut child = Command::new("/usr/bin/bwrap")
         .args(plan.arguments)
@@ -259,6 +345,11 @@ fn observe_case(policy: &LinuxPolicy<'_>, case: Case) -> Value {
     let mut trace = Trace::default();
     let mut released = false;
     let outcome = drive(&mut child, &mut input, &rx, &mut trace, &mut released, case);
+    if matches!(case, Case::Escape) {
+        trace.closed_before_cleanup = Some(trace.stdout_closed);
+        trace.owner_exited_before_cleanup =
+            Some(outcome.as_ref().is_ok_and(|status| status.is_some()));
+    }
     // This single owner is the only waiter. An unreaped bwrap child retains its
     // identity; terminating its private PID namespace settles the owned fixture
     // before any assertion, including the intentionally missing-cancel control.

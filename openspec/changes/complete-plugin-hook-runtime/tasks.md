@@ -39,7 +39,8 @@ descriptor-number replacement, copied arguments and actual private TCP exchange.
 The [broker candidate](linux-socket-broker-candidate.md) has source-bound initial
 socket/runtime and real thread-local descriptor receipts on x64 and arm64, with
 the precise missing-thread control. Its [cancellation case and control](linux-socket-broker-cancellation.md)
-also have source-bound native receipts. Its [post-inspection mutation case and controls](linux-socket-broker-mutation.md)
+also have source-bound native receipts, as do the [post-inspection mutation case and controls](linux-socket-broker-mutation.md).
+Its [escaped-descendant namespace case and control](linux-plugin-descendant-proof.md)
 still require fresh native execution. These
 experiments change no production policy or accepted support floor.
 

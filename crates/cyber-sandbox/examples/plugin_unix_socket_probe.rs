@@ -69,20 +69,38 @@ mod probe {
         Broker,
         BrokerCancel,
         BrokerMutation,
+        BrokerEscape,
+        BrokerEscapeNoPid,
         Unix9,
     }
     impl Mode {
         fn ip_servers(self) -> bool {
             matches!(
                 self,
-                Self::Unix9 | Self::Broker | Self::BrokerCancel | Self::BrokerMutation
+                Self::Unix9
+                    | Self::Broker
+                    | Self::BrokerCancel
+                    | Self::BrokerMutation
+                    | Self::BrokerEscape
+                    | Self::BrokerEscapeNoPid
             )
         }
         fn broker(self) -> bool {
             matches!(
                 self,
-                Self::Broker | Self::BrokerCancel | Self::BrokerMutation
+                Self::Broker
+                    | Self::BrokerCancel
+                    | Self::BrokerMutation
+                    | Self::BrokerEscape
+                    | Self::BrokerEscapeNoPid
             )
+        }
+        fn escape(self) -> Option<bool> {
+            match self {
+                Self::BrokerEscape => Some(true),
+                Self::BrokerEscapeNoPid => Some(false),
+                _ => None,
+            }
         }
     }
 
@@ -172,6 +190,13 @@ mod probe {
         mode: Mode,
     ) -> Vec<Value> {
         let mut rows = Vec::new();
+        if let Some(private_pid) = mode.escape()
+            && label == "outside"
+        {
+            let observed = super::cancellation::observe_escape(&policy, private_pid);
+            rows.push(json!({"mode":"escape","socket":label,"fs_read":policy.fs_read,
+                "fs_write":policy.fs_write,"shell":true,"private_pid_namespace":private_pid,"observed":observed}));
+        }
         if mode == Mode::BrokerMutation && label == "outside" {
             let observed = super::cancellation::observe_mutation(&policy);
             rows.push(
@@ -207,6 +232,8 @@ mod probe {
             Some("--broker") => Mode::Broker,
             Some("--broker-cancel") => Mode::BrokerCancel,
             Some("--broker-mutation") => Mode::BrokerMutation,
+            Some("--broker-escape") => Mode::BrokerEscape,
+            Some("--broker-escape-no-pid") => Mode::BrokerEscapeNoPid,
             Some("--landlock9") => Mode::Unix9,
             _ => panic!("unknown candidate mode"),
         };
@@ -318,6 +345,7 @@ mod probe {
             "crates/cyber-sandbox/tests/fixtures/plugin_unix_socket.c",
             "crates/cyber-sandbox/tests/fixtures/plugin_socket_cancel.h",
             "crates/cyber-sandbox/tests/fixtures/plugin_socket_mutation.h",
+            "crates/cyber-sandbox/tests/fixtures/plugin_process_escape.h",
             "crates/cyber-sandbox/examples/support/plugin_socket_cancel.rs",
             "crates/cyber-sandbox/src/plugin_policy.rs",
             "crates/cyber-sandbox/src/plugin_policy/linux.rs",
@@ -345,7 +373,7 @@ mod probe {
         }
         let report = json!({"platform": std::env::consts::OS, "architecture": std::env::consts::ARCH,
             "checkout": std::env::var("GITHUB_SHA").ok(), "run_id": std::env::var("GITHUB_RUN_ID").ok(),
-            "candidate": candidate, "landlock9": mode == Mode::Unix9, "socket_broker": mode.broker(), "cancellation_probe": mode == Mode::BrokerCancel, "mutation_probe": mode == Mode::BrokerMutation, "sources": sources, "source_sha256": format!("{:x}", hash.finalize()),
+            "candidate": candidate, "landlock9": mode == Mode::Unix9, "socket_broker": mode.broker(), "cancellation_probe": mode == Mode::BrokerCancel, "mutation_probe": mode == Mode::BrokerMutation, "escape_probe": mode.escape(), "sources": sources, "source_sha256": format!("{:x}", hash.finalize()),
             "helper_sha256": format!("{:x}", Sha256::digest(std::fs::read(helper).unwrap())),
             "rows": rows, "scope": "Fixture-owned UNIX reachability and candidate private IP exchange only. Experimental syscall broker when selected; no ambient service contact or production capability acceptance."});
         std::fs::write(
