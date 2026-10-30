@@ -146,8 +146,35 @@ jobs:
           # matching-identity counterexamples and descriptor isolation.
           # The historical re-signing experiment remains an opt-in diagnostic;
           # its failed startup control is never counted as confinement.
-          node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime native --macos-signing-native --report "$RUNNER_TEMP/matrix.json" > "$RUNNER_TEMP/matrix.log" 2>&1
+          node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime native --macos-signing-native --macos-private-unix --report "$RUNNER_TEMP/matrix.json" > "$RUNNER_TEMP/matrix.log" 2>&1
           node --experimental-strip-types scripts/probes/plugin-confinement/macos_signing_exec.mts --report "$RUNNER_TEMP/exec.json" > "$RUNNER_TEMP/exec.log" 2>&1
+      - name: Reject missing scratch UNIX policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          control="$RUNNER_TEMP/macos-private-unix-missing-grant"
+          python3 - "$control" <<'PYCONTROL'
+          from pathlib import Path
+          import shutil, sys
+          target = Path(sys.argv[1])
+          shutil.copytree('scripts/probes/plugin-confinement', target, ignore=shutil.ignore_patterns('evidence', '__pycache__'))
+          driver = target / 'run.mts'
+          text = driver.read_text()
+          before = '  if (privateUnix) {'
+          assert text.count(before) == 1
+          driver.write_text(text.replace(before, '  if (false) { // Missing scratch UNIX grant control.'))
+          PYCONTROL
+          log="$RUNNER_TEMP/private-unix-missing-grant.log"
+          if node --experimental-strip-types "$control/run.mts" --runtime native --macos-signing-native --macos-private-unix --report "$control/result.json" > "$log" 2>&1; then
+            echo 'Missing private UNIX policy unexpectedly passed' >&2
+            exit 1
+          fi
+          python3 - "$log" <<'PYCONTROL'
+          from pathlib import Path
+          import sys
+          text = Path(sys.argv[1]).read_text()
+          assert 'no-capabilities: private UNIX runtime exchange failed: [false,false]' in text, text
+          PYCONTROL
       - name: Retain signing-identity candidate evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -156,6 +183,7 @@ jobs:
           path: |
             ${{ runner.temp }}/matrix.json
             ${{ runner.temp }}/matrix.log
+            ${{ runner.temp }}/private-unix-missing-grant.log
             ${{ runner.temp }}/exec.json
             ${{ runner.temp }}/exec.log
           if-no-files-found: error
@@ -197,7 +225,7 @@ jobs:
           if [[ "$runtime" == python-system ]]; then
             runtime=python
           fi
-          args=(--runtime "$runtime" --macos-signing-runtime --report "$RUNNER_TEMP/proof.json")
+          args=(--runtime "$runtime" --macos-signing-runtime --macos-private-unix --report "$RUNNER_TEMP/proof.json")
           if [[ "$PROOF_RUNTIME" == python ]]; then
             args+=(--python "$(command -v python3)")
           elif [[ "$PROOF_RUNTIME" == python-system ]]; then

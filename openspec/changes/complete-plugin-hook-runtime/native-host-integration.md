@@ -124,6 +124,8 @@ App's legacy launch path does not implement this sequence today.
   The [kernel peer identity diagnostic](linux-private-peer-identity.md) separately
   checks the listener's view of a broker-emulated caller; data exchange alone
   cannot establish that compatibility.
+  Independent [macOS private runtime exchanges](macos-private-runtime-ipc.md)
+  extend the pre-runtime signing candidate while the Linux revision awaits review.
 - [ ] N3 Implement registry-owned generation admission and immutable resource
   binding with actual production startup, revocation and quarantine tests.
 - [ ] N4 Integrate the native launch owner and independently intersect all

@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 type Runtime = { kind: "python" | "node" | "bun" | "deno" | "native"; executable: string; prefix: string; include: string; libdir: string; library?: string; version: string };
-type Artifacts = { executable: string; addon?: string; landlock?: string; initialExec: boolean; stagedPlatform?: boolean; signingIdentifier?: string; trace?: string; packaged?: boolean; unixScratch?: boolean; privateStream?: boolean };
+type Artifacts = { executable: string; addon?: string; landlock?: string; initialExec: boolean; stagedPlatform?: boolean; signingIdentifier?: string; trace?: string; packaged?: boolean; unixScratch?: boolean; privateUnix?: boolean };
 type Flags = { read: boolean; write: boolean; shell: boolean; unrestricted?: boolean };
 type Observation = Record<string, boolean | null | boolean[]>;
 const source = dirname(fileURLToPath(import.meta.url));
@@ -125,7 +125,7 @@ function build(root: string, runtime: Runtime, initialExec: boolean, signingRunt
   return { executable, landlock, initialExec };
 }
 
-function policy(runtime: Runtime, paths: Record<string, string>, flags: Flags, stagedPlatform = false, signingIdentifier?: string): string {
+function policy(runtime: Runtime, paths: Record<string, string>, flags: Flags, stagedPlatform = false, signingIdentifier?: string, privateUnix = false): string {
   const allow = (operation: string, path: string) => `(allow ${operation} (subpath ${JSON.stringify(path)}))`;
   // The child runtime requires directory-data access to the root object itself.
   // A literal root rule does not grant reads of descendant files/directories.
@@ -146,6 +146,10 @@ function policy(runtime: Runtime, paths: Record<string, string>, flags: Flags, s
   }
   if (runtime.kind === "native") lines.push(`(allow file-read* file-map-executable (literal ${JSON.stringify(runtime.executable)}))`);
   lines.push(allow("file-write*", paths.scratch));
+  if (privateUnix) {
+    lines.push(`(allow network-inbound (local unix-socket (subpath ${JSON.stringify(paths.scratch)})))`);
+    lines.push(`(allow network-outbound (remote unix-socket (subpath ${JSON.stringify(paths.scratch)})))`);
+  }
   if (flags.read) lines.push(allow("file-read*", paths.project));
   if (flags.write) lines.push(allow("file-write*", paths.project));
   for (const path of [paths.private, paths.protected]) {
@@ -229,7 +233,7 @@ function observe(artifacts: Artifacts, runtime: Runtime, paths: Record<string, s
   const workerAddon = join(paths.package, "native.node");
   if (artifacts.addon) copyFileSync(artifacts.addon, workerAddon);
   const identity = statSync(join(paths.private, "data"), { bigint: true });
-  const input = { kind: runtime.kind, initial_exec: artifacts.initialExec, private_stream: !!artifacts.privateStream, platform: process.platform, runtime: runtime.executable, addon: workerAddon, private_dev: identity.dev.toString(), private_ino: identity.ino.toString(), python: runtime.executable, mode, confined: profile !== "-", package_file: join(paths.package, "data"),
+  const input = { kind: runtime.kind, initial_exec: artifacts.initialExec, private_stream: !!artifacts.privateUnix, platform: process.platform, runtime: runtime.executable, addon: workerAddon, private_dev: identity.dev.toString(), private_ino: identity.ino.toString(), python: runtime.executable, mode, confined: profile !== "-", package_file: join(paths.package, "data"),
     project_file: join(paths.project, "data"), private_file: join(paths.private, "data"),
     scratch_file: join(paths.scratch, "roundtrip"), project_write: join(paths.project, "written"),
     symlink_private: join(paths.package, "escape"), protected_file: join(paths.protected, "data"),
@@ -271,7 +275,7 @@ function observe(artifacts: Artifacts, runtime: Runtime, paths: Record<string, s
       : { program: artifacts.executable, args };
     const options = { cwd: paths.cwd, env: { ...environment, HOME: paths.scratch, XDG_CONFIG_HOME: join(paths.scratch, "config"), DENO_DIR: join(paths.scratch, "deno-cache"),
           XDG_CACHE_HOME: join(paths.scratch, "cache"), BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(paths.scratch, "bun-cache"),
-          ...runtime.kind === "native" ? { CYBER_PROOF_PRIVATE: input.private_file, CYBER_PROOF_PRIVATE_STREAM: artifacts.privateStream ? "1" : "0" } : {} },
+          ...runtime.kind === "native" ? { CYBER_PROOF_PRIVATE: input.private_file, CYBER_PROOF_PRIVATE_STREAM: artifacts.privateUnix ? "1" : "0" } : {} },
         ...mode === "inspect" ? { input: JSON.stringify({ jsonrpc: "2.0", id: "native-proof", method: "tool/execute", params: { name: "native-probe", input: {} } }) + "\n" } : {},
         stdio: [mode === "inspect" ? "pipe" : "ignore", "pipe", "pipe", "ignore", "ignore", "ignore", "ignore", "ignore", "ignore", inherited] };
     let stdout: string;
@@ -322,10 +326,10 @@ function check(root: string, artifacts: Artifacts, runtime: Runtime, name: strin
   const paths = fixture(directory);
   paths.cwd = flags.read ? paths.project : paths.scratch;
   const profile = flags.unrestricted ? "-" : join(directory, "policy.sb");
-  if (!flags.unrestricted) writeFileSync(profile, isLinux ? `shell=${flags.shell ? 1 : 0}\n` : policy(runtime, paths, flags, artifacts.stagedPlatform, artifacts.signingIdentifier), { mode: 0o600 });
+  if (!flags.unrestricted) writeFileSync(profile, isLinux ? `shell=${flags.shell ? 1 : 0}\n` : policy(runtime, paths, flags, artifacts.stagedPlatform, artifacts.signingIdentifier, artifacts.privateUnix), { mode: 0o600 });
   const actual = observe(artifacts, runtime, paths, profile, "inspect", flags);
   const expectations = expected(flags);
-  if (artifacts.privateStream) {
+  if (artifacts.privateUnix) {
     expectations.private_unix = [true, true];
     assert.deepEqual(actual.private_unix, [true, true],
       `${name}: private UNIX runtime exchange failed: ${JSON.stringify(actual.private_unix)}`);
@@ -369,7 +373,7 @@ function check(root: string, artifacts: Artifacts, runtime: Runtime, name: strin
 
 function main() {
   assert(["darwin", "linux"].includes(process.platform), "native proof requires macOS or Linux; other platforms are unproved");
-  const { values } = parseArgs({ options: { runtime: { type: "string", default: "python" }, "packaged-helper": { type: "string" }, python: { type: "string" }, executable: { type: "string" }, report: { type: "string" }, trace: { type: "string" }, "initial-exec": { type: "boolean", default: false }, "unix-scratch-policy": { type: "boolean", default: false }, "socket-broker": { type: "boolean", default: false }, "broker-private-stream": { type: "boolean", default: false }, "macos-staged-native": { type: "boolean", default: false }, "macos-signing-native": { type: "boolean", default: false }, "macos-signing-runtime": { type: "boolean", default: false } } });
+  const { values } = parseArgs({ options: { runtime: { type: "string", default: "python" }, "packaged-helper": { type: "string" }, python: { type: "string" }, executable: { type: "string" }, report: { type: "string" }, trace: { type: "string" }, "initial-exec": { type: "boolean", default: false }, "unix-scratch-policy": { type: "boolean", default: false }, "socket-broker": { type: "boolean", default: false }, "broker-private-stream": { type: "boolean", default: false }, "macos-staged-native": { type: "boolean", default: false }, "macos-signing-native": { type: "boolean", default: false }, "macos-signing-runtime": { type: "boolean", default: false }, "macos-private-unix": { type: "boolean", default: false } } });
   assert(["python", "node", "bun", "deno", "native"].includes(values.runtime), "runtime must be python, node, bun, deno or native");
   if (values.runtime === "bun" || values.runtime === "deno") assert(values.executable, "supply an explicit trusted Bun/Deno executable");
   const stagedPlatform = values["macos-staged-native"];
@@ -378,6 +382,7 @@ function main() {
   assert(!signingNative || (!isLinux && values.runtime === "native" && !stagedPlatform), "macos-signing-native requires macOS native runtime without staging");
   const signingRuntime = signingNative || values["macos-signing-runtime"];
   assert(!signingRuntime || (!isLinux && !stagedPlatform), "macos-signing-runtime requires macOS without staging");
+  assert(!values["macos-private-unix"] || (!isLinux && signingRuntime), "macOS private UNIX proof requires the pre-runtime signing candidate");
   const packagedHelper = values["packaged-helper"];
   if (packagedHelper) {
     assert(isAbsolute(packagedHelper), "packaged helper must be absolute");
@@ -389,7 +394,10 @@ function main() {
   assert(!values["unix-scratch-policy"] || (isLinux && initialExec && packagedHelper), "unix scratch experiment requires a Linux packaged initial-exec helper");
   assert(!values["socket-broker"] || (isLinux && initialExec && packagedHelper && !values["unix-scratch-policy"]), "socket broker experiment requires a Linux packaged initial-exec helper without the UNIX-9 alternative");
   assert(!values["broker-private-stream"] || values["socket-broker"], "private stream candidate requires the socket-broker reporting mode");
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "cyber-plugin-native-proof-")));
+  // Darwin's 104-byte sun_path cannot hold the long per-user TMPDIR plus
+  // capability case names. Retain an owned 0700 root under canonical /tmp.
+  const temporary = values["macos-private-unix"] ? realpathSync("/tmp") : tmpdir();
+  const root = realpathSync(mkdtempSync(join(temporary, "cyber-plugin-native-proof-")));
   try {
     const runtime: Runtime = values.runtime === "node" ? nodeInfo() : values.runtime === "bun" || values.runtime === "deno"
       ? javascriptInfo(values.runtime, values.executable!, root) : values.runtime === "native"
@@ -403,7 +411,7 @@ function main() {
     // Literal exec admission must name the same physical executable the kernel
     // resolves, including framework Python's executable symlinks.
     if (signingRuntime && runtime.kind !== "native") runtime.executable = realpathSync(runtime.executable);
-    const artifacts: Artifacts = { ...build(root, runtime, initialExec, signingRuntime, packagedHelper), trace: values.trace, packaged: Boolean(packagedHelper), unixScratch: values["unix-scratch-policy"] || values["broker-private-stream"], privateStream: values["broker-private-stream"] };
+    const artifacts: Artifacts = { ...build(root, runtime, initialExec, signingRuntime, packagedHelper), trace: values.trace, packaged: Boolean(packagedHelper), unixScratch: values["unix-scratch-policy"] || values["broker-private-stream"], privateUnix: values["broker-private-stream"] || values["macos-private-unix"] };
     if (signingRuntime) {
       artifacts.signingIdentifier = `com.cyberdyne.probe.bootstrap.${randomUUID()}`;
       command("/usr/bin/codesign", ["--force", "--sign", "-", "--identifier", artifacts.signingIdentifier, "--timestamp=none", artifacts.executable]);
@@ -442,6 +450,7 @@ function main() {
       } : undefined,
       socket_broker_candidate: values["socket-broker"],
       private_stream_candidate: values["broker-private-stream"],
+      macos_private_unix_candidate: values["macos-private-unix"],
       mechanism: values["socket-broker"] ? "experimental descriptor-pinned socket broker with one-use parent startup-exec budget; notification listener remains live for socket operations; immutable inherited filter" : signingRuntime ? "fresh signing identifier on trusted launcher + exact-target Seatbelt exec rule before any runtime instruction; target signature unchanged; experimental subject-identity candidate" : stagedPlatform ? "ad-hoc-staged native image + system platform launcher Seatbelt policy before first target instruction; platform-subject exact-path exec admission" : initialExec ? "bubblewrap private mounts + Landlock/seccomp before first target instruction + one-shot exec admission; closed listener and immutable filter" : isLinux ? "bubblewrap private mounts + Landlock before runtime startup + synchronized seccomp before fixture execution" : "trusted native/runtime bootstrap followed by native sandbox_init before fixture execution",
       limitation: packagedHelper ? "packaged entry with experimental policy composition; production admission, protected ownership, network/secret integration and Windows acceptance remain required" : "experimental native mechanisms; macOS uses deprecated Seatbelt API; not production packaging or Windows acceptance", unsupported_cases, rows };
     if (values.report) writeFileSync(values.report, JSON.stringify(report, null, 2) + "\n", { mode: 0o600 });

@@ -1,0 +1,549 @@
+{
+  "recorded_at": "2026-10-30T17:00:55.822Z",
+  "kernel_release": "25.6.0",
+  "sources": [
+    "run.mts",
+    "macos_python.c",
+    "macos_node.c",
+    "native_exec.c",
+    "node_bootstrap.cjs",
+    "fixture.py",
+    "fixture.cjs",
+    "private_unix.cjs",
+    "process_policy.h",
+    "linux_filter.h",
+    "linux_exec.c",
+    "linux_initial_exec.h",
+    "fixture_native.c",
+    "macos_exec.c",
+    "macos_stage.mts"
+  ],
+  "source_sha256": "819f7e4455d5d9c4803197328ff0bef845803515202711349897af9260789ff7",
+  "platform": "darwin",
+  "architecture": "arm64",
+  "runtime": "native",
+  "version": "fixture-v2",
+  "signing_identifier": "com.cyberdyne.probe.bootstrap.0824ddae-e974-48fc-a63b-b119e046fac5",
+  "packaged_helper": {
+    "input_sha256": "64ee74d21d1ddc470989450014f1e89fa33ab5aec230cd998890df3ec5717225",
+    "executed_sha256": "7ffb48fee46462bb42fa36ff39f3bbbaf8ce23a0f52c69ecb8ff00a3cd6eee75",
+    "private_copy": true,
+    "direct_runtime": true
+  },
+  "socket_broker_candidate": false,
+  "private_stream_candidate": false,
+  "macos_private_unix_candidate": true,
+  "mechanism": "fresh signing identifier on trusted launcher + exact-target Seatbelt exec rule before any runtime instruction; target signature unchanged; experimental subject-identity candidate",
+  "limitation": "packaged entry with experimental policy composition; production admission, protected ownership, network/secret integration and Windows acceptance remain required",
+  "unsupported_cases": [],
+  "rows": [
+    {
+      "name": "unconfined-control",
+      "flags": {
+        "read": true,
+        "write": true,
+        "shell": true,
+        "unrestricted": true
+      },
+      "observations": {
+        "stdio_tool": true,
+        "package_read": true,
+        "scratch_write": true,
+        "scratch_read": true,
+        "project_read": true,
+        "project_list": true,
+        "project_write": true,
+        "written_project_read": true,
+        "private_read": true,
+        "private_list": true,
+        "private_write": true,
+        "protected_read": true,
+        "protected_write": true,
+        "symlink_private_read": true,
+        "hardlink_private": true,
+        "project_rename": true,
+        "inherited_descriptor": true,
+        "thread": true,
+        "package_hardlink": true,
+        "package_alias_write": true,
+        "thread_reads": [
+          true,
+          true
+        ],
+        "thread_shell": true,
+        "shell": true,
+        "native_fork": true,
+        "child_reads": [
+          true,
+          true
+        ],
+        "native_child_reads": [
+          true,
+          true
+        ],
+        "cannot_relax": null,
+        "constructor_private_read": true,
+        "constructor_fork": true,
+        "native_spawn": true,
+        "platform_status_known": true,
+        "platform_before": false,
+        "platform_after_set": false,
+        "private_unix": [
+          true,
+          true
+        ]
+      },
+      "self_exec": true,
+      "constructor_self_exec": true,
+      "constructor_spawn": true
+    },
+    {
+      "name": "no-capabilities",
+      "flags": {
+        "read": false,
+        "write": false,
+        "shell": false
+      },
+      "observations": {
+        "stdio_tool": true,
+        "package_read": true,
+        "scratch_write": true,
+        "scratch_read": true,
+        "project_read": false,
+        "project_list": false,
+        "project_write": false,
+        "written_project_read": false,
+        "private_read": false,
+        "private_list": false,
+        "private_write": false,
+        "protected_read": false,
+        "protected_write": false,
+        "symlink_private_read": false,
+        "hardlink_private": false,
+        "project_rename": false,
+        "inherited_descriptor": false,
+        "thread": true,
+        "package_hardlink": false,
+        "package_alias_write": false,
+        "thread_reads": [
+          false,
+          false
+        ],
+        "thread_shell": false,
+        "shell": false,
+        "native_fork": false,
+        "child_reads": null,
+        "native_child_reads": null,
+        "cannot_relax": true,
+        "constructor_private_read": false,
+        "constructor_fork": false,
+        "native_spawn": false,
+        "platform_status_known": true,
+        "platform_before": false,
+        "platform_after_set": false,
+        "private_unix": [
+          true,
+          true
+        ]
+      },
+      "self_exec": false,
+      "constructor_self_exec": false,
+      "constructor_spawn": false
+    },
+    {
+      "name": "read-only",
+      "flags": {
+        "read": true,
+        "write": false,
+        "shell": false
+      },
+      "observations": {
+        "stdio_tool": true,
+        "package_read": true,
+        "scratch_write": true,
+        "scratch_read": true,
+        "project_read": true,
+        "project_list": true,
+        "project_write": false,
+        "written_project_read": false,
+        "private_read": false,
+        "private_list": false,
+        "private_write": false,
+        "protected_read": false,
+        "protected_write": false,
+        "symlink_private_read": false,
+        "hardlink_private": false,
+        "project_rename": false,
+        "inherited_descriptor": false,
+        "thread": true,
+        "package_hardlink": false,
+        "package_alias_write": false,
+        "thread_reads": [
+          true,
+          false
+        ],
+        "thread_shell": false,
+        "shell": false,
+        "native_fork": false,
+        "child_reads": null,
+        "native_child_reads": null,
+        "cannot_relax": true,
+        "constructor_private_read": false,
+        "constructor_fork": false,
+        "native_spawn": false,
+        "platform_status_known": true,
+        "platform_before": false,
+        "platform_after_set": false,
+        "private_unix": [
+          true,
+          true
+        ]
+      },
+      "self_exec": false,
+      "constructor_self_exec": false,
+      "constructor_spawn": false
+    },
+    {
+      "name": "write-without-read",
+      "flags": {
+        "read": false,
+        "write": true,
+        "shell": false
+      },
+      "observations": {
+        "stdio_tool": true,
+        "package_read": true,
+        "scratch_write": true,
+        "scratch_read": true,
+        "project_read": false,
+        "project_list": false,
+        "project_write": true,
+        "written_project_read": false,
+        "private_read": false,
+        "private_list": false,
+        "private_write": false,
+        "protected_read": false,
+        "protected_write": false,
+        "symlink_private_read": false,
+        "hardlink_private": false,
+        "project_rename": false,
+        "inherited_descriptor": false,
+        "thread": true,
+        "package_hardlink": false,
+        "package_alias_write": false,
+        "thread_reads": [
+          false,
+          false
+        ],
+        "thread_shell": false,
+        "shell": false,
+        "native_fork": false,
+        "child_reads": null,
+        "native_child_reads": null,
+        "cannot_relax": true,
+        "constructor_private_read": false,
+        "constructor_fork": false,
+        "native_spawn": false,
+        "platform_status_known": true,
+        "platform_before": false,
+        "platform_after_set": false,
+        "private_unix": [
+          true,
+          true
+        ]
+      },
+      "self_exec": false,
+      "constructor_self_exec": false,
+      "constructor_spawn": false
+    },
+    {
+      "name": "shell-without-read",
+      "flags": {
+        "read": false,
+        "write": false,
+        "shell": true
+      },
+      "observations": {
+        "stdio_tool": true,
+        "package_read": true,
+        "scratch_write": true,
+        "scratch_read": true,
+        "project_read": false,
+        "project_list": false,
+        "project_write": false,
+        "written_project_read": false,
+        "private_read": false,
+        "private_list": false,
+        "private_write": false,
+        "protected_read": false,
+        "protected_write": false,
+        "symlink_private_read": false,
+        "hardlink_private": false,
+        "project_rename": false,
+        "inherited_descriptor": false,
+        "thread": true,
+        "package_hardlink": false,
+        "package_alias_write": false,
+        "thread_reads": [
+          false,
+          false
+        ],
+        "thread_shell": true,
+        "shell": true,
+        "native_fork": true,
+        "child_reads": [
+          false,
+          false
+        ],
+        "native_child_reads": [
+          false,
+          false
+        ],
+        "cannot_relax": true,
+        "constructor_private_read": false,
+        "constructor_fork": true,
+        "native_spawn": true,
+        "platform_status_known": true,
+        "platform_before": false,
+        "platform_after_set": false,
+        "private_unix": [
+          true,
+          true
+        ]
+      },
+      "self_exec": true,
+      "constructor_self_exec": true,
+      "constructor_spawn": true
+    },
+    {
+      "name": "read-write-without-shell",
+      "flags": {
+        "read": true,
+        "write": true,
+        "shell": false
+      },
+      "observations": {
+        "stdio_tool": true,
+        "package_read": true,
+        "scratch_write": true,
+        "scratch_read": true,
+        "project_read": true,
+        "project_list": true,
+        "project_write": true,
+        "written_project_read": true,
+        "private_read": false,
+        "private_list": false,
+        "private_write": false,
+        "protected_read": false,
+        "protected_write": false,
+        "symlink_private_read": false,
+        "hardlink_private": false,
+        "project_rename": false,
+        "inherited_descriptor": false,
+        "thread": true,
+        "package_hardlink": false,
+        "package_alias_write": false,
+        "thread_reads": [
+          true,
+          false
+        ],
+        "thread_shell": false,
+        "shell": false,
+        "native_fork": false,
+        "child_reads": null,
+        "native_child_reads": null,
+        "cannot_relax": true,
+        "constructor_private_read": false,
+        "constructor_fork": false,
+        "native_spawn": false,
+        "platform_status_known": true,
+        "platform_before": false,
+        "platform_after_set": false,
+        "private_unix": [
+          true,
+          true
+        ]
+      },
+      "self_exec": false,
+      "constructor_self_exec": false,
+      "constructor_spawn": false
+    },
+    {
+      "name": "read-shell-without-write",
+      "flags": {
+        "read": true,
+        "write": false,
+        "shell": true
+      },
+      "observations": {
+        "stdio_tool": true,
+        "package_read": true,
+        "scratch_write": true,
+        "scratch_read": true,
+        "project_read": true,
+        "project_list": true,
+        "project_write": false,
+        "written_project_read": false,
+        "private_read": false,
+        "private_list": false,
+        "private_write": false,
+        "protected_read": false,
+        "protected_write": false,
+        "symlink_private_read": false,
+        "hardlink_private": false,
+        "project_rename": false,
+        "inherited_descriptor": false,
+        "thread": true,
+        "package_hardlink": false,
+        "package_alias_write": false,
+        "thread_reads": [
+          true,
+          false
+        ],
+        "thread_shell": true,
+        "shell": true,
+        "native_fork": true,
+        "child_reads": [
+          true,
+          false
+        ],
+        "native_child_reads": [
+          true,
+          false
+        ],
+        "cannot_relax": true,
+        "constructor_private_read": false,
+        "constructor_fork": true,
+        "native_spawn": true,
+        "platform_status_known": true,
+        "platform_before": false,
+        "platform_after_set": false,
+        "private_unix": [
+          true,
+          true
+        ]
+      },
+      "self_exec": true,
+      "constructor_self_exec": true,
+      "constructor_spawn": true
+    },
+    {
+      "name": "write-shell-without-read",
+      "flags": {
+        "read": false,
+        "write": true,
+        "shell": true
+      },
+      "observations": {
+        "stdio_tool": true,
+        "package_read": true,
+        "scratch_write": true,
+        "scratch_read": true,
+        "project_read": false,
+        "project_list": false,
+        "project_write": true,
+        "written_project_read": false,
+        "private_read": false,
+        "private_list": false,
+        "private_write": false,
+        "protected_read": false,
+        "protected_write": false,
+        "symlink_private_read": false,
+        "hardlink_private": false,
+        "project_rename": false,
+        "inherited_descriptor": false,
+        "thread": true,
+        "package_hardlink": false,
+        "package_alias_write": false,
+        "thread_reads": [
+          false,
+          false
+        ],
+        "thread_shell": true,
+        "shell": true,
+        "native_fork": true,
+        "child_reads": [
+          false,
+          false
+        ],
+        "native_child_reads": [
+          false,
+          false
+        ],
+        "cannot_relax": true,
+        "constructor_private_read": false,
+        "constructor_fork": true,
+        "native_spawn": true,
+        "platform_status_known": true,
+        "platform_before": false,
+        "platform_after_set": false,
+        "private_unix": [
+          true,
+          true
+        ]
+      },
+      "self_exec": true,
+      "constructor_self_exec": true,
+      "constructor_spawn": true
+    },
+    {
+      "name": "declared-read-write-shell",
+      "flags": {
+        "read": true,
+        "write": true,
+        "shell": true
+      },
+      "observations": {
+        "stdio_tool": true,
+        "package_read": true,
+        "scratch_write": true,
+        "scratch_read": true,
+        "project_read": true,
+        "project_list": true,
+        "project_write": true,
+        "written_project_read": true,
+        "private_read": false,
+        "private_list": false,
+        "private_write": false,
+        "protected_read": false,
+        "protected_write": false,
+        "symlink_private_read": false,
+        "hardlink_private": false,
+        "project_rename": false,
+        "inherited_descriptor": false,
+        "thread": true,
+        "package_hardlink": false,
+        "package_alias_write": false,
+        "thread_reads": [
+          true,
+          false
+        ],
+        "thread_shell": true,
+        "shell": true,
+        "native_fork": true,
+        "child_reads": [
+          true,
+          false
+        ],
+        "native_child_reads": [
+          true,
+          false
+        ],
+        "cannot_relax": true,
+        "constructor_private_read": false,
+        "constructor_fork": true,
+        "native_spawn": true,
+        "platform_status_known": true,
+        "platform_before": false,
+        "platform_after_set": false,
+        "private_unix": [
+          true,
+          true
+        ]
+      },
+      "self_exec": true,
+      "constructor_self_exec": true,
+      "constructor_spawn": true
+    }
+  ]
+}

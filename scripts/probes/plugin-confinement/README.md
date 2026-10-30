@@ -69,6 +69,23 @@ sources, and actual observations. A failure exits nonzero and does not produce a
 new success report. Use a fresh report destination or check its timestamp and
 digest before treating an existing report as evidence.
 
+## macOS private UNIX stream candidate
+
+`--macos-private-unix` extends the pre-runtime signing candidate with scratch-only
+UNIX inbound/outbound rules and real absolute/relative socket exchanges in every
+capability row. For example:
+
+```sh
+node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime native --macos-signing-native --macos-private-unix --report /tmp/native-private-unix.json
+```
+
+Use `--macos-signing-runtime` for Node/Python/Bun/Deno and supply the same explicit
+runtime arguments as the existing pre-runtime matrix. This opt-in experiment
+uses an owned short temporary root under canonical `/tmp` to retain a genuine
+absolute-path exchange within Darwin's UNIX address bound. CI includes a precise
+missing-grant control. See the [evidence and remaining acceptance](../../../openspec/changes/complete-plugin-hook-runtime/macos-private-runtime-ipc.md).
+This is not production launch policy or complete private IPC/network acceptance.
+
 ## Boundary and coverage
 
 `macos_python.c` embeds an isolated Python and preloads trusted standard-library
