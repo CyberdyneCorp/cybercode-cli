@@ -87,6 +87,19 @@ async fn epoch_without_a_family_keeps_its_prefix_bytes() {
 /// `system-context` → Base prompt coverage, "Prompt version change".
 #[tokio::test]
 async fn prompt_version_change_starts_a_new_epoch() {
+    epoch_built_with_version_is_replaced(1).await;
+}
+
+/// `system-context` → Untrusted content guidance, "Version bump starts a new epoch": an
+/// epoch built with the prompt before the untrusted-content topic (version 2) is replaced
+/// at the next Turn.
+#[tokio::test]
+async fn untrusted_content_topic_version_bump_starts_a_new_epoch() {
+    assert!(cyber_core::prompts::base_prompt_version() >= 3);
+    epoch_built_with_version_is_replaced(2).await;
+}
+
+async fn epoch_built_with_version_is_replaced(old: u32) {
     use cyber_server::runtime::{ModelFamily, base_prompt};
     let h = Harness::new(Setup {
         scripts: vec![("test/main", vec![text("a"), text("b")])],
@@ -103,12 +116,13 @@ async fn prompt_version_change_starts_a_new_epoch() {
         .find(|f| Some(f.as_str()) == built.family.as_deref())
         .unwrap();
 
-    // The same family, but built with the version 1 prompt.
+    // The same family, but built with an older prompt.
     let seq = h.store.aggregate_seq(&id).unwrap().unwrap();
     h.store.append(&id, cyber_store::Expected::Seq(seq), vec![cyber_store::NewEvent::new(
         "session.context.epoch_started.1", serde_json::json!({
             "epoch":2, "baseline":built.baseline, "snapshot":built.snapshot, "provider":"test",
-            "system_prefix":"Version 1 base prompt.", "family":family.as_str(), "prompt_version":1
+            "system_prefix":format!("Version {old} base prompt."), "family":family.as_str(),
+            "prompt_version":old
         }),
     )]).unwrap();
     let restarted = h.restart();

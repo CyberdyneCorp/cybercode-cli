@@ -57,7 +57,7 @@ fn stream(body: String) -> Response {
 }
 
 const HOOK_SYSTEM: &str = "Judge the supplied hook event";
-const SUMMARY_SYSTEM: &str = "provided web page content";
+const SUMMARY_SYSTEM: &str = "Answer the request using only the web page";
 const CHILD_TASK: &str = "CHILD TASK";
 
 /// What a model call is for: a prompt hook check, a `webfetch` summary, a child

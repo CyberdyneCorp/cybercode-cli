@@ -52,8 +52,10 @@ const fn pattern(kind: SignalKind, pattern: &'static str) -> Rule {
 
 /// Paths and names of secrets.
 const SECRET: &str = r"\.ssh\b|\bid_rsa|\bid_ed25519|(?:^|[\s/~`'(=:])\.env\b|\.aws/credentials|\.npmrc\b|\.netrc\b|\.git-credentials\b|\bapi[ _-]?key|\baccess[ _]token|\bprivate[ _]key|\bpassword";
-/// Verbs that move data somewhere.
-const TRANSFER: &str = r"\b(?:send(?:s|ing)?|sent|upload(?:s|ed|ing)?|post(?:s|ed|ing)?|curl|fetch(?:es|ed|ing)?|e-?mail(?:s|ed|ing)?|paste[sd]?|pasting|include[sd]?|including|append(?: \S+){0,3} to the url)\b";
+/// Verbs that move data somewhere. `email` counts as a verb only when inflected or
+/// followed by an object or `to`, so a login form's `Email` and `Password` fields are
+/// not a hit.
+const TRANSFER: &str = r"\b(?:send(?:s|ing)?|sent|upload(?:s|ed|ing)?|post(?:s|ed|ing)?|curl|fetch(?:es|ed|ing)?|e-?mail(?:ed|ing)|e-?mails? (?:it|them|this|that|the|a|an|your|my|our|us|me|to)|paste[sd]?|pasting|include[sd]?|including|append(?: \S+){0,3} to the url)\b";
 
 /// The v1 table, one or more rules per kind. `hidden_text` runs on the original text.
 pub const RULES: &[Rule] = &[

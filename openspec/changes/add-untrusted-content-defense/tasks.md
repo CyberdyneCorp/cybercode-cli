@@ -64,20 +64,22 @@
 
 - [x] 5.1 Add `permissions.untrusted_content` (`taint`, `bypass`, `scan`, `allow_when_tainted`) to the config schema and loader, with the project-layer tightening rule and one warning per load.
   - Tests: scenario "Project cannot switch taint off", tightening accepted, project `allow_when_tainted` ignored, change applied at the next Safe Boundary.
-- [ ] 5.2 Base prompts: replace the single tool-output sentence in `prompts/base/core.md` with the untrusted-content topic, cover it in every family addendum where tool habits differ, and raise the prompt version.
+- [x] 5.2 Base prompts: replace the single tool-output sentence in `prompts/base/core.md` with the untrusted-content topic, cover it in every family addendum where tool habits differ, and raise the prompt version.
   - Tests: scenario "Prompt covers the frame" for each family, and scenario "Version bump starts a new epoch".
 - [ ] 5.3 Hand the effective `taint` and `bypass` settings to the TUI and the web dashboard, so a notice's consequence follows them instead of the defaults (design D5).
   - Tests: the notice snapshot for a Location with `bypass: "deny"`, and the dashboard line for `taint: "off"`.
 
 ## 6. Evaluation
 
-- [ ] 6.1 Add `eval/fixtures/untrusted-content/`: at least 60 labeled injection samples (at least 5 per kind, across `webfetch`, `websearch`, MCP and repository files) and at least 200 benign samples, including 20 security articles.
+- [x] 6.1 Add `eval/fixtures/untrusted-content/`: at least 60 labeled injection samples (at least 5 per kind, across `webfetch`, `websearch`, MCP and repository files) and at least 200 benign samples, including 20 security articles.
   - A deterministic test reports recall per kind and false-positive rates, and gates on 90% recall and a 2% false-positive rate.
   - Test: scenario "Rule change lowers recall" via a mutated rule table.
-- [ ] 6.2 End-to-end scripted-model scenarios for reading secrets, widening permissions and redirecting provider traffic, in `default`, `auto` (attached and not attached) and `bypass`, linked from the recovery and trust release report.
+  - Done in `cyber-core/tests/untrusted_eval.rs` (61 injection, 212 benign samples). The first run found a 2.1% false-positive rate, one of them a sign-in form whose `Email` field label read as a transfer verb; the v1 table now takes `email` as a verb only when inflected or followed by an object (design D4), giving 98.4% recall and 1.6% false positives.
+- [x] 6.2 End-to-end scripted-model scenarios for reading secrets, widening permissions and redirecting provider traffic, in `default`, `auto` (attached and not attached) and `bypass`, linked from the recovery and trust release report.
   - Test: scenario "Scripted model follows an injected page".
+  - Done in `cyber-tools/tests/untrusted_e2e.rs`, linked as the `injected-page-*` cases of `eval/manifests/recovery-storage.json` (owning requirement `workspace-trust` → Instruction and data provenance, since `untrusted-content` is not archived yet). `bypass` runs with `bypass: "deny"`; the default `allow` is covered by `untrusted_taint.rs`.
 
 ## 7. Docs
 
-- [ ] 7.1 Document the frame, signals, taint, settings and the MCP resource format change in `docs/local-core-guide.md`, `docs/features.md` and the tool schema bundle descriptions. Update `ROADMAP.md` for P1 safety.
-- [ ] 7.2 Run `openspec validate add-untrusted-content-defense --strict` and `python3 scripts/spec_lint.py`.
+- [x] 7.1 Document the frame, signals, taint, settings and the MCP resource format change in `docs/local-core-guide.md`, `docs/features.md` and the tool schema bundle descriptions. Update `ROADMAP.md` for P1 safety.
+- [x] 7.2 Run `openspec validate add-untrusted-content-defense --strict` and `python3 scripts/spec_lint.py`.
