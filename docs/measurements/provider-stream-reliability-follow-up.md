@@ -10,6 +10,8 @@ Before protocol completion, a body failure remains a transport error. Diagnostic
 
 Automatic retry behavior is unchanged: up to four retries before output, none after text, reasoning, streamed tool arguments or a completed call. There is no transparent replay of partially completed work.
 
+Update (2026-10-29, change `retry-interrupted-streams`): this paragraph describes the behaviour measured here. A retryable failure after partial output is now discarded and the request is replayed, within the same four retries, as long as none of the answer's tool calls has been dispatched (see `provider-catalog` → Retry policy). The results below predate that change.
+
 ## Local verification
 
 Six real HTTP fault tests cover completed output followed by broken framing, completed output with a held-open connection, failure before output followed by success, failure after partial output, clean HTTP EOF without protocol completion, and retry exhaustion. The partial-output case checks text, reasoning, incomplete tool arguments and completed calls independently. The initial broken-tail regression fails against the original decoder with the same generic error observed in the pilot; it passes with the fix.

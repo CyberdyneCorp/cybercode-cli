@@ -98,6 +98,10 @@ pub struct SessionInfo {
     /// `None` follows the Location's configuration. Only primary Sessions have one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_style: Option<String>,
+    /// Nobody attends the Session (`cyber exec` creates its Sessions so): a usage limit
+    /// with a known reset waits (`session-runtime` → Usage limit wait).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unattended: bool,
 }
 
 /// One entry of model-visible history. Answers are about half of all entries, so boxing
@@ -543,6 +547,10 @@ pub struct SessionState {
     pub(crate) loop_coalesced: BTreeSet<String>,
     /// The Session's Goals (`goals`), folded from `session.goal.*` events.
     pub goals: super::goals::Goals,
+    /// Usage limit waits (`session-runtime` → Usage limit wait), folded from
+    /// `session.usage_limit.*` and step events.
+    #[serde(skip)]
+    pub(crate) usage_wait: super::usage_wait::UsageWaitState,
     /// Every projected message with its parent; `entries` is its active path.
     #[serde(skip)]
     pub(super) branches: super::branches::BranchTree,
@@ -741,6 +749,7 @@ impl SessionState {
             loops: BTreeMap::new(),
             loop_coalesced: BTreeSet::new(),
             goals: Default::default(),
+            usage_wait: Default::default(),
             branches: Default::default(),
         }
     }
@@ -846,6 +855,9 @@ impl SessionState {
             _ if kind.starts_with("session.goal.") => {
                 super::goals::records::fold(&mut self.goals, e)?;
             }
+            _ if kind.starts_with("session.usage_limit.") => {
+                super::usage_wait::fold(&mut self.usage_wait, e)?;
+            }
             _ if kind.starts_with("messaging.") => {
                 super::messaging::records::fold(
                     &mut self.message_chains,
@@ -948,6 +960,7 @@ impl SessionState {
             "session.tool.settled" => self.on_settled(decode(e)?),
             "session.step.ended" => {
                 self.on_step_ended(decode(e)?, e.time_ms, e.data["usage_accounted"] != true);
+                self.usage_wait.step_ended();
                 self.finished_seq = e.seq;
             }
             "usage.recorded" => {
@@ -966,6 +979,7 @@ impl SessionState {
             }
             "session.step.failed" => {
                 self.on_step_failed(decode(e)?, e.time_ms);
+                self.usage_wait.step_failed(&e.data);
                 self.finished_seq = e.seq;
             }
             _ => self.apply_meta(kind, e)?,

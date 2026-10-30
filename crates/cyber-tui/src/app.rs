@@ -178,6 +178,8 @@ pub enum Action {
     Subtask(String),
     ApproveAuto,
     Compact(Option<String>),
+    /// `/resume-at-reset`: retry the Turn a usage limit failed once it resets.
+    ResumeAtReset,
     FindFiles(String),
     LoadAgents,
     RemoveQueued(String),
@@ -1813,6 +1815,7 @@ impl App {
             "compact" => vec![Action::Compact(
                 (!args.is_empty()).then(|| args.to_string()),
             )],
+            "resume-at-reset" => vec![Action::ResumeAtReset],
             "mode" if MODES.contains(&args) => self.select_mode(args),
             "mode" => {
                 let items = MODES
@@ -2275,6 +2278,13 @@ impl App {
                     .push_str(data["text"].as_str().unwrap_or_default());
                 Vec::new()
             }
+            // `provider-catalog` → Retry policy: the request is replayed from the start.
+            "session.retry" if data["discarded"] == true => {
+                if let Some(id) = data["message_id"].as_str() {
+                    self.streaming.remove(id);
+                }
+                Vec::new()
+            }
             "session.idle" => {
                 self.session.running = false;
                 self.alert(crate::sound::Alert::Done, "cyber: the session is idle");
@@ -2305,7 +2315,11 @@ impl App {
             "session.error" => {
                 let text = format!("error: {}", data["message"].as_str().unwrap_or_default());
                 self.alert(crate::sound::Alert::Error, &format!("cyber: {text}"));
-                self.toast(text);
+                self.toast(crate::usage_wait::error_notice(data, text));
+                vec![Action::Refresh]
+            }
+            k if k.starts_with("session.usage_limit.") => {
+                self.toast(crate::usage_wait::wait_notice(k, data));
                 vec![Action::Refresh]
             }
             k if k.starts_with("session.step.started")

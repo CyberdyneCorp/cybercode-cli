@@ -17,7 +17,14 @@ use crate::types::{LlmEvent, LlmRequest};
 #[allow(clippy::large_enum_variant)]
 pub enum ScriptStep {
     Event(LlmEvent),
-    Error { error: ErrorKind, message: String },
+    Error {
+        error: ErrorKind,
+        message: String,
+    },
+    /// A subscription usage limit that resets at `resets_at` (Unix seconds).
+    UsageLimit {
+        resets_at: i64,
+    },
 }
 
 /// Each `stream` call plays the next turn of the script. A turn whose first step is an
@@ -86,18 +93,28 @@ impl Adapter for ScriptedAdapter {
         Box::pin(async move {
             let turn =
                 turn.ok_or_else(|| LlmError::new(ErrorKind::InvalidRequest, "script exhausted"))?;
-            if let Some(ScriptStep::Error { error, message }) = turn.first() {
-                return Err(LlmError::new(*error, message.clone()));
+            if let Some(step @ (ScriptStep::Error { .. } | ScriptStep::UsageLimit { .. })) =
+                turn.first()
+            {
+                return Err(step_error(step.clone()));
             }
             let items: Vec<Result<LlmEvent, LlmError>> = turn
                 .into_iter()
                 .map(|step| match step {
                     ScriptStep::Event(e) => Ok(e),
-                    ScriptStep::Error { error, message } => Err(LlmError::new(error, message)),
+                    step => Err(step_error(step)),
                 })
                 .collect();
             Ok(stream::iter(items).boxed())
         })
+    }
+}
+
+fn step_error(step: ScriptStep) -> LlmError {
+    match step {
+        ScriptStep::UsageLimit { resets_at } => LlmError::usage_limit(Some(resets_at)),
+        ScriptStep::Error { error, message } => LlmError::new(error, message),
+        ScriptStep::Event(_) => LlmError::new(ErrorKind::InvalidRequest, "not an error step"),
     }
 }
 

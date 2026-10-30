@@ -2310,10 +2310,11 @@ fn read_json_request(stream: &mut std::net::TcpStream) -> Option<serde_json::Val
 }
 
 /// `tool-registry` → Eager execution during streaming through the production App and
-/// its OpenAI-compatible adapter: the first of two streamed calls is durable as soon as
-/// the second one starts, while the provider stream is still open.
+/// its OpenAI-compatible adapter: while the stream is open it may still be replayed
+/// (`provider-catalog` → Retry policy), so a completed call is not durable yet; both calls
+/// are recorded, in order, when the stream completes.
 #[tokio::test]
-async fn openai_compatible_call_is_durable_while_its_stream_is_still_open() {
+async fn openai_compatible_calls_are_recorded_when_their_stream_completes() {
     use cyber_server::runtime::{Admission, CreateSession, Delivery};
     use serde_json::json;
     use std::io::Write;
@@ -2325,7 +2326,8 @@ async fn openai_compatible_call_is_durable_while_its_stream_is_still_open() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/v1", listener.local_addr().unwrap());
     let release = Arc::new(AtomicBool::new(false));
-    let open = release.clone();
+    let streamed = Arc::new(AtomicBool::new(false));
+    let (open, sent) = (release.clone(), streamed.clone());
     let provider = std::thread::spawn(move || {
         let chunk = |delta: serde_json::Value, finish: Option<&str>| {
             format!(
@@ -2365,6 +2367,7 @@ async fn openai_compatible_call_is_durable_while_its_stream_is_still_open() {
                 chunk(read(1, "call_b", "b.txt"), None)
             );
             let _ = stream.flush();
+            sent.store(true, Ordering::SeqCst);
             while !open.load(Ordering::SeqCst) {
                 std::thread::sleep(Duration::from_millis(5));
             }
@@ -2413,19 +2416,19 @@ async fn openai_compatible_call_is_durable_while_its_stream_is_still_open() {
             .map(|e| e.data["call_id"].as_str().unwrap().to_owned())
             .collect()
     };
-    let early = tokio::time::timeout(Duration::from_secs(20), async {
-        loop {
-            let calls = called(&application.store);
-            if !calls.is_empty() {
-                break calls;
-            }
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while !streamed.load(Ordering::SeqCst) {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("no call became durable while the stream was open");
-    assert_eq!(early, ["call_a"], "only the completed call is recorded");
-    assert!(!release.load(Ordering::SeqCst));
+    .expect("the provider did not stream the calls");
+    // `call_a` is complete once `call_b` starts; give the Drain time to have seen it.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        called(&application.store).is_empty(),
+        "nothing is durable while the stream can be replayed"
+    );
     release.store(true, Ordering::SeqCst);
     application.runtime.wait_idle(&id).await;
     assert_eq!(called(&application.store), ["call_a", "call_b"]);

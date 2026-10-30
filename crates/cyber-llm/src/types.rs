@@ -494,12 +494,17 @@ pub enum LlmEvent {
     Finish {
         reason: FinishReason,
     },
+    /// Never sent by an adapter: [`crate::open_with_retry`] discarded the attempt streamed
+    /// so far after a retryable failure and replays the request. Consumers drop every
+    /// event since the stream opened or the previous `Discarded`; usage they saw stays spent.
+    #[serde(skip)]
+    Discarded,
 }
 
 impl LlmEvent {
-    /// Whether the event is assistant output (anything but usage).
+    /// Whether the event is assistant output (anything but usage and retry markers).
     pub fn is_output(&self) -> bool {
-        !matches!(self, Self::Usage(_))
+        !matches!(self, Self::Usage(_) | Self::Discarded)
     }
 }
 

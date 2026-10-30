@@ -970,6 +970,7 @@ pub async fn perform_owned(
         | Action::Login(_)
         | Action::OutputStyle(_)
         | Action::LoadUpdate
+        | Action::ResumeAtReset
         | Action::Export(_) => scheduled(client, session, action).await,
         Action::SaveTheme(_)
         | Action::SaveProjectTheme(_)
@@ -989,9 +990,9 @@ async fn scheduled(client: &Client, session: &Session, action: Action) -> Result
         Action::ComputerStatus | Action::ComputerStop => {
             crate::computer::perform(client, session, action).await
         }
-        Action::Branch(request) => crate::branches::perform(client, session, request).await,
-        Action::Export(request) => crate::export::perform(client, request).await,
-        Action::LoadUpdate => crate::update::perform(client).await,
+        Action::Branch(_) | Action::Export(_) | Action::LoadUpdate | Action::ResumeAtReset => {
+            session_requests(client, session, action).await
+        }
         Action::Loop(request) => crate::loops::perform(client, request).await,
         Action::Team(request) => crate::team::perform(client, session, request).await,
         Action::Collaboration(request) => {
@@ -1005,6 +1006,22 @@ async fn scheduled(client: &Client, session: &Session, action: Action) -> Result
         Action::Workflow(request) => Ok(Msg::Workflow(
             crate::workflows::perform(client, request).await,
         )),
+        _ => Ok(Msg::Done),
+    }
+}
+
+/// The branch tree (`/tree`, `/label`), `/export`, the update check and
+/// `/resume-at-reset`.
+async fn session_requests(
+    client: &Client,
+    session: &Session,
+    action: Action,
+) -> Result<Msg, String> {
+    match action {
+        Action::Branch(request) => crate::branches::perform(client, session, request).await,
+        Action::Export(request) => crate::export::perform(client, request).await,
+        Action::LoadUpdate => crate::update::perform(client).await,
+        Action::ResumeAtReset => crate::usage_wait::perform(client, &session.id).await,
         _ => Ok(Msg::Done),
     }
 }

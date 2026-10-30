@@ -75,8 +75,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
             adapter.as_ref(),
             &request,
             &RetryPolicy::default(),
-            |n, d, e| {
-                eprintln!("retry {n} in {d:?}: {e}");
+            |retry| {
+                eprintln!(
+                    "retry {} in {:?}: {}",
+                    retry.attempt, retry.delay, retry.error
+                );
             },
         )
         .await?;

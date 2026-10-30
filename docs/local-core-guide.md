@@ -55,13 +55,15 @@ cargo run -p cyber-tools --example agent -- openai/gpt-6-luna path/to/repo "Fix 
 
 ## Provider stream interruptions
 
-Cyber retries retryable provider failures up to four times before assistant output starts. Once text, reasoning or tool input has arrived, a failure preserves the partial response and settles the turn without replaying its request. Completed tool outcomes remain recorded; calls that never dispatched are marked interrupted. Continuing the conversation uses that recorded history.
+Cyber retries retryable provider failures (`RateLimit`, `ProviderInternal`, `Transport`) up to four times per provider request. A failure before any output simply reopens the request. A failure after partial text, reasoning, streamed tool input or complete tool calls also counts as one of those four retries. Cyber discards that partial answer and sends the same request again. Clients get `session.retry` with `discarded: true` and the step's `message_id`, and drop the text they showed. The TUI and the dashboard clear it, and `cyber exec --format stream-json` prints a `retry` line. This is safe because nothing in the answer has had an effect yet. Tool calls are dispatched only after the stream completes. Reasoning, text and calls are recorded only when the stream ends, so a discarded attempt leaves nothing in history, and none of it is sent to the model afterwards. If the provider reported usage for the discarded attempt, it is recorded as a failed `turn` call (`usage.recorded.1`). It counts toward totals and budgets, but not toward the step's own usage or the context meter.
+
+When the four retries are spent, or the failure cannot be retried, the final attempt's partial response is kept and the turn is settled as interrupted. Completed tool outcomes remain recorded, and calls that never dispatched are marked interrupted. Continuing the conversation uses that recorded history. A request is never sent again after protocol completion, or after one of its tool calls was dispatched.
 
 An HTTP body failure reports `provider response stream interrupted after N body bytes` followed by the credential-redacted transport error. This identifies where the failure happened; it does not identify whether the provider, network or client caused it. A valid protocol completion is final: Cyber retains its result and usage even if the HTTP tail later stalls or closes incorrectly. A stream that ends before protocol completion still fails.
 
 ### Stream idle timeout
 
-A response stream that delivers no bytes for `providers.<p>.timeout.idle_ms` milliseconds (default 300 000, five minutes) fails with a `Transport` error `stream idle for <n>s`. It is retried like any other transport failure when no output had arrived; after output, the partial response is kept as described above. `0` turns the timer off for that provider:
+A response stream that delivers no bytes for `providers.<p>.timeout.idle_ms` milliseconds (default 300 000, five minutes) fails with a `Transport` error `stream idle for <n>s`. It is retried like any other transport failure. If output had already arrived, the partial answer is discarded and the request is replayed, as described above. `0` turns the timer off for that provider:
 
 ```jsonc
 { "providers": { "ollama": { "timeout": { "idle_ms": 0 } } } }
@@ -75,13 +77,40 @@ Known error codes from HTTP bodies and in-stream errors map onto the usual reaso
 |---|---|---|
 | `context_length_exceeded` | `ContextOverflow` | the overflow path (compaction, then the error) |
 | `insufficient_quota`, `credit_balance_exhausted`, `*_spend_limit_exceeded` | `QuotaExceeded` | fallback models are tried |
-| `usage_limit_reached` (ChatGPT plan) | `QuotaExceeded` | `usage limit reached; resets at <local time>` in the TUI status and in `exec` errors, after any fallback |
+| `usage_limit_reached` (ChatGPT plan) | `QuotaExceeded` | an unattended run [waits for the reset](#usage-limit-waits); otherwise `usage limit reached; resets at <local time>` in the TUI status and in `exec` errors, after any fallback |
 | `usage_not_included` | `Authentication` | `plan does not include this model` |
 | `server_is_overloaded`, `slow_down`, `policy_capacity_unavailable` | `ProviderInternal` | retried |
 | `rate_limit_exceeded` | `RateLimit` | retried |
 | `invalid_prompt`, `*_policy` | `ContentPolicy` | not retried |
 
 A retry waits the delay the server advises, taken from `retry-after-ms`, then `Retry-After`, then a message such as "try again in 2.5s", capped at 60 seconds, in place of the usual backoff. A Responses `response.incomplete` finishes as `Stop` for `interrupted`, `Length` for `max_output_tokens` and `ContentFilter` for `content_filter`; any other reason fails the step as `ProviderInternal` with the reason, rather than ending silently.
+
+### Usage limit waits
+
+When a subscription plan reports its usage limit with a reset time (ChatGPT `usage_limit_reached`), a run nobody is watching waits for the reset and then retries the Turn instead of failing:
+
+- **Who waits.** With `usage_limit.mode: "unattended"` (the default): `cyber exec`, a Session with an active Goal or a running loop iteration, a workflow agent, a teammate, and a subagent whose parent is one of these. An interactive TUI Session does not wait. `"always"` waits everywhere, `"never"` nowhere.
+- **When.** Only when the reset time is known and lies within `usage_limit.max_wait` (default `6h`, at most `7d`) of the Turn's first wait. The retry starts 10 s after the reset plus up to 30 s of per-Session jitter, so many runs do not retry at once.
+- **The retry** sends the same request from the same history, as one new attempt with a fresh retry budget. A second limit decides again; `max_wait` still counts from the first wait.
+- **Deadlines win.** When the resume time falls after a wall deadline (a Session or Workflow Run `max_wall_seconds`, a Goal's or a loop's `max_wall_seconds`, `cyber exec --timeout`), the run does not wait and ends with that deadline's outcome: `BudgetExceeded`, the Goal or loop ending `budget_exceeded`, or exec's `timeout` (exit 4).
+- **Not waiting** fails the Turn as before, and the message says why, for example `usage limit reached; resets at 14:20 (not waiting: the reset is more than usage_limit.max_wait (6h) away)`.
+
+```jsonc
+{ "usage_limit": { "mode": "unattended", "max_wait": "3h" } }
+```
+
+The wait is durable: `session.usage_limit.waiting.1` (with `resets_at_ms` and `resume_at_ms`), then `session.usage_limit.resumed.1` or `session.usage_limit.abandoned.1` (`interrupted`, `restarted`, `deadline`). The Session view's `usage_limit` field carries a pending wait. During the wait:
+
+- the Session stays `running`, so the normal interrupt (Esc, `POST …/interrupt`, the dashboard's Interrupt) cancels it, and input sent meanwhile joins the retried Turn;
+- the active Goal is not paused, and no budget reservation is held;
+- a workflow agent keeps its slot: the limit belongs to the account, so another agent on the same provider would hit it too;
+- a server restart resumes a top-level Session's wait for the time left. A subagent's, workflow agent's or teammate's wait ends (`restarted`) and its owner's own recovery applies.
+
+`cyber exec` prints `usage limit reached; resets at 14:20, waiting until 14:20 to continue` on stderr (unless `--quiet`) and, in `--format stream-json`, a `usage_limit` line for each change: `{"type": "usage_limit", "status": "waiting", "resets_at_ms": …, "resume_at_ms": …}`, then `"resumed"` or `"abandoned"` with its `reason`.
+
+In the TUI an interactive Session still fails, and the error notice ends with `/resume-at-reset to continue then`. `/resume-at-reset` (`POST /api/v1/sessions/{id}/usage-limit/resume`) schedules this Session to retry its last Turn after the reset, within `max_wait` and the deadlines; the footer then shows `⏸ usage limit · resumes 14:31`. The web dashboard shows the pending wait as a notice.
+
+For tests only, debug builds read `CYBER_TEST_USAGE_WAIT_SCALE=<n>`, which divides every wait by `n`; release builds ignore it.
 
 ## Reasoning replay
 
@@ -152,7 +181,7 @@ The sign-in uses OpenAI's OAuth flow with the Codex public client, which is what
 - `localhost:1455` is the port Codex uses too. If another login holds it, finish that login or use `--method code`.
 - Windows is not supported yet, because the login file cannot be made owner-only there.
 - Each request names its Session for routing: `session-id` (the root Session), `thread-id` and `x-client-request-id` (the requesting Session), and `x-openai-subagent` for compaction, titles, recaps and subagents. The first `x-codex-turn-state` the backend returns while answering a prompt is sent back on that prompt's later requests and retries, kept in memory only, and dropped when the next prompt starts. The `openai` provider at its default URL gets `session-id` alone; other providers, including custom Responses gateways, get none of these headers. `prompt_cache_key` is the root Session ID, or `<root>:<agent>` for a subagent.
-- When the plan's usage limit is reached, the fallback models are tried; with none left, the TUI and `exec` report `usage limit reached; resets at <local time>`.
+- When the plan's usage limit is reached, the fallback models are tried; with none left, an unattended run waits for the reset ([usage limit waits](#usage-limit-waits)), and the TUI and `exec` otherwise report `usage limit reached; resets at <local time>`.
 - OpenAI's acceptance of third-party harnesses is a public statement, not a contract. The `openai` provider with `OPENAI_API_KEY` is not affected by this login.
 
 ## Signing in with a GitHub Copilot subscription

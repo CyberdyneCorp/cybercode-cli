@@ -66,11 +66,11 @@ The first `x-codex-turn-state` response header of a Turn SHALL be sent back on e
 - **THEN** both follow-up requests send `x-codex-turn-state: abc`, and the first request of the new Turn sends none
 
 ### Requirement: Stream idle timeout
-(P1) Every streaming adapter SHALL fail a response stream that delivers no bytes for `provider.timeout.idle_ms` (default 300000; `0` turns it off) with a `Transport` error `stream idle for <n>s`. Retry Policy SHALL then treat it like any other transport failure: retried when no output was received, otherwise handled as a mid-stream failure.
+(P1) Every streaming adapter SHALL fail a response stream that delivers no bytes for `provider.timeout.idle_ms` (default 300000; `0` turns it off) with a `Transport` error `stream idle for <n>s`. Retry Policy SHALL then treat it like any other transport failure: retried when no output was received, and otherwise discarded and replayed as a mid-stream failure.
 
 #### Scenario: Stalled stream
 - **WHEN** a provider sends headers and one event, then nothing for 300 seconds
-- **THEN** the step fails with `Transport` `stream idle for 300s`, and the partial output prevents automatic replay
+- **THEN** the attempt fails with `Transport` `stream idle for 300s`, and its partial output is discarded and the request is replayed under Retry policy
 
 ### Requirement: Provider-specific error codes
 (P1) The system SHALL map known provider error codes, from in-stream errors and HTTP bodies, onto the existing typed reasons:

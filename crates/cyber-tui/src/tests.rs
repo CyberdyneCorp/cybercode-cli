@@ -313,6 +313,28 @@ fn streaming_text_shows_until_the_message_is_durable() {
     assert!(!app.session.running);
 }
 
+/// `provider-catalog` → Retry policy: a retry that discarded a partial answer clears its
+/// streamed text, so the replay is not shown after the old text.
+#[test]
+fn a_discarded_attempt_clears_its_streamed_text() {
+    let mut app = App::new(session(true), Vec::new(), "cyber");
+    let delta = |text: &str| json!({ "session_id": "ses_1", "message_id": "m9", "text": text });
+    app.on_event("session.text.delta", &delta("first half"));
+    let retry = |discarded: bool| {
+        json!({ "session_id": "ses_1", "message_id": "m9", "attempt": 1, "delay_ms": 900,
+            "error": "transport: connection reset", "discarded": discarded })
+    };
+    app.on_event("session.retry", &retry(false));
+    assert!(
+        screen(&app).contains("first half"),
+        "a retry before output keeps it"
+    );
+    assert!(app.on_event("session.retry", &retry(true)).is_empty());
+    app.on_event("session.text.delta", &delta("Done."));
+    let s = screen(&app);
+    assert!(s.contains("Done.") && !s.contains("first half"), "{s}");
+}
+
 /// A refresh during a step brings the in-progress assistant message with no text yet;
 /// its streamed text must show once, inside that message, not again after it.
 #[test]

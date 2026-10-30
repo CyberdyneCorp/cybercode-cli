@@ -32,6 +32,9 @@ pub struct Session {
     pub team: Option<TeamTag>,
     /// The Session's own output style selection; `None` follows the configuration.
     pub output_style: Option<String>,
+    /// When a pending usage limit wait resumes the Session, in Unix milliseconds
+    /// (`tui` → Resume at usage limit reset).
+    pub usage_wait: Option<i64>,
 }
 
 /// A teammate's team and member name, as `SessionInfo.team` carries it.
@@ -139,6 +142,7 @@ impl Session {
             inbound_reason: v["messaging"]["reason"].as_str().map(str::to_string),
             team: TeamTag::parse(&v["team"]),
             output_style: v["output_style"].as_str().map(str::to_string),
+            usage_wait: v["usage_limit"]["resume_at_ms"].as_i64(),
         }
     }
 }
