@@ -272,3 +272,12 @@ The prompt version goes up, which starts a new Context Epoch at the next Turn. T
 - **MCP resources.** `mcp_read_resource`, listings and `@server:uri` attachments switch from `<mcp_resource>`/`<mcp_resources>` to `<untrusted_content source="mcp_resource">`. Listings use `origin="mcp:<server>"`. The tool schema bundle documents the new format, and the existing frame tests are rewritten against it.
 - **Behavior change.** `auto` and `accept-edits` users get prompts after a flagged result. Release notes and `docs/local-core-guide.md` explain `taint`, `bypass` and `allow_when_tainted`.
 - **Prompt epochs.** The base prompt version goes up, so existing Sessions start a new Context Epoch at their next Turn.
+
+## Long frame-prefix whitespace correction
+
+Merge review reproduced an unescaped closing-tag spelling after 128 spaces. The
+bounded lookahead included whitespace in its budget, so it stopped before the
+frame name despite the contract allowing that whitespace. Prefix recognition
+now skips folded ASCII whitespace with an iterator before comparing the fixed
+name. It copies no unbounded tail, preserves unrelated content and covers long
+ASCII and full-width whitespace with a regression that failed before the fix.
