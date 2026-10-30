@@ -1,4 +1,4 @@
-# Socket-worker cancellation proof (pending native execution)
+# Socket-worker cancellation proof
 
 This extends the isolated [socket broker candidate](linux-socket-broker-candidate.md),
 not production hosting or an approved support floor. The current candidate's
@@ -52,3 +52,24 @@ Local macOS checks cover Rust example Clippy, formatting/diff, portable C syntax
 eight temporary builder transformations with compiler interception, workflow
 syntax and OpenSpec validation. The Linux-specific C branch and actual signal/
 seccomp/TCP behavior require the hosted x64/arm64 jobs; they are not verified here.
+
+## Native receipts
+
+[Run 41009708899](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41009708899)
+passed on x64 (job 123912578832) and arm64 (job 123912578660). Retained
+[x64](../../../scripts/probes/plugin-native-entry/evidence/linux-socket-broker-cancel-7a8ed4e6/x64/linux-ipc-broker-cancel.json)
+and [arm64](../../../scripts/probes/plugin-native-entry/evidence/linux-socket-broker-cancel-7a8ed4e6/arm64/linux-ipc-broker-cancel.json)
+reports each contain four actual SYN_SENT/EINTR, exact-worker normal-reap and
+subsequent TCP exchange cases across all read/write combinations, plus the 32
+ordinary socket cases. Adjacent missing-cancel logs fail the named reaping
+assertion after genuine interruption while the target remains waiting.
+
+Merge checkout `6a9ac84504defd5ebe7de06e45b80da6b51ed7e6` binds source SHA-256
+`5c2327b86c3ca1edad606213b88d977b734a5f5da2ce7c531a5454f985c83357`,
+independently recomputed from that checkout. Audit helper hashes are x64
+`ca1c090ee7a3eb939f9591bfa247bc89e9cc4f09efa1a07f93d703f5818fe5c1`
+and arm64 `9a87557fa36eab0e716e5a2a67a2ae51979f97aff66cc437528dd03fdf56d139`.
+The native runtime reports identify kernel `7.0.0-1017-azure`.
+These receipts establish the exercised cancellation settlement, not rollback,
+arbitrary-plugin marker authenticity or unperformed mutation/saturation cases.
+Subsequent shared-driver changes require their own fresh hosted execution.
