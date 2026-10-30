@@ -134,8 +134,17 @@ function check(entry: Awaited<ReturnType<typeof row>>) {
   assert.equal(entry.rights_payload, "AB", `received descriptor file effect: ${JSON.stringify(entry)}`);
   assert.deepEqual(entry.observed.private_datagram, [true, true, true], `private datagram exchange: ${JSON.stringify(entry)}`);
   assert.equal(entry.observed.datagram_symlink_created, true);
-  assert.equal(entry.datagram_receipts, entry.flags.unrestricted ? 6 : 0,
+  const race = entry.observed.datagram_race;
+  assert.equal(race.private_control, true);
+  assert.equal(race.settled, true);
+  assert.equal(race.failed, false, `datagram mutation failed: ${JSON.stringify(entry)}`);
+  assert.equal(race.attempts, 16);
+  assert(race.swaps >= race.attempts && race.swaps <= 4096);
+  assert.equal(race.private_acks + race.host_acks + race.refused, race.attempts);
+  assert.equal(entry.datagram_receipts, entry.flags.unrestricted ? 7 + race.host_acks : 0,
     `macOS datagram endpoint escaped scratch: ${JSON.stringify(entry)}`);
+  assert.equal(race.host_control, !!entry.flags.unrestricted);
+  assert.equal(race.refused, entry.flags.unrestricted ? 0 : race.attempts - race.private_acks);
   for (const prefix of ["dgram_", "dgram_alias_"]) for (const method of ["connect", "sendto", "sendmsg"]) {
     assert.deepEqual(entry.observed[prefix + method], {
       connected: !!entry.flags.unrestricted && method === "connect",
@@ -184,7 +193,7 @@ try {
     rows.push(observed);
   }
   assert.equal(createHash("sha256").update(readFileSync(prepared.target)).digest("hex"), targetHash);
-  const sources = ["macos_private_ipc.mts", "macos_policy.mts", "macos_rights.h", "macos_datagram.h", "macos_datagram_owner.mts", "macos_datagram_owner.c", "fixture_native.c", "process_policy.h", "macos_exec.c"];
+  const sources = ["macos_private_ipc.mts", "macos_policy.mts", "macos_rights.h", "macos_datagram.h", "macos_datagram_race.h", "macos_datagram_owner.mts", "macos_datagram_owner.c", "fixture_native.c", "process_policy.h", "macos_exec.c"];
   const hash = createHash("sha256");
   for (const file of sources) hash.update(file + "\0").update(readFileSync(join(source, file)));
   const report = { recorded_at: new Date().toISOString(), platform: process.platform, architecture: process.arch,

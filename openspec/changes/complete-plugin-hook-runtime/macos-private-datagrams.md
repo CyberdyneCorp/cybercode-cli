@@ -55,3 +55,6 @@ These fixed pathname exchanges do not prove concurrent endpoint mutation,
 seqpacket compatibility, ancillary credentials, every descriptor operation,
 proxy/network/secret ceilings, complete descendant resource settlement or actual
 App/server integration. Those acceptance requirements remain open.
+
+The subsequent [concurrent alias replacement](macos-datagram-alias-race.md)
+extends this fixed-route revision with separately retained race evidence.

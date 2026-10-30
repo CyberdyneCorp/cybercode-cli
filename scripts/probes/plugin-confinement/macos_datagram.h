@@ -71,7 +71,9 @@ static struct unix_attempt host_datagram(const char *scratch, const char *host, 
     return result;
 }
 
-struct datagram_result { int private[3], symlink_created; struct unix_attempt host[6]; };
+#include "macos_datagram_race.h"
+
+struct datagram_result { int private[3], symlink_created; struct unix_attempt host[6]; struct datagram_race_result race; };
 static struct datagram_result datagram_probe(const char *scratch, const char *host) {
     struct datagram_result result = {0};
     char alias[PATH_MAX];
@@ -83,12 +85,14 @@ static struct datagram_result datagram_probe(const char *scratch, const char *ho
         if (result.symlink_created) result.host[method + 3] = host_datagram(scratch, alias, method);
     }
     unlink(alias);
+    result.race = datagram_race(scratch, host);
     return result;
 }
 
 static void print_datagram(struct datagram_result result) {
     printf(",\"private_datagram\":[%s,%s,%s],\"datagram_symlink_created\":%s",
         truth(result.private[0]), truth(result.private[1]), truth(result.private[2]), truth(result.symlink_created));
+    print_datagram_race(result.race);
     const char *names[6] = { "dgram_connect", "dgram_sendto", "dgram_sendmsg", "dgram_alias_connect", "dgram_alias_sendto", "dgram_alias_sendmsg" };
     for (int index = 0; index < 6; ++index) print_unix_attempt(names[index], result.host[index]);
 }

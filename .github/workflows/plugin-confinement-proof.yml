@@ -190,8 +190,15 @@ jobs:
           import sys
           text = Path(sys.argv[1]).read_text()
           assert 'macOS datagram endpoint escaped scratch:' in text, text
+          import json, re
+          match = re.search(r'macOS datagram endpoint escaped scratch: (\{[^\n]+\})', text)
+          assert match, text
+          entry = json.loads(match[1])
+          race = entry['observed']['datagram_race']
+          assert race['host_control'] and race['settled'] and not race['failed'], entry
+          assert entry['datagram_receipts'] == 7 + race['host_acks'], entry
           for token in ['"owner_received_fixture":true', '"acknowledged":true',
-                        '"owner_datagram_received_fixture":true', '"datagram_receipts":6',
+                        '"owner_datagram_received_fixture":true', '"private_datagram":[true,true,true]',
                         '"private_aliases":[true,true]', '"private_peer_matches":true']:
               assert token in text, text
           PYCONTROL

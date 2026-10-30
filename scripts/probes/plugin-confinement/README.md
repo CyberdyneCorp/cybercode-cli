@@ -100,6 +100,9 @@ It also requires private connected/sendto/sendmsg datagram exchanges and denies
 six direct/symlink host routes. A bounded native owner records actual receipt
 after guest settlement; startup failure cannot count as zero delivery. See
 [datagram evidence and limits](../../../openspec/changes/complete-plugin-hook-runtime/macos-private-datagrams.md).
+The [concurrent alias test](../../../openspec/changes/complete-plugin-hook-runtime/macos-datagram-alias-race.md)
+replaces a scratch symlink while native sendto/sendmsg run and compares actual
+private acknowledgements, policy refusals and owner-recorded host packets.
 
 ## Boundary and coverage
 
