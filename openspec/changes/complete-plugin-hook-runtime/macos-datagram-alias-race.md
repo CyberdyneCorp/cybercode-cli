@@ -50,7 +50,45 @@ Independently recomputed source hashes are:
 - IPC: `7eae036bc0756198bd522e570f6e2c7a357efab0f0eb543b7ced11d4e4f88cce`.
 - Runtime: `05c2c5808004a944c2582857a16df3f4a2266abbe5911d68886c36aeebd3b5ad`.
 
-Hosted verification is pending. This tests one concurrently replaced symlink
+## Hosted failure and diagnostic follow-up
+
+The Intel native signing job in [run 41119882444](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41119882444/job/124283606909)
+failed at the `r0w1s1` datagram mutation row: three attempts were recorded before the
+fixture reported an unknown exchange failure. Its other private stream,
+descriptor and fixed datagram checks passed, but they do not override the failed
+race. Zero observed host packets from an incomplete row is not confinement
+acceptance. The failure's original report did not identify the failing operation
+or errno; its cause remains unresolved.
+
+Original artifacts and the job log are retained in
+`scripts/probes/plugin-confinement/evidence/macos-datagram-intel-08ee6fe6`.
+The downloaded archive matches GitHub's SHA-256 digest
+`24c3a99bbff97fba00dd1a977ceb5fc6ebd14b3110f6ec9b4a3cc3e807a0f654`.
+The source binding verifies that the actual tested merge `ebdb3f33` and head
+`08ee6fe6` share tree `b10649b8f6ca411a8506705bbe88f8bc9d5ca44b`.
+
+The diagnostic extension records the first failure stage and errno, including
+send/receive, private replies, client setup, alias replacement and mutation
+progress. The mutator publishes its error atomically; it is still stopped and
+joined before resource release. Success requires an empty failure stage and zero
+errno in addition to the existing acknowledgements and receipt counts. Unknown
+errors still fail; they are not retried or classified as permission refusals.
+
+A copied-fixture control attempts to bind its client through the already occupied
+private server alias. It must fail the real private-control assertion and report
+`client_bind` with `EADDRINUSE`, zero race attempts and zero policy refusals.
+Compiler failure cannot satisfy this control. The workflow retains its log.
+
+All nine diagnostic rows and four exact workflow steps pass locally on arm64
+Darwin 25.6.0, including occupied-bind, widened-scope, dropped-rights and path-reader
+controls. Original reports/logs are retained in
+`scripts/probes/plugin-confinement/evidence/macos-datagram-diagnostic-local`.
+The current IPC source digest is
+`24c0b65db4e5609b386b460b713989b2d2d2954e3b4222f72985b057b8c9bc15`.
+These results establish diagnostic behavior, not a fix for the Intel failure.
+Fresh hosted verification remains required.
+
+This tests one concurrently replaced symlink
 with destination-bearing sends. It does not establish every pathname/FD/address
 mutation, seqpacket or ancillary credential behavior, proxy/network/secret
 ceilings, descendant settlement or App integration. Parent acceptance stays open.

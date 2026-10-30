@@ -202,6 +202,40 @@ jobs:
                         '"private_aliases":[true,true]', '"private_peer_matches":true']:
               assert token in text, text
           PYCONTROL
+      - name: Reject unknown datagram exchange failures
+        shell: bash
+        run: |
+          set -euo pipefail
+          control="$RUNNER_TEMP/macos-datagram-bind-failure"
+          python3 - "$control" <<'PYCONTROL'
+          from pathlib import Path
+          import shutil, sys
+          target = Path(sys.argv[1])
+          shutil.copytree('scripts/probes/plugin-confinement', target, ignore=shutil.ignore_patterns('evidence', '__pycache__'))
+          fixture = target / 'macos_datagram_race.h'
+          source = fixture.read_text()
+          needle = 'int client = datagram_socket(client_path);'
+          assert source.count(needle) == 1
+          fixture.write_text(source.replace(needle, 'int client = datagram_socket(alias);'))
+          PYCONTROL
+          log="$RUNNER_TEMP/unix-datagram-bind-failure.log"
+          if node --experimental-strip-types "$control/macos_private_ipc.mts" > "$log" 2>&1; then
+            echo 'Occupied datagram client bind unexpectedly passed' >&2
+            exit 1
+          fi
+          python3 - "$log" <<'PYCONTROL'
+          from pathlib import Path
+          import errno, json, re, sys
+          text = Path(sys.argv[1]).read_text()
+          match = re.search(r'private datagram race control failed: (\{[^\n]+\})', text)
+          assert match, text
+          entry = json.loads(match[1])
+          race = entry['observed']['datagram_race']
+          assert entry['flags']['unrestricted'] and not race['private_control'], entry
+          assert race['failure_stage'] == 'client_bind', entry
+          assert race['failure_errno'] == errno.EADDRINUSE, entry
+          assert race['refused'] == 0 and race['attempts'] == 0, entry
+          PYCONTROL
       - name: Reject missing private descriptor reception
         shell: bash
         run: |
@@ -262,6 +296,7 @@ jobs:
             ${{ runner.temp }}/unix-boundary.json
             ${{ runner.temp }}/unix-boundary.log
             ${{ runner.temp }}/unix-missing-scope.log
+            ${{ runner.temp }}/unix-datagram-bind-failure.log
             ${{ runner.temp }}/unix-dropped-rights.log
             ${{ runner.temp }}/unix-rights-path-reader.log
             ${{ runner.temp }}/exec.json

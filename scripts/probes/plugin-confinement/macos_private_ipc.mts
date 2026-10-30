@@ -135,9 +135,11 @@ function check(entry: Awaited<ReturnType<typeof row>>) {
   assert.deepEqual(entry.observed.private_datagram, [true, true, true], `private datagram exchange: ${JSON.stringify(entry)}`);
   assert.equal(entry.observed.datagram_symlink_created, true);
   const race = entry.observed.datagram_race;
-  assert.equal(race.private_control, true);
-  assert.equal(race.settled, true);
+  assert.equal(race.private_control, true, `private datagram race control failed: ${JSON.stringify(entry)}`);
+  assert.equal(race.settled, true, `datagram mutator did not settle: ${JSON.stringify(entry)}`);
   assert.equal(race.failed, false, `datagram mutation failed: ${JSON.stringify(entry)}`);
+  assert.equal(race.failure_stage, "");
+  assert.equal(race.failure_errno, 0);
   assert.equal(race.attempts, 16);
   assert(race.swaps >= race.attempts && race.swaps <= 4096);
   assert.equal(race.private_acks + race.host_acks + race.refused, race.attempts);

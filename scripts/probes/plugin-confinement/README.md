@@ -103,6 +103,11 @@ after guest settlement; startup failure cannot count as zero delivery. See
 The [concurrent alias test](../../../openspec/changes/complete-plugin-hook-runtime/macos-datagram-alias-race.md)
 replaces a scratch symlink while native sendto/sendmsg run and compares actual
 private acknowledgements, policy refusals and owner-recorded host packets.
+Its first unexpected operation/errno is retained in `failure_stage` and
+`failure_errno`; successful rows require both to be empty/zero. The occupied-bind
+control must report `client_bind`/`EADDRINUSE` and fail the real private exchange
+assertion. Unknown errors never count as policy refusals. The retained Intel
+failure remains unresolved pending the diagnostic run.
 
 ## Boundary and coverage
 
