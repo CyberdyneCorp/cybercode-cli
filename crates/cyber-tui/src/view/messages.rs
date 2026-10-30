@@ -401,6 +401,12 @@ fn tool_card(app: &App, tool: &Tool, out: &mut Out) {
         ),
         Span::styled(format!("  {status}"), status_style(t, status)),
     ]));
+    if let Some(note) = tool.redaction_note() {
+        out.push(Line::from(Span::styled(
+            format!("    ⊘ {note}"),
+            Style::default().fg(t.warning),
+        )));
+    }
     let rows = tool_rows(app, tool, &out.ctx);
     let collapsed = !app.expand_tools && rows.lines.len() > COLLAPSE_OVER;
     let shown = if collapsed {

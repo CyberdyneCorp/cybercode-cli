@@ -589,11 +589,14 @@ impl Out {
     fn tool_result(&self, run: &mut Run, data: &Value) {
         let id = data["call_id"].as_str().unwrap_or_default();
         let output = data["output"].as_str().unwrap_or_default();
-        let truncated: String = output.chars().take(RESULT_LIMIT).collect();
-        self.line(
-            "tool_result",
-            json!({ "call_id": id, "status": data["status"], "output": truncated }),
-        );
+        self.line("tool_result", tool_result_line(id, data));
+        let tool = run.calls.get(id).map_or("tool", |(tool, _)| tool.as_str());
+        if let Some(note) = redaction_note(tool, data)
+            && self.format == Format::Text
+            && !self.quiet
+        {
+            eprintln!("{note}");
+        }
         let Some(reason) = denial_reason(output) else {
             return;
         };
@@ -916,10 +919,45 @@ fn summary(input: &Value) -> String {
     String::new()
 }
 
+/// The `tool_result` stream line of a settlement, with its `redactions` when any.
+fn tool_result_line(id: &str, data: &Value) -> Value {
+    let output = data["output"].as_str().unwrap_or_default();
+    let truncated: String = output.chars().take(RESULT_LIMIT).collect();
+    let mut line = json!({ "call_id": id, "status": data["status"], "output": truncated });
+    if data["redactions"]["count"].as_u64().unwrap_or(0) > 0 {
+        line["redactions"] = data["redactions"].clone();
+    }
+    line
+}
+
+/// `bash: 2 secrets hidden from the model` (`exec-mode` → Redaction notes in exec output).
+fn redaction_note(tool: &str, data: &Value) -> Option<String> {
+    let count = data["redactions"]["count"]
+        .as_u64()
+        .filter(|count| *count > 0)?;
+    let noun = if count == 1 { "secret" } else { "secrets" };
+    Some(format!("{tool}: {count} {noun} hidden from the model"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn settlements_with_redactions_report_them() {
+        let data = json!({"call_id": "c1", "status": "ok", "output": "T=[REDACTED:assignment]",
+            "redactions": {"count": 2, "kinds": ["assignment", "jwt"]}});
+        let line = tool_result_line("c1", &data);
+        assert_eq!(line["redactions"]["kinds"], json!(["assignment", "jwt"]));
+        assert_eq!(
+            redaction_note("bash", &data).as_deref(),
+            Some("bash: 2 secrets hidden from the model")
+        );
+        let plain = json!({"call_id": "c2", "status": "ok", "output": "fine"});
+        assert!(tool_result_line("c2", &plain).get("redactions").is_none());
+        assert_eq!(redaction_note("read", &plain), None);
+    }
 
     #[derive(Parser)]
     struct Wrapper {

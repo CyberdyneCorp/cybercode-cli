@@ -288,6 +288,7 @@ async fn read_and_write_tool_cards_highlight_by_file_extension() {
         input: json!({ "path": "src/lib.rs", "content": "fn main() {}\n" }),
         status: "ok".into(),
         output: "Created src/lib.rs".into(),
+        redactions: 0,
     };
     if let Some(Item::Assistant { tools, .. }) = app
         .items

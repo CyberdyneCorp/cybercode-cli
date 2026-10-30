@@ -207,6 +207,7 @@ mod tests {
                 input: serde_json::Value::Null,
                 status: "interrupted".into(),
                 output: String::new(),
+                redactions: 0,
             });
         }
         assert_eq!(markers(&items, false)[0].outcome, Outcome::Interrupted);

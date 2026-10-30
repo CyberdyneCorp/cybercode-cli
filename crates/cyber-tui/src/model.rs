@@ -151,6 +151,8 @@ pub struct Tool {
     /// `called`, `dispatched`, `ok`, `error`, `interrupted`, `outcome_unknown`.
     pub status: String,
     pub output: String,
+    /// How many secrets were hidden from the model in `output`.
+    pub redactions: u64,
 }
 
 impl Tool {
@@ -163,6 +165,15 @@ impl Tool {
             "interrupted" => "interrupted",
             "outcome_unknown" => "unknown",
             _ => "failed",
+        }
+    }
+
+    /// `2 secrets hidden from the model`, when any were.
+    pub fn redaction_note(&self) -> Option<String> {
+        match self.redactions {
+            0 => None,
+            1 => Some("1 secret hidden from the model".into()),
+            n => Some(format!("{n} secrets hidden from the model")),
         }
     }
 
@@ -267,6 +278,7 @@ fn tool(v: &Value) -> Tool {
         input: v["input"].clone(),
         status: s("status"),
         output: s("output"),
+        redactions: v["redactions"]["count"].as_u64().unwrap_or(0),
     }
 }
 
