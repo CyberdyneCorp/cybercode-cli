@@ -668,15 +668,7 @@ async fn webfetch_summary_budget_case(reserved: bool) {
     )
     .await
     .unwrap();
-    assert_eq!(summary.requests().len(), usize::from(!reserved));
-    if !reserved {
-        let request = serde_json::to_string(&summary.requests()[0]).unwrap();
-        assert!(
-            !request.contains("abcdefgh12345678") && !request.contains("plainwordsecretvalue"),
-            "summary provider must not receive page or origin credentials: {request}"
-        );
-        assert!(request.contains("[REDACTED:"));
-    }
+    assert_summary_request_redaction(&summary.requests(), reserved);
     assert_eq!(flow.main.requests().len(), 1);
     let state = flow.runtime.state(&id).await.unwrap();
     let expected_usage = if reserved { (100, 5) } else { (200, 15) };
@@ -695,6 +687,18 @@ async fn webfetch_summary_budget_case(reserved: bool) {
     );
     if !reserved {
         assert!(events.iter().any(|e| e.kind == "budget.exceeded.1"));
+    }
+}
+
+fn assert_summary_request_redaction(requests: &[cyber_llm::LlmRequest], reserved: bool) {
+    assert_eq!(requests.len(), usize::from(!reserved));
+    if !reserved {
+        let request = serde_json::to_string(&requests[0]).unwrap();
+        assert!(
+            !request.contains("abcdefgh12345678") && !request.contains("plainwordsecretvalue"),
+            "summary provider must not receive page or origin credentials: {request}"
+        );
+        assert!(request.contains("[REDACTED:"));
     }
 }
 
