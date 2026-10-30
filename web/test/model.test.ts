@@ -70,6 +70,20 @@ test("durable completed messages retire matching live text even before the Sessi
   deliver("msg_other", "Separate answer"); assert.equal(model.state.liveText, "Separate answer", "different message IDs do not concatenate");
 });
 
+test("a retry that discarded a partial answer clears its live text before the replay streams", async (t) => {
+  const { model } = await ready(t);
+  const send = (type: string, data: Record<string, unknown>) => (model as unknown as { event(event: EventEnvelope, session: string): void }).event({ id: "live", type, data: { session_id: "ses_one", ...data } } as EventEnvelope, "ses_one");
+  send("session.text.delta", { message_id: "msg_live", text: "first half" });
+  send("session.retry", { message_id: "msg_live", attempt: 1, delay_ms: 900, error: "transport", discarded: false });
+  assert.equal(model.state.liveText, "first half", "a retry before output keeps the text");
+  send("session.retry", { message_id: "msg_other", attempt: 1, delay_ms: 900, error: "transport", discarded: true });
+  assert.equal(model.state.liveText, "first half", "another message's retry does not clear it");
+  send("session.retry", { message_id: "msg_live", attempt: 2, delay_ms: 900, error: "transport", discarded: true });
+  assert.equal(model.state.liveText, "");
+  send("session.text.delta", { message_id: "msg_live", text: "Done." });
+  assert.equal(model.state.liveText, "Done.");
+});
+
 test("lost reply retries the exact owner/request/key/payload, never the selected parent or a fresh decision", async (t) => {
   const { model, api } = await ready(t); const card = model.state.cards[0]!;
   api.failReply = true; await model.answer(card, { reply: "once" });
