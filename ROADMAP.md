@@ -87,6 +87,14 @@ The [current inventory](docs/implementation/spec-doc-reconciliation.md) contains
 
 **Sound alerts (`tui`, P1): Status: implemented** (change [`add-sound-alerts`](openspec/changes/add-sound-alerts/proposal.md); the check on real hardware remains). Six distinct alert sounds: input needed, done, error, workflow completed, workflow failed, and message. They play while the terminal is unfocused. There are four packs synthesized in code (`cyber`, `soft`, `retro` and `bell`), played through the OS player (`afplay`, `pw-play`/`paplay`/`aplay`, PowerShell), with a terminal-bell fallback over SSH or when no player is found. `/sounds` picks the pack and volume, toggles events and previews each sound. It also closes the gap where a permission or question request raised no attention notification. No native audio dependency.
 
+**Tool output redaction (`tool-registry`, `builtin-tools`, `configuration`, P1 security): Status: implemented** (change [`add-tool-output-redaction`](openspec/changes/add-tool-output-redaction/proposal.md)). Secrets in tool results no longer reach the model provider. Every result is redacted before truncation: built-in tools, MCP, browser and plugin tools, subagent results, and Job and workflow handbacks.
+- Each secret becomes `[REDACTED:<kind>]`. Detection covers provider credential formats, the exact values of secret-named environment variables, provider keys and MCP secrets, and secret-looking assignments. It is never based on entropy.
+- The stored `session.tool.settled` output is the redacted text, so clients never show more than the model saw. Raw overflow files and Job logs stay local.
+- `write`, `edit`, `apply_patch` and shell input refuse markers.
+- `tool_output.redact` adds `patterns` and `allow` entries. Project and plugin config can only add patterns.
+- `redactions: {count, kinds}` reaches the TUI, dashboard, `exec` and SDK.
+- Fragments without a recognizable shape and tool input remain out of scope.
+
 **Proposed binary hex editor (P1):** [`add-binary-hex-editor`](openspec/changes/add-binary-hex-editor/proposal.md) extends the current file explorer with paged hex/ASCII inspection, staged byte edits, review/undo/recovery and a bounded model-facing binary tool. Specification only; implementation awaits review and scheduling after the existing Plugins/hooks and Daily coding workstreams. It does not imply that `/files` already provides a general manual text editor.
 
 ## P2: Autonomy & orchestration (flagship)
