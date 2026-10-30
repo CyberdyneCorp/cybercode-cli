@@ -8,6 +8,7 @@ on:
       - crates/cyber-sandbox/tests/fixtures/plugin_socket_cancel.h
       - crates/cyber-sandbox/tests/fixtures/plugin_socket_mutation.h
       - crates/cyber-sandbox/tests/fixtures/plugin_unix_mutation.h
+      - crates/cyber-sandbox/tests/fixtures/plugin_unix_relative.h
       - crates/cyber-sandbox/tests/fixtures/plugin_process_escape.h
       - crates/cyber-sandbox/tests/fixtures/plugin_socket_saturation.h
       - crates/cyber-sandbox/examples/support/plugin_socket_cancel.rs
@@ -111,6 +112,9 @@ jobs:
           for variant in broker-private-stream broker-private-stream-no-makesock broker-private-stream-no-refer broker-private-stream-mutation broker-private-stream-mutation-no-endpoint; do
             python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/$variant" "$variant"
           done
+          for variant in wrong-cwd no-beneath; do
+            python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/broker-private-stream-$variant" "broker-private-stream-$variant"
+          done
           for mode in mutation mutation-no-pin mutation-no-copy mutation-continue; do
             python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker-$mode" "broker-$mode"
           done
@@ -149,6 +153,29 @@ jobs:
                         '"private_roundtrip":false', '"host_received_fixture":true', 'BPIN ']:
               assert token in text, text
           PY
+      - name: Reject wrong relative context and missing scratch traversal boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          for control in wrong-cwd no-beneath; do
+            log="$RUNNER_TEMP/private-stream-$control.log"
+            if target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/broker-private-stream-$control" "$RUNNER_TEMP/linux-ipc-private-$control.json" --broker-private-stream > "$log" 2>&1; then
+              echo "Private relative-path control unexpectedly passed: $control" >&2
+              exit 1
+            fi
+            python3 - "$log" "$control" <<'PY'
+          from pathlib import Path
+          import sys
+          text = Path(sys.argv[1]).read_text()
+          if sys.argv[2] == 'wrong-cwd':
+              assert 'private relative stream exchange: relative_root_roundtrip' in text, text
+              assert '"scratch_unix_roundtrip":true' in text and '"relative_root_roundtrip":false' in text, text
+          else:
+              assert 'private relative path escaped scratch:' in text, text
+              for token in ['"host_received_fixture":true', '"relative_escape_connected":true', '"relative_escape_sent":true']:
+                  assert token in text, text
+          PY
+          done
       - name: Reject missing private socket creation and file-move compatibility guards
         shell: bash
         run: |
@@ -389,6 +416,8 @@ jobs:
             ${{ runner.temp }}/broker-private-stream-no-makesock.log
             ${{ runner.temp }}/broker-private-stream-no-refer.log
             ${{ runner.temp }}/private-stream-no-endpoint.log
+            ${{ runner.temp }}/private-stream-wrong-cwd.log
+            ${{ runner.temp }}/private-stream-no-beneath.log
             ${{ runner.temp }}/broker-no-thread.log
             ${{ runner.temp }}/broker-no-cancel.log
             ${{ runner.temp }}/broker-mutation-*.log

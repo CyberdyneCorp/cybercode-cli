@@ -89,7 +89,7 @@ static int broker_copy(int listener, const struct seccomp_notif *request,
         error = EPERM;
 #ifdef CYBER_PRIVATE_UNIX_STREAM
         if (domain == AF_UNIX) {
-            error = private_endpoint(&call->address, call->length, &call->endpoint);
+            error = private_endpoint(&call->address, call->length, request->pid, &call->endpoint);
             if (error != 0) goto failed;
         } else
 #endif

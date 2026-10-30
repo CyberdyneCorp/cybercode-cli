@@ -12,6 +12,7 @@ assert mode in {"seccomp", "broker", "broker-no-bind", "broker-no-thread", "brok
                 "broker-mutation", "broker-mutation-no-pin", "broker-mutation-no-copy", "broker-mutation-continue",
                 "broker-private-stream", "broker-private-stream-no-makesock", "broker-private-stream-no-refer",
                 "broker-private-stream-mutation", "broker-private-stream-mutation-no-endpoint",
+                "broker-private-stream-wrong-cwd", "broker-private-stream-no-beneath",
                 "landlock9", "landlock9-no-resolve"}
 unix9 = mode.startswith("landlock9")
 private_stream = mode.startswith("broker-private-stream")
@@ -39,6 +40,19 @@ with tempfile.TemporaryDirectory(prefix="cyber-socket-candidate-") as temporary:
                 before = '    if (result == 0) result = add_path(ruleset, "/", LANDLOCK_ACCESS_FS_REFER);'
                 assert text.count(before) == 1
                 header.write_text(text.replace(before, "    /* Missing compatibility grant: REFER remains denied. */"))
+            if mode == "broker-private-stream-wrong-cwd":
+                header = target / "socket_private_unix.h"
+                text = header.read_text()
+                before = '    snprintf(proc, sizeof(proc), "/proc/%u/cwd", tid);'
+                assert text.count(before) == 1
+                header.write_text(text.replace(before, '    tid = (unsigned int)getpid(); /* Wrong-context control. */\n' + before))
+            if mode == "broker-private-stream-no-beneath":
+                header = target / "socket_private_unix.h"
+                text = header.read_text()
+                before = '''    struct open_how how = { .flags = O_PATH | O_CLOEXEC,
+        .resolve = RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS };'''
+                assert text.count(before) == 1
+                header.write_text(text.replace(before, before.replace('RESOLVE_BENEATH | ', '')))
         if mode == "broker-audit-wrong-cap":
             broker = target / "socket_broker.h"
             text = broker.read_text()

@@ -87,7 +87,9 @@ when the implementation branch is rebased onto the #76 squash merge. These
 original receipts are not relabeled as execution of the rebased head.
 
 The [real broker pathname replacement case](linux-private-stream-mutation.md)
-now tests the post-pin race; its new hosted evidence is pending.
+has source-bound passing x64/arm64 evidence. The
+[caller-bound relative-path extension](linux-private-relative-paths.md) now adds
+scratch-relative handling; its native evidence remains pending.
 
 Still required before complete IPC/production acceptance: verified post-pin
 replacement, relative/alias forms, datagram/seqpacket and

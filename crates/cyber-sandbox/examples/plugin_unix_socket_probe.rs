@@ -41,10 +41,13 @@ mod probe {
 
     fn receipt(listener: &UnixListener, observed: &Value) -> bool {
         assert_eq!(observed["started"], true);
+        let connected =
+            observed["connected"] == true || observed["relative_escape_connected"] == true;
+        let sent = observed["sent"] == true || observed["relative_escape_sent"] == true;
         match listener.accept() {
             Ok((mut stream, _)) => {
-                assert_eq!(observed["connected"], true);
-                assert_eq!(observed["sent"], true);
+                assert!(connected);
+                assert!(sent);
                 stream
                     .set_read_timeout(Some(Duration::from_secs(1)))
                     .unwrap();
@@ -55,8 +58,8 @@ mod probe {
             }
             Err(error) => {
                 assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
-                assert_eq!(observed["connected"], false);
-                assert_eq!(observed["sent"], false);
+                assert!(!connected);
+                assert!(!sent);
                 false
             }
         }
@@ -154,6 +157,10 @@ mod probe {
             ..policy
         };
         let observed = observe(&pair_policy, mode);
+        let delivered = receipt(listener, &observed);
+        if mode.private_stream() {
+            check_private_stream(&observed, &pair_policy, label, delivered);
+        }
         assert_eq!(
             observed["project_read"], pair_policy.fs_read,
             "native pair read control: {observed}"
@@ -170,24 +177,42 @@ mod probe {
             );
         }
         check_pair_support(&observed, mode);
-        if mode.private_stream() {
-            assert_eq!(
-                observed["regular_reparent"], pair_policy.fs_write,
-                "private IPC layer changed ordinary file moves: {label} read={} write={}: {observed}",
-                pair_policy.fs_read, pair_policy.fs_write,
-            );
-            if label == "public" && pair_policy.fs_write {
-                assert_eq!(
-                    observed["cross_mount_alias_errno"],
-                    libc::EXDEV,
-                    "a host socket alias crossed the private scratch mount: {observed}"
-                );
-            }
-        }
-        let delivered = receipt(listener, &observed);
         assert!(!delivered, "pair reached host: {observed}");
         json!({"socket": label, "fs_read": pair_policy.fs_read, "fs_write": pair_policy.fs_write,
                         "shell": false, "mode": "pair", "host_received_fixture": delivered, "observed": observed})
+    }
+
+    fn check_private_stream(
+        observed: &Value,
+        policy: &LinuxPolicy<'_>,
+        label: &str,
+        delivered: bool,
+    ) {
+        assert!(
+            !delivered,
+            "private relative path escaped scratch: {}",
+            json!({"host_received_fixture":delivered,"observed":observed})
+        );
+        for key in ["relative_root_roundtrip", "relative_parent_roundtrip"] {
+            assert_eq!(
+                observed[key], true,
+                "private relative stream exchange: {key}: {observed}"
+            );
+        }
+        assert_eq!(observed["relative_escape_connected"], false);
+        assert_eq!(observed["relative_escape_sent"], false);
+        assert_eq!(
+            observed["regular_reparent"], policy.fs_write,
+            "private IPC layer changed ordinary file moves: {label} read={} write={}: {observed}",
+            policy.fs_read, policy.fs_write,
+        );
+        if label == "public" && policy.fs_write {
+            assert_eq!(
+                observed["cross_mount_alias_errno"],
+                libc::EXDEV,
+                "a host socket alias crossed the private scratch mount: {observed}"
+            );
+        }
     }
 
     fn check_pair_support(observed: &Value, mode: Mode) {
@@ -396,6 +421,7 @@ mod probe {
             "crates/cyber-sandbox/tests/fixtures/plugin_socket_cancel.h",
             "crates/cyber-sandbox/tests/fixtures/plugin_socket_mutation.h",
             "crates/cyber-sandbox/tests/fixtures/plugin_unix_mutation.h",
+            "crates/cyber-sandbox/tests/fixtures/plugin_unix_relative.h",
             "crates/cyber-sandbox/tests/fixtures/plugin_process_escape.h",
             "crates/cyber-sandbox/tests/fixtures/plugin_socket_saturation.h",
             "crates/cyber-sandbox/examples/support/plugin_socket_cancel.rs",

@@ -48,9 +48,10 @@ static int local_exchange(int family, const char *path, int server) {
     client = socket(family, SOCK_STREAM, 0);
     if (client < 0 || connect(client, (struct sockaddr *)&storage, length) != 0) goto done;
     peer = accept(server, NULL, NULL);
-    char token[12];
+    char token[12], ack = 0;
     ok = peer >= 0 && send(client, "fixture-only", 12, MSG_NOSIGNAL) == 12 &&
-        recv(peer, token, sizeof(token), MSG_WAITALL) == 12 && memcmp(token, "fixture-only", 12) == 0;
+        recv(peer, token, sizeof(token), MSG_WAITALL) == 12 && memcmp(token, "fixture-only", 12) == 0 &&
+        send(peer, "A", 1, MSG_NOSIGNAL) == 1 && recv(client, &ack, 1, MSG_WAITALL) == 1 && ack == 'A';
 done:
     if (peer >= 0) close(peer);
     if (client >= 0) close(client);
@@ -58,6 +59,8 @@ done:
     if (family == AF_UNIX) unlink(path);
     return ok;
 }
+
+#include "plugin_unix_relative.h"
 
 #ifdef __linux__
 struct thread_exchange { int descriptor; int roundtrip; };
@@ -157,6 +160,7 @@ static int pair_probe(const struct sockaddr_un *address, socklen_t length,
     int tcp = scratch_socket != NULL && local_exchange(AF_INET, NULL, -1);
     int thread_tcp = scratch_socket != NULL && thread_local_exchange();
     int scratch_ipc = scratch_socket != NULL && local_exchange(AF_UNIX, scratch_socket, -1);
+    struct relative_result relative = relative_probe(scratch_socket);
     int moved = regular_reparent(data_path);
     int alias_error = 0;
     if (scratch_socket != NULL) {
@@ -171,7 +175,8 @@ static int pair_probe(const struct sockaddr_un *address, socklen_t length,
         "\"pair_bind\":%s,\"pair_listen\":%s,\"pair_sendto\":%s,\"pair_sendmsg\":%s,"
         "\"datagram_pair\":%s,\"seqpacket_pair\":%s,\"landlock_abi\":%d,"
         "\"tcp_roundtrip\":%s,\"thread_tcp_roundtrip\":%s,\"scratch_unix_roundtrip\":%s,\"regular_reparent\":%s,"
-        "\"cross_mount_alias_errno\":%d}\n",
+        "\"cross_mount_alias_errno\":%d,\"relative_root_roundtrip\":%s,\"relative_parent_roundtrip\":%s,"
+        "\"relative_escape_connected\":%s,\"relative_escape_sent\":%s}\n",
         (connected || reconnected) ? "true" : "false", sent ? "true" : "false",
         readable ? "true" : "false", roundtrip ? "true" : "false",
         disconnected ? "true" : "false", reconnected ? "true" : "false",
@@ -179,7 +184,9 @@ static int pair_probe(const struct sockaddr_un *address, socklen_t length,
         sent_to ? "true" : "false", sent_message ? "true" : "false",
         datagram ? "true" : "false", sequence ? "true" : "false", abi(),
         tcp ? "true" : "false", thread_tcp ? "true" : "false", scratch_ipc ? "true" : "false",
-        moved ? "true" : "false", alias_error);
+        moved ? "true" : "false", alias_error,
+        relative.root ? "true" : "false", relative.parent ? "true" : "false",
+        relative.escape_connected ? "true" : "false", relative.escape_sent ? "true" : "false");
     return 0;
 }
 

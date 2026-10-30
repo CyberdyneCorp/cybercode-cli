@@ -43,6 +43,24 @@ descendant and saturation cases still exercise the changed shared driver.
 
 Local Rust example Clippy, portable C fixture syntax, Python/workflow syntax,
 18 compiler-intercepted temporary source transformations, formatting/diff and
-strict OpenSpec are required before push. These local checks do not compile the
-Linux C branch or prove kernel behavior. Hosted x64/arm64 execution is pending.
-No parent task is closed by this fixture or its source review.
+strict OpenSpec passed before push. These local checks do not compile the
+Linux C branch or prove kernel behavior. The native result below supplies that
+case-specific evidence. No parent task is closed by this fixture or source review.
+
+## Native result for 9bb0fb60
+
+[Run 41076338785](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41076338785)
+passed on Linux x64 and arm64. Each report contains 36 rows, including four
+actual mutation cases across the read/write combinations. All observe matching
+ready/pinned TIDs, descriptor/address/path replacement, the original inode now
+unlinked, successful syscall completion and private token/ack exchange, with no
+host receipt. The exact missing-endpoint control instead records actual host
+delivery, successful send and no private roundtrip after the same mutations.
+
+Original reports and control logs are retained under
+`scripts/probes/plugin-native-entry/evidence/linux-private-stream-mutation-9bb0fb60/{x64,arm64}`.
+They bind tested merge `0aed910c2e00671ecf2dd3d88fb98b028fdba546` and source manifest
+SHA-256 `a59ac3e0c8fed62905517f9ce468b13810f8f6d79955de4b902ee4f04db7b643`.
+The manifest was independently recomputed from that exact tree, which was also
+verified equal to branch head `9bb0fb6040af2b9f0a0e3767148a2c889afd9c73`.
+These receipts do not establish later relative-path handling or full IPC support.
