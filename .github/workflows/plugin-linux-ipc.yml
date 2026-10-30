@@ -5,8 +5,13 @@ on:
     paths:
       - crates/cyber-sandbox/examples/plugin_unix_socket_probe.rs
       - crates/cyber-sandbox/tests/fixtures/plugin_unix_socket.c
+      - crates/cyber-sandbox/native/**
+      - crates/cyber-sandbox/src/plugin_policy.rs
+      - crates/cyber-sandbox/src/plugin_policy/**
+      - scripts/probes/plugin-confinement/**
       - .github/workflows/plugin-linux-ipc.yml
       - scripts/probes/plugin-native-entry/linux_socket_candidate.h
+      - scripts/probes/plugin-native-entry/linux_socket_broker.h
       - scripts/probes/plugin-native-entry/build_socket_candidate.py
       - scripts/probes/plugin-native-entry/linux_socket_landlock9.h
       - scripts/probes/plugin-native-entry/linux_unix9_policy.h
@@ -21,7 +26,7 @@ jobs:
   ipc:
     name: UNIX socket diagnostic (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -71,16 +76,34 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec --example plugin_unix_socket_probe
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-candidate"
+          python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker" broker
+          python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker-no-bind" broker-no-bind
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/unix9-candidate" landlock9
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/unix9-missing-resolve" landlock9-no-resolve
+          cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec --example plugin_unix_socket_probe
       - name: Observe fixture-only host socket reachability
         shell: bash
         run: |
           set -euo pipefail
           target/debug/examples/plugin_unix_socket_probe "$PWD/target/debug/cyber-sandbox-exec" "$RUNNER_TEMP/linux-ipc.json"
           target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-candidate" "$RUNNER_TEMP/linux-ipc-candidate.json" --candidate
+          target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker" "$RUNNER_TEMP/linux-ipc-broker.json" --broker
+      - name: Reject blanket bind denial as broker acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          if target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker-no-bind" "$RUNNER_TEMP/linux-ipc-broker-control.json" --broker > "$RUNNER_TEMP/broker-no-bind.log" 2>&1; then
+            echo 'Missing IP server capability unexpectedly passed' >&2
+            exit 1
+          fi
+          python3 - "$RUNNER_TEMP/broker-no-bind.log" <<'PY'
+          from pathlib import Path
+          import sys
+          text = Path(sys.argv[1]).read_text()
+          assert 'IP server/client token exchange' in text, text
+          assert '"tcp_roundtrip":false' in text, text
+          PY
       - name: Record pathname policy kernel availability
         id: abi
         shell: bash
@@ -153,13 +176,14 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/socket-runtime"
           status=0
-          for policy in seccomp unix9; do
+          for policy in seccomp broker unix9; do
             if [[ "$policy" == unix9 && '${{ steps.abi.outputs.supported }}' != true ]]; then
               echo 'UNVERIFIED: skipping ABI-9 runtime matrix on this unsupported kernel.'
               continue
             fi
             mkdir -p "$RUNNER_TEMP/socket-runtime/$policy"
             helper="$RUNNER_TEMP/socket-candidate"
+            if [[ "$policy" == broker ]]; then helper="$RUNNER_TEMP/socket-broker"; fi
             if [[ "$policy" == unix9 ]]; then helper="$RUNNER_TEMP/unix9-candidate"; fi
             for runtime in node python bun deno native; do
             args=(--runtime "$runtime" --initial-exec --packaged-helper "$helper" --report "$RUNNER_TEMP/socket-runtime/$policy/$runtime.json" --trace "$RUNNER_TEMP/socket-runtime/$policy/trace-$runtime")
@@ -186,5 +210,6 @@ jobs:
             ${{ runner.temp }}/socket-runtime/
             ${{ runner.temp }}/unix9-missing-resolve.log
             ${{ runner.temp }}/unix9-unavailable.log
+            ${{ runner.temp }}/broker-no-bind.log
           if-no-files-found: warn
           retention-days: 14

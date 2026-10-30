@@ -63,6 +63,7 @@ mod probe {
     enum Mode {
         Baseline,
         Seccomp,
+        Broker,
         Unix9,
     }
 
@@ -93,7 +94,7 @@ mod probe {
             policy.target_args[1].clone(),
             "pair".into(),
         ];
-        if mode == Mode::Unix9 {
+        if matches!(mode, Mode::Unix9 | Mode::Broker) {
             pair_args.push(policy.scratch.join("local.sock").to_str().unwrap().into());
         }
         let pair_policy = LinuxPolicy {
@@ -115,19 +116,19 @@ mod probe {
                 "private pair escape: {key}: {observed}"
             );
         }
-        for key in [
-            "datagram_pair",
-            "seqpacket_pair",
-            "tcp_roundtrip",
-            "scratch_unix_roundtrip",
-        ] {
+        for key in ["datagram_pair", "seqpacket_pair", "scratch_unix_roundtrip"] {
             assert_eq!(
                 observed[key],
                 mode == Mode::Unix9,
                 "pair/local support: {key}: {observed}"
             );
         }
-        if mode == Mode::Seccomp {
+        assert_eq!(
+            observed["tcp_roundtrip"],
+            matches!(mode, Mode::Unix9 | Mode::Broker),
+            "IP server/client token exchange: {observed}"
+        );
+        if matches!(mode, Mode::Seccomp | Mode::Broker) {
             assert_eq!(observed["pair_listen"], false, "pair listener: {observed}");
         }
         let delivered = receipt(listener, &observed);
@@ -150,6 +151,7 @@ mod probe {
         let mode = match args.get(2).and_then(|arg| arg.to_str()) {
             None => Mode::Baseline,
             Some("--candidate") => Mode::Seccomp,
+            Some("--broker") => Mode::Broker,
             Some("--landlock9") => Mode::Unix9,
             _ => panic!("unknown candidate mode"),
         };
@@ -271,6 +273,7 @@ mod probe {
             "Cargo.lock",
             ".github/workflows/plugin-linux-ipc.yml",
             "scripts/probes/plugin-native-entry/linux_socket_candidate.h",
+            "scripts/probes/plugin-native-entry/linux_socket_broker.h",
             "scripts/probes/plugin-native-entry/linux_socket_landlock9.h",
             "scripts/probes/plugin-native-entry/linux_unix9_policy.h",
             "scripts/probes/plugin-native-entry/build_socket_candidate.py",
@@ -283,9 +286,9 @@ mod probe {
         }
         let report = json!({"platform": std::env::consts::OS, "architecture": std::env::consts::ARCH,
             "checkout": std::env::var("GITHUB_SHA").ok(), "run_id": std::env::var("GITHUB_RUN_ID").ok(),
-            "candidate": candidate, "landlock9": mode == Mode::Unix9, "sources": sources, "source_sha256": format!("{:x}", hash.finalize()),
+            "candidate": candidate, "landlock9": mode == Mode::Unix9, "socket_broker": mode == Mode::Broker, "sources": sources, "source_sha256": format!("{:x}", hash.finalize()),
             "helper_sha256": format!("{:x}", Sha256::digest(std::fs::read(helper).unwrap())),
-            "rows": rows, "scope": "Diagnostic host UNIX-socket reachability only. Fixture messages only; no real broker, filesystem/shell escalation or capability acceptance."});
+            "rows": rows, "scope": "Fixture-owned UNIX reachability and candidate private IP exchange only. Experimental syscall broker when selected; no ambient service contact or production capability acceptance."});
         std::fs::write(
             report_path,
             format!("{}\n", serde_json::to_string_pretty(&report).unwrap()),
