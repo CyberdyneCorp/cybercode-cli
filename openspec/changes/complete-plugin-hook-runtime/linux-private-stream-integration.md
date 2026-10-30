@@ -27,9 +27,11 @@ mount, so writable project sockets cannot be hard-linked into it; this origin
 precondition is essential, including after a source pathname is unlinked.
 
 Connect notifications still pin the exact requesting thread's socket. For an
-absolute scratch pathname the broker uses beneath/no-symlink/no-magic-link
-resolution and checks the actual endpoint inode, retaining its O_PATH descriptor
-through the worker operation. The worker keeps only socket, result pipe and
+absolute scratch pathname the initial implementation used beneath/no-symlink/
+no-magic-link resolution. The [alias extension](linux-private-aliases.md) now
+checks pinned endpoint mount membership and permits safe symlinks and callers
+outside scratch. Both retain the endpoint's O_PATH descriptor through the worker
+operation. The worker keeps only socket, result pipe and
 endpoint handles at fixed slots, then connects through its own procfs reference.
 It never continues a mutable inspected pathname or re-resolves a guest descriptor.
 Private abstract stream destinations rely on the mandatory private net namespace.
@@ -91,8 +93,8 @@ has source-bound passing x64/arm64 evidence. The
 [caller-bound relative-path extension](linux-private-relative-paths.md) now adds
 scratch-relative handling with retained x64/arm64 evidence. The
 [runtime API exchange extension](linux-private-runtime-ipc.md) adds acceptance
-for each runtime's own private pathname socket operations; hosted results for
-that extension remain pending.
+for each runtime's own private pathname socket operations with retained passing
+x64/arm64 results. The alias extension's native results remain pending.
 
 Still required before complete IPC/production acceptance: verified post-pin
 replacement, relative/alias forms, datagram/seqpacket and

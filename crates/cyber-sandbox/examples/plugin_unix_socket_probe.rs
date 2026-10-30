@@ -41,9 +41,16 @@ mod probe {
 
     fn receipt(listener: &UnixListener, observed: &Value) -> bool {
         assert_eq!(observed["started"], true);
-        let connected =
-            observed["connected"] == true || observed["relative_escape_connected"] == true;
-        let sent = observed["sent"] == true || observed["relative_escape_sent"] == true;
+        let connected = [
+            "connected",
+            "relative_escape_connected",
+            "alias_escape_connected",
+        ]
+        .iter()
+        .any(|key| observed[*key] == true);
+        let sent = ["sent", "relative_escape_sent", "alias_escape_sent"]
+            .iter()
+            .any(|key| observed[*key] == true);
         match listener.accept() {
             Ok((mut stream, _)) => {
                 assert!(connected);
@@ -193,7 +200,14 @@ mod probe {
             "private relative path escaped scratch: {}",
             json!({"host_received_fixture":delivered,"observed":observed})
         );
-        for key in ["relative_root_roundtrip", "relative_parent_roundtrip"] {
+        for key in [
+            "relative_root_roundtrip",
+            "relative_parent_roundtrip",
+            "outside_cwd_roundtrip",
+            "alias_relative_roundtrip",
+            "alias_absolute_roundtrip",
+            "alias_directory_roundtrip",
+        ] {
             assert_eq!(
                 observed[key], true,
                 "private relative stream exchange: {key}: {observed}"
@@ -201,6 +215,8 @@ mod probe {
         }
         assert_eq!(observed["relative_escape_connected"], false);
         assert_eq!(observed["relative_escape_sent"], false);
+        assert_eq!(observed["alias_escape_connected"], false);
+        assert_eq!(observed["alias_escape_sent"], false);
         assert_eq!(
             observed["regular_reparent"], policy.fs_write,
             "private IPC layer changed ordinary file moves: {label} read={} write={}: {observed}",
@@ -406,7 +422,11 @@ mod probe {
                 assert_eq!(observed["project_read"], read, "native read control");
                 let delivered = receipt(&listeners[index], &observed);
                 if candidate || label == "private-mask" {
-                    assert!(!delivered, "socket denial: {label}: {observed}");
+                    assert!(
+                        !delivered,
+                        "socket denial: {label}: {}",
+                        json!({"host_received_fixture":delivered,"observed":observed})
+                    );
                 }
                 rows.push(json!({"socket": label, "fs_read": read, "fs_write": write,
                     "shell": false, "host_received_fixture": delivered, "observed": observed}));

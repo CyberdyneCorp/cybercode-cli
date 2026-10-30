@@ -81,47 +81,27 @@ static int private_make_sock(void) {
     return result;
 }
 
-static int private_same_directory(int first, int second) {
-    struct statx a, b;
-    unsigned int mask = STATX_INO | STATX_MNT_ID | STATX_TYPE;
-    if (syscall(SYS_statx, first, "", AT_EMPTY_PATH, mask, &a) != 0 ||
-        syscall(SYS_statx, second, "", AT_EMPTY_PATH, mask, &b) != 0) return 0;
-    return (a.stx_mask & mask) == mask && (b.stx_mask & mask) == mask &&
-        S_ISDIR(a.stx_mode) && S_ISDIR(b.stx_mode) && a.stx_ino == b.stx_ino &&
-        a.stx_dev_major == b.stx_dev_major && a.stx_dev_minor == b.stx_dev_minor &&
-        a.stx_mnt_id == b.stx_mnt_id;
+/* A separate protected scratch bind mount supplies endpoint provenance even
+ * when a pathname traverses a symlink or begins from a caller CWD outside it.
+ * Both handles remain pinned: mount IDs cannot be recycled out from under them.
+ * The owner must prevent foreign links/submounts before admission. */
+static int private_socket_mount(int endpoint) {
+    struct statx root, socket;
+    unsigned int mask = STATX_MNT_ID | STATX_TYPE;
+    if (syscall(SYS_statx, private_root, "", AT_EMPTY_PATH, mask, &root) != 0 ||
+        syscall(SYS_statx, endpoint, "", AT_EMPTY_PATH, mask, &socket) != 0) return 0;
+    return (root.stx_mask & mask) == mask && (socket.stx_mask & mask) == mask &&
+        S_ISDIR(root.stx_mode) && S_ISSOCK(socket.stx_mode) &&
+        root.stx_mnt_id == socket.stx_mnt_id &&
+        root.stx_dev_major == socket.stx_dev_major && root.stx_dev_minor == socket.stx_dev_minor;
 }
 
-/* Bind a relative name to the actual notifying thread's CWD. Only an attested
- * directory inside the protected scratch mount may supply this context. */
-static int private_relative(unsigned int tid, const char *path, char *relative, size_t capacity) {
-    char proc[64], cwd_path[4097];
+/* Snapshot the notifying thread's actual directory object, not a guessed path
+ * or the broker's CWD. Notification validity is checked again after lookup. */
+static int private_context(unsigned int tid) {
+    char proc[64];
     snprintf(proc, sizeof(proc), "/proc/%u/cwd", tid);
-    int cwd = open(proc, O_PATH | O_DIRECTORY | O_CLOEXEC);
-    if (cwd < 0) return errno;
-    snprintf(proc, sizeof(proc), "/proc/self/fd/%d", cwd);
-    ssize_t count = readlink(proc, cwd_path, sizeof(cwd_path) - 1);
-    int error = count < 0 ? errno : ENAMETOOLONG;
-    if (count < 0 || (size_t)count >= sizeof(cwd_path) - 1) goto done;
-    cwd_path[count] = '\0';
-    size_t prefix = strlen(private_path);
-    const char *within;
-    if (strcmp(cwd_path, private_path) == 0) within = ".";
-    else if (prefix < (size_t)count && strncmp(cwd_path, private_path, prefix) == 0 &&
-             cwd_path[prefix] == '/') within = cwd_path + prefix + 1;
-    else { error = EPERM; goto done; }
-    struct open_how how = { .flags = O_PATH | O_DIRECTORY | O_CLOEXEC,
-        .resolve = RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS };
-    int matched = syscall(SYS_openat2, private_root, within, &how, sizeof(how));
-    if (matched < 0) { error = errno; goto done; }
-    int same = private_same_directory(cwd, matched);
-    close(matched);
-    if (!same) { error = EPERM; goto done; }
-    int size = snprintf(relative, capacity, "%s/%s", within, path);
-    error = size <= 0 || (size_t)size >= capacity ? ENAMETOOLONG : 0;
-done:
-    close(cwd);
-    return error;
+    return open(proc, O_PATH | O_DIRECTORY | O_CLOEXEC);
 }
 
 /* The real socket descriptor was already pinned for the exact notifying thread.
@@ -137,25 +117,22 @@ static int private_endpoint(struct sockaddr_storage *storage, socklen_t length, 
     size_t count = length - offsetof(struct sockaddr_un, sun_path);
     memcpy(path, address->sun_path, count);
     path[count] = '\0';
-    char relative[4096];
-    const char *selected = relative;
-    if (path[0] == '/') {
-        size_t prefix = strlen(private_path);
-        if (prefix >= strlen(path) || strncmp(path, private_path, prefix) != 0 ||
-            path[prefix] != '/') return EPERM;
-        selected = path + prefix + 1;
-    } else {
-        int error = private_relative(tid, path, relative, sizeof(relative));
-        if (error != 0) return error;
+    int cwd = -1;
+    if (path[0] != '/') {
+        cwd = private_context(tid);
+        if (cwd < 0) return errno;
     }
+    /* Ordinary symlinks may resolve to scratch. Magic links are not pathname
+     * authority; only the final pinned socket's protected mount grants access. */
     struct open_how how = { .flags = O_PATH | O_CLOEXEC,
-        .resolve = RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS };
-    int fd = syscall(SYS_openat2, private_root, selected, &how, sizeof(how));
-    if (fd < 0) return errno;
-    struct stat info;
-    if (fstat(fd, &info) != 0 || !S_ISSOCK(info.st_mode)) {
+        .resolve = RESOLVE_NO_MAGICLINKS };
+    int fd = syscall(SYS_openat2, cwd < 0 ? AT_FDCWD : cwd, path, &how, sizeof(how));
+    int error = errno;
+    if (cwd >= 0) close(cwd);
+    if (fd < 0) return error;
+    if (!private_socket_mount(fd)) {
         close(fd);
-        return ENOTSOCK;
+        return EPERM;
     }
     *endpoint = fd;
     return 0;

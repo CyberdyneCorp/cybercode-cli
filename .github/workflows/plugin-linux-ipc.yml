@@ -112,7 +112,7 @@ jobs:
           for variant in broker-private-stream broker-private-stream-no-makesock broker-private-stream-no-refer broker-private-stream-mutation broker-private-stream-mutation-no-endpoint; do
             python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/$variant" "$variant"
           done
-          for variant in wrong-cwd no-beneath no-unix-create; do
+          for variant in wrong-cwd no-mount no-unix-create no-alias; do
             python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/broker-private-stream-$variant" "broker-private-stream-$variant"
           done
           for mode in mutation mutation-no-pin mutation-no-copy mutation-continue; do
@@ -153,11 +153,11 @@ jobs:
                         '"private_roundtrip":false', '"host_received_fixture":true', 'BPIN ']:
               assert token in text, text
           PY
-      - name: Reject wrong relative context and missing scratch traversal boundary
+      - name: Reject wrong relative context and missing endpoint mount boundary
         shell: bash
         run: |
           set -euo pipefail
-          for control in wrong-cwd no-beneath; do
+          for control in wrong-cwd no-mount no-alias; do
             log="$RUNNER_TEMP/private-stream-$control.log"
             if target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/broker-private-stream-$control" "$RUNNER_TEMP/linux-ipc-private-$control.json" --broker-private-stream > "$log" 2>&1; then
               echo "Private relative-path control unexpectedly passed: $control" >&2
@@ -170,9 +170,14 @@ jobs:
           if sys.argv[2] == 'wrong-cwd':
               assert 'private relative stream exchange: relative_root_roundtrip' in text, text
               assert '"scratch_unix_roundtrip":true' in text and '"relative_root_roundtrip":false' in text, text
+          elif sys.argv[2] == 'no-mount':
+              assert 'socket denial: outside:' in text, text
+              for token in ['"host_received_fixture":true', '"connected":true', '"sent":true']:
+                  assert token in text, text
           else:
-              assert 'private relative path escaped scratch:' in text, text
-              for token in ['"host_received_fixture":true', '"relative_escape_connected":true', '"relative_escape_sent":true']:
+              assert 'private relative stream exchange: alias_relative_roundtrip' in text, text
+              for token in ['"scratch_unix_roundtrip":true', '"relative_root_roundtrip":true',
+                            '"outside_cwd_roundtrip":true', '"alias_relative_roundtrip":false']:
                   assert token in text, text
           PY
           done
@@ -433,7 +438,8 @@ jobs:
             ${{ runner.temp }}/broker-private-stream-no-refer.log
             ${{ runner.temp }}/private-stream-no-endpoint.log
             ${{ runner.temp }}/private-stream-wrong-cwd.log
-            ${{ runner.temp }}/private-stream-no-beneath.log
+            ${{ runner.temp }}/private-stream-no-mount.log
+            ${{ runner.temp }}/private-stream-no-alias.log
             ${{ runner.temp }}/private-runtime-no-create.log
             ${{ runner.temp }}/broker-no-thread.log
             ${{ runner.temp }}/broker-no-cancel.log

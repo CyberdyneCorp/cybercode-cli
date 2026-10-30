@@ -1,8 +1,10 @@
 # Caller-bound relative private UNIX paths
 
-The private-stream candidate now resolves relative names using the actual
-notifying thread's working directory. This extends the approved broker scope;
-it is not production admission or complete pathname/IPC acceptance.
+This records the b227c833 private-stream prerequisite and its native receipts.
+It resolves relative names using the actual notifying thread's working directory.
+The subsequent [alias and outside-CWD extension](linux-private-aliases.md)
+replaces the beneath-root authorization algorithm described here with pinned
+endpoint mount membership. Neither is production admission or complete IPC.
 
 The broker opens the thread's procfs CWD as an owned directory handle, reads that
 handle's kernel pathname and matches it to a beneath-root directory open in the

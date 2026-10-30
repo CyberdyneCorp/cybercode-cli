@@ -12,8 +12,8 @@ assert mode in {"seccomp", "broker", "broker-no-bind", "broker-no-thread", "brok
                 "broker-mutation", "broker-mutation-no-pin", "broker-mutation-no-copy", "broker-mutation-continue",
                 "broker-private-stream", "broker-private-stream-no-makesock", "broker-private-stream-no-refer",
                 "broker-private-stream-mutation", "broker-private-stream-mutation-no-endpoint",
-                "broker-private-stream-wrong-cwd", "broker-private-stream-no-beneath",
-                "broker-private-stream-no-unix-create",
+                "broker-private-stream-wrong-cwd", "broker-private-stream-no-mount",
+                "broker-private-stream-no-unix-create", "broker-private-stream-no-alias",
                 "landlock9", "landlock9-no-resolve"}
 unix9 = mode.startswith("landlock9")
 private_stream = mode.startswith("broker-private-stream")
@@ -53,13 +53,18 @@ with tempfile.TemporaryDirectory(prefix="cyber-socket-candidate-") as temporary:
                 before = '    snprintf(proc, sizeof(proc), "/proc/%u/cwd", tid);'
                 assert text.count(before) == 1
                 header.write_text(text.replace(before, '    tid = (unsigned int)getpid(); /* Wrong-context control. */\n' + before))
-            if mode == "broker-private-stream-no-beneath":
+            if mode == "broker-private-stream-no-mount":
                 header = target / "socket_private_unix.h"
                 text = header.read_text()
-                before = '''    struct open_how how = { .flags = O_PATH | O_CLOEXEC,
-        .resolve = RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS };'''
+                before = '    if (!private_socket_mount(fd)) {'
                 assert text.count(before) == 1
-                header.write_text(text.replace(before, before.replace('RESOLVE_BENEATH | ', '')))
+                header.write_text(text.replace(before, '    if (!private_socket_mount(fd) && 0) { /* Missing endpoint mount guard. */'))
+            if mode == "broker-private-stream-no-alias":
+                header = target / "socket_private_unix.h"
+                text = header.read_text()
+                before = '        .resolve = RESOLVE_NO_MAGICLINKS };'
+                assert text.count(before) == 1
+                header.write_text(text.replace(before, before.replace('RESOLVE_NO_MAGICLINKS', 'RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS')))
         if mode == "broker-audit-wrong-cap":
             broker = target / "socket_broker.h"
             text = broker.read_text()

@@ -26,7 +26,7 @@ static int abi(void) {
 #endif
 }
 
-static int local_exchange(int family, const char *path, int server) {
+static int local_exchange_to(int family, const char *path, int server, const char *destination) {
     int client = -1, peer = -1, ok = 0;
     struct sockaddr_storage storage = {0};
     socklen_t length;
@@ -45,6 +45,12 @@ static int local_exchange(int family, const char *path, int server) {
     if (server < 0) server = socket(family, SOCK_STREAM, 0);
     if (server < 0 || bind(server, (struct sockaddr *)&storage, length) != 0 ||
         listen(server, 1) != 0 || getsockname(server, (struct sockaddr *)&storage, &length) != 0) goto done;
+    if (destination != NULL) {
+        struct sockaddr_un *address = (struct sockaddr_un *)&storage;
+        if (family != AF_UNIX || strlen(destination) >= sizeof(address->sun_path)) goto done;
+        strcpy(address->sun_path, destination);
+        length = (socklen_t)(offsetof(struct sockaddr_un, sun_path) + strlen(destination) + 1);
+    }
     client = socket(family, SOCK_STREAM, 0);
     if (client < 0 || connect(client, (struct sockaddr *)&storage, length) != 0) goto done;
     peer = accept(server, NULL, NULL);
@@ -58,6 +64,10 @@ done:
     if (server >= 0) close(server);
     if (family == AF_UNIX) unlink(path);
     return ok;
+}
+
+static int local_exchange(int family, const char *path, int server) {
+    return local_exchange_to(family, path, server, NULL);
 }
 
 #include "plugin_unix_relative.h"
@@ -176,7 +186,9 @@ static int pair_probe(const struct sockaddr_un *address, socklen_t length,
         "\"datagram_pair\":%s,\"seqpacket_pair\":%s,\"landlock_abi\":%d,"
         "\"tcp_roundtrip\":%s,\"thread_tcp_roundtrip\":%s,\"scratch_unix_roundtrip\":%s,\"regular_reparent\":%s,"
         "\"cross_mount_alias_errno\":%d,\"relative_root_roundtrip\":%s,\"relative_parent_roundtrip\":%s,"
-        "\"relative_escape_connected\":%s,\"relative_escape_sent\":%s}\n",
+        "\"relative_escape_connected\":%s,\"relative_escape_sent\":%s,"
+        "\"outside_cwd_roundtrip\":%s,\"alias_relative_roundtrip\":%s,\"alias_absolute_roundtrip\":%s,"
+        "\"alias_directory_roundtrip\":%s,\"alias_escape_connected\":%s,\"alias_escape_sent\":%s}\n",
         (connected || reconnected) ? "true" : "false", sent ? "true" : "false",
         readable ? "true" : "false", roundtrip ? "true" : "false",
         disconnected ? "true" : "false", reconnected ? "true" : "false",
@@ -186,7 +198,10 @@ static int pair_probe(const struct sockaddr_un *address, socklen_t length,
         tcp ? "true" : "false", thread_tcp ? "true" : "false", scratch_ipc ? "true" : "false",
         moved ? "true" : "false", alias_error,
         relative.root ? "true" : "false", relative.parent ? "true" : "false",
-        relative.escape_connected ? "true" : "false", relative.escape_sent ? "true" : "false");
+        relative.escape_connected ? "true" : "false", relative.escape_sent ? "true" : "false",
+        relative.outside_cwd ? "true" : "false", relative.alias_relative ? "true" : "false",
+        relative.alias_absolute ? "true" : "false", relative.alias_directory ? "true" : "false",
+        relative.alias_escape_connected ? "true" : "false", relative.alias_escape_sent ? "true" : "false");
     return 0;
 }
 

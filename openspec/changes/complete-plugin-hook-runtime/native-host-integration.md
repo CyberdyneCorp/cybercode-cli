@@ -113,7 +113,8 @@ App's legacy launch path does not implement this sequence today.
   applies that primitive in real connect notifications. The
   [runtime API exchange extension](linux-private-runtime-ipc.md) requires real
   private pathname exchanges from each supported runtime. These increments do
-  not complete this task.
+  not complete this task. The [alias extension](linux-private-aliases.md) covers
+  safe symlinks and outside-scratch caller contexts through pinned mount identity.
 - [ ] N3 Implement registry-owned generation admission and immutable resource
   binding with actual production startup, revocation and quarantine tests.
 - [ ] N4 Integrate the native launch owner and independently intersect all
