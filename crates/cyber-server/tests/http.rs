@@ -1536,7 +1536,12 @@ async fn read_sse_until(
     use futures::StreamExt;
     tokio::time::timeout(Duration::from_secs(3), async {
         let mut buffer = String::new();
-        while !buffer.contains(needle) {
+        // Read past the needle to the blank line that ends its event: a chunk can end
+        // mid-line, and callers parse the event's `data:` line.
+        while !buffer
+            .find(needle)
+            .is_some_and(|at| buffer[at..].contains("\n\n"))
+        {
             let chunk = stream
                 .next()
                 .await
