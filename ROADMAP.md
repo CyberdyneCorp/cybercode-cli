@@ -87,6 +87,8 @@ The [current inventory](docs/implementation/spec-doc-reconciliation.md) contains
 
 **Sound alerts (`tui`, P1): Status: implemented** (change [`add-sound-alerts`](openspec/changes/add-sound-alerts/proposal.md); the check on real hardware remains). Six distinct alert sounds: input needed, done, error, workflow completed, workflow failed, and message. They play while the terminal is unfocused. There are four packs synthesized in code (`cyber`, `soft`, `retro` and `bell`), played through the OS player (`afplay`, `pw-play`/`paplay`/`aplay`, PowerShell), with a terminal-bell fallback over SSH or when no player is found. `/sounds` picks the pack and volume, toggles events and previews each sound. It also closes the gap where a permission or question request raised no attention notification. No native audio dependency.
 
+**Usage limit waits (`session-runtime`, `configuration`, `exec-mode`, `tui`, `web-client`, P1; `goals`, `loops-scheduling`, `workflows`, P2): Status: implemented** (change [`add-usage-limit-wait`](openspec/changes/add-usage-limit-wait/proposal.md)). An unattended run (`cyber exec`, a Goal, a loop iteration, a workflow agent, a teammate, or their subagents) that hits a subscription usage limit with a known reset waits for it and retries the Turn instead of failing: within `usage_limit.max_wait` (default 6 h), 10 s after the reset plus per-Session jitter, as one new attempt from the same history. The wait is durable (`session.usage_limit.waiting|resumed|abandoned.1`), cancelled by the normal interrupt, resumed after a restart for top-level Sessions and ended cleanly for owned ones; wall deadlines (Session, run, Goal and loop `max_wall_seconds`, `exec --timeout`) win over waiting. `exec` reports `usage_limit` stream-json lines, the TUI offers `/resume-at-reset` and a footer badge, and the dashboard shows the wait. The model fallback chain, once implemented, runs first.
+
 **Proposed binary hex editor (P1):** [`add-binary-hex-editor`](openspec/changes/add-binary-hex-editor/proposal.md) extends the current file explorer with paged hex/ASCII inspection, staged byte edits, review/undo/recovery and a bounded model-facing binary tool. Specification only; implementation awaits review and scheduling after the existing Plugins/hooks and Daily coding workstreams. It does not imply that `/files` already provides a general manual text editor.
 
 ## P2: Autonomy & orchestration (flagship)
@@ -203,16 +205,16 @@ The editor deferral is already reflected in canonical phase tags: 14 editor requ
 | `compaction` | 15 | 3 | 1 |  |  | 19 |
 | `compat-import` | 1 | 19 | 1 |  |  | 21 |
 | `computer-use` |  |  | 4 |  |  | 4 |
-| `configuration` | 18 | 3 |  |  |  | 21 |
+| `configuration` | 18 | 4 |  |  |  | 22 |
 | `cross-session-messaging` |  | 21 | 5 | 2 |  | 28 |
 | `cyber-account` |  |  |  | 18 |  | 18 |
 | `editor-integration` |  |  |  | 14 | 1 | 15 |
-| `exec-mode` | 11 | 5 | 2 | 1 |  | 19 |
-| `goals` |  |  | 21 |  |  | 21 |
+| `exec-mode` | 11 | 6 | 2 | 1 |  | 20 |
+| `goals` |  |  | 22 |  |  | 22 |
 | `harness-evaluation` | 7 |  | 1 |  |  | 8 |
 | `hooks` |  | 20 | 2 |  |  | 22 |
 | `installation-upgrade` | 12 | 1 |  |  |  | 13 |
-| `loops-scheduling` |  |  | 14 | 1 |  | 15 |
+| `loops-scheduling` |  |  | 15 | 1 |  | 16 |
 | `mcp` | 14 | 7 | 1 |  |  | 22 |
 | `mcp-server` |  | 11 | 4 | 1 |  | 16 |
 | `memory` |  | 13 |  | 1 |  | 14 |
@@ -228,22 +230,22 @@ The editor deferral is already reflected in canonical phase tags: 14 editor requ
 | `runners-cloud` |  |  |  | 22 |  | 22 |
 | `sandbox` | 7 | 9 |  | 1 |  | 17 |
 | `server-api` | 26 | 6 | 2 | 3 |  | 37 |
-| `session-runtime` | 23 | 6 |  |  |  | 29 |
+| `session-runtime` | 23 | 8 |  |  |  | 31 |
 | `session-sharing` |  |  |  | 10 | 2 | 12 |
 | `skills-commands` | 14 | 5 | 1 |  |  | 20 |
 | `snapshots-checkpoints` | 12 | 3 | 1 |  |  | 16 |
 | `storage-events` | 18 | 2 |  | 2 |  | 22 |
 | `system-context` | 14 | 5 | 1 |  |  | 20 |
 | `tool-registry` | 15 | 4 |  |  |  | 19 |
-| `tui` | 21 | 41 | 5 | 1 | 1 | 69 |
+| `tui` | 21 | 42 | 5 | 1 | 1 | 70 |
 | `vcs-integration` | 2 | 3 |  | 10 |  | 15 |
 | `verified-integrations` |  |  | 4 |  |  | 4 |
 | `verified-workflows` |  |  | 5 |  |  | 5 |
-| `web-client` |  | 5 |  | 1 | 1 | 7 |
-| `workflows` |  |  | 35 | 2 | 1 | 38 |
+| `web-client` |  | 6 |  | 1 | 1 | 8 |
+| `workflows` |  |  | 36 | 2 | 1 | 39 |
 | `workspace-trust` | 4 |  |  |  |  | 4 |
 | `worktrees` |  | 12 | 4 |  |  | 16 |
-| **Total** | **343** | **338** | **140** | **180** | **15** | **1016** |
+| **Total** | **343** | **344** | **143** | **180** | **15** | **1025** |
 
 
 Most capabilities span phases. A spec is a product contract, and each phase implements the slice tagged for it. For example, `tui` has its basics in P0, rewind and modes in P1, the agent view and workflow monitor in P2, remote indicators in P3 and mods panes in P4.
