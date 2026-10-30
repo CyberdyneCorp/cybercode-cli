@@ -84,12 +84,16 @@ pub enum LiveEvent {
         job_id: String,
         text: String,
     },
-    /// `session.retry`: the attempt number and delay before it.
+    /// `session.retry`: the attempt number and delay before it. `discarded` means the
+    /// failed attempt of `message_id` had streamed output: clients drop its live text,
+    /// reasoning and tool input, since the request is replayed from the start.
     Retry {
         session_id: String,
+        message_id: String,
         attempt: u32,
         delay_ms: u64,
         error: String,
+        discarded: bool,
     },
     /// `session.usage`: usage of the last step and context-window utilization.
     Usage {

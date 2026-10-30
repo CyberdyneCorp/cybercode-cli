@@ -53,6 +53,22 @@ pub(super) fn mark_for_call(
     Ok(())
 }
 
+/// Whether a reservation billed an attempt of `call`: its receipts already carry the usage.
+pub(super) fn reserved_call(
+    store: &cyber_store::Store,
+    session: &str,
+    call: &str,
+) -> Result<bool, RuntimeError> {
+    let (session, call) = (session.to_string(), call.to_string());
+    Ok(store.read(move |db| {
+        Ok(db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM budget_reservation WHERE session_id=?1 AND call_id=?2)",
+            rusqlite::params![session, call],
+            |row| row.get::<_, bool>(0),
+        )?)
+    })?)
+}
+
 pub(super) fn error(error: StoreError) -> RuntimeError {
     if let StoreError::Projector { kind, reason } = &error {
         let value: Value = serde_json::from_str(reason).unwrap_or(Value::Null);

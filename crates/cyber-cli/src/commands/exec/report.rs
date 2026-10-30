@@ -291,6 +291,17 @@ pub struct Out {
     review: Option<Review>,
 }
 
+/// The `retry` stream-json payload of a `session.retry` event.
+fn retry_payload(data: &Value) -> Value {
+    json!({
+        "message_id": data["message_id"],
+        "attempt": data["attempt"],
+        "delay_ms": data["delay_ms"],
+        "error": data["error"],
+        "discarded": data["discarded"] == true,
+    })
+}
+
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -552,6 +563,24 @@ impl Out {
         if self.format != Format::StreamJson && !self.quiet {
             eprintln!("error: {message}");
         }
+    }
+
+    /// `session.retry`: a provider retry. A `discarded` attempt never reached the output,
+    /// which holds recorded content only (`provider-catalog` → Retry policy).
+    pub fn retry(&self, data: &Value) {
+        let payload = retry_payload(data);
+        self.note(&format!(
+            "retry {} in {} ms: {}{}",
+            payload["attempt"],
+            payload["delay_ms"],
+            data["error"].as_str().unwrap_or_default(),
+            if payload["discarded"] == true {
+                " (partial answer discarded)"
+            } else {
+                ""
+            }
+        ));
+        self.line("retry", payload);
     }
 
     /// A durable session event.
@@ -1037,6 +1066,30 @@ mod tests {
             (0, &json!(true)),
             "inline override"
         );
+    }
+
+    /// A discarded attempt is reported as a `retry` line; only recorded content becomes
+    /// `assistant_text`, so the run's result is the replayed answer alone.
+    #[test]
+    fn a_discarded_attempt_is_a_retry_line_and_never_the_result() {
+        let retry = json!({ "session_id": "ses_1", "message_id": "msg_1", "attempt": 1,
+            "delay_ms": 900, "error": "transport: reset", "discarded": true });
+        assert_eq!(
+            retry_payload(&retry),
+            json!({ "message_id": "msg_1", "attempt": 1, "delay_ms": 900,
+                "error": "transport: reset", "discarded": true })
+        );
+        let args = Wrapper::parse_from(["exec", "hi"]).args;
+        let mut out = Out::new(Format::Json, &args, &json!({ "id": "ses_1" }));
+        let mut run = Run::new(&args, Instant::now());
+        out.retry(&retry);
+        out.durable(
+            &mut run,
+            "session.text.ended.1",
+            &json!({ "message_id": "msg_1", "text": "Done." }),
+        );
+        assert_eq!(run.text, "Done.");
+        assert_eq!(out.summary(&run, 0)["result"], "Done.");
     }
 
     #[test]

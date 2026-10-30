@@ -55,13 +55,15 @@ cargo run -p cyber-tools --example agent -- openai/gpt-6-luna path/to/repo "Fix 
 
 ## Provider stream interruptions
 
-Cyber retries retryable provider failures up to four times before assistant output starts. Once text, reasoning or tool input has arrived, a failure preserves the partial response and settles the turn without replaying its request. Completed tool outcomes remain recorded; calls that never dispatched are marked interrupted. Continuing the conversation uses that recorded history.
+Cyber retries retryable provider failures (`RateLimit`, `ProviderInternal`, `Transport`) up to four times per provider request. A failure before any output simply reopens the request. A failure after partial text, reasoning, streamed tool input or complete tool calls also counts as one of those four retries. Cyber discards that partial answer and sends the same request again. Clients get `session.retry` with `discarded: true` and the step's `message_id`, and drop the text they showed. The TUI and the dashboard clear it, and `cyber exec --format stream-json` prints a `retry` line. This is safe because nothing in the answer has had an effect yet. Tool calls are dispatched only after the stream completes. Reasoning, text and calls are recorded only when the stream ends, so a discarded attempt leaves nothing in history, and none of it is sent to the model afterwards. If the provider reported usage for the discarded attempt, it is recorded as a failed `turn` call (`usage.recorded.1`). It counts toward totals and budgets, but not toward the step's own usage or the context meter.
+
+When the four retries are spent, or the failure cannot be retried, the final attempt's partial response is kept and the turn is settled as interrupted. Completed tool outcomes remain recorded, and calls that never dispatched are marked interrupted. Continuing the conversation uses that recorded history. A request is never sent again after protocol completion, or after one of its tool calls was dispatched.
 
 An HTTP body failure reports `provider response stream interrupted after N body bytes` followed by the credential-redacted transport error. This identifies where the failure happened; it does not identify whether the provider, network or client caused it. A valid protocol completion is final: Cyber retains its result and usage even if the HTTP tail later stalls or closes incorrectly. A stream that ends before protocol completion still fails.
 
 ### Stream idle timeout
 
-A response stream that delivers no bytes for `providers.<p>.timeout.idle_ms` milliseconds (default 300 000, five minutes) fails with a `Transport` error `stream idle for <n>s`. It is retried like any other transport failure when no output had arrived; after output, the partial response is kept as described above. `0` turns the timer off for that provider:
+A response stream that delivers no bytes for `providers.<p>.timeout.idle_ms` milliseconds (default 300 000, five minutes) fails with a `Transport` error `stream idle for <n>s`. It is retried like any other transport failure. If output had already arrived, the partial answer is discarded and the request is replayed, as described above. `0` turns the timer off for that provider:
 
 ```jsonc
 { "providers": { "ollama": { "timeout": { "idle_ms": 0 } } } }

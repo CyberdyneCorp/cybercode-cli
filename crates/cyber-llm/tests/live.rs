@@ -79,14 +79,9 @@ async fn round_trip(catalog: &Catalog, model: &str) {
     ));
 
     let first = collect(
-        open_with_retry(
-            adapter.as_ref(),
-            &request,
-            &RetryPolicy::default(),
-            |_, _, _| {},
-        )
-        .await
-        .unwrap(),
+        open_with_retry(adapter.as_ref(), &request, &RetryPolicy::default(), |_| {})
+            .await
+            .unwrap(),
         |_| {},
     )
     .await
@@ -116,14 +111,9 @@ async fn round_trip(catalog: &Catalog, model: &str) {
         }],
     });
     let second = collect(
-        open_with_retry(
-            adapter.as_ref(),
-            &request,
-            &RetryPolicy::default(),
-            |_, _, _| {},
-        )
-        .await
-        .unwrap(),
+        open_with_retry(adapter.as_ref(), &request, &RetryPolicy::default(), |_| {})
+            .await
+            .unwrap(),
         |_| {},
     )
     .await
@@ -220,14 +210,9 @@ async fn reasoning_tool_loop(
     for step in 0..MAX_STEPS {
         let mut items = Vec::new();
         let mut streamed = String::new();
-        let stream = open_with_retry(
-            adapter.as_ref(),
-            &request,
-            &RetryPolicy::default(),
-            |_, _, _| {},
-        )
-        .await
-        .unwrap_or_else(|e| panic!("{model} step {step} rejected: {e:?}"));
+        let stream = open_with_retry(adapter.as_ref(), &request, &RetryPolicy::default(), |_| {})
+            .await
+            .unwrap_or_else(|e| panic!("{model} step {step} rejected: {e:?}"));
         // An item without text closes the reasoning streamed since the last item.
         let out = collect(stream, |event| match event {
             LlmEvent::ReasoningDelta { text } => streamed.push_str(text),
