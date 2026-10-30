@@ -61,3 +61,23 @@ and makes guest-address mutation volatile so the counterexample is not removed
 by optimization. The probe reads only its own fixture child's memory. It does not
 change the one-shot exec supervisor, authorize later exec or inspect real plugins.
 Native results remain authoritative for whether the proposed prerequisites work.
+
+## Native prerequisite receipts
+
+[Run 40990090248](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40990090248)
+completed successfully on Linux x64 and arm64. The retained
+[x64 report](../../../scripts/probes/plugin-native-entry/evidence/linux-pidfd-7936cb6d/x64.json)
+and [arm64 report](../../../scripts/probes/plugin-native-entry/evidence/linux-pidfd-7936cb6d/arm64.json)
+each contain passing host and private-namespace observations on kernel
+`7.0.0-1017-azure`. Both establish thread-table selection, socket pinning across
+descriptor replacement, copied-address mutation followed by a TCP exchange,
+ESRCH after thread exit and EPERM for nondumpable-child access.
+
+The reports bind merge checkout `c42831be5ee522833b802960c9e568db8433a522`
+to source SHA-256 `9ef84af7a5ee191fbaa25127844674c7758e00dc31330616d4905f5488462a9f`.
+That manifest was independently recomputed from the committed checkout when
+retaining these receipts. Probe binary hashes are reported by the native jobs
+inside each receipt; local macOS verification does not independently execute
+those Linux binaries. These four positive cases support implementing an isolated
+broker candidate. They do not prove confinement, compatibility on other kernels,
+production admission or an approved support-floor change.
