@@ -169,6 +169,7 @@ impl Tool for Grep {
             let files = walker(&base, crate::sandboxing::hidden(ctx))
                 .filter(|p| include.as_ref().is_none_or(|m| glob_matches(m, &base, p)));
             let (output, matched) = search(files, &regex, context, limit, &ctx.cancel);
+            ctx.authorize_secret_matches(&matched).await?;
             frame_overflow_matches(ctx, &base, &matched);
             Ok(output)
         })
@@ -310,6 +311,7 @@ pub(crate) async fn grep_value(ctx: &Ctx<'_>) -> Result<Value, ToolError> {
         .collect();
     files.sort();
     let mut matches = Vec::new();
+    let mut matched = Vec::new();
     let mut truncated = false;
     for path in files {
         if ctx.cancel.is_cancelled() {
@@ -319,6 +321,9 @@ pub(crate) async fn grep_value(ctx: &Ctx<'_>) -> Result<Value, ToolError> {
         let room = max - matches.len();
         truncated = found.len() > room;
         let shown = ctx.resource(&path);
+        if !found.is_empty() {
+            matched.push(path);
+        }
         matches.extend(
             found
                 .into_iter()
@@ -329,6 +334,8 @@ pub(crate) async fn grep_value(ctx: &Ctx<'_>) -> Result<Value, ToolError> {
             break;
         }
     }
+    ctx.authorize_secret_matches(&matched).await?;
+    frame_overflow_matches(ctx, &base, &matched);
     Ok(json!({"matches": matches, "truncated": truncated}))
 }
 

@@ -263,6 +263,9 @@ export type BudgetUsage = {
   zone?: string | null;
 };
 
+/** `permissions.untrusted_content.bypass`: what taint does in `bypass`. */
+export type BypassSetting = "allow" | "deny";
+
 export type CallState = {
   structured_output?: unknown;
   call_id: string;
@@ -3069,6 +3072,16 @@ export type NetworkCapability = {
 };
 
 /**
+ * The effective settings a notice's consequence depends on: the Location's
+ * `permissions.untrusted_content` `taint` and `bypass`, which the server reports on a
+ * Session so clients state the consequence that applies.
+ */
+export type NoticePolicy = {
+  taint?: TaintSetting;
+  bypass?: BypassSetting;
+};
+
+/**
  * Provider state that must travel back with reasoning or a tool call. `data` is stored
  * exactly as received and never decoded; `provider` and `model` name its producer, so
  * only that model receives it back. `Debug` never prints `data`.
@@ -3981,6 +3994,12 @@ export type Session = {
    * step and after a compaction.
    */
   context?: ContextMeter | null;
+  /**
+   * The Location's effective `permissions.untrusted_content` `taint` and `bypass`,
+   * so clients state an injection notice's consequence as it applies
+   * (`untrusted-content` → Injection signal notices).
+   */
+  untrusted_content: NoticePolicy;
 };
 
 export type SessionContext = {
@@ -4505,6 +4524,9 @@ export type SubtreeStopReport = {
 };
 
 export type SubtreeStopStatus = "acknowledged" | "unknown";
+
+/** `permissions.untrusted_content.taint`: which framed results taint the run. */
+export type TaintSetting = "off" | "signal" | "any";
 
 /** A task as it is after a change. */
 export type Task = {

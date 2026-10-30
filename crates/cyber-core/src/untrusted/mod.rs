@@ -19,7 +19,9 @@ pub use detect::{Detector, scan};
 pub use hidden::{VALUE_LIMIT, expose_hidden, is_hidden, visible_value, without_userinfo};
 pub use notice::{BypassSetting, NoticePolicy, TaintSetting, consequence};
 pub use rules::{DETECTOR_VERSION, Matcher, RULES, Rule};
-pub use settings::{TaintedAllow, UntrustedSettings, restrict_project_layer};
+pub use settings::{
+    TaintedAllow, UntrustedSettings, replaced_settings, restore_settings, restrict_project_layer,
+};
 pub use taint::{RunTaint, TaintSource};
 
 /// At most this many hits are recorded per scanned text; all are counted.
@@ -156,18 +158,6 @@ pub enum ScanScope {
     All,
 }
 
-impl ScanScope {
-    /// The effective scope in a merged config. Scanning more is the safe side, so any
-    /// value other than an absent key or `"external"` scans everything.
-    pub fn from_config(config: &serde_json::Value) -> Self {
-        match config.pointer("/permissions/untrusted_content/scan") {
-            None => Self::External,
-            Some(value) if value.as_str() == Some("external") => Self::External,
-            Some(_) => Self::All,
-        }
-    }
-}
-
 /// The `untrusted` record of `session.tool.settled.1` and `session.prompt.admitted.1`
 /// (`untrusted-content` → Injection signal notices). Events without it read as having
 /// no signals.
@@ -232,19 +222,6 @@ mod tests {
         assert_eq!(kept[0], signal(SignalKind::OverrideInstructions, "later"));
         assert_eq!(kept[1], signal(SignalKind::RoleMarkup, "0"));
         assert_eq!(kept[MAX_RECORDED - 1], signal(SignalKind::ExfilUrl, "late"));
-    }
-
-    #[test]
-    fn scan_scope_reads_the_setting_and_errs_toward_scanning() {
-        let scope = |value: serde_json::Value| ScanScope::from_config(&value);
-        assert_eq!(scope(serde_json::json!({})), ScanScope::External);
-        let set = |scan: serde_json::Value| {
-            scope(serde_json::json!({"permissions": {"untrusted_content": {"scan": scan}}}))
-        };
-        assert_eq!(set("external".into()), ScanScope::External);
-        assert_eq!(set("all".into()), ScanScope::All);
-        assert_eq!(set("everything".into()), ScanScope::All);
-        assert_eq!(set(serde_json::Value::Null), ScanScope::All);
     }
 
     #[test]

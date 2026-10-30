@@ -106,6 +106,7 @@ pub(crate) async fn readable(ctx: &Ctx<'_>) -> Result<PathBuf, ToolError> {
 /// or a binary file is an error.
 pub(crate) async fn read_value(ctx: &Ctx<'_>) -> Result<Value, ToolError> {
     let path = readable(ctx).await?;
+    ctx.frame_overflow_reads(&path);
     let meta = tokio::fs::metadata(&path)
         .await
         .map_err(|_| failed(not_found(&path)))?;

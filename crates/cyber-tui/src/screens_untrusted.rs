@@ -50,7 +50,7 @@ async fn app(server: &Server, items: Vec<Item>) -> App {
 fn screen(app: &mut App, mode: &str, policy: NoticePolicy) -> String {
     app.session.mode = mode.into();
     app.session.effective_mode = mode.into();
-    app.untrusted_policy = policy;
+    app.session.untrusted_policy = policy;
     render(app, 180, 22, &Opts::default())
 }
 
@@ -157,4 +157,44 @@ async fn messages_with_signals_get_a_notice_and_clean_results_none() {
         1,
         "{shown}"
     );
+}
+
+/// Regression: the TUI stated the consequence for the defaults whatever the Location
+/// set. The effective `taint` and `bypass` come from the server's Session: with
+/// `bypass: "deny"` a bypass Session's notice says risky actions are denied, and with
+/// `taint: "off"` it states no consequence.
+#[tokio::test]
+async fn notices_follow_the_locations_effective_settings() {
+    for (settings, mode, consequence) in [
+        (
+            json!({"bypass": "deny"}),
+            "bypass",
+            " Risky actions in this run will be denied (bypass).",
+        ),
+        (json!({"taint": "off"}), "default", ""),
+    ] {
+        let server = Server::start_config(
+            json!({}),
+            json!({"permissions": {"untrusted_content": settings}}),
+            false,
+        )
+        .await;
+        let mut app = app(&server, fetched()).await;
+        let expected: NoticePolicy =
+            serde_json::from_value(settings.clone()).expect("a notice policy");
+        assert_eq!(app.session.untrusted_policy, expected, "{settings}");
+        app.session.mode = mode.into();
+        app.session.effective_mode = mode.into();
+        let shown = render(&mut app, 180, 22, &Opts::default());
+        let line = shown
+            .lines()
+            .find(|row| row.contains(NOTICE))
+            .unwrap_or_else(|| panic!("no notice:\n{shown}"));
+        let after = &line[line.find(NOTICE).unwrap() + NOTICE.len()..];
+        assert_eq!(
+            after.split("  ").next().unwrap_or_default(),
+            consequence,
+            "{line}"
+        );
+    }
 }

@@ -203,6 +203,8 @@ impl ResourceTool {
                 action: "read".into(),
                 resources: vec![resource.clone()],
                 read_only: true,
+                // The URI goes to the server, so a tainted run treats it as egress.
+                egress: true,
                 ..Request::default()
             },
             vec![resource],

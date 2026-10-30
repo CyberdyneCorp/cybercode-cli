@@ -41,6 +41,11 @@ impl Runtime {
         Ok(taint)
     }
 
+    /// The Location's effective notice policy, from the tool host.
+    pub fn untrusted_policy(&self, directory: &str) -> cyber_core::untrusted::NoticePolicy {
+        self.inner.tools.untrusted_policy(directory)
+    }
+
     /// The record a Session's run hands on: to a child it spawns now, or to its parent
     /// with its result. `None` when the run has read nothing untrusted.
     pub async fn handed_taint(&self, session_id: &str) -> Option<UntrustedRecord> {
@@ -54,6 +59,19 @@ impl Runtime {
         let parent = handle.state.lock().await.info.parent_id.clone()?;
         self.handed_taint(&parent).await
     }
+}
+
+/// One record for an admission from several (the input's own and its attachments'):
+/// the first tainting one's source and origin with the union of kinds.
+pub(super) fn merged<const N: usize>(
+    records: [Option<UntrustedRecord>; N],
+) -> Option<UntrustedRecord> {
+    let mut taint = cyber_core::untrusted::RunTaint::default();
+    records
+        .iter()
+        .flatten()
+        .for_each(|record| taint.note(record));
+    taint.inherited()
 }
 
 fn record(source: &str, origin: &str, text: &str) -> Option<UntrustedRecord> {

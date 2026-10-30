@@ -211,21 +211,28 @@ impl BuiltinHost {
         }
         let agents = self.subagent_names(Path::new(&turn.directory));
         let mut parts = Vec::new();
+        let mut records = Vec::new();
         let mut attached = 0;
         for token in tokens {
             if agents.iter().any(|agent| agent == token) {
                 parts.push(agent_part(token));
                 continue;
             }
-            let Some(text) = self.read_reference(turn, token, asker, cancel).await? else {
+            let read = self.read_reference(turn, token, asker, cancel).await;
+            // A framed reference (a managed overflow file) has a record; it rides with
+            // the prompt's admission instead of a settlement.
+            let record = self.take_untrusted(&turn.session_id, &asker.call_id);
+            let Some(text) = read? else {
                 continue;
             };
             if attached + text.len() > ATTACHED_LIMIT {
                 break;
             }
             attached += text.len();
+            records.extend(record);
             parts.push(Content::Text { text });
         }
+        self.note_attachment_untrusted(&turn.session_id, &asker.call_id, &records);
         Ok(parts)
     }
 

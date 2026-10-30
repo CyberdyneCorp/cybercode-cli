@@ -1,0 +1,175 @@
+{
+  "description": "Injection notice lines for an attached client, checked by cyber-core untrusted::notice and web/src/untrusted.ts so the wording cannot drift.",
+  "cases": [
+    {
+      "name": "default mode asks",
+      "record": {
+        "source": "webfetch",
+        "origin": "https://x.example/a",
+        "detector_version": 2,
+        "signals": [
+          {
+            "kind": "exfil_url",
+            "excerpt": "x"
+          }
+        ],
+        "signal_count": 1
+      },
+      "mode": "default",
+      "policy": {
+        "taint": "signal",
+        "bypass": "allow"
+      },
+      "line": "! Possible prompt injection in webfetch result (exfil_url). Risky actions in this run will ask."
+    },
+    {
+      "name": "kinds in kind order",
+      "record": {
+        "source": "mcp",
+        "origin": "https://x.example/a",
+        "detector_version": 2,
+        "signals": [
+          {
+            "kind": "exfil_url",
+            "excerpt": "x"
+          },
+          {
+            "kind": "override_instructions",
+            "excerpt": "x"
+          }
+        ],
+        "signal_count": 2
+      },
+      "mode": "auto",
+      "policy": {},
+      "line": "! Possible prompt injection in mcp result (override_instructions, exfil_url). Risky actions in this run will ask."
+    },
+    {
+      "name": "dont-ask denies",
+      "record": {
+        "source": "websearch",
+        "origin": "https://x.example/a",
+        "detector_version": 2,
+        "signals": [
+          {
+            "kind": "command_request",
+            "excerpt": "x"
+          }
+        ],
+        "signal_count": 1
+      },
+      "mode": "dont-ask",
+      "policy": {},
+      "line": "! Possible prompt injection in websearch result (command_request). Risky actions in this run will be denied."
+    },
+    {
+      "name": "bypass default",
+      "record": {
+        "source": "webfetch",
+        "origin": "https://x.example/a",
+        "detector_version": 2,
+        "signals": [
+          {
+            "kind": "exfil_url",
+            "excerpt": "x"
+          }
+        ],
+        "signal_count": 1
+      },
+      "mode": "bypass",
+      "policy": {
+        "bypass": "allow"
+      },
+      "line": "! Possible prompt injection in webfetch result (exfil_url). Taint is off in bypass."
+    },
+    {
+      "name": "bypass deny",
+      "record": {
+        "source": "webfetch",
+        "origin": "https://x.example/a",
+        "detector_version": 2,
+        "signals": [
+          {
+            "kind": "exfil_url",
+            "excerpt": "x"
+          }
+        ],
+        "signal_count": 1
+      },
+      "mode": "bypass",
+      "policy": {
+        "bypass": "deny"
+      },
+      "line": "! Possible prompt injection in webfetch result (exfil_url). Risky actions in this run will be denied (bypass)."
+    },
+    {
+      "name": "taint off states no consequence",
+      "record": {
+        "source": "browser",
+        "origin": "https://x.example/a",
+        "detector_version": 2,
+        "signals": [
+          {
+            "kind": "role_markup",
+            "excerpt": "x"
+          }
+        ],
+        "signal_count": 1
+      },
+      "mode": "default",
+      "policy": {
+        "taint": "off"
+      },
+      "line": "! Possible prompt injection in browser result (role_markup)."
+    },
+    {
+      "name": "a message",
+      "record": {
+        "source": "session",
+        "origin": "https://x.example/a",
+        "detector_version": 2,
+        "signals": [
+          {
+            "kind": "permission_change",
+            "excerpt": "x"
+          }
+        ],
+        "signal_count": 1
+      },
+      "mode": "plan",
+      "policy": {
+        "taint": "any"
+      },
+      "line": "! Possible prompt injection in session message (permission_change). Risky actions in this run will ask."
+    },
+    {
+      "name": "hidden characters in the source are shown",
+      "record": {
+        "source": "we‮bfetch\u0007",
+        "origin": "https://x.example/a",
+        "detector_version": 2,
+        "signals": [
+          {
+            "kind": "hidden_text",
+            "excerpt": "x"
+          }
+        ],
+        "signal_count": 1
+      },
+      "mode": "default",
+      "policy": {},
+      "line": "! Possible prompt injection in we[U+202E]bfetch result (hidden_text). Risky actions in this run will ask."
+    },
+    {
+      "name": "no signals, no line",
+      "record": {
+        "source": "mcp",
+        "origin": "mcp:docs/search",
+        "detector_version": 2
+      },
+      "mode": "default",
+      "policy": {},
+      "line": null
+    }
+  ]
+}

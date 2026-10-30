@@ -25,8 +25,8 @@ use cyber_core::hooks::HookAction;
 use cyber_core::skills::{self, Discovery, SkillScope};
 use cyber_core::untrusted::Scan;
 use cyber_server::runtime::{
-    CallState, Invocation, ModelResolver, PermissionAsk, PermissionReply, Provenance,
-    Reconciliation, Runtime, ToolDef, ToolHost, ToolOutcome, TurnContext, WeakRuntime,
+    CallState, ContentSource, Invocation, ModelResolver, PermissionAsk, PermissionReply,
+    Provenance, Reconciliation, Runtime, ToolDef, ToolHost, ToolOutcome, TurnContext, WeakRuntime,
 };
 use cyber_store::Store;
 use futures::future::BoxFuture;
@@ -874,6 +874,16 @@ impl ToolHost for BuiltinHost {
         call_id: &str,
     ) -> Option<cyber_core::untrusted::UntrustedRecord> {
         self.take_untrusted(session_id, call_id)
+    }
+
+    /// A config that fails to load reports the defaults; its tool calls fail anyway.
+    fn untrusted_policy(&self, directory: &str) -> cyber_core::untrusted::NoticePolicy {
+        (self.opts.config)(Path::new(directory)).map_or_else(
+            |_| Default::default(),
+            |(config, _)| {
+                cyber_core::untrusted::UntrustedSettings::effective(&config).notice_policy()
+            },
+        )
     }
 
     fn file_decisions<'a>(
@@ -1958,6 +1968,80 @@ impl Ctx<'_> {
             .unwrap_or_else(PoisonError::into_inner) = Some((provenance, prior));
     }
 
+    /// In a tainted run, a search that matched inside secret files reads them: the files
+    /// are authorized as a `read` of each (`permissions-modes` → Taint-aware approvals),
+    /// since a search's base and filter alone do not show what the walk visits.
+    pub(crate) async fn authorize_secret_matches(
+        &self,
+        files: &[PathBuf],
+    ) -> Result<(), ToolError> {
+        if !self.policy.taint.is_tainted() {
+            return Ok(());
+        }
+        let secrets: Vec<String> = files
+            .iter()
+            .filter(|path| {
+                permissions::secret_path(
+                    &permissions::slash(path),
+                    &self.policy.location,
+                    &self.policy.home,
+                )
+            })
+            .map(|path| self.resource(path))
+            .collect();
+        if secrets.is_empty() {
+            return Ok(());
+        }
+        let req = Request {
+            action: "read".into(),
+            resources: secrets.clone(),
+            read_only: true,
+            ..Request::default()
+        };
+        self.authorize_as("read", req, secrets, Value::Null).await
+    }
+
+    /// A shell command that names a file in the managed output directory (`cat
+    /// <data>/tool-output/tool_3`), or runs there, re-reads external text: its output is
+    /// framed like a `read` of that file, with the file's recorded provenance when it
+    /// names one file and `overflow` otherwise (`untrusted-content` → Framed tool results).
+    pub(crate) fn frame_overflow_shell(&self, commands: &[String], workdir: &Path) {
+        let dir = &self.host.opts.tool_output_dir;
+        let powershell = self.inv.name == "powershell";
+        let mut named: Vec<PathBuf> = Vec::new();
+        for command in commands {
+            for word in permissions::shell_words_or_split(command, powershell)
+                .iter()
+                .skip(1)
+            {
+                let path = resolve_path(
+                    workdir,
+                    &self.host.opts.home,
+                    permissions::path_argument(word),
+                );
+                if crate::untrusted::overflow::managed(dir, &path) && !named.contains(&path) {
+                    named.push(path);
+                }
+            }
+        }
+        // The directory spelled inside a word the split cannot isolate (`$(cat …)`).
+        let spelled = [dir.display().to_string(), permissions::slash(dir)]
+            .iter()
+            .any(|dir| {
+                commands
+                    .iter()
+                    .any(|command| command.contains(dir.as_str()))
+            });
+        match named.as_slice() {
+            [file] => self.frame_overflow_reads(file),
+            [] if !spelled && !crate::untrusted::overflow::managed(dir, workdir) => {}
+            _ => self.declare_provenance(Provenance::new(
+                ContentSource::Overflow,
+                dir.display().to_string(),
+            )),
+        }
+    }
+
     /// A read or grep of a managed overflow file takes the original result's frame.
     pub(crate) fn frame_overflow_reads(&self, path: &Path) {
         if crate::untrusted::overflow::managed(&self.host.opts.tool_output_dir, path) {
@@ -2002,10 +2086,13 @@ impl Ctx<'_> {
     ) -> Result<(), ToolError> {
         let location =
             std::fs::canonicalize(&self.location).unwrap_or_else(|_| self.location.clone());
+        let outside = |canonical: &Path| {
+            !canonical.starts_with(&location) && !canonical.starts_with(&self.location)
+        };
         let mut dirs: Vec<String> = Vec::new();
         for path in paths {
             let canonical = canonical(path);
-            if canonical.starts_with(&location) || canonical.starts_with(&self.location) {
+            if !outside(&canonical) {
                 continue;
             }
             let dir = if canonical.is_dir() {
@@ -2027,17 +2114,10 @@ impl Ctx<'_> {
             action: "external_directory".into(),
             resources: dirs.clone(),
             read_only: true,
-            external_write: writes.iter().any(|path| self.leaves_location(path)),
+            external_write: writes.iter().any(|path| outside(&canonical(path))),
             ..Request::default()
         };
         self.authorize(req, dirs, Value::Null).await
-    }
-
-    fn leaves_location(&self, path: &Path) -> bool {
-        let location =
-            std::fs::canonicalize(&self.location).unwrap_or_else(|_| self.location.clone());
-        let canonical = canonical(path);
-        !canonical.starts_with(&location) && !canonical.starts_with(&self.location)
     }
 
     /// Decide, asking the user when the policy says `ask`.
@@ -2072,34 +2152,12 @@ impl Ctx<'_> {
         mut metadata: Value,
     ) -> Result<(), ToolError> {
         req.tool = Some(tool.to_owned());
-        let hook_allowed = tool == self.inv.name
-            && self.hook_decision == Some(cyber_core::hooks::HookAction::Allow);
-        if self
-            .host
-            .solve_isolation(&self.inv.session_id)
-            .map_err(ToolError::Failed)?
-        {
-            let root = canonical(&self.location);
-            if req
-                .mutates
-                .iter()
-                .any(|path| !canonical(path).starts_with(&root))
-            {
-                return Err(self
-                    .denied(
-                        &req,
-                        "solve isolation",
-                        "Solve candidates cannot write outside their checkout".into(),
-                    )
-                    .await);
-            }
-        }
-        let decision = self.policy.decide(&req);
+        self.refuse_outside_checkout(&req).await?;
+        let (decision, source) = self.policy.decide_with_source(&req);
         if let Decision::Deny(reason) = decision {
-            let source = if is_taint_denial(&reason) {
-                "taint"
-            } else {
-                "rule"
+            let source = match source {
+                permissions::DecisionSource::Taint => "taint",
+                permissions::DecisionSource::Rules => "rule",
             };
             return Err(self.denied(&req, source, deny_message(&reason)).await);
         }
@@ -2113,25 +2171,64 @@ impl Ctx<'_> {
             self.auto_gate(&req, &mut metadata, false).await?;
             return self.ask(req, always, metadata, held).await;
         }
+        let hook_allowed = tool == self.inv.name
+            && self.hook_decision == Some(cyber_core::hooks::HookAction::Allow);
         let needs_approval = (decision == Decision::Ask && (!hook_allowed || held))
             || self.policy.forces_classifier(&req);
         let approval = self.auto_gate(&req, &mut metadata, needs_approval).await?;
-        // A classifier allow in a tainted run still asks for a risky action or a command
-        // that is not read-only; the prompt shows the classifier's reason.
-        let asks_after_review = match &approval {
-            AutoApproval::Classifier(reason) if self.policy.taint_asks_after_review(&req) => {
-                self.note_taint(&mut metadata, Some(reason));
-                true
-            }
-            AutoApproval::Rule if held => true,
-            _ => false,
-        };
-        let approved = !matches!(approval, AutoApproval::None) && !asks_after_review;
-        if approved || (!needs_approval && !asks_after_review) {
+        let taint_asks = self.taint_after_review(&approval, &req, &mut metadata, held);
+        let reviewed = !matches!(approval, AutoApproval::None);
+        if !taint_asks && (reviewed || !needs_approval) {
             return Ok(());
         }
-        self.ask(req, always, metadata, held || asks_after_review)
-            .await
+        self.ask(req, always, metadata, held || taint_asks).await
+    }
+
+    /// A solve candidate may not write outside its checkout (`workflows` → solve
+    /// isolation).
+    async fn refuse_outside_checkout(&self, req: &Request) -> Result<(), ToolError> {
+        if !self
+            .host
+            .solve_isolation(&self.inv.session_id)
+            .map_err(ToolError::Failed)?
+        {
+            return Ok(());
+        }
+        let root = canonical(&self.location);
+        if req
+            .mutates
+            .iter()
+            .all(|path| canonical(path).starts_with(&root))
+        {
+            return Ok(());
+        }
+        Err(self
+            .denied(
+                req,
+                "solve isolation",
+                "Solve candidates cannot write outside their checkout".into(),
+            )
+            .await)
+    }
+
+    /// Whether the run's taint still asks after auto review: a classifier allow of a
+    /// risky action or a command that is not read-only (the prompt shows the
+    /// classifier's reason), or a trusted rule's approval of a held action.
+    fn taint_after_review(
+        &self,
+        approval: &AutoApproval,
+        req: &Request,
+        metadata: &mut Value,
+        held: bool,
+    ) -> bool {
+        match approval {
+            AutoApproval::Classifier(reason) if self.policy.taint_asks_after_review(req) => {
+                self.note_taint(metadata, Some(reason));
+                true
+            }
+            AutoApproval::Rule => held,
+            _ => false,
+        }
     }
 
     /// Mark a taint ask's request: `metadata.taint`, and the reason the prompt shows
@@ -2295,9 +2392,11 @@ impl Ctx<'_> {
 }
 
 /// A denial the run's taint made (`permissions-modes` → Taint-aware approvals).
+/// Whether a tool's failure text is a taint denial: a Workflow script's direct tool
+/// reports it as `PermissionDenied`. A failure reaches the script as text, so the two
+/// fixed denials are matched exactly, not searched for.
 pub(crate) fn is_taint_denial(message: &str) -> bool {
-    message.contains(permissions::TAINT_NOT_PRE_APPROVED)
-        || message.contains(permissions::TAINT_BYPASS_DENIED)
+    message == permissions::TAINT_NOT_PRE_APPROVED || message == permissions::TAINT_BYPASS_DENIED
 }
 
 /// How auto review left a request that needed approval.
@@ -2313,8 +2412,9 @@ pub(crate) enum AutoApproval {
 }
 
 fn deny_message(reason: &str) -> String {
+    // `Not pre-approved` covers the taint denial in `dont-ask` too.
     if reason.starts_with("Plan mode")
-        || is_taint_denial(reason)
+        || reason == permissions::TAINT_BYPASS_DENIED
         || reason.starts_with("Not pre-approved")
         || reason.starts_with("Refused:")
         || reason.starts_with(cyber_server::runtime::teams::OWNED_PREFIX)

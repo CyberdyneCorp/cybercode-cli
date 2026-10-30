@@ -48,6 +48,10 @@ pub struct Session {
     /// The context window meter after the last finished step; null before the first
     /// step and after a compaction.
     pub context: Option<crate::runtime::ContextMeter>,
+    /// The Location's effective `permissions.untrusted_content` `taint` and `bypass`,
+    /// so clients state an injection notice's consequence as it applies
+    /// (`untrusted-content` → Injection signal notices).
+    pub untrusted_content: cyber_core::untrusted::NoticePolicy,
 }
 
 /// A history entry with the tool calls it made.
@@ -373,8 +377,10 @@ pub(super) fn session(state: &AppState, s: SessionState) -> Session {
     let effective_mode = s.effective_mode(running).to_string();
     let pending_mode = s.pending_mode(running).map(str::to_string);
     let context = state.runtime.context_meter(&s);
+    let untrusted_content = state.runtime.untrusted_policy(&s.info.directory);
     Session {
         context,
+        untrusted_content,
         effective_mode,
         pending_mode,
         status: status.into(),

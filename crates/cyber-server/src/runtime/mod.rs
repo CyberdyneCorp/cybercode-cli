@@ -227,6 +227,7 @@ pub use reservations::{
 pub use view::{INTERRUPTED, UNKNOWN};
 
 use bus::Bus;
+use cyber_core::untrusted::UntrustedRecord;
 use events::*;
 use lifecycle::PromptEffects;
 
@@ -1459,12 +1460,15 @@ impl Runtime {
         admission: &Admission,
         files: &[attachments::FilePart],
     ) -> Result<PromptAttachments, RuntimeError> {
-        let mut parts = match &admission.template {
-            Some(template) => Some(self.expand_template(handle, template, admission).await?),
-            None => None,
+        let (mut parts, expanded) = match &admission.template {
+            Some(template) => {
+                let (parts, record) = self.expand_template(handle, template, admission).await?;
+                (Some(parts), record)
+            }
+            None => (None, None),
         };
-        let resources = if is_forked(admission.skill_command.as_ref()) {
-            Vec::new()
+        let (resources, mentioned) = if is_forked(admission.skill_command.as_ref()) {
+            (Vec::new(), None)
         } else {
             self.mention_resources(handle, &admission.parts).await?
         };
@@ -1481,18 +1485,23 @@ impl Runtime {
             resources,
             parts,
             blobs,
+            untrusted: untrusted_input::merged([expanded, mentioned]),
         })
     }
 
+    /// The expanded parts, with the `untrusted` record of any framed reference the host
+    /// noted under the expansion's call.
     async fn expand_template(
         &self,
         handle: &Handle,
         template: &PromptTemplate,
         admission: &Admission,
-    ) -> Result<Vec<Content>, RuntimeError> {
+    ) -> Result<(Vec<Content>, Option<UntrustedRecord>), RuntimeError> {
         let turn = drain::turn_context_for(&*handle.state.lock().await, false);
         let asker = self.operation_asker(&turn.session_id).await?;
-        self.inner
+        let call_id = asker.call_id.clone();
+        let parts = self
+            .inner
             .tools
             .expand_prompt_template(
                 &turn,
@@ -1502,21 +1511,34 @@ impl Runtime {
                 self.inner.closed.child_token(),
             )
             .await
-            .map_err(RuntimeError::Invalid)
+            .map_err(RuntimeError::Invalid)?;
+        let record = self
+            .inner
+            .tools
+            .take_call_untrusted(&turn.session_id, &call_id);
+        Ok((parts, record))
     }
 
+    /// The prompt's attached resource blocks, with their merged `untrusted` record: an
+    /// attachment is framed external content, so it taints the run it arrives in.
     async fn mention_resources(
         &self,
         handle: &Handle,
         parts: &[Content],
-    ) -> Result<Vec<String>, RuntimeError> {
+    ) -> Result<(Vec<String>, Option<UntrustedRecord>), RuntimeError> {
         let turn = drain::turn_context_for(&*handle.state.lock().await, false);
         let asker = self.operation_asker(&turn.session_id).await?;
-        Ok(self
+        let call_id = asker.call_id.clone();
+        let blocks = self
             .inner
             .tools
             .resolve_prompt_resources(&turn, parts, asker, self.inner.closed.child_token())
-            .await)
+            .await;
+        let record = self
+            .inner
+            .tools
+            .take_call_untrusted(&turn.session_id, &call_id);
+        Ok((blocks, record))
     }
 
     async fn admit_attempt(
@@ -1649,7 +1671,7 @@ impl Runtime {
                 hook_context: effects.context,
                 hook_stop: effects.stop,
                 resources: attachments.resources,
-                untrusted,
+                untrusted: untrusted_input::merged([untrusted, attachments.untrusted]),
             };
             let mut events = Vec::new();
             if let Some(attempt) = attempt {
@@ -1692,14 +1714,14 @@ impl Runtime {
         // Edited parts are user input: UserPromptSubmit re-checks them and their
         // resource mentions are resolved again before commit. Their media must suit the
         // Session's model, as a prompt's must.
-        let (effects, resources) = match &parts {
+        let edit = match &parts {
             Some(parts) => {
                 let handle = self.inner.handle(session_id).await?;
                 self.check_modalities(&handle, parts).await?;
                 self.edited_prompt_hooks(session_id, message_id, parts)
                     .await?
             }
-            None => (PromptEffects::default(), Vec::new()),
+            None => InputEdit::default(),
         };
         self.update_input(
             session_id,
@@ -1707,7 +1729,7 @@ impl Runtime {
             InboxAction::Edited,
             parts,
             delivery,
-            (effects, resources),
+            edit,
         )
         .await
     }
@@ -1717,7 +1739,7 @@ impl Runtime {
         session_id: &str,
         message_id: &str,
         parts: &[Content],
-    ) -> Result<(PromptEffects, Vec<String>), RuntimeError> {
+    ) -> Result<InputEdit, RuntimeError> {
         let handle = self.inner.handle(session_id).await?;
         let (source, fork) = {
             let state = handle.state.lock().await;
@@ -1734,12 +1756,16 @@ impl Runtime {
             .user_prompt_hooks(&handle, parts, &source)
             .await?
             .for_prompt(fork)?;
-        let resources = if fork {
-            Vec::new()
+        let (resources, untrusted) = if fork {
+            (Vec::new(), None)
         } else {
             self.mention_resources(&handle, parts).await?
         };
-        Ok((effects, resources))
+        Ok(InputEdit {
+            effects,
+            resources,
+            untrusted,
+        })
     }
 
     /// Withdraw an unpromoted `queue` or `hold` row; it never reaches the model. A
@@ -1755,7 +1781,7 @@ impl Runtime {
             InboxAction::Removed,
             None,
             None,
-            (PromptEffects::default(), Vec::new()),
+            InputEdit::default(),
         )
         .await?;
         self.complete_sent(Some(message_id)).await?;
@@ -1792,7 +1818,7 @@ impl Runtime {
             InboxAction::Released,
             None,
             Some(delivery),
-            (PromptEffects::default(), Vec::new()),
+            InputEdit::default(),
         )
         .await?;
         self.inner.start_drain(session_id, false);
@@ -1809,7 +1835,7 @@ impl Runtime {
             InboxAction::Refused,
             None,
             None,
-            (PromptEffects::default(), Vec::new()),
+            InputEdit::default(),
         )
         .await?;
         self.complete_sent(Some(message_id)).await?;
@@ -1823,7 +1849,7 @@ impl Runtime {
         action: InboxAction,
         parts: Option<Vec<Content>>,
         delivery: Option<Delivery>,
-        (effects, resources): (PromptEffects, Vec<String>),
+        edit: InputEdit,
     ) -> Result<(), RuntimeError> {
         let handle = self.inner.handle(session_id).await?;
         let mut state = handle.state.lock().await;
@@ -1843,9 +1869,10 @@ impl Runtime {
             action,
             parts,
             delivery,
-            hook_context: effects.context,
-            hook_stop: effects.stop,
-            resources,
+            hook_context: edit.effects.context,
+            hook_stop: edit.effects.stop,
+            resources: edit.resources,
+            untrusted: edit.untrusted,
         };
         // A cross-session message's `in` record commits with the change; the caller then
         // completes the sender's record.
@@ -2343,6 +2370,18 @@ pub(super) struct PromptAttachments {
     pub(super) parts: Option<Vec<Content>>,
     /// Blobs stored for `file` parts, removed unless the prompt is committed.
     pub(super) blobs: attachments::NewBlobs,
+    /// The attachments' merged `untrusted` record: framed `@server:uri` resources and
+    /// template references (`untrusted-content` → Framed tool results).
+    pub(super) untrusted: Option<UntrustedRecord>,
+}
+
+/// What an edit of an unpromoted row re-resolves: hook effects, attached resources and
+/// their `untrusted` record, which replace the row's earlier ones.
+#[derive(Debug, Default)]
+struct InputEdit {
+    effects: PromptEffects,
+    resources: Vec<String>,
+    untrusted: Option<UntrustedRecord>,
 }
 
 fn existing_receipt(

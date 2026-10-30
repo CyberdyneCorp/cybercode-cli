@@ -33,6 +33,9 @@ pub struct Session {
     pub team: Option<TeamTag>,
     /// The Session's own output style selection; `None` follows the configuration.
     pub output_style: Option<String>,
+    /// The Location's effective `permissions.untrusted_content` settings that injection
+    /// notices state the consequence of; the defaults when the server reports none.
+    pub untrusted_policy: cyber_core::untrusted::NoticePolicy,
 }
 
 /// A teammate's team and member name, as `SessionInfo.team` carries it.
@@ -140,6 +143,8 @@ impl Session {
             inbound_reason: v["messaging"]["reason"].as_str().map(str::to_string),
             team: TeamTag::parse(&v["team"]),
             output_style: v["output_style"].as_str().map(str::to_string),
+            untrusted_policy: serde_json::from_value(v["untrusted_content"].clone())
+                .unwrap_or_default(),
         }
     }
 }

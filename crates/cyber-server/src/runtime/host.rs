@@ -1231,6 +1231,14 @@ pub trait ToolHost: Send + Sync {
         None
     }
 
+    /// The Location's effective `permissions.untrusted_content` notice policy (`taint`
+    /// and `bypass`), which clients need to state a notice's consequence
+    /// (`untrusted-content` → Injection signal notices). Hosts without the setting
+    /// report the defaults.
+    fn untrusted_policy(&self, _directory: &str) -> cyber_core::untrusted::NoticePolicy {
+        cyber_core::untrusted::NoticePolicy::default()
+    }
+
     /// Take, once, the `untrusted` record the host noted for a call's result
     /// (`untrusted-content` → Injection signal notices); the runtime records it on the
     /// settlement. Hosts that frame nothing return `None`.

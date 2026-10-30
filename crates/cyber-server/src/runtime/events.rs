@@ -206,6 +206,10 @@ pub struct InboxUpdated {
     /// Resource mentions resolved for edited parts; replace any earlier attachments.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resources: Vec<String>,
+    /// The edited attachments' `untrusted` record; replaces the row's earlier one for a
+    /// prompt with source `user`. Events without it read as no record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub untrusted: Option<cyber_core::untrusted::UntrustedRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

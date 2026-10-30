@@ -66,8 +66,9 @@
   - Tests: scenario "Project cannot switch taint off", tightening accepted, project `allow_when_tainted` ignored, change applied at the next Safe Boundary.
 - [x] 5.2 Base prompts: replace the single tool-output sentence in `prompts/base/core.md` with the untrusted-content topic, cover it in every family addendum where tool habits differ, and raise the prompt version.
   - Tests: scenario "Prompt covers the frame" for each family, and scenario "Version bump starts a new epoch".
-- [ ] 5.3 Hand the effective `taint` and `bypass` settings to the TUI and the web dashboard, so a notice's consequence follows them instead of the defaults (design D5).
+- [x] 5.3 Hand the effective `taint` and `bypass` settings to the TUI and the web dashboard, so a notice's consequence follows them instead of the defaults (design D5).
   - Tests: the notice snapshot for a Location with `bypass: "deny"`, and the dashboard line for `taint: "off"`.
+  - Done as `untrusted_content` on `GET /sessions/:id` (`ToolHost::untrusted_policy`); the TUI test starts a server whose global config sets each value (`screens_untrusted::notices_follow_the_locations_effective_settings`), and the dashboard test renders from the Session the server sends. Both renderings check `eval/fixtures/untrusted-content/notices.json`.
 
 ## 6. Evaluation
 

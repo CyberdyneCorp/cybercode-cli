@@ -26,8 +26,10 @@ pub(super) fn push_exposed(out: &mut String, chars: &[char], index: usize) {
 }
 
 /// Whether `chars[index]` is hidden: zero-width characters (a BOM only after offset 0,
-/// a joiner only outside emoji sequences), bidi controls, Unicode tag characters, and
-/// C0 controls other than tab, line feed and carriage return, plus DEL.
+/// a joiner only outside emoji sequences), other invisible default-ignorable characters
+/// (soft hyphen, fillers, invisible operators), variation selectors outside an emoji or
+/// ideographic variation sequence, bidi controls, Unicode tag characters, and C0
+/// controls other than tab, line feed and carriage return, plus DEL.
 pub fn is_hidden(chars: &[char], index: usize) -> bool {
     hidden_class(chars, index).is_some()
 }
@@ -50,8 +52,45 @@ pub(super) fn hidden_class(chars: &[char], index: usize) -> Option<HiddenClass> 
         '\u{200d}' => (!joins_emoji(chars, index)).then_some(HiddenClass::ZeroWidth),
         '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' => Some(HiddenClass::Control),
         '\u{e0000}'..='\u{e007f}' => Some(HiddenClass::Control),
+        '\u{fe00}'..='\u{fe0f}' => {
+            (!selects_emoji_variant(chars, index)).then_some(HiddenClass::ZeroWidth)
+        }
+        // Ideographic variation selectors follow a CJK ideograph; elsewhere (after an
+        // emoji, say) they are the byte-smuggling encoding.
+        '\u{e0100}'..='\u{e01ef}' => (!index
+            .checked_sub(1)
+            .is_some_and(|before| is_ideograph(chars[before])))
+        .then_some(HiddenClass::Control),
+        c if invisible(c) => Some(HiddenClass::ZeroWidth),
         _ => None,
     }
+}
+
+/// Default-ignorable characters that render as nothing: soft hyphen, the combining
+/// grapheme joiner, Hangul and Mongolian fillers and selectors, invisible operators,
+/// deprecated format controls and musical formatting characters.
+fn invisible(c: char) -> bool {
+    matches!(c,
+        '\u{ad}' | '\u{34f}' | '\u{115f}' | '\u{1160}' | '\u{17b4}' | '\u{17b5}'
+        | '\u{180b}'..='\u{180f}' | '\u{2061}'..='\u{2065}' | '\u{206a}'..='\u{206f}'
+        | '\u{3164}' | '\u{ffa0}' | '\u{fff0}'..='\u{fff8}' | '\u{1bca0}'..='\u{1bca3}'
+        | '\u{1d173}'..='\u{1d17a}')
+}
+
+/// A variation selector right after an emoji (`❤️`), or after a keycap base before the
+/// keycap mark (`1️⃣`); a run of selectors is never one.
+fn selects_emoji_variant(chars: &[char], index: usize) -> bool {
+    let Some(&before) = index.checked_sub(1).and_then(|at| chars.get(at)) else {
+        return false;
+    };
+    is_emoji(before)
+        || (matches!(before, '0'..='9' | '#' | '*') && chars.get(index + 1) == Some(&'\u{20e3}'))
+}
+
+fn is_ideograph(c: char) -> bool {
+    matches!(c,
+        '\u{3400}'..='\u{4dbf}' | '\u{4e00}'..='\u{9fff}' | '\u{f900}'..='\u{faff}'
+        | '\u{20000}'..='\u{3134f}')
 }
 
 /// A zero-width joiner between two emoji, past the first one's presentation selector
@@ -164,6 +203,28 @@ mod tests {
         }
         assert_eq!(expose_hidden("👨\u{200d}"), "👨[U+200D]");
         assert_eq!(expose_hidden("\u{200d}👨"), "[U+200D]👨");
+        // Presentation selectors after an emoji or a keycap base are kept, as is an
+        // ideographic variation sequence.
+        for kept in ["❤\u{fe0f}", "1\u{fe0f}\u{20e3}", "葛\u{e0100}"] {
+            assert_eq!(expose_hidden(kept), kept);
+        }
+    }
+
+    /// Regression: invisible characters outside the first list (soft hyphen, fillers,
+    /// invisible operators) and variation-selector smuggling passed unseen.
+    #[test]
+    fn other_invisible_characters_and_smuggled_selectors_become_markers() {
+        assert_eq!(expose_hidden("ig\u{ad}nore"), "ig[U+00AD]nore");
+        assert_eq!(
+            expose_hidden("a\u{34f}\u{2062}\u{3164}\u{115f}\u{180e}"),
+            "a[U+034F][U+2062][U+3164][U+115F][U+180E]"
+        );
+        assert_eq!(expose_hidden("x\u{fe01}"), "x[U+FE01]");
+        assert_eq!(expose_hidden("❤\u{fe0f}\u{fe0f}"), "❤\u{fe0f}[U+FE0F]");
+        assert_eq!(
+            expose_hidden("😀\u{e0100}\u{e0101}"),
+            "😀[U+E0100][U+E0101]"
+        );
     }
 
     /// Property: exposure never loses a character. Decoding every marker back to the
@@ -195,6 +256,10 @@ mod tests {
             '👨',
             '\u{fe0f}',
             '\u{1f3fd}',
+            '\u{ad}',
+            '\u{fe01}',
+            '\u{e0100}',
+            '\u{3164}',
             'é',
             '中',
         ];

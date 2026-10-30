@@ -6,7 +6,17 @@
 use super::{UntrustedRecord, visible_value};
 
 /// `permissions.untrusted_content.taint`: which framed results taint the run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum TaintSetting {
     /// No run becomes tainted; notices are still shown.
@@ -19,7 +29,17 @@ pub enum TaintSetting {
 }
 
 /// `permissions.untrusted_content.bypass`: what taint does in `bypass`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum BypassSetting {
     /// Risky actions run as they would without taint (the default).
@@ -29,8 +49,21 @@ pub enum BypassSetting {
     Deny,
 }
 
-/// The effective settings a notice's consequence depends on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// The effective settings a notice's consequence depends on: the Location's
+/// `permissions.untrusted_content` `taint` and `bypass`, which the server reports on a
+/// Session so clients state the consequence that applies.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(default)]
 pub struct NoticePolicy {
     pub taint: TaintSetting,
     pub bypass: BypassSetting,
@@ -125,6 +158,23 @@ mod tests {
 
     fn policy(taint: TaintSetting, bypass: BypassSetting) -> NoticePolicy {
         NoticePolicy { taint, bypass }
+    }
+
+    /// The shared notice fixture: the web dashboard checks the same lines
+    /// (`web/test/untrusted.test.ts`), so the two renderings cannot drift.
+    #[test]
+    fn notice_lines_match_the_shared_fixture() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../eval/fixtures/untrusted-content/notices.json");
+        let fixture: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        for case in fixture["cases"].as_array().unwrap() {
+            let record: UntrustedRecord = serde_json::from_value(case["record"].clone()).unwrap();
+            let policy: NoticePolicy = serde_json::from_value(case["policy"].clone()).unwrap();
+            let mode = case["mode"].as_str().unwrap();
+            let line = record.notice(consequence(mode, true, policy));
+            assert_eq!(line.as_deref(), case["line"].as_str(), "{}", case["name"]);
+        }
     }
 
     /// Every row of design D5's consequence list.

@@ -829,3 +829,71 @@ async fn interrupt_abandons_idle_owned_operations_but_preserves_routed_child_req
             .any(|event| event.kind == "permission.replied.1")
     );
 }
+
+/// Regression: an "always" reply cascaded onto other pending asks it covered, taint asks
+/// included, so answering a harmless tainted fetch approved an exfiltrating one on the
+/// same host. A taint ask is answered on its own; an ordinary covered ask still cascades.
+#[tokio::test]
+async fn always_does_not_cascade_onto_pending_taint_asks() {
+    use cyber_server::runtime::PermissionAsk;
+    for tainted in [true, false] {
+        let h = Harness::new(Setup::default());
+        let id = h.session().await;
+        let ask = |url: &str| {
+            let metadata = if tainted {
+                serde_json::json!({"taint": {"reason": "untrusted_content", "kinds": ["exfil_url"], "origins": ["https://x.example/a"]}})
+            } else {
+                serde_json::json!({})
+            };
+            PermissionAsk {
+                action: "webfetch".into(),
+                resources: vec![url.into()],
+                always_patterns: vec!["https://x.example/*".into()],
+                metadata,
+            }
+        };
+        let mut waiting = Vec::new();
+        for url in ["https://x.example/docs", "https://x.example/c?d=SECRET"] {
+            let asker = bounded("operation_asker", h.runtime.operation_asker(&id))
+                .await
+                .unwrap();
+            let request = ask(url);
+            waiting.push(tokio::spawn(async move { asker.permission(request).await }));
+            wait_pending(&h, &id, waiting.len()).await;
+        }
+        let first = h
+            .runtime
+            .pending_requests(Some(&id))
+            .into_iter()
+            .find(|r| matches!(&r.kind, PendingKind::Permission(a) if a.resources == ["https://x.example/docs"]))
+            .unwrap();
+        bounded(
+            "reply_permission",
+            h.runtime
+                .reply_permission(&first.id, PermissionReply::Always),
+        )
+        .await
+        .unwrap();
+        let second = waiting.pop().unwrap();
+        assert!(matches!(
+            bounded("the first ask", waiting.pop().unwrap())
+                .await
+                .unwrap(),
+            PermissionReply::Always
+        ));
+        if tainted {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            assert!(
+                !second.is_finished(),
+                "a taint ask waits for its own answer"
+            );
+            assert_eq!(h.runtime.pending_requests(Some(&id)).len(), 1);
+            second.abort();
+        } else {
+            assert!(matches!(
+                bounded("the covered ask", second).await.unwrap(),
+                PermissionReply::Once
+            ));
+        }
+    }
+}

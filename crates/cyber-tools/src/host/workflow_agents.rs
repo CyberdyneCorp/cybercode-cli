@@ -169,7 +169,9 @@ impl BuiltinHost {
             "grep" => tools::search::grep_value(&ctx).await,
             other => return Err(tool_failed(format!("unknown direct tool {other}"))),
         };
-        value.map_err(|error| tool_failure(&tool, error))
+        value
+            .map(|value| framed_direct_value(&ctx, value))
+            .map_err(|error| tool_failure(&tool, error))
     }
 
     /// Whether `owner` has the child Session named `agent_id`.
@@ -248,6 +250,46 @@ impl BuiltinHost {
                     .any(|tool| super::profile_allows_tool(profile, tool))
         })
     }
+}
+
+/// A direct tool's value read from the managed output directory (`untrusted-content` →
+/// Framed tool results): its text is framed like the model's `read`/`grep` of that file,
+/// and the value carries the `untrusted` record, which the run's summary hands to the
+/// owner (`permissions-modes` → Untrusted-content taint). Other values are unchanged.
+fn framed_direct_value(ctx: &Ctx<'_>, mut value: Value) -> Value {
+    let declared = ctx
+        .provenance
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
+    let Some((provenance, prior)) = declared else {
+        return value;
+    };
+    let mut scan = prior;
+    let mut frame = |text: &mut Value| {
+        let Some(body) = text.as_str() else {
+            return;
+        };
+        let (framed, hits) = crate::untrusted::scanned(&provenance, body);
+        scan = std::mem::take(&mut scan).merge(hits);
+        *text = Value::String(framed);
+    };
+    if let Some(content) = value.get_mut("content") {
+        frame(content);
+    }
+    if let Some(matches) = value.get_mut("matches").and_then(Value::as_array_mut) {
+        matches
+            .iter_mut()
+            .filter_map(|item| item.get_mut("text"))
+            .for_each(&mut frame);
+    }
+    let record = cyber_core::untrusted::UntrustedRecord::new(
+        provenance.source.as_str(),
+        &provenance.origin,
+        scan,
+    );
+    value["untrusted"] = json!(record);
+    value
 }
 
 /// Tools that edit files (`tools::action_of` maps them to `edit`).

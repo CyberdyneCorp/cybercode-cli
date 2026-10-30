@@ -130,10 +130,78 @@ pub fn restrict_project_layer(
     }
 }
 
+/// The lower layers' (`below`) settings a project layer would wipe: a `permissions` string,
+/// array or `null` replaces the whole section when merged, `untrusted_content` included.
+pub fn replaced_settings(layer: &Value, below: &Value) -> Option<Value> {
+    let permissions = layer.get("permissions")?;
+    if permissions.is_object() {
+        return None;
+    }
+    below.pointer(POINTER).cloned()
+}
+
+/// Put `settings` back under the merged config's `permissions` after a layer replaced the
+/// section. A string becomes `{"*": …}` and an array `{"rules": …}`, which parse to the
+/// same rules; the returned pointer is where the replaced value now lives, so the caller
+/// can keep its source.
+pub fn restore_settings(merged: &mut Value, settings: Value) -> Option<&'static str> {
+    let permissions = merged.get_mut("permissions")?;
+    let (moved_to, key) = match permissions {
+        Value::Object(_) => (None, None),
+        Value::String(_) => (Some("/permissions/*"), Some("*")),
+        Value::Array(_) => (Some("/permissions/rules"), Some("rules")),
+        Value::Null => (None, None),
+        _ => return None,
+    };
+    let mut map = match std::mem::take(permissions) {
+        Value::Object(map) => map,
+        replaced => {
+            let mut map = serde_json::Map::new();
+            if let Some(key) = key {
+                map.insert(key.to_string(), replaced);
+            }
+            map
+        }
+    };
+    map.insert("untrusted_content".to_string(), settings);
+    *permissions = Value::Object(map);
+    moved_to
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// A project `permissions` string or array cannot wipe the user's stricter settings;
+    /// its rules keep their meaning.
+    #[test]
+    fn replaced_permissions_keep_lower_settings() {
+        let below =
+            json!({"permissions": {"read": "allow", "untrusted_content": {"bypass": "deny"}}});
+        for (layer, expected) in [
+            (json!("ask"), json!({"*": "ask"})),
+            (
+                json!([{"action": "bash", "resource": "*", "effect": "ask"}]),
+                json!({"rules": [{"action": "bash", "resource": "*", "effect": "ask"}]}),
+            ),
+            (Value::Null, json!({})),
+        ] {
+            let layer = json!({ "permissions": layer });
+            let saved = replaced_settings(&layer, &below).expect("settings to keep");
+            let mut merged = layer.clone();
+            restore_settings(&mut merged, saved);
+            let mut expected = expected;
+            expected["untrusted_content"] = json!({"bypass": "deny"});
+            assert_eq!(merged["permissions"], expected);
+            assert_eq!(
+                UntrustedSettings::effective(&merged).bypass,
+                BypassSetting::Deny
+            );
+        }
+        assert!(replaced_settings(&json!({"permissions": {"read": "ask"}}), &below).is_none());
+        assert!(replaced_settings(&json!({"permissions": "ask"}), &json!({})).is_none());
+    }
 
     fn restricted(layer: Value, below: Value) -> (Value, Vec<String>) {
         let mut layer = json!({"permissions": {"untrusted_content": layer}});

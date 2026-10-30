@@ -435,6 +435,15 @@ pub enum Decision {
     Deny(String),
 }
 
+/// What set a [`Decision`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecisionSource {
+    /// Rules, saved approvals, Modes and ceilings.
+    Rules,
+    /// The run's untrusted-content taint, which replaced an `allow`.
+    Taint,
+}
+
 /// Rules for one evaluation, in layer order, plus the facts Modes need.
 #[derive(Clone)]
 pub struct Policy {
@@ -464,11 +473,17 @@ impl Policy {
     }
 
     pub fn decide(&self, req: &Request) -> Decision {
+        self.decide_with_source(req).0
+    }
+
+    /// [`Policy::decide`], with what set the decision: the rules and Modes, or the run's
+    /// taint replacing their `allow` (`permissions-modes` → Taint-aware approvals).
+    pub fn decide_with_source(&self, req: &Request) -> (Decision, DecisionSource) {
         let decision = self.decide_untainted(req);
         if decision == Decision::Allow && self.taint_holds(req) {
-            return self.tainted_decision();
+            return (self.tainted_decision(), DecisionSource::Taint);
         }
-        decision
+        (decision, DecisionSource::Rules)
     }
 
     /// Whether the run's taint governs `req`: the run is tainted, `req` is risky and no

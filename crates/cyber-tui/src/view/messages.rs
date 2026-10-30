@@ -452,7 +452,7 @@ fn untrusted_notice(app: &App, record: &UntrustedRecord, out: &mut Out) {
     } else {
         &app.session.effective_mode
     };
-    let consequence = untrusted::consequence(mode, true, app.untrusted_policy);
+    let consequence = untrusted::consequence(mode, true, app.session.untrusted_policy);
     let Some(line) = record.notice(consequence) else {
         return;
     };

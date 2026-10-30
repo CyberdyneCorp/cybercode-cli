@@ -61,6 +61,15 @@ test("injection notices and excerpts on tool cards and messages render as text o
     assert.ok(said.includes("! Possible prompt injection in session message (permission_change). Risky actions in this run will ask."), said.join("\n"));
     assert.ok(said.includes("permission_change: <script>alert(1)</script>"), said.join("\n"));
     assert.ok(!created.some((element) => ["img", "script", "a", "iframe", "object", "embed"].includes(element.tag)), created.map((element) => element.tag).join(","));
+
+    // Regression: the consequence followed the defaults; it now follows the Location's
+    // effective settings, which the Session the server sent carries.
+    const notice = (session: unknown) => {
+      const shown = new View(undefined as never, { state: { liveMessage: undefined, liveText: "", session } } as never) as unknown as { message(value: unknown): Fake };
+      return texts(shown.message({ id: "msg_4", kind: "user", parts: [], untrusted: record("webfetch", "exfil_url", "x") })).find((text) => text.startsWith("! Possible"));
+    };
+    assert.equal(notice({ mode: "bypass", effective_mode: "bypass", untrusted_content: { taint: "signal", bypass: "deny" } }), "! Possible prompt injection in webfetch result (exfil_url). Risky actions in this run will be denied (bypass).");
+    assert.equal(notice({ mode: "default", effective_mode: "default", untrusted_content: { taint: "off", bypass: "allow" } }), "! Possible prompt injection in webfetch result (exfil_url).");
   } finally {
     if (previous) Object.defineProperty(globalThis, "document", previous);
     else Reflect.deleteProperty(globalThis, "document");

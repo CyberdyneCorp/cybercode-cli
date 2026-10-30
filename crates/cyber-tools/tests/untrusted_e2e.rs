@@ -27,10 +27,12 @@ fn allow_all() -> Value {
 }
 
 /// The fixture's home directory, written with `/` so the commands read the same on
-/// every platform.
+/// every platform, and without the verbatim `\\?\` prefix Windows canonical paths carry.
 fn home(fixture: &support::Fixture) -> String {
     let root = std::fs::canonicalize(fixture.dir.path()).unwrap();
-    slash(&root.join("home"))
+    let home = slash(&root.join("home"));
+    home.strip_prefix("//?/")
+        .map_or(home.clone(), str::to_owned)
 }
 
 fn slash(path: &Path) -> String {

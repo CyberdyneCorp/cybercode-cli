@@ -330,6 +330,8 @@ pub(crate) async fn authorize_facts(
     analysis: &Analysis,
     facts: Facts,
 ) -> Result<(), ToolError> {
+    let commands: Vec<String> = analysis.commands.iter().map(|c| c.text.clone()).collect();
+    ctx.frame_overflow_shell(&commands, workdir);
     let mut external = facts.mutates.clone();
     external.push(workdir.to_path_buf());
     let always: Vec<String> = analysis.commands.iter().map(|c| c.always.clone()).collect();

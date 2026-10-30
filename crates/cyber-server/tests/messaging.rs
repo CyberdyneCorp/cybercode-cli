@@ -442,7 +442,10 @@ async fn admitted_messages_and_channel_events_record_injection_signals() {
         (&json!("session"), &json!("frontend"))
     );
     assert_eq!(untrusted["signals"][0]["kind"], "permission_change");
-    assert_eq!(untrusted["detector_version"], 1);
+    assert_eq!(
+        untrusted["detector_version"],
+        cyber_core::untrusted::DETECTOR_VERSION
+    );
     assert!(
         evil["parts"][0]["text"].as_str().unwrap().contains(text),
         "the text is admitted unchanged"

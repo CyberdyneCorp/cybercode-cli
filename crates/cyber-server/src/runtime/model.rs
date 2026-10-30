@@ -1234,6 +1234,10 @@ impl SessionState {
                         self.resource_contexts
                             .insert(u.message_id.clone(), u.resources);
                     }
+                    // A user prompt's record is its attachments', resolved again.
+                    if row.source == "user" {
+                        row.untrusted = u.untrusted;
+                    }
                     row.parts = parts;
                 }
                 if let Some(delivery) = u.delivery {
@@ -1265,10 +1269,12 @@ impl SessionState {
         row.status = InputStatus::Promoted;
         row.promoted_seq = Some(seq);
         // Only the user's own prompt re-anchors the run; every other source keeps the
-        // taint, and input with signals adds to it.
+        // taint. The input's record (a message with signals, or a user prompt's framed
+        // attachments) adds to it after that, so attachments taint the run they start.
         if row.source == "user" {
             self.taint.clear();
-        } else if let Some(record) = &row.untrusted {
+        }
+        if let Some(record) = &row.untrusted {
             self.taint.note(record);
         }
         let text = text_of(&row.parts);

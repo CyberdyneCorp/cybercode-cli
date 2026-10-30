@@ -56,6 +56,26 @@ impl BuiltinHost {
             .insert((inv.session_id.clone(), inv.call_id.clone()), record);
     }
 
+    /// Note the records of a prompt's attachments (`@server:uri` mentions, template
+    /// `@file` references) under the admission's call, merged into one: the runtime takes
+    /// it into the prompt's `session.prompt.admitted.1`, so the attachments taint the
+    /// run they arrive in (`permissions-modes` → Untrusted-content taint).
+    pub(crate) fn note_attachment_untrusted(
+        &self,
+        session_id: &str,
+        call_id: &str,
+        records: &[UntrustedRecord],
+    ) {
+        let mut taint = cyber_core::untrusted::RunTaint::default();
+        records.iter().for_each(|record| taint.note(record));
+        if let Some(record) = taint.inherited() {
+            self.call_untrusted
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert((session_id.to_owned(), call_id.to_owned()), record);
+        }
+    }
+
     /// Take, once, the record noted for a call.
     pub(crate) fn take_untrusted(
         &self,
@@ -88,7 +108,7 @@ impl BuiltinHost {
     /// scan never changes output, so erring toward it is the safe side.
     fn scan_scope(&self, location: &Path) -> ScanScope {
         (self.opts.config)(location).map_or(ScanScope::All, |(config, _)| {
-            ScanScope::from_config(&config)
+            cyber_core::untrusted::UntrustedSettings::effective(&config).scan
         })
     }
 }

@@ -4,7 +4,8 @@
 //! RFC 3986 scheme, so `@notes.txt`, `user@host:x` and `@C:\x` stay plain text. Each
 //! mention is read through `mcp_read_resource` (permissions, hooks, output budget and
 //! blob artifacts included) and attached in its `<untrusted_content>` frame as
-//! untrusted user-turn data. Anything
+//! untrusted user-turn data; the attachments' `untrusted` record rides with the prompt's
+//! admission and taints the run. Anything
 //! that cannot be attached becomes a visible notice; nothing falls back to a file read.
 use std::path::Path;
 use std::time::Duration;
@@ -116,19 +117,21 @@ impl BuiltinHost {
         }
         self.await_mentioned(directory, &mentions, &cancel).await;
         let mut blocks = Vec::with_capacity(mentions.len() + excess.len());
+        let mut records = Vec::new();
         let mut attached = 0;
         for mention in &mentions {
-            blocks.push(
-                match self.read_mention(turn, mention, &asker, &cancel).await {
-                    Ok(output) if attached + output.len() <= ATTACHED_LIMIT => {
-                        attached += output.len();
-                        attachment(mention, &output)
-                    }
-                    Ok(_) => notice(mention, "attached resources exceed 256 KiB per prompt"),
-                    Err(reason) => notice(mention, &reason),
-                },
-            );
+            let (read, record) = self.read_mention(turn, mention, &asker, &cancel).await;
+            blocks.push(match read {
+                Ok(output) if attached + output.len() <= ATTACHED_LIMIT => {
+                    attached += output.len();
+                    records.extend(record);
+                    attachment(mention, &output)
+                }
+                Ok(_) => notice(mention, "attached resources exceed 256 KiB per prompt"),
+                Err(reason) => notice(mention, &reason),
+            });
         }
+        self.note_attachment_untrusted(&turn.session_id, &asker.call_id, &records);
         blocks.extend(excess.iter().map(|mention| {
             notice(
                 mention,
@@ -192,14 +195,18 @@ impl BuiltinHost {
     }
 
     /// One read as the `mcp_read_resource` tool, so permission rules, asks, hooks, the
-    /// output budget and blob artifacts apply exactly as for a model call.
+    /// output budget and blob artifacts apply exactly as for a model call; with the
+    /// attachment's `untrusted` record.
     async fn read_mention(
         &self,
         turn: &TurnContext,
         mention: &Mention,
         asker: &Asker,
         cancel: &CancellationToken,
-    ) -> Result<String, String> {
+    ) -> (
+        Result<String, String>,
+        Option<cyber_core::untrusted::UntrustedRecord>,
+    ) {
         let invocation = Invocation {
             tool_output: Default::default(),
             registration: None,
@@ -217,10 +224,9 @@ impl BuiltinHost {
             rules: turn.rules.clone(),
         };
         let outcome = self.execute(invocation, cancel.clone()).await;
-        // An attachment is not a call: its frame carries any `signals`, and the record
-        // noted for a settlement that will never come is dropped.
-        self.take_untrusted(&turn.session_id, &asker.call_id);
-        match outcome {
+        // An attachment is not a call: its record rides with the prompt's admission.
+        let record = self.take_untrusted(&turn.session_id, &asker.call_id);
+        let read = match outcome {
             ToolOutcome::External {
                 output,
                 failed: false,
@@ -233,7 +239,8 @@ impl BuiltinHost {
                 Err("internal error".into())
             }
             _ => Err("unexpected tool outcome".into()),
-        }
+        };
+        (read, record)
     }
 }
 

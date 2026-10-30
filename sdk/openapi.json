@@ -5466,6 +5466,10 @@
               }
             ],
             "description": "The context window meter after the last finished step; null before the first\nstep and after a compaction."
+          },
+          "untrusted_content": {
+            "$ref": "#/components/schemas/NoticePolicy",
+            "description": "The Location's effective `permissions.untrusted_content` `taint` and `bypass`,\nso clients state an injection notice's consequence as it applies\n(`untrusted-content` → Injection signal notices)."
           }
         },
         "required": [
@@ -5482,7 +5486,8 @@
           "children_cost",
           "children_tokens",
           "children_unpriced_steps",
-          "children_usage_complete"
+          "children_usage_complete",
+          "untrusted_content"
         ],
         "description": "A Session with its live status."
       },
@@ -5609,6 +5614,55 @@
           "measured",
           "compacted"
         ]
+      },
+      "NoticePolicy": {
+        "type": "object",
+        "properties": {
+          "taint": {
+            "$ref": "#/components/schemas/TaintSetting",
+            "default": "signal"
+          },
+          "bypass": {
+            "$ref": "#/components/schemas/BypassSetting",
+            "default": "allow"
+          }
+        },
+        "description": "The effective settings a notice's consequence depends on: the Location's\n`permissions.untrusted_content` `taint` and `bypass`, which the server reports on a\nSession so clients state the consequence that applies."
+      },
+      "TaintSetting": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "off",
+            "description": "No run becomes tainted; notices are still shown."
+          },
+          {
+            "type": "string",
+            "const": "signal",
+            "description": "Results and messages with at least one signal taint the run (the default)."
+          },
+          {
+            "type": "string",
+            "const": "any",
+            "description": "Every framed result taints the run."
+          }
+        ],
+        "description": "`permissions.untrusted_content.taint`: which framed results taint the run."
+      },
+      "BypassSetting": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "allow",
+            "description": "Risky actions run as they would without taint (the default)."
+          },
+          {
+            "type": "string",
+            "const": "deny",
+            "description": "Risky actions are denied."
+          }
+        ],
+        "description": "`permissions.untrusted_content.bypass`: what taint does in `bypass`."
       },
       "SetupStatus": {
         "oneOf": [

@@ -96,7 +96,16 @@ pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
             subst::templates(&layer.value, "", &layer.label, &mut templates);
         }
         substitute_layer(layer, req, &mut issues);
-        merge::merge_layer(&mut value, &layer.value, &layer.label, &mut sources);
+        let project = layer.label.starts_with("project:");
+        merge_keeping_untrusted(
+            &mut value,
+            &layer.value,
+            project,
+            &mut sources,
+            |value, sources| {
+                merge::merge_layer(value, &layer.value, &layer.label, sources);
+            },
+        );
         labels.push(layer.label.clone());
     }
     labels.extend(apply_profile(
@@ -751,8 +760,45 @@ fn apply_profile(
     }
     let label = format!("profile:{name}");
     issues.extend(super::computer::layer_issue(&label, &overlay));
-    merge::merge_profile(value, &overlay, &name, sources);
+    let project = project_source(sources, &name, "/permissions").is_some();
+    merge_keeping_untrusted(value, &overlay, project, sources, |value, sources| {
+        merge::merge_profile(value, &overlay, &name, sources);
+    });
     Some(label)
+}
+
+/// Merge a layer with `merge`. When a `project` layer replaces the whole `permissions`
+/// section (a string, an array or `null`), the lower layers' `permissions.untrusted_content`
+/// is put back with its sources: a project layer may only make those settings stricter.
+fn merge_keeping_untrusted(
+    value: &mut Value,
+    overlay: &Value,
+    project: bool,
+    sources: &mut Sources,
+    merge: impl FnOnce(&mut Value, &mut Sources),
+) {
+    let saved = project
+        .then(|| crate::untrusted::replaced_settings(overlay, value))
+        .flatten();
+    let Some(saved) = saved else {
+        merge(value, sources);
+        return;
+    };
+    const POINTER: &str = "/permissions/untrusted_content";
+    let saved_sources: Sources = sources
+        .iter()
+        .filter(|(key, _)| {
+            key.strip_prefix(POINTER)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+        })
+        .map(|(key, source)| (key.clone(), source.clone()))
+        .collect();
+    merge(value, sources);
+    let moved = crate::untrusted::restore_settings(value, saved);
+    if let Some((moved, source)) = moved.zip(sources.get("/permissions").cloned()) {
+        sources.insert(moved.to_string(), source);
+    }
+    sources.extend(saved_sources);
 }
 
 /// The project layer label that set anything under `pointer` in profile `name`, if any.

@@ -325,6 +325,10 @@ impl ToolHost for AppHost {
         self.builtin.take_call_untrusted(session_id, call_id)
     }
 
+    fn untrusted_policy(&self, directory: &str) -> cyber_core::untrusted::NoticePolicy {
+        self.builtin.untrusted_policy(directory)
+    }
+
     fn file_decisions<'a>(
         &'a self,
         turn: &'a TurnContext,

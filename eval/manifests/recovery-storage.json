@@ -97,6 +97,18 @@
       "requirement": "workspace-trust/Instruction and data provenance",
       "fault": "permission_ceiling",
       "test": "cyber-tools::untrusted_e2e::injected_page_actions_are_each_denied_in_bypass_when_opted_in"
+    },
+    {
+      "id": "injection-detector-release-gate",
+      "requirement": "workspace-trust/Instruction and data provenance",
+      "fault": "prompt_injection",
+      "test": "cyber-core::untrusted_eval::built_in_rules_pass_the_release_gate"
+    },
+    {
+      "id": "injection-detector-recall-drop-fails-the-gate",
+      "requirement": "workspace-trust/Instruction and data provenance",
+      "fault": "prompt_injection",
+      "test": "cyber-core::untrusted_eval::rule_change_lowering_recall_fails_the_gate"
     }
   ]
 }

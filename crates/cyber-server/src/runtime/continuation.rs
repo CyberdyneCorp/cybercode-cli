@@ -115,7 +115,7 @@ impl Runtime {
                         hook_context: effects.context,
                         hook_stop: effects.stop,
                         resources: attachments.resources,
-                        untrusted: None,
+                        untrusted: attachments.untrusted,
                     },
                 ),
             ],
@@ -190,6 +190,7 @@ impl Runtime {
                     hook_context: None,
                     hook_stop: None,
                     resources: Vec::new(),
+                    untrusted: None,
                 },
             ));
         } else if !eligible_child_input(&state, requested_only) {

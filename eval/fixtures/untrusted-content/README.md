@@ -22,3 +22,11 @@ stay visible in review.
 
 Do not tune samples to the rules: a miss or a false positive is a finding about the rules.
 Samples are original text written for this set.
+
+Every sample verifies `untrusted-content` → Injection signal detection; the gate itself verifies
+Injection defense evaluation. The report names both, and the two gate tests are listed as cases
+of `eval/manifests/recovery-storage.json`.
+
+The benign set includes install guides that pipe a download to a shell, build files that
+`rm -rf` a build tree, API documentation that sends a key in a header, and REST route templates
+(`/users/{username}`): the rule table must not flag them (detector v2).

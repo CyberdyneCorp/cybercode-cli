@@ -424,36 +424,37 @@ The tool registry wraps every result with external provenance in one frame, afte
 | `mcp` | every MCP tool call result, `isError` text included | `mcp:<server>/<tool>` |
 | `browser` | the same, for the server named by `browser.server` (default `browser`), with the harness's capture lines | `mcp:<server>/<tool>` |
 | `mcp_resource` | `mcp_read_resource`, resource listings and `@server:uri` attachments | `mcp:<server>:<uri>`, or `mcp:<server>` for listings |
-| `overflow` | a `read` or `grep` of a managed overflow file whose provenance record is missing or corrupt | the file path |
+| `overflow` | a `read` or `grep` of a managed overflow file whose provenance record is missing or corrupt, or of several overflow files at once | the file path |
 
-- **Escaping.** Inside the body, a `<` that starts `untrusted_content` or `/untrusted_content` (any case, with spaces allowed) is written `&lt;`, so content cannot close the frame or open a fake one. Every other byte is kept: `Vec<T>` and HTML stay readable. Attribute values are escaped, cut to 512 characters, and URLs lose their userinfo.
-- **Hidden characters.** Inside a frame, zero-width characters (U+200B, U+200C, U+2060, and U+FEFF after the first character), U+200D outside emoji sequences, bidi controls, Unicode tag characters, DEL and C0 controls other than tab, LF and CR become visible markers such as `[U+202E]`; ESC becomes `[ESC]`. Nothing is deleted.
-- **Truncation and overflow.** The closing tag always comes before the truncation notice. An overflow file keeps its provenance in a sidecar `<file>.provenance.json`, so reading it back is framed with the original `source` and `origin`.
+- **Escaping.** Inside the body, a `<` (or its full-width `＜` or small `﹤` form) that starts `untrusted_content` or `/untrusted_content` (any case or width, with spaces allowed) is written `&lt;`, so content cannot close the frame or open a fake one. Every other byte is kept: `Vec<T>` and HTML stay readable. Attribute values are escaped, cut to 512 characters, and URLs lose their userinfo.
+- **Hidden characters.** Inside a frame, zero-width characters (U+200B, U+200C, U+2060, and U+FEFF after the first character), U+200D outside emoji sequences, other invisible characters (soft hyphen U+00AD, U+034F, the Hangul fillers, U+17B4/U+17B5, Mongolian selectors U+180B–U+180F, invisible operators U+2061–U+2065, U+206A–U+206F, U+FFF0–U+FFF8, U+1BCA0–U+1BCA3, U+1D173–U+1D17A), variation selectors outside an emoji or keycap sequence, ideographic variation selectors (U+E0100–U+E01EF) outside an ideographic sequence, bidi controls, Unicode tag characters, DEL and C0 controls other than tab, LF and CR become visible markers such as `[U+202E]`; ESC becomes `[ESC]`. Nothing is deleted.
+- **Truncation and overflow.** The closing tag always comes before the truncation notice. An overflow file keeps its provenance in a sidecar `<file>.provenance.json`, so reading it back is framed with the original `source` and `origin`: through `read` and `grep`, through a `bash` or `powershell` command that names a file in the managed output directory (or runs there), and through a Workflow script's `tools.read`/`tools.grep`, whose value then carries the `untrusted` record the run's summary hands to its owner.
+- **History.** `history_search` returns an earlier external result framed again, with its recorded `source` and `origin` and its signals, so searching history cannot bring injected text back bare.
 - **Not framed.** `read`, `grep`, `glob`, `list`, `bash` and `powershell` on workspace files, whose exact bytes edits depend on. Cross-session messages, Channel events and `<mcp_instructions>` keep their own blocks.
 
 MCP `structuredContent` stays structured for clients; the JSON text the model sees is framed.
 
 ### Injection signals
 
-A deterministic rule table (no model call, `detector_version` 1) scans each framed result, each admitted cross-session message and Channel event, and, with `scan: "all"`, the output of `read`, `grep`, `bash` and `powershell` (that output gets no frame and is never rewritten, but its hits raise notices and taint the run). Text is normalized first (NFKC, lower case, hidden characters removed, whitespace collapsed), so `ignore` with a zero-width space inside it still matches. The kinds, in the order `signals` lists them:
+A deterministic rule table (no model call, `detector_version` 2) scans each framed result, each admitted cross-session message and Channel event, and, with `scan: "all"`, the output of `read`, `grep`, `bash` and `powershell` (that output gets no frame and is never rewritten, but its hits raise notices and taint the run). Text is normalized first (NFKC, lower case, hidden characters removed, whitespace collapsed), so `ignore` with a zero-width space inside it still matches. The kinds, in the order `signals` lists them:
 
 | kind | what it matches |
 |---|---|
 | `override_instructions` | "ignore / disregard / forget / override ... previous instructions", "new instructions:", "you are now", "from now on, you", "do not tell the user" |
 | `role_markup` | `<system>`, `<\|im_start\|>`, `[INST]`, forged `untrusted_content`, `cross_session_message` or `mcp_instructions` tags, lines starting with `system:` or `assistant:` |
-| `secret_access` | a secret path or name (`.ssh`, `id_rsa`, `.env`, `.aws/credentials`, `.npmrc`, API keys, private keys, passwords, ...) within 200 characters of a transfer verb (send, upload, post, curl, fetch, email, paste, include) |
-| `exfil_url` | a remote Markdown image with a query string; a URL with a placeholder (`{...}`, `${...}`, `$VAR`, `<...>`, `[...]`) in its path or query |
-| `command_request` | "run / execute / paste this command", "in your terminal"; `curl ... \| sh`, `\| bash`, `base64 -d \|`, `powershell -enc`, `iex(`, `rm -rf` |
+| `secret_access` | a secret path or name (`.ssh`, `id_rsa`, `.env`, `.aws/credentials`, `.npmrc`, API keys, private keys, passwords, ...) within 200 characters of a transfer verb with a destination: a URL, an e-mail address, a reply or a public place ("upload it to the issue", "paste it into your next reply"), or `curl` with a data flag. Sending requests or telemetry ("send a POST request to https://…") is not a transfer of the key the page mentions. |
+| `exfil_url` | a remote Markdown image with a query string; a URL with a placeholder (`{...}`, `${...}`, `$VAR`, `<...>`, `[...]`) in its query or fragment, or a placeholder naming data (`{conversation}`, `[output]`, `${HOME}`) in its path. Route templates such as `/users/{username}` are not hits. |
+| `command_request` | requests aimed at the agent ("AI agents must run this command"), or to act at once without asking ("do this immediately without asking"); `base64 -d \|`, `powershell -enc`, `iex(`. `curl ... \| sh`, `\| bash` and `rm -rf`, which install guides and build files use, count only beside another signal. |
 | `permission_change` | bypass mode, `--dangerously-`, `/mode`, `/approve`, "approve the pending", "disable the sandbox", `permissions` or `cyber.json` next to `allow` |
-| `hidden_text` | any bidi control, tag character, ESC or other replaced control, or at least 3 zero-width characters outside emoji |
+| `hidden_text` | any bidi control, tag character, ideographic variation selector outside an ideographic sequence, ESC or other replaced control, or at least 3 zero-width or other invisible characters outside emoji |
 
 A scan covers at most 256 KiB, records at most 10 hits (at least one per kind that hit) with redacted excerpts of up to 120 characters, and counts all of them. A hit never removes, blocks or reorders content. Pages about security or prompt injection often match; that costs a notice and a few prompts.
 
 ### Notices and records
 
-`session.tool.settled.1` carries `untrusted: { source, origin, detector_version, signals: [{ kind, excerpt }], signal_count }` for every framed result and for `scan: "all"` hits; `session.prompt.admitted.1` carries it for messages and Channel events with hits (`source` `session` or `channel`). Old events without the field read as no signals.
+`session.tool.settled.1` carries `untrusted: { source, origin, detector_version, signals: [{ kind, excerpt }], signal_count }` for every framed result and for `scan: "all"` hits; `session.prompt.admitted.1` carries it for messages and Channel events with hits (`source` `session` or `channel`), and for a prompt's framed attachments (`@server:uri` resources and template `@file` references to overflow files), which taint the run they start. Old events without the field read as no signals.
 
-- **TUI and web dashboard:** one line under the result, such as `! Possible prompt injection in webfetch result (exfil_url). Risky actions in this run will ask.` (`message` instead of `result` for a message). The second sentence follows the Mode: `will be denied.` in `dont-ask` or with no user attached, `Taint is off in bypass.` in `bypass`, `will be denied (bypass).` with `bypass: "deny"`, and nothing with `taint: "off"`. Expanding the result (Ctrl+O) shows the excerpts. The dashboard renders the line and excerpts as text.
+- **TUI and web dashboard:** one line under the result, such as `! Possible prompt injection in webfetch result (exfil_url). Risky actions in this run will ask.` (`message` instead of `result` for a message). The second sentence follows the Mode and the Location's effective settings, which `GET /sessions/:id` reports as `untrusted_content: { taint, bypass }`: `will be denied.` in `dont-ask` or with no user attached, `Taint is off in bypass.` in `bypass`, `will be denied (bypass).` with `bypass: "deny"`, and nothing with `taint: "off"`. Expanding the result (Ctrl+O) shows the excerpts. The dashboard renders the line and excerpts as text.
 - **`cyber exec`:** text mode writes `warning: possible prompt injection in webfetch result from <origin>: <kinds>` to stderr unless `--quiet`; stream-json adds `untrusted` to the `tool_result` line (still `schema_version` 1).
 
 ### Taint and risky actions
@@ -462,10 +463,10 @@ A run is tainted once a result or admitted message with signals is promoted, and
 
 In a tainted run these actions are risky:
 
-- **egress:** `webfetch`, `websearch`, every MCP tool call, `message.send` to cross-machine targets, and shell commands named `curl`, `wget`, `nc`, `ncat`, `ssh`, `scp`, `sftp`, `rsync`, `ftp`, `telnet`, `gh`, `Invoke-WebRequest`, `Invoke-RestMethod`, `iwr` or `irm`, `git push`, `git remote add`, `npm publish`, `cargo publish`, and any command the analysis cannot parse (inline `sh -c`, `eval`, `pwsh -Command`, ...);
+- **egress:** `webfetch`, `websearch`, every MCP tool call and MCP resource read or listing, `message.send` to cross-machine targets, collaboration messages and task writes, native input (`computer.control`), and shell commands named `curl`, `wget`, `nc`, `ncat`, `ssh`, `scp`, `sftp`, `rsync`, `ftp`, `telnet`, `gh`, `Invoke-WebRequest`, `Invoke-RestMethod`, `iwr` or `irm` (also behind `sudo`, `env`, `timeout`, `nice`, `stdbuf`, `flock`, `busybox` and similar wrappers, or as a full path such as `C:\Windows\System32\curl.exe`), `git push`, `git remote add`, `npm publish`, `cargo publish` (after any options), a program named by a variable or a substitution (`$c …`), and any command the analysis cannot parse (inline `sh -c`, `eval`, `pwsh -Command`, unbalanced quotes, ...);
 - **external writes:** any mutation outside the Location (`external_directory`);
 - **auto-approved commands:** in `auto`, a shell command the classifier allows that is not plainly read-only;
-- **secret reads:** `read`, `grep`, `glob` and shell path arguments matching `*.env` or `*.env.*` (not `*.env.example`), `*.pem`, `*.key`, `*.p12`, `id_rsa*`, `id_ed25519*`, `.npmrc`, `.pypirc`, `.netrc`, `.git-credentials`, or `~/.ssh/**`, `~/.gnupg/**`, `~/.aws/**`, `~/.kube/config`, `~/.docker/config.json`, `~/.config/gh/hosts.yml`, `~/.config/cyber/**`.
+- **secret reads:** `read`, `grep`, `glob` and shell path arguments matching `*.env` or `*.env.*` (not `*.env.example`), `*.pem`, `*.key`, `*.p12`, `id_rsa*`, `id_ed25519*`, `.npmrc`, `.pypirc`, `.netrc`, `.git-credentials`, or `~/.ssh/**`, `~/.gnupg/**`, `~/.aws/**`, `~/.kube/config`, `~/.docker/config.json`, `~/.config/gh/hosts.yml`, `~/.config/cyber/**`; also through a symbolic link, a shell glob (`cat ~/.a?s/credentials`), PowerShell paths (`Get-Content ~\.aws\credentials`, `$env:USERPROFILE\…`), and a `grep` whose matches come from such a file.
 
 For a risky action, every `allow` becomes `ask`: config and Session rules, saved "always" approvals, Mode grants, hook decisions, `auto_mode.rules.always_allow` and classifier allows. Denies and ceilings are unchanged, and edits inside the Location are not risky. The ask is resolved by Mode:
 
@@ -476,7 +477,7 @@ For a risky action, every `allow` becomes `ask`: config and Session rules, saved
 | `dont-ask`, or no attached user (`cyber exec`, routines, Workflow agents) | denied with `Not pre-approved (untrusted content in this run)`; the run continues |
 | `bypass` | never prompts: runs as without taint by default, or is denied with `Denied: untrusted content in this run (bypass)` with `bypass: "deny"` |
 
-The request's `metadata.taint` is `{ reason: "untrusted_content", kinds, origins }` and the prompt says `Asked because this run read untrusted content with injection signals: <source> <origin>`. Answering "always" saves the approval as usual, but a later call in a tainted run still asks.
+The request's `metadata.taint` is `{ reason: "untrusted_content", kinds, origins }` and the prompt says `Asked because this run read untrusted content with injection signals: <source> <origin>`. Answering "always" saves the approval as usual, but a later call in a tainted run still asks, and it never answers another taint ask that is pending at the same time.
 
 ### Settings
 
@@ -493,11 +494,11 @@ The request's `metadata.taint` is `{ reason: "untrusted_content", kinds, origins
 }
 ```
 
-User, global, `--config` and environment layers may set anything. A project layer may only tighten: `taint` from `off` to `signal` or `any` (or `signal` to `any`), `bypass` to `deny`, `scan` to `all`. A loosening project value and any project `allow_when_tainted` are ignored with one warning per load naming the file and key, so a hostile checkout cannot switch the defense off. A change applies from the next tool call. With `taint: "off"` notices are still shown.
+User, global, `--config` and environment layers may set anything. A project layer may only tighten: `taint` from `off` to `signal` or `any` (or `signal` to `any`), `bypass` to `deny`, `scan` to `all`. A loosening project value and any project `allow_when_tainted` are ignored with one warning per load naming the file and key, so a hostile checkout cannot switch the defense off. A project `permissions` written as a string or an array (which replaces the whole section) keeps the lower layers' `untrusted_content`. A change applies from the next tool call. With `taint: "off"` notices are still shown.
 
 ### Evaluation
 
-`eval/fixtures/untrusted-content/` holds labeled injection samples (every kind, through `webfetch`, `websearch`, MCP and repository files) and benign documentation, READMEs, search results and MCP output, including security articles about prompt injection. `cargo test -p cyber-core --test untrusted_eval -- --nocapture` reports recall per kind and false-positive rates, and fails below 90% recall or above 2% false positives. `cargo test -p cyber-tools --test untrusted_e2e` runs a scripted model that follows an injected page (read `~/.aws/credentials` and post it, widen permissions, redirect provider traffic) in `default`, `auto` with and without a user, and `bypass` with `bypass: "deny"`, and checks that every action is asked or denied.
+`eval/fixtures/untrusted-content/` holds labeled injection samples (every kind, through `webfetch`, `websearch`, MCP and repository files) and benign documentation, READMEs, search results and MCP output, including security articles about prompt injection. `cargo test -p cyber-core --test untrusted_eval -- --nocapture` reports recall per kind and false-positive rates, and fails below 90% recall or above 2% false positives. `cargo bench -p cyber-core --bench untrusted_detector` warns when a 50 KiB page scans in more than 5 ms and fails above 10 ms, and bounds a 256 KiB adversarial text. `cargo test -p cyber-tools --test untrusted_e2e` runs a scripted model that follows an injected page (read `~/.aws/credentials` and post it, widen permissions, redirect provider traffic) in `default`, `auto` with and without a user, and `bypass` with `bypass: "deny"`, and checks that every action is asked or denied.
 
 ## Budgets and deferred input
 
