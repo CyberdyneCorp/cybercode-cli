@@ -26,7 +26,7 @@ use serde_json::{Value, json};
 /// carried. With `restart_marker`, a crash leaves that file behind and every later start
 /// exits during `initialize`.
 const HOST: &str = r#"
-import json, os, socket, sys, urllib.request
+import json, os, socket, sys, urllib.request, urllib.parse
 BEHAVIOR = json.loads(__BEHAVIOR__)
 def send(message):
     sys.stdout.write(json.dumps(message) + "\n")
@@ -54,6 +54,7 @@ def probe(port):
     return "\n".join(out)
 marker = BEHAVIOR.get("restart_marker")
 config = None
+plugin_root = None
 while True:
     line = sys.stdin.readline()
     if not line:
@@ -64,6 +65,7 @@ while True:
         if marker and os.path.exists(marker):
             sys.exit(3)
         config = params.get("config")
+        plugin_root = params["plugin"]["root"]
         reply(id, {"protocolVersion": BEHAVIOR.get("version", "1"), "tools": BEHAVIOR["tools"]})
     elif method == "tool/execute":
         name = params["name"]
@@ -73,6 +75,26 @@ while True:
             os._exit(9)
         if name in BEHAVIOR.get("probe", []):
             reply(id, {"content": probe(params["input"]["port"])})
+        elif name in BEHAVIOR.get("environment", []):
+            forbidden = ["PYTHONHOME", "PYTHONPATH", "LD_PRELOAD", "LD_LIBRARY_PATH",
+                         "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "NODE_OPTIONS",
+                         "DENO_AUTH_TOKENS", "PROJECT_CALLBACK"]
+            home = os.environ.get("HOME", "")
+            paths = [os.environ.get(key, "") for key in ["XDG_CONFIG_HOME", "XDG_CACHE_HOME",
+                     "XDG_STATE_HOME", "XDG_DATA_HOME", "DENO_DIR", "BUN_RUNTIME_TRANSPILER_CACHE_PATH"]]
+            proxy = urllib.parse.urlsplit(os.environ.get("HTTP_PROXY", ""))
+            managed_proxy = (proxy.scheme == "http" and proxy.hostname == "127.0.0.1" and bool(proxy.port)
+                             and not proxy.username and not proxy.password and os.environ.get("NO_PROXY") == ""
+                             and os.environ.get("HTTP_PROXY") == os.environ.get("HTTPS_PROXY") == os.environ.get("ALL_PROXY"))
+            observed = {"managed_proxy": managed_proxy, "untrusted_absent": all(key not in os.environ for key in forbidden),
+                        "private_home": bool(home) and os.path.isdir(home) and home == os.environ.get("TMPDIR"),
+                        "private_paths": bool(home) and all(path and os.path.commonpath([home, path]) == home for path in paths),
+                        "plugin_root": os.environ.get("CYBER_PLUGIN_ROOT") == plugin_root,
+                        "package_cwd": os.getcwd() == plugin_root,
+                        "plugin_name": os.environ.get("CYBER_PLUGIN_NAME") == "env-kit",
+                        "fixed_path": os.environ.get("PATH") == "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+                        "stdout_utf8": sys.stdout.encoding.lower().replace("-", "") == "utf8"}
+            reply(id, {"content": json.dumps(observed)})
         elif name in BEHAVIOR.get("secret", []):
             answer = ask_core("secrets/get", {"key": params["input"]["key"]})
             reply(id, {"content": json.dumps(answer.get("result") or answer.get("error"))})
@@ -419,6 +441,50 @@ async fn plugin_tool_is_forwarded_via_tool_execute() {
     assert_eq!(again["config"], json!({"site": "globex"}));
     assert_eq!(again["pid"], echo["pid"]);
     f.app.runtime.shutdown().await;
+}
+
+/// Real production spawn: ordinary-tool overlays must not inject Python startup
+/// paths, loaders, provider credentials or project environment into the host.
+#[tokio::test]
+async fn plugin_bootstrap_environment_ignores_tool_overlays_and_owns_home() {
+    fn reply(body: &Value) -> Value {
+        if let Some(title) = title(body) {
+            return title;
+        }
+        if after_tool(body) {
+            return json!({"content": "Done."});
+        }
+        call(&call_id(body), "inspect_bootstrap", json!({}))
+    }
+    let f = Fixture::new(reply, json!({"sandbox": {"env": {"allow": ["*"], "set": {
+        "PYTHONHOME": "/fixture-invalid-python-home", "PYTHONPATH": "/fixture-untrusted-python",
+        "LD_PRELOAD": "/fixture-untrusted-loader.so", "LD_LIBRARY_PATH": "/fixture-untrusted-library",
+        "DYLD_INSERT_LIBRARIES": "/fixture-untrusted-loader.dylib", "DYLD_LIBRARY_PATH": "/fixture-untrusted-library",
+        "NODE_OPTIONS": "--require=/fixture-untrusted-node", "DENO_AUTH_TOKENS": "fixture-only",
+        "PROJECT_CALLBACK": "fixture-only", "PATH": "/fixture-untrusted-bin", "HOME": "/fixture-owner-home",
+        "HTTP_PROXY": "http://fixture.invalid:1", "HTTPS_PROXY": "http://fixture.invalid:1",
+        "ALL_PROXY": "http://fixture.invalid:1", "NO_PROXY": "*"
+    }}}})).await;
+    f.install(json!({"name": "env-kit"}), json!({"tools": [read_only("inspect_bootstrap", "Inspect dummy bootstrap", json!({"type": "object"}))], "environment": ["inspect_bootstrap"]}), &[]);
+    let id = f.session().await;
+    f.turn(&id, "Inspect the plugin bootstrap", 1).await;
+    let requests = chats(&f.model);
+    let advertised = requests
+        .first()
+        .is_some_and(|request| tool_names(request).contains(&"inspect_bootstrap".to_owned()));
+    let results = requests.last().map(tool_results).unwrap_or_default();
+    let observed = results
+        .first()
+        .map(|result| serde_json::from_str::<Value>(result));
+    // Settle the real host before assertions, including the unsafe-overlay control.
+    f.app.runtime.shutdown().await;
+    assert!(advertised, "inspect_bootstrap was not advertised");
+    let observed = observed.unwrap().unwrap();
+    assert_eq!(
+        observed,
+        json!({"package_cwd": true, "managed_proxy": true, "untrusted_absent": true, "private_home": true, "private_paths": true,
+        "plugin_root": true, "plugin_name": true, "fixed_path": true, "stdout_utf8": true})
+    );
 }
 
 #[tokio::test]

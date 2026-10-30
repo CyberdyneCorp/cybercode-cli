@@ -216,6 +216,20 @@ fn worker_source_io_preserves_owner_sqlite_locks() {
         );
     };
     check();
+    // Metadata-only private inventory must not open/close this locked database.
+    let inventory = cyber_sandbox::plugin_image::private_roots::Inventory::capture(
+        std::slice::from_ref(&source),
+    )
+    .unwrap();
+    inventory.recheck().unwrap();
+    check();
+    drop(inventory);
+    check();
+    assert!(
+        cyber_sandbox::plugin_image::private_roots::Inventory::capture(&[path.join("child")])
+            .is_err()
+    );
+    check();
     let result = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "source_digest_probe", "--ignored", "--nocapture"])
         .env("CYBER_PLUGIN_COPY_SOURCE", &source)
@@ -315,12 +329,29 @@ async fn owned_copy_pins_the_actual_worker_result_and_cleans_it_on_drop() {
     );
     assert_eq!(package.digest(), digest);
     assert_eq!(
+        cyber_core::plugins::tree_digest(package.path().unwrap()).unwrap(),
+        digest
+    );
+    let boundary = package
+        .path()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("package.json");
+    let boundary_metadata = std::fs::metadata(&boundary).unwrap();
+    assert_eq!(boundary_metadata.permissions().mode() & 0o777, 0o400);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&std::fs::read(&boundary).unwrap()).unwrap(),
+        serde_json::json!({"private": true, "workspaces": []})
+    );
+    assert_eq!(
         std::fs::read(package.path().unwrap().join("main")).unwrap(),
         b"approved bytes"
     );
     let path = package.path().unwrap().to_owned();
     drop(package);
     assert!(!path.exists());
+    assert!(!boundary.exists());
     assert_eq!(std::fs::read_dir(&base).unwrap().count(), 0);
 }
 
@@ -362,14 +393,35 @@ async fn replacing_identical_content_cannot_revive_the_previous_package() {
         .await
         .unwrap();
     let old_path = old.path().unwrap().to_owned();
+    assert_eq!(
+        old.commit(&Generation::new(), |_| panic!(
+            "foreign package commit executed"
+        )),
+        Err(Error::Revoked)
+    );
+    assert_eq!(old.path().unwrap(), old_path);
+    assert_eq!(
+        old.commit(&previous, |path| std::fs::read(path.join("main")))
+            .unwrap()
+            .unwrap(),
+        b"same content"
+    );
     previous.revoke();
     assert_eq!(old.path(), Err(Error::Revoked));
+    assert_eq!(
+        old.commit(&previous, |_| panic!("revoked package commit executed")),
+        Err(Error::Revoked)
+    );
     let current = Generation::new();
     let new = prepare(&current.lease(), helper, &base, &source, &digest)
         .await
         .unwrap();
     assert_eq!(old.digest(), new.digest());
     assert_ne!(new.path().unwrap(), old_path);
+    assert_eq!(
+        new.commit(&current, |path| path.to_owned()).unwrap(),
+        new.path().unwrap()
+    );
     assert_eq!(old.path(), Err(Error::Revoked));
     assert_eq!(
         prepare(&old_lease, helper, &base, &source, &digest)
@@ -380,6 +432,12 @@ async fn replacing_identical_content_cannot_revive_the_previous_package() {
     assert_eq!(std::fs::read_dir(&base).unwrap().count(), 2);
     drop(current);
     assert_eq!(new.path(), Err(Error::Revoked));
+    assert_eq!(
+        new.commit(&Generation::new(), |_| panic!(
+            "dropped owner package commit executed"
+        )),
+        Err(Error::Revoked)
+    );
     drop(old);
     drop(new);
     assert_eq!(std::fs::read_dir(&base).unwrap().count(), 0);

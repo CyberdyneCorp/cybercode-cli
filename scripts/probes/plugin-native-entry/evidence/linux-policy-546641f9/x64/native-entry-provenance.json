@@ -1,0 +1,42 @@
+{
+  "recorded_at": "2026-10-29T21:06:20.867Z",
+  "platform": "linux",
+  "architecture": "x64",
+  "checkout": "d273221de42084d0c0f45d64d7779a42b6ace819",
+  "run_id": "40954544764",
+  "sources": [
+    ".github/workflows/plugin-native-launcher.yml",
+    "scripts/probes/plugin-confinement/run.mts",
+    "crates/cyber-sandbox/native/linux_plugin_exec.c",
+    "crates/cyber-sandbox/native/linux_filter.h",
+    "crates/cyber-sandbox/native/linux_initial_exec.h",
+    "crates/cyber-sandbox/tests/support/native_exec_linux.rs",
+    "Cargo.lock",
+    "crates/cyber-sandbox/Cargo.toml",
+    "crates/cyber-sandbox/build.rs",
+    "crates/cyber-sandbox/native/macos_plugin_exec.c",
+    "crates/cyber-sandbox/src/native_exec.rs",
+    "crates/cyber-sandbox/src/bin/cyber-sandbox-exec.rs",
+    "crates/cyber-sandbox/tests/native_exec.rs",
+    "crates/cyber-sandbox/src/lib.rs",
+    "crates/cyber-sandbox/src/plugin_policy.rs",
+    "crates/cyber-sandbox/src/plugin_policy/tests.rs",
+    "crates/cyber-sandbox/tests/support/native_policy_macos.rs",
+    "crates/cyber-sandbox/src/plugin_policy/linux.rs",
+    "crates/cyber-sandbox/src/plugin_policy/linux/tests.rs",
+    "crates/cyber-sandbox/tests/support/native_policy_linux.rs",
+    "crates/cyber-sandbox/tests/fixtures/plugin_path_mutation.c",
+    "crates/cyber-sandbox/tests/fixtures/plugin_proc_probe.c",
+    "crates/cyber-sandbox/tests/fixtures/plugin_native_fds.c",
+    "scripts/probes/plugin-confinement/fixture_exec.c",
+    "scripts/probes/plugin-confinement/fixture_native.c",
+    "scripts/probes/plugin-confinement/process_policy.h",
+    "scripts/probes/plugin-native-entry/report.mts"
+  ],
+  "source_sha256": "21e1e4adca3b9deaefa1a392c1da62c83386bff16c970012b5f6dbd6a4cb9545",
+  "packaged_binary": {
+    "sha256": "22ad1c8ddc2828a2ad618dbe1289d30b91b996272cb4b1e279b38f86fb55cbff",
+    "bytes": 128989736
+  },
+  "scope": "Build provenance. macOS tests execute private copies signed with fresh identifiers; read the job for outcomes. This does not establish plugin launch admission or runtime compatibility beyond the tested fixtures."
+}
