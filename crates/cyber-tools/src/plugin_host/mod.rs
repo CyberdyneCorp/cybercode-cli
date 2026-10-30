@@ -11,10 +11,13 @@
 //! removes exactly its tools from the next step's list, without a server restart.
 
 mod connection;
+mod environment;
 mod host;
 mod launch;
+mod lifetime;
 pub(crate) mod network;
 mod restart;
+mod runtime_search;
 pub mod secrets;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -265,17 +268,20 @@ async fn supervise(
     entry.set(State::Ready(Arc::clone(&live)));
     let stopped = tokio::select! {
         _ = live.connection.closed.cancelled() => false,
-        _ = started.process.wait() => false,
+        _ = started.wait() => false,
         _ = entry.stop.cancelled() => true,
     };
     if stopped {
         shutdown(&live, started).await;
         return None;
     }
-    started.process.terminate();
-    let _ = started.process.wait().await;
-    if let Some(proxy) = started.proxy.take() {
-        let _ = proxy.shutdown().await;
+    live.connection.closed.cancel();
+    if started.finish().await.is_err() {
+        entry.set(State::Failed(format!(
+            "plugin {} cleanup is unconfirmed; resources retained",
+            entry.name
+        )));
+        return None;
     }
     let error = format!("plugin {} crashed", entry.name);
     Some((error, live.started.elapsed()))
@@ -335,17 +341,9 @@ async fn shutdown(live: &Live, mut started: launch::Started) {
             Some(SHUTDOWN_GRACE),
         )
         .await;
-    if tokio::time::timeout(SHUTDOWN_GRACE, started.process.wait())
-        .await
-        .is_err()
-    {
-        started.process.terminate();
-        let _ = started.process.wait().await;
-    }
+    let _ = tokio::time::timeout(SHUTDOWN_GRACE, started.wait()).await;
     live.connection.closed.cancel();
-    if let Some(proxy) = started.proxy.take() {
-        let _ = proxy.shutdown().await;
-    }
+    let _ = started.finish().await;
 }
 
 async fn start(
@@ -387,17 +385,20 @@ async fn start(
         .start(&request, &entry.denials)
         .await
         .map_err(StartError::Fatal)?;
-    let (Some(stdin), Some(stdout)) = (started.process.stdin(), started.process.stdout()) else {
+    let (Some(stdin), Some(stdout)) = (started.stdin(), started.stdout()) else {
         return Err(StartError::Fatal(format!(
             "plugin {}: host streams unavailable",
             plugin.name
         )));
     };
-    if let Some(stderr) = started.process.stderr() {
+    if let Some(stderr) = started.stderr() {
         tokio::spawn(log_stderr(plugin.name.clone(), stderr));
     }
     let handler = handler(entry, &plugin, settings.secrets);
     let connection = Connection::start(stdin, stdout, handler);
+    // An aborted initialization must close its protocol scope too, even if an
+    // in-flight handler temporarily retains another Arc to the connection.
+    let initializing = connection.closed.clone().drop_guard();
     let params = json!({
         "protocolVersion": PROTOCOL_VERSION,
         "core": {"name": "cyber", "version": cyber_core::version::build_info().version},
@@ -434,6 +435,7 @@ async fn start(
         tools,
         started: Instant::now(),
     });
+    initializing.disarm();
     Ok((live, started))
 }
 
@@ -709,3 +711,6 @@ async fn log_stderr(name: String, stderr: crate::tools::process::ReadStream) {
         );
     }
 }
+
+#[cfg(all(test, unix))]
+mod settlement_tests;

@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Commits that only touch root Markdown, docs/ or openspec/ skip the build and test
   # jobs; OpenSpec validation still runs for them.

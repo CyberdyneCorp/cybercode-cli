@@ -1,0 +1,56 @@
+{
+  "platform": "linux",
+  "architecture": "arm64",
+  "kernel_release": "7.0.0-1017-azure",
+  "checkout": "c42831be5ee522833b802960c9e568db8433a522",
+  "run_id": "40990090248",
+  "outcome": "prerequisites-passed",
+  "sources": [
+    "scripts/probes/plugin-native-entry/linux_pidfd_probe.c",
+    "scripts/probes/plugin-native-entry/pidfd.mts",
+    ".github/workflows/plugin-linux-ipc.yml"
+  ],
+  "source_sha256": "9ef84af7a5ee191fbaa25127844674c7758e00dc31330616d4905f5488462a9f",
+  "probe_sha256": "798fea438ad18f137655d48d43947825b571292d7e5a4e76d2167823deb16533",
+  "rows": [
+    {
+      "mode": "host",
+      "status": 0,
+      "observed": {
+        "outcome": "passed",
+        "stage": "complete",
+        "errno": 0,
+        "leader_domain": 1,
+        "thread_domain": 2,
+        "replacement_domain": 1,
+        "pinned_domain": 2,
+        "copied_address_changed": true,
+        "guest_observed_bind": true,
+        "pinned_tcp_roundtrip": true,
+        "thread_after_exit_errno": 3,
+        "nondumpable_fd_errno": 1,
+        "nondumpable_memory_errno": 1
+      }
+    },
+    {
+      "mode": "private-namespaces",
+      "status": 0,
+      "observed": {
+        "outcome": "passed",
+        "stage": "complete",
+        "errno": 0,
+        "leader_domain": 1,
+        "thread_domain": 2,
+        "replacement_domain": 1,
+        "pinned_domain": 2,
+        "copied_address_changed": true,
+        "guest_observed_bind": true,
+        "pinned_tcp_roundtrip": true,
+        "thread_after_exit_errno": 3,
+        "nondumpable_fd_errno": 1,
+        "nondumpable_memory_errno": 1
+      }
+    }
+  ],
+  "scope": "Owned-fixture syscall prerequisites only. No syscall broker, sandbox policy, runtime support revision or production acceptance."
+}

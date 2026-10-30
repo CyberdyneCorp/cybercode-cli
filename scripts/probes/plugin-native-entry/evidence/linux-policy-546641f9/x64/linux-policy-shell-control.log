@@ -1,0 +1,24 @@
+[1m[92m   Compiling[0m cyber-sandbox v0.1.0 (/home/runner/work/cybercode-cli/cybercode-cli/crates/cyber-sandbox)
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 2.13s
+[1m[92m     Running[0m tests/native_exec.rs (target/debug/deps/native_exec-867fac6aeb87ccec)
+
+running 1 test
+test linux::policy::rust_linux_policy_composes_mounts_with_landlock_and_the_packaged_entry ... FAILED
+
+failures:
+
+---- linux::policy::rust_linux_policy_composes_mounts_with_landlock_and_the_packaged_entry stdout ----
+
+thread 'linux::policy::rust_linux_policy_composes_mounts_with_landlock_and_the_packaged_entry' (7017) panicked at crates/cyber-sandbox/tests/support/native_policy_linux.rs:174:9:
+assertion `left == right` failed: shell: {"stdio_tool":true,"package_read":true,"scratch_write":true,"scratch_read":true,"project_read":false,"project_list":false,"project_write":false,"written_project_read":false,"private_read":false,"private_list":false,"private_write":false,"protected_read":false,"protected_write":false,"symlink_private_read":false,"hardlink_private":false,"project_rename":false,"inherited_descriptor":false,"thread":true,"package_hardlink":false,"package_alias_write":false,"thread_reads":[false,false],"thread_shell":true,"shell":true,"native_fork":true,"child_reads":[false,false],"native_child_reads":[false,false],"cannot_relax":true,"constructor_private_read":false,"constructor_fork":true,"native_spawn":true,"filter_replacement_denied":true}
+  left: Bool(true)
+ right: false
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    linux::policy::rust_linux_policy_composes_mounts_with_landlock_and_the_packaged_entry
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.09s
+
+[1m[91merror[0m: test failed, to rerun pass `-p cyber-sandbox --test native_exec`

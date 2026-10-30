@@ -1,0 +1,768 @@
+{
+  "platform": "linux",
+  "architecture": "arm64",
+  "kernel_release": "7.0.0-1017-azure",
+  "bubblewrap_version": "bubblewrap 0.9.0",
+  "python_version": "Python 3.12.3",
+  "checkout": "d6afa580f51a2a6ec1ad0fec823a8fcc8200e75b",
+  "run_id": "40943857344",
+  "outcome": "passed",
+  "sources": [
+    "scripts/probes/plugin-native-entry/linux_mounts.mts",
+    ".github/workflows/plugin-linux-mounts.yml"
+  ],
+  "source_sha256": "fc98524c490a23bc18e373783cdea32b55ceb400dee2d22a9b78c3d3f32660ed",
+  "rows": [
+    {
+      "write": true,
+      "anchored": false,
+      "deviceMask": false,
+      "observations": {
+        "started": true,
+        "mask_info": {
+          "character": false,
+          "regular": true,
+          "mode": 0,
+          "nodev": true
+        },
+        "renames": [
+          {
+            "root": "package",
+            "level": 0,
+            "result": {
+              "ok": true,
+              "errno": null
+            }
+          },
+          {
+            "root": "package",
+            "level": 1,
+            "result": {
+              "ok": true,
+              "errno": null
+            }
+          },
+          {
+            "root": "runtime_file",
+            "level": 0,
+            "result": {
+              "ok": true,
+              "errno": null
+            }
+          },
+          {
+            "root": "runtime_file",
+            "level": 1,
+            "result": {
+              "ok": true,
+              "errno": null
+            }
+          },
+          {
+            "root": "private_directory",
+            "level": 0,
+            "result": {
+              "ok": true,
+              "errno": null
+            }
+          },
+          {
+            "root": "private_directory",
+            "level": 1,
+            "result": {
+              "ok": true,
+              "errno": null
+            }
+          },
+          {
+            "root": "private_file",
+            "level": 0,
+            "result": {
+              "ok": true,
+              "errno": null
+            }
+          },
+          {
+            "root": "private_file",
+            "level": 1,
+            "result": {
+              "ok": true,
+              "errno": null
+            }
+          }
+        ],
+        "siblings": [
+          {
+            "ok": true,
+            "errno": null
+          },
+          {
+            "ok": true,
+            "errno": null
+          },
+          {
+            "ok": true,
+            "errno": null
+          },
+          {
+            "ok": true,
+            "errno": null
+          },
+          {
+            "ok": true,
+            "errno": null
+          },
+          {
+            "ok": true,
+            "errno": null
+          },
+          {
+            "ok": true,
+            "errno": null
+          },
+          {
+            "ok": true,
+            "errno": null
+          }
+        ],
+        "immutable_writes": [
+          {
+            "ok": false,
+            "errno": 30
+          },
+          {
+            "ok": false,
+            "errno": 30
+          }
+        ],
+        "private_directory_read": "denied",
+        "private_file_read": "denied",
+        "private_writes": [
+          {
+            "ok": false,
+            "errno": 13
+          },
+          {
+            "ok": false,
+            "errno": 30
+          }
+        ],
+        "symlink_private_read": "denied",
+        "workspace_write": {
+          "ok": true,
+          "errno": null
+        },
+        "public_rename": {
+          "ok": true,
+          "errno": null
+        },
+        "scratch_write": {
+          "ok": true,
+          "errno": null
+        }
+      },
+      "owner_data_unchanged": true
+    },
+    {
+      "write": true,
+      "anchored": true,
+      "deviceMask": false,
+      "observations": {
+        "started": true,
+        "mask_info": {
+          "character": false,
+          "regular": true,
+          "mode": 0,
+          "nodev": true
+        },
+        "renames": [
+          {
+            "root": "package",
+            "level": 0,
+            "result": {
+              "ok": false,
+              "errno": 16
+            }
+          },
+          {
+            "root": "package",
+            "level": 1,
+            "result": {
+              "ok": false,
+              "errno": 16
+            }
+          },
+          {
+            "root": "runtime_file",
+            "level": 0,
+            "result": {
+              "ok": false,
+              "errno": 16
+            }
+          },
+          {
+            "root": "runtime_file",
+            "level": 1,
+            "result": {
+              "ok": false,
+              "errno": 16
+            }
+          },
+          {
+            "root": "private_directory",
+            "level": 0,
+            "result": {
+              "ok": false,
+              "errno": 16
+            }
+          },
+          {
+            "root": "private_directory",
+            "level": 1,
+            "result": {
+              "ok": false,
+              "errno": 16
+            }
+          },
+          {
+            "root": "private_file",
+            "level": 0,
+            "result": {
+              "ok": false,
+              "errno": 16
+            }
+          },
+          {
+            "root": "private_file",
+            "level": 1,
+            "result": {
+              "ok": false,
+              "errno": 16
+            }
+          }
+        ],
+        "siblings": [
+          {
+            "ok": true,
+            "errno": null
+          },
+          {
+            "ok": true,
+            "errno": null
+          },
+          {
+            "ok": true,
+            "errno": null
+          },
+          {
+            "ok": true,
+            "errno": null
+          },
+          {
+            "ok": true,
+            "errno": null
+          },
+          {
+            "ok": true,
+            "errno": null
+          },
+          {
+            "ok": true,
+            "errno": null
+          },
+          {
+            "ok": true,
+            "errno": null
+          }
+        ],
+        "immutable_writes": [
+          {
+            "ok": false,
+            "errno": 30
+          },
+          {
+            "ok": false,
+            "errno": 30
+          }
+        ],
+        "private_directory_read": "denied",
+        "private_file_read": "denied",
+        "private_writes": [
+          {
+            "ok": false,
+            "errno": 13
+          },
+          {
+            "ok": false,
+            "errno": 30
+          }
+        ],
+        "symlink_private_read": "denied",
+        "workspace_write": {
+          "ok": true,
+          "errno": null
+        },
+        "public_rename": {
+          "ok": true,
+          "errno": null
+        },
+        "scratch_write": {
+          "ok": true,
+          "errno": null
+        }
+      },
+      "owner_data_unchanged": true
+    },
+    {
+      "write": false,
+      "anchored": false,
+      "deviceMask": false,
+      "observations": {
+        "started": true,
+        "mask_info": {
+          "character": false,
+          "regular": true,
+          "mode": 0,
+          "nodev": true
+        },
+        "renames": [
+          {
+            "root": "package",
+            "level": 0,
+            "result": {
+              "ok": false,
+              "errno": 30
+            }
+          },
+          {
+            "root": "package",
+            "level": 1,
+            "result": {
+              "ok": false,
+              "errno": 30
+            }
+          },
+          {
+            "root": "runtime_file",
+            "level": 0,
+            "result": {
+              "ok": false,
+              "errno": 30
+            }
+          },
+          {
+            "root": "runtime_file",
+            "level": 1,
+            "result": {
+              "ok": false,
+              "errno": 30
+            }
+          },
+          {
+            "root": "private_directory",
+            "level": 0,
+            "result": {
+              "ok": false,
+              "errno": 30
+            }
+          },
+          {
+            "root": "private_directory",
+            "level": 1,
+            "result": {
+              "ok": false,
+              "errno": 30
+            }
+          },
+          {
+            "root": "private_file",
+            "level": 0,
+            "result": {
+              "ok": false,
+              "errno": 30
+            }
+          },
+          {
+            "root": "private_file",
+            "level": 1,
+            "result": {
+              "ok": false,
+              "errno": 30
+            }
+          }
+        ],
+        "siblings": [
+          {
+            "ok": false,
+            "errno": 30
+          },
+          {
+            "ok": false,
+            "errno": 30
+          },
+          {
+            "ok": false,
+            "errno": 30
+          },
+          {
+            "ok": false,
+            "errno": 30
+          },
+          {
+            "ok": false,
+            "errno": 30
+          },
+          {
+            "ok": false,
+            "errno": 30
+          },
+          {
+            "ok": false,
+            "errno": 30
+          },
+          {
+            "ok": false,
+            "errno": 30
+          }
+        ],
+        "immutable_writes": [
+          {
+            "ok": false,
+            "errno": 30
+          },
+          {
+            "ok": false,
+            "errno": 30
+          }
+        ],
+        "private_directory_read": "denied",
+        "private_file_read": "denied",
+        "private_writes": [
+          {
+            "ok": false,
+            "errno": 13
+          },
+          {
+            "ok": false,
+            "errno": 30
+          }
+        ],
+        "symlink_private_read": "denied",
+        "workspace_write": {
+          "ok": false,
+          "errno": 30
+        },
+        "public_rename": {
+          "ok": false,
+          "errno": 30
+        },
+        "scratch_write": {
+          "ok": true,
+          "errno": null
+        }
+      },
+      "owner_data_unchanged": true
+    },
+    {
+      "write": false,
+      "anchored": true,
+      "deviceMask": false,
+      "observations": {
+        "started": true,
+        "mask_info": {
+          "character": false,
+          "regular": true,
+          "mode": 0,
+          "nodev": true
+        },
+        "renames": [
+          {
+            "root": "package",
+            "level": 0,
+            "result": {
+              "ok": false,
+              "errno": 30
+            }
+          },
+          {
+            "root": "package",
+            "level": 1,
+            "result": {
+              "ok": false,
+              "errno": 30
+            }
+          },
+          {
+            "root": "runtime_file",
+            "level": 0,
+            "result": {
+              "ok": false,
+              "errno": 30
+            }
+          },
+          {
+            "root": "runtime_file",
+            "level": 1,
+            "result": {
+              "ok": false,
+              "errno": 30
+            }
+          },
+          {
+            "root": "private_directory",
+            "level": 0,
+            "result": {
+              "ok": false,
+              "errno": 30
+            }
+          },
+          {
+            "root": "private_directory",
+            "level": 1,
+            "result": {
+              "ok": false,
+              "errno": 30
+            }
+          },
+          {
+            "root": "private_file",
+            "level": 0,
+            "result": {
+              "ok": false,
+              "errno": 30
+            }
+          },
+          {
+            "root": "private_file",
+            "level": 1,
+            "result": {
+              "ok": false,
+              "errno": 30
+            }
+          }
+        ],
+        "siblings": [
+          {
+            "ok": false,
+            "errno": 30
+          },
+          {
+            "ok": false,
+            "errno": 30
+          },
+          {
+            "ok": false,
+            "errno": 30
+          },
+          {
+            "ok": false,
+            "errno": 30
+          },
+          {
+            "ok": false,
+            "errno": 30
+          },
+          {
+            "ok": false,
+            "errno": 30
+          },
+          {
+            "ok": false,
+            "errno": 30
+          },
+          {
+            "ok": false,
+            "errno": 30
+          }
+        ],
+        "immutable_writes": [
+          {
+            "ok": false,
+            "errno": 30
+          },
+          {
+            "ok": false,
+            "errno": 30
+          }
+        ],
+        "private_directory_read": "denied",
+        "private_file_read": "denied",
+        "private_writes": [
+          {
+            "ok": false,
+            "errno": 13
+          },
+          {
+            "ok": false,
+            "errno": 30
+          }
+        ],
+        "symlink_private_read": "denied",
+        "workspace_write": {
+          "ok": false,
+          "errno": 30
+        },
+        "public_rename": {
+          "ok": false,
+          "errno": 30
+        },
+        "scratch_write": {
+          "ok": true,
+          "errno": null
+        }
+      },
+      "owner_data_unchanged": true
+    },
+    {
+      "write": true,
+      "anchored": true,
+      "deviceMask": true,
+      "observations": {
+        "started": true,
+        "mask_info": {
+          "character": true,
+          "regular": false,
+          "mode": 438,
+          "nodev": true
+        },
+        "renames": [
+          {
+            "root": "package",
+            "level": 0,
+            "result": {
+              "ok": false,
+              "errno": 16
+            }
+          },
+          {
+            "root": "package",
+            "level": 1,
+            "result": {
+              "ok": false,
+              "errno": 16
+            }
+          },
+          {
+            "root": "runtime_file",
+            "level": 0,
+            "result": {
+              "ok": false,
+              "errno": 16
+            }
+          },
+          {
+            "root": "runtime_file",
+            "level": 1,
+            "result": {
+              "ok": false,
+              "errno": 16
+            }
+          },
+          {
+            "root": "private_directory",
+            "level": 0,
+            "result": {
+              "ok": false,
+              "errno": 16
+            }
+          },
+          {
+            "root": "private_directory",
+            "level": 1,
+            "result": {
+              "ok": false,
+              "errno": 16
+            }
+          },
+          {
+            "root": "private_file",
+            "level": 0,
+            "result": {
+              "ok": false,
+              "errno": 16
+            }
+          },
+          {
+            "root": "private_file",
+            "level": 1,
+            "result": {
+              "ok": false,
+              "errno": 16
+            }
+          }
+        ],
+        "siblings": [
+          {
+            "ok": true,
+            "errno": null
+          },
+          {
+            "ok": true,
+            "errno": null
+          },
+          {
+            "ok": true,
+            "errno": null
+          },
+          {
+            "ok": true,
+            "errno": null
+          },
+          {
+            "ok": true,
+            "errno": null
+          },
+          {
+            "ok": true,
+            "errno": null
+          },
+          {
+            "ok": true,
+            "errno": null
+          },
+          {
+            "ok": true,
+            "errno": null
+          }
+        ],
+        "immutable_writes": [
+          {
+            "ok": false,
+            "errno": 30
+          },
+          {
+            "ok": false,
+            "errno": 30
+          }
+        ],
+        "private_directory_read": "denied",
+        "private_file_read": "denied",
+        "private_writes": [
+          {
+            "ok": false,
+            "errno": 13
+          },
+          {
+            "ok": false,
+            "errno": 13
+          }
+        ],
+        "symlink_private_read": "denied",
+        "workspace_write": {
+          "ok": true,
+          "errno": null
+        },
+        "public_rename": {
+          "ok": true,
+          "errno": null
+        },
+        "scratch_write": {
+          "ok": true,
+          "errno": null
+        }
+      },
+      "owner_data_unchanged": true
+    }
+  ],
+  "scope": "Mount primitive experiment only. No Landlock, native helper/runtime admission, network capability, Windows or production activation proof."
+}
