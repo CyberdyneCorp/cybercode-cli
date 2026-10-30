@@ -114,6 +114,8 @@ mod screens_team;
 #[cfg(test)]
 mod screens_themes;
 #[cfg(test)]
+mod screens_untrusted;
+#[cfg(test)]
 mod screens_update;
 #[cfg(test)]
 mod screens_usage;

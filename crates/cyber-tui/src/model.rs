@@ -1,5 +1,6 @@
 //! Session data as the TUI shows it, parsed leniently from API responses.
 
+use cyber_core::untrusted::UntrustedRecord;
 use serde_json::Value;
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -151,6 +152,9 @@ pub struct Tool {
     /// `called`, `dispatched`, `ok`, `error`, `interrupted`, `outcome_unknown`.
     pub status: String,
     pub output: String,
+    /// The result's provenance and injection signals (`untrusted-content` → Injection
+    /// signal notices).
+    pub untrusted: Option<UntrustedRecord>,
 }
 
 impl Tool {
@@ -200,6 +204,8 @@ pub enum Item {
         id: String,
         text: String,
         promoted_ms: Option<i64>,
+        /// Injection signals of a promoted message or Channel event.
+        untrusted: Option<UntrustedRecord>,
     },
     Assistant {
         id: String,
@@ -229,6 +235,7 @@ impl Item {
                 id,
                 text: parts_text(&v["parts"]),
                 promoted_ms: v["promoted_ms"].as_i64(),
+                untrusted: untrusted(&v["untrusted"]),
             }),
             "system" => Some(Item::System {
                 id,
@@ -267,7 +274,13 @@ fn tool(v: &Value) -> Tool {
         input: v["input"].clone(),
         status: s("status"),
         output: s("output"),
+        untrusted: untrusted(&v["untrusted"]),
     }
+}
+
+/// An `untrusted` record; one that does not parse reads as none, like an absent one.
+fn untrusted(v: &Value) -> Option<UntrustedRecord> {
+    serde_json::from_value(v.clone()).ok()
 }
 
 pub fn parts_text(parts: &Value) -> String {

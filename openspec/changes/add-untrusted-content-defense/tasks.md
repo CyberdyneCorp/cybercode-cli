@@ -40,11 +40,11 @@
 
 - [x] 3.1 Add the optional `untrusted` field to `ToolSettled` and to admitted prompts (`runtime/events.rs`).
   - Tests: round-trip, and an old event without the field reads as no signals.
-- [ ] 3.2 TUI warning line, with its consequence text per Mode and setting, and excerpts when the result is expanded.
+- [x] 3.2 TUI warning line, with its consequence text per Mode and setting, and excerpts when the result is expanded.
   - Snapshot tests: scenario "TUI notice under a fetch", plus `dont-ask`, `bypass` (`allow`/`deny`) and `taint: off` variants.
-- [ ] 3.3 `cyber exec`: stderr `warning:` line in text mode, and `untrusted` on stream-json `tool_result`.
+- [x] 3.3 `cyber exec`: stderr `warning:` line in text mode, and `untrusted` on stream-json `tool_result`.
   - Tests: scenario "Stream JSON carries the record"; `schema_version` stays 1.
-- [ ] 3.4 Web dashboard notice on tool cards and messages, rendered with `textContent`.
+- [x] 3.4 Web dashboard notice on tool cards and messages, rendered with `textContent`.
   - Test in `web/test`: an excerpt containing `<img src=x>` renders as text.
 
 ## 4. Taint and approvals

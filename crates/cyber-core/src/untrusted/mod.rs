@@ -7,6 +7,7 @@
 
 mod detect;
 mod hidden;
+mod notice;
 mod rules;
 
 use schemars::JsonSchema;
@@ -14,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 pub use detect::{Detector, scan};
 pub use hidden::{VALUE_LIMIT, expose_hidden, is_hidden, visible_value, without_userinfo};
+pub use notice::{BypassSetting, NoticePolicy, TaintSetting, consequence};
 pub use rules::{DETECTOR_VERSION, Matcher, RULES, Rule};
 
 /// At most this many hits are recorded per scanned text; all are counted.

@@ -433,6 +433,9 @@ pub struct App {
     pub agents: Vec<Choice>,
     pub show_reasoning: bool,
     pub expand_tools: bool,
+    /// The effective `permissions.untrusted_content` settings that injection notices
+    /// state the consequence of; the defaults until the server reports them.
+    pub untrusted_policy: cyber_core::untrusted::NoticePolicy,
     pub timestamps: bool,
     /// Lines scrolled up from the bottom.
     pub scroll: u16,
@@ -576,6 +579,7 @@ impl App {
             agents: Vec::new(),
             show_reasoning: false,
             expand_tools: false,
+            untrusted_policy: Default::default(),
             timestamps: false,
             scroll: 0,
             permission_scroll: 0,

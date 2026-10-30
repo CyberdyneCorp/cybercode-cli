@@ -102,8 +102,8 @@ The scan SHALL cover at most 256 KiB per result, SHALL record at most 10 hits pe
 ### Requirement: Injection signal notices
 (P1) A result or admitted message with signals SHALL be recorded and shown. The system SHALL:
 - **Record it on the event.** `session.tool.settled.1` SHALL carry an optional `untrusted` object `{ source, origin, detector_version, signals: [{ kind, excerpt }], signal_count }` for every framed result, and for scanned workspace results that had hits. `session.prompt.admitted.1` SHALL carry the same object for messages and Channel events that had hits, with `source` set to `session` or `channel`. Events without the field SHALL read as having no signals.
-- **Show it in the TUI and web dashboard.** Both SHALL show one warning line on the tool result or message: `! Possible prompt injection in <source> result (<kinds>).`, followed by the effective consequence from `permissions-modes` → Taint-aware approvals. The web dashboard SHALL render that line as text.
-- **Report it from `cyber exec`.** Text mode SHALL write `warning: possible prompt injection in <source> result from <origin>: <kinds>` to stderr. stream-json SHALL add the `untrusted` object to `tool_result` as an additive field under `schema_version` 1.
+- **Show it in the TUI and web dashboard.** Both SHALL show one warning line on the tool result or message: `! Possible prompt injection in <source> result (<kinds>).` (`message` in place of `result` for sources `session` and `channel`), followed by the effective consequence from `permissions-modes` → Taint-aware approvals. Expanding the result SHALL show the excerpts. The web dashboard SHALL render the line and the excerpts as text. A promoted message SHALL carry its record on the Session's message listing.
+- **Report it from `cyber exec`.** Text mode SHALL write `warning: possible prompt injection in <source> result from <origin>: <kinds>` to stderr, unless `--quiet` is set. stream-json SHALL add the `untrusted` object to `tool_result` as an additive field under `schema_version` 1.
 
 A notice SHALL NOT hide, collapse or replace the content it refers to.
 

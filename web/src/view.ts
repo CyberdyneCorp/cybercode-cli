@@ -1,9 +1,10 @@
 import { computerBanner, computerPanel } from "./computer-view.js";
 
 import { integrationsView } from "./integrations-view.js";
-import type { Content, Message, PendingRequest, RunDetail } from "../../sdk/typescript/src/generated/types.js";
+import type { Content, Message, PendingRequest, RunDetail, UntrustedRecord } from "../../sdk/typescript/src/generated/types.js";
 import { Dashboard, type Card, type Tab } from "./model.js";
 import { messageInbox } from "./inbox-view.js";
+import { noticeLine } from "./untrusted.js";
 
 function node<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text?: string): HTMLElementTagNameMap[K] {
   const element = document.createElement(tag); element.className = className;
@@ -20,6 +21,16 @@ const prettyStatus = (value: string) => value.replaceAll("_", " ");
 function badge(value: string, className = ""): HTMLElement { return node("span", `badge ${className}`, prettyStatus(value)); }
 function code(value: unknown, label?: string): HTMLElement {
   const element = node("pre", "code", text(value)); if (label) element.setAttribute("aria-label", label); element.tabIndex = 0; return element;
+}
+/** The injection signal notice for a tool card or message and its excerpts (in the tool's details, or a details of their own for a message); none without signals. Text only: the excerpts are the page's words. */
+function untrustedNotice(record: UntrustedRecord | null | undefined, mode: string, ownDetails: boolean): HTMLElement[] {
+  const line = noticeLine(record, mode); if (!line || !record) return [];
+  const notice = node("p", "untrusted-notice", line); notice.setAttribute("role", "note");
+  const list = node("ul", "untrusted-excerpts"); list.setAttribute("aria-label", "Injection signal excerpts");
+  for (const signal of record.signals ?? []) list.append(node("li", "mono", `${signal.kind}: ${signal.excerpt}`));
+  if (!ownDetails) return [notice, list];
+  const detail = node("details", "tool"); detail.append(node("summary", "", "Injection signal excerpts"), list);
+  return [notice, detail];
 }
 function heading(eyebrow: string, title: string): HTMLElement { const wrap = node("div", "section-heading"); wrap.append(node("p", "eyebrow", eyebrow), node("h2", "", title)); return wrap; }
 function labelInput(label: string, input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, key: string): HTMLElement {
@@ -143,13 +154,15 @@ export class View {
     const article = node("article", `message ${message.kind}`);
     const label = message.kind === "user" ? "You" : message.kind === "assistant" ? `${message.agent ?? "Assistant"} · ${message.finished ? "completed" : "working"}` : "Session note";
     article.append(node("div", "message-label", label));
-    if (message.kind === "user") for (const part of message.parts) article.append(this.part(part));
+    const mode = this.model.state.session?.effective_mode || this.model.state.session?.mode || "default";
+    if (message.kind === "user") { for (const part of message.parts) article.append(this.part(part)); article.append(...untrustedNotice(message.untrusted, mode, true)); }
     else {
       const live = this.model.state.liveMessage === message.id ? this.model.state.liveText : "";
       article.append(node("div", "prose", live.startsWith(message.text) && live.length > message.text.length ? live : message.text));
     }
     for (const tool of message.tools ?? []) {
-      const detail = node("details", "tool"); const summary = node("summary", "", `${tool.name} · ${prettyStatus(tool.status)}`); detail.append(summary, code(tool.arguments, "Tool arguments")); if (tool.output) detail.append(code(tool.output, "Tool output")); article.append(detail);
+      const detail = node("details", "tool"); const summary = node("summary", "", `${tool.name} · ${prettyStatus(tool.status)}`); detail.append(summary, code(tool.arguments, "Tool arguments")); if (tool.output) detail.append(code(tool.output, "Tool output"));
+      const [notice, excerpts] = untrustedNotice(tool.untrusted, mode, false); if (excerpts) detail.append(excerpts); article.append(detail); if (notice) article.append(notice);
     }
     if (message.kind === "assistant" && message.error) article.append(node("p", "tool-error", "This step ended with an error. Review its tool output and the current Session state."));
     return article;

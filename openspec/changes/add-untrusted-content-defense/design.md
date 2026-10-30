@@ -147,9 +147,11 @@ Text is never deleted, so the user can see it and the model cannot be fed instru
   - `Risky actions in this run will be denied (bypass).` with `bypass: "deny"`;
   - nothing when `taint` is `off`.
   
-  Expanding the tool result shows the excerpts.
-- **`cyber exec`.** Text mode writes `warning: possible prompt injection in webfetch result from <origin>: <kinds>` to stderr. stream-json adds `untrusted` to `tool_result`, an additive change under `schema_version` 1.
-- **Web dashboard.** The same line on the tool card, rendered with `textContent`.
+  Expanding the tool result (Ctrl+O) shows the excerpts. For a promoted message or Channel event the line says `message` instead of `result` (`! Possible prompt injection in session message (permission_change).`), since it is not a tool result. The message carries its admission's record as `untrusted` on `GET /sessions/:id/messages` (taken from its inbox row, only when it has signals), so clients need no event decoding. The wording and the consequence live in `cyber-core` (`untrusted::notice`), and the dashboard mirrors them in `web/src/untrusted.ts`.
+  
+  The consequence needs the effective `taint` and `bypass` settings, which task 5.1 adds to the config loader together with the project-layer tightening rule. Until clients receive them, the TUI and the dashboard state the consequence for the defaults (`taint: "signal"`, `bypass: "allow"`) and the Session's effective Mode; both take the settings as an input, so 5.1 only has to deliver them.
+- **`cyber exec`.** Text mode writes `warning: possible prompt injection in webfetch result from <origin>: <kinds>` to stderr; `--quiet` suppresses it with all other non-result output (`exec-mode`). stream-json adds `untrusted` to `tool_result`, an additive change under `schema_version` 1.
+- **Web dashboard.** The same line on the tool card and on a message, rendered with `textContent`; the excerpts are in the tool's details (a details of their own for a message).
 
 ### D6. Taint: scope and lifetime
 

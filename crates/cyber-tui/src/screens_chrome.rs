@@ -465,6 +465,7 @@ fn a_streaming_answer_is_not_a_finished_run() {
         id: "u".into(),
         text: "hi".into(),
         promoted_ms: Some(1),
+        untrusted: None,
     }];
     assert!(crate::turns::markers(&items, false).is_empty());
 }

@@ -7295,6 +7295,17 @@
               "null"
             ],
             "description": "The previous message on this message's branch; null for the first message."
+          },
+          "untrusted": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UntrustedRecord"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Injection signals in a promoted cross-session message or Channel event\n(`untrusted-content` → Injection signal notices); absent when it had none."
           }
         },
         "required": [

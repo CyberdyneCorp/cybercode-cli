@@ -2923,6 +2923,11 @@ export type Message = {
   tools: CallState[];
   /** The previous message on this message's branch; null for the first message. */
   parent_message_id?: string | null;
+  /**
+   * Injection signals in a promoted cross-session message or Channel event
+   * (`untrusted-content` → Injection signal notices); absent when it had none.
+   */
+  untrusted?: UntrustedRecord | null;
 } & ({
   id: string;
   parts: Content[];
