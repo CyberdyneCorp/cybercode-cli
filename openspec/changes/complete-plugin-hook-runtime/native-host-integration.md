@@ -107,7 +107,9 @@ App's legacy launch path does not implement this sequence today.
 - [x] N1 Review the Linux broker/support direction above; record the decision.
 - [ ] N2 Complete required native IPC/network compatibility and adversarial proof,
   including private UNIX behavior and proxy endpoint identity. Retain positive
-  runtime controls and denied ambient access, not only refusal cases.
+  runtime controls and denied ambient access, not only refusal cases. The
+  [endpoint identity prerequisite](linux-unix-endpoint-identity.md) tests the first
+  pathname-object binding step; it does not complete this task.
 - [ ] N3 Implement registry-owned generation admission and immutable resource
   binding with actual production startup, revocation and quarantine tests.
 - [ ] N4 Integrate the native launch owner and independently intersect all
