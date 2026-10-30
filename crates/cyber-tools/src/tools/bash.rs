@@ -304,6 +304,7 @@ impl Facts {
             mutates: self.mutates,
             ask_floor: self.ask_floor,
             sandbox_boundary: self.boundary,
+            unparseable: analysis.unparseable,
             ..Request::default()
         }
     }
@@ -329,6 +330,8 @@ pub(crate) async fn authorize_facts(
     analysis: &Analysis,
     facts: Facts,
 ) -> Result<(), ToolError> {
+    let commands: Vec<String> = analysis.commands.iter().map(|c| c.text.clone()).collect();
+    ctx.frame_overflow_shell(&commands, workdir);
     let mut external = facts.mutates.clone();
     external.push(workdir.to_path_buf());
     let always: Vec<String> = analysis.commands.iter().map(|c| c.always.clone()).collect();
@@ -340,13 +343,14 @@ pub(crate) async fn authorize_facts(
     } else if facts.ask_floor {
         metadata["warning"] = json!("Excluded command: runs outside the sandbox");
     }
+    let req_mutates = facts.mutates.clone();
     let req = facts.request(analysis);
     // Critical warnings must reach the user before an external-directory approval.
     if req.removal_risk.is_some() {
         ctx.authorize(req, always, metadata).await?;
-        ctx.check_external(&external).await
+        ctx.check_external_paths(&external, &req_mutates).await
     } else {
-        ctx.check_external(&external).await?;
+        ctx.check_external_paths(&external, &req_mutates).await?;
         ctx.authorize(req, always, metadata).await
     }
 }

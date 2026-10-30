@@ -393,6 +393,7 @@ async fn staged_review_refuses_unrelated_duplicate_or_empty_gates_before_inferen
             tool: "shell".into(),
             input: json!({"command":"echo test"}),
             policy: String::new(),
+            taint: Vec::new(),
         },
         rule: None,
     };

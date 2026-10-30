@@ -7,6 +7,7 @@ use std::time::Instant;
 
 use cyber_client::{Client, ClientError};
 use cyber_core::review::{Counts, ErrorCode, Findings, Target, TargetError};
+use cyber_core::untrusted::UntrustedRecord;
 use serde_json::{Value, json};
 
 use super::background::ForkOutcome;
@@ -677,10 +678,14 @@ impl Out {
         let id = data["call_id"].as_str().unwrap_or_default();
         let output = data["output"].as_str().unwrap_or_default();
         let truncated: String = output.chars().take(RESULT_LIMIT).collect();
-        self.line(
-            "tool_result",
-            json!({ "call_id": id, "status": data["status"], "output": truncated }),
-        );
+        let mut result = json!({ "call_id": id, "status": data["status"], "output": truncated });
+        // `untrusted-content` → Injection signal notices: the record is an additive field
+        // under `schema_version` 1, present whenever the settlement carries one.
+        if let Some(record) = data.get("untrusted").filter(|v| !v.is_null()) {
+            result["untrusted"] = record.clone();
+        }
+        self.line("tool_result", result);
+        self.injection_warning(data);
         let Some(reason) = denial_reason(output) else {
             return;
         };
@@ -693,6 +698,18 @@ impl Out {
             eprintln!("denied: {tool} {resource} ({reason})");
         }
         run.denials.push(denial);
+    }
+
+    /// Text mode's stderr `warning:` line for a result with injection signals; `--quiet`
+    /// suppresses it with all other non-result output (`exec-mode`).
+    fn injection_warning(&self, data: &Value) {
+        if self.format != Format::Text || self.quiet {
+            return;
+        }
+        let record = serde_json::from_value::<UntrustedRecord>(data["untrusted"].clone());
+        if let Some(line) = record.ok().and_then(|r| r.exec_warning()) {
+            eprintln!("{line}");
+        }
     }
 
     /// Print the result and return the exit code.

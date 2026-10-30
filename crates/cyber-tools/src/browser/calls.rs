@@ -6,8 +6,8 @@ use std::sync::{Arc, PoisonError};
 
 use base64::Engine as _;
 use cyber_server::runtime::{
-    BrowserArtifact, EvidenceStatus, Invocation, RetrySafety, ToolDef, ToolOutcome, ToolScope,
-    Viewport,
+    BrowserArtifact, ContentSource, EvidenceStatus, Invocation, Provenance, RetrySafety, ToolDef,
+    ToolOutcome, ToolScope, Viewport,
 };
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
@@ -304,16 +304,15 @@ impl BuiltinHost {
                 }
             }
         }
-        let output = lines.join("\n");
-        if failed {
-            return ToolOutcome::Failed(output);
-        }
-        match result.get("structuredContent") {
-            Some(value) => ToolOutcome::Structured {
-                output,
-                value: value.clone(),
-            },
-            None => ToolOutcome::Ok(output),
+        // The page's text is framed as `browser` data by the registry.
+        ToolOutcome::External {
+            output: lines.join("\n"),
+            value: result.get("structuredContent").filter(|_| !failed).cloned(),
+            failed,
+            provenance: Provenance::new(
+                ContentSource::Browser,
+                format!("mcp:{}/{remote}", entry.name),
+            ),
         }
     }
 

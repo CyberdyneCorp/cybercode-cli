@@ -73,6 +73,42 @@
       "requirement": "compaction/Durable task state",
       "fault": "repeated_compaction",
       "test": "cyber-server::context_compaction::repeated_compaction_never_drops_a_user_constraint"
+    },
+    {
+      "id": "injected-page-asked-in-default",
+      "requirement": "workspace-trust/Instruction and data provenance",
+      "fault": "secret_read",
+      "test": "cyber-tools::untrusted_e2e::injected_page_actions_are_each_asked_in_default_mode"
+    },
+    {
+      "id": "injected-page-asked-in-auto-attached",
+      "requirement": "workspace-trust/Instruction and data provenance",
+      "fault": "secret_read",
+      "test": "cyber-tools::untrusted_e2e::injected_page_actions_are_each_asked_in_auto_with_a_user_attached"
+    },
+    {
+      "id": "injected-page-denied-in-auto-detached",
+      "requirement": "workspace-trust/Instruction and data provenance",
+      "fault": "permission_ceiling",
+      "test": "cyber-tools::untrusted_e2e::injected_page_actions_are_each_denied_in_auto_without_a_user"
+    },
+    {
+      "id": "injected-page-denied-in-bypass-opt-in",
+      "requirement": "workspace-trust/Instruction and data provenance",
+      "fault": "permission_ceiling",
+      "test": "cyber-tools::untrusted_e2e::injected_page_actions_are_each_denied_in_bypass_when_opted_in"
+    },
+    {
+      "id": "injection-detector-release-gate",
+      "requirement": "workspace-trust/Instruction and data provenance",
+      "fault": "prompt_injection",
+      "test": "cyber-core::untrusted_eval::built_in_rules_pass_the_release_gate"
+    },
+    {
+      "id": "injection-detector-recall-drop-fails-the-gate",
+      "requirement": "workspace-trust/Instruction and data provenance",
+      "fault": "prompt_injection",
+      "test": "cyber-core::untrusted_eval::rule_change_lowering_recall_fails_the_gate"
     }
   ]
 }

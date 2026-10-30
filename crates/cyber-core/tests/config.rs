@@ -2310,3 +2310,176 @@ fn native_global_loading_ignores_process_feature_and_config_overrides() {
             .enabled
     );
 }
+
+/// Scenario "Project tightens scanning" (`permissions-modes` → Untrusted content
+/// settings): a project layer's `scan: "all"` is effective even in a checkout that was
+/// never approved, since it only adds scanning, and loads without warnings.
+#[test]
+fn project_layer_can_turn_on_scanning_of_workspace_output() {
+    use cyber_core::untrusted::{ScanScope, UntrustedSettings};
+    let f = Fixture::new();
+    assert_eq!(
+        UntrustedSettings::effective(&f.load().unwrap().value).scan,
+        ScanScope::External
+    );
+    f.write(
+        ".cyber/cyber.jsonc",
+        r#"{ "permissions": { "untrusted_content": { "scan": "all" } } }"#,
+    );
+    let resolved = f.load().unwrap();
+    assert_eq!(
+        UntrustedSettings::effective(&resolved.value).scan,
+        ScanScope::All
+    );
+    assert!(resolved.warnings.is_empty(), "{:?}", resolved.warnings);
+}
+
+/// Scenario "Project cannot switch taint off" (`permissions-modes` → Untrusted content
+/// settings): in a trusted checkout, a project `taint: "off"` is ignored with one warning
+/// naming the file and the key, while the layer's other permissions still apply.
+#[test]
+fn project_layer_cannot_switch_taint_off() {
+    use cyber_core::untrusted::{TaintSetting, UntrustedSettings};
+    let f = Fixture::new();
+    f.write(
+        ".cyber/cyber.jsonc",
+        r#"{ "permissions": { "read": "allow", "untrusted_content": { "taint": "off" } } }"#,
+    );
+    f.approve_current();
+    let resolved = f.load().unwrap();
+    assert!(resolved.trust.trusted);
+    assert_eq!(resolved.value["permissions"]["read"], "allow");
+    assert_eq!(
+        UntrustedSettings::effective(&resolved.value).taint,
+        TaintSetting::Signal
+    );
+    let file = std::path::Path::new(".cyber").join("cyber.jsonc");
+    let named: Vec<&String> = resolved
+        .warnings
+        .iter()
+        .filter(|w| w.contains("permissions.untrusted_content.taint"))
+        .collect();
+    assert_eq!(named.len(), 1, "{:?}", resolved.warnings);
+    assert!(
+        named[0].contains(&file.display().to_string()),
+        "{}",
+        named[0]
+    );
+}
+
+/// A project layer may tighten every setting, over defaults and over a user value, and
+/// its `allow_when_tainted` is ignored; the user's own layer may loosen anything.
+#[test]
+fn project_layer_only_tightens_untrusted_content_settings() {
+    use cyber_core::untrusted::{BypassSetting, ScanScope, TaintSetting, UntrustedSettings};
+    let f = Fixture::new();
+    f.write(
+        "global:cyber.jsonc",
+        r#"{ "permissions": { "untrusted_content": { "taint": "off", "bypass": "allow",
+            "allow_when_tainted": [{ "action": "webfetch", "resource": "https://docs.rs/*" }] } } }"#,
+    );
+    let user = UntrustedSettings::effective(&f.load().unwrap().value);
+    assert_eq!(user.taint, TaintSetting::Off);
+    assert_eq!(user.allow_when_tainted.len(), 1);
+    f.write(
+        ".cyber/cyber.jsonc",
+        r#"{ "permissions": { "untrusted_content": { "taint": "any", "bypass": "deny",
+            "scan": "all", "allow_when_tainted": [{ "action": "*", "resource": "*" }] } } }"#,
+    );
+    let resolved = f.load().unwrap();
+    let settings = UntrustedSettings::effective(&resolved.value);
+    assert_eq!(settings.taint, TaintSetting::Any);
+    assert_eq!(settings.bypass, BypassSetting::Deny);
+    assert_eq!(settings.scan, ScanScope::All);
+    assert_eq!(
+        settings.allow_when_tainted.len(),
+        1,
+        "only the user's pattern stays"
+    );
+    assert_eq!(settings.allow_when_tainted[0].action, "webfetch");
+    let warnings: Vec<&String> = resolved
+        .warnings
+        .iter()
+        .filter(|w| w.contains("untrusted_content"))
+        .collect();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("permissions.untrusted_content.allow_when_tainted"));
+}
+
+/// A profile defined in a project layer is held to the same rule when it is selected.
+#[test]
+fn project_profile_cannot_loosen_untrusted_content_settings() {
+    use cyber_core::untrusted::{BypassSetting, UntrustedSettings};
+    let f = Fixture::new();
+    f.write(
+        "global:cyber.jsonc",
+        r#"{ "permissions": { "untrusted_content": { "bypass": "deny" } } }"#,
+    );
+    f.write(
+        ".cyber/cyber.jsonc",
+        r#"{ "default_profile": "loose", "profiles": { "loose": {
+            "permissions": { "untrusted_content": { "bypass": "allow" } } } } }"#,
+    );
+    let resolved = f.load().unwrap();
+    assert_eq!(
+        UntrustedSettings::effective(&resolved.value).bypass,
+        BypassSetting::Deny
+    );
+    assert!(
+        resolved
+            .warnings
+            .iter()
+            .any(|w| w.contains("permissions.untrusted_content.bypass")),
+        "{:?}",
+        resolved.warnings
+    );
+}
+
+/// Regression: a project `permissions` string or array replaces the whole section when
+/// merged, which used to drop the user's stricter `untrusted_content` even in a checkout
+/// that was never approved. The user's settings stay; the project's rules still apply.
+#[test]
+fn project_permissions_string_keeps_user_untrusted_content_settings() {
+    use cyber_core::untrusted::{BypassSetting, ScanScope, TaintSetting, UntrustedSettings};
+    for project in [
+        r#"{ "permissions": "ask" }"#,
+        r#"{ "permissions": [{ "action": "bash", "resource": "*", "effect": "ask" }] }"#,
+    ] {
+        let f = Fixture::new();
+        f.write(
+            "global:cyber.jsonc",
+            r#"{ "permissions": { "untrusted_content": { "taint": "any", "bypass": "deny", "scan": "all" } } }"#,
+        );
+        f.write(".cyber/cyber.jsonc", project);
+        let resolved = f.load().unwrap();
+        let settings = UntrustedSettings::effective(&resolved.value);
+        assert_eq!(settings.bypass, BypassSetting::Deny, "{project}");
+        assert_eq!(settings.taint, TaintSetting::Any, "{project}");
+        assert_eq!(settings.scan, ScanScope::All, "{project}");
+        let permissions = &resolved.value["permissions"];
+        assert!(
+            permissions.get("*") == Some(&json!("ask")) || permissions["rules"].is_array(),
+            "{permissions}"
+        );
+    }
+}
+
+/// The same holds for a project-defined profile that replaces `permissions`.
+#[test]
+fn project_profile_permissions_string_keeps_user_untrusted_content_settings() {
+    use cyber_core::untrusted::{BypassSetting, UntrustedSettings};
+    let f = Fixture::new();
+    f.write(
+        "global:cyber.jsonc",
+        r#"{ "permissions": { "untrusted_content": { "bypass": "deny" } } }"#,
+    );
+    f.write(
+        ".cyber/cyber.jsonc",
+        r#"{ "default_profile": "p", "profiles": { "p": { "permissions": "ask" } } }"#,
+    );
+    let resolved = f.load().unwrap();
+    assert_eq!(
+        UntrustedSettings::effective(&resolved.value).bypass,
+        BypassSetting::Deny
+    );
+}

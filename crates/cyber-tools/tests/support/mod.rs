@@ -270,6 +270,61 @@ pub fn ok(outcome: ToolOutcome) -> String {
     }
 }
 
+/// A framed external result (`untrusted-content`): its framed output and provenance.
+pub fn external(outcome: ToolOutcome) -> (String, cyber_server::runtime::Provenance) {
+    match outcome {
+        ToolOutcome::External {
+            output,
+            failed: false,
+            provenance,
+            ..
+        } => (output, provenance),
+        other => panic!("expected an external result, got {other:?}"),
+    }
+}
+
+/// The body of a framed result, checking that its frame carries `source` and `origin`
+/// (and any `signals`) and closes exactly once, as the last line before any truncation
+/// notice.
+pub fn framed(output: &str, source: &str, origin: &str) -> String {
+    let head = format!("<untrusted_content source=\"{source}\" origin=\"{origin}\"");
+    let attributes = output
+        .strip_prefix(&head)
+        .unwrap_or_else(|| panic!("expected frame {head:?} in {output:?}"));
+    let body = attributes
+        .strip_prefix(">\n")
+        .or_else(|| {
+            let rest = attributes.strip_prefix(" signals=\"")?;
+            let (kinds, rest) = rest.split_once('"')?;
+            assert!(
+                !kinds.is_empty() && !kinds.contains(['<', '>', ' ']),
+                "{output}"
+            );
+            rest.strip_prefix(">\n")
+        })
+        .unwrap_or_else(|| panic!("malformed frame attributes in {output:?}"));
+    assert_eq!(
+        output.matches("</untrusted_content>").count(),
+        1,
+        "{output}"
+    );
+    let (body, notice) = body
+        .split_once("\n</untrusted_content>")
+        .unwrap_or_else(|| panic!("frame does not close: {output:?}"));
+    assert!(
+        notice.is_empty() || notice.starts_with("\n[output truncated: "),
+        "{output}"
+    );
+    body.to_string()
+}
+
+/// The `signals` attribute of a framed result, if any.
+pub fn signals(output: &str) -> Option<&str> {
+    let head = output.lines().next()?;
+    let rest = head.split_once(" signals=\"")?.1;
+    Some(rest.split_once('"')?.0)
+}
+
 pub fn failed(outcome: ToolOutcome) -> String {
     match outcome {
         ToolOutcome::Failed(text) => text,

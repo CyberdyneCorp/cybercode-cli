@@ -736,10 +736,13 @@ impl Inner {
             .owned_pending(session_id)
             .into_iter()
             .filter(|r| match &r.kind {
+                // A taint ask is answered on its own: an "always" never approves another
+                // tainted call (`permissions-modes` → Taint-aware approvals).
                 PendingKind::Permission(ask) => {
                     !ask.metadata["requires_confirmation"]
                         .as_bool()
                         .unwrap_or(false)
+                        && ask.metadata.get("taint").is_none_or(Value::is_null)
                         && ask.action == approved.action
                         && ask.resources.iter().all(|res| {
                             approved

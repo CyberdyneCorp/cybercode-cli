@@ -682,7 +682,8 @@ fn queue_head<'a>(mut rows: impl Iterator<Item = &'a super::model::InboxRow>) ->
 }
 
 impl Inner {
-    /// `settled` with the tool host's notes on the call, when it made any.
+    /// `settled` with the tool host's notes on the call and its result's `untrusted`
+    /// record, when it has them.
     pub(super) fn with_call_metadata(
         &self,
         session_id: &str,
@@ -691,6 +692,11 @@ impl Inner {
     ) -> cyber_store::NewEvent {
         if let Some(metadata) = self.tools.take_call_metadata(session_id, call_id) {
             settled.data["metadata"] = metadata;
+        }
+        if let Some(record) = self.tools.take_call_untrusted(session_id, call_id)
+            && let Ok(record) = serde_json::to_value(record)
+        {
+            settled.data["untrusted"] = record;
         }
         settled
     }
@@ -2201,6 +2207,7 @@ fn settled(
         output: output.into(),
         detail: detail.map(str::to_string),
         metadata: None,
+        untrusted: None,
     };
     event(TOOL_SETTLED, &payload)
 }
@@ -2322,6 +2329,7 @@ pub(super) fn settlement_with_reminders(
             output,
             detail: None,
             metadata: None,
+            untrusted: None,
         },
     );
     (settled, loaded)
@@ -2408,6 +2416,7 @@ pub(super) fn settlement(
                 output,
                 detail: None,
                 metadata: None,
+                untrusted: None,
             },
         ),
         ToolOutcome::SkillSuggestions {
@@ -2438,9 +2447,35 @@ pub(super) fn settlement(
                 output,
                 detail: None,
                 metadata: None,
+                untrusted: None,
             },
         ),
         ToolOutcome::Failed(message) => settled(call_id, CallStatus::Error, &message, None),
+        // The output is already framed by the registry; reminders never follow it.
+        ToolOutcome::External {
+            output,
+            value,
+            failed,
+            ..
+        } => event(
+            TOOL_SETTLED,
+            &ToolSettled {
+                skill_activation: None,
+                skill_reminders: Vec::new(),
+                instruction_reminders: Vec::new(),
+                structured_output: value,
+                call_id: call_id.into(),
+                status: if failed {
+                    CallStatus::Error
+                } else {
+                    CallStatus::Ok
+                },
+                output,
+                detail: None,
+                metadata: None,
+                untrusted: None,
+            },
+        ),
         ToolOutcome::Aborted if read_only => settled(
             call_id,
             CallStatus::Interrupted,
@@ -2745,6 +2780,60 @@ mod skill_reminder_tests {
         );
     }
 
+    /// A framed external result settles with its frame intact: no reminder is appended
+    /// (re-finalizing could truncate the closing tag), it loads no nested instructions,
+    /// and the source's own error and structured value carry over.
+    #[test]
+    fn external_results_settle_framed_without_reminders() {
+        let (_temp, nested) = nested(&[("CYBER.md", "rule".into())]);
+        let framed =
+            "<untrusted_content source=\"overflow\" origin=\"/o\">\nx\n</untrusted_content>";
+        let external = |failed: bool| ToolOutcome::External {
+            output: framed.into(),
+            value: (!failed).then(|| serde_json::json!({"k": 1})),
+            failed,
+            provenance: super::super::host::Provenance::new(
+                super::super::host::ContentSource::Overflow,
+                "/o",
+            ),
+        };
+        for failed in [false, true] {
+            let mut seen = Reminded::default();
+            let (event, loaded) = settlement_with_reminders(
+                "call",
+                &read_def(),
+                external(failed),
+                &mut seen,
+                &nested,
+                |_, _| panic!("a framed result is never re-finalized"),
+            );
+            let payload: ToolSettled = serde_json::from_value(event.data).unwrap();
+            assert_eq!(payload.output, framed);
+            let status = if failed {
+                CallStatus::Error
+            } else {
+                CallStatus::Ok
+            };
+            assert_eq!(payload.status, status);
+            assert_eq!(payload.structured_output.is_some(), !failed);
+            assert!(payload.instruction_reminders.is_empty() && loaded.is_none());
+        }
+        let run = ToolRun {
+            call_id: "call".into(),
+            def: read_def(),
+            outcome: external(false),
+            read: Some(ReadTarget {
+                location: "/repo".into(),
+                file: "/repo/a.md".into(),
+                settings: super::super::instructions::InstructionSettings::from_env(
+                    true,
+                    &std::collections::HashMap::<String, String>::new(),
+                ),
+            }),
+        };
+        assert!(run.nested_target().is_none());
+    }
+
     /// When no instruction reminder fits, the read keeps its own output and the files stay
     /// unrecorded, so a later read can attach them.
     #[test]
@@ -2777,6 +2866,7 @@ mod queue_head_tests {
             digest: String::new(),
             admitted_seq: 0,
             promoted_seq: None,
+            untrusted: None,
         }
     }
 

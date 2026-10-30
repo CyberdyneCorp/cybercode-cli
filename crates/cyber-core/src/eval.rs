@@ -176,6 +176,8 @@ pub enum Fault {
     StaleEdit,
     RewindConflict,
     RepeatedCompaction,
+    /// Injected instructions in external content: the detector's labeled fixture set.
+    PromptInjection,
 }
 
 pub fn load_manifest(path: &Path) -> Result<Manifest, String> {

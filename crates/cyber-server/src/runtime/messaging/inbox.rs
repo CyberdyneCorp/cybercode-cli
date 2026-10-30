@@ -95,6 +95,7 @@ impl Runtime {
                     hook_context: None,
                     hook_stop: None,
                     resources: Vec::new(),
+                    untrusted: None,
                 };
                 let dropped = MessageDropped {
                     message_id: message_id.clone(),

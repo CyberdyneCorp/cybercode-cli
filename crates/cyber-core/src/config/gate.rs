@@ -95,7 +95,7 @@ fn classify(path: &[String], value: &Value) -> Class {
         [key] if SENSITIVE_KEYS.contains(key) => Class::Sensitive,
         ["mode"] | ["agents", _, "permission_mode"] => sensitive_if(widens_mode(value)),
         ["permissions"] | ["agents", _, "permissions"] => {
-            sensitive_if(grants_allow(value) || value.get("auto_mode").is_some())
+            sensitive_if(grants_permission(value) || value.get("auto_mode").is_some())
         }
         // An agent's sandbox profile is a boundary, as `sandbox` is.
         ["worktrees", "setup"] | ["agents", _, "request" | "sandbox"] => Class::Sensitive,
@@ -132,6 +132,18 @@ fn sensitive_if(condition: bool) -> Class {
 
 fn widens_mode(value: &Value) -> bool {
     value.as_str().is_some_and(|m| WIDE_MODES.contains(&m))
+}
+
+/// Whether a `permissions` value grants an `allow`. `untrusted_content` holds settings,
+/// not rules, and a project layer may only tighten them (its `bypass: "allow"` is ignored
+/// unless it changes nothing), so it never makes the section sensitive.
+fn grants_permission(value: &Value) -> bool {
+    match value {
+        Value::Object(map) => map
+            .iter()
+            .any(|(key, value)| key != "untrusted_content" && grants_allow(value)),
+        other => grants_allow(other),
+    }
 }
 
 fn grants_allow(value: &Value) -> bool {

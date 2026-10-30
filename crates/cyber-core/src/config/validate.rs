@@ -131,6 +131,7 @@ fn settings_issues(value: &Value) -> Vec<String> {
     let sections = [
         crate::worktrees::Settings::from_config(value).err(),
         super::AutoModeSettings::from_config(value).err(),
+        crate::untrusted::UntrustedSettings::from_config(value).err(),
         memory,
         super::LspSettings::from_config(value).err(),
         super::FormatterSettings::from_config(value).err(),

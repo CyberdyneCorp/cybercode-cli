@@ -140,6 +140,7 @@ mod tests {
             id: id.into(),
             text: "go".into(),
             promoted_ms: Some(0),
+            untrusted: None,
         }
     }
 
@@ -207,6 +208,7 @@ mod tests {
                 input: serde_json::Value::Null,
                 status: "interrupted".into(),
                 output: String::new(),
+                untrusted: None,
             });
         }
         assert_eq!(markers(&items, false)[0].outcome, Outcome::Interrupted);

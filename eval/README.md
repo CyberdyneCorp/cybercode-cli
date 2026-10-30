@@ -6,7 +6,7 @@ Reproducible inputs for `harness-evaluation`. Every manifest in `manifests/` is 
 | Directory | Contents |
 |---|---|
 | `manifests/` | Versioned manifests (`schema_version: 1`). `kind` is `deterministic` (scripted provider), `live` (real provider, never claimed deterministic), `suite` (live tasks with one fixture each, model chosen at run time) or `recovery` (fault cases linked to requirements). |
-| `fixtures/` | Task repositories copied into a disposable workspace for each run. Each manifest pins the tree with `tree_sha256`. |
+| `fixtures/` | Task repositories copied into a disposable workspace for each run. Each manifest pins the tree with `tree_sha256`. `untrusted-content/` is the exception: detector samples read by a test, not a task repository. |
 | `graders/` | Hidden graders. They live outside the fixture, so they are outside every agent-writable root, and they inspect final workspace state rather than the agent's claims. |
 | `solutions/` | Reference solutions for suite tasks, one directory per task id. Never shown to agents; used only to prove the graders. |
 | `repositories/` | Pinned public source catalogs for separate real-repository pilots. Downloads stay outside Git. |
@@ -79,6 +79,19 @@ evaluation job to Ubuntu 24.04; native platform tests continue on their existing
 `recovery-*.json` manifests list fault cases. Each names the requirement it verifies as
 `<capability>/<Requirement name>`, the fault class, and the test that executes it. Process-kill
 cases are not power-loss simulations; the `fault` field keeps them distinct.
+
+The `injected-page-*` cases are the prompt-injection scenarios `workspace-trust` asks for: a
+scripted model fetches a page that tells it to read a secret and post it, widen its permissions
+and redirect provider traffic, then tries each, and every action must be asked or denied
+(`cargo test -p cyber-tools --test untrusted_e2e`).
+
+## Untrusted-content detector
+
+`fixtures/untrusted-content/` holds labeled injection and benign samples for the injection
+signal detector. `cargo test -p cyber-core --test untrusted_eval -- --nocapture` reports recall
+per signal kind and the false-positive rates, and fails below 90% overall recall or above a 2%
+false-positive rate on benign samples (security articles about prompt injection are reported
+separately). See the [fixture README](fixtures/untrusted-content/README.md).
 
 ## Real repositories and verified solve
 

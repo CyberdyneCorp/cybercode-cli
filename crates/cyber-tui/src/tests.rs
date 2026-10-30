@@ -259,6 +259,7 @@ fn messages_render_text_tools_and_collapsed_output() {
             id: "m1".into(),
             text: "run the tests".into(),
             promoted_ms: None,
+            untrusted: None,
         },
         Item::Assistant {
             id: "m2".into(),
@@ -270,6 +271,7 @@ fn messages_render_text_tools_and_collapsed_output() {
                 input: json!({"command": "cargo test"}),
                 status: "ok".into(),
                 output,
+                untrusted: None,
             }],
             error: None,
             step: Default::default(),
@@ -3558,16 +3560,19 @@ fn quiet_loop_iterations_collapse_in_the_transcript() {
             id: "loopi_01ABCD_1".into(),
             text: "check CI".into(),
             promoted_ms: None,
+            untrusted: None,
         },
         Item::User {
             id: "loopi_01ABCD_2".into(),
             text: "check CI".into(),
             promoted_ms: None,
+            untrusted: None,
         },
         Item::User {
             id: "loopi_01ABCD_3".into(),
             text: "check CI".into(),
             promoted_ms: None,
+            untrusted: None,
         },
     ];
     app.loops.set(
@@ -3795,8 +3800,8 @@ fn goal_commands_parse_locally_before_posting() {
 fn goal_prompts_and_the_footer() {
     let mut app = App::new(session(false), Vec::new(), "cyber");
     app.items = vec![
-        Item::User { id: "msg_1".into(), text: "<goal id=\"gol_1\">\nWork toward this goal until it is met:\ndocs build cleanly\n</goal>".into(), promoted_ms: None },
-        Item::User { id: "msg_2".into(), text: "<goal_not_met id=\"gol_1\">\nThe goal is not met yet:\ndocs build cleanly\n\nWhy: 2 broken links\n\nKeep working toward it.\n</goal_not_met>".into(), promoted_ms: None },
+        Item::User { id: "msg_1".into(), text: "<goal id=\"gol_1\">\nWork toward this goal until it is met:\ndocs build cleanly\n</goal>".into(), promoted_ms: None, untrusted: None },
+        Item::User { id: "msg_2".into(), text: "<goal_not_met id=\"gol_1\">\nThe goal is not met yet:\ndocs build cleanly\n\nWhy: 2 broken links\n\nKeep working toward it.\n</goal_not_met>".into(), promoted_ms: None, untrusted: None },
     ];
     app.goals.replace(Some(
         json!({"current": {"status": "active", "condition": "docs build cleanly"}}),

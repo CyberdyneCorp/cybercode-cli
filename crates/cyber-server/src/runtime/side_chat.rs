@@ -216,7 +216,8 @@ impl Inner {
             ToolOutcome::Ok(output)
             | ToolOutcome::Structured { output, .. }
             | ToolOutcome::SkillLoaded { output, .. } => (output, false),
-            ToolOutcome::SkillSuggestions { output, failed, .. } => (output, failed),
+            ToolOutcome::SkillSuggestions { output, failed, .. }
+            | ToolOutcome::External { output, failed, .. } => (output, failed),
             ToolOutcome::Failed(message) => (message, true),
             ToolOutcome::Aborted => ("The tool was stopped".into(), true),
             ToolOutcome::Crashed(_) => ("The tool failed".into(), true),

@@ -54,14 +54,16 @@ All of the following are ADDED requirements. No existing requirement is modified
 ## Impact
 
 - **Code:**
+  - `crates/cyber-core`: new `src/untrusted/` (`hidden.rs`, `rules.rs`, `detect.rs`), the detector and the `untrusted` record shared by the tool registry and the runtime, with a `cargo bench` target.
   - `crates/cyber-tools`:
-    - new `src/untrusted/` (`frame.rs`, `rules.rs`, `detect.rs`);
+    - new `src/untrusted/` (`frame.rs`, `overflow.rs`);
     - `budget.rs` (frame after truncation; overflow provenance);
     - `tools/web.rs`, `tools/websearch.rs`, `tools/mcp.rs`, `mcp/pool.rs`, `mcp/mention.rs` (declare provenance instead of formatting frames);
     - `permissions/engine.rs` (taint downgrade, risky-action classes).
   - `crates/cyber-server/src/runtime`:
     - `host.rs` (`ToolOutcome` provenance);
-    - `events.rs` (`untrusted` on `ToolSettled` and admitted prompts);
+    - `events.rs` (`untrusted` on `ToolSettled` and admitted prompts), `model.rs` (the same on `CallState` and `InboxRow`);
+    - `untrusted_input.rs` (scanning admitted cross-session messages and Channel events);
     - `drain.rs` (taint state);
     - `auto.rs` (taint evidence);
     - `subtask.rs` (propagation).

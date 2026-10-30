@@ -227,7 +227,8 @@ impl Runtime {
         }
         // The resumed child continues the parent's message chain.
         let inherited = self.delegated_chain(&owner.id, &mut admission).await;
-        self.admit_attempt_with(
+        let untrusted = self.parent_taint(&owner.id).await;
+        self.admit_recorded(
             &owner.id,
             admission,
             Some(Resumed {
@@ -237,6 +238,7 @@ impl Runtime {
             }),
             super::PromptCheck::Checked(None),
             inherited,
+            untrusted,
         )
         .await
     }

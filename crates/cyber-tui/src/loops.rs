@@ -294,6 +294,7 @@ mod tests {
             id: id.into(),
             text: "check".into(),
             promoted_ms: None,
+            untrusted: None,
         }
     }
 

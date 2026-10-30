@@ -1,6 +1,9 @@
 //! Session tools: todo, question, history_search, plan_enter, plan_exit.
 
-use cyber_server::runtime::{Question, QuestionReply, RetrySafety, ToolDef};
+use cyber_core::untrusted::{Scan, UntrustedRecord};
+use cyber_server::runtime::{
+    ContentSource, Provenance, Question, QuestionReply, RetrySafety, ToolDef,
+};
 use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -275,6 +278,7 @@ impl Tool for HistorySearch {
                     .iter()
                     .find(|e| e.id == id)
                     .ok_or_else(|| failed(format!("No message {id} in this session")))?;
+                frame_recorded(ctx, std::iter::once(hit));
                 return Ok(format!(
                     "[seq {}] [{}] {}\n{}",
                     hit.seq, hit.role, hit.id, hit.text
@@ -290,13 +294,17 @@ impl Tool for HistorySearch {
                 .and_then(Value::as_i64)
                 .unwrap_or(i64::MAX);
             let limit = number(input, "limit").unwrap_or(10).clamp(1, 50) as usize;
-            let hits: Vec<String> = entries
+            let found: Vec<&HistoryEntry> = entries
                 .iter()
                 .rev()
                 .filter(|e| {
                     e.seq < before && words.iter().all(|w| e.text.to_lowercase().contains(w))
                 })
                 .take(limit)
+                .collect();
+            frame_recorded(ctx, found.iter().copied());
+            let hits: Vec<String> = found
+                .into_iter()
                 .map(|e| {
                     format!(
                         "[seq {}] [{}] {}: {}",
@@ -321,6 +329,29 @@ struct HistoryEntry {
     role: &'static str,
     id: String,
     text: String,
+    /// The event's `untrusted` record: the entry holds external content.
+    untrusted: Option<UntrustedRecord>,
+}
+
+/// History that held external content stays framed when it comes back (`untrusted-content`
+/// → Framed tool results): the output is framed with the newest such entry's source and
+/// origin (`overflow` when its source is not a frame source, such as a scanned workspace
+/// result or a cross-session message), and its frame and record carry every such entry's
+/// signals, since an excerpt may cut the text that raised them.
+fn frame_recorded<'e>(ctx: &Ctx<'_>, hits: impl Iterator<Item = &'e HistoryEntry>) {
+    let records: Vec<&UntrustedRecord> = hits.filter_map(|e| e.untrusted.as_ref()).collect();
+    let Some(first) = records.first() else {
+        return;
+    };
+    let source = serde_json::from_value::<ContentSource>(json!(first.source))
+        .unwrap_or(ContentSource::Overflow);
+    let prior = records.iter().fold(Scan::default(), |scan, record| {
+        scan.merge(Scan {
+            signals: record.signals.clone(),
+            count: record.signal_count,
+        })
+    });
+    ctx.declare_derived_provenance(Provenance::new(source, first.origin.clone()), prior);
 }
 
 /// Durable history of this Session only; other Sessions are never searched.
@@ -363,6 +394,7 @@ fn entry(e: &cyber_store::StoredEvent) -> Option<HistoryEntry> {
         role,
         id: id.into(),
         text,
+        untrusted: serde_json::from_value(d["untrusted"].clone()).ok(),
     })
 }
 

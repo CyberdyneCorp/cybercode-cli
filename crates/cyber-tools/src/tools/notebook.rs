@@ -70,7 +70,8 @@ impl Tool for NotebookEdit {
             {
                 return Err(failed("notebook_edit requires an .ipynb file"));
             }
-            ctx.check_external(std::slice::from_ref(&path)).await?;
+            ctx.check_external_writes(std::slice::from_ref(&path))
+                .await?;
             crate::sandboxing::refuse_hidden(ctx, &[&path]).await?;
             let before = tokio::fs::read(&path)
                 .await

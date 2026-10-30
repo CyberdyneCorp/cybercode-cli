@@ -280,6 +280,7 @@ impl Runtime {
                     hook_context: None,
                     hook_stop: None,
                     resources: Vec::new(),
+                    untrusted: None,
                 };
                 let promoted = Promoted { message_id };
                 self.inner
