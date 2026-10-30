@@ -40,6 +40,13 @@ Inventory every declared P1 event and its existing producer before adding code. 
 
 ## Delivery and verification
 
+On 2026-10-30 the user approved continuing the Linux descriptor-pinned broker
+direction with runtime capability checks for its exact-thread pidfd dependency.
+The [native-host integration handoff](native-host-integration.md) records this
+decision, ownership sequence and remaining IPC/network compatibility obligations.
+This approves the strategy rather than production activation or reduced private
+IPC support. Required complete native proof and production acceptance remain.
+
 Deliver separate reviewable increments: confinement proof and enforcement; generation registry/runtime hooks; providers/transforms; scoped prompt callbacks; missing event producers. Each increment includes regression tests, docs and scoped tests/Clippy. Use real processes and OS denial/positive controls, a real server plus scripted provider, cancellation/restart tests, and SDK protocol tests. Run complete relevant native checks before acceptance. A code/security review must examine process escape paths, callback deadlocks/recursion, secret handling, late generations and unknown effects. Do not archive the broader extensibility change merely because this slice is complete.
 
 ### File observation Session scopes
