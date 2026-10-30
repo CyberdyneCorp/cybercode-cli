@@ -10,16 +10,33 @@ output = Path(sys.argv[1]).resolve()
 mode = sys.argv[2] if len(sys.argv) == 3 else "seccomp"
 assert mode in {"seccomp", "broker", "broker-no-bind", "broker-no-thread", "broker-audit", "broker-audit-no-cancel", "broker-audit-wrong-cap",
                 "broker-mutation", "broker-mutation-no-pin", "broker-mutation-no-copy", "broker-mutation-continue",
+                "broker-private-stream", "broker-private-stream-no-makesock", "broker-private-stream-no-refer",
                 "landlock9", "landlock9-no-resolve"}
 unix9 = mode.startswith("landlock9")
+private_stream = mode.startswith("broker-private-stream")
 with tempfile.TemporaryDirectory(prefix="cyber-socket-candidate-") as temporary:
     target = Path(temporary)
     for name in ["linux_plugin_exec.c", "linux_filter.h", "linux_initial_exec.h"]:
         shutil.copyfile(root / "crates/cyber-sandbox/native" / name, target / name)
-    family = "linux_socket_landlock9.h" if unix9 else "linux_socket_candidate.h"
+    family = "linux_socket_landlock9.h" if unix9 else (
+        "linux_socket_private_stream.h" if private_stream else "linux_socket_candidate.h")
     shutil.copyfile(Path(__file__).with_name(family), target / "socket_candidate.h")
     if mode.startswith("broker"):
         shutil.copyfile(Path(__file__).with_name("linux_socket_broker.h"), target / "socket_broker.h")
+        if private_stream:
+            shutil.copyfile(Path(__file__).with_name("linux_socket_private_unix.h"), target / "socket_private_unix.h")
+            if mode == "broker-private-stream-no-makesock":
+                header = target / "socket_private_unix.h"
+                text = header.read_text()
+                before = "    if (result == 0) result = syscall(SYS_landlock_restrict_self, ruleset, 0);"
+                assert text.count(before) == 1
+                header.write_text(text.replace(before, "    /* Missing-rule control: do not install scratch-only MAKE_SOCK. */"))
+            if mode == "broker-private-stream-no-refer":
+                header = target / "socket_private_unix.h"
+                text = header.read_text()
+                before = '    if (result == 0) result = add_path(ruleset, "/", LANDLOCK_ACCESS_FS_REFER);'
+                assert text.count(before) == 1
+                header.write_text(text.replace(before, "    /* Missing compatibility grant: REFER remains denied. */"))
         if mode == "broker-audit-wrong-cap":
             broker = target / "socket_broker.h"
             text = broker.read_text()
@@ -90,6 +107,8 @@ with tempfile.TemporaryDirectory(prefix="cyber-socket-candidate-") as temporary:
         socket_header = target / "socket_candidate.h"
         text = socket_header.read_text()
         for name in ["bind", "listen"]:
+            if private_stream:
+                continue
             if mode == "broker-no-bind" and name == "bind":
                 continue
             line = f"    CYBER_DENY(SYS_{name}), \\\n"
@@ -111,17 +130,22 @@ with tempfile.TemporaryDirectory(prefix="cyber-socket-candidate-") as temporary:
         notify = "".join(
             f"        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_{name}, 0, 1),\n"
             "        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_USER_NOTIF),\n"
-            for name in ["bind", "listen", "connect"])
+            for name in (["connect"] if private_stream else ["bind", "listen", "connect"]))
         initial_header.write_text(text.replace(before, before + notify))
         source = target / "linux_plugin_exec.c"
         text = source.read_text()
+        if private_stream:
+            before = "        if ((line[0] != 'R' && line[0] != 'W')"
+            assert text.count(before) == 1
+            text = text.replace(before, "        if (line[0] == 'U') continue;\n" + before)
         marker = "int cyber_plugin_exec(int argc, const char *const argv[]) {"
         assert text.count(marker) == 1
         prefix, entry = text.split(marker)
         boundary = "    if (!single_threaded() || confine(argv[1]) != 0) {"
         assert entry.count(boundary) == 1 and entry.endswith("}\n")
         arguments = entry.split(boundary)[0]
-        source.write_text(prefix + '#include "socket_broker.h"\n\n' + marker + arguments +
+        private_define = '#define CYBER_PRIVATE_UNIX_STREAM 1\n' if private_stream else ''
+        source.write_text(prefix + private_define + '#include "socket_broker.h"\n\n' + marker + arguments +
             '    if (!single_threaded() || syscall(SYS_close_range, 3U, UINT_MAX, 0) != 0) return 2;\n'
             '    return broker_entry(argv, shell);\n}\n')
     if unix9:

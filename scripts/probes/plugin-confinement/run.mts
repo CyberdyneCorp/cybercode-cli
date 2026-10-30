@@ -364,7 +364,7 @@ function check(root: string, artifacts: Artifacts, runtime: Runtime, name: strin
 
 function main() {
   assert(["darwin", "linux"].includes(process.platform), "native proof requires macOS or Linux; other platforms are unproved");
-  const { values } = parseArgs({ options: { runtime: { type: "string", default: "python" }, "packaged-helper": { type: "string" }, python: { type: "string" }, executable: { type: "string" }, report: { type: "string" }, trace: { type: "string" }, "initial-exec": { type: "boolean", default: false }, "unix-scratch-policy": { type: "boolean", default: false }, "socket-broker": { type: "boolean", default: false }, "macos-staged-native": { type: "boolean", default: false }, "macos-signing-native": { type: "boolean", default: false }, "macos-signing-runtime": { type: "boolean", default: false } } });
+  const { values } = parseArgs({ options: { runtime: { type: "string", default: "python" }, "packaged-helper": { type: "string" }, python: { type: "string" }, executable: { type: "string" }, report: { type: "string" }, trace: { type: "string" }, "initial-exec": { type: "boolean", default: false }, "unix-scratch-policy": { type: "boolean", default: false }, "socket-broker": { type: "boolean", default: false }, "broker-private-stream": { type: "boolean", default: false }, "macos-staged-native": { type: "boolean", default: false }, "macos-signing-native": { type: "boolean", default: false }, "macos-signing-runtime": { type: "boolean", default: false } } });
   assert(["python", "node", "bun", "deno", "native"].includes(values.runtime), "runtime must be python, node, bun, deno or native");
   if (values.runtime === "bun" || values.runtime === "deno") assert(values.executable, "supply an explicit trusted Bun/Deno executable");
   const stagedPlatform = values["macos-staged-native"];
@@ -383,6 +383,7 @@ function main() {
   if (values.runtime === "python") assert(values.python, "supply an explicit trusted Python; embedding additionally requires development headers and a dynamic library");
   assert(!values["unix-scratch-policy"] || (isLinux && initialExec && packagedHelper), "unix scratch experiment requires a Linux packaged initial-exec helper");
   assert(!values["socket-broker"] || (isLinux && initialExec && packagedHelper && !values["unix-scratch-policy"]), "socket broker experiment requires a Linux packaged initial-exec helper without the UNIX-9 alternative");
+  assert(!values["broker-private-stream"] || values["socket-broker"], "private stream candidate requires the socket-broker reporting mode");
   const root = realpathSync(mkdtempSync(join(tmpdir(), "cyber-plugin-native-proof-")));
   try {
     const runtime: Runtime = values.runtime === "node" ? nodeInfo() : values.runtime === "bun" || values.runtime === "deno"
@@ -397,7 +398,7 @@ function main() {
     // Literal exec admission must name the same physical executable the kernel
     // resolves, including framework Python's executable symlinks.
     if (signingRuntime && runtime.kind !== "native") runtime.executable = realpathSync(runtime.executable);
-    const artifacts: Artifacts = { ...build(root, runtime, initialExec, signingRuntime, packagedHelper), trace: values.trace, packaged: Boolean(packagedHelper), unixScratch: values["unix-scratch-policy"] };
+    const artifacts: Artifacts = { ...build(root, runtime, initialExec, signingRuntime, packagedHelper), trace: values.trace, packaged: Boolean(packagedHelper), unixScratch: values["unix-scratch-policy"] || values["broker-private-stream"] };
     if (signingRuntime) {
       artifacts.signingIdentifier = `com.cyberdyne.probe.bootstrap.${randomUUID()}`;
       command("/usr/bin/codesign", ["--force", "--sign", "-", "--identifier", artifacts.signingIdentifier, "--timestamp=none", artifacts.executable]);
@@ -435,6 +436,7 @@ function main() {
         private_copy: true, direct_runtime: true,
       } : undefined,
       socket_broker_candidate: values["socket-broker"],
+      private_stream_candidate: values["broker-private-stream"],
       mechanism: values["socket-broker"] ? "experimental descriptor-pinned socket broker with one-use parent startup-exec budget; notification listener remains live for socket operations; immutable inherited filter" : signingRuntime ? "fresh signing identifier on trusted launcher + exact-target Seatbelt exec rule before any runtime instruction; target signature unchanged; experimental subject-identity candidate" : stagedPlatform ? "ad-hoc-staged native image + system platform launcher Seatbelt policy before first target instruction; platform-subject exact-path exec admission" : initialExec ? "bubblewrap private mounts + Landlock/seccomp before first target instruction + one-shot exec admission; closed listener and immutable filter" : isLinux ? "bubblewrap private mounts + Landlock before runtime startup + synchronized seccomp before fixture execution" : "trusted native/runtime bootstrap followed by native sandbox_init before fixture execution",
       limitation: packagedHelper ? "packaged entry with experimental policy composition; production admission, protected ownership, network/secret integration and Windows acceptance remain required" : "experimental native mechanisms; macOS uses deprecated Seatbelt API; not production packaging or Windows acceptance", unsupported_cases, rows };
     if (values.report) writeFileSync(values.report, JSON.stringify(report, null, 2) + "\n", { mode: 0o600 });

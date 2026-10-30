@@ -17,6 +17,8 @@ on:
       - .github/workflows/plugin-linux-ipc.yml
       - scripts/probes/plugin-native-entry/linux_socket_candidate.h
       - scripts/probes/plugin-native-entry/linux_socket_broker.h
+      - scripts/probes/plugin-native-entry/linux_socket_private_stream.h
+      - scripts/probes/plugin-native-entry/linux_socket_private_unix.h
       - scripts/probes/plugin-native-entry/linux_socket_broker_mutation.h
       - scripts/probes/plugin-native-entry/build_socket_candidate.py
       - scripts/probes/plugin-native-entry/linux_socket_landlock9.h
@@ -105,6 +107,9 @@ jobs:
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker-audit" broker-audit
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker-no-cancel" broker-audit-no-cancel
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker-wrong-cap" broker-audit-wrong-cap
+          for variant in broker-private-stream broker-private-stream-no-makesock broker-private-stream-no-refer; do
+            python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/$variant" "$variant"
+          done
           for mode in mutation mutation-no-pin mutation-no-copy mutation-continue; do
             python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker-$mode" "broker-$mode"
           done
@@ -122,6 +127,29 @@ jobs:
           target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker-mutation" "$RUNNER_TEMP/linux-ipc-broker-mutation.json" --broker-mutation
           target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker" "$RUNNER_TEMP/linux-ipc-broker-escape.json" --broker-escape
           target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker-audit" "$RUNNER_TEMP/linux-ipc-broker-saturation.json" --broker-saturation
+          target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/broker-private-stream" "$RUNNER_TEMP/linux-ipc-broker-private-stream.json" --broker-private-stream
+      - name: Reject missing private socket creation and file-move compatibility guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          for control in no-makesock no-refer; do
+            log="$RUNNER_TEMP/broker-private-stream-$control.log"
+            if target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/broker-private-stream-$control" "$RUNNER_TEMP/linux-ipc-private-stream-$control.json" --broker-private-stream > "$log" 2>&1; then
+              echo "Private stream control unexpectedly passed: $control" >&2
+              exit 1
+            fi
+            python3 - "$log" "$control" <<'PY'
+          from pathlib import Path
+          import sys
+          text = Path(sys.argv[1]).read_text()
+          if sys.argv[2] == 'no-makesock':
+              assert 'private pair escape: pair_bind: public read=false write=true' in text, text
+              assert '"pair_bind":true' in text, text
+          else:
+              assert 'private IPC layer changed ordinary file moves:' in text, text
+              assert 'write=true' in text and '"regular_reparent":false' in text, text
+          PY
+          done
       - name: Reject blanket bind denial as broker acceptance
         shell: bash
         run: |
@@ -299,7 +327,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/socket-runtime"
           status=0
-          for policy in seccomp broker unix9; do
+          for policy in seccomp broker private-stream unix9; do
             if [[ "$policy" == unix9 && '${{ steps.abi.outputs.supported }}' != true ]]; then
               echo 'UNVERIFIED: skipping ABI-9 runtime matrix on this unsupported kernel.'
               continue
@@ -307,10 +335,12 @@ jobs:
             mkdir -p "$RUNNER_TEMP/socket-runtime/$policy"
             helper="$RUNNER_TEMP/socket-candidate"
             if [[ "$policy" == broker ]]; then helper="$RUNNER_TEMP/socket-broker"; fi
+            if [[ "$policy" == private-stream ]]; then helper="$RUNNER_TEMP/broker-private-stream"; fi
             if [[ "$policy" == unix9 ]]; then helper="$RUNNER_TEMP/unix9-candidate"; fi
             for runtime in node python bun deno native; do
             args=(--runtime "$runtime" --initial-exec --packaged-helper "$helper" --report "$RUNNER_TEMP/socket-runtime/$policy/$runtime.json" --trace "$RUNNER_TEMP/socket-runtime/$policy/trace-$runtime")
             if [[ "$policy" == broker ]]; then args+=(--socket-broker); fi
+            if [[ "$policy" == private-stream ]]; then args+=(--socket-broker --broker-private-stream); fi
             if [[ "$policy" == unix9 ]]; then args+=(--unix-scratch-policy); fi
             if [[ "$runtime" == python ]]; then
               args+=(--python "$(command -v python3)")
@@ -335,6 +365,8 @@ jobs:
             ${{ runner.temp }}/unix9-missing-resolve.log
             ${{ runner.temp }}/unix9-unavailable.log
             ${{ runner.temp }}/broker-no-bind.log
+            ${{ runner.temp }}/broker-private-stream-no-makesock.log
+            ${{ runner.temp }}/broker-private-stream-no-refer.log
             ${{ runner.temp }}/broker-no-thread.log
             ${{ runner.temp }}/broker-no-cancel.log
             ${{ runner.temp }}/broker-mutation-*.log
