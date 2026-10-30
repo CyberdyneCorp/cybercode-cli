@@ -26,6 +26,28 @@ static int abi(void) {
 #endif
 }
 
+#ifdef __linux__
+static int peer_checks, peer_matches = 1, client_peer_matches = 1;
+static int peer_pid = -1, client_peer_pid = -1;
+static void record_peer_identity(int client, int peer) {
+    struct ucred accepted = {0}, listener = {0};
+    socklen_t accepted_size = sizeof(accepted), listener_size = sizeof(listener);
+    int accepted_ok = getsockopt(peer, SOL_SOCKET, SO_PEERCRED, &accepted, &accepted_size) == 0 &&
+        accepted_size == sizeof(accepted);
+    int listener_ok = getsockopt(client, SOL_SOCKET, SO_PEERCRED, &listener, &listener_size) == 0 &&
+        listener_size == sizeof(listener);
+    peer_checks++;
+    peer_pid = accepted_ok ? accepted.pid : -1;
+    client_peer_pid = listener_ok ? listener.pid : -1;
+    peer_matches = peer_matches && accepted_ok && accepted.pid == getpid() &&
+        accepted.uid == getuid() && accepted.gid == getgid();
+    client_peer_matches = client_peer_matches && listener_ok && listener.pid == getpid() &&
+        listener.uid == getuid() && listener.gid == getgid();
+}
+#else
+static void record_peer_identity(int client, int peer) { (void)client; (void)peer; }
+#endif
+
 static int local_exchange_to(int family, const char *path, int server, const char *destination) {
     int client = -1, peer = -1, ok = 0;
     struct sockaddr_storage storage = {0};
@@ -58,6 +80,7 @@ static int local_exchange_to(int family, const char *path, int server, const cha
     ok = peer >= 0 && send(client, "fixture-only", 12, MSG_NOSIGNAL) == 12 &&
         recv(peer, token, sizeof(token), MSG_WAITALL) == 12 && memcmp(token, "fixture-only", 12) == 0 &&
         send(peer, "A", 1, MSG_NOSIGNAL) == 1 && recv(client, &ack, 1, MSG_WAITALL) == 1 && ack == 'A';
+    if (ok && family == AF_UNIX) record_peer_identity(client, peer);
 done:
     if (peer >= 0) close(peer);
     if (client >= 0) close(client);
@@ -221,6 +244,17 @@ int main(int argc, char **argv) {
     if (argc == 4 && strcmp(argv[3], "mutation") == 0) return mutation_probe();
     if (argc == 4 && strcmp(argv[3], "escape") == 0) return escape_probe();
     if (argc == 4 && strcmp(argv[3], "saturation") == 0) return saturation_probe();
+#ifdef __linux__
+    if (argc == 5 && strcmp(argv[3], "peer-identity") == 0) {
+        int exchanged = local_exchange(AF_UNIX, argv[4], -1);
+        printf("{\"started\":true,\"exchanged\":%s,\"peer_checks\":%d,"
+            "\"expected_pid\":%d,\"accepted_pid\":%d,\"client_peer_pid\":%d,"
+            "\"peer_matches\":%s,\"client_peer_matches\":%s}\n",
+            exchanged ? "true" : "false", peer_checks, (int)getpid(), peer_pid, client_peer_pid,
+            peer_matches ? "true" : "false", client_peer_matches ? "true" : "false");
+        return 0;
+    }
+#endif
     if (argc == 5 && strcmp(argv[3], "unix-mutation") == 0) return unix_mutation_probe(argv[1], argv[4]);
     if (argc >= 4) {
         if (strcmp(argv[3], "pair") != 0) return 2;

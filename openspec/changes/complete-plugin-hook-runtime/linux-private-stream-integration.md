@@ -94,7 +94,9 @@ has source-bound passing x64/arm64 evidence. The
 scratch-relative handling with retained x64/arm64 evidence. The
 [runtime API exchange extension](linux-private-runtime-ipc.md) adds acceptance
 for each runtime's own private pathname socket operations with retained passing
-x64/arm64 results. The alias extension's native results remain pending.
+x64/arm64 results. The alias extension also has source-bound passing native
+results. The [peer-identity diagnostic](linux-private-peer-identity.md) separately
+tests accepted-side kernel credentials; its execution remains pending.
 
 Still required before complete IPC/production acceptance: verified post-pin
 replacement, relative/alias forms, datagram/seqpacket and

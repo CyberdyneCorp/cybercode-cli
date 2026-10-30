@@ -259,6 +259,55 @@ mod probe {
         }
     }
 
+    fn peer_identity_row(policy: &LinuxPolicy<'_>) -> Value {
+        let target_args = [
+            policy.target_args[0].clone(),
+            policy.target_args[1].clone(),
+            "peer-identity".into(),
+            policy
+                .scratch
+                .join("identity.sock")
+                .to_str()
+                .unwrap()
+                .into(),
+        ];
+        let control: Value = serde_json::from_slice(
+            &run(Command::new(policy.target).args(&target_args).env_clear()).stdout,
+        )
+        .unwrap();
+        assert_eq!(
+            control["exchanged"], true,
+            "unconfined peer exchange: {control}"
+        );
+        assert_eq!(control["peer_checks"], 1);
+        assert_eq!(
+            control["peer_matches"], true,
+            "unconfined accepted peer: {control}"
+        );
+        assert_eq!(control["client_peer_matches"], true);
+        let observed = observe(
+            &LinuxPolicy {
+                target_args: &target_args,
+                ..*policy
+            },
+            Mode::BrokerPrivateStream,
+        );
+        assert_eq!(
+            observed["exchanged"], true,
+            "broker peer exchange: {observed}"
+        );
+        assert_eq!(observed["peer_checks"], 1);
+        assert_eq!(
+            observed["client_peer_matches"], true,
+            "broker listener identity: {observed}"
+        );
+        // Record the accepted side honestly. A successful byte exchange cannot
+        // turn a peer-identity mismatch into private IPC compatibility.
+        json!({"mode":"peer-identity", "fs_read":policy.fs_read, "fs_write":policy.fs_write,
+            "shell":false,"compatibility_accepted":observed["peer_matches"] == true,
+            "unconfined_control":control,"observed":observed})
+    }
+
     fn candidate_rows(
         policy: LinuxPolicy<'_>,
         listener: &UnixListener,
@@ -266,6 +315,9 @@ mod probe {
         mode: Mode,
     ) -> Vec<Value> {
         let mut rows = Vec::new();
+        if mode == Mode::BrokerPrivateStream && label == "outside" {
+            rows.push(peer_identity_row(&policy));
+        }
         if mode == Mode::BrokerPrivateStreamMutation && label == "outside" {
             let observed = super::cancellation::observe_unix_mutation(&policy, listener);
             rows.push(json!({"mode":"unix-mutation","socket":label,

@@ -134,6 +134,27 @@ jobs:
           target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker-audit" "$RUNNER_TEMP/linux-ipc-broker-saturation.json" --broker-saturation
           target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/broker-private-stream" "$RUNNER_TEMP/linux-ipc-broker-private-stream.json" --broker-private-stream
           target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/broker-private-stream-mutation" "$RUNNER_TEMP/linux-ipc-broker-private-stream-mutation.json" --broker-private-stream-mutation
+      - name: Record accepted-side kernel peer identity compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP/linux-ipc-broker-private-stream.json" <<'PY'
+          import json
+          import sys
+          report = json.load(open(sys.argv[1]))
+          rows = [row for row in report['rows'] if row.get('mode') == 'peer-identity']
+          assert len(rows) == 4, rows
+          for row in rows:
+              control, observed = row['unconfined_control'], row['observed']
+              assert control['exchanged'] and control['peer_checks'] == 1, row
+              assert control['peer_matches'] and control['client_peer_matches'], row
+              assert control['accepted_pid'] == control['expected_pid'], row
+              assert observed['exchanged'] and observed['peer_checks'] == 1, row
+              assert observed['client_peer_matches'], row
+              assert observed['accepted_pid'] != observed['expected_pid'], row
+              assert not observed['peer_matches'] and not row['compatibility_accepted'], row
+          print('Recorded accepted-side peer PID mismatch in all four capability combinations; full IPC acceptance remains open')
+          PY
       - name: Reject pathname re-resolution after private endpoint pinning
         shell: bash
         run: |

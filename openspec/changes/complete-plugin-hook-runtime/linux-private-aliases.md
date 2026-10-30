@@ -49,8 +49,29 @@ Local checks cover portable C syntax, Rust example Clippy, intercepted candidate
 transformations, Python/workflow syntax and spec validation. An unconfined macOS
 component check exercises all six positive fixture exchanges and both reachable
 owned host controls, adapting O_PATH/CLOEXEC flags for that platform. It does not
-test Linux flags, mount identity or confinement. Hosted Linux x64/arm64 results
-for this extension remain pending.
+test Linux flags, mount identity or confinement. The hosted result below supplies
+Linux evidence for the exact tested revision.
+
+## Native result for 2f1fee99
+
+[Run 41091051579](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41091051579)
+passes both Linux jobs. Each architecture has 32 socket rows: 16 direct host
+denials and 16 pair cases. All six pathname forms exchange successfully in every
+pair case, while direct and symlink escapes neither connect nor send and the
+owned host listeners receive no token. Independent read/write expectations and
+the original broker/runtime regression matrices pass.
+
+Wrong-CWD lookup fails its named relative-root exchange. Removing only the mount
+guard actually delivers to the owned outside listener and fails the named
+socket-denial assertion. Adding NO_SYMLINKS preserves absolute scratch,
+relative-root and outside-CWD exchanges, then fails the named relative-alias
+assertion. Original socket reports and the three logs are retained under
+`scripts/probes/plugin-native-entry/evidence/linux-private-aliases-2f1fee99/{x64,arm64}`.
+They bind tested merge `4d8c4576b941f32fdcad6dc97c0c6e8396e28108`, whose tree
+equals source `2f1fee99b730db5d3d37876b603e5c059399088d`, and source manifest
+SHA-256 `ca4ffbe66815bc3a696f0296c9ffbe978244b0d511fc09c65c3d802409a4da52`.
+Tree equality and the manifest were independently verified. These receipts do
+not cover the subsequent peer-identity diagnostic.
 
 Datagram/seqpacket, destination-bearing sends, ancillary and peer identity,
 proxy/network intersections and production admission/settlement remain required.

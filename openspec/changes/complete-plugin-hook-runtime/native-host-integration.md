@@ -115,6 +115,9 @@ App's legacy launch path does not implement this sequence today.
   private pathname exchanges from each supported runtime. These increments do
   not complete this task. The [alias extension](linux-private-aliases.md) covers
   safe symlinks and outside-scratch caller contexts through pinned mount identity.
+  The [kernel peer identity diagnostic](linux-private-peer-identity.md) separately
+  checks the listener's view of a broker-emulated caller; data exchange alone
+  cannot establish that compatibility.
 - [ ] N3 Implement registry-owned generation admission and immutable resource
   binding with actual production startup, revocation and quarantine tests.
 - [ ] N4 Integrate the native launch owner and independently intersect all
