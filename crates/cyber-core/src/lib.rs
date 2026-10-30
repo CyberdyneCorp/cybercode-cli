@@ -23,6 +23,7 @@ pub mod paths;
 pub mod plugins;
 pub mod project;
 pub mod prompts;
+pub mod redact;
 pub mod review;
 pub mod skills;
 pub mod teams;

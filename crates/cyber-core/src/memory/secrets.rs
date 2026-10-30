@@ -1,35 +1,10 @@
 use super::MemoryError;
-use regex::Regex;
 use std::collections::BTreeMap;
-use std::sync::LazyLock;
 
-const CREDENTIAL_PATTERNS: &[&str] = &[
-    r#"(?i)\b(?:[a-z0-9_-]*(?:api[_-]?key|password|passwd|token|secret)|authorization)["']?\s*[:=]\s*\S+"#,
-    r"(?i)\bsk-(?:proj-|ant-)?[a-z0-9_-]{8,}",
-    r"(?i)\b(?:gh[pousr]_[a-z0-9]{8,}|github_pat_[a-z0-9_]{8,}|AKIA[0-9A-Z]{16})",
-    // Minted GitHub Copilot API tokens (`tid=<hex>;exp=<unix>;…`).
-    r"\btid=[0-9a-fA-F]{8,};[^\s\x22']+",
-    // Peer grant tokens (`cyp_pgr…_<secret>`) of `cross-session-messaging` → Peer grants.
-    r"\bcyp_[A-Za-z0-9_-]{8,}",
-    r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----",
-];
-static CREDENTIALS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
-    CREDENTIAL_PATTERNS
-        .iter()
-        .map(|pattern| Regex::new(pattern).expect("static memory credential pattern"))
-        .collect()
-});
-
-/// Assignments whose key only contains a credential word, as in `~/.aws/credentials`.
-static REDACTED_ASSIGNMENTS: LazyLock<[Regex; 1]> = LazyLock::new(|| {
-    [Regex::new(
-        r#"(?i)\b[a-z0-9_-]*(?:secret|access[_-]?key|session[_-]?token)[a-z0-9_-]*["']?\s*[:=]\s*\S+"#,
-    )
-    .expect("static redaction pattern")]
-});
-
+/// Refuse credential-shaped text (the shared detectors of [`crate::redact`]) and text
+/// that only looks random (high entropy), which memory should not keep either.
 pub(super) fn check(text: &str) -> Result<(), MemoryError> {
-    if CREDENTIALS.iter().any(|pattern| pattern.is_match(text))
+    if crate::redact::contains_credential(text)
         || text
             .split(|c: char| !c.is_alphanumeric() && !matches!(c, '_' | '-' | '+' | '/' | '='))
             .any(high_entropy)
@@ -47,13 +22,7 @@ pub fn redact_credentials(text: &str) -> String {
 
 /// [`redact_credentials`] with a caller-chosen `marker`, such as `***` for telemetry.
 pub fn redact_credentials_with(text: &str, marker: &str) -> String {
-    let marker = regex::NoExpand(marker);
-    CREDENTIALS
-        .iter()
-        .chain(REDACTED_ASSIGNMENTS.iter())
-        .fold(text.to_string(), |text, pattern| {
-            pattern.replace_all(&text, marker.clone()).into_owned()
-        })
+    crate::redact::redact_credentials_with(text, marker)
 }
 
 fn high_entropy(token: &str) -> bool {

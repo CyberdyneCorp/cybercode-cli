@@ -25,6 +25,7 @@ mod messaging;
 pub mod model_profiles;
 mod modes;
 mod peers;
+mod redaction;
 mod subst;
 mod telemetry;
 mod validate;
