@@ -10,6 +10,8 @@ on:
       - scripts/probes/plugin-native-entry/build_socket_candidate.py
       - scripts/probes/plugin-native-entry/linux_socket_landlock9.h
       - scripts/probes/plugin-native-entry/linux_unix9_policy.h
+      - scripts/probes/plugin-native-entry/linux_pidfd_probe.c
+      - scripts/probes/plugin-native-entry/pidfd.mts
 permissions:
   contents: read
 concurrency:
@@ -50,6 +52,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bubblewrap build-essential pkg-config cmake strace
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - name: Observe descriptor-pinning prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -Wall -Wextra -Werror -pthread scripts/probes/plugin-native-entry/linux_pidfd_probe.c -o "$RUNNER_TEMP/pidfd-probe"
+          node --experimental-strip-types scripts/probes/plugin-native-entry/pidfd.mts --probe "$RUNNER_TEMP/pidfd-probe" --report "$RUNNER_TEMP/linux-pidfd.json"
+      - name: Retain descriptor prerequisite observations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-pidfd-${{ matrix.os }}
+          path: ${{ runner.temp }}/linux-pidfd.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Build production helper and diagnostic
         id: build
         shell: bash

@@ -33,6 +33,11 @@ scratch through asynchronous cleanup and unconfirmed waits while revoking its
 proxy. Native containment, staging ancestry, quarantine and generation/retry
 fencing still gate complete host lifetime acceptance.
 
+The next compatible Linux IPC investigation starts with [descriptor-pinning
+prerequisites](linux-pidfd-proof.md), including independent thread file tables,
+descriptor-number replacement, copied arguments and actual private TCP exchange.
+This experiment changes no production policy or accepted support floor.
+
 ## 3. Host contribution lifecycle
 
 - [ ] 3.1 Validate initialize contributions and add plugin/digest/Location/generation ownership, collision handling, atomic replacement and late-result fences.
