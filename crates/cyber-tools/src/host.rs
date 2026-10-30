@@ -1045,6 +1045,14 @@ impl ToolHost for BuiltinHost {
         cyber_core::budget::Budget::from_config(&config, "daily")
     }
 
+    fn usage_limit_settings(
+        &self,
+        directory: &str,
+    ) -> Result<cyber_core::usage_limit::UsageLimitSettings, String> {
+        let (config, _) = (self.opts.config)(Path::new(directory))?;
+        cyber_core::usage_limit::UsageLimitSettings::from_config(&config)
+    }
+
     fn messaging_settings(
         &self,
         directory: Option<&str>,

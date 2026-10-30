@@ -5006,6 +5006,10 @@
               "null"
             ],
             "description": "The Session's own output style (`system-context` → Output style selection);\n`None` follows the Location's configuration. Only primary Sessions have one."
+          },
+          "unattended": {
+            "type": "boolean",
+            "description": "Nobody attends the Session (`cyber exec` creates its Sessions so): a usage limit\nwith a known reset waits (`session-runtime` → Usage limit wait)."
           }
         },
         "required": [
@@ -5198,6 +5202,11 @@
               "null"
             ],
             "description": "The Session's own output style; refused when it is invalid, unknown or held at\nthe Location, or for a child Session."
+          },
+          "unattended": {
+            "type": "boolean",
+            "description": "Nobody attends the Session (`cyber exec`): a usage limit with a known reset waits\nfor the reset instead of failing the Turn.",
+            "default": false
           }
         }
       },
@@ -5389,6 +5398,10 @@
             ],
             "description": "The Session's own output style (`system-context` → Output style selection);\n`None` follows the Location's configuration. Only primary Sessions have one."
           },
+          "unattended": {
+            "type": "boolean",
+            "description": "Nobody attends the Session (`cyber exec` creates its Sessions so): a usage limit\nwith a known reset waits (`session-runtime` → Usage limit wait)."
+          },
           "status": {
             "type": "string",
             "description": "`idle` or `running`."
@@ -5466,6 +5479,17 @@
               }
             ],
             "description": "The context window meter after the last finished step; null before the first\nstep and after a compaction."
+          },
+          "usage_limit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UsageLimitWait"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The pending usage limit wait (`session-runtime` → Usage limit wait); null when the\nSession is not waiting for a limit to reset."
           }
         },
         "required": [
@@ -5609,6 +5633,47 @@
           "measured",
           "compacted"
         ]
+      },
+      "UsageLimitWait": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "description": "The failed step whose Turn runs again."
+          },
+          "resets_at_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "resume_at_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "started_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "by": {
+            "$ref": "#/components/schemas/WaitedBy"
+          }
+        },
+        "required": [
+          "message_id",
+          "resets_at_ms",
+          "resume_at_ms",
+          "started_ms",
+          "by"
+        ],
+        "description": "`session.usage_limit.waiting.1`, and the pending wait of the Session view."
+      },
+      "WaitedBy": {
+        "type": "string",
+        "enum": [
+          "runtime",
+          "user"
+        ],
+        "description": "Who planned a wait: the runtime for an unattended Session, or the user's\n`/resume-at-reset`."
       },
       "SetupStatus": {
         "oneOf": [
@@ -6734,6 +6799,17 @@
         "enum": [
           "acknowledged",
           "unknown"
+        ]
+      },
+      "Data_UsageLimitWait": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/UsageLimitWait"
+          }
+        },
+        "required": [
+          "data"
         ]
       },
       "AgentBody": {
@@ -21779,6 +21855,75 @@
         "responses": {
           "204": {
             "description": "OK"
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/usage-limit/resume": {
+      "post": {
+        "operationId": "v1.session.resumeAtReset",
+        "summary": "Wait for the usage limit that failed the idle Session's last Turn to reset, then run that Turn again; publishes session.usage_limit.waiting.1",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_UsageLimitWait"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError: the last Turn did not fail on a usage limit with a known reset, or the wait passes usage_limit.max_wait or a wall deadline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "SessionBusyError: the Session is running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
           },
           "default": {
             "description": "Tagged error",

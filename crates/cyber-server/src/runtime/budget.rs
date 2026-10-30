@@ -50,7 +50,7 @@ pub(super) struct Scope {
     activated: Option<i64>,
     complete: bool,
 }
-fn scopes(tx: &Transaction<'_>, id: &str) -> Result<Vec<Scope>, StoreError> {
+fn scopes(tx: &rusqlite::Connection, id: &str) -> Result<Vec<Scope>, StoreError> {
     let mut statement = tx.prepare("WITH RECURSIVE scopes(id) AS (
         SELECT id FROM session WHERE id=?1 UNION SELECT s.parent_id FROM scopes a JOIN session s ON s.id=a.id WHERE s.parent_id IS NOT NULL
     ) SELECT s.id,b.spec,s.cost+s.children_cost,
@@ -76,7 +76,7 @@ fn scopes(tx: &Transaction<'_>, id: &str) -> Result<Vec<Scope>, StoreError> {
 /// The run budget joined through the `workflow_run_id` of `id` or an ancestor
 /// (`agents-subagents` → cost attribution to the workflow budget). Its spend is every
 /// Session of the run with its descendants; wall time excludes paused segments.
-fn run_scopes(tx: &Transaction<'_>, id: &str, now: i64) -> Result<Vec<Scope>, StoreError> {
+fn run_scopes(tx: &rusqlite::Connection, id: &str, now: i64) -> Result<Vec<Scope>, StoreError> {
     let mut statement = tx.prepare("WITH RECURSIVE scopes(id) AS (
         SELECT id FROM session WHERE id=?1 UNION SELECT s.parent_id FROM scopes a JOIN session s ON s.id=a.id WHERE s.parent_id IS NOT NULL
     ) SELECT DISTINCT s.workflow_run_id FROM scopes a JOIN session s ON s.id=a.id WHERE s.workflow_run_id IS NOT NULL ORDER BY 1")?;
@@ -114,6 +114,40 @@ pub(super) fn run_scope(
             complete: r.get::<_, i64>(6)? != 0,
         })
     }).optional()?)
+}
+
+/// The earliest wall deadline of the Session's own and ancestor budget scopes and the
+/// Workflow Run scopes it joins, as `(scope, deadline_ms)` (`session-runtime` → Usage
+/// limit wait). A scope whose clock has not started counts from `now`.
+pub(super) fn wall_deadline(
+    store: &Store,
+    id: &str,
+    now: i64,
+) -> Result<Option<(String, i64)>, StoreError> {
+    let id = id.to_owned();
+    store.read(move |db| {
+        let mut all = scopes(db, &id)?;
+        all.extend(run_scopes(db, &id, now)?);
+        let mut earliest: Option<(String, i64)> = None;
+        for scope in all {
+            let budget: Budget =
+                serde_json::from_str(&scope.spec).map_err(|e| StoreError::Projector {
+                    kind: "budget".into(),
+                    reason: e.to_string(),
+                })?;
+            let Some(wall) = budget.max_wall_seconds else {
+                continue;
+            };
+            let at = scope
+                .activated
+                .unwrap_or(now)
+                .saturating_add((wall * 1000.0) as i64);
+            if earliest.as_ref().is_none_or(|(_, first)| at < *first) {
+                earliest = Some((scope.id, at));
+            }
+        }
+        Ok(earliest)
+    })
 }
 
 fn signal(
