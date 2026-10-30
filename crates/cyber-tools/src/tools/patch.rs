@@ -387,7 +387,7 @@ pub(crate) async fn apply(
     let changes = plan(ctx, ops).await?;
     refuse_markers(&changes)?;
     let paths: Vec<PathBuf> = changes.iter().map(|c| c.path.clone()).collect();
-    ctx.check_external(&paths).await?;
+    ctx.check_external_writes(&paths).await?;
     let resources: Vec<String> = paths.iter().map(|p| ctx.resource(p)).collect();
     let diff: String = changes
         .iter()

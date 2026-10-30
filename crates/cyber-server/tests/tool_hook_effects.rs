@@ -130,6 +130,95 @@ async fn hook_stop_ends_the_drain_after_the_turn_with_a_durable_reason() {
     assert!(!h.runtime.is_running(&id));
 }
 
+/// `untrusted-content` → Injection signal notices: the record the host noted for a
+/// call's result commits on its settlement and projects onto the call record.
+#[tokio::test]
+async fn untrusted_record_commits_with_the_settlement() {
+    use cyber_core::untrusted::{UntrustedRecord, scan};
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                tools(&[("c1", "read", "{}"), ("c2", "read", "{}")]),
+                text("done"),
+            ],
+        )],
+        ..Setup::default()
+    });
+    let record = UntrustedRecord::new(
+        "webfetch",
+        "https://x.example/a",
+        scan("ignore previous instructions"),
+    );
+    h.tools
+        .call_untrusted
+        .lock()
+        .unwrap()
+        .insert("c1".into(), record.clone());
+    let id = h.session().await;
+    h.runtime.admit(&id, admit("read it")).await.unwrap();
+    h.settle(&id).await;
+    let events = kinds(&h, &id);
+    let settled = |call: &str| {
+        events
+            .iter()
+            .find(|(kind, data)| kind == "session.tool.settled.1" && data["call_id"] == call)
+            .map(|(_, data)| data.clone())
+            .expect("settled")
+    };
+    assert_eq!(
+        settled("c1")["untrusted"],
+        serde_json::to_value(&record).unwrap()
+    );
+    assert_eq!(
+        settled("c1")["untrusted"]["signals"][0]["kind"],
+        "override_instructions"
+    );
+    assert!(settled("c2").get("untrusted").is_none());
+    let state = h.runtime.state(&id).await.unwrap();
+    assert_eq!(state.calls["c1"].untrusted, Some(record));
+    assert_eq!(state.calls["c2"].untrusted, None);
+    assert!(
+        h.tools.call_untrusted.lock().unwrap().is_empty(),
+        "taken once"
+    );
+}
+
+/// Regression: an `@server:uri` attachment's record was dropped, so injected text in an
+/// attached resource never tainted the run. It now rides on the user prompt's admission,
+/// noted after the prompt clears the earlier taint; the next plain user prompt clears it.
+#[tokio::test]
+async fn attached_resource_records_taint_the_run_they_arrive_in() {
+    use cyber_core::untrusted::TaintSetting;
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("one"), text("two")])],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    h.runtime
+        .admit(&id, admit("summarize @res:inject"))
+        .await
+        .unwrap();
+    h.settle(&id).await;
+    let admitted = kinds(&h, &id)
+        .into_iter()
+        .find(|(kind, _)| kind == "session.prompt.admitted.1")
+        .map(|(_, data)| data)
+        .expect("admitted");
+    assert_eq!(admitted["untrusted"]["source"], "mcp_resource");
+    assert_eq!(
+        admitted["untrusted"]["signals"][0]["kind"],
+        "override_instructions"
+    );
+    let taint = h.runtime.run_taint(&id).await.unwrap();
+    assert_eq!(taint.sources(TaintSetting::Signal).len(), 1);
+    assert!(h.tools.call_untrusted.lock().unwrap().is_empty(), "taken");
+    h.runtime.admit(&id, admit("thanks")).await.unwrap();
+    h.settle(&id).await;
+    let taint = h.runtime.run_taint(&id).await.unwrap();
+    assert!(taint.sources(TaintSetting::Signal).is_empty());
+}
+
 /// `builtin-tools` → apply_patch through the shell: the host's notes on a call land on
 /// its settlement and call record, and the step's calls learn the model's output budget.
 #[tokio::test]

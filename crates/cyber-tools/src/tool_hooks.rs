@@ -282,10 +282,20 @@ impl BuiltinHost {
                 failed: false,
                 output,
                 ..
+            }
+            | ToolOutcome::External {
+                failed: false,
+                output,
+                ..
             } => ("PostToolUse", output),
             ToolOutcome::Failed(error)
             | ToolOutcome::Crashed(error)
             | ToolOutcome::SkillSuggestions {
+                failed: true,
+                output: error,
+                ..
+            }
+            | ToolOutcome::External {
                 failed: true,
                 output: error,
                 ..

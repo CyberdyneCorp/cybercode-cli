@@ -185,16 +185,24 @@ async fn model_and_stored_history_get_the_same_redacted_results() {
     assert!(std::fs::read_to_string(&path).unwrap().contains(PEM));
     // A page that starts inside the key shows none of it, and one that ends inside it
     // shows only the marker: the file is redacted whole before it is paged.
-    let tail = support::ok(
+    let (tail, tail_provenance) = support::external(
         f.call("bypass", "read", json!({"path": path, "offset": 3002}))
             .await,
     );
+    assert_eq!(
+        tail_provenance.source,
+        cyber_server::runtime::ContentSource::Overflow
+    );
+    assert_eq!(tail_provenance.origin, path);
+    support::framed(&tail, "overflow", &path);
     assert_hidden(&tail);
     assert!(!tail.contains("REDACTED"), "{tail}");
-    let reread = support::ok(
+    let (reread, reread_provenance) = support::external(
         f.call("bypass", "read", json!({"path": path, "offset": 2990}))
             .await,
     );
+    assert_eq!(reread_provenance, tail_provenance);
+    support::framed(&reread, "overflow", &path);
     assert!(reread.contains("[REDACTED:private_key]"), "{reread}");
     assert_hidden(&reread);
     assert_eq!(

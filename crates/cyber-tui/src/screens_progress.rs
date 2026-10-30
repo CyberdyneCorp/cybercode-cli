@@ -172,6 +172,7 @@ async fn a_running_tool_is_named_in_the_label() {
             status: "dispatched".into(),
             output: String::new(),
             redactions: 0,
+            untrusted: None,
         }],
         error: None,
         step: Default::default(),

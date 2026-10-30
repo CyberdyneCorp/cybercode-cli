@@ -135,6 +135,7 @@ async fn execute(
     let ctx = Ctx {
         skill_paths: Default::default(),
         loaded_skill: Default::default(),
+        provenance: Default::default(),
         compiler_feedback: Default::default(),
         host,
         inv,
@@ -359,7 +360,8 @@ async fn infer(
             LlmEvent::ToolCallDone(_) | LlmEvent::ToolCallDelta { .. } => {
                 return Err("Sampling provider attempted a tool call");
             }
-            LlmEvent::ReasoningItem { .. } => {}
+            // A bare adapter stream is never replayed.
+            LlmEvent::ReasoningItem { .. } | LlmEvent::Discarded => {}
         }
         if bytes > super::LIMIT / 2 {
             return Err("Sampling response exceeds its byte allowance");

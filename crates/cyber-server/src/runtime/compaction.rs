@@ -367,7 +367,7 @@ impl Inner {
         let handle = self.handle(&state.info.id).await?;
         self.check_budget(&handle).await?;
         let gated = super::budget::GatedAdapter::new(self, &handle, &resolved, "compaction");
-        let stream = open_with_retry(&gated, &request, &self.options.retry, |_, _, _| {})
+        let stream = open_with_retry(&gated, &request, &self.options.retry, |_| {})
             .await
             .map_err(|error| {
                 gated

@@ -2278,6 +2278,13 @@ impl App {
                     .push_str(data["text"].as_str().unwrap_or_default());
                 Vec::new()
             }
+            // `provider-catalog` → Retry policy: the request is replayed from the start.
+            "session.retry" if data["discarded"] == true => {
+                if let Some(id) = data["message_id"].as_str() {
+                    self.streaming.remove(id);
+                }
+                Vec::new()
+            }
             "session.idle" => {
                 self.session.running = false;
                 self.alert(crate::sound::Alert::Done, "cyber: the session is idle");

@@ -28,6 +28,7 @@ pub mod review;
 pub mod skills;
 pub mod teams;
 pub mod trust;
+pub mod untrusted;
 pub mod usage_limit;
 pub mod vcs;
 pub mod version;

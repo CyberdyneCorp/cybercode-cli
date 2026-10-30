@@ -7,6 +7,7 @@ use std::time::Instant;
 
 use cyber_client::{Client, ClientError};
 use cyber_core::review::{Counts, ErrorCode, Findings, Target, TargetError};
+use cyber_core::untrusted::UntrustedRecord;
 use serde_json::{Value, json};
 
 use super::background::ForkOutcome;
@@ -291,6 +292,17 @@ pub struct Out {
     review: Option<Review>,
 }
 
+/// The `retry` stream-json payload of a `session.retry` event.
+fn retry_payload(data: &Value) -> Value {
+    json!({
+        "message_id": data["message_id"],
+        "attempt": data["attempt"],
+        "delay_ms": data["delay_ms"],
+        "error": data["error"],
+        "discarded": data["discarded"] == true,
+    })
+}
+
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -554,6 +566,24 @@ impl Out {
         }
     }
 
+    /// `session.retry`: a provider retry. A `discarded` attempt never reached the output,
+    /// which holds recorded content only (`provider-catalog` → Retry policy).
+    pub fn retry(&self, data: &Value) {
+        let payload = retry_payload(data);
+        self.note(&format!(
+            "retry {} in {} ms: {}{}",
+            payload["attempt"],
+            payload["delay_ms"],
+            data["error"].as_str().unwrap_or_default(),
+            if payload["discarded"] == true {
+                " (partial answer discarded)"
+            } else {
+                ""
+            }
+        ));
+        self.line("retry", payload);
+    }
+
     /// A durable session event.
     pub fn durable(&mut self, run: &mut Run, kind: &str, data: &Value) {
         let base = kind.rsplit_once('.').map_or(kind, |(b, _)| b);
@@ -655,6 +685,7 @@ impl Out {
         {
             eprintln!("{note}");
         }
+        self.injection_warning(data);
         let Some(reason) = denial_reason(output) else {
             return;
         };
@@ -667,6 +698,18 @@ impl Out {
             eprintln!("denied: {tool} {resource} ({reason})");
         }
         run.denials.push(denial);
+    }
+
+    /// Text mode's stderr `warning:` line for a result with injection signals; `--quiet`
+    /// suppresses it with all other non-result output (`exec-mode`).
+    fn injection_warning(&self, data: &Value) {
+        if self.format != Format::Text || self.quiet {
+            return;
+        }
+        let record = serde_json::from_value::<UntrustedRecord>(data["untrusted"].clone());
+        if let Some(line) = record.ok().and_then(|r| r.exec_warning()) {
+            eprintln!("{line}");
+        }
     }
 
     /// Print the result and return the exit code.
@@ -985,6 +1028,9 @@ fn tool_result_line(id: &str, data: &Value) -> Value {
     if data["redactions"]["count"].as_u64().unwrap_or(0) > 0 {
         line["redactions"] = data["redactions"].clone();
     }
+    if let Some(record) = data.get("untrusted").filter(|v| !v.is_null()) {
+        line["untrusted"] = record.clone();
+    }
     line
 }
 
@@ -1075,6 +1121,38 @@ mod tests {
             (0, &json!(true)),
             "inline override"
         );
+    }
+
+    /// A discarded attempt is reported as a `retry` line; only recorded content becomes
+    /// `assistant_text`, so the run's result is the replayed answer alone.
+    #[test]
+    fn a_discarded_attempt_is_a_retry_line_and_never_the_result() {
+        let retry = json!({ "session_id": "ses_1", "message_id": "msg_1", "attempt": 1,
+            "delay_ms": 900, "error": "transport: reset", "discarded": true });
+        assert_eq!(
+            retry_payload(&retry),
+            json!({ "message_id": "msg_1", "attempt": 1, "delay_ms": 900,
+                "error": "transport: reset", "discarded": true })
+        );
+        let args = Wrapper::parse_from(["exec", "hi"]).args;
+        let mut out = Out::new(Format::Json, &args, &json!({ "id": "ses_1" }));
+        let mut run = Run::new(&args, Instant::now());
+        out.retry(&retry);
+        out.durable(
+            &mut run,
+            "session.text.ended.1",
+            &json!({ "message_id": "msg_1", "text": "Done." }),
+        );
+        assert_eq!(run.text, "Done.");
+        assert_eq!(out.summary(&run, 0)["result"], "Done.");
+    }
+
+    #[test]
+    fn tool_results_keep_both_redaction_and_injection_records() {
+        let data = json!({"status":"ok", "output":"[REDACTED:known_secret]", "redactions":{"count":1,"kinds":["known_secret"]}, "untrusted":{"source":"mcp","origin":"owned fixture","detector_version":1,"signals":[],"signal_count":0}});
+        let result = tool_result_line("call_1", &data);
+        assert_eq!(result["redactions"], data["redactions"]);
+        assert_eq!(result["untrusted"], data["untrusted"]);
     }
 
     #[test]

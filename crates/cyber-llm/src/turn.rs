@@ -1,8 +1,7 @@
 //! Collect a stream into the result of one Turn.
 
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 
-use crate::adapters::EventStream;
 use crate::error::LlmError;
 use crate::types::{FinishReason, LlmEvent, ToolCall, Usage};
 
@@ -15,9 +14,10 @@ pub struct TurnOutput {
     pub finish: Option<FinishReason>,
 }
 
-/// Drain a stream, calling `on_event` for each event (for live rendering).
+/// Drain a stream, calling `on_event` for each event (for live rendering). A discarded
+/// attempt's output is dropped; its usage was spent and stays counted.
 pub async fn collect(
-    mut stream: EventStream,
+    mut stream: impl Stream<Item = Result<LlmEvent, LlmError>> + Unpin,
     mut on_event: impl FnMut(&LlmEvent),
 ) -> Result<TurnOutput, LlmError> {
     let mut out = TurnOutput::default();
@@ -36,6 +36,12 @@ pub async fn collect(
             LlmEvent::Usage(usage) => out.usage.add(&usage),
             LlmEvent::Finish { reason } => out.finish = Some(reason),
             LlmEvent::ToolCallDelta { .. } => {}
+            LlmEvent::Discarded => {
+                out = TurnOutput {
+                    usage: out.usage,
+                    ..TurnOutput::default()
+                };
+            }
         }
     }
     Ok(out)

@@ -148,6 +148,23 @@ async fn ready(flow: &Flow, id: &str) -> Vec<ToolDef> {
     .await
     .unwrap()
 }
+/// The framed outcome of the shared server's `tool` (`untrusted-content`).
+fn framed(tool: &str, text: &str, value: Option<Value>, failed: bool) -> ToolOutcome {
+    ToolOutcome::External {
+        output: format!(
+            "<untrusted_content source=\"mcp\" origin=\"mcp:shared/{tool}\">\n{text}\n</untrusted_content>"
+        ),
+        value,
+        failed,
+        provenance: cyber_server::runtime::Provenance::new(
+            cyber_server::runtime::ContentSource::Mcp,
+            format!("mcp:shared/{tool}"),
+        ),
+    }
+}
+
+const FRAMED_READ: &str = "<untrusted_content source=\"mcp\" origin=\"mcp:shared/read\">\nremote read\n</untrusted_content>";
+
 async fn invoke(flow: &Flow, id: &str, def: &ToolDef, mode: &str) -> ToolOutcome {
     let mut inv = flow.f.invocation(mode, &def.spec.name, json!({}));
     inv.session_id = id.into();
@@ -202,7 +219,7 @@ async fn slow_startup_does_not_block_turns_and_sessions_share_one_connection() {
     assert_eq!(flow.f.read("spawned").lines().count(), 1);
     flow.prompt(&id, "after readiness").await;
     flow.settle(&id).await;
-    assert_eq!(flow.output(&id, "c1").await, "remote read");
+    assert_eq!(flow.output(&id, "c1").await, FRAMED_READ);
     assert_eq!(flow.f.read("calls"), "read\n");
     flow.runtime.shutdown().await;
     assert_eq!(
@@ -233,7 +250,7 @@ async fn permission_defaults_modes_structured_results_and_errors_use_host_bounda
     );
     assert_eq!(
         invoke(&flow, &id, find("read"), "default").await,
-        ToolOutcome::Ok("remote read".into())
+        framed("read", "remote read", None, false)
     );
     assert!(matches!(
         invoke(&flow, &id, find("write"), "default").await,
@@ -243,16 +260,20 @@ async fn permission_defaults_modes_structured_results_and_errors_use_host_bounda
         invoke(&flow, &id, find("write"), "plan").await,
         ToolOutcome::Failed(_)
     ));
+    // Structured content stays unchanged for clients; its model text is framed.
     assert_eq!(
         invoke(&flow, &id, find("structured"), "default").await,
-        ToolOutcome::Structured {
-            output: "remote structured".into(),
-            value: json!({"answer":42})
-        }
+        framed(
+            "structured",
+            "remote structured",
+            Some(json!({"answer":42})),
+            false
+        )
     );
+    // The server wrote its error text, so it is framed too.
     assert_eq!(
         invoke(&flow, &id, find("error"), "default").await,
-        ToolOutcome::Failed("remote error".into())
+        framed("error", "remote error", None, true)
     );
     assert_eq!(flow.f.read("calls"), "read\nstructured\nerror\n");
     let mut config = flow.f.config.lock().unwrap().clone();
@@ -753,7 +774,7 @@ async fn location_close_keeps_sibling_connection_running() {
     inv.registration = def.registration.clone();
     assert_eq!(
         flow.f.host.execute(inv, CancellationToken::new()).await,
-        ToolOutcome::Ok("remote read".into())
+        framed("read", "remote read", None, false)
     );
     flow.runtime.shutdown().await;
 }
@@ -915,7 +936,7 @@ async fn list_change_during_call_refreshes_metadata_and_rejects_old_registration
         .unwrap();
     assert_eq!(
         invoke(&flow, &id, old, "default").await,
-        ToolOutcome::Ok("remote read".into())
+        framed("read", "remote read", None, false)
     );
     let refreshed = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
@@ -946,7 +967,7 @@ async fn list_change_during_call_refreshes_metadata_and_rejects_old_registration
     assert_eq!(flow.f.read("calls"), "read\n");
     assert_eq!(
         invoke(&flow, &id, &refreshed, "default").await,
-        ToolOutcome::Ok("remote read".into())
+        framed("read", "remote read", None, false)
     );
     flow.runtime.shutdown().await;
 }
@@ -1145,7 +1166,7 @@ async fn idle_loss_reconnects_with_new_identity_without_replaying_old_calls() {
     assert!(!flow.f.repo.join("calls").exists());
     assert_eq!(
         invoke(&flow, &id, &new, "default").await,
-        ToolOutcome::Ok("remote read".into())
+        framed("read", "remote read", None, false)
     );
     flow.runtime.shutdown().await;
 }
@@ -1482,7 +1503,7 @@ async fn runtime_wait_makes_connected_tools_available_on_following_model_step() 
             .iter()
             .any(|tool| tool.name == "mcp__shared__read")
     );
-    assert_eq!(flow.output(&id, "read").await, "remote read");
+    assert_eq!(flow.output(&id, "read").await, FRAMED_READ);
     flow.runtime.shutdown().await;
 }
 
@@ -1543,7 +1564,7 @@ async fn deferred_search_loads_only_selected_schema_on_following_steps() {
     let result: Value = serde_json::from_str(&flow.output(&id, "search").await).unwrap();
     assert_eq!(result["tools"][0]["name"], "mcp__shared__read");
     assert_eq!(result["tools"][0]["input_schema"]["type"], "object");
-    assert_eq!(flow.output(&id, "loaded").await, "remote read");
+    assert_eq!(flow.output(&id, "loaded").await, FRAMED_READ);
     assert_eq!(flow.f.read("calls"), "read\n");
     let requests = flow.main.requests();
     for request in &requests[..2] {
@@ -2004,16 +2025,25 @@ async fn per_server_cap_bounds_success_error_and_structured_text_without_losing_
             .find(|def| def.spec.name == format!("mcp__shared__{name}"))
             .unwrap();
         let outcome = invoke(&flow, &id, def, "default").await;
-        let output = match outcome {
-            ToolOutcome::Ok(output) if name == "read" => output,
-            ToolOutcome::Failed(output) if name == "error" => output,
-            ToolOutcome::Structured { output, value } if name == "structured" => {
-                assert_eq!(value, json!({"answer":42}));
-                output
-            }
-            other => panic!("unexpected {name} outcome: {other:?}"),
+        let ToolOutcome::External {
+            output,
+            value,
+            failed,
+            ..
+        } = outcome
+        else {
+            panic!("unexpected {name} outcome: {outcome:?}");
         };
-        assert!(output.starts_with(&format!("{}\n[output truncated:", "🦀".repeat(8))));
+        assert_eq!(failed, name == "error");
+        assert_eq!(value, (name == "structured").then(|| json!({"answer":42})));
+        // The frame closes before the notice, which names the full output.
+        assert!(
+            output.starts_with(&format!(
+                "<untrusted_content source=\"mcp\" origin=\"mcp:shared/{name}\">\n{}\n</untrusted_content>\n[output truncated:",
+                "🦀".repeat(8)
+            )),
+            "{output}"
+        );
         let path = output
             .rsplit("full output at ")
             .next()

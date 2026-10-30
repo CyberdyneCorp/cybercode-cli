@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use cyber_llm::catalog::compute_cost;
 use cyber_llm::{
-    ErrorKind, EventStream, FinishReason, LlmError, LlmEvent, Opaque, ToolCall, Usage,
-    open_with_retry,
+    ErrorKind, FinishReason, LlmError, LlmEvent, Opaque, RetryNotice, RetryingStream, ToolCall,
+    Usage, open_with_retry,
 };
 use futures::future::join_all;
 use futures::{FutureExt, StreamExt};
@@ -686,6 +686,8 @@ impl Inner {
     /// redacted: this is the one text both the model and the stored history get
     /// (`tool-registry` → Tool output redaction). The host already redacted the raw
     /// result before truncating it; this pass also covers failures and reminders.
+    /// `settled` with the tool host's notes on the call and its result's `untrusted`
+    /// record, when it has them.
     pub(super) fn with_call_metadata(
         &self,
         session_id: &str,
@@ -705,6 +707,12 @@ impl Inner {
         if !redactions.is_empty() {
             settled.data["redactions"] =
                 serde_json::to_value(redactions).unwrap_or(serde_json::Value::Null);
+        }
+        if let Some(mut record) = self.tools.take_call_untrusted(session_id, call_id) {
+            super::redaction::redact_untrusted(&*self.tools, directory, &mut record);
+            if let Ok(record) = serde_json::to_value(record) {
+                settled.data["untrusted"] = record;
+            }
         }
         settled
     }
@@ -760,6 +768,9 @@ struct Accum {
     blocks: u32,
     /// Whether this step already warned about dropped opaque state.
     dropped_warned: bool,
+    /// Reasoning items and complete calls, recorded when the stream ends: until then the
+    /// attempt may still be discarded and replayed (`provider-catalog` → Retry policy).
+    pending: Vec<cyber_store::NewEvent>,
     calls: Vec<ToolCall>,
     usage: Usage,
     finish: Option<FinishReason>,
@@ -988,22 +999,25 @@ impl Inner {
 
     /// Open a Turn's stream through the retry policy, announcing each retry for the
     /// Session; `None` when the Drain is cancelled first.
-    async fn open_turn(
+    async fn open_turn<'a>(
         &self,
         handle: &Handle,
-        adapter: &dyn cyber_llm::Adapter,
+        message_id: &str,
+        adapter: &'a dyn cyber_llm::Adapter,
         request: &cyber_llm::LlmRequest,
         cancel: &CancellationToken,
-    ) -> Option<Result<cyber_llm::EventStream, cyber_llm::LlmError>> {
+    ) -> Option<Result<RetryingStream<'a>, cyber_llm::LlmError>> {
         // Not the cache key: a subagent's is `<root>:<agent>`.
         let session_id = handle.state.lock().await.info.id.clone();
-        let bus = self.bus.clone();
-        let announce = |attempt, delay: Duration, e: &cyber_llm::LlmError| {
+        let (bus, message_id) = (self.bus.clone(), message_id.to_string());
+        let announce = move |retry: &RetryNotice<'_>| {
             bus.publish(LiveEvent::Retry {
                 session_id: session_id.clone(),
-                attempt,
-                delay_ms: delay.as_millis() as u64,
-                error: e.to_string(),
+                message_id: message_id.clone(),
+                attempt: retry.attempt,
+                delay_ms: retry.delay.as_millis() as u64,
+                error: retry.error.to_string(),
+                discarded: retry.discarded,
             });
         };
         tokio::select! {
@@ -1028,7 +1042,10 @@ impl Inner {
         let resolved = &prepared.model;
         let gated = super::budget::GatedAdapter::new(self, handle, resolved, "turn")
             .for_call(message_id.clone());
-        let stream = match self.open_turn(handle, &gated, &request, cancel).await {
+        let stream = match self
+            .open_turn(handle, &message_id, &gated, &request, cancel)
+            .await
+        {
             None => {
                 gated.flush().await?;
                 return self
@@ -1207,7 +1224,7 @@ impl Inner {
         handle: &Handle,
         message_id: &str,
         defs: &[ToolDef],
-        mut stream: EventStream,
+        mut stream: RetryingStream<'_>,
         cancel: &CancellationToken,
         resolved: &ResolvedModel,
     ) -> Result<Result<Accum, TurnEnd>, RuntimeError> {
@@ -1232,8 +1249,12 @@ impl Inner {
                     return Ok(Err(end));
                 }
                 Some(None) => return Ok(Ok(acc)),
+                Some(Some(Ok(LlmEvent::Discarded))) => {
+                    self.discard_attempt(handle, message_id, &mut acc, resolved)
+                        .await?;
+                }
                 Some(Some(Err(e))) => {
-                    // Output already exists, so the request is not replayed; the Turn is settled.
+                    // The retry policy gave up on this output; the Turn is settled with it.
                     self.bus.publish(LiveEvent::Error {
                         session_id: session_id.clone(),
                         kind: kind_name(e.kind).into(),
@@ -1260,22 +1281,22 @@ impl Inner {
                             .await?;
                         return Ok(Err(end));
                     }
-                    self.on_stream_event(handle, &session_id, message_id, defs, &mut acc, event)
-                        .await?
+                    self.on_stream_event(&session_id, message_id, defs, &mut acc, event);
                 }
             }
         }
     }
 
-    async fn on_stream_event(
+    /// Publish a streamed event and add it to the step; nothing is durable before the stream
+    /// ends.
+    fn on_stream_event(
         &self,
-        handle: &Handle,
         session_id: &str,
         message_id: &str,
         defs: &[ToolDef],
         acc: &mut Accum,
         event_: LlmEvent,
-    ) -> Result<(), RuntimeError> {
+    ) {
         let live = |text: String, reasoning: bool| {
             let (session_id, message_id) = (session_id.to_string(), message_id.to_string());
             if reasoning {
@@ -1305,8 +1326,7 @@ impl Inner {
                 self.bus.publish(live(text, true));
             }
             LlmEvent::ReasoningItem { text, opaque } => {
-                self.close_reasoning(handle, message_id, acc, text, opaque)
-                    .await?;
+                Self::close_reasoning(message_id, acc, text, opaque);
             }
             LlmEvent::ToolCallDelta {
                 id,
@@ -1314,7 +1334,7 @@ impl Inner {
                 arguments,
             } => {
                 if name.is_empty() || name == "computer" {
-                    return Ok(());
+                    return;
                 }
                 self.bus.publish(LiveEvent::ToolInputDelta {
                     session_id: session_id.into(),
@@ -1324,8 +1344,8 @@ impl Inner {
             }
             LlmEvent::ToolCallDone(mut call) => {
                 // Reasoning streamed before the call is recorded ahead of it.
-                if let Some(events) = acc.take_reasoning(message_id) {
-                    self.commit(handle, vec![events]).await?;
+                if let Some(event) = acc.take_reasoning(message_id) {
+                    acc.pending.push(event);
                 }
                 call.opaque = acc.stamped(call.opaque.take());
                 let retry_safety =
@@ -1347,34 +1367,64 @@ impl Inner {
                     opaque: call.opaque.clone(),
                     retry_safety,
                 };
-                self.commit(handle, vec![event(TOOL_CALLED, &payload)])
-                    .await?;
+                acc.pending.push(event(TOOL_CALLED, &payload));
                 acc.calls.push(call);
             }
             LlmEvent::Usage(usage) => acc.usage.add(&usage),
             LlmEvent::Finish { reason } => acc.finish = Some(reason),
+            // `consume` handles it before any other event.
+            LlmEvent::Discarded => {}
         }
-        Ok(())
     }
 
-    /// Record the reasoning block streamed so far, completed by an item or a signature.
-    async fn close_reasoning(
+    /// Drop what a failed attempt streamed before its request is replayed. Usage it reported
+    /// was spent: without a reservation, which bills each attempt itself, it is recorded as
+    /// a failed `turn` call so no token is lost.
+    async fn discard_attempt(
         &self,
         handle: &Handle,
         message_id: &str,
         acc: &mut Accum,
-        text: String,
-        opaque: Option<Opaque>,
+        resolved: &ResolvedModel,
     ) -> Result<(), RuntimeError> {
+        let spent = acc.discard();
+        if spent == Usage::default() {
+            return Ok(());
+        }
+        {
+            let mut state = handle.state.lock().await;
+            if super::reservations::reserved_call(&self.store, &state.info.id, message_id)? {
+                return Ok(());
+            }
+            let record = AttributedUsage {
+                usage: AuxiliaryUsage {
+                    provider: resolved.provider.clone(),
+                    model: resolved.model.clone(),
+                    purpose: "turn".into(),
+                    call_id: Some(message_id.into()),
+                    duration_ms: 0,
+                    usage: spent,
+                    cost: compute_cost(resolved.cost.as_ref(), &spent),
+                },
+                origin: state.step_origin.clone(),
+            };
+            let mut recorded = event(AUXILIARY_USAGE, &record);
+            recorded.data["failed"] = true.into();
+            self.commit_locked(&mut state, vec![recorded])?;
+        }
+        self.observe_budget(handle).await
+    }
+
+    /// Close the reasoning block streamed so far, completed by an item or a signature.
+    fn close_reasoning(message_id: &str, acc: &mut Accum, text: String, opaque: Option<Opaque>) {
         let block = acc.reasoning.get_or_insert_with(Reasoned::default);
         if !text.is_empty() {
             block.text = text;
         }
         block.opaque = opaque;
         if let Some(event) = acc.take_reasoning(message_id) {
-            self.commit(handle, vec![event]).await?;
+            acc.pending.push(event);
         }
-        Ok(())
     }
 
     async fn end_step(
@@ -1500,6 +1550,18 @@ impl Inner {
         message: &str,
     ) -> Result<TurnEnd, RuntimeError> {
         let mut state = handle.state.lock().await;
+        let never_dispatched: Vec<_> = acc
+            .calls
+            .iter()
+            .map(|call| {
+                settled(
+                    &call.id,
+                    CallStatus::Interrupted,
+                    INTERRUPTED,
+                    Some("turn stopped before dispatch"),
+                )
+            })
+            .collect();
         let mut events = content_events(message_id, &mut acc);
         let mut failed = event(
             STEP_FAILED,
@@ -1513,20 +1575,7 @@ impl Inner {
         );
         super::reservations::mark_for_call(&self.store, &state.info.id, message_id, &mut failed)?;
         events.push(failed);
-        events.extend(
-            state
-                .calls
-                .values()
-                .filter(|c| c.message_id == message_id && c.status == CallStatus::Called)
-                .map(|c| {
-                    settled(
-                        &c.call_id,
-                        CallStatus::Interrupted,
-                        INTERRUPTED,
-                        Some("turn stopped before dispatch"),
-                    )
-                }),
-        );
+        events.extend(never_dispatched);
         self.commit_locked(&mut state, events)?;
         Ok(TurnEnd::Stopped)
     }
@@ -2070,6 +2119,7 @@ impl Accum {
             reasoning: None,
             blocks: 0,
             dropped_warned: false,
+            pending: Vec::new(),
             calls: Vec::new(),
             usage: Usage::default(),
             finish: None,
@@ -2106,6 +2156,18 @@ impl Accum {
         Some(opaque)
     }
 
+    /// Forget the attempt streamed so far, keeping the producer; returns its reported usage.
+    fn discard(&mut self) -> Usage {
+        let spent = self.usage;
+        *self = Self {
+            provider: std::mem::take(&mut self.provider),
+            model: std::mem::take(&mut self.model),
+            dropped_warned: self.dropped_warned,
+            ..Self::empty()
+        };
+        spent
+    }
+
     /// The `session.reasoning.ended.1` of the streamed block, if it has any content.
     fn take_reasoning(&mut self, message_id: &str) -> Option<cyber_store::NewEvent> {
         let block = self.reasoning.take()?;
@@ -2125,8 +2187,11 @@ impl Accum {
     }
 }
 
+/// The step's content in stream order: reasoning items and calls, then the open reasoning
+/// block and the text.
 fn content_events(message_id: &str, acc: &mut Accum) -> Vec<cyber_store::NewEvent> {
-    let mut events: Vec<_> = acc.take_reasoning(message_id).into_iter().collect();
+    let mut events = std::mem::take(&mut acc.pending);
+    events.extend(acc.take_reasoning(message_id));
     if !acc.text.is_empty() {
         events.push(event(
             TEXT_ENDED,
@@ -2159,6 +2224,7 @@ fn settled(
         detail: detail.map(str::to_string),
         metadata: None,
         redactions: None,
+        untrusted: None,
     };
     event(TOOL_SETTLED, &payload)
 }
@@ -2281,6 +2347,7 @@ pub(super) fn settlement_with_reminders(
             detail: None,
             metadata: None,
             redactions: None,
+            untrusted: None,
         },
     );
     (settled, loaded)
@@ -2368,6 +2435,7 @@ pub(super) fn settlement(
                 detail: None,
                 metadata: None,
                 redactions: None,
+                untrusted: None,
             },
         ),
         ToolOutcome::SkillSuggestions {
@@ -2399,9 +2467,36 @@ pub(super) fn settlement(
                 detail: None,
                 metadata: None,
                 redactions: None,
+                untrusted: None,
             },
         ),
         ToolOutcome::Failed(message) => settled(call_id, CallStatus::Error, &message, None),
+        // The output is already framed by the registry; reminders never follow it.
+        ToolOutcome::External {
+            output,
+            value,
+            failed,
+            ..
+        } => event(
+            TOOL_SETTLED,
+            &ToolSettled {
+                skill_activation: None,
+                skill_reminders: Vec::new(),
+                instruction_reminders: Vec::new(),
+                structured_output: value,
+                call_id: call_id.into(),
+                status: if failed {
+                    CallStatus::Error
+                } else {
+                    CallStatus::Ok
+                },
+                output,
+                detail: None,
+                metadata: None,
+                redactions: None,
+                untrusted: None,
+            },
+        ),
         ToolOutcome::Aborted if read_only => settled(
             call_id,
             CallStatus::Interrupted,
@@ -2706,6 +2801,60 @@ mod skill_reminder_tests {
         );
     }
 
+    /// A framed external result settles with its frame intact: no reminder is appended
+    /// (re-finalizing could truncate the closing tag), it loads no nested instructions,
+    /// and the source's own error and structured value carry over.
+    #[test]
+    fn external_results_settle_framed_without_reminders() {
+        let (_temp, nested) = nested(&[("CYBER.md", "rule".into())]);
+        let framed =
+            "<untrusted_content source=\"overflow\" origin=\"/o\">\nx\n</untrusted_content>";
+        let external = |failed: bool| ToolOutcome::External {
+            output: framed.into(),
+            value: (!failed).then(|| serde_json::json!({"k": 1})),
+            failed,
+            provenance: super::super::host::Provenance::new(
+                super::super::host::ContentSource::Overflow,
+                "/o",
+            ),
+        };
+        for failed in [false, true] {
+            let mut seen = Reminded::default();
+            let (event, loaded) = settlement_with_reminders(
+                "call",
+                &read_def(),
+                external(failed),
+                &mut seen,
+                &nested,
+                |_, _| panic!("a framed result is never re-finalized"),
+            );
+            let payload: ToolSettled = serde_json::from_value(event.data).unwrap();
+            assert_eq!(payload.output, framed);
+            let status = if failed {
+                CallStatus::Error
+            } else {
+                CallStatus::Ok
+            };
+            assert_eq!(payload.status, status);
+            assert_eq!(payload.structured_output.is_some(), !failed);
+            assert!(payload.instruction_reminders.is_empty() && loaded.is_none());
+        }
+        let run = ToolRun {
+            call_id: "call".into(),
+            def: read_def(),
+            outcome: external(false),
+            read: Some(ReadTarget {
+                location: "/repo".into(),
+                file: "/repo/a.md".into(),
+                settings: super::super::instructions::InstructionSettings::from_env(
+                    true,
+                    &std::collections::HashMap::<String, String>::new(),
+                ),
+            }),
+        };
+        assert!(run.nested_target().is_none());
+    }
+
     /// When no instruction reminder fits, the read keeps its own output and the files stay
     /// unrecorded, so a later read can attach them.
     #[test]
@@ -2738,6 +2887,8 @@ mod queue_head_tests {
             digest: String::new(),
             admitted_seq: 0,
             promoted_seq: None,
+            redactions: None,
+            untrusted: None,
         }
     }
 

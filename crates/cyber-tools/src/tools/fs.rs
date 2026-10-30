@@ -35,6 +35,8 @@ impl Tool for Read {
     fn run<'a>(&'a self, ctx: &'a Ctx<'a>) -> BoxFuture<'a, Result<String, ToolError>> {
         Box::pin(async move {
             let path = readable(ctx).await?;
+            // A managed overflow file is re-read in its original result's frame.
+            ctx.frame_overflow_reads(&path);
             let meta = tokio::fs::metadata(&path)
                 .await
                 .map_err(|_| failed(not_found(&path)))?;
@@ -126,6 +128,7 @@ pub(crate) async fn readable(ctx: &Ctx<'_>) -> Result<PathBuf, ToolError> {
 /// or a binary file is an error.
 pub(crate) async fn read_value(ctx: &Ctx<'_>) -> Result<Value, ToolError> {
     let path = readable(ctx).await?;
+    ctx.frame_overflow_reads(&path);
     let meta = tokio::fs::metadata(&path)
         .await
         .map_err(|_| failed(not_found(&path)))?;
@@ -369,7 +372,7 @@ pub(crate) async fn guarded_write(
         &String::from_utf8_lossy(before.unwrap_or_default()),
         &String::from_utf8_lossy(after),
     )?;
-    ctx.check_external(&[path.to_path_buf()]).await?;
+    ctx.check_external_writes(&[path.to_path_buf()]).await?;
     authorize_edit(ctx, path, diff).await?;
     let origin = super::intelligence::capture(ctx, path);
     let lock = ctx.host.path_lock(path);

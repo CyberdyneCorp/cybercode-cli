@@ -545,7 +545,7 @@ async fn context_overflow_is_detected_and_never_retried() {
         .mount(&server)
         .await;
     let a = adapter(ApiKind::OpenaiCompatible, Endpoint::new(server.uri(), None));
-    let err = open_with_retry(a.as_ref(), &request(), &fast_policy(), |_, _, _| {})
+    let err = open_with_retry(a.as_ref(), &request(), &fast_policy(), |_| {})
         .await
         .err()
         .unwrap();
@@ -579,8 +579,8 @@ async fn overloaded_provider_is_retried_then_succeeds() {
 
     let a = adapter(ApiKind::OpenaiCompatible, Endpoint::new(server.uri(), None));
     let mut retries = Vec::new();
-    let stream = open_with_retry(a.as_ref(), &request(), &fast_policy(), |n, d, e| {
-        retries.push((n, d, e.kind))
+    let stream = open_with_retry(a.as_ref(), &request(), &fast_policy(), |retry| {
+        retries.push((retry.attempt, retry.delay, retry.error.kind))
     })
     .await
     .unwrap();
@@ -595,40 +595,63 @@ async fn overloaded_provider_is_retried_then_succeeds() {
     assert_eq!(server.received_requests().await.unwrap().len(), 3);
 }
 
+/// `provider-catalog` → Retry policy: an in-stream overload after partial text discards the
+/// attempt and replays the request; the consumer sees only the replayed answer.
 #[tokio::test]
-async fn failure_after_output_is_not_replayed() {
+async fn overload_after_output_discards_the_attempt_and_replays() {
     let server = MockServer::start().await;
-    let body = sse(&[
-        (
-            "message_start",
-            json!({"message": {"usage": {"input_tokens": 1}}}),
-        ),
+    let start = (
+        "message_start",
+        json!({"message": {"usage": {"input_tokens": 1}}}),
+    );
+    let text = |t: &str| {
         (
             "content_block_delta",
-            json!({"index": 0, "delta": {"type": "text_delta", "text": "partial"}}),
-        ),
+            json!({"index": 0, "delta": {"type": "text_delta", "text": t}}),
+        )
+    };
+    let failed = sse(&[
+        start.clone(),
+        text("partial"),
         (
             "error",
             json!({"error": {"type": "overloaded_error", "message": "Overloaded"}}),
         ),
     ]);
+    let completed = sse(&[
+        start,
+        text("whole answer"),
+        (
+            "message_delta",
+            json!({"delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 2}}),
+        ),
+        ("message_stop", json!({})),
+    ]);
     Mock::given(method("POST"))
-        .respond_with(ok_stream(body))
+        .respond_with(ok_stream(failed))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(ok_stream(completed))
         .mount(&server)
         .await;
     let a = adapter(ApiKind::Anthropic, Endpoint::new(server.uri(), None));
-    let stream = open_with_retry(a.as_ref(), &request(), &fast_policy(), |_, _, _| {
-        panic!("must not retry")
+    let mut notices = Vec::new();
+    let stream = open_with_retry(a.as_ref(), &request(), &fast_policy(), |retry| {
+        notices.push((retry.attempt, retry.discarded, retry.error.kind))
     })
     .await
     .unwrap();
     let mut seen = Vec::new();
-    let err = collect(stream, |e| seen.push(e.clone())).await.unwrap_err();
-    assert_eq!(err.kind, ErrorKind::ProviderInternal);
-    assert!(seen.contains(&LlmEvent::TextDelta {
+    let out = collect(stream, |e| seen.push(e.clone())).await.unwrap();
+    let discarded = seen.iter().position(|e| *e == LlmEvent::Discarded).unwrap();
+    assert!(seen[..discarded].contains(&LlmEvent::TextDelta {
         text: "partial".into()
     }));
-    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    assert_eq!(out.text, "whole answer");
+    assert_eq!(notices, [(1, true, ErrorKind::ProviderInternal)]);
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -650,10 +673,49 @@ async fn error_before_output_in_stream_is_retried() {
             }),
         ],
     ]);
-    let stream = open_with_retry(&adapter, &request(), &fast_policy(), |_, _, _| {})
+    let stream = open_with_retry(&adapter, &request(), &fast_policy(), |_| {})
         .await
         .unwrap();
     assert_eq!(collect(stream, |_| {}).await.unwrap().text, "fine");
+    assert_eq!(adapter.requests().len(), 2);
+}
+
+/// `collect` drops a discarded attempt's output but keeps the usage it reported: those
+/// tokens were spent.
+#[tokio::test]
+async fn a_discarded_attempt_keeps_its_reported_usage() {
+    let usage = |input| {
+        ScriptStep::Event(LlmEvent::Usage(Usage {
+            input,
+            ..Usage::default()
+        }))
+    };
+    let adapter = ScriptedAdapter::new(vec![
+        vec![
+            usage(5),
+            ScriptStep::Event(LlmEvent::TextDelta {
+                text: "partial".into(),
+            }),
+            ScriptStep::Error {
+                error: ErrorKind::Transport,
+                message: "reset".into(),
+            },
+        ],
+        vec![
+            ScriptStep::Event(LlmEvent::TextDelta {
+                text: "fine".into(),
+            }),
+            usage(7),
+            ScriptStep::Event(LlmEvent::Finish {
+                reason: FinishReason::Stop,
+            }),
+        ],
+    ]);
+    let stream = open_with_retry(&adapter, &request(), &fast_policy(), |_| {})
+        .await
+        .unwrap();
+    let out = collect(stream, |_| {}).await.unwrap();
+    assert_eq!((out.text.as_str(), out.usage.input), ("fine", 12));
     assert_eq!(adapter.requests().len(), 2);
 }
 

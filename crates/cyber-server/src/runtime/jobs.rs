@@ -609,7 +609,21 @@ impl Runtime {
         let mut admission = Admission::text(text, Delivery::Queue);
         admission.message_id = Some(handback_id(&job.id));
         admission.source = "session".into();
-        self.admit(&job.session_id, admission).await?;
+        // A tainted subagent's handback taints the parent that reads it.
+        let untrusted = if job.kind == "subagent" {
+            self.handed_taint(&job.child_id).await
+        } else {
+            None
+        };
+        self.admit_recorded(
+            &job.session_id,
+            admission,
+            None,
+            super::PromptCheck::Checked(None),
+            Vec::new(),
+            untrusted,
+        )
+        .await?;
         job.notified = true;
         self.record_job(NOTIFIED, &job).await
     }

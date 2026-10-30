@@ -136,3 +136,28 @@ Known coverage coalesces during enumeration instead of storing every overlapping
 match. Existing markers and allow entries are filtered before coalescing, so
 allowed individual values remain exempt. Regressions include built-in/known,
 known/known, self-overlapping and Unicode values, plus overlapping allow entries.
+
+## Composition with untrusted-content defense
+
+The combined prompt version is 4 and retains both guidance topics. Redaction
+runs before output truncation and untrusted framing; raw managed overflow files
+retain their provenance. Tool settlements and client cards retain both redaction
+counts and typed injection records. The runtime also redacts the injection
+record's origin and excerpts before committing it or retaining it as taint for
+later classifier evidence, without changing detector kinds/version or exceeding
+its existing bounds. A real-runtime regression reproduced a known secret in that
+metadata while the ordinary result body was already redacted, then verifies the
+corrected stored call and derived taint. This is independent of the overlap fix.
+
+The webfetch summarizer is also a provider boundary. Its page and provenance
+origin now pass through the Location redactor before clipping and framing; the
+user/model-supplied summary request keeps its existing input semantics. The
+real HTTP/scripted-summary regression failed before this correction because the
+auxiliary request contained both a token-shaped credential and an exact known
+value. A page-cut regression additionally protects a secret crossing the
+100,000-character summary boundary.
+
+Fetched text is redacted before HTML-to-text/Markdown conversion as well, since
+conversion can escape token punctuation. Redaction counts are retained and
+Markdown-escaped placeholder spellings are restored to their canonical marker.
+The render regression covers raw HTML, plain text and Markdown output.

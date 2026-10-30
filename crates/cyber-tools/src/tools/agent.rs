@@ -393,6 +393,7 @@ pub(crate) async fn fork_skill(
     let child_ctx = Ctx {
         skill_paths: Default::default(),
         loaded_skill: Default::default(),
+        provenance: Default::default(),
         compiler_feedback: Default::default(),
         host: ctx.host,
         policy: ctx.host.policy(&inv).await.map_err(failed)?,
@@ -763,6 +764,11 @@ async fn execute_child(
     }
     drop(reservation);
     let result = Box::pin(finish_foreground(ctx, run)).await;
+    // A tainted child's result taints the parent that receives it (`permissions-modes`
+    // → Untrusted-content taint); its handback carries the child's record.
+    if let Some(record) = runtime.handed_taint(&id).await {
+        ctx.host.note_untrusted(ctx.inv, record);
+    }
     guard
         .settle_foreground(&runtime, &id, result.is_err())
         .await;

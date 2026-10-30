@@ -699,6 +699,7 @@ mod tests {
             id: id.into(),
             text: text.into(),
             promoted_ms: None,
+            untrusted: None,
         };
         let notice = Notice::of(&item("msgx_watch_w1")).unwrap();
         assert_eq!(notice.target, "migration");
@@ -713,6 +714,7 @@ mod tests {
             id: "msgx_watch_w2".into(),
             text: "<session_watch_expired target=\"b\" watch_id=\"w2\"/>\nexpired".into(),
             promoted_ms: None,
+            untrusted: None,
         };
         assert!(Notice::of(&expired).unwrap().expired);
     }
@@ -723,6 +725,7 @@ mod tests {
             id: id.into(),
             text: text.into(),
             promoted_ms: None,
+            untrusted: None,
         };
         let text = "<team_idle_notice team_id=\"team_1\" member=\"tests\"/>\ntests is idle: said &quot;ok&quot;\x1b[2J\nThis is an idle notice about a teammate.";
         let notice = Notice::of(&item("msgx_team_idle_team_1_tests_7", text)).unwrap();

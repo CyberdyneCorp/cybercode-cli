@@ -1,0 +1,124 @@
+//! `untrusted` records of tool results (`untrusted-content` → Injection signal notices):
+//! noted when the registry frames a result, or when a workspace result scanned under
+//! `scan: "all"` has hits, and taken by the runtime into the call's
+//! `session.tool.settled.1`.
+
+use std::path::Path;
+use std::sync::PoisonError;
+
+use cyber_core::untrusted::{Scan, ScanScope, UntrustedRecord, UntrustedSettings};
+use cyber_server::runtime::{Invocation, Provenance, RuntimeError};
+
+use super::{BuiltinHost, Ctx};
+use crate::tools::text;
+
+/// Workspace tools whose output `scan: "all"` scans. Their output is never framed or
+/// rewritten, since edits must match its exact bytes.
+const SCANNED_WORKSPACE_TOOLS: &[&str] = &["read", "grep", "bash", "powershell"];
+
+impl BuiltinHost {
+    /// Note the record of a framed result: present whether or not it had hits.
+    pub(crate) fn note_framed(&self, inv: &Invocation, provenance: &Provenance, scan: Scan) {
+        let record = UntrustedRecord::new(provenance.source.as_str(), &provenance.origin, scan);
+        self.note_untrusted(inv, record);
+    }
+
+    /// The taint of `session_id`'s run for a permission evaluation under the Location's
+    /// merged `config` (`permissions-modes` → Taint-aware approvals): the records its
+    /// events promoted since the last `user` prompt, under its `untrusted_content`
+    /// settings.
+    pub(crate) async fn run_taint(
+        &self,
+        session_id: &str,
+        config: &serde_json::Value,
+    ) -> Result<crate::permissions::Taint, String> {
+        let settings = UntrustedSettings::effective(config);
+        let Some(runtime) = self.runtime() else {
+            return Ok(crate::permissions::Taint::new(Vec::new(), &settings));
+        };
+        let run = match runtime.run_taint(session_id).await {
+            Ok(run) => run,
+            // A Session with no events has promoted nothing.
+            Err(RuntimeError::SessionNotFound(_)) => Default::default(),
+            Err(error) => return Err(error.to_string()),
+        };
+        Ok(crate::permissions::Taint::new(
+            run.sources(settings.taint),
+            &settings,
+        ))
+    }
+
+    /// Note that a call's result carries `record` (a tainted child's result, say).
+    pub(crate) fn note_untrusted(&self, inv: &Invocation, record: UntrustedRecord) {
+        self.call_untrusted
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert((inv.session_id.clone(), inv.call_id.clone()), record);
+    }
+
+    /// Note the records of a prompt's attachments (`@server:uri` mentions, template
+    /// `@file` references) under the admission's call, merged into one: the runtime takes
+    /// it into the prompt's `session.prompt.admitted.1`, so the attachments taint the
+    /// run they arrive in (`permissions-modes` → Untrusted-content taint).
+    pub(crate) fn note_attachment_untrusted(
+        &self,
+        session_id: &str,
+        call_id: &str,
+        records: &[UntrustedRecord],
+    ) {
+        let mut taint = cyber_core::untrusted::RunTaint::default();
+        records.iter().for_each(|record| taint.note(record));
+        if let Some(record) = taint.inherited() {
+            self.call_untrusted
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert((session_id.to_owned(), call_id.to_owned()), record);
+        }
+    }
+
+    /// Take, once, the record noted for a call.
+    pub(crate) fn take_untrusted(
+        &self,
+        session_id: &str,
+        call_id: &str,
+    ) -> Option<UntrustedRecord> {
+        self.call_untrusted
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&(session_id.to_owned(), call_id.to_owned()))
+    }
+
+    /// With `permissions.untrusted_content.scan: "all"`, scan a workspace tool's
+    /// model-facing output and note a record when it has hits. The output is unchanged.
+    pub(super) fn scan_workspace_output(&self, ctx: &Ctx<'_>, output: &str) {
+        if !SCANNED_WORKSPACE_TOOLS.contains(&ctx.inv.name.as_str())
+            || self.scan_scope(&ctx.location) != ScanScope::All
+        {
+            return;
+        }
+        let scan = cyber_core::untrusted::scan(output);
+        if scan.is_empty() {
+            return;
+        }
+        let record = UntrustedRecord::new(&ctx.inv.name, &workspace_origin(ctx), scan);
+        self.note_untrusted(ctx.inv, record);
+    }
+
+    /// The Location's scan scope. A config that cannot be loaded scans everything: the
+    /// scan never changes output, so erring toward it is the safe side.
+    fn scan_scope(&self, location: &Path) -> ScanScope {
+        (self.opts.config)(location).map_or(ScanScope::All, |(config, _)| {
+            cyber_core::untrusted::UntrustedSettings::effective(&config).scan
+        })
+    }
+}
+
+/// Where a scanned workspace result came from: the path read or searched, or the
+/// command run, with credentials redacted.
+fn workspace_origin(ctx: &Ctx<'_>) -> String {
+    let input = &ctx.inv.input;
+    match ctx.inv.name.as_str() {
+        "bash" | "powershell" => cyber_core::memory::redact_credentials(text(input, "command")),
+        _ => ctx.resolve(text(input, "path")).display().to_string(),
+    }
+}

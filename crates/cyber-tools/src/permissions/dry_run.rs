@@ -133,6 +133,7 @@ mod tests {
             home: "/home/u".into(),
             plan_file: "/repo/.cyber/plans/x.md".into(),
             ownership: None,
+            taint: Default::default(),
         }
     }
 

@@ -7,8 +7,9 @@ use std::time::Duration;
 
 use cyber_core::config::{McpServer, McpSettings};
 use cyber_server::runtime::{
-    Invocation, McpConnectionPhase, McpConnectionStatus, McpServerStatus, McpStatusUpdate,
-    RetrySafety, SessionInfo, ToolDef, ToolOutcome, TurnContext, mcp_connections,
+    ContentSource, Invocation, McpConnectionPhase, McpConnectionStatus, McpServerStatus,
+    McpStatusUpdate, Provenance, RetrySafety, SessionInfo, ToolDef, ToolOutcome, TurnContext,
+    mcp_connections,
 };
 use serde_json::{Value, json};
 use tokio::task::JoinHandle;
@@ -1119,6 +1120,10 @@ impl BuiltinHost {
             concurrency_safe: false,
         };
         let metadata = json!({"server":entry.name,"annotations":tool.definition["annotations"]});
+        let provenance = Provenance::new(
+            ContentSource::Mcp,
+            format!("mcp:{}/{}", entry.name, tool.remote_name),
+        );
         let token_limit = match self
             .hook_config
             .get()
@@ -1151,7 +1156,7 @@ impl BuiltinHost {
                     match self
                         .invoke_mcp(&entry, &inv, &cancel)
                         .await
-                        .and_then(output)
+                        .and_then(|result| output(result, provenance))
                     {
                         Ok(outcome) => outcome,
                         Err(ToolError::Failed(error)) => ToolOutcome::Failed(error),
@@ -1712,7 +1717,10 @@ fn user_action(
     Some((record.status, message.into()))
 }
 
-fn output(result: Value) -> Result<ToolOutcome, ToolError> {
+/// The server's text as an external result; the registry frames it after truncation
+/// (`untrusted-content` → Framed tool results). An `isError` text is framed too, since
+/// the server wrote it, and `structuredContent` stays unchanged for clients.
+fn output(result: Value, provenance: Provenance) -> Result<ToolOutcome, ToolError> {
     let content = result["content"]
         .as_array()
         .ok_or_else(|| ToolError::Failed("MCP result has no content list".into()))?;
@@ -1726,20 +1734,17 @@ fn output(result: Value) -> Result<ToolOutcome, ToolError> {
         })
         .collect::<Result<Vec<_>, _>>()?
         .join("\n");
-    if result["isError"] == true {
-        return Ok(ToolOutcome::Failed(text));
-    }
-    if content.iter().any(|item| item["type"] != "text") {
+    let failed = result["isError"] == true;
+    if !failed && content.iter().any(|item| item["type"] != "text") {
         return Err(ToolError::Failed(
             "MCP non-text content attachment handling is not implemented".into(),
         ));
     }
-    Ok(match result.get("structuredContent") {
-        Some(value) => ToolOutcome::Structured {
-            output: text,
-            value: value.clone(),
-        },
-        None => ToolOutcome::Ok(text),
+    Ok(ToolOutcome::External {
+        output: text,
+        value: result.get("structuredContent").filter(|_| !failed).cloned(),
+        failed,
+        provenance,
     })
 }
 

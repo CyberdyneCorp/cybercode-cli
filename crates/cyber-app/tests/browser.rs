@@ -563,6 +563,13 @@ async fn unvetted_browser_tools_are_neither_offered_nor_called() {
         .collect();
     assert_eq!(called, [json!("browser_snapshot")], "{:?}", f.results());
     let results = f.results();
+    // Scenario "Browser page framed as browser": the page reaches the model as data.
+    assert!(
+        results[0].starts_with(
+            "<untrusted_content source=\"browser\" origin=\"mcp:browser/browser_snapshot\">\n"
+        ) && results[0].ends_with("\n</untrusted_content>"),
+        "{results:?}"
+    );
     assert!(results[1].contains("Unknown tool"), "{results:?}");
     assert!(results[2].contains("Unknown tool"), "{results:?}");
     f.app.runtime.shutdown().await;

@@ -389,6 +389,12 @@ impl Outgoing {
         }
     }
 
+    /// Injection signals in the message's own text, recorded on its admission
+    /// (`untrusted-content` → Injection signal detection).
+    fn untrusted(&self) -> Option<cyber_core::untrusted::UntrustedRecord> {
+        crate::runtime::untrusted_input::message_record(&self.from, &self.text)
+    }
+
     /// Whether a recorded message is this one sent again.
     fn matches(&self, row: &MessageRow) -> bool {
         let target = &self.target.candidate.session_id;
@@ -710,6 +716,7 @@ impl Messaging {
                 &target,
                 outgoing.admission(delivery),
                 vec![event(kind, &record)],
+                outgoing.untrusted(),
             )
         })
         .await?;

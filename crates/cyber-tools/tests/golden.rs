@@ -269,19 +269,20 @@ async fn web_goldens() {
         br#"{"results":[{"title":"Rust","url":"https://rust-lang.org/","content":"Systems language"}]}"#.to_vec())).await;
     let f = Fixture::new();
     f.set_config(json!({"permissions":{"webfetch":"allow","websearch":"allow"},"tools":{"websearch":{"backend":"searxng","searxng":{"url":base}}}}));
-    support::golden(
-        &f,
-        "webfetch",
-        &ok(f
-            .call("default", "webfetch", json!({"url":base,"format":"text"}))
-            .await),
+    // Both are framed as untrusted content; the server's port is normalized.
+    let (fetched, _) = support::external(
+        f.call("default", "webfetch", json!({"url":base,"format":"text"}))
+            .await,
     );
+    support::golden(&f, "webfetch", &fetched.replace(&base, "http://SERVER"));
     support::golden(
         &f,
         "websearch",
-        &ok(f
-            .call("default", "websearch", json!({"query":"rust"}))
-            .await),
+        &support::external(
+            f.call("default", "websearch", json!({"query":"rust"}))
+                .await,
+        )
+        .0,
     );
 }
 

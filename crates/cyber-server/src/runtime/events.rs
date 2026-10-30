@@ -175,6 +175,11 @@ pub struct Admitted {
     /// untrusted user-turn data when it is promoted.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resources: Vec<String>,
+    /// Injection signals in an admitted cross-session message or Channel event
+    /// (`untrusted-content` → Injection signal notices); absent when it had none, and on
+    /// events written before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub untrusted: Option<cyber_core::untrusted::UntrustedRecord>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -201,6 +206,10 @@ pub struct InboxUpdated {
     /// Resource mentions resolved for edited parts; replace any earlier attachments.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resources: Vec<String>,
+    /// The edited attachments' `untrusted` record; replaces the row's earlier one for a
+    /// prompt with source `user`. Events without it read as no record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub untrusted: Option<cyber_core::untrusted::UntrustedRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -376,6 +385,11 @@ pub struct ToolSettled {
     /// Secrets hidden from `output` (`tool-registry` → Tool output redaction).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redactions: Option<cyber_core::redact::Redactions>,
+    /// The result's provenance and injection signals (`untrusted-content` → Injection
+    /// signal notices): present for every framed result, and for a workspace result
+    /// scanned under `scan: "all"` that had hits. Absent reads as no signals.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub untrusted: Option<cyber_core::untrusted::UntrustedRecord>,
 }
 
 pub(crate) fn present_value<'de, D: serde::Deserializer<'de>>(
@@ -792,4 +806,67 @@ fn project_usage(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()> 
 
 fn s<'a>(v: &'a Value, key: &str) -> &'a str {
     v[key].as_str().unwrap_or_default()
+}
+
+#[cfg(test)]
+mod untrusted_tests {
+    use super::*;
+    use cyber_core::untrusted::{Scan, Signal, SignalKind, UntrustedRecord};
+    use serde_json::json;
+
+    fn record(source: &str) -> UntrustedRecord {
+        UntrustedRecord::new(
+            source,
+            "https://x.example/a",
+            Scan {
+                signals: vec![Signal {
+                    kind: SignalKind::PermissionChange,
+                    excerpt: "switch to bypass mode".into(),
+                }],
+                count: 1,
+            },
+        )
+    }
+
+    /// `untrusted` on `session.tool.settled.1` round-trips, and a settlement written
+    /// before the field existed reads as having no record, so no signals.
+    #[test]
+    fn settled_records_round_trip_and_old_events_read_as_none() {
+        let old = json!({"call_id": "c1", "status": "ok", "output": "x", "detail": null});
+        let settled: ToolSettled = serde_json::from_value(old.clone()).unwrap();
+        assert!(settled.untrusted.is_none());
+        assert!(
+            serde_json::to_value(&settled)
+                .unwrap()
+                .get("untrusted")
+                .is_none()
+        );
+        let mut new = old;
+        new["untrusted"] = serde_json::to_value(record("webfetch")).unwrap();
+        let settled: ToolSettled = serde_json::from_value(new.clone()).unwrap();
+        assert_eq!(settled.untrusted, Some(record("webfetch")));
+        assert_eq!(
+            serde_json::to_value(&settled).unwrap()["untrusted"],
+            new["untrusted"]
+        );
+    }
+
+    /// The same for `session.prompt.admitted.1`.
+    #[test]
+    fn admitted_records_round_trip_and_old_events_read_as_none() {
+        let old = json!({
+            "message_id": "msgx_1", "parts": [], "delivery": "steer", "source": "session",
+            "digest": "d",
+        });
+        let admitted: Admitted = serde_json::from_value(old.clone()).unwrap();
+        assert!(admitted.untrusted.is_none());
+        let mut new = old;
+        new["untrusted"] = serde_json::to_value(record("session")).unwrap();
+        let admitted: Admitted = serde_json::from_value(new.clone()).unwrap();
+        assert_eq!(admitted.untrusted.as_ref().unwrap().source, "session");
+        assert_eq!(
+            serde_json::to_value(&admitted).unwrap()["untrusted"],
+            new["untrusted"]
+        );
+    }
 }

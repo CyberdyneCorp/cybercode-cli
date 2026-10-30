@@ -386,10 +386,64 @@ pub enum ToolOutcome {
     },
     /// An expected failure; the message is shown to the model.
     Failed(String),
+    /// A result from outside the workspace (`untrusted-content` → Framed tool results).
+    /// The tool hands `output` over bare with its provenance; the registry's projection
+    /// truncates it and wraps it in the `<untrusted_content>` frame, so every External
+    /// outcome that leaves the registry carries framed text. `failed` is the source's
+    /// own error (an MCP `isError`), and `value` stays unchanged structured data.
+    External {
+        output: String,
+        value: Option<Value>,
+        failed: bool,
+        provenance: Provenance,
+    },
     /// Stopped by the abort signal before finishing.
     Aborted,
     /// A defect; the detail is logged, never shown to the model.
     Crashed(String),
+}
+
+/// Where an external tool result came from (`untrusted-content` → Untrusted content
+/// frame): the frame's `source` and `origin` attributes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Provenance {
+    pub source: ContentSource,
+    pub origin: String,
+}
+
+/// The `source` attribute of an `<untrusted_content>` frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContentSource {
+    Webfetch,
+    Websearch,
+    Mcp,
+    McpResource,
+    Browser,
+    /// A managed overflow file re-read without its provenance record.
+    Overflow,
+}
+
+impl ContentSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Webfetch => "webfetch",
+            Self::Websearch => "websearch",
+            Self::Mcp => "mcp",
+            Self::McpResource => "mcp_resource",
+            Self::Browser => "browser",
+            Self::Overflow => "overflow",
+        }
+    }
+}
+
+impl Provenance {
+    pub fn new(source: ContentSource, origin: impl Into<String>) -> Self {
+        Self {
+            source,
+            origin: origin.into(),
+        }
+    }
 }
 
 /// Read-only reconciliation of an outcome that became unknown.
@@ -1215,6 +1269,25 @@ pub trait ToolHost: Send + Sync {
         _call_id: &str,
     ) -> cyber_core::redact::Redactions {
         cyber_core::redact::Redactions::default()
+    }
+
+    /// The Location's effective `permissions.untrusted_content` notice policy (`taint`
+    /// and `bypass`), which clients need to state a notice's consequence
+    /// (`untrusted-content` → Injection signal notices). Hosts without the setting
+    /// report the defaults.
+    fn untrusted_policy(&self, _directory: &str) -> cyber_core::untrusted::NoticePolicy {
+        cyber_core::untrusted::NoticePolicy::default()
+    }
+
+    /// Take, once, the `untrusted` record the host noted for a call's result
+    /// (`untrusted-content` → Injection signal notices); the runtime records it on the
+    /// settlement. Hosts that frame nothing return `None`.
+    fn take_call_untrusted(
+        &self,
+        _session_id: &str,
+        _call_id: &str,
+    ) -> Option<cyber_core::untrusted::UntrustedRecord> {
+        None
     }
 
     /// Establish, without side effects, whether a dispatched call took effect.

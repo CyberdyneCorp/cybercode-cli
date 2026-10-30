@@ -152,7 +152,7 @@ impl BuiltinHost {
             let server = metadata["server"].as_str().unwrap_or(&inv.name).to_owned();
             let authorized = match ctx
                 .authorize(
-                    request(&inv, read_only, hints),
+                    request(&inv, read_only, hints, &metadata),
                     vec!["*".into()],
                     metadata.clone(),
                 )
@@ -232,6 +232,7 @@ impl BuiltinHost {
         Ok(Ctx {
             skill_paths: Default::default(),
             loaded_skill: Default::default(),
+            provenance: Default::default(),
             compiler_feedback: Default::default(),
             host: self,
             inv,
@@ -277,7 +278,7 @@ impl BuiltinHost {
                     .to_owned();
                 match ctx
                     .authorize(
-                        request(&retried, retry.read_only, retry.hints),
+                        request(&retried, retry.read_only, retry.hints, &retry.metadata),
                         vec!["*".into()],
                         retry.metadata,
                     )
@@ -302,8 +303,11 @@ impl BuiltinHost {
         token_limit: Option<usize>,
     ) -> ToolOutcome {
         let budget = self.budget(&ctx.location);
-        let bound =
-            |output: String| budget.apply_registered(output, ctx.inv.tool_output, token_limit);
+        let bound = |output: String| {
+            budget
+                .apply_registered(output, ctx.inv.tool_output, token_limit, None)
+                .map(|(output, _)| output)
+        };
         let outcome = match outcome {
             ToolOutcome::Ok(output) => {
                 bound(output).map_or_else(ToolOutcome::Crashed, ToolOutcome::Ok)
@@ -330,6 +334,30 @@ impl BuiltinHost {
             ToolOutcome::Failed(output) => {
                 bound(output).map_or_else(ToolOutcome::Crashed, ToolOutcome::Failed)
             }
+            // The projection owns the frame: truncate the bare text, then scan and frame
+            // it, and note its `untrusted` record for the settlement.
+            ToolOutcome::External {
+                output,
+                value,
+                failed,
+                provenance,
+            } => match budget.apply_registered(
+                output,
+                ctx.inv.tool_output,
+                token_limit,
+                Some(&provenance),
+            ) {
+                Ok((output, scan)) => {
+                    self.note_framed(ctx.inv, &provenance, scan.unwrap_or_default());
+                    ToolOutcome::External {
+                        output,
+                        value,
+                        failed,
+                        provenance,
+                    }
+                }
+                Err(error) => ToolOutcome::Crashed(error),
+            },
             other => other,
         };
         // What the projection hid from the raw result before cutting it.
@@ -351,12 +379,15 @@ struct Retry<'a> {
     network_target: Option<&'a NetworkTarget>,
 }
 
-fn request(inv: &Invocation, read_only: bool, hints: ToolHints) -> Request {
+/// `metadata` marks an MCP call (a `server` with no other `source`): its arguments
+/// leave the process, which a tainted run treats as egress.
+fn request(inv: &Invocation, read_only: bool, hints: ToolHints, metadata: &Value) -> Request {
     Request {
         action: inv.name.clone(),
         resources: vec!["*".into()],
         read_only,
         destructive: hints.destructive,
+        egress: metadata.get("server").is_some() && metadata.get("source").is_none(),
         ..Default::default()
     }
 }

@@ -22,6 +22,7 @@ fn call(name: &str, input: Value) -> CallState {
         output: None,
         metadata: None,
         redactions: None,
+        untrusted: None,
     }
 }
 

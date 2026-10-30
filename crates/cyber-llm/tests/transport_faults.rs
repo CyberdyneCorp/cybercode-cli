@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use cyber_llm::adapters::{ApiKind, Endpoint, adapter};
 use cyber_llm::{ErrorKind, LlmEvent, LlmRequest, RetryPolicy, collect, open_with_retry};
+use futures::StreamExt;
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -23,12 +24,20 @@ impl Drop for FaultServer {
     }
 }
 
-impl FaultServer {
-    async fn start(responses: Vec<(String, bool)>) -> Self {
-        Self::start_with_held_tail(responses, false).await
-    }
+/// How a response body ends after its events.
+#[derive(Clone, Copy, PartialEq)]
+enum Tail {
+    /// The terminating chunk, then close.
+    Complete,
+    /// Close without the terminating chunk.
+    Broken,
+    /// Keep the connection open and send nothing more.
+    Held,
+}
 
-    async fn start_with_held_tail(responses: Vec<(String, bool)>, held: bool) -> Self {
+impl FaultServer {
+    /// Each request gets the next response; the last one repeats.
+    async fn start(responses: Vec<(String, Tail)>) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let requests = Arc::new(AtomicUsize::new(0));
@@ -59,7 +68,7 @@ impl FaultServer {
                 request.resize(header_end + length, 0);
                 socket.read_exact(&mut request[header_end..]).await.unwrap();
                 let index = count.fetch_add(1, Ordering::SeqCst);
-                let (body, broken) = &responses[index.min(responses.len() - 1)];
+                let (body, tail) = &responses[index.min(responses.len() - 1)];
                 let headers = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{:x}\r\n",
                     body.len()
@@ -67,10 +76,15 @@ impl FaultServer {
                 socket.write_all(headers.as_bytes()).await.unwrap();
                 socket.write_all(body.as_bytes()).await.unwrap();
                 socket.write_all(b"\r\n").await.unwrap();
-                if held {
-                    std::future::pending::<()>().await;
+                if *tail == Tail::Held {
+                    // Hold this connection open while later requests are served.
+                    tokio::spawn(async move {
+                        let _socket = socket;
+                        std::future::pending::<()>().await
+                    });
+                    continue;
                 }
-                if !broken {
+                if *tail == Tail::Complete {
                     socket.write_all(b"0\r\n\r\n").await.unwrap();
                 }
                 socket.shutdown().await.unwrap();
@@ -118,7 +132,7 @@ fn model(server: &FaultServer) -> Box<dyn cyber_llm::Adapter> {
 
 #[tokio::test]
 async fn completed_response_survives_broken_http_tail() {
-    let server = FaultServer::start(vec![(text() + &completed(), true)]).await;
+    let server = FaultServer::start(vec![(text() + &completed(), Tail::Broken)]).await;
     let output = collect(
         model(&server).stream(LlmRequest::default()).await.unwrap(),
         |_| {},
@@ -132,8 +146,7 @@ async fn completed_response_survives_broken_http_tail() {
 
 #[tokio::test]
 async fn completed_response_does_not_wait_for_http_eof() {
-    let server =
-        FaultServer::start_with_held_tail(vec![(text() + &completed(), false)], true).await;
+    let server = FaultServer::start(vec![(text() + &completed(), Tail::Held)]).await;
     let output = tokio::time::timeout(Duration::from_secs(10), async {
         collect(
             model(&server).stream(LlmRequest::default()).await.unwrap(),
@@ -154,9 +167,9 @@ async fn broken_body_before_output_retries_then_succeeds() {
     let server = FaultServer::start(vec![
         (
             event("response.created", json!({"response":{"id":"r1"}})),
-            true,
+            Tail::Broken,
         ),
-        (text() + &completed(), false),
+        (text() + &completed(), Tail::Complete),
     ])
     .await;
     let adapter = model(&server);
@@ -165,72 +178,98 @@ async fn broken_body_before_output_retries_then_succeeds() {
         adapter.as_ref(),
         &LlmRequest::default(),
         &policy(),
-        |_, _, error| {
+        |retry| {
             retries += 1;
-            assert_eq!(error.kind, ErrorKind::Transport);
+            assert!(!retry.discarded, "nothing was streamed");
+            assert_eq!(retry.error.kind, ErrorKind::Transport);
             assert!(
-                error.message.contains("response stream interrupted after"),
-                "{error}"
+                retry
+                    .error
+                    .message
+                    .contains("response stream interrupted after"),
+                "{}",
+                retry.error
             );
         },
     )
     .await
     .unwrap();
-    assert_eq!(collect(stream, |_| {}).await.unwrap().text, "hello");
+    let mut seen = Vec::new();
+    let output = collect(stream, |event| seen.push(event.clone()))
+        .await
+        .unwrap();
+    assert_eq!(output.text, "hello");
+    assert!(!seen.contains(&LlmEvent::Discarded));
     assert_eq!(retries, 1);
     assert_eq!(server.requests.load(Ordering::SeqCst), 2);
 }
 
-#[tokio::test]
-async fn broken_body_after_partial_output_is_never_retried() {
-    for prefix in [
+/// What an interrupted attempt can have streamed before its body broke.
+fn partial_prefixes() -> [String; 4] {
+    let call = event(
+        "response.output_item.added",
+        json!({"item":{"type":"function_call","id":"i1","call_id":"c1","name":"write"}}),
+    );
+    [
         text(),
         event(
             "response.reasoning_summary_text.delta",
             json!({"delta":"thinking"}),
         ),
-        event(
-            "response.output_item.added",
-            json!({"item":{"type":"function_call","id":"i1","call_id":"c1","name":"write"}}),
-        ) + &event(
-            "response.function_call_arguments.delta",
-            json!({"item_id":"i1","delta":"{\"path\":"}),
-        ),
-        event(
-            "response.output_item.added",
-            json!({"item":{"type":"function_call","id":"i1","call_id":"c1","name":"write"}}),
-        ) + &event(
+        call.clone()
+            + &event(
+                "response.function_call_arguments.delta",
+                json!({"item_id":"i1","delta":"{\"path\":"}),
+            ),
+        // Complete but never dispatched: the stream had not ended.
+        call + &event(
             "response.output_item.done",
             json!({"item":{"type":"function_call","id":"i1","arguments":"{}"}}),
         ),
-    ] {
-        let server = FaultServer::start(vec![(prefix, true)]).await;
+    ]
+}
+
+/// `provider-catalog` → Retry policy: partial text, reasoning, streamed tool arguments or a
+/// completed but undispatched call are discarded, and the same request is replayed.
+#[tokio::test]
+async fn broken_body_after_partial_output_is_discarded_and_replayed() {
+    for prefix in partial_prefixes() {
+        let server = FaultServer::start(vec![
+            (prefix, Tail::Broken),
+            (text() + &completed(), Tail::Complete),
+        ])
+        .await;
         let adapter = model(&server);
+        let mut notices = Vec::new();
         let stream = open_with_retry(
             adapter.as_ref(),
             &LlmRequest::default(),
             &policy(),
-            |_, _, _| panic!("partial output must not be replayed"),
+            |retry| {
+                notices.push((retry.attempt, retry.discarded, retry.error.kind));
+            },
         )
         .await
         .unwrap();
         let mut seen = Vec::new();
-        let error = collect(stream, |event| seen.push(event.clone()))
+        let output = collect(stream, |event| seen.push(event.clone()))
             .await
-            .unwrap_err();
-        assert_eq!(error.kind, ErrorKind::Transport);
-        assert!(
-            error.message.contains("response stream interrupted after"),
-            "{error}"
-        );
-        assert!(seen.iter().any(LlmEvent::is_output));
-        assert_eq!(server.requests.load(Ordering::SeqCst), 1);
+            .unwrap();
+        let discarded = seen
+            .iter()
+            .position(|event| *event == LlmEvent::Discarded)
+            .expect("the partial attempt is discarded");
+        assert!(seen[..discarded].iter().any(LlmEvent::is_output));
+        assert_eq!(notices, [(1, true, ErrorKind::Transport)]);
+        assert_eq!(output.text, "hello");
+        assert!(output.reasoning.is_empty() && output.tool_calls.is_empty());
+        assert_eq!(server.requests.load(Ordering::SeqCst), 2);
     }
 }
 
 #[tokio::test]
 async fn clean_http_eof_before_protocol_completion_is_an_error() {
-    let server = FaultServer::start(vec![(text(), false)]).await;
+    let server = FaultServer::start(vec![(text(), Tail::Complete)]).await;
     let error = collect(
         model(&server).stream(LlmRequest::default()).await.unwrap(),
         |_| {},
@@ -248,17 +287,12 @@ async fn clean_http_eof_before_protocol_completion_is_an_error() {
 #[tokio::test]
 async fn repeated_body_faults_stop_at_the_retry_limit() {
     let body = event("response.created", json!({"response":{"id":"r1"}}));
-    let server = FaultServer::start(vec![(body.clone(), true)]).await;
+    let server = FaultServer::start(vec![(body.clone(), Tail::Broken)]).await;
     let adapter = model(&server);
     let mut retries = 0;
-    let error = open_with_retry(
-        adapter.as_ref(),
-        &LlmRequest::default(),
-        &policy(),
-        |_, _, _| {
-            retries += 1;
-        },
-    )
+    let error = open_with_retry(adapter.as_ref(), &LlmRequest::default(), &policy(), |_| {
+        retries += 1;
+    })
     .await
     .err()
     .expect("all five attempts must fail");
@@ -273,11 +307,56 @@ async fn repeated_body_faults_stop_at_the_retry_limit() {
     );
 }
 
-/// `provider-catalog` → "Stalled stream": headers and one event, then silence for the
-/// idle window, fails as a transport error, and the partial output is not replayed.
+/// Failures before and after output share one budget of four retries; the last attempt's
+/// failure is returned with its partial output, so the Turn settles as interrupted.
 #[tokio::test]
-async fn a_stalled_stream_fails_after_the_idle_window() {
-    let server = FaultServer::start_with_held_tail(vec![(text(), false)], true).await;
+async fn retries_before_and_after_output_share_one_budget() {
+    let created = event("response.created", json!({"response":{"id":"r1"}}));
+    let server = FaultServer::start(vec![
+        (created.clone(), Tail::Broken),
+        (text(), Tail::Broken),
+        (created, Tail::Broken),
+        (text(), Tail::Broken),
+    ])
+    .await;
+    let adapter = model(&server);
+    let mut notices = Vec::new();
+    let stream = open_with_retry(
+        adapter.as_ref(),
+        &LlmRequest::default(),
+        &policy(),
+        |retry| {
+            notices.push(retry.discarded);
+        },
+    )
+    .await
+    .unwrap();
+    let mut seen = Vec::new();
+    let error = collect(stream, |event| seen.push(event.clone()))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, ErrorKind::Transport);
+    assert_eq!(notices, [false, true, false, true]);
+    assert_eq!(server.requests.load(Ordering::SeqCst), 5);
+    let last = seen
+        .iter()
+        .rposition(|e| *e == LlmEvent::Discarded)
+        .unwrap();
+    assert!(
+        seen[last..].iter().any(LlmEvent::is_output),
+        "the final attempt's partial output reaches the caller"
+    );
+}
+
+/// `provider-catalog` → "Stalled stream": headers and one event, then silence for the
+/// idle window, fails as a transport error; the partial output is discarded and replayed.
+#[tokio::test]
+async fn a_stalled_stream_fails_after_the_idle_window_and_is_replayed() {
+    let server = FaultServer::start(vec![
+        (text(), Tail::Held),
+        (text() + &completed(), Tail::Complete),
+    ])
+    .await;
     // No client-wide timeout: under the paused clock only the idle timer may fire.
     let mut endpoint = Endpoint::new(server.url.clone(), None);
     endpoint.client = reqwest::Client::builder().no_proxy().build().unwrap();
@@ -286,27 +365,28 @@ async fn a_stalled_stream_fails_after_the_idle_window() {
         Some(cyber_llm::adapters::DEFAULT_IDLE_TIMEOUT)
     );
     let adapter = adapter(ApiKind::OpenaiResponses, endpoint);
+    let mut errors = Vec::new();
     let mut stream = open_with_retry(
         adapter.as_ref(),
         &LlmRequest::default(),
         &policy(),
-        |_, _, _| panic!("partial output must not be replayed"),
+        |retry| {
+            errors.push(retry.error.message.clone());
+        },
     )
     .await
     .unwrap();
-    use futures::StreamExt;
     let first = stream.next().await.unwrap().unwrap();
     assert!(first.is_output(), "{first:?}");
 
     tokio::time::pause();
     let started = tokio::time::Instant::now();
-    let error = stream.next().await.unwrap().unwrap_err();
-    assert_eq!(error.kind, ErrorKind::Transport);
-    assert_eq!(error.message, "stream idle for 300s");
+    assert_eq!(stream.next().await.unwrap().unwrap(), LlmEvent::Discarded);
     assert!(started.elapsed() >= Duration::from_secs(300));
-    assert!(
-        stream.next().await.is_none(),
-        "the stream ends with the failure"
-    );
-    assert_eq!(server.requests.load(Ordering::SeqCst), 1);
+    // The replay runs on real time: a paused clock would fire its idle timer at once.
+    tokio::time::resume();
+    let output = collect(stream, |_| {}).await.unwrap();
+    assert_eq!(output.text, "hello");
+    assert_eq!(errors, ["stream idle for 300s"]);
+    assert_eq!(server.requests.load(Ordering::SeqCst), 2);
 }

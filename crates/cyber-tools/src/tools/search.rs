@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use cyber_server::runtime::{RetrySafety, ToolDef};
+use cyber_server::runtime::{ContentSource, Provenance, RetrySafety, ToolDef};
 use futures::future::BoxFuture;
 use globset::{Glob as GlobPattern, GlobMatcher};
 use regex::Regex;
@@ -64,10 +64,20 @@ async fn scope(ctx: &Ctx<'_>, action: &str, resource: &str) -> Result<PathBuf, T
     let raw = text(&ctx.inv.input, "path");
     let base = ctx.resolve(if raw.is_empty() { "." } else { raw });
     ctx.check_external(std::slice::from_ref(&base)).await?;
+    // The searched base and file filter, for the secret-path check of a tainted run.
+    let filter = match action {
+        "glob" => resource,
+        _ => text(&ctx.inv.input, "include"),
+    };
+    let mut reads = vec![base.clone()];
+    if !filter.is_empty() {
+        reads.push(base.join(filter));
+    }
     let req = Request {
         action: action.into(),
         resources: vec![resource.into()],
         read_only: true,
+        reads,
         ..Request::default()
     };
     ctx.authorize(req, vec![resource.into()], Value::Null)
@@ -158,18 +168,41 @@ impl Tool for Grep {
             let limit = number(input, "limit").unwrap_or(100).clamp(1, 1000) as usize;
             let files = walker(&base, crate::sandboxing::hidden(ctx))
                 .filter(|p| include.as_ref().is_none_or(|m| glob_matches(m, &base, p)));
-            Ok(search(files, &regex, context, limit, &ctx.cancel))
+            let (output, matched) = search(files, &regex, context, limit, &ctx.cancel);
+            ctx.authorize_secret_matches(&matched).await?;
+            frame_overflow_matches(ctx, &base, &matched);
+            Ok(output)
         })
     }
 }
 
+/// Matches from managed overflow files keep their frame (`untrusted-content` → Framed
+/// tool results): one file's recorded provenance, or `overflow` for several.
+fn frame_overflow_matches(ctx: &Ctx<'_>, base: &Path, matched: &[PathBuf]) {
+    let dir = &ctx.host.opts.tool_output_dir;
+    let managed: Vec<&PathBuf> = matched
+        .iter()
+        .filter(|path| crate::untrusted::overflow::managed(dir, path))
+        .collect();
+    match managed.as_slice() {
+        [] => {}
+        [file] => ctx.frame_overflow_reads(file),
+        _ => ctx.declare_provenance(Provenance::new(
+            ContentSource::Overflow,
+            base.display().to_string(),
+        )),
+    }
+}
+
+/// The rendered matches and the files they came from.
 fn search(
     files: impl Iterator<Item = PathBuf>,
     regex: &Regex,
     context: usize,
     limit: usize,
     cancel: &tokio_util::sync::CancellationToken,
-) -> String {
+) -> (String, Vec<PathBuf>) {
+    let mut matched = Vec::new();
     let mut blocks = Vec::new();
     let mut total = 0;
     for path in files {
@@ -196,12 +229,14 @@ fn search(
         }
         total += hits.len();
         blocks.push(render(&path, &lines, &hits, context));
+        matched.push(path);
     }
-    match total {
+    let output = match total {
         0 => "No matches found".into(),
         n if n >= limit => format!("Found {n} matches (limit reached)\n{}", blocks.join("\n")),
         n => format!("Found {n} matches\n{}", blocks.join("\n")),
-    }
+    };
+    (output, matched)
 }
 
 fn render(path: &Path, lines: &[&str], hits: &[usize], context: usize) -> String {
@@ -276,6 +311,7 @@ pub(crate) async fn grep_value(ctx: &Ctx<'_>) -> Result<Value, ToolError> {
         .collect();
     files.sort();
     let mut matches = Vec::new();
+    let mut matched = Vec::new();
     let mut truncated = false;
     for path in files {
         if ctx.cancel.is_cancelled() {
@@ -285,6 +321,9 @@ pub(crate) async fn grep_value(ctx: &Ctx<'_>) -> Result<Value, ToolError> {
         let room = max - matches.len();
         truncated = found.len() > room;
         let shown = ctx.resource(&path);
+        if !found.is_empty() {
+            matched.push(path);
+        }
         matches.extend(
             found
                 .into_iter()
@@ -295,6 +334,8 @@ pub(crate) async fn grep_value(ctx: &Ctx<'_>) -> Result<Value, ToolError> {
             break;
         }
     }
+    ctx.authorize_secret_matches(&matched).await?;
+    frame_overflow_matches(ctx, &base, &matched);
     Ok(json!({"matches": matches, "truncated": truncated}))
 }
 

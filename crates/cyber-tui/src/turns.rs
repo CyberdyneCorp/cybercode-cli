@@ -140,6 +140,7 @@ mod tests {
             id: id.into(),
             text: "go".into(),
             promoted_ms: Some(0),
+            untrusted: None,
         }
     }
 
@@ -208,6 +209,7 @@ mod tests {
                 status: "interrupted".into(),
                 output: String::new(),
                 redactions: 0,
+                untrusted: None,
             });
         }
         assert_eq!(markers(&items, false)[0].outcome, Outcome::Interrupted);

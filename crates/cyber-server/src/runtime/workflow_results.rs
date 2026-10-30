@@ -15,7 +15,7 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use super::model::Delivery;
-use super::workflows::{RUN_NOTIFIED, RUN_RESUMED, WorkflowAgent, WorkflowRun};
+use super::workflows::{CALL_RECORDED, RUN_NOTIFIED, RUN_RESUMED, WorkflowAgent, WorkflowRun};
 use super::{Admission, Runtime, RuntimeError};
 
 /// Return values larger than this (as JSON) are stored as a file with a preview.
@@ -169,13 +169,76 @@ impl Runtime {
         admission.message_id = Some(message_id.clone());
         admission.source = "workflow".into();
         admission.resume = run.continue_owner;
-        match self.admit(&run.session_id, admission).await {
+        // Tainted agents taint the owner that reads the summary (`permissions-modes` →
+        // Untrusted-content taint).
+        let untrusted = self.agents_taint(&run.id, &agents).await;
+        let admitted = self
+            .admit_recorded(
+                &run.session_id,
+                admission,
+                None,
+                super::PromptCheck::Checked(None),
+                Vec::new(),
+                untrusted,
+            )
+            .await;
+        match admitted {
             Ok(_) | Err(RuntimeError::PromptConflict(_)) => {}
             Err(error) => return Err(error),
         }
         self.run_log()
             .append(&run.id, RUN_NOTIFIED, json!({"message_id": message_id}))
             .map_err(RuntimeError::Invalid)
+    }
+
+    /// The record the run's tainted agents, and its direct tool reads of external
+    /// content, hand on together: the first one's source and origin with the union of
+    /// their kinds.
+    async fn agents_taint(
+        &self,
+        run_id: &str,
+        agents: &[super::WorkflowAgent],
+    ) -> Option<cyber_core::untrusted::UntrustedRecord> {
+        let mut taint = cyber_core::untrusted::RunTaint::default();
+        for session in agents
+            .iter()
+            .filter_map(|agent| agent.session_id.as_deref())
+        {
+            if let Some(record) = self.handed_taint(session).await {
+                taint.note(&record);
+            }
+        }
+        for record in self.direct_tool_records(run_id).unwrap_or_default() {
+            taint.note(&record);
+        }
+        taint.inherited()
+    }
+
+    /// The `untrusted` records of the run's recorded direct tool values: a script's
+    /// `tools.read`/`tools.grep` of a managed overflow file is framed and carries one.
+    fn direct_tool_records(
+        &self,
+        run_id: &str,
+    ) -> Result<Vec<cyber_core::untrusted::UntrustedRecord>, RuntimeError> {
+        let run = run_id.to_owned();
+        let texts = self.inner.store.read(move |db| {
+            let mut statement = db.prepare(
+                "SELECT json_extract(data, '$.outcome.value.untrusted') FROM event \
+                 WHERE aggregate_id = ?1 AND type = ?2 AND json_extract(data, '$.kind') = 'tool' \
+                 AND json_extract(data, '$.outcome.value.untrusted') IS NOT NULL ORDER BY seq",
+            )?;
+            let texts = statement
+                .query_map(rusqlite::params![run, CALL_RECORDED], |row| {
+                    row.get::<_, String>(0)
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(texts)
+        })?;
+        // A record that does not parse is skipped, as an event without the field is.
+        Ok(texts
+            .iter()
+            .filter_map(|text| serde_json::from_str(text).ok())
+            .collect())
     }
 
     /// How often the run was resumed: its attempt number less one.

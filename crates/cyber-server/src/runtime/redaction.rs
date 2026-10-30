@@ -31,3 +31,20 @@ pub(super) fn redact_value(tools: &dyn ToolHost, directory: &str, value: &mut Va
 pub(super) fn redact_text(tools: &dyn ToolHost, directory: &str, text: String) -> String {
     tools.redact_model_text(directory, text).0
 }
+
+/// Taint evidence may be reused in a later classifier request. Redact its data
+/// fields with the same Location policy without changing detector kinds or version.
+pub(super) fn redact_untrusted(
+    tools: &dyn ToolHost,
+    directory: &str,
+    record: &mut cyber_core::untrusted::UntrustedRecord,
+) {
+    let origin = redact_text(tools, directory, std::mem::take(&mut record.origin));
+    record.origin = cyber_core::untrusted::visible_value(&origin);
+    for signal in &mut record.signals {
+        signal.excerpt = redact_text(tools, directory, std::mem::take(&mut signal.excerpt))
+            .chars()
+            .take(cyber_core::untrusted::EXCERPT_LIMIT)
+            .collect();
+    }
+}

@@ -1,1 +1,3 @@
+<untrusted_content source="webfetch" origin="http://SERVER/">
 {"results":[{"title":"Rust","url":"https://rust-lang.org/","content":"Systems language"}]}
+</untrusted_content>

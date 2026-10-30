@@ -10,3 +10,5 @@
 .computer-controls.native-active { position: sticky; top: 67px; z-index: 4; max-height: calc(100dvh - 79px); overflow: auto; background: #17201c; }
 .computer-controls.native-active > .notice { position: sticky; top: 0; z-index: 1; background: #17201c; }
 @media(max-width:620px) { .computer-controls.native-active { top: 61px; max-height: calc(100dvh - 73px); } }
+.untrusted-notice { margin: 10px 0 0; padding: 9px 12px; border: 1px solid #65583a; border-radius: 7px; background: #efd28d0a; color: var(--amber); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; unicode-bidi: plaintext; }
+.untrusted-excerpts { margin: 0; padding: 10px 15px 12px 30px; border-top: 1px solid var(--line); font-size: 11px; line-height: 1.7; color: var(--muted); overflow-wrap: anywhere; unicode-bidi: plaintext; }

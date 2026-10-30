@@ -537,6 +537,7 @@ impl Inner {
                         hook_context: None,
                         hook_stop: None,
                         resources: Vec::new(),
+                        untrusted: None,
                     },
                 ),
                 event(

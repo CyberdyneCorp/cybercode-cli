@@ -259,6 +259,7 @@ fn messages_render_text_tools_and_collapsed_output() {
             id: "m1".into(),
             text: "run the tests".into(),
             promoted_ms: None,
+            untrusted: None,
         },
         Item::Assistant {
             id: "m2".into(),
@@ -271,6 +272,7 @@ fn messages_render_text_tools_and_collapsed_output() {
                 status: "ok".into(),
                 output,
                 redactions: 0,
+                untrusted: None,
             }],
             error: None,
             step: Default::default(),
@@ -332,6 +334,28 @@ fn streaming_text_shows_until_the_message_is_durable() {
         ]
     );
     assert!(!app.session.running);
+}
+
+/// `provider-catalog` → Retry policy: a retry that discarded a partial answer clears its
+/// streamed text, so the replay is not shown after the old text.
+#[test]
+fn a_discarded_attempt_clears_its_streamed_text() {
+    let mut app = App::new(session(true), Vec::new(), "cyber");
+    let delta = |text: &str| json!({ "session_id": "ses_1", "message_id": "m9", "text": text });
+    app.on_event("session.text.delta", &delta("first half"));
+    let retry = |discarded: bool| {
+        json!({ "session_id": "ses_1", "message_id": "m9", "attempt": 1, "delay_ms": 900,
+            "error": "transport: connection reset", "discarded": discarded })
+    };
+    app.on_event("session.retry", &retry(false));
+    assert!(
+        screen(&app).contains("first half"),
+        "a retry before output keeps it"
+    );
+    assert!(app.on_event("session.retry", &retry(true)).is_empty());
+    app.on_event("session.text.delta", &delta("Done."));
+    let s = screen(&app);
+    assert!(s.contains("Done.") && !s.contains("first half"), "{s}");
 }
 
 /// A refresh during a step brings the in-progress assistant message with no text yet;
@@ -3557,16 +3581,19 @@ fn quiet_loop_iterations_collapse_in_the_transcript() {
             id: "loopi_01ABCD_1".into(),
             text: "check CI".into(),
             promoted_ms: None,
+            untrusted: None,
         },
         Item::User {
             id: "loopi_01ABCD_2".into(),
             text: "check CI".into(),
             promoted_ms: None,
+            untrusted: None,
         },
         Item::User {
             id: "loopi_01ABCD_3".into(),
             text: "check CI".into(),
             promoted_ms: None,
+            untrusted: None,
         },
     ];
     app.loops.set(
@@ -3794,8 +3821,8 @@ fn goal_commands_parse_locally_before_posting() {
 fn goal_prompts_and_the_footer() {
     let mut app = App::new(session(false), Vec::new(), "cyber");
     app.items = vec![
-        Item::User { id: "msg_1".into(), text: "<goal id=\"gol_1\">\nWork toward this goal until it is met:\ndocs build cleanly\n</goal>".into(), promoted_ms: None },
-        Item::User { id: "msg_2".into(), text: "<goal_not_met id=\"gol_1\">\nThe goal is not met yet:\ndocs build cleanly\n\nWhy: 2 broken links\n\nKeep working toward it.\n</goal_not_met>".into(), promoted_ms: None },
+        Item::User { id: "msg_1".into(), text: "<goal id=\"gol_1\">\nWork toward this goal until it is met:\ndocs build cleanly\n</goal>".into(), promoted_ms: None, untrusted: None },
+        Item::User { id: "msg_2".into(), text: "<goal_not_met id=\"gol_1\">\nThe goal is not met yet:\ndocs build cleanly\n\nWhy: 2 broken links\n\nKeep working toward it.\n</goal_not_met>".into(), promoted_ms: None, untrusted: None },
     ];
     app.goals.replace(Some(
         json!({"current": {"status": "active", "condition": "docs build cleanly"}}),

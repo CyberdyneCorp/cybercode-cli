@@ -5480,6 +5480,10 @@
             ],
             "description": "The context window meter after the last finished step; null before the first\nstep and after a compaction."
           },
+          "untrusted_content": {
+            "$ref": "#/components/schemas/NoticePolicy",
+            "description": "The Location's effective `permissions.untrusted_content` `taint` and `bypass`,\nso clients state an injection notice's consequence as it applies\n(`untrusted-content` → Injection signal notices)."
+          },
           "usage_limit": {
             "anyOf": [
               {
@@ -5506,7 +5510,8 @@
           "children_cost",
           "children_tokens",
           "children_unpriced_steps",
-          "children_usage_complete"
+          "children_usage_complete",
+          "untrusted_content"
         ],
         "description": "A Session with its live status."
       },
@@ -5633,6 +5638,55 @@
           "measured",
           "compacted"
         ]
+      },
+      "NoticePolicy": {
+        "type": "object",
+        "properties": {
+          "taint": {
+            "$ref": "#/components/schemas/TaintSetting",
+            "default": "signal"
+          },
+          "bypass": {
+            "$ref": "#/components/schemas/BypassSetting",
+            "default": "allow"
+          }
+        },
+        "description": "The effective settings a notice's consequence depends on: the Location's\n`permissions.untrusted_content` `taint` and `bypass`, which the server reports on a\nSession so clients state the consequence that applies."
+      },
+      "TaintSetting": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "off",
+            "description": "No run becomes tainted; notices are still shown."
+          },
+          {
+            "type": "string",
+            "const": "signal",
+            "description": "Results and messages with at least one signal taint the run (the default)."
+          },
+          {
+            "type": "string",
+            "const": "any",
+            "description": "Every framed result taints the run."
+          }
+        ],
+        "description": "`permissions.untrusted_content.taint`: which framed results taint the run."
+      },
+      "BypassSetting": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "allow",
+            "description": "Risky actions run as they would without taint (the default)."
+          },
+          {
+            "type": "string",
+            "const": "deny",
+            "description": "Risky actions are denied."
+          }
+        ],
+        "description": "`permissions.untrusted_content.bypass`: what taint does in `bypass`."
       },
       "UsageLimitWait": {
         "type": "object",
@@ -7371,6 +7425,17 @@
               "null"
             ],
             "description": "The previous message on this message's branch; null for the first message."
+          },
+          "untrusted": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UntrustedRecord"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Injection signals in a promoted cross-session message or Channel event\n(`untrusted-content` → Injection signal notices); absent when it had none."
           }
         },
         "required": [
@@ -7835,6 +7900,17 @@
               }
             ],
             "description": "Secrets hidden from `output` before it reached the model (`tool-registry` → Tool\noutput redaction)."
+          },
+          "untrusted": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UntrustedRecord"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The settled result's provenance and injection signals (`untrusted-content` →\nInjection signal notices)."
           }
         },
         "required": [
@@ -7907,6 +7983,73 @@
           "kinds"
         ],
         "description": "What a redaction hid: how many values, and their kinds (sorted, distinct)."
+      },
+      "UntrustedRecord": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "The frame's `source` (`webfetch`, `mcp`, …), the workspace tool for a\n`scan: \"all\"` hit (`read`, `grep`, `bash`, `powershell`), or `session` /\n`channel` for an admitted message."
+          },
+          "origin": {
+            "type": "string",
+            "description": "Where the content came from, without userinfo and cut to 512 characters."
+          },
+          "detector_version": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "signals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Signal"
+            },
+            "default": []
+          },
+          "signal_count": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "All hits, including those past the recorded ten.",
+            "default": 0
+          }
+        },
+        "required": [
+          "source",
+          "origin",
+          "detector_version"
+        ],
+        "description": "The `untrusted` record of `session.tool.settled.1` and `session.prompt.admitted.1`\n(`untrusted-content` → Injection signal notices). Events without it read as having\nno signals."
+      },
+      "Signal": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/SignalKind"
+          },
+          "excerpt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "excerpt"
+        ],
+        "description": "One recorded hit: its kind and a short, redacted excerpt of the matched text."
+      },
+      "SignalKind": {
+        "type": "string",
+        "enum": [
+          "override_instructions",
+          "role_markup",
+          "secret_access",
+          "exfil_url",
+          "command_request",
+          "permission_change",
+          "hidden_text"
+        ],
+        "description": "A kind of injection signal, in the order frames and records list them."
       },
       "Data_Array_of_BranchNode": {
         "type": "object",
@@ -8126,6 +8269,17 @@
               "null"
             ],
             "format": "int64"
+          },
+          "untrusted": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UntrustedRecord"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Injection signals in an admitted message or Channel event (`untrusted-content`\n→ Injection signal notices)."
           }
         },
         "required": [

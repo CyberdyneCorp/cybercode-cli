@@ -1,5 +1,5 @@
 //! Production auto-mode admission, after the ordinary rule and Mode ceilings.
-use crate::host::{Ctx, canonical};
+use crate::host::{AutoApproval, Ctx, canonical};
 use crate::permissions::{Mode, Request, is_protected};
 use crate::tools::ToolError;
 use cyber_core::config::{AutoFallback, AutoModeSettings};
@@ -7,13 +7,14 @@ use cyber_server::runtime::{AutoEffect, AutoReview, AutoReviewStage};
 use serde_json::{Value, json};
 
 impl Ctx<'_> {
-    /// False means manual approval is still required; an Allow never saves an approval.
+    /// [`AutoApproval::None`] means manual approval is still required; an Allow never
+    /// saves an approval.
     pub(crate) async fn review_auto_permission(
         &self,
         request: &Request,
         metadata: &mut Value,
         needs_approval: bool,
-    ) -> Result<bool, ToolError> {
+    ) -> Result<AutoApproval, ToolError> {
         let inherited = self
             .host
             .inherited_permissions(&self.inv.session_id)
@@ -35,7 +36,7 @@ impl Ctx<'_> {
             );
         }
         if gates.is_empty() {
-            return Ok(false);
+            return Ok(AutoApproval::None);
         }
         // All explicit blocks precede inference and overrides, including another gate's allow.
         let blocked = gates.iter().position(|(_, settings)| {
@@ -60,7 +61,7 @@ impl Ctx<'_> {
             && metadata["requires_confirmation"] != true
             && !protected;
         if blocked.is_none() && !eligible {
-            return Ok(false);
+            return Ok(AutoApproval::None);
         }
         let stages = if let Some(index) = blocked {
             vec![self.auto_stage(request, &gates[index], true)]
@@ -70,12 +71,21 @@ impl Ctx<'_> {
                 .map(|gate| self.auto_stage(request, gate, false))
                 .collect()
         };
+        // Only an allow every gate's trusted rule gave is not the classifier's; a
+        // confirmed override is the user's own approval of this exact call.
+        let ruled = stages.iter().all(|stage| stage.rule.is_some());
+        let confirmed = self
+            .inv
+            .asker
+            .auto_override_matches(&self.inv.name, &self.inv.input);
         let decision = tokio::select! {
             _ = self.cancel.cancelled() => return Err(ToolError::Aborted),
             result = self.inv.asker.review_auto_stages(stages, self.cancel.clone()) => result.map_err(|error| ToolError::Failed(format!("Auto review failed: {error}")))?,
         };
         match decision.decision {
-            AutoEffect::Allow => Ok(true),
+            AutoEffect::Allow if ruled && confirmed => Ok(AutoApproval::User),
+            AutoEffect::Allow if ruled => Ok(AutoApproval::Rule),
+            AutoEffect::Allow => Ok(AutoApproval::Classifier(decision.reason)),
             AutoEffect::Block => Err(ToolError::Failed(format!(
                 "Blocked by auto mode: {}",
                 decision.reason
@@ -96,7 +106,7 @@ impl Ctx<'_> {
                 }
                 metadata["requires_confirmation"] = json!(true);
                 metadata["auto_review_session"] = json!(decision.reviewed_session_id);
-                Ok(false)
+                Ok(AutoApproval::None)
             }
         }
     }
@@ -160,6 +170,13 @@ impl Ctx<'_> {
                     self.inv.input.clone()
                 },
                 policy: settings.policy.clone(),
+                taint: self
+                    .policy
+                    .taint
+                    .sources
+                    .iter()
+                    .map(cyber_core::untrusted::TaintSource::of)
+                    .collect(),
             },
             ancestor_id: ancestor_id.clone(),
             rule,

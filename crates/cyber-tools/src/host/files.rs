@@ -120,6 +120,7 @@ impl BuiltinHost {
         let ctx = Ctx {
             skill_paths: Default::default(),
             loaded_skill: Default::default(),
+            provenance: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
             denial: Default::default(),

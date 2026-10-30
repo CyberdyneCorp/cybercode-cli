@@ -527,6 +527,7 @@ async fn handle(
             out.error(&message);
             run.error = Some(message);
         }
+        "session.retry" => out.retry(&event.data),
         "session.deleted" => {
             run.error = Some("the Session was deleted".into());
             return Step::End;

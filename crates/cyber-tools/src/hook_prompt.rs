@@ -563,7 +563,8 @@ async fn infer(
             }
             LlmEvent::Finish { reason } => finish = Some(reason),
             LlmEvent::ToolCallDone(_) | LlmEvent::ToolCallDelta { .. } => tools = true,
-            LlmEvent::ReasoningItem { .. } => {}
+            // A bare adapter stream is never replayed.
+            LlmEvent::ReasoningItem { .. } | LlmEvent::Discarded => {}
         }
         if bytes > LIMIT {
             return Err("prompt hook response exceeds 1 MiB; completion is unverified".into());

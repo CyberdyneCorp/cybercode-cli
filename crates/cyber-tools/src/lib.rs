@@ -34,6 +34,7 @@ mod subagents;
 mod tool_hooks;
 pub use tool_hooks::HookConfigFn;
 mod tools;
+mod untrusted;
 mod worktrees;
 
 pub use browser::health::{BrowserHealth, HealthCheck as BrowserHealthCheck, browser_health};

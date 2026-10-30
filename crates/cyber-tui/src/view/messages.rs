@@ -4,6 +4,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
+use cyber_core::untrusted::{self, UntrustedRecord};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -227,6 +228,17 @@ fn marker_line(app: &App, m: &crate::turns::Marker) -> Line<'static> {
 }
 
 fn item_lines(app: &App, item: &Item, out: &mut Out) {
+    body_lines(app, item, out);
+    if let Item::User {
+        untrusted: Some(record),
+        ..
+    } = item
+    {
+        untrusted_notice(app, record, out);
+    }
+}
+
+fn body_lines(app: &App, item: &Item, out: &mut Out) {
     let t = &app.theme;
     if let Some(lines) = message_lines(app, item, out.ctx.width) {
         for line in lines {
@@ -430,6 +442,44 @@ fn tool_card(app: &App, tool: &Tool, out: &mut Out) {
         spans.extend(line.spans.iter().cloned());
         let hang = format!("    │ {:1$}", "", number_width(tool, line));
         out.push_hanging(Line::from(spans), Span::styled(hang, gutter.style));
+    }
+    if let Some(record) = &tool.untrusted {
+        untrusted_notice(app, record, out);
+    }
+}
+
+/// The injection signal notice under a result or message (`untrusted-content` →
+/// Injection signal notices), with its consequence for the Session's Mode; the excerpts
+/// follow while tool details are expanded (Ctrl+O). It adds rows and never hides the
+/// content above it.
+fn untrusted_notice(app: &App, record: &UntrustedRecord, out: &mut Out) {
+    let mode = if app.session.effective_mode.is_empty() {
+        &app.session.mode
+    } else {
+        &app.session.effective_mode
+    };
+    let consequence = untrusted::consequence(mode, true, app.session.untrusted_policy);
+    let Some(line) = record.notice(consequence) else {
+        return;
+    };
+    let style = Style::default().fg(app.theme.warning);
+    out.push_hanging(
+        Line::from(Span::styled(format!("    {line}"), style)),
+        Span::styled("      ", style),
+    );
+    if !app.expand_tools {
+        return;
+    }
+    let muted = Style::default().fg(app.theme.text_muted);
+    for signal in &record.signals {
+        let excerpt = untrusted::visible_value(&signal.excerpt);
+        out.push_hanging(
+            Line::from(Span::styled(
+                format!("      {}: {excerpt}", signal.kind.as_str()),
+                muted,
+            )),
+            Span::styled("        ", muted),
+        );
     }
 }
 

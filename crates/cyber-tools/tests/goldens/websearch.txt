@@ -1,3 +1,5 @@
+<untrusted_content source="websearch" origin="search:searxng">
 1. Rust
    https://rust-lang.org/
    Systems language
+</untrusted_content>
