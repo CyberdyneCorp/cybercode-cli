@@ -1,8 +1,9 @@
 ## 1. Review and baseline
 
 Delivery rule updated by the user on 2026-10-29: normally one open goal PR,
-maximum two only for independently reviewable work. Consolidate #70–#76 into
-draft #76 against `main`; keep related probes, fixes and evidence in that PR.
+maximum two only for independently reviewable work. #70–#75 were consolidated into
+#76 against `main`. On 2026-10-30 the user authorized merging that foundations
+milestone after green CI and merge review, then continuing in one follow-up PR.
 The full goal scope, order and acceptance gates remain unchanged. See
 [goal delivery rules](../../../docs/goal-delivery.md).
 
@@ -42,7 +43,7 @@ the precise missing-thread control. Its [cancellation case and control](linux-so
 also have source-bound native receipts, as do the [post-inspection mutation case and controls](linux-socket-broker-mutation.md).
 Its [escaped-descendant namespace case and control](linux-plugin-descendant-proof.md)
 also have source-bound native receipts. Its [trusted-worker capacity/recovery case and control](linux-socket-broker-capacity.md)
-still require fresh native execution. These
+passed on x64/arm64 in run 41049265434, with source-bound receipts retained. These
 experiments change no production policy or accepted support floor.
 
 ## 3. Host contribution lifecycle

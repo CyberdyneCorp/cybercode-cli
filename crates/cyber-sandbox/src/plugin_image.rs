@@ -21,6 +21,8 @@ pub enum Error {
     Request,
     #[error("plugin package staging or helper IO failed")]
     Io,
+    #[error("plugin package helper exit could not be confirmed")]
+    Unconfirmed,
     #[error("plugin package helper refused the requested copy")]
     Refused,
     #[error("plugin package helper exceeded its output limit")]
@@ -187,7 +189,7 @@ async fn supervise(
     let stderr = child.stderr.take().expect("piped helper stderr");
     let capture = async {
         let (stdout, _) = tokio::try_join!(bounded(stdout, MAX_RESPONSE), bounded(stderr, 8192))?;
-        let status = child.wait().await.map_err(|_| Error::Io)?;
+        let status = child.wait().await.map_err(|_| Error::Unconfirmed)?;
         if !status.success() {
             return Err(Error::Refused);
         }
@@ -202,13 +204,14 @@ async fn supervise(
     };
     // On every terminal path, settle the exact process before releasing its
     // writable parent. The trusted worker cannot spawn descendants.
-    if child.try_wait().ok().flatten().is_none() {
-        let _ = child.start_kill();
-    }
-    if child.wait().await.is_err() {
+    let unconfirmed = matches!(result, Some(Err(Error::Unconfirmed)));
+    if settle_helper(child, unconfirmed, tokio::process::Child::start_kill)
+        .await
+        .is_err()
+    {
         // Do not delete a namespace that might still have a live writer. Leaking
         // this protected parent is safer than removing it before a proven reap.
-        let _ = reply.send(Err(Error::Io));
+        let _ = reply.send(Err(Error::Unconfirmed));
         return;
     }
     let parent = retained.0.take().expect("owned helper parent");
@@ -216,6 +219,35 @@ async fn supervise(
         let package = result.and_then(|report| bind(parent, &request, report, lease));
         let _ = reply.send(package);
     }
+}
+
+#[cfg(unix)]
+async fn settle_helper(
+    mut child: tokio::process::Child,
+    unconfirmed: bool,
+    terminate: impl FnOnce(&mut tokio::process::Child) -> std::io::Result<()>,
+) -> Result<(), Error> {
+    // An observed wait error ends our authority to signal a cached PID. Do not
+    // repoll it or let Tokio's kill-on-drop/orphan reaper act on that identity.
+    if unconfirmed {
+        std::mem::forget(child);
+        return Err(Error::Unconfirmed);
+    }
+    match child.try_wait() {
+        Ok(Some(_)) => return Ok(()),
+        Ok(None) => {
+            let _ = terminate(&mut child);
+        }
+        Err(_) => {
+            std::mem::forget(child);
+            return Err(Error::Unconfirmed);
+        }
+    }
+    if child.wait().await.is_err() {
+        std::mem::forget(child);
+        return Err(Error::Unconfirmed);
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -309,6 +341,43 @@ impl Drop for RetainUntilReaped {
 mod tests {
     use super::*;
     use std::os::unix::fs::MetadataExt;
+
+    #[tokio::test]
+    #[allow(unsafe_code)]
+    async fn lost_wait_ownership_retains_staging_and_refuses_settlement() {
+        let parent = tempfile::tempdir().unwrap();
+        let path = parent.path().to_path_buf();
+        let retained = RetainUntilReaped(Some(parent));
+        let child = tokio::process::Command::new("/usr/bin/true")
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let pid = child.id().unwrap() as libc::pid_t;
+        // Reproduce a real ECHILD without polling Tokio's child future. Only
+        // this test's exact direct child is reaped; no process lookup is used.
+        let mut status = 0;
+        loop {
+            // SAFETY: status is writable and pid names our unreaped direct child.
+            let result = unsafe { libc::waitpid(pid, &mut status, 0) };
+            if result == pid {
+                break;
+            }
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::EINTR)
+            );
+        }
+        assert_eq!(
+            settle_helper(child, false, |_| panic!("must not signal an uncertain PID")).await,
+            Err(Error::Unconfirmed)
+        );
+        drop(retained);
+        assert!(
+            path.is_dir(),
+            "unknown settlement must retain the namespace"
+        );
+        std::fs::remove_dir(path).unwrap();
+    }
 
     #[test]
     fn workspace_boundary_refuses_existing_files_and_symlinks_without_modifying_them() {

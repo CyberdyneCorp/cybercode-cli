@@ -39,5 +39,21 @@ other concurrency/signal/resource cases, runtime/platform support and the full
 native design gate remain open. Local checks cover Rust example Clippy, portable
 C syntax excluding Linux-specific code, thirteen temporary builder transformations
 with compiler interception, workflow syntax, formatting/diff and OpenSpec.
-Actual capacity/backpressure/recovery and the precise control still require
-hosted Linux x64/arm64 execution.
+
+## Hosted result for ceecb479
+
+[Run 41049265434](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41049265434)
+passed on Linux x64 and arm64, including the four capacity/backpressure/recovery
+cases per architecture and the exact wrong-cap control. The shared cancellation,
+mutation and escaped-descendant checks also passed in that run. These are isolated
+candidate results, not production admission acceptance.
+
+The original saturation reports and wrong-cap logs are retained under
+`scripts/probes/plugin-native-entry/evidence/linux-socket-broker-capacity-ceecb479/{x64,arm64}`.
+They identify tested merge `7c357b89e0f40b5df6110710c31cc41651770e6e` and source
+manifest SHA-256 `2f4e8a8a8e42dc07fb60cc6505887c3f4c81988b5d8e14ffc7eee491eb634887`.
+The manifest was independently recomputed from that exact Git tree. Each report
+has 36 rows, including four saturation rows with 16 blocked requests, backpressure,
+16 interrupted and normally reaped workers, and a successful subsequent TCP
+exchange. Each control shows 16 blocked callers and 20 starts before the named
+backpressure failure. These receipts are not assigned to later revisions.

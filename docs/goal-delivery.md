@@ -17,7 +17,10 @@ The user requested fewer simultaneously open PRs. Keep normally **one open goal
 PR**, with a **maximum of two** only when an independent change genuinely needs
 separate review. This changes delivery granularity, not feature scope or acceptance.
 
-- Finish and verify a coherent production increment before opening the next PR.
+- Finish and verify the agreed delivery increment before opening the next PR.
+  On 2026-10-30 the user authorized merging #76 as a foundations milestone once
+  its CI is green and merge review is satisfied, then continuing the full goal
+  in one follow-up PR. This milestone does not complete production enforcement.
 - Keep related experiments, evidence, implementation fixes and CI fixes in the
   active PR. Do not open a PR for each probe or supporting component.
 - Cancel superseded PR/revision CI runs after verifying their source is retained.
@@ -39,7 +42,8 @@ separate review. This changes delivery granularity, not feature scope or accepta
   cap does not authorize closing unrelated PRs.
 - Preserve native proof and explicit support/design revision gates. Passing probes
   are not production feature acceptance. Never weaken the agreed contract merely
-  to finish a PR, and never merge automatically.
+  to finish a PR. Merge only with user authorization; the conditional approval
+  above applies to #76.
 
 As of consolidation, native confinement foundations and regressions exist, but
 production enforcement and the remaining plugin/hook scope are incomplete. The
