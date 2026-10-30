@@ -39,13 +39,7 @@ pub(crate) struct PluginLaunch<'a> {
     pub capabilities: &'a Capabilities,
 }
 
-/// A started host and the native resources it owns until it stops.
-pub(crate) struct Started {
-    pub process: Process,
-    /// Removed when the host's resources are dropped.
-    pub _scratch: Scratch,
-    pub proxy: Option<Proxy>,
-}
+pub(crate) use super::lifetime::Started;
 
 impl LaunchContext<'_> {
     pub(crate) async fn start(
@@ -91,11 +85,7 @@ impl LaunchContext<'_> {
             })
             .await
             .map_err(|error| format!("plugin {} failed to start: {error}", plugin.name))?;
-        Ok(Started {
-            process,
-            _scratch: scratch,
-            proxy,
-        })
+        Ok(Started::new(process, scratch, proxy, plugin.name))
     }
 
     /// Narrow the resolved network to the capability; a proxy records refused hosts.

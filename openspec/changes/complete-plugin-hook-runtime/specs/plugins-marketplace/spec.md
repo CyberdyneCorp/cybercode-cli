@@ -27,6 +27,11 @@
 - **THEN** host runtime lookup ignores that entry and selects a suitable outside executable or refuses with a plugin-named diagnostic
 - **AND** this search guard does not substitute for immutable reviewed runtime and dependency admission
 
+#### Scenario: Initialization cleanup retains unconfirmed resources
+- **WHEN** initialization returns early or its future is cancelled after host process creation
+- **THEN** a separate owner continues process cleanup and proxy revocation and retains scratch until backend wait and proxy disposal are acknowledged
+- **AND** runtime loss or an unconfirmed wait retains resources and reports uncertainty rather than treating a termination request as proof of disposal
+
 ### Requirement: Runtime contribution generation ownership
 (P1) Runtime hooks, providers and catalog transforms SHALL be validated and owned by plugin identity, digest, Location and host generation. Revocation SHALL remove only that generation before later dispatch, and stale results SHALL NOT restore it. Runtime hooks SHALL follow ordinary plugin hook scope and managed-only policy. Provider streams SHALL use normal usage/cancellation paths and SHALL NOT supply trusted reserved bounds by declaration alone. Catalog transforms SHALL be bounded and ordered, preserve policy/configuration ceilings and leave the previous valid view intact on failure.
 

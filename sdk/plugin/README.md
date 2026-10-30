@@ -63,7 +63,8 @@ Use `initialize` configuration and the authorized `secrets/get` API for plugin
 settings and credentials. Host processes receive an explicit bootstrap
 environment; ordinary-tool environment overlays and inherited runtime/preload
 variables are not passed through. Home, temporary and runtime cache paths point
-inside the host's private scratch, which is removed when the host stops. The
+inside the host's private scratch. Scratch cleanup waits for process and proxy
+disposal; unconfirmed cleanup retains it and reports a plugin-named diagnostic. The
 owner supplies any permitted proxy endpoint. This does not complete native
 filesystem/subprocess capability enforcement or runtime admission.
 

@@ -28,6 +28,11 @@ graceful waits through the existing tree-aware Process owner. Live-child and
 missing-fix regressions cover those paths; escaped descendants, startup/cancellation
 settlement and complete native resource lifetime remain open.
 
+The [cancellation-safe started-host owner](host-resource-ownership.md) now retains
+scratch through asynchronous cleanup and unconfirmed waits while revoking its
+proxy. Native containment, staging ancestry, quarantine and generation/retry
+fencing still gate complete host lifetime acceptance.
+
 ## 3. Host contribution lifecycle
 
 - [ ] 3.1 Validate initialize contributions and add plugin/digest/Location/generation ownership, collision handling, atomic replacement and late-result fences.

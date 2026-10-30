@@ -27,6 +27,12 @@ generation-bound resource retention still require their own implementation and
 proof. Sending a termination signal is not an assertion that every possible
 descendant is reaped. No parent native admission or lifetime task is closed here.
 
+The [started-host ownership follow-up](host-resource-ownership.md) now retains
+resources across startup returns and cancellation and tracks unconfirmed backend
+waits. It centralizes the tree-aware wait; the historical four-wait mutation below
+is replaced by a mutation of that shared wait plus two resource-retention controls.
+Escaped descendants and full generation/admission obligations remain open.
+
 ## Verification
 
 On local macOS arm64 the two live-child regressions pass. Both fail their exact

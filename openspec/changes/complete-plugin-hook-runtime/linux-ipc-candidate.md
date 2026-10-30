@@ -104,3 +104,11 @@ job-reported candidate helper hashes are
 and `909a09be86ab2173c489e75a0a1b3bd4b75a0902ea511d4598518490535f3766`
 (arm64). Binaries were not retained for independent rehashing. The support/design
 gate and the explicit bind/listen limitation remain open despite these passes.
+
+The compatible-mechanism investigation remains necessary: a descriptor-pinned
+syscall broker is a possible next experiment for preserving private IP bind/listen
+and internal pairs. It must first prove native descriptor-duplication and thread
+identity support on both Linux hosts. It must operate on a pinned descriptor and
+validated copied arguments rather than continue a guest-pointer syscall after a
+racy inspection. No such broker is implemented or accepted here; its lifecycle,
+thread/fork coverage, policy intersection and support gate remain required.
