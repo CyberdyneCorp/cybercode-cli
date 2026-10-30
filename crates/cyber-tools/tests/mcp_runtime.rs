@@ -3504,7 +3504,8 @@ async fn destructive_tool_is_always_classified_in_auto_mode() {
 
 /// `tool-registry` → Tool output redaction, scenario "MCP result": a server's text with
 /// a provider token and the exact value of a secret from the server's own `env`
-/// reaches the model redacted, and the stored settlement holds the same text.
+/// reaches the model redacted within its MCP provenance frame, and the stored
+/// settlement holds the same text.
 #[tokio::test]
 async fn mcp_results_are_redacted_for_the_model_and_the_stored_history() {
     let secret = "mcp-env-secret-value-77";
@@ -3525,10 +3526,15 @@ async fn mcp_results_are_redacted_for_the_model_and_the_stored_history() {
     ready(&flow, &id).await;
     flow.prompt(&id, "ask the server").await;
     flow.settle(&id).await;
+    let expected = concat!(
+        "<untrusted_content source=\"mcp\" origin=\"mcp:shared/read\">\n",
+        "slack [REDACTED:slack_token] and [REDACTED:known_secret]",
+        "\n</untrusted_content>"
+    );
     let request = flow.main.requests().pop().unwrap();
     let messages = serde_json::to_string(&request.messages).unwrap();
     assert!(
-        messages.contains("slack [REDACTED:slack_token] and [REDACTED:known_secret]"),
+        messages.contains(&serde_json::to_string(expected).unwrap()),
         "{messages}"
     );
     assert!(!messages.contains("xoxb-1234567890") && !messages.contains(secret));
@@ -3541,10 +3547,7 @@ async fn mcp_results_are_redacted_for_the_model_and_the_stored_history() {
         .into_iter()
         .find(|event| event.kind == "session.tool.settled.1")
         .unwrap();
-    assert_eq!(
-        settled.data["output"],
-        "slack [REDACTED:slack_token] and [REDACTED:known_secret]"
-    );
+    assert_eq!(settled.data["output"], expected);
     assert_eq!(
         settled.data["redactions"],
         json!({"count": 2, "kinds": ["known_secret", "slack_token"]})
