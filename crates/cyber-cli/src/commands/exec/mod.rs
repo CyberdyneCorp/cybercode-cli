@@ -358,6 +358,7 @@ impl Follow<'_> {
         let mut settle_poll = tokio::time::interval(Duration::from_millis(500));
         settle_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut waiting = false;
+        self.run.set_timeout(timeout);
         let deadline = tokio::time::sleep(timeout.unwrap_or(Duration::from_secs(u64::MAX / 4)));
         tokio::pin!(deadline);
         // One listener for the whole run: a `ctrl_c()` made anew in each `select!` exists
@@ -536,6 +537,8 @@ async fn handle(
             out.durable(run, kind, &event.data);
             if kind.starts_with("session.step.ended") && run.over_budget() {
                 stop(client, id, run, owned, "budget_exceeded").await;
+            } else if run.waits_past_timeout(kind, &event.data) {
+                stop(client, id, run, owned, "timeout").await;
             }
         }
     }

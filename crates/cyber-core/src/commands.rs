@@ -194,6 +194,10 @@ pub fn valid_name(name: &str) -> bool {
 /// Built-in slash commands handled by clients or the server.
 pub const BUILTIN: &[(&str, &str)] = &[
     ("compact", "Summarize older history to free context"),
+    (
+        "resume-at-reset",
+        "Retry the Turn a usage limit failed once the limit resets",
+    ),
     ("model", "Switch the model"),
     ("mode", "Switch the permission mode"),
     (

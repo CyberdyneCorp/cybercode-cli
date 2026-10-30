@@ -169,6 +169,10 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         id: "20261026051000_budget_reservation_origin",
         sql: include_str!("../migrations/20261026051000_budget_reservation_origin.sql"),
     },
+    Migration {
+        id: "20261030000000_usage_limit_wait",
+        sql: include_str!("../migrations/20261030000000_usage_limit_wait.sql"),
+    },
 ];
 
 pub(crate) enum Outcome {

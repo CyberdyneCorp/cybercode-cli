@@ -1314,6 +1314,12 @@ export interface Operations {
     body: S.GoalOrder;
     response: string[];
   };
+  "v1.session.resumeAtReset": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.UsageLimitWait;
+  };
   "v1.session.resumeGoal": {
     path: { sessionID: string };
     query: Record<string, never>;
@@ -4021,6 +4027,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.session.resumeAtReset": {
+    tag: "session",
+    name: "resumeAtReset",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/usage-limit/resume",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.resumeGoal": {
     tag: "session",
     name: "resumeGoal",
@@ -5414,6 +5432,9 @@ export function createGroups(caller: Caller) {
       /** Reorder the pending queue; publishes session.goal.reordered.1 (`PATCH /api/v1/sessions/{sessionID}/goals/order`) */
       reorderGoals: (sessionID: string, body: Operations["v1.session.reorderGoals"]["body"], options?: RequestOptions): Promise<Operations["v1.session.reorderGoals"]["response"]> =>
         caller.call("v1.session.reorderGoals", { path: { sessionID }, body }, options),
+      /** Wait for the usage limit that failed the idle Session's last Turn to reset, then run that Turn again; publishes session.usage_limit.waiting.1 (`POST /api/v1/sessions/{sessionID}/usage-limit/resume`) */
+      resumeAtReset: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.resumeAtReset"]["response"]> =>
+        caller.call("v1.session.resumeAtReset", { path: { sessionID } }, options),
       /** Resume the paused Goal with a prompt toward it (`POST /api/v1/sessions/{sessionID}/goals/resume`) */
       resumeGoal: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.resumeGoal"]["response"]> =>
         caller.call("v1.session.resumeGoal", { path: { sessionID } }, options),

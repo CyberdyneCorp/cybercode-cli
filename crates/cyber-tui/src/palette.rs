@@ -130,6 +130,12 @@ const BUILTINS: &[(&str, &str, Option<&str>, bool)] = &[
     ),
     ("compact", "summarize older history", None, false),
     (
+        "resume-at-reset",
+        "retry the Turn a usage limit failed once the limit resets",
+        None,
+        false,
+    ),
+    (
         "cost",
         "tokens, cost and cache hit rate of this session tree",
         None,
