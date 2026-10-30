@@ -96,7 +96,8 @@ scratch-relative handling with retained x64/arm64 evidence. The
 for each runtime's own private pathname socket operations with retained passing
 x64/arm64 results. The alias extension also has source-bound passing native
 results. The [peer-identity diagnostic](linux-private-peer-identity.md) separately
-tests accepted-side kernel credentials; its execution remains pending.
+confirms an accepted-side PID mismatch on both architectures. That compatibility
+issue remains unresolved and requires the proposed design/support review.
 
 Still required before complete IPC/production acceptance: verified post-pin
 replacement, relative/alias forms, datagram/seqpacket and

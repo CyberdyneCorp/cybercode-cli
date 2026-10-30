@@ -5,6 +5,12 @@ implementation handoff after the #76 foundations milestone, not production
 activation or completed native support acceptance.
 The full plugins/hooks, daily-coding and binary-editor scope remains unchanged.
 
+The [peer-identity result](linux-private-peer-identity.md) now confirms an
+accepted-side caller PID mismatch in the current Linux broker. The
+[kernel UNIX revision](linux-kernel-unix-revision.md) proposes a changed dependency
+for review; it is not approved and does not replace the recorded direction yet.
+Full IPC compatibility and the production activation gate remain unmet.
+
 ## Approved implementation direction
 
 Continue the descriptor-pinned Linux broker toward production integration rather

@@ -62,3 +62,11 @@ Linux UNIX-socket diagnostic found a real host-reachability gap. Its experimenta
 filter and runtime checks remain experimental. The broker direction is approved;
 complete support acceptance and host activation remain pending. Daily coding and binary editor implementation have not
 started. The linked task lists remain authoritative for completion.
+
+The [Linux peer-identity diagnostic](../openspec/changes/complete-plugin-hook-runtime/linux-private-peer-identity.md)
+confirms that the current broker changes the caller PID observed by a UNIX
+listener, despite successful data exchange. The
+[kernel UNIX revision](../openspec/changes/complete-plugin-hook-runtime/linux-kernel-unix-revision.md)
+is a concrete proposal awaiting review. It does not reduce IPC requirements or
+authorize a new production support floor. Preserve this review gate before
+production activation or protocol-feature integration.
