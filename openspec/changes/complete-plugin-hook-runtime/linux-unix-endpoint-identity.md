@@ -55,8 +55,9 @@ passed on x64 (job 124056240517) and arm64 (job 124056240704). Each original
 report contains six unique cases in each of the host and private namespace
 contexts: 12 cases per architecture, 24 total. All require actual token/ack
 exchange, including the missing-pin controls reaching the second fixture endpoint.
-Every guard and pinned inode-retention assertion passed. The rest of that broader
-workflow remains separately pending; these step results do not claim its completion.
+Every guard and pinned inode-retention assertion passed. The broader workflow
+also completed successfully on both architectures, including its existing broker
+and runtime checks; that does not extend this primitive's proof beyond its cases.
 
 Reports are retained unchanged at
 `scripts/probes/plugin-native-entry/evidence/linux-unix-endpoint-e968c44e/{x64,arm64}/linux-unix-endpoint.json`.
