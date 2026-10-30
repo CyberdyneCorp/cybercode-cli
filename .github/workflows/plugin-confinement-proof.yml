@@ -158,7 +158,7 @@ jobs:
           import shutil, sys
           target = Path(sys.argv[1])
           shutil.copytree('scripts/probes/plugin-confinement', target, ignore=shutil.ignore_patterns('evidence', '__pycache__'))
-          driver = target / 'run.mts'
+          driver = target / 'macos_policy.mts'
           text = driver.read_text()
           before = '  if (privateUnix) {'
           assert text.count(before) == 1
@@ -175,6 +175,25 @@ jobs:
           text = Path(sys.argv[1]).read_text()
           assert 'no-capabilities: private UNIX runtime exchange failed: [false,false]' in text, text
           PYCONTROL
+      - name: Verify owned UNIX endpoints and native peer identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --experimental-strip-types scripts/probes/plugin-confinement/macos_private_ipc.mts --report "$RUNNER_TEMP/unix-boundary.json" > "$RUNNER_TEMP/unix-boundary.log" 2>&1
+          log="$RUNNER_TEMP/unix-missing-scope.log"
+          if node --experimental-strip-types scripts/probes/plugin-confinement/macos_private_ipc.mts --missing-scope > "$log" 2>&1; then
+            echo 'Missing UNIX outbound scope unexpectedly passed' >&2
+            exit 1
+          fi
+          python3 - "$log" <<'PYCONTROL'
+          from pathlib import Path
+          import sys
+          text = Path(sys.argv[1]).read_text()
+          assert 'macOS UNIX socket boundary escaped scratch:' in text, text
+          for token in ['"owner_received_fixture":true', '"acknowledged":true',
+                        '"private_aliases":[true,true]', '"private_peer_matches":true']:
+              assert token in text, text
+          PYCONTROL
       - name: Retain signing-identity candidate evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -184,6 +203,9 @@ jobs:
             ${{ runner.temp }}/matrix.json
             ${{ runner.temp }}/matrix.log
             ${{ runner.temp }}/private-unix-missing-grant.log
+            ${{ runner.temp }}/unix-boundary.json
+            ${{ runner.temp }}/unix-boundary.log
+            ${{ runner.temp }}/unix-missing-scope.log
             ${{ runner.temp }}/exec.json
             ${{ runner.temp }}/exec.log
           if-no-files-found: error

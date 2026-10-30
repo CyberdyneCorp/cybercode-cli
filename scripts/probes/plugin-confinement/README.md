@@ -86,6 +86,12 @@ absolute-path exchange within Darwin's UNIX address bound. CI includes a precise
 missing-grant control. See the [evidence and remaining acceptance](../../../openspec/changes/complete-plugin-hook-runtime/macos-private-runtime-ipc.md).
 This is not production launch policy or complete private IPC/network acceptance.
 
+`macos_private_ipc.mts` also runs the shared profile against a fixture-owned host
+listener. Its nine native cases require private socket aliases and correct peer
+PID/UID/GID while denying actual host delivery. `--missing-scope` must expose the
+owned host endpoint and fail the named isolation assertion. See the
+[owned-listener evidence and limits](../../../openspec/changes/complete-plugin-hook-runtime/macos-owned-unix-boundary.md).
+
 ## Boundary and coverage
 
 `macos_python.c` embeds an isolated Python and preloads trusted standard-library

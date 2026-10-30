@@ -55,3 +55,8 @@ exchanges are not full private IPC acceptance: owned-host/alias adversarial
 coverage, datagram/seqpacket, ancillary credentials/FDs, proxy/network ceilings
 and complete production admission/settlement remain required. Native support
 and parent task checkboxes stay open.
+
+The [owned-listener and peer-identity extension](macos-owned-unix-boundary.md)
+adds actual host receipts, positive private aliases, native credential checks
+and a precise widened-scope counterexample. It shares the profile builder with
+this runtime matrix; its source-bound results remain separate from those above.
