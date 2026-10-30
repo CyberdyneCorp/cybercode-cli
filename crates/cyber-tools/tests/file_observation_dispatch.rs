@@ -1002,7 +1002,10 @@ async fn known_private_subtree_retires_old_public_descendants_without_callbacks(
 async fn shutdown_settles_a_held_observer_callback_and_restart_does_not_replay_it() {
     let mut flow = support::flow::Flow::new(vec![support::flow::text("Session reopened")], false);
     let gate = Arc::new(tokio::sync::Notify::new());
-    let recorder = Recorder::with_gate(Some(Arc::clone(&gate))).await;
+    // Hold only the callback whose cancellation is under test. A new observer
+    // may reconcile other paths before fresh-after-restart; those callbacks
+    // must not consume another gate wait and stall serial observation delivery.
+    let recorder = Recorder::with_first_gate(Arc::clone(&gate)).await;
     automatic_hooks(&flow, &recorder);
     let session = flow.session("default").await;
     await_condition("held-callback baseline", || {
