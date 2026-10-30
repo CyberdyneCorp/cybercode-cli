@@ -18,6 +18,7 @@ enum Case {
     Cancellation,
     Mutation,
     Escape,
+    Saturation,
 }
 impl Case {
     fn argument(self) -> &'static str {
@@ -25,6 +26,14 @@ impl Case {
             Self::Cancellation => "cancel",
             Self::Mutation => "mutation",
             Self::Escape => "escape",
+            Self::Saturation => "saturation",
+        }
+    }
+    fn handshakes(self) -> u8 {
+        match self {
+            Self::Escape => 0,
+            Self::Saturation => 2,
+            _ => 1,
         }
     }
 }
@@ -73,6 +82,7 @@ struct Trace {
     ready: Option<Value>,
     finished: Option<Value>,
     cancelled: Option<u32>,
+    cancelled_workers: BTreeSet<u32>,
     pinned: Option<u32>,
     started: BTreeSet<u32>,
     reaped: BTreeSet<u32>,
@@ -80,6 +90,8 @@ struct Trace {
     stdout_closed: bool,
     closed_before_cleanup: Option<bool>,
     owner_exited_before_cleanup: Option<bool>,
+    pressure: Option<Value>,
+    pressure_cancelled: Option<Value>,
 }
 impl Trace {
     fn record(&mut self, message: Message) -> Result<(), String> {
@@ -96,8 +108,14 @@ impl Trace {
     fn output(&mut self, line: &str) -> Result<(), String> {
         let value: Value = serde_json::from_str(line).map_err(|e| e.to_string())?;
         let slot = match value["phase"].as_str() {
-            Some("cancel-ready" | "mutation-ready" | "escape-ready") => &mut self.ready,
-            Some("cancel-finished" | "mutation-finished") => &mut self.finished,
+            Some("cancel-ready" | "mutation-ready" | "escape-ready" | "saturation-ready") => {
+                &mut self.ready
+            }
+            Some("cancel-finished" | "mutation-finished" | "saturation-finished") => {
+                &mut self.finished
+            }
+            Some("saturation-filled") => &mut self.pressure,
+            Some("saturation-cancelled") => &mut self.pressure_cancelled,
             _ => return Err(format!("unexpected fixture phase: {value}")),
         };
         if slot.is_some() {
@@ -123,6 +141,7 @@ impl Trace {
             }
             "BCANCEL" => {
                 self.cancelled = Some(pid);
+                self.cancelled_workers.insert(pid);
             }
             "BPIN" => {
                 self.pinned = Some(pid);
@@ -134,7 +153,10 @@ impl Trace {
         }
         Ok(())
     }
-    fn can_release(&self, case: Case) -> bool {
+    fn can_release(&self, case: Case, handshake: u8) -> bool {
+        if matches!(case, Case::Saturation) {
+            return self.release_pressure(handshake);
+        }
         if matches!(case, Case::Escape) {
             return false;
         }
@@ -156,16 +178,38 @@ impl Trace {
             && self.started.contains(&pid)
             && self.reaped.contains(&pid)
     }
+    fn release_pressure(&self, handshake: u8) -> bool {
+        match handshake {
+            0 => {
+                self.ready
+                    .as_ref()
+                    .is_some_and(|v| v["setup_complete"] == true)
+                    && self.started.len() == 3
+                    && self.started.is_subset(&self.reaped)
+            }
+            1 => {
+                self.pressure_cancelled
+                    .as_ref()
+                    .is_some_and(|v| v["backpressure"] == true && v["interrupted_count"] == 16)
+                    && self.started.len() == 19
+                    && self.cancelled_workers.len() == 16
+                    && self.cancelled_workers.is_subset(&self.reaped)
+            }
+            _ => false,
+        }
+    }
     fn report(&self) -> Value {
         json!({"ready":self.ready,"finished":self.finished,"cancelled_pid":self.cancelled,
             "pinned_tid":self.pinned,"started":self.started,"reaped":self.reaped,"audit":self.audit,
-            "stdout_closed_before_cleanup":self.closed_before_cleanup,"owner_exited_before_cleanup":self.owner_exited_before_cleanup})
+            "stdout_closed_before_cleanup":self.closed_before_cleanup,"owner_exited_before_cleanup":self.owner_exited_before_cleanup,
+            "pressure":self.pressure,"pressure_cancelled":self.pressure_cancelled,"cancelled_workers":self.cancelled_workers})
     }
     fn verify(&self, case: Case, released: bool, status: ExitStatus) {
         match case {
             Case::Cancellation => self.verify_cancel(released, status),
             Case::Mutation => self.verify_mutation(released, status),
             Case::Escape => self.verify_escape(status),
+            Case::Saturation => self.verify_pressure(released, status),
         }
     }
     fn verify_cancel(&self, released: bool, status: ExitStatus) {
@@ -234,6 +278,40 @@ impl Trace {
             self.report()
         );
     }
+    fn verify_pressure(&self, released: bool, status: ExitStatus) {
+        assert_eq!(
+            self.ready.as_ref().expect("missing pressure setup")["setup_complete"],
+            true
+        );
+        assert_eq!(
+            self.pressure
+                .as_ref()
+                .expect("missing actual saturation wave")["blocked_count"],
+            16,
+            "fixture did not establish 16 real blocked connects"
+        );
+        assert!(
+            self.pressure_cancelled
+                .as_ref()
+                .is_some_and(|v| v["backpressure"] == true),
+            "socket-worker cap did not backpressure: {}",
+            self.report()
+        );
+        assert!(
+            released,
+            "saturation cancellation wave was not reaped: {}",
+            self.report()
+        );
+        assert!(
+            status.success()
+                && self
+                    .finished
+                    .as_ref()
+                    .is_some_and(|v| v["tcp_after_saturation"] == true),
+            "socket-worker capacity was not recovered: {}",
+            self.report()
+        );
+    }
 }
 
 fn settled(
@@ -262,7 +340,7 @@ fn drive(
     input: &mut Option<ChildStdin>,
     rx: &Receiver<Message>,
     trace: &mut Trace,
-    released: &mut bool,
+    handshakes: &mut u8,
     case: Case,
 ) -> Result<Option<ExitStatus>, String> {
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -271,13 +349,16 @@ fn drive(
         if let Ok(message) = rx.recv_timeout(Duration::from_millis(30)) {
             trace.record(message)?;
         }
-        if !*released && trace.can_release(case) {
+        if *handshakes < case.handshakes() && trace.can_release(case, *handshakes) {
             input
-                .take()
+                .as_mut()
                 .ok_or("fixture input already closed")?
                 .write_all(b"R")
                 .map_err(|e| e.to_string())?;
-            *released = true;
+            *handshakes += 1;
+            if *handshakes == case.handshakes() {
+                drop(input.take());
+            }
         }
         if let Some(status) = settled(child, trace, case, &mut exit)? {
             return Ok(Some(status));
@@ -295,6 +376,9 @@ pub fn observe_mutation(policy: &LinuxPolicy<'_>) -> Value {
 }
 pub fn observe_escape(policy: &LinuxPolicy<'_>, private_pid: bool) -> Value {
     observe_case(policy, Case::Escape, private_pid)
+}
+pub fn observe_saturation(policy: &LinuxPolicy<'_>) -> Value {
+    observe_case(policy, Case::Saturation, true)
 }
 fn observe_case(policy: &LinuxPolicy<'_>, case: Case, private_pid: bool) -> Value {
     let args = [
@@ -343,8 +427,15 @@ fn observe_case(policy: &LinuxPolicy<'_>, case: Case, private_pid: bool) -> Valu
     let stderr = reader(child.stderr.take().unwrap(), tx.clone(), false);
     drop(tx);
     let mut trace = Trace::default();
-    let mut released = false;
-    let outcome = drive(&mut child, &mut input, &rx, &mut trace, &mut released, case);
+    let mut handshakes = 0;
+    let outcome = drive(
+        &mut child,
+        &mut input,
+        &rx,
+        &mut trace,
+        &mut handshakes,
+        case,
+    );
     if matches!(case, Case::Escape) {
         trace.closed_before_cleanup = Some(trace.stdout_closed);
         trace.owner_exited_before_cleanup =
@@ -371,6 +462,6 @@ fn observe_case(policy: &LinuxPolicy<'_>, case: Case, private_pid: bool) -> Valu
         "fixture protocol failed: {outcome:?} {errors:?}: {}",
         trace.report()
     );
-    trace.verify(case, released, status);
+    trace.verify(case, handshakes == case.handshakes(), status);
     trace.report()
 }

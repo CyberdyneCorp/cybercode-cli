@@ -8,7 +8,7 @@ import tempfile
 root = Path(__file__).resolve().parents[3]
 output = Path(sys.argv[1]).resolve()
 mode = sys.argv[2] if len(sys.argv) == 3 else "seccomp"
-assert mode in {"seccomp", "broker", "broker-no-bind", "broker-no-thread", "broker-audit", "broker-audit-no-cancel",
+assert mode in {"seccomp", "broker", "broker-no-bind", "broker-no-thread", "broker-audit", "broker-audit-no-cancel", "broker-audit-wrong-cap",
                 "broker-mutation", "broker-mutation-no-pin", "broker-mutation-no-copy", "broker-mutation-continue",
                 "landlock9", "landlock9-no-resolve"}
 unix9 = mode.startswith("landlock9")
@@ -20,6 +20,12 @@ with tempfile.TemporaryDirectory(prefix="cyber-socket-candidate-") as temporary:
     shutil.copyfile(Path(__file__).with_name(family), target / "socket_candidate.h")
     if mode.startswith("broker"):
         shutil.copyfile(Path(__file__).with_name("linux_socket_broker.h"), target / "socket_broker.h")
+        if mode == "broker-audit-wrong-cap":
+            broker = target / "socket_broker.h"
+            text = broker.read_text()
+            before = "#define BROKER_SLOTS 16"
+            assert text.count(before) == 1
+            broker.write_text(text.replace(before, "#define BROKER_SLOTS 17"))
         if mode == "broker-no-thread":
             broker = target / "socket_broker.h"
             text = broker.read_text()

@@ -79,6 +79,8 @@ before target exit, with source-bound native receipts on both architectures.
 The [post-inspection mutation fixture](linux-socket-broker-mutation.md) and its
 three controls have source-bound native receipts on both architectures.
 The [escaped-descendant namespace fixture](linux-plugin-descendant-proof.md)
+has source-bound native receipts on both architectures.
+The [trusted-worker capacity/recovery fixture](linux-socket-broker-capacity.md)
 still requires native execution.
 
 The kernel's [seccomp notification documentation](https://docs.kernel.org/userspace-api/seccomp_filter.html)
@@ -95,7 +97,7 @@ shell blocks and embedded Python parse; formatting/diff checks, all 107
 strict OpenSpec items and spec lint (zero errors, 25 warnings) pass. The native C
 SDK build emits two Seatbelt deprecation warnings. Linux candidate compilation,
 kernel behavior for each revision requires corresponding hosted x64/arm64 jobs.
-The new escaped-descendant case/control still requires hosted results. The separate
+The new trusted-worker capacity/recovery case/control still requires hosted results. The separate
 thread-specific receipts below establish that earlier case and corrected report
 label; the first candidate receipts cannot prove those later changes.
 

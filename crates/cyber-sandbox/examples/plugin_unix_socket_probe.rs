@@ -71,6 +71,7 @@ mod probe {
         BrokerMutation,
         BrokerEscape,
         BrokerEscapeNoPid,
+        BrokerSaturation,
         Unix9,
     }
     impl Mode {
@@ -83,6 +84,7 @@ mod probe {
                     | Self::BrokerMutation
                     | Self::BrokerEscape
                     | Self::BrokerEscapeNoPid
+                    | Self::BrokerSaturation
             )
         }
         fn broker(self) -> bool {
@@ -93,6 +95,7 @@ mod probe {
                     | Self::BrokerMutation
                     | Self::BrokerEscape
                     | Self::BrokerEscapeNoPid
+                    | Self::BrokerSaturation
             )
         }
         fn escape(self) -> Option<bool> {
@@ -190,6 +193,13 @@ mod probe {
         mode: Mode,
     ) -> Vec<Value> {
         let mut rows = Vec::new();
+        if mode == Mode::BrokerSaturation && label == "outside" {
+            let observed = super::cancellation::observe_saturation(&policy);
+            rows.push(
+                json!({"mode":"saturation","socket":label,"fs_read":policy.fs_read,
+                "fs_write":policy.fs_write,"shell":false,"observed":observed}),
+            );
+        }
         if let Some(private_pid) = mode.escape()
             && label == "outside"
         {
@@ -234,6 +244,7 @@ mod probe {
             Some("--broker-mutation") => Mode::BrokerMutation,
             Some("--broker-escape") => Mode::BrokerEscape,
             Some("--broker-escape-no-pid") => Mode::BrokerEscapeNoPid,
+            Some("--broker-saturation") => Mode::BrokerSaturation,
             Some("--landlock9") => Mode::Unix9,
             _ => panic!("unknown candidate mode"),
         };
@@ -346,6 +357,7 @@ mod probe {
             "crates/cyber-sandbox/tests/fixtures/plugin_socket_cancel.h",
             "crates/cyber-sandbox/tests/fixtures/plugin_socket_mutation.h",
             "crates/cyber-sandbox/tests/fixtures/plugin_process_escape.h",
+            "crates/cyber-sandbox/tests/fixtures/plugin_socket_saturation.h",
             "crates/cyber-sandbox/examples/support/plugin_socket_cancel.rs",
             "crates/cyber-sandbox/src/plugin_policy.rs",
             "crates/cyber-sandbox/src/plugin_policy/linux.rs",
@@ -373,9 +385,9 @@ mod probe {
         }
         let report = json!({"platform": std::env::consts::OS, "architecture": std::env::consts::ARCH,
             "checkout": std::env::var("GITHUB_SHA").ok(), "run_id": std::env::var("GITHUB_RUN_ID").ok(),
-            "candidate": candidate, "landlock9": mode == Mode::Unix9, "socket_broker": mode.broker(), "cancellation_probe": mode == Mode::BrokerCancel, "mutation_probe": mode == Mode::BrokerMutation, "escape_probe": mode.escape(), "sources": sources, "source_sha256": format!("{:x}", hash.finalize()),
+            "candidate": candidate, "landlock9": mode == Mode::Unix9, "socket_broker": mode.broker(), "cancellation_probe": mode == Mode::BrokerCancel, "mutation_probe": mode == Mode::BrokerMutation, "escape_probe": mode.escape(), "saturation_probe": mode == Mode::BrokerSaturation, "sources": sources, "source_sha256": format!("{:x}", hash.finalize()),
             "helper_sha256": format!("{:x}", Sha256::digest(std::fs::read(helper).unwrap())),
-            "rows": rows, "scope": "Fixture-owned UNIX reachability and candidate private IP exchange only. Experimental syscall broker when selected; no ambient service contact or production capability acceptance."});
+            "rows": rows, "scope": "Fixture-owned socket, caller and worker observations in experimental helpers only. Proof rows are case-specific; no ambient service contact or production capability acceptance."});
         std::fs::write(
             report_path,
             format!("{}\n", serde_json::to_string_pretty(&report).unwrap()),

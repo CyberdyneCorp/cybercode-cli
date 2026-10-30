@@ -8,6 +8,7 @@ on:
       - crates/cyber-sandbox/tests/fixtures/plugin_socket_cancel.h
       - crates/cyber-sandbox/tests/fixtures/plugin_socket_mutation.h
       - crates/cyber-sandbox/tests/fixtures/plugin_process_escape.h
+      - crates/cyber-sandbox/tests/fixtures/plugin_socket_saturation.h
       - crates/cyber-sandbox/examples/support/plugin_socket_cancel.rs
       - crates/cyber-sandbox/native/**
       - crates/cyber-sandbox/src/plugin_policy.rs
@@ -87,6 +88,7 @@ jobs:
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker-no-thread" broker-no-thread
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker-audit" broker-audit
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker-no-cancel" broker-audit-no-cancel
+          python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker-wrong-cap" broker-audit-wrong-cap
           for mode in mutation mutation-no-pin mutation-no-copy mutation-continue; do
             python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker-$mode" "broker-$mode"
           done
@@ -103,6 +105,7 @@ jobs:
           target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker-audit" "$RUNNER_TEMP/linux-ipc-broker-cancel.json" --broker-cancel
           target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker-mutation" "$RUNNER_TEMP/linux-ipc-broker-mutation.json" --broker-mutation
           target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker" "$RUNNER_TEMP/linux-ipc-broker-escape.json" --broker-escape
+          target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker-audit" "$RUNNER_TEMP/linux-ipc-broker-saturation.json" --broker-saturation
       - name: Reject blanket bind denial as broker acceptance
         shell: bash
         run: |
@@ -187,6 +190,26 @@ jobs:
           assert 'escaped descendant retained stdout after namespace owner exited' in text, text
           for token in ['"escaped_session":true', '"controlled_stdin":true', '"stdout_closed_before_cleanup":false', '"owner_exited_before_cleanup":true']:
               assert token in text, text
+          PY
+      - name: Reject an over-capacity socket worker pool
+        shell: bash
+        run: |
+          set -euo pipefail
+          if target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker-wrong-cap" "$RUNNER_TEMP/linux-ipc-broker-capacity-control.json" --broker-saturation > "$RUNNER_TEMP/broker-wrong-cap.log" 2>&1; then
+            echo 'Wrong socket worker limit unexpectedly passed' >&2
+            exit 1
+          fi
+          python3 - "$RUNNER_TEMP/broker-wrong-cap.log" <<'PY'
+          from pathlib import Path
+          import json, sys
+          text = Path(sys.argv[1]).read_text()
+          marker = 'socket-worker cap did not backpressure: '
+          assert marker in text, text
+          receipt = json.loads(text.split(marker, 1)[1].splitlines()[0])
+          assert receipt['ready']['setup_complete'] is True, receipt
+          assert receipt['pressure']['blocked_count'] == 16, receipt
+          assert len(receipt['started']) == 20, receipt
+          assert receipt['pressure_cancelled'] is None, receipt
           PY
       - name: Record pathname policy kernel availability
         id: abi
@@ -300,5 +323,6 @@ jobs:
             ${{ runner.temp }}/broker-no-cancel.log
             ${{ runner.temp }}/broker-mutation-*.log
             ${{ runner.temp }}/broker-no-pid.log
+            ${{ runner.temp }}/broker-wrong-cap.log
           if-no-files-found: warn
           retention-days: 14
