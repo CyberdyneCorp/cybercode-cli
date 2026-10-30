@@ -86,8 +86,11 @@ report. The tested commits remain on `evidence/plugin-native-host-pre-76-merge`
 when the implementation branch is rebased onto the #76 squash merge. These
 original receipts are not relabeled as execution of the rebased head.
 
-Still required before complete IPC/production acceptance: actual post-pin
-pathname replacement in this broker, relative/alias forms, datagram/seqpacket and
+The [real broker pathname replacement case](linux-private-stream-mutation.md)
+now tests the post-pin race; its new hosted evidence is pending.
+
+Still required before complete IPC/production acceptance: verified post-pin
+replacement, relative/alias forms, datagram/seqpacket and
 destination-bearing sends, ancillary FD/credential and peer-identity behavior,
 exact proxy endpoint ownership and network ceilings, full runtime IPC controls,
 immutable admission, generation quarantine and complete resource settlement.

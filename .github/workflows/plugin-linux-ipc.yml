@@ -7,6 +7,7 @@ on:
       - crates/cyber-sandbox/tests/fixtures/plugin_unix_socket.c
       - crates/cyber-sandbox/tests/fixtures/plugin_socket_cancel.h
       - crates/cyber-sandbox/tests/fixtures/plugin_socket_mutation.h
+      - crates/cyber-sandbox/tests/fixtures/plugin_unix_mutation.h
       - crates/cyber-sandbox/tests/fixtures/plugin_process_escape.h
       - crates/cyber-sandbox/tests/fixtures/plugin_socket_saturation.h
       - crates/cyber-sandbox/examples/support/plugin_socket_cancel.rs
@@ -107,7 +108,7 @@ jobs:
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker-audit" broker-audit
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker-no-cancel" broker-audit-no-cancel
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker-wrong-cap" broker-audit-wrong-cap
-          for variant in broker-private-stream broker-private-stream-no-makesock broker-private-stream-no-refer; do
+          for variant in broker-private-stream broker-private-stream-no-makesock broker-private-stream-no-refer broker-private-stream-mutation broker-private-stream-mutation-no-endpoint; do
             python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/$variant" "$variant"
           done
           for mode in mutation mutation-no-pin mutation-no-copy mutation-continue; do
@@ -128,6 +129,26 @@ jobs:
           target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker" "$RUNNER_TEMP/linux-ipc-broker-escape.json" --broker-escape
           target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker-audit" "$RUNNER_TEMP/linux-ipc-broker-saturation.json" --broker-saturation
           target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/broker-private-stream" "$RUNNER_TEMP/linux-ipc-broker-private-stream.json" --broker-private-stream
+          target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/broker-private-stream-mutation" "$RUNNER_TEMP/linux-ipc-broker-private-stream-mutation.json" --broker-private-stream-mutation
+      - name: Reject pathname re-resolution after private endpoint pinning
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/private-stream-no-endpoint.log"
+          if target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/broker-private-stream-mutation-no-endpoint" "$RUNNER_TEMP/linux-ipc-private-no-endpoint.json" --broker-private-stream-mutation > "$log" 2>&1; then
+            echo 'Missing private endpoint pin unexpectedly passed' >&2
+            exit 1
+          fi
+          python3 - "$log" <<'PY'
+          from pathlib import Path
+          import sys
+          text = Path(sys.argv[1]).read_text()
+          assert 'private UNIX mutation escaped the pinned endpoint' in text, text
+          for token in ['"fd_replaced":true', '"address_changed":true', '"path_replaced":true',
+                        '"original_unlinked":true', '"result_ok":true', '"sent":true',
+                        '"private_roundtrip":false', '"host_received_fixture":true', 'BPIN ']:
+              assert token in text, text
+          PY
       - name: Reject missing private socket creation and file-move compatibility guards
         shell: bash
         run: |
@@ -367,6 +388,7 @@ jobs:
             ${{ runner.temp }}/broker-no-bind.log
             ${{ runner.temp }}/broker-private-stream-no-makesock.log
             ${{ runner.temp }}/broker-private-stream-no-refer.log
+            ${{ runner.temp }}/private-stream-no-endpoint.log
             ${{ runner.temp }}/broker-no-thread.log
             ${{ runner.temp }}/broker-no-cancel.log
             ${{ runner.temp }}/broker-mutation-*.log

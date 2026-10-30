@@ -186,6 +186,7 @@ static int pair_probe(const struct sockaddr_un *address, socklen_t length,
 #include "plugin_socket_cancel.h"
 #include "plugin_socket_saturation.h"
 #include "plugin_socket_mutation.h"
+#include "plugin_unix_mutation.h"
 #include "plugin_process_escape.h"
 
 int main(int argc, char **argv) {
@@ -198,6 +199,7 @@ int main(int argc, char **argv) {
     if (argc == 4 && strcmp(argv[3], "mutation") == 0) return mutation_probe();
     if (argc == 4 && strcmp(argv[3], "escape") == 0) return escape_probe();
     if (argc == 4 && strcmp(argv[3], "saturation") == 0) return saturation_probe();
+    if (argc == 5 && strcmp(argv[3], "unix-mutation") == 0) return unix_mutation_probe(argv[1], argv[4]);
     if (argc >= 4) {
         if (strcmp(argv[3], "pair") != 0) return 2;
         return pair_probe(&address,

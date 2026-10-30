@@ -52,7 +52,8 @@ tree matches the reviewed/tested `e6fd3d2f` tree. The user approved continuing t
 [Linux broker direction](../openspec/changes/complete-plugin-hook-runtime/native-host-integration.md)
 with runtime kernel capability checks and full private IPC/network compatibility
 remaining required before activation. Continue on the single
-`feat/plugin-native-host-admission` follow-up branch/PR, retaining its original
+[draft #80](https://github.com/CyberdyneCorp/cybercode-cli/pull/80), branch
+`feat/plugin-native-host-admission`, retaining its original
 tested sources on `evidence/plugin-native-host-pre-76-merge` across rebase.
 
 Native confinement foundations and regressions exist, but

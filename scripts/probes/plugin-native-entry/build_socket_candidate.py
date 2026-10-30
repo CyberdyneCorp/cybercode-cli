@@ -11,9 +11,11 @@ mode = sys.argv[2] if len(sys.argv) == 3 else "seccomp"
 assert mode in {"seccomp", "broker", "broker-no-bind", "broker-no-thread", "broker-audit", "broker-audit-no-cancel", "broker-audit-wrong-cap",
                 "broker-mutation", "broker-mutation-no-pin", "broker-mutation-no-copy", "broker-mutation-continue",
                 "broker-private-stream", "broker-private-stream-no-makesock", "broker-private-stream-no-refer",
+                "broker-private-stream-mutation", "broker-private-stream-mutation-no-endpoint",
                 "landlock9", "landlock9-no-resolve"}
 unix9 = mode.startswith("landlock9")
 private_stream = mode.startswith("broker-private-stream")
+unix_mutation = mode.startswith("broker-private-stream-mutation")
 with tempfile.TemporaryDirectory(prefix="cyber-socket-candidate-") as temporary:
     target = Path(temporary)
     for name in ["linux_plugin_exec.c", "linux_filter.h", "linux_initial_exec.h"]:
@@ -49,7 +51,7 @@ with tempfile.TemporaryDirectory(prefix="cyber-socket-candidate-") as temporary:
             before = "syscall(SYS_pidfd_open, request->pid, PIDFD_THREAD)"
             assert text.count(before) == 1
             broker.write_text(text.replace(before, "syscall(SYS_pidfd_open, request->pid, 0)"))
-        if mode.startswith("broker-audit") or mode.startswith("broker-mutation"):
+        if mode.startswith("broker-audit") or mode.startswith("broker-mutation") or unix_mutation:
             # Fixture-only receipts from the actual worker owner. Logging is
             # injected solely into this temporary copy, never the base helper.
             broker = target / "socket_broker.h"
@@ -65,8 +67,14 @@ with tempfile.TemporaryDirectory(prefix="cyber-socket-candidate-") as temporary:
             assert text.count(before) == 1
             text = text.replace(before, '        fprintf(stderr, "BREAP %d\\n", (int)job->pid);\n' + before)
             broker.write_text(text)
-        if mode.startswith("broker-mutation"):
+        if mode.startswith("broker-mutation") or unix_mutation:
             shutil.copyfile(Path(__file__).with_name("linux_socket_broker_mutation.h"), target / "socket_mutation.h")
+            if unix_mutation:
+                hook = target / "socket_mutation.h"
+                text = hook.read_text()
+                before = '    if (request->data.nr != SYS_bind || request->data.args[2] != sizeof(struct sockaddr_storage)) return 0;'
+                assert text.count(before) == 1
+                hook.write_text(text.replace(before, '    if (request->data.nr != SYS_connect || request->data.args[2] != sizeof(struct sockaddr_un)) return 0;'))
             broker = target / "socket_broker.h"
             text = broker.read_text()
             before = "static void broker_tick(int signal_number)"
@@ -75,7 +83,15 @@ with tempfile.TemporaryDirectory(prefix="cyber-socket-candidate-") as temporary:
             before = "    call->socket = socket;\n    return 0;"
             assert text.count(before) == 1
             mutation = '''    int mutated = broker_mutation_pause(request);
-    if (mutated < 0) { close(socket); return EIO; }
+    if (mutated < 0) {
+        if (call->endpoint >= 0) close(call->endpoint);
+        close(socket); return EIO;
+    }
+'''
+            if mode == "broker-private-stream-mutation-no-endpoint":
+                mutation += '''    if (mutated && call->endpoint >= 0) {
+        close(call->endpoint); call->endpoint = -1;
+    }
 '''
             if mode == "broker-mutation-no-pin":
                 mutation += '''    if (mutated) {
