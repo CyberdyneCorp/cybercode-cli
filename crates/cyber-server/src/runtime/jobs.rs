@@ -592,17 +592,21 @@ impl Runtime {
         } else {
             ("Background job ended", super::process_jobs::log_tail(&job))
         };
-        let mut admission = Admission::text(
-            format!(
-                "{heading}: {}",
-                serde_json::json!({
-                    "job":job,
-                    "duration_ms":job.ended_ms.unwrap_or(job.started_ms).saturating_sub(job.started_ms).max(0),
-                    "output_tail":last_lines(&output, NOTICE_LINES)
-                })
-            ),
-            Delivery::Queue,
+        // The raw log stays on disk; the model gets the tail and result redacted.
+        let directory = self.state(&job.session_id).await?.info.directory;
+        let tools = self.inner.tools.as_ref();
+        let mut shown = serde_json::to_value(&job).unwrap_or(Value::Null);
+        super::redaction::redact_value(tools, &directory, &mut shown["result"]);
+        let output = super::redaction::redact_text(tools, &directory, output);
+        let text = format!(
+            "{heading}: {}",
+            serde_json::json!({
+                "job":shown,
+                "duration_ms":job.ended_ms.unwrap_or(job.started_ms).saturating_sub(job.started_ms).max(0),
+                "output_tail":last_lines(&output, NOTICE_LINES)
+            })
         );
+        let mut admission = Admission::text(text, Delivery::Queue);
         admission.message_id = Some(handback_id(&job.id));
         admission.source = "session".into();
         self.admit(&job.session_id, admission).await?;

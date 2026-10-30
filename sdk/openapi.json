@@ -7748,6 +7748,17 @@
           },
           "metadata": {
             "description": "The tool host's notes on the settled run (`builtin-tools` → apply_patch through\nthe shell)."
+          },
+          "redactions": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Redactions"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Secrets hidden from `output` before it reached the model (`tool-registry` → Tool\noutput redaction)."
           }
         },
         "required": [
@@ -7799,6 +7810,27 @@
             "description": "Dispatched, and whether its side effects happened is unknown."
           }
         ]
+      },
+      "Redactions": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "kinds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "count",
+          "kinds"
+        ],
+        "description": "What a redaction hid: how many values, and their kinds (sorted, distinct)."
       },
       "Data_Array_of_BranchNode": {
         "type": "object",

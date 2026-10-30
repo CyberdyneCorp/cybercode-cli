@@ -177,6 +177,33 @@ async fn background_bash_notice_has_exit_code_duration_and_last_20_lines() {
     assert_eq!(flow.main.requests().len(), 1);
 }
 
+/// `tool-registry` → Tool output redaction, scenario "Job handback": the completion
+/// notice the model gets carries the log tail redacted, while the log on disk and the
+/// job output read back through `job_output`-style tools keep or redact as specified.
+#[tokio::test]
+async fn background_notices_redact_the_log_tail_and_the_log_stays_raw() {
+    let token = "glpat-abcdefghij0123456789";
+    let flow = flow(vec![text("notice handled")]);
+    let session = flow.session("default").await;
+    flow.f.write("token.txt", token);
+    let handle = start(
+        &flow,
+        &session,
+        json!({"command": "echo deploying; cat token.txt"}),
+    )
+    .await;
+    let id = handle["job_id"].as_str().unwrap();
+    terminal(&flow, id).await;
+    let notice = notice(&flow, &session, id).await.expect("notice admitted");
+    assert_eq!(notice["output_tail"], "deploying\n[REDACTED:gitlab_token]");
+    assert!(!notice.to_string().contains(token));
+    assert!(
+        log(&handle).contains(token),
+        "the job log keeps the raw output"
+    );
+    flow.settle(&session).await;
+}
+
 #[tokio::test]
 async fn notify_false_suppresses_the_completion_notice() {
     let flow = flow(vec![text("unexpected")]);

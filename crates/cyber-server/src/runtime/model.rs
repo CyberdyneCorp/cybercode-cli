@@ -301,6 +301,10 @@ pub struct CallState {
     /// the shell).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
+    /// Secrets hidden from `output` before it reached the model (`tool-registry` → Tool
+    /// output redaction).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redactions: Option<cyber_core::redact::Redactions>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -1379,6 +1383,7 @@ impl SessionState {
                 status: CallStatus::Called,
                 output: None,
                 metadata: None,
+                redactions: None,
             },
         );
     }
@@ -1407,6 +1412,7 @@ impl SessionState {
             call.output = Some(s.output);
             call.structured_output = s.structured_output;
             call.metadata = s.metadata;
+            call.redactions = s.redactions;
             self.result.settle(call);
         }
     }

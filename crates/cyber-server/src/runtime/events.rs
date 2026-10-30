@@ -373,6 +373,9 @@ pub struct ToolSettled {
     /// for a shell call run as a patch (`builtin-tools` → apply_patch through the shell).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
+    /// Secrets hidden from `output` (`tool-registry` → Tool output redaction).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redactions: Option<cyber_core::redact::Redactions>,
 }
 
 pub(crate) fn present_value<'de, D: serde::Deserializer<'de>>(

@@ -301,40 +301,44 @@ impl BuiltinHost {
         outcome: ToolOutcome,
         token_limit: Option<usize>,
     ) -> ToolOutcome {
-        match outcome {
-            ToolOutcome::Ok(output) => self
-                .budget(&ctx.location)
-                .apply_registered(output, ctx.inv.tool_output, token_limit)
-                .map_or_else(ToolOutcome::Crashed, ToolOutcome::Ok),
-            ToolOutcome::Structured { output, value } => self
-                .budget(&ctx.location)
-                .apply_registered(output, ctx.inv.tool_output, token_limit)
-                .map_or_else(ToolOutcome::Crashed, |output| ToolOutcome::Structured {
+        let budget = self.budget(&ctx.location);
+        let bound =
+            |output: String| budget.apply_registered(output, ctx.inv.tool_output, token_limit);
+        let outcome = match outcome {
+            ToolOutcome::Ok(output) => {
+                bound(output).map_or_else(ToolOutcome::Crashed, ToolOutcome::Ok)
+            }
+            ToolOutcome::Structured { output, value } => {
+                bound(output).map_or_else(ToolOutcome::Crashed, |output| ToolOutcome::Structured {
                     output,
                     value,
-                }),
+                })
+            }
             ToolOutcome::SkillSuggestions {
                 failed,
                 output,
                 value,
                 skills,
-            } => self
-                .budget(&ctx.location)
-                .apply_registered(output, ctx.inv.tool_output, token_limit)
-                .map_or_else(ToolOutcome::Crashed, |output| {
-                    ToolOutcome::SkillSuggestions {
-                        failed,
-                        output,
-                        value,
-                        skills,
-                    }
-                }),
-            ToolOutcome::Failed(output) => self
-                .budget(&ctx.location)
-                .apply_registered(output, ctx.inv.tool_output, token_limit)
-                .map_or_else(ToolOutcome::Crashed, ToolOutcome::Failed),
+            } => bound(output).map_or_else(ToolOutcome::Crashed, |output| {
+                ToolOutcome::SkillSuggestions {
+                    failed,
+                    output,
+                    value,
+                    skills,
+                }
+            }),
+            ToolOutcome::Failed(output) => {
+                bound(output).map_or_else(ToolOutcome::Crashed, ToolOutcome::Failed)
+            }
             other => other,
-        }
+        };
+        // What the projection hid from the raw result before cutting it.
+        self.note_redactions(
+            &ctx.inv.session_id,
+            &ctx.inv.call_id,
+            budget.redaction.take(),
+        );
+        outcome
     }
 }
 

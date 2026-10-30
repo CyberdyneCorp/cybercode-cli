@@ -127,6 +127,12 @@ pub trait ModelResolver: Send + Sync {
         Vec::new()
     }
 
+    /// The resolved provider API keys, matched exactly in tool output so they never
+    /// reach a model (`tool-registry` → Tool output redaction). Never logged.
+    fn credential_values(&self) -> Vec<String> {
+        Vec::new()
+    }
+
     /// The configured model for a role, following the role fallbacks.
     fn role(&self, role: ModelRole) -> Option<String>;
 
@@ -183,6 +189,10 @@ impl CatalogResolver {
 }
 
 impl ModelResolver for CatalogResolver {
+    fn credential_values(&self) -> Vec<String> {
+        self.catalog().credential_values()
+    }
+
     fn credential_env_names(&self) -> Vec<String> {
         self.catalog()
             .providers
@@ -1175,6 +1185,28 @@ pub trait ToolHost: Send + Sync {
     /// the settlement's `metadata`. Hosts that note nothing return `None`.
     fn take_call_metadata(&self, _session_id: &str, _call_id: &str) -> Option<Value> {
         None
+    }
+
+    /// Text the model is about to receive from outside the conversation (a tool's
+    /// settled output, a Job or workflow handback) with secrets hidden, and what was
+    /// hidden (`tool-registry` → Tool output redaction). Hosts without configuration
+    /// apply the built-in detectors.
+    fn redact_model_text(
+        &self,
+        _directory: &str,
+        text: String,
+    ) -> (String, cyber_core::redact::Redactions) {
+        cyber_core::redact::Redactor::builtin().redact_owned(text)
+    }
+
+    /// Take, once, what the host hid from a call's result before truncating it; the
+    /// runtime adds it to the settlement's `redactions`.
+    fn take_call_redactions(
+        &self,
+        _session_id: &str,
+        _call_id: &str,
+    ) -> cyber_core::redact::Redactions {
+        cyber_core::redact::Redactions::default()
     }
 
     /// Establish, without side effects, whether a dispatched call took effect.

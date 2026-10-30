@@ -38,7 +38,7 @@ mod worktrees;
 
 pub use browser::health::{BrowserHealth, HealthCheck as BrowserHealthCheck, browser_health};
 pub use browser::profiles::{Cleanup as BrowserCleanup, cleanup as cleanup_browser_profiles};
-pub use budget::Budget;
+pub use budget::{Budget, Redaction};
 pub use host::{
     BuiltinHost, ConfigFn, HostOptions, IsolationOptions, PermissionTest, PermissionTestReport,
     PrepareError,

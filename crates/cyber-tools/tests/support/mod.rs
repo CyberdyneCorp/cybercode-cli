@@ -35,6 +35,15 @@ impl cyber_core::env::EnvSource for TestEnv {
     fn get(&self, key: &str) -> Option<String> {
         self.0.lock().unwrap().get(key).cloned()
     }
+
+    fn vars(&self) -> Vec<(String, String)> {
+        self.0
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect()
+    }
 }
 
 /// Tool tests exercise each Mode's rules, not the `bypass` eligibility gate (App and CLI

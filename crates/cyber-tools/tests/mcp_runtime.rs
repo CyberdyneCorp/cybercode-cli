@@ -3471,3 +3471,53 @@ async fn destructive_tool_is_always_classified_in_auto_mode() {
     assert_eq!(flow.requests("test/summary").len(), 1);
     flow.runtime.shutdown().await;
 }
+
+/// `tool-registry` → Tool output redaction, scenario "MCP result": a server's text with
+/// a provider token and the exact value of a secret from the server's own `env`
+/// reaches the model redacted, and the stored settlement holds the same text.
+#[tokio::test]
+async fn mcp_results_are_redacted_for_the_model_and_the_stored_history() {
+    let secret = "mcp-env-secret-value-77";
+    let flow = Flow::new(
+        vec![call("c1", "mcp__shared__read", json!({})), text("done")],
+        false,
+    );
+    let path = configure(&flow, json!({}));
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    config["mcp"]["shared"]["env"] = json!({"SERVICE_TOKEN": secret});
+    std::fs::write(&path, config.to_string()).unwrap();
+    flow.f.set_config(config);
+    flow.f.write(
+        "tool-text",
+        &format!("slack xoxb-1234567890-abcdefghijkl and {secret}"),
+    );
+    let id = flow.session("bypass").await;
+    ready(&flow, &id).await;
+    flow.prompt(&id, "ask the server").await;
+    flow.settle(&id).await;
+    let request = flow.main.requests().pop().unwrap();
+    let messages = serde_json::to_string(&request.messages).unwrap();
+    assert!(
+        messages.contains("slack [REDACTED:slack_token] and [REDACTED:known_secret]"),
+        "{messages}"
+    );
+    assert!(!messages.contains("xoxb-1234567890") && !messages.contains(secret));
+    let settled = flow
+        .f
+        .store
+        .read_events(&id, -1, 500)
+        .unwrap()
+        .events
+        .into_iter()
+        .find(|event| event.kind == "session.tool.settled.1")
+        .unwrap();
+    assert_eq!(
+        settled.data["output"],
+        "slack [REDACTED:slack_token] and [REDACTED:known_secret]"
+    );
+    assert_eq!(
+        settled.data["redactions"],
+        json!({"count": 2, "kinds": ["known_secret", "slack_token"]})
+    );
+    flow.runtime.shutdown().await;
+}

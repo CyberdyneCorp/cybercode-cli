@@ -1,9 +1,13 @@
 //! Model-facing output budget and managed overflow files
-//! (`tool-registry` → Output size budget, Managed tool output files).
+//! (`tool-registry` → Output size budget, Managed tool output files, Tool output
+//! redaction).
 
+use std::borrow::Cow;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
 
+use cyber_core::redact::{Redactions, Redactor};
 use cyber_llm::catalog::{ToolOutput, Truncation};
 
 #[derive(Debug, Clone)]
@@ -11,6 +15,43 @@ pub struct Budget {
     pub max_lines: usize,
     pub max_bytes: usize,
     pub dir: PathBuf,
+    /// Secrets hidden from the model-facing text before it is measured and cut; the
+    /// overflow file keeps the raw text.
+    pub redaction: Redaction,
+}
+
+/// The redaction step of a [`Budget`] and what it hid, shared by its clones.
+#[derive(Debug, Clone, Default)]
+pub struct Redaction {
+    redactor: Option<Arc<Redactor>>,
+    found: Arc<Mutex<Redactions>>,
+}
+
+impl Redaction {
+    pub fn new(redactor: Arc<Redactor>) -> Self {
+        Self {
+            redactor: Some(redactor),
+            found: Arc::default(),
+        }
+    }
+
+    /// `text` with secrets replaced, adding what was hidden to [`Redaction::take`].
+    fn apply<'a>(&self, text: &'a str) -> Cow<'a, str> {
+        let Some(redactor) = &self.redactor else {
+            return Cow::Borrowed(text);
+        };
+        let redacted = redactor.redact(text);
+        self.found
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .merge(&redacted.redactions);
+        redacted.text
+    }
+
+    /// Everything hidden so far, once.
+    pub fn take(&self) -> Redactions {
+        std::mem::take(&mut *self.found.lock().unwrap_or_else(PoisonError::into_inner))
+    }
 }
 
 /// Which part of a long output the model sees.
@@ -81,25 +122,32 @@ impl Budget {
         }
     }
 
-    /// The one truncation path: `text` when it fits every limit, else what `keep`
-    /// selects, a marker with the omitted counts, and the full text in a managed file.
+    /// The one truncation path: `text` redacted first, so a secret is hidden whole even
+    /// where the cut falls; then the redacted text when it fits every limit, else what
+    /// `keep` selects of it, a marker with the omitted counts, and the full raw text in a
+    /// managed file (which stays on this machine; reading it back redacts it again).
     fn truncate(
         &self,
         text: String,
         keep: Keep,
         char_limit: Option<usize>,
     ) -> Result<String, String> {
-        let lines = text.lines().count();
+        let redacted = match self.redaction.apply(&text) {
+            Cow::Owned(redacted) => Some(redacted),
+            Cow::Borrowed(_) => None,
+        };
+        let shown = redacted.as_deref().unwrap_or(&text);
+        let lines = shown.lines().count();
         if lines <= self.max_lines
-            && text.len() <= self.max_bytes
-            && char_limit.is_none_or(|limit| text.chars().count() <= limit)
+            && shown.len() <= self.max_bytes
+            && char_limit.is_none_or(|limit| shown.chars().count() <= limit)
         {
-            return Ok(text);
+            return Ok(redacted.unwrap_or(text));
         }
         let path = self.store(&text)?;
-        let (first, last) = self.kept(&text, keep, char_limit);
+        let (first, last) = self.kept(shown, keep, char_limit);
         let omitted_lines = lines.saturating_sub(first.lines().count() + last.lines().count());
-        let omitted_bytes = text.len().saturating_sub(first.len() + last.len());
+        let omitted_bytes = shown.len().saturating_sub(first.len() + last.len());
         let counts = format!(
             "{omitted_lines} lines / {omitted_bytes} bytes omitted; full output at {}",
             path.display()
@@ -133,6 +181,7 @@ impl Budget {
     }
 
     /// Keep the entire reminder in the payload budget; only the overflow notice is extra.
+    /// `text` is a settled result, already redacted, so it is not redacted again here.
     pub(crate) fn apply_with_reminder(
         &self,
         text: String,
@@ -243,6 +292,7 @@ mod tests {
             max_lines: 3,
             max_bytes: 1000,
             dir: dir.path().into(),
+            redaction: Redaction::default(),
         };
         let text = (1..=10)
             .map(|i| format!("line {i}"))
@@ -280,6 +330,7 @@ mod tests {
             max_lines: 2000,
             max_bytes: 51_200,
             dir: dir.path().into(),
+            redaction: Redaction::default(),
         };
         let log: String = (0..4000)
             .map(|i| format!("{i:05} compiling crate number {i:05} of the workspace\n"))
@@ -317,6 +368,7 @@ mod tests {
             max_lines: 2000,
             max_bytes: 1000,
             dir: dir.path().into(),
+            redaction: Redaction::default(),
         };
         let text: String = (0..200).map(|i| format!("line {i:03}\n")).collect();
         let narrowed = ToolOutput {
@@ -357,6 +409,7 @@ mod tests {
             max_lines: 2000,
             max_bytes: 51_200,
             dir: dir.path().into(),
+            redaction: Redaction::default(),
         };
         let text: String = (0..2000)
             .map(|i| format!("row {i:04} of the result\n"))
@@ -392,6 +445,7 @@ mod tests {
             max_lines: 10,
             max_bytes: 100,
             dir: "/nonexistent".into(),
+            redaction: Redaction::default(),
         };
         assert_eq!(budget.apply("ok".into(), false).unwrap(), "ok");
     }
@@ -402,6 +456,7 @@ mod tests {
             max_lines: 100,
             max_bytes: 1000,
             dir: dir.path().into(),
+            redaction: Redaction::default(),
         };
         let text = "🦀".repeat(20);
         let output = budget

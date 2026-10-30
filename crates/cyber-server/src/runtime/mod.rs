@@ -125,6 +125,7 @@ pub use side_chat::SideAnswer;
 mod structured;
 pub use structured::StructuredSchema;
 mod recap;
+mod redaction;
 pub use recap::{NOTHING_TO_RECAP, Recap};
 mod title;
 mod usage;
@@ -2159,6 +2160,7 @@ impl Runtime {
             output,
             detail: Some("resolved by user".into()),
             metadata: None,
+            redactions: None,
         };
         self.inner
             .commit_locked(&mut state, vec![event(TOOL_SETTLED, &payload)])?;

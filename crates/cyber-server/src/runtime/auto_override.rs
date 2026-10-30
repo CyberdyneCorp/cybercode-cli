@@ -487,13 +487,15 @@ impl Inner {
                     .finalize_skill_output(&state.info.directory, output, reminder)
             },
         );
+        let session_id = state.info.id.clone();
+        let settled =
+            self.with_call_metadata(&session_id, &replay.id, &state.info.directory, settled);
         let output = settled.data["output"]
             .as_str()
             .unwrap_or_default()
             .to_owned();
         record.status = "settled".into();
-        let session_id = state.info.id.clone();
-        let mut events = vec![self.with_call_metadata(&session_id, &replay.id, settled)];
+        let mut events = vec![settled];
         let stop = self.take_call_hook_effects(&session_id, &replay.id, &mut events);
         events.push(change(record));
         self.commit_locked(&mut state, events)?;

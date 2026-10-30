@@ -132,6 +132,7 @@ mod tests {
             ("lead with the result", "lead with the outcome"),
             ("file references", "`path:line`"),
             ("no filler", "no greetings"),
+            ("redacted secrets", "`[redacted:<kind>]`"),
         ];
         for (topic, phrase) in topics {
             assert!(core.contains(phrase), "core prompt lost the {topic} topic");
@@ -169,7 +170,7 @@ mod tests {
         let digest = format!("{:x}", hasher.finalize());
         assert_eq!(
             (base_prompt_version(), &digest[..16]),
-            (2, "cf61e2d10d918a9d"),
+            (3, "bedba395777f58ff"),
             "a base prompt changed: bump prompts/base/VERSION and update this digest"
         );
     }

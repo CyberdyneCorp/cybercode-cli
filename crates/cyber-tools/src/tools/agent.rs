@@ -1165,10 +1165,12 @@ fn render_result(
     name: Option<&str>,
     answer: &str,
 ) -> Result<String, ToolError> {
+    // The answer is redacted with the agent tool's whole result when it settles.
     let budget = crate::Budget {
         max_bytes: bytes,
         max_lines: usize::MAX,
         dir,
+        redaction: Default::default(),
     };
     let mut result = json!({"id":id,"text":answer});
     if let Some(name) = name {

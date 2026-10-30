@@ -5,6 +5,7 @@ mod command_skills;
 mod files;
 mod isolation;
 mod path_skills;
+mod redaction;
 mod remote_sources;
 pub(crate) mod review;
 mod skill_catalog;
@@ -65,6 +66,7 @@ pub struct HostOptions {
 }
 
 pub use isolation::{IsolationOptions, PermissionTest, PermissionTestReport};
+pub(crate) use redaction::refuse_marker;
 pub use workflow_prepare::PrepareError;
 
 pub struct BuiltinHost {
@@ -91,6 +93,9 @@ pub struct BuiltinHost {
     pub(crate) tool_annotations: Mutex<HashMap<(String, String), Value>>,
     /// Notes on settled runs awaiting their settlement, by (Session, call).
     call_metadata: Mutex<HashMap<(String, String), Value>>,
+    /// Secrets hidden from results awaiting their settlement, by (Session, call).
+    call_redactions: Mutex<HashMap<(String, String), cyber_core::redact::Redactions>>,
+    redactors: redaction::RedactorCache,
     pub(crate) search_cooldowns: tools::websearch::Cooldowns,
     /// Domains approved for sandboxed network access, by Session.
     network: Mutex<HashMap<String, Arc<Mutex<HashSet<String>>>>>,
@@ -196,6 +201,8 @@ impl BuiltinHost {
             hook_effects: Default::default(),
             tool_annotations: Mutex::default(),
             call_metadata: Mutex::default(),
+            call_redactions: Mutex::default(),
+            redactors: Default::default(),
             search_cooldowns: tools::websearch::Cooldowns::default(),
             network: Mutex::default(),
             subagents: crate::subagents::Slots::default(),
@@ -255,10 +262,14 @@ impl BuiltinHost {
         } else {
             None
         };
-        match self
-            .budget(&ctx.location)
-            .apply_for(output, keep_tail, ctx.inv.tool_output)
-        {
+        let budget = self.budget(&ctx.location);
+        let projected = budget.apply_for(output, keep_tail, ctx.inv.tool_output);
+        self.note_redactions(
+            &ctx.inv.session_id,
+            &ctx.inv.call_id,
+            budget.redaction.take(),
+        );
+        match projected {
             Ok(output) => match value {
                 Some(value) => ToolOutcome::Structured { output, value },
                 None => match ctx
@@ -716,6 +727,7 @@ impl BuiltinHost {
             max_lines: get("max_lines", 2000),
             max_bytes: get("max_bytes", 51_200),
             dir: self.opts.tool_output_dir.clone(),
+            redaction: crate::budget::Redaction::new(self.redactor(&config)),
         }
     }
 
@@ -806,6 +818,23 @@ impl ToolHost for BuiltinHost {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(&(session_id.to_owned(), call_id.to_owned()))
+    }
+
+    fn redact_model_text(
+        &self,
+        directory: &str,
+        text: String,
+    ) -> (String, cyber_core::redact::Redactions) {
+        self.location_redactor(Path::new(directory))
+            .redact_owned(text)
+    }
+
+    fn take_call_redactions(
+        &self,
+        session_id: &str,
+        call_id: &str,
+    ) -> cyber_core::redact::Redactions {
+        self.take_redactions(session_id, call_id)
     }
 
     fn file_decisions<'a>(
@@ -1760,6 +1789,9 @@ impl BuiltinHost {
 
     async fn run_builtin(&self, tool: &dyn Tool, ctx: &Ctx<'_>) -> ToolOutcome {
         let keep_tail = matches!(ctx.inv.name.as_str(), "bash" | "powershell");
+        if let Err(ToolError::Failed(refusal)) = redaction::refuse_shell_marker(ctx.inv) {
+            return ToolOutcome::Failed(refusal);
+        }
         match tool.run(ctx).await {
             Ok(output) => self.settle_output(
                 ctx,

@@ -281,6 +281,11 @@ export type CallState = {
    * the shell).
    */
   metadata?: unknown;
+  /**
+   * Secrets hidden from `output` before it reached the model (`tool-registry` → Tool
+   * output redaction).
+   */
+  redactions?: Redactions | null;
 };
 
 export type CallStatus = "ok" | "error" | "called" | "dispatched" | "interrupted" | "outcome_unknown";
@@ -3482,6 +3487,12 @@ export type Receipt = {
 export type RecoverMemory = {
   storage_fingerprint: string;
   admission_fingerprint: string;
+};
+
+/** What a redaction hid: how many values, and their kinds (sorted, distinct). */
+export type Redactions = {
+  count: number;
+  kinds: string[];
 };
 
 /** An interrupted run that could not be resumed. */

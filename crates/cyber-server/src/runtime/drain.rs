@@ -637,15 +637,29 @@ fn queue_head<'a>(mut rows: impl Iterator<Item = &'a super::model::InboxRow>) ->
 }
 
 impl Inner {
-    /// `settled` with the tool host's notes on the call, when it made any.
+    /// `settled` with the tool host's notes on the call, when it made any, and its output
+    /// redacted: this is the one text both the model and the stored history get
+    /// (`tool-registry` → Tool output redaction). The host already redacted the raw
+    /// result before truncating it; this pass also covers failures and reminders.
     pub(super) fn with_call_metadata(
         &self,
         session_id: &str,
         call_id: &str,
+        directory: &str,
         mut settled: cyber_store::NewEvent,
     ) -> cyber_store::NewEvent {
         if let Some(metadata) = self.tools.take_call_metadata(session_id, call_id) {
             settled.data["metadata"] = metadata;
+        }
+        let mut redactions = self.tools.take_call_redactions(session_id, call_id);
+        if let Some(output) = settled.data["output"].as_str() {
+            let (output, found) = self.tools.redact_model_text(directory, output.to_owned());
+            redactions.merge(&found);
+            settled.data["output"] = output.into();
+        }
+        if !redactions.is_empty() {
+            settled.data["redactions"] =
+                serde_json::to_value(redactions).unwrap_or(serde_json::Value::Null);
         }
         settled
     }
@@ -1609,7 +1623,7 @@ impl Inner {
                         .finalize_skill_output(&directory, output, reminder)
                 },
             );
-            events.push(self.with_call_metadata(&session_id, &run.call_id, settled));
+            events.push(self.with_call_metadata(&session_id, &run.call_id, &directory, settled));
             loaded.extend(instructions);
             stops.extend(self.take_call_hook_effects(&session_id, &run.call_id, &mut events));
         }
@@ -2077,6 +2091,7 @@ fn settled(
         output: output.into(),
         detail: detail.map(str::to_string),
         metadata: None,
+        redactions: None,
     };
     event(TOOL_SETTLED, &payload)
 }
@@ -2198,6 +2213,7 @@ pub(super) fn settlement_with_reminders(
             output,
             detail: None,
             metadata: None,
+            redactions: None,
         },
     );
     (settled, loaded)
@@ -2284,6 +2300,7 @@ pub(super) fn settlement(
                 output,
                 detail: None,
                 metadata: None,
+                redactions: None,
             },
         ),
         ToolOutcome::SkillSuggestions {
@@ -2314,6 +2331,7 @@ pub(super) fn settlement(
                 output,
                 detail: None,
                 metadata: None,
+                redactions: None,
             },
         ),
         ToolOutcome::Failed(message) => settled(call_id, CallStatus::Error, &message, None),
