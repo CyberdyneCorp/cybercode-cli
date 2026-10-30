@@ -200,9 +200,9 @@ static int unix_boundary(const char *scratch, const char *host, const char *data
     struct unix_attempt hardlink = linked ? host_unix_attempt(alias) : (struct unix_attempt){0};
     int symlinked = symlink(host, symbolic) == 0;
     struct unix_attempt symlink_result = symlinked ? host_unix_attempt(symbolic) : (struct unix_attempt){0};
-    printf("{\"started\":true,\"private_unix\":[%s,%s],\"private_peer_checks\":%d,"
+    printf("{\"started\":true,\"pid\":%ld,\"private_unix\":[%s,%s],\"private_peer_checks\":%d,"
         "\"private_peer_matches\":%s,\"hardlink_created\":%s,\"symlink_created\":%s",
-        truth(ipc[0]), truth(ipc[1]), private_peer_checks, truth(private_peer_matches), truth(linked), truth(symlinked));
+        (long)getpid(), truth(ipc[0]), truth(ipc[1]), private_peer_checks, truth(private_peer_matches), truth(linked), truth(symlinked));
     printf(",\"private_aliases\":[%s,%s]", truth(own_hardlink), truth(own_symlink));
     print_rights(rights);
     printf(",\"rights_path_replaced\":%s", truth(rights_path_replaced));

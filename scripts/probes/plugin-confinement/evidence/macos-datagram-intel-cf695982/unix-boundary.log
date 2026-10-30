@@ -1,0 +1,20 @@
+node:internal/modules/run_main:123
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: datagram mutation failed: {"name":"r0w1s1","flags":{"read":false,"write":true,"shell":true},"observed":{"started":true,"private_unix":[true,true],"private_peer_checks":8,"private_peer_matches":true,"hardlink_created":false,"symlink_created":true,"private_aliases":[true,true],"rights":{"sent":true,"original_closed":true,"token":true,"truncated":false,"received":true,"same_inode":true,"readable":true,"written":true,"cloexec":true},"rights_path_replaced":true,"private_datagram":[true,true,true],"datagram_symlink_created":true,"datagram_race":{"private_control":true,"host_control":false,"settled":true,"failed":true,"attempts":10,"private_acks":4,"host_acks":0,"refused":5,"swaps":11,"failure_stage":"send","failure_errno":22},"dgram_connect":{"connected":false,"sent":false,"acknowledged":false},"dgram_sendto":{"connected":false,"sent":false,"acknowledged":false},"dgram_sendmsg":{"connected":false,"sent":false,"acknowledged":false},"dgram_alias_connect":{"connected":false,"sent":false,"acknowledged":false},"dgram_alias_sendto":{"connected":false,"sent":false,"acknowledged":false},"dgram_alias_sendmsg":{"connected":false,"sent":false,"acknowledged":false},"direct":{"connected":false,"sent":false,"acknowledged":false},"hardlink":{"connected":false,"sent":false,"acknowledged":false},"symlink":{"connected":false,"sent":false,"acknowledged":false}},"rights_payload":"AB","rights_link_count":0,"owner_receipts":0,"owner_received_fixture":false,"datagram_receipts":0,"owner_datagram_received_fixture":false}
+
+true !== false
+
+    at check (file:///Users/runner/work/cybercode-cli/cybercode-cli/scripts/probes/plugin-confinement/macos_private_ipc.mts:140:10)
+    at file:///Users/runner/work/cybercode-cli/cybercode-cli/scripts/probes/plugin-confinement/macos_private_ipc.mts:194:5
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: true,
+  expected: false,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v22.23.2

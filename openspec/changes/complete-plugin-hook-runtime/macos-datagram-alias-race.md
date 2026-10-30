@@ -83,10 +83,46 @@ All nine diagnostic rows and four exact workflow steps pass locally on arm64
 Darwin 25.6.0, including occupied-bind, widened-scope, dropped-rights and path-reader
 controls. Original reports/logs are retained in
 `scripts/probes/plugin-confinement/evidence/macos-datagram-diagnostic-local`.
-The current IPC source digest is
+The IPC source digest at `cf695982` is
 `24c0b65db4e5609b386b460b713989b2d2d2954e3b4222f72985b057b8c9bc15`.
 These results establish diagnostic behavior, not a fix for the Intel failure.
 Fresh hosted verification remains required.
+
+## Intel EINVAL result and kernel-context follow-up
+
+The diagnostic [Intel job at cf695982](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41143313110/job/124362484197)
+failed again at `r0w1s1`, now identifying `send` with errno 22 (`EINVAL`). Ten
+attempts were recorded: four private acknowledgements, five policy refusals and
+one unknown error. The thread settled and the owner recorded zero host packets;
+this incomplete row still fails acceptance. The exact cause remains unresolved.
+Artifacts, checksum and tested-source/tree binding are retained in
+`scripts/probes/plugin-confinement/evidence/macos-datagram-intel-cf695982`.
+
+Errno alone does not identify the failing kernel check. The public
+[XNU send path](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/uipc_syscalls.c)
+contains address validation and MAC checks before dispatch. Source inspection
+cannot establish which check returned the observed error on the hosted machine.
+
+The fixture now reports its actual PID. On an unexpected datagram error, the
+owner queries only kernel messages containing both that PID and the exact owned
+case directory. The trusted `/usr/bin/log` command has a five-second timeout,
+SIGKILL timeout disposal, a 64-KiB capture limit and smaller retained text bounds.
+Missing/failed logging is diagnostic metadata, never successful confinement or a
+replacement for the original assertion.
+
+Widened-scope, occupied-bind, dropped-rights and path-reader controls now run
+independently after successful native setup, including after a boundary-test
+failure. Cancellation prevents new control execution. There is no
+`continue-on-error`: a failed positive boundary test still fails the job. This
+allows the next Intel run to compare its scoped and widened cases rather than
+skipping all differential evidence after the first error.
+
+All nine final-source rows and all five exact workflow steps pass locally. The
+occupied-bind control also verifies that diagnostic PID ownership and retained
+output bounds match the fixture. Current source-bound reports/logs are retained
+in `scripts/probes/plugin-confinement/evidence/macos-datagram-kernel-diagnostic-local`;
+the IPC digest is `a6d7fc68ceb9c768184f1c31964c687f16d8f89b97aeb0041dcad1da41656cae`. Native Intel/kernel acceptance
+and all parent tasks remain open.
 
 This tests one concurrently replaced symlink
 with destination-bearing sends. It does not establish every pathname/FD/address

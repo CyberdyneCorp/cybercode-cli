@@ -69,6 +69,17 @@ async function owner(path: string) {
   };
 }
 
+function failureLog(base: string, pid: number) {
+  if (!Number.isSafeInteger(pid) || pid <= 0 || pid > 0x7fffffff) return { pid: null, error: "invalid fixture PID" };
+  const predicate = `process == "kernel" AND eventMessage CONTAINS ${JSON.stringify(`(${pid})`)} AND eventMessage CONTAINS ${JSON.stringify(base)}`;
+  const result = spawnSync("/usr/bin/log", ["show", "--last", "1m", "--style", "json", "--predicate", predicate], {
+    env: environment, encoding: "utf8", timeout: 5000, killSignal: "SIGKILL", maxBuffer: 65536,
+  });
+  return { pid, status: result.status, signal: result.signal,
+    error: result.error?.message.slice(0, 2048) ?? "", stderr: result.stderr?.slice(0, 2048) ?? "",
+    output: result.stdout?.slice(0, 16384) ?? "" };
+}
+
 async function row(root: string, prepared: ReturnType<typeof prepare>, name: string, flags: Flags, missingScope: boolean, dropRights: boolean) {
   const base = join(root, name);
   mkdirSync(base, { mode: 0o700 });
@@ -107,7 +118,8 @@ async function row(root: string, prepared: ReturnType<typeof prepare>, name: str
     const count = readSync(payload, contents, 0, contents.length, 0);
     assert(count <= 2, "oversized owned rights payload");
     const rights_payload = contents.subarray(0, count).toString();
-    return { name, flags, observed, rights_payload, rights_link_count: identity.nlink,
+    const kernel_diagnostic = observed.datagram_race.failure_stage ? failureLog(base, observed.pid) : undefined;
+    return { name, flags, observed, rights_payload, rights_link_count: identity.nlink, kernel_diagnostic,
       owner_receipts: receipt.count, owner_received_fixture: receipt.count > 0,
       datagram_receipts, owner_datagram_received_fixture: datagram_receipts > 0 };
   } finally {

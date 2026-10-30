@@ -139,6 +139,7 @@ jobs:
         with:
           node-version: 22
       - name: Verify capability matrix and original-signature exec controls
+        id: native_setup
         shell: bash
         run: |
           set -euo pipefail
@@ -180,6 +181,11 @@ jobs:
         run: |
           set -euo pipefail
           node --experimental-strip-types scripts/probes/plugin-confinement/macos_private_ipc.mts --report "$RUNNER_TEMP/unix-boundary.json" > "$RUNNER_TEMP/unix-boundary.log" 2>&1
+      - name: Reject widened UNIX endpoint scope independently
+        if: always() && !cancelled() && steps.native_setup.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
           log="$RUNNER_TEMP/unix-missing-scope.log"
           if node --experimental-strip-types scripts/probes/plugin-confinement/macos_private_ipc.mts --missing-scope > "$log" 2>&1; then
             echo 'Missing UNIX outbound scope unexpectedly passed' >&2
@@ -203,6 +209,7 @@ jobs:
               assert token in text, text
           PYCONTROL
       - name: Reject unknown datagram exchange failures
+        if: always() && !cancelled() && steps.native_setup.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -235,8 +242,12 @@ jobs:
           assert race['failure_stage'] == 'client_bind', entry
           assert race['failure_errno'] == errno.EADDRINUSE, entry
           assert race['refused'] == 0 and race['attempts'] == 0, entry
+          diagnostic = entry['kernel_diagnostic']
+          assert diagnostic['pid'] == entry['observed']['pid'] > 0, entry
+          assert len(diagnostic['output']) <= 16384 and len(diagnostic['stderr']) <= 2048, entry
           PYCONTROL
       - name: Reject missing private descriptor reception
+        if: always() && !cancelled() && steps.native_setup.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -255,6 +266,7 @@ jobs:
               assert token in text, text
           PYCONTROL
       - name: Reject owner payload path re-resolution
+        if: always() && !cancelled() && steps.native_setup.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
