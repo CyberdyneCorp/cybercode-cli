@@ -49,3 +49,25 @@ new positive case and all three controls is still required. Existing thread and
 cancellation receipts cannot establish this mutation proof. Saturation, other
 signal/cancellation races, descendants, admission, network/proxy/secret ceilings
 and the full native support/design gate remain open.
+
+## Native receipts
+
+[Run 41011901810](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41011901810)
+passed on x64 (job 123919430419) and arm64 (job 123919430221). Retained
+[x64](../../../scripts/probes/plugin-native-entry/evidence/linux-socket-broker-mutation-d47cfe27/x64/linux-ipc-broker-mutation.json)
+and [arm64](../../../scripts/probes/plugin-native-entry/evidence/linux-socket-broker-mutation-d47cfe27/arm64/linux-ipc-broker-mutation.json)
+reports each contain four successful post-inspection mutations across read/write
+combinations and 32 ordinary socket cases. Each matches the requesting TID to the
+post-pin marker, confirms the original object was bound and both originals were
+changed, and observes a successful caller result. All three adjacent controls
+fail the precise final assertion: re-resolution/re-read leave the original object
+unbound; incorrect CONTINUE binds it but fails the guest result.
+
+Merge checkout `893b883655dd7ede255e992a99f99bd0bf1859d2` binds source SHA-256
+`0ea7e634b39ae67a292044c4846d939c5deb8e54847f60e3839deafc996d55d8`,
+independently recomputed from the checkout. Recorded instrumented helper hashes
+are x64 `90d204e45347be22ecbdd361a6c3984c7a3de9dde2afa94375037ad037fca19b`
+and arm64 `0ac7234c48e23229db1e78cc0b5bd1184e5a2daa7768eb50ac39aac9f99f797c`.
+These source-bound observations establish this controlled mutation case, not all
+possible concurrent changes or production admission. Subsequent shared-driver
+changes still need fresh native checks.

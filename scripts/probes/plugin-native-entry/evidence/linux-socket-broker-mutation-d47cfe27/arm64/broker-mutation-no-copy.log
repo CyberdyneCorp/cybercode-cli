@@ -1,0 +1,4 @@
+
+thread 'main' (4381) panicked at crates/cyber-sandbox/examples/support/plugin_socket_cancel.rs:191:9:
+socket/address mutation changed the admitted operation: {"ready":{"phase":"mutation-ready","request_tid":4},"finished":{"phase":"mutation-finished","bound_original":false,"fd_replaced":true,"address_changed":true,"result_ok":false},"cancelled_pid":null,"pinned_tid":4,"started":[5],"reaped":[5],"audit":["BPIN 4","BSTART 5","BREAP 5"]}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
