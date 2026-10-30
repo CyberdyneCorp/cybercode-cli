@@ -4,20 +4,31 @@
 
 mod support;
 
+#[cfg(unix)]
 use cyber_llm::Content;
+#[cfg(unix)]
 use cyber_server::runtime::ToolHost;
-use serde_json::{Value, json};
+#[cfg(unix)]
+use serde_json::Value;
+use serde_json::json;
+#[cfg(unix)]
 use std::collections::BTreeMap;
 use support::Fixture;
 
+#[cfg(unix)]
 const GITHUB: &str = "ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789";
+#[cfg(unix)]
 const NPM: &str = "npm_abcdefghijklmnopqrstuvwxyz0123456789";
+#[cfg(unix)]
 /// Shapeless values only an exact match can find: an environment secret and a
 /// configured provider key.
 const DEPLOY: &str = "plain-deploy-value-0042";
+#[cfg(unix)]
 const PROVIDER_KEY: &str = "corp-provider-key-0123456789";
+#[cfg(unix)]
 const PEM: &str = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ\nAAAAMwAAAAtzc2gtZWQyNTUxOQAAACD3r9cZ\n-----END OPENSSH PRIVATE KEY-----";
 
+#[cfg(unix)]
 /// The tool results of a request, by call.
 fn tool_results(request: &cyber_llm::LlmRequest) -> BTreeMap<String, String> {
     request
@@ -33,6 +44,7 @@ fn tool_results(request: &cyber_llm::LlmRequest) -> BTreeMap<String, String> {
         .collect()
 }
 
+#[cfg(unix)]
 /// The stored `session.tool.settled` payloads, by call.
 fn settled(f: &Fixture, session: &str) -> BTreeMap<String, Value> {
     f.store
@@ -50,6 +62,7 @@ fn settled(f: &Fixture, session: &str) -> BTreeMap<String, Value> {
         .collect()
 }
 
+#[cfg(unix)]
 fn assert_hidden(text: &str) {
     for secret in [
         GITHUB,
@@ -65,6 +78,7 @@ fn assert_hidden(text: &str) {
     }
 }
 
+#[cfg(unix)]
 fn overflow_path(output: &str) -> String {
     output
         .rsplit("full output at ")
