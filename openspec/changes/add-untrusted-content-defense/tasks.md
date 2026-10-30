@@ -23,22 +23,22 @@
 
 ## 2. Detector
 
-- [ ] 2.1 `untrusted/rules.rs` (`detector_version = 1`) and `untrusted/detect.rs`:
+- [x] 2.1 `untrusted/rules.rs` (`detector_version = 1`) and `untrusted/detect.rs` (in `cyber-core`, see design D4):
   - normalize with NFKC, lowercase, remove hidden characters, collapse whitespace;
   - the seven kinds;
   - at most 10 hits with excerpts of up to 120 characters, passed through secret redaction;
   - `signal_count`.
   
   Table-driven tests: at least 3 positive and 3 negative cases per kind, plus scenarios "Instruction override flagged", "Obfuscated phrase still matches" and "Benign page has no signals".
-- [ ] 2.2 Run the detector on framed results, set `signals` in the frame (kind order as in the spec), and scan admitted cross-session messages and Channel events.
+- [x] 2.2 Run the detector on framed results, set `signals` in the frame (kind order as in the spec), and scan admitted cross-session messages and Channel events.
   - Tests: frame attribute order, a message with `permission_change` gets an `untrusted` record on `session.prompt.admitted.1`.
-- [ ] 2.3 `scan: "all"`: scan `read`, `grep`, `bash` and `powershell` output without rewriting it.
+- [x] 2.3 `scan: "all"`: scan `read`, `grep`, `bash` and `powershell` output without rewriting it.
   - Test: scenario "Project tightens scanning". Also a `read` with a bidi control yields a `hidden_text` record while the output bytes are unchanged.
-- [ ] 2.4 Benchmark: a 50 KiB mixed page under 5 ms on the CI Linux x64 runner (`cargo bench` target, checked in CI with a 2x margin alarm).
+- [x] 2.4 Benchmark: a 50 KiB mixed page under 5 ms on the CI Linux x64 runner (`cargo bench` target, checked in CI with a 2x margin alarm).
 
 ## 3. Records and notices
 
-- [ ] 3.1 Add the optional `untrusted` field to `ToolSettled` and to admitted prompts (`runtime/events.rs`).
+- [x] 3.1 Add the optional `untrusted` field to `ToolSettled` and to admitted prompts (`runtime/events.rs`).
   - Tests: round-trip, and an old event without the field reads as no signals.
 - [ ] 3.2 TUI warning line, with its consequence text per Mode and setting, and excerpts when the result is expanded.
   - Snapshot tests: scenario "TUI notice under a fetch", plus `dont-ask`, `bypass` (`allow`/`deny`) and `taint: off` variants.

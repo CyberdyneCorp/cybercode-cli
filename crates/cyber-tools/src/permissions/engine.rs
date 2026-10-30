@@ -72,7 +72,8 @@ pub fn parse_rules(value: &Value, sources: &BTreeMap<String, String>) -> Vec<Rul
             .unwrap_or_default(),
         Value::Object(map) => map
             .iter()
-            .filter(|(action, _)| action.as_str() != "auto_mode")
+            // Settings that live beside the rules, not rules.
+            .filter(|(action, _)| !matches!(action.as_str(), "auto_mode" | "untrusted_content"))
             .flat_map(|(action, spec)| {
                 if action == "rules"
                     && let Some(items) = spec.as_array()
@@ -847,6 +848,17 @@ mod tests {
             parse_rules(&json!("ask"), &BTreeMap::new())[0],
             Rule::new("*", "*", Effect::Ask, "config")
         );
+    }
+
+    /// `untrusted_content` holds settings (`scan`, `bypass: "allow"`, …), not rules: it
+    /// must never become an `allow` rule for an action of that name.
+    #[test]
+    fn untrusted_content_settings_are_not_rules() {
+        let rules = parse_rules(
+            &json!({"read": "allow", "untrusted_content": {"scan": "all", "bypass": "allow"}}),
+            &BTreeMap::new(),
+        );
+        assert_eq!(rules, [Rule::new("read", "*", Effect::Allow, "config")]);
     }
 
     #[test]

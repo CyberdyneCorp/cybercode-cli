@@ -163,7 +163,7 @@ impl Runtime {
                         resume: true,
                         ..Admission::text(resume_line(&task.id, &task.title), Delivery::Queue)
                     };
-                    self.admit_message(&member.session_id, admission, Vec::new())
+                    self.admit_message(&member.session_id, admission, Vec::new(), None)
                         .await?;
                 }
                 _ if queued => self.inner.start_drain(&member.session_id, false),

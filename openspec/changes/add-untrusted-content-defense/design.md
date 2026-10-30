@@ -103,7 +103,7 @@ Text is never deleted, so the user can see it and the model cannot be fed instru
 
 ### D4. Detector: a versioned rule table
 
-`crates/cyber-tools/src/untrusted/rules.rs` holds the rules, and `detector_version` starts at `1` and goes up with any rule change. Before matching, the detector:
+`crates/cyber-core/src/untrusted/rules.rs` holds the rules and `detect.rs` the detector; `detector_version` starts at `1` and goes up with any rule change. They live in `cyber-core`, not `cyber-tools`, because the runtime (`cyber-server`) scans admitted messages and cannot depend on the tool crate. Before matching, the detector:
 1. normalizes the text with NFKC;
 2. lowercases it;
 3. removes the hidden characters from D3, so `ig​nore` still matches;
@@ -119,9 +119,19 @@ Text is never deleted, so the user can see it and the model cannot be fed instru
 | `permission_change` | `bypass` mode, `--dangerously-`, `/mode `, `/approve`, "approve the pending", "disable the sandbox", `cyber.json` or `permissions` next to `allow` |
 | `hidden_text` | at least one bidi control, tag character, ESC or other replaced C0 control, or at least 3 zero-width characters outside emoji sequences |
 
+- **How v1 reads the table.** Precise points the table leaves open:
+  - `\b` in a rule is an ASCII word boundary; a Unicode one pushes `regex` off its fast engines on non-ASCII text and missed the speed target by a factor of ten.
+  - Whitespace runs collapse to one space, or one line break when the run held one, so the line-start rules still apply.
+  - Verbs and names also match their common inflections and spellings (`sending`, `uploaded`, `e-mail`, `api-key`, `access_token`). `.env` matches only where a path segment starts (after whitespace, `/`, `~`, a quote, `(`, `=` or `:`), so `process.env` is not a secret.
+  - The frame and block tags also match in their closing form and with spaces (`</ untrusted_content`).
+  - The `<…>` placeholder does not match a closing tag such as `</a>`.
+  - `command_request` also takes `rm -fr`, `| zsh`, `| sudo sh` and the `-e` / `-encodedcommand` spellings of `powershell -enc`.
+  - "`permissions` next to `allow`" is a `permissions` key (`permissions:`, `"permissions":`, `permissions=`) or `cyber.json(c)` within 80 characters of `allow`, so prose such as "permissions allow you to" is not a hit.
+  - `hidden_text` is one hit per result however many characters raise it, and its excerpt is the original text with markers; other excerpts come from the normalized (lower-cased) text, starting at a word so redaction sees whole credentials.
+  - When more than ten hits are found, the first of each kind is kept before the rest, so every kind that hit has an excerpt; `signals` lists every kind that hit.
 - **Bounds.** The scan covers the model-facing text, which the budget already caps at about 50 KiB, and never more than 256 KiB. It records at most 10 hits per result, each with `kind` and an `excerpt` of up to 120 characters. Excerpts pass through the existing secret redaction and have hidden characters replaced. `signal_count` counts all hits.
 - **Speed target.** At most 5 ms for a 50 KiB result on the CI Linux x64 runner (benchmark in tasks 2.4). The rules are plain substring and `regex` (linear-time) matches.
-- **Where it runs.** On every framed result. On `<cross_session_message>` and Channel event text when admitted. With `scan: "all"`, also on the output of `read`, `grep`, `bash` and `powershell`; those hits appear in notices and taint the run, but there is no frame.
+- **Where it runs.** On every framed result (for a `webfetch` summary, also on the page the summarizer read). On the text of a cross-session message when admitted (the sender's own words, not the `<cross_session_message>` block, whose tag is itself `role_markup`), and on a teammate's idle status line, which is cross-session text too. On any admission with source `channel`, whatever path admits it; no Channel transport exists yet, so this is where one will be scanned. `@server:uri` attachments carry `signals` on their frame but no record, since they are not a tool call. With `scan: "all"`, also on the output of `read`, `grep`, `bash` and `powershell`; those hits appear in notices and taint the run, but there is no frame.
 - **False positives** are expected on pages about security or prompt injection. A hit costs a notice and a few prompts, never lost content, which is why the rules can afford to be broad.
 
 *Alternatives considered:*
@@ -130,7 +140,7 @@ Text is never deleted, so the user can see it and the model cannot be fed instru
 
 ### D5. Records and notices
 
-- **Event.** `session.tool.settled.1` gains optional `untrusted: { source, origin, detector_version, signals: [{kind, excerpt}], signal_count }`. It is present whenever the result was framed, or was scanned under `scan: "all"` and had hits. `session.prompt.admitted.1` gains the same object for messages and Channel events that hit, with `source` set to `session` or `channel`. Old events have no field and read as no signals.
+- **Event.** `session.tool.settled.1` gains optional `untrusted: { source, origin, detector_version, signals: [{kind, excerpt}], signal_count }`. It is present whenever the result was framed, or was scanned under `scan: "all"` and had hits; for such a workspace hit `source` is the tool (`read`, `grep`, `bash`, `powershell`) and `origin` the path or the command (credentials redacted). The tool host notes the record when the registry projects the result, and the runtime attaches it to the settlement as it does the host's call metadata. The Session projection carries it on `CallState.untrusted` and `InboxRow.untrusted`, so clients read it without decoding events. `session.prompt.admitted.1` gains the same object for messages and Channel events that hit, with `source` set to `session` or `channel`. Old events have no field and read as no signals.
 - **TUI.** One warning line under the tool result: `! Possible prompt injection in webfetch result (override_instructions, exfil_url). Risky actions in this run will ask.` The second sentence follows the effective setting:
   - `Risky actions in this run will be denied.` in `dont-ask` or with no user attached;
   - `Taint is off in bypass.` in `bypass` with the default `bypass: "allow"`;
@@ -209,6 +219,7 @@ When the run is tainted, `runtime/auto.rs` adds `taint: { sources: [{source, ori
 - **Project layers can only tighten.** A project layer may set `taint: "any"`, `bypass: "deny"` and `scan: "all"`. It may not set `taint: "off"`, `bypass: "allow"` over a stricter user value, `scan: "external"` over `all`, or `allow_when_tainted`. Those values are ignored with one warning per load naming the file, because a hostile checkout must not switch the defense off.
 - **Other layers.** User, global, CLI (`--config`) and env layers may set anything.
 - **Changes apply at the next Safe Boundary.**
+- **Reading `scan`.** The tool host reads `scan` from the Location's merged config for each `read`, `grep`, `bash` and `powershell` result. Scanning never changes output, so it errs toward it: a value other than `external` (or no value) scans everything, and so does a config that fails to load. `untrusted_content` sits under `permissions` but is never parsed as a permission rule (its `bypass: "allow"` must not become an `allow` rule for an action of that name).
 
 ### D10. Prompt guidance
 

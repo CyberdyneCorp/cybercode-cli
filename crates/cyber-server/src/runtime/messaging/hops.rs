@@ -275,6 +275,7 @@ mod tests {
                 digest: String::new(),
                 admitted_seq: 0,
                 promoted_seq: *promoted,
+                untrusted: None,
             });
             if let Some(hops) = hops {
                 let chain = MessageChain {

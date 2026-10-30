@@ -216,7 +216,11 @@ impl BuiltinHost {
             asker: asker.clone(),
             rules: turn.rules.clone(),
         };
-        match self.execute(invocation, cancel.clone()).await {
+        let outcome = self.execute(invocation, cancel.clone()).await;
+        // An attachment is not a call: its frame carries any `signals`, and the record
+        // noted for a settlement that will never come is dropped.
+        self.take_untrusted(&turn.session_id, &asker.call_id);
+        match outcome {
             ToolOutcome::External {
                 output,
                 failed: false,

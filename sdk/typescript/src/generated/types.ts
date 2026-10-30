@@ -281,6 +281,11 @@ export type CallState = {
    * the shell).
    */
   metadata?: unknown;
+  /**
+   * The settled result's provenance and injection signals (`untrusted-content` →
+   * Injection signal notices).
+   */
+  untrusted?: UntrustedRecord | null;
 };
 
 export type CallStatus = "ok" | "error" | "called" | "dispatched" | "interrupted" | "outcome_unknown";
@@ -2063,6 +2068,11 @@ export type InboxRow = {
   digest: string;
   admitted_seq: number;
   promoted_seq?: number | null;
+  /**
+   * Injection signals in an admitted message or Channel event (`untrusted-content`
+   * → Injection signal notices).
+   */
+  untrusted?: UntrustedRecord | null;
 };
 
 /** An iteration that was admitted and has not ended. */
@@ -4179,6 +4189,15 @@ export type SideBody = {
   question: string;
 };
 
+/** One recorded hit: its kind and a short, redacted excerpt of the matched text. */
+export type Signal = {
+  kind: SignalKind;
+  excerpt: string;
+};
+
+/** A kind of injection signal, in the order frames and records list them. */
+export type SignalKind = "override_instructions" | "role_markup" | "secret_access" | "exfil_url" | "command_request" | "permission_change" | "hidden_text";
+
 /** The source of each signal value, labelled as [`SourcedFlag::source`]. */
 export type SignalSources = {
   endpoint: string;
@@ -4674,6 +4693,26 @@ export type Totals = {
  * end for every tool, and `middle` keeps both ends.
  */
 export type Truncation = "default" | "head" | "tail" | "middle";
+
+/**
+ * The `untrusted` record of `session.tool.settled.1` and `session.prompt.admitted.1`
+ * (`untrusted-content` → Injection signal notices). Events without it read as having
+ * no signals.
+ */
+export type UntrustedRecord = {
+  /**
+   * The frame's `source` (`webfetch`, `mcp`, …), the workspace tool for a
+   * `scan: "all"` hit (`read`, `grep`, `bash`, `powershell`), or `session` /
+   * `channel` for an admitted message.
+   */
+  source: string;
+  /** Where the content came from, without userinfo and cut to 512 characters. */
+  origin: string;
+  detector_version: number;
+  signals?: Signal[];
+  /** All hits, including those past the recorded ten. */
+  signal_count?: number;
+};
 
 export type UpdateBody = {
   title?: string | null;

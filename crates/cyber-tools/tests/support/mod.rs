@@ -284,12 +284,25 @@ pub fn external(outcome: ToolOutcome) -> (String, cyber_server::runtime::Provena
 }
 
 /// The body of a framed result, checking that its frame carries `source` and `origin`
-/// and closes exactly once, as the last line before any truncation notice.
+/// (and any `signals`) and closes exactly once, as the last line before any truncation
+/// notice.
 pub fn framed(output: &str, source: &str, origin: &str) -> String {
-    let head = format!("<untrusted_content source=\"{source}\" origin=\"{origin}\">\n");
-    let body = output
+    let head = format!("<untrusted_content source=\"{source}\" origin=\"{origin}\"");
+    let attributes = output
         .strip_prefix(&head)
         .unwrap_or_else(|| panic!("expected frame {head:?} in {output:?}"));
+    let body = attributes
+        .strip_prefix(">\n")
+        .or_else(|| {
+            let rest = attributes.strip_prefix(" signals=\"")?;
+            let (kinds, rest) = rest.split_once('"')?;
+            assert!(
+                !kinds.is_empty() && !kinds.contains(['<', '>', ' ']),
+                "{output}"
+            );
+            rest.strip_prefix(">\n")
+        })
+        .unwrap_or_else(|| panic!("malformed frame attributes in {output:?}"));
     assert_eq!(
         output.matches("</untrusted_content>").count(),
         1,
@@ -303,6 +316,13 @@ pub fn framed(output: &str, source: &str, origin: &str) -> String {
         "{output}"
     );
     body.to_string()
+}
+
+/// The `signals` attribute of a framed result, if any.
+pub fn signals(output: &str) -> Option<&str> {
+    let head = output.lines().next()?;
+    let rest = head.split_once(" signals=\"")?.1;
+    Some(rest.split_once('"')?.0)
 }
 
 pub fn failed(outcome: ToolOutcome) -> String {

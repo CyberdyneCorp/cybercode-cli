@@ -2284,3 +2284,23 @@ fn native_global_loading_ignores_process_feature_and_config_overrides() {
             .enabled
     );
 }
+
+/// Scenario "Project tightens scanning" (`permissions-modes` → Untrusted content
+/// settings): a project layer's `scan: "all"` is effective even in a checkout that was
+/// never approved, since it only adds scanning, and loads without warnings.
+#[test]
+fn project_layer_can_turn_on_scanning_of_workspace_output() {
+    use cyber_core::untrusted::ScanScope;
+    let f = Fixture::new();
+    assert_eq!(
+        ScanScope::from_config(&f.load().unwrap().value),
+        ScanScope::External
+    );
+    f.write(
+        ".cyber/cyber.jsonc",
+        r#"{ "permissions": { "untrusted_content": { "scan": "all" } } }"#,
+    );
+    let resolved = f.load().unwrap();
+    assert_eq!(ScanScope::from_config(&resolved.value), ScanScope::All);
+    assert!(resolved.warnings.is_empty(), "{:?}", resolved.warnings);
+}

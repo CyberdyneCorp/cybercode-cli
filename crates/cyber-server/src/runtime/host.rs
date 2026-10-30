@@ -1231,6 +1231,17 @@ pub trait ToolHost: Send + Sync {
         None
     }
 
+    /// Take, once, the `untrusted` record the host noted for a call's result
+    /// (`untrusted-content` → Injection signal notices); the runtime records it on the
+    /// settlement. Hosts that frame nothing return `None`.
+    fn take_call_untrusted(
+        &self,
+        _session_id: &str,
+        _call_id: &str,
+    ) -> Option<cyber_core::untrusted::UntrustedRecord> {
+        None
+    }
+
     /// Establish, without side effects, whether a dispatched call took effect.
     /// `directory` is the Session's Location, for resolving relative paths.
     fn reconcile(&self, _directory: &str, _call: &CallState) -> BoxFuture<'_, Reconciliation> {

@@ -5,4 +5,7 @@
 pub(crate) mod frame;
 pub(crate) mod overflow;
 
-pub(crate) use frame::{frame, without_userinfo};
+pub(crate) use cyber_core::untrusted::without_userinfo;
+#[cfg(test)]
+pub(crate) use frame::frame;
+pub(crate) use frame::{scanned, scanned_with};

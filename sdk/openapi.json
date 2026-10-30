@@ -7748,6 +7748,17 @@
           },
           "metadata": {
             "description": "The tool host's notes on the settled run (`builtin-tools` → apply_patch through\nthe shell)."
+          },
+          "untrusted": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UntrustedRecord"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The settled result's provenance and injection signals (`untrusted-content` →\nInjection signal notices)."
           }
         },
         "required": [
@@ -7799,6 +7810,73 @@
             "description": "Dispatched, and whether its side effects happened is unknown."
           }
         ]
+      },
+      "UntrustedRecord": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "The frame's `source` (`webfetch`, `mcp`, …), the workspace tool for a\n`scan: \"all\"` hit (`read`, `grep`, `bash`, `powershell`), or `session` /\n`channel` for an admitted message."
+          },
+          "origin": {
+            "type": "string",
+            "description": "Where the content came from, without userinfo and cut to 512 characters."
+          },
+          "detector_version": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "signals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Signal"
+            },
+            "default": []
+          },
+          "signal_count": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "All hits, including those past the recorded ten.",
+            "default": 0
+          }
+        },
+        "required": [
+          "source",
+          "origin",
+          "detector_version"
+        ],
+        "description": "The `untrusted` record of `session.tool.settled.1` and `session.prompt.admitted.1`\n(`untrusted-content` → Injection signal notices). Events without it read as having\nno signals."
+      },
+      "Signal": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/SignalKind"
+          },
+          "excerpt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "excerpt"
+        ],
+        "description": "One recorded hit: its kind and a short, redacted excerpt of the matched text."
+      },
+      "SignalKind": {
+        "type": "string",
+        "enum": [
+          "override_instructions",
+          "role_markup",
+          "secret_access",
+          "exfil_url",
+          "command_request",
+          "permission_change",
+          "hidden_text"
+        ],
+        "description": "A kind of injection signal, in the order frames and records list them."
       },
       "Data_Array_of_BranchNode": {
         "type": "object",
@@ -8018,6 +8096,17 @@
               "null"
             ],
             "format": "int64"
+          },
+          "untrusted": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UntrustedRecord"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Injection signals in an admitted message or Channel event (`untrusted-content`\n→ Injection signal notices)."
           }
         },
         "required": [

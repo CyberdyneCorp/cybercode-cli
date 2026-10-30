@@ -127,6 +127,7 @@ pub use structured::StructuredSchema;
 mod recap;
 pub use recap::{NOTHING_TO_RECAP, Recap};
 mod title;
+mod untrusted_input;
 mod usage;
 mod usage_breakdown;
 mod usage_insights;
@@ -1531,18 +1532,22 @@ impl Runtime {
     /// A message is not user input: no UserPromptSubmit, template or `@` resolution runs,
     /// so its mentions stay literal text (`cross-session-messaging` → Message content
     /// limits). An exact retry returns the original receipt and commits nothing.
+    /// `untrusted` is the message text's injection signal record, when it had hits
+    /// (`untrusted-content` → Injection signal notices).
     pub(crate) async fn admit_message(
         &self,
         session_id: &str,
         admission: Admission,
         extra: Vec<NewEvent>,
+        untrusted: Option<cyber_core::untrusted::UntrustedRecord>,
     ) -> Result<Receipt, RuntimeError> {
-        self.admit_attempt_with(
+        self.admit_recorded(
             session_id,
             admission,
             None,
             PromptCheck::Checked(None),
             extra,
+            untrusted,
         )
         .await
     }
@@ -1555,6 +1560,22 @@ impl Runtime {
         check: PromptCheck,
         extra: Vec<NewEvent>,
     ) -> Result<Receipt, RuntimeError> {
+        self.admit_recorded(session_id, admission, attempt, check, extra, None)
+            .await
+    }
+
+    /// Admit with the input's `untrusted` record. A Channel event is always scanned
+    /// here, so no Channel admission path can skip the detector.
+    async fn admit_recorded(
+        &self,
+        session_id: &str,
+        admission: Admission,
+        attempt: Option<names::Resumed>,
+        check: PromptCheck,
+        extra: Vec<NewEvent>,
+        untrusted: Option<cyber_core::untrusted::UntrustedRecord>,
+    ) -> Result<Receipt, RuntimeError> {
+        let untrusted = untrusted.or_else(|| untrusted_input::channel_record(&admission));
         let message_id = admission
             .message_id
             .clone()
@@ -1626,6 +1647,7 @@ impl Runtime {
                 hook_context: effects.context,
                 hook_stop: effects.stop,
                 resources: attachments.resources,
+                untrusted,
             };
             let mut events = Vec::new();
             if let Some(attempt) = attempt {
@@ -2160,6 +2182,7 @@ impl Runtime {
             output,
             detail: Some("resolved by user".into()),
             metadata: None,
+            untrusted: None,
         };
         self.inner
             .commit_locked(&mut state, vec![event(TOOL_SETTLED, &payload)])?;

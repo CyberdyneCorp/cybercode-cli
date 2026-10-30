@@ -637,7 +637,8 @@ fn queue_head<'a>(mut rows: impl Iterator<Item = &'a super::model::InboxRow>) ->
 }
 
 impl Inner {
-    /// `settled` with the tool host's notes on the call, when it made any.
+    /// `settled` with the tool host's notes on the call and its result's `untrusted`
+    /// record, when it has them.
     pub(super) fn with_call_metadata(
         &self,
         session_id: &str,
@@ -646,6 +647,11 @@ impl Inner {
     ) -> cyber_store::NewEvent {
         if let Some(metadata) = self.tools.take_call_metadata(session_id, call_id) {
             settled.data["metadata"] = metadata;
+        }
+        if let Some(record) = self.tools.take_call_untrusted(session_id, call_id)
+            && let Ok(record) = serde_json::to_value(record)
+        {
+            settled.data["untrusted"] = record;
         }
         settled
     }
@@ -2077,6 +2083,7 @@ fn settled(
         output: output.into(),
         detail: detail.map(str::to_string),
         metadata: None,
+        untrusted: None,
     };
     event(TOOL_SETTLED, &payload)
 }
@@ -2198,6 +2205,7 @@ pub(super) fn settlement_with_reminders(
             output,
             detail: None,
             metadata: None,
+            untrusted: None,
         },
     );
     (settled, loaded)
@@ -2284,6 +2292,7 @@ pub(super) fn settlement(
                 output,
                 detail: None,
                 metadata: None,
+                untrusted: None,
             },
         ),
         ToolOutcome::SkillSuggestions {
@@ -2314,6 +2323,7 @@ pub(super) fn settlement(
                 output,
                 detail: None,
                 metadata: None,
+                untrusted: None,
             },
         ),
         ToolOutcome::Failed(message) => settled(call_id, CallStatus::Error, &message, None),
@@ -2339,6 +2349,7 @@ pub(super) fn settlement(
                 output,
                 detail: None,
                 metadata: None,
+                untrusted: None,
             },
         ),
         ToolOutcome::Aborted if read_only => settled(
@@ -2731,6 +2742,7 @@ mod queue_head_tests {
             digest: String::new(),
             admitted_seq: 0,
             promoted_seq: None,
+            untrusted: None,
         }
     }
 

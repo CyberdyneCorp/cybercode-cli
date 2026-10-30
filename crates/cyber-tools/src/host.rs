@@ -9,6 +9,7 @@ mod remote_sources;
 pub(crate) mod review;
 mod skill_catalog;
 mod template_expand;
+mod untrusted_records;
 mod workflow_agents;
 pub(crate) mod workflow_integration;
 mod workflow_prepare;
@@ -22,6 +23,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use cyber_core::env::EnvSource;
 use cyber_core::hooks::HookAction;
 use cyber_core::skills::{self, Discovery, SkillScope};
+use cyber_core::untrusted::Scan;
 use cyber_server::runtime::{
     CallState, Invocation, ModelResolver, PermissionAsk, PermissionReply, Provenance,
     Reconciliation, Runtime, ToolDef, ToolHost, ToolOutcome, TurnContext, WeakRuntime,
@@ -91,6 +93,8 @@ pub struct BuiltinHost {
     pub(crate) tool_annotations: Mutex<HashMap<(String, String), Value>>,
     /// Notes on settled runs awaiting their settlement, by (Session, call).
     call_metadata: Mutex<HashMap<(String, String), Value>>,
+    /// `untrusted` records of results awaiting their settlement, by (Session, call).
+    call_untrusted: Mutex<HashMap<(String, String), cyber_core::untrusted::UntrustedRecord>>,
     pub(crate) search_cooldowns: tools::websearch::Cooldowns,
     /// Domains approved for sandboxed network access, by Session.
     network: Mutex<HashMap<String, Arc<Mutex<HashSet<String>>>>>,
@@ -196,6 +200,7 @@ impl BuiltinHost {
             hook_effects: Default::default(),
             tool_annotations: Mutex::default(),
             call_metadata: Mutex::default(),
+            call_untrusted: Mutex::default(),
             search_cooldowns: tools::websearch::Cooldowns::default(),
             network: Mutex::default(),
             subagents: crate::subagents::Slots::default(),
@@ -260,49 +265,59 @@ impl BuiltinHost {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take();
-        if let Some(provenance) = provenance {
-            return self.settle_external(ctx, output, keep_tail, provenance);
+        if let Some((provenance, prior)) = provenance {
+            return self.settle_external(ctx, output, keep_tail, provenance, prior);
         }
-        match self
-            .budget(&ctx.location)
-            .apply_for(output, keep_tail, ctx.inv.tool_output)
-        {
-            Ok(output) => match value {
-                Some(value) => ToolOutcome::Structured { output, value },
-                None => match ctx
-                    .loaded_skill
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .clone()
-                {
-                    Some(activation) => ToolOutcome::SkillLoaded { output, activation },
-                    None => ToolOutcome::Ok(output),
-                },
+        let output =
+            match self
+                .budget(&ctx.location)
+                .apply_for(output, keep_tail, ctx.inv.tool_output)
+            {
+                Ok(output) => output,
+                Err(error) => return ToolOutcome::Crashed(error),
+            };
+        // `scan: "all"` may record hits; workspace output itself is never rewritten.
+        self.scan_workspace_output(ctx, &output);
+        match value {
+            Some(value) => ToolOutcome::Structured { output, value },
+            None => match ctx
+                .loaded_skill
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+            {
+                Some(activation) => ToolOutcome::SkillLoaded { output, activation },
+                None => ToolOutcome::Ok(output),
             },
-            Err(error) => ToolOutcome::Crashed(error),
         }
     }
 
-    /// A built-in result from outside the workspace: truncated, then framed.
+    /// A built-in result from outside the workspace: truncated, then scanned and
+    /// framed, with its `untrusted` record noted for the settlement.
     fn settle_external(
         &self,
         ctx: &Ctx<'_>,
         output: String,
         keep_tail: bool,
         provenance: Provenance,
+        prior: Scan,
     ) -> ToolOutcome {
         match self.budget(&ctx.location).apply_framed(
             output,
             keep_tail,
             ctx.inv.tool_output,
             &provenance,
+            prior,
         ) {
-            Ok(output) => ToolOutcome::External {
-                output,
-                value: None,
-                failed: false,
-                provenance,
-            },
+            Ok((output, scan)) => {
+                self.note_framed(ctx.inv, &provenance, scan);
+                ToolOutcome::External {
+                    output,
+                    value: None,
+                    failed: false,
+                    provenance,
+                }
+            }
             Err(error) => ToolOutcome::Crashed(error),
         }
     }
@@ -838,6 +853,14 @@ impl ToolHost for BuiltinHost {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(&(session_id.to_owned(), call_id.to_owned()))
+    }
+
+    fn take_call_untrusted(
+        &self,
+        session_id: &str,
+        call_id: &str,
+    ) -> Option<cyber_core::untrusted::UntrustedRecord> {
+        self.take_untrusted(session_id, call_id)
     }
 
     fn file_decisions<'a>(
@@ -1867,7 +1890,8 @@ pub(crate) struct Ctx<'a> {
     pub loaded_skill: Mutex<Option<skills::SkillActivation>>,
     /// Set by a tool whose result comes from outside the workspace; the projection
     /// then frames it (`untrusted-content` → Framed tool results).
-    pub provenance: Mutex<Option<Provenance>>,
+    /// A derived result (a page's summary) also carries the hits of what it came from.
+    pub provenance: Mutex<Option<(Provenance, Scan)>>,
     pub compiler_feedback: std::sync::atomic::AtomicBool,
     pub host: &'a BuiltinHost,
     pub inv: &'a Invocation,
@@ -1909,10 +1933,16 @@ impl DenialHooks {
 impl Ctx<'_> {
     /// Declare where this call's result comes from, so the registry frames it.
     pub(crate) fn declare_provenance(&self, provenance: Provenance) {
+        self.declare_derived_provenance(provenance, Scan::default());
+    }
+
+    /// [`Ctx::declare_provenance`] for a result derived from scanned text, such as a
+    /// summary of a page: the frame carries the union of both texts' signals.
+    pub(crate) fn declare_derived_provenance(&self, provenance: Provenance, prior: Scan) {
         *self
             .provenance
             .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(provenance);
+            .unwrap_or_else(PoisonError::into_inner) = Some((provenance, prior));
     }
 
     /// A read or grep of a managed overflow file takes the original result's frame.

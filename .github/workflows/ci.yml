@@ -68,6 +68,11 @@ jobs:
       # One retry per failing test; see .config/nextest.toml. Doctests are not run by nextest.
       - run: cargo nextest run --workspace --profile ci
       - run: cargo test --workspace --doc
+      # The injection detector's speed target (`untrusted-content`): 5 ms for a 50 KiB
+      # page on this runner; the bench fails above twice that.
+      - name: Untrusted-content detector benchmark
+        if: runner.os == 'Linux'
+        run: cargo bench -p cyber-core --bench untrusted_detector
 
   windows-lint:
     name: Windows lint

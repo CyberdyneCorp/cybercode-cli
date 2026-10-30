@@ -115,6 +115,7 @@ impl Runtime {
                         hook_context: effects.context,
                         hook_stop: effects.stop,
                         resources: attachments.resources,
+                        untrusted: None,
                     },
                 ),
             ],

@@ -217,6 +217,8 @@ impl Runtime {
             &team.lead_id,
             admission,
             vec![updated, event(records::MEMBER_IDLE, &recorded)],
+            // The status line is the teammate's own words, scanned like a message.
+            crate::runtime::untrusted_input::message_record(&member.name, &idle.last_status),
         )
         .await?;
         Ok(Some(tasks_in_progress))

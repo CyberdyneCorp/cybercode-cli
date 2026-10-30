@@ -302,53 +302,60 @@ impl BuiltinHost {
         outcome: ToolOutcome,
         token_limit: Option<usize>,
     ) -> ToolOutcome {
+        let bounded = |output: String| {
+            self.budget(&ctx.location)
+                .apply_registered(output, ctx.inv.tool_output, token_limit, None)
+                .map(|(output, _)| output)
+        };
         match outcome {
-            ToolOutcome::Ok(output) => self
-                .budget(&ctx.location)
-                .apply_registered(output, ctx.inv.tool_output, token_limit, None)
-                .map_or_else(ToolOutcome::Crashed, ToolOutcome::Ok),
-            ToolOutcome::Structured { output, value } => self
-                .budget(&ctx.location)
-                .apply_registered(output, ctx.inv.tool_output, token_limit, None)
-                .map_or_else(ToolOutcome::Crashed, |output| ToolOutcome::Structured {
-                    output,
-                    value,
-                }),
+            ToolOutcome::Ok(output) => {
+                bounded(output).map_or_else(ToolOutcome::Crashed, ToolOutcome::Ok)
+            }
+            ToolOutcome::Structured { output, value } => {
+                bounded(output).map_or_else(ToolOutcome::Crashed, |output| {
+                    ToolOutcome::Structured { output, value }
+                })
+            }
             ToolOutcome::SkillSuggestions {
                 failed,
                 output,
                 value,
                 skills,
-            } => self
-                .budget(&ctx.location)
-                .apply_registered(output, ctx.inv.tool_output, token_limit, None)
-                .map_or_else(ToolOutcome::Crashed, |output| {
-                    ToolOutcome::SkillSuggestions {
-                        failed,
-                        output,
-                        value,
-                        skills,
-                    }
-                }),
-            ToolOutcome::Failed(output) => self
-                .budget(&ctx.location)
-                .apply_registered(output, ctx.inv.tool_output, token_limit, None)
-                .map_or_else(ToolOutcome::Crashed, ToolOutcome::Failed),
-            // The projection owns the frame: truncate the bare text, then frame it.
+            } => bounded(output).map_or_else(ToolOutcome::Crashed, |output| {
+                ToolOutcome::SkillSuggestions {
+                    failed,
+                    output,
+                    value,
+                    skills,
+                }
+            }),
+            ToolOutcome::Failed(output) => {
+                bounded(output).map_or_else(ToolOutcome::Crashed, ToolOutcome::Failed)
+            }
+            // The projection owns the frame: truncate the bare text, then scan and frame
+            // it, and note its `untrusted` record for the settlement.
             ToolOutcome::External {
                 output,
                 value,
                 failed,
                 provenance,
-            } => self
-                .budget(&ctx.location)
-                .apply_registered(output, ctx.inv.tool_output, token_limit, Some(&provenance))
-                .map_or_else(ToolOutcome::Crashed, |output| ToolOutcome::External {
-                    output,
-                    value,
-                    failed,
-                    provenance,
-                }),
+            } => match self.budget(&ctx.location).apply_registered(
+                output,
+                ctx.inv.tool_output,
+                token_limit,
+                Some(&provenance),
+            ) {
+                Ok((output, scan)) => {
+                    self.note_framed(ctx.inv, &provenance, scan.unwrap_or_default());
+                    ToolOutcome::External {
+                        output,
+                        value,
+                        failed,
+                        provenance,
+                    }
+                }
+                Err(error) => ToolOutcome::Crashed(error),
+            },
             other => other,
         }
     }

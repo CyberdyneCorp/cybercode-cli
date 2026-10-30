@@ -44,6 +44,10 @@ pub struct InboxRow {
     pub digest: String,
     pub admitted_seq: i64,
     pub promoted_seq: Option<i64>,
+    /// Injection signals in an admitted message or Channel event (`untrusted-content`
+    /// → Injection signal notices).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub untrusted: Option<cyber_core::untrusted::UntrustedRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -301,6 +305,10 @@ pub struct CallState {
     /// the shell).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
+    /// The settled result's provenance and injection signals (`untrusted-content` →
+    /// Injection signal notices).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub untrusted: Option<cyber_core::untrusted::UntrustedRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -1177,6 +1185,7 @@ impl SessionState {
             digest: a.digest,
             admitted_seq: seq,
             promoted_seq: None,
+            untrusted: a.untrusted,
         });
     }
 
@@ -1379,6 +1388,7 @@ impl SessionState {
                 status: CallStatus::Called,
                 output: None,
                 metadata: None,
+                untrusted: None,
             },
         );
     }
@@ -1407,6 +1417,7 @@ impl SessionState {
             call.output = Some(s.output);
             call.structured_output = s.structured_output;
             call.metadata = s.metadata;
+            call.untrusted = s.untrusted;
             self.result.settle(call);
         }
     }

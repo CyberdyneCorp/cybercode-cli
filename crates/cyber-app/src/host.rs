@@ -317,6 +317,14 @@ impl ToolHost for AppHost {
         self.builtin.take_call_metadata(session_id, call_id)
     }
 
+    fn take_call_untrusted(
+        &self,
+        session_id: &str,
+        call_id: &str,
+    ) -> Option<cyber_core::untrusted::UntrustedRecord> {
+        self.builtin.take_call_untrusted(session_id, call_id)
+    }
+
     fn file_decisions<'a>(
         &'a self,
         turn: &'a TurnContext,
