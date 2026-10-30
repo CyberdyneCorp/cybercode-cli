@@ -1,5 +1,8 @@
 //! Diagnostic evidence, not capability acceptance. Uses only owned test sockets.
 #[cfg(unix)]
+#[path = "support/plugin_socket_cancel.rs"]
+mod cancellation;
+#[cfg(unix)]
 mod probe {
     use cyber_sandbox::plugin_policy::{LinuxPolicy, MaskPath};
     use serde_json::{Value, json};
@@ -64,7 +67,16 @@ mod probe {
         Baseline,
         Seccomp,
         Broker,
+        BrokerCancel,
         Unix9,
+    }
+    impl Mode {
+        fn ip_servers(self) -> bool {
+            matches!(self, Self::Unix9 | Self::Broker | Self::BrokerCancel)
+        }
+        fn broker(self) -> bool {
+            matches!(self, Self::Broker | Self::BrokerCancel)
+        }
     }
 
     fn observe(policy: &LinuxPolicy<'_>, mode: Mode) -> Value {
@@ -94,7 +106,7 @@ mod probe {
             policy.target_args[1].clone(),
             "pair".into(),
         ];
-        if matches!(mode, Mode::Unix9 | Mode::Broker) {
+        if mode.ip_servers() {
             pair_args.push(policy.scratch.join("local.sock").to_str().unwrap().into());
         }
         let pair_policy = LinuxPolicy {
@@ -133,17 +145,35 @@ mod probe {
         }
         assert_eq!(
             observed["tcp_roundtrip"],
-            matches!(mode, Mode::Unix9 | Mode::Broker),
+            mode.ip_servers(),
             "IP server/client token exchange: {observed}"
         );
         assert_eq!(
             observed["thread_tcp_roundtrip"],
-            matches!(mode, Mode::Unix9 | Mode::Broker),
+            mode.ip_servers(),
             "thread-local IP descriptor token exchange: {observed}"
         );
-        if matches!(mode, Mode::Seccomp | Mode::Broker) {
+        if mode == Mode::Seccomp || mode.broker() {
             assert_eq!(observed["pair_listen"], false, "pair listener: {observed}");
         }
+    }
+
+    fn candidate_rows(
+        policy: LinuxPolicy<'_>,
+        listener: &UnixListener,
+        label: &str,
+        mode: Mode,
+    ) -> Vec<Value> {
+        let mut rows = Vec::new();
+        if mode == Mode::BrokerCancel && label == "outside" {
+            let observed = super::cancellation::observe(&policy);
+            rows.push(
+                json!({"mode":"cancel","socket":label,"fs_read":policy.fs_read,
+                "fs_write":policy.fs_write,"shell":false,"observed":observed}),
+            );
+        }
+        rows.push(pair_row(policy, listener, label, mode));
+        rows
     }
 
     fn options() -> (PathBuf, PathBuf, Mode) {
@@ -161,6 +191,7 @@ mod probe {
             None => Mode::Baseline,
             Some("--candidate") => Mode::Seccomp,
             Some("--broker") => Mode::Broker,
+            Some("--broker-cancel") => Mode::BrokerCancel,
             Some("--landlock9") => Mode::Unix9,
             _ => panic!("unknown candidate mode"),
         };
@@ -263,13 +294,15 @@ mod probe {
                 rows.push(json!({"socket": label, "fs_read": read, "fs_write": write,
                     "shell": false, "host_received_fixture": delivered, "observed": observed}));
                 if candidate {
-                    rows.push(pair_row(policy, &listeners[index], label, mode));
+                    rows.extend(candidate_rows(policy, &listeners[index], label, mode));
                 }
             }
         }
         let sources = [
             "crates/cyber-sandbox/examples/plugin_unix_socket_probe.rs",
             "crates/cyber-sandbox/tests/fixtures/plugin_unix_socket.c",
+            "crates/cyber-sandbox/tests/fixtures/plugin_socket_cancel.h",
+            "crates/cyber-sandbox/examples/support/plugin_socket_cancel.rs",
             "crates/cyber-sandbox/src/plugin_policy.rs",
             "crates/cyber-sandbox/src/plugin_policy/linux.rs",
             "crates/cyber-sandbox/native/linux_plugin_exec.c",
@@ -295,7 +328,7 @@ mod probe {
         }
         let report = json!({"platform": std::env::consts::OS, "architecture": std::env::consts::ARCH,
             "checkout": std::env::var("GITHUB_SHA").ok(), "run_id": std::env::var("GITHUB_RUN_ID").ok(),
-            "candidate": candidate, "landlock9": mode == Mode::Unix9, "socket_broker": mode == Mode::Broker, "sources": sources, "source_sha256": format!("{:x}", hash.finalize()),
+            "candidate": candidate, "landlock9": mode == Mode::Unix9, "socket_broker": mode.broker(), "cancellation_probe": mode == Mode::BrokerCancel, "sources": sources, "source_sha256": format!("{:x}", hash.finalize()),
             "helper_sha256": format!("{:x}", Sha256::digest(std::fs::read(helper).unwrap())),
             "rows": rows, "scope": "Fixture-owned UNIX reachability and candidate private IP exchange only. Experimental syscall broker when selected; no ambient service contact or production capability acceptance."});
         std::fs::write(

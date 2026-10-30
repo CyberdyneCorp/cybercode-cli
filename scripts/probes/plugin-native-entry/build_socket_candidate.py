@@ -8,7 +8,7 @@ import tempfile
 root = Path(__file__).resolve().parents[3]
 output = Path(sys.argv[1]).resolve()
 mode = sys.argv[2] if len(sys.argv) == 3 else "seccomp"
-assert mode in {"seccomp", "broker", "broker-no-bind", "broker-no-thread", "landlock9", "landlock9-no-resolve"}
+assert mode in {"seccomp", "broker", "broker-no-bind", "broker-no-thread", "broker-audit", "broker-audit-no-cancel", "landlock9", "landlock9-no-resolve"}
 unix9 = mode.startswith("landlock9")
 with tempfile.TemporaryDirectory(prefix="cyber-socket-candidate-") as temporary:
     target = Path(temporary)
@@ -24,6 +24,22 @@ with tempfile.TemporaryDirectory(prefix="cyber-socket-candidate-") as temporary:
             before = "syscall(SYS_pidfd_open, request->pid, PIDFD_THREAD)"
             assert text.count(before) == 1
             broker.write_text(text.replace(before, "syscall(SYS_pidfd_open, request->pid, 0)"))
+        if mode.startswith("broker-audit"):
+            # Fixture-only receipts from the actual worker owner. Logging is
+            # injected solely into this temporary copy, never the base helper.
+            broker = target / "socket_broker.h"
+            text = broker.read_text()
+            before = "    jobs[slot] = (struct broker_job){ .pid = worker, .pipe = channel[0], .id = request->id };\n"
+            assert text.count(before) == 1
+            text = text.replace(before, before + '    fprintf(stderr, "BSTART %d\\n", (int)worker);\n')
+            before = "            (void)kill(job->pid, SIGKILL);\n"
+            assert text.count(before) == 1
+            cancel = '' if mode == "broker-audit-no-cancel" else before
+            text = text.replace(before, '            fprintf(stderr, "BCANCEL %d\\n", (int)job->pid);\n' + cancel)
+            before = "        *job = (struct broker_job){0};\n"
+            assert text.count(before) == 1
+            text = text.replace(before, '        fprintf(stderr, "BREAP %d\\n", (int)job->pid);\n' + before)
+            broker.write_text(text)
         # Preserve family/pair restrictions, replacing the blanket IP server
         # denial with the candidate's pinned-object syscall mediation.
         socket_header = target / "socket_candidate.h"

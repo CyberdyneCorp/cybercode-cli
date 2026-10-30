@@ -149,12 +149,15 @@ static int pair_probe(const struct sockaddr_un *address, socklen_t length,
     return 0;
 }
 
+#include "plugin_socket_cancel.h"
+
 int main(int argc, char **argv) {
     if (argc != 3 && argc != 4 && argc != 5) return 2;
     struct sockaddr_un address = { .sun_family = AF_UNIX };
     size_t length = strlen(argv[1]);
     if (length == 0 || length >= sizeof(address.sun_path)) return 2;
     memcpy(address.sun_path, argv[1], length + 1);
+    if (argc == 4 && strcmp(argv[3], "cancel") == 0) return cancel_probe();
     if (argc >= 4) {
         if (strcmp(argv[3], "pair") != 0) return 2;
         return pair_probe(&address,

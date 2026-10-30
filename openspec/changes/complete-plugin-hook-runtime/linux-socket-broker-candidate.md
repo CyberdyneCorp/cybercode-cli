@@ -73,6 +73,9 @@ thread selection, beyond the earlier standalone prerequisite fixture. A copied
 control removes PIDFD_THREAD and must fail this assertion while the ordinary
 single-thread TCP exchange still succeeds. Descriptor/address mutation during
 an already admitted operation and cancellation/saturation cases remain open.
+The [cancellation proof fixture](linux-socket-broker-cancellation.md) now tests
+a real blocked connect, targeted interruption and a normal-reap acknowledgement
+before target exit. Native execution of that new fixture is still required.
 
 The kernel's [seccomp notification documentation](https://docs.kernel.org/userspace-api/seccomp_filter.html)
 requires copied tracee arguments to avoid policy decisions on mutable memory.
@@ -88,8 +91,9 @@ shell blocks and embedded Python parse; formatting/diff checks, all 107
 strict OpenSpec items and spec lint (zero errors, 25 warnings) pass. The native C
 SDK build emits two Seatbelt deprecation warnings. Linux candidate compilation,
 kernel behavior for each revision requires corresponding hosted x64/arm64 jobs.
-The new thread-specific case/control and corrected runtime report label still
-require fresh hosted results; earlier receipts below cannot prove those changes.
+The new cancellation case/control still requires hosted results. The separate
+thread-specific receipts below establish that earlier case and corrected report
+label; the first candidate receipts cannot prove those later changes.
 
 Scoped source/security review rejected the nested-listener design, corrected a
 potential second signal after guest reaping, drains worker replies before
@@ -132,3 +136,25 @@ to label that mechanism accurately. Source/binary bindings and observed cases
 support only the specific tested candidate, not that inaccurate label or the
 unperformed adversarial cases. Production admission and support/design review
 remain open.
+
+## Thread-specific native receipts
+
+[Run 41007688907](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41007688907)
+passed on x64 (job 123906188321) and arm64 (job 123906188488). Retained
+[x64](../../../scripts/probes/plugin-native-entry/evidence/linux-socket-broker-9de3bf77/x64/linux-ipc-broker.json)
+and [arm64](../../../scripts/probes/plugin-native-entry/evidence/linux-socket-broker-9de3bf77/arm64/linux-ipc-broker.json)
+reports each contain 32 socket cases, including 16 successful thread-local TCP
+exchanges after CLOSE_RANGE_UNSHARE while the leader retains its UNIX object.
+The adjacent missing-thread controls fail that exact assertion with ordinary
+TCP still successful, and missing-bind controls still fail their TCP assertion.
+
+Merge checkout `b1a06c56cff5caab2fd2635d7b43a717a9edef2f` binds socket source hash
+`6b5a2468c8f0e007d5399f5c7878bf98af37c6a4ab4a509d17c74139784f38a7`.
+The five runtime reports per architecture each pass nine cases with no unsupported
+cases, correctly label the live listener and have source hash
+`d95a07ad97ad17f76cb3386545624a9cc67b1868f99c3f1a0c7b1c01a7565286`.
+Both manifests were independently recomputed from that checkout. Their reported
+input/executed-helper hashes match the socket reports, unchanged from the first
+candidate's architecture hashes above. Kernel remains `7.0.0-1017-azure`.
+These observations prove the real broker's tested thread-table selection, not
+cancellation, saturation, descriptor/address mutation or production admission.

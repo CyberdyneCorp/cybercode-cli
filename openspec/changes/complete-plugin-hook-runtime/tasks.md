@@ -37,8 +37,9 @@ The compatible Linux IPC investigation includes [descriptor-pinning
 prerequisites](linux-pidfd-proof.md), including independent thread file tables,
 descriptor-number replacement, copied arguments and actual private TCP exchange.
 The [broker candidate](linux-socket-broker-candidate.md) has source-bound initial
-socket/runtime receipts on x64 and arm64; its real thread-local descriptor case
-and precise missing-thread control still require fresh native execution. These
+socket/runtime and real thread-local descriptor receipts on x64 and arm64, with
+the precise missing-thread control. Its [cancellation case and control](linux-socket-broker-cancellation.md)
+still require fresh native execution. These
 experiments change no production policy or accepted support floor.
 
 ## 3. Host contribution lifecycle
