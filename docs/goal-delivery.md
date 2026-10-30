@@ -31,6 +31,12 @@ separate review. This changes delivery granularity, not feature scope or accepta
   its delivery increment is incomplete.
 - Do not open the next implementation PR until the current increment is merged,
   superseded or deliberately split for independent review within the cap.
+- Prioritize fixing failing checks and making the active increment ready for
+  review before starting another delivery increment. Report pending and failing
+  checks explicitly; do not describe the active PR as ready while they remain.
+- Count goal PRs separately from unrelated repository PRs. Inspect ownership and
+  scope before consolidating or closing other contributors' work; the delivery
+  cap does not authorize closing unrelated PRs.
 - Preserve native proof and explicit support/design revision gates. Passing probes
   are not production feature acceptance. Never weaken the agreed contract merely
   to finish a PR, and never merge automatically.
