@@ -240,6 +240,8 @@ pub async fn session(
             "model": global.model, "agent": args.agent, "mode": mode(args, global),
             "title": args.name, "rules": cyber_core::config::never_ask_rules(), "max_steps": args.max_turns.filter(|_| args.goals.is_empty()),
             "messaging": inbound(args), "output_style": args.output_style,
+            // `exec-mode` → Usage limit waits in exec: nobody attends this Session.
+            "unattended": true,
         });
         if let Some(name) = &args.worktree {
             return crate::commands::worktrees::start(client, name, body, args.quiet).await;
