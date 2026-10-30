@@ -150,6 +150,7 @@ fn policy(
         home: "/home/user".into(),
         plan_file: "/repo/.cyber/plans/plan.md".into(),
         ownership: None,
+        taint: Default::default(),
     }
 }
 

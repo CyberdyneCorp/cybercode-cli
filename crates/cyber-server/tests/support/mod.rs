@@ -443,6 +443,7 @@ impl ToolHost for Tools {
                         tool: name,
                         input,
                         policy: "Only modify this repository".into(),
+                        taint: Vec::new(),
                     };
                     match asker.review_auto(review, cancel).await {
                         Ok(decision) => ToolOutcome::Ok(serde_json::to_string(&decision).unwrap()),
@@ -461,6 +462,7 @@ impl ToolHost for Tools {
                                 tool: name,
                                 input,
                                 policy: String::new(),
+                                taint: Vec::new(),
                             },
                             cancel,
                         )

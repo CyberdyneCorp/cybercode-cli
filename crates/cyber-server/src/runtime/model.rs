@@ -554,6 +554,11 @@ pub struct SessionState {
     /// Every projected message with its parent; `entries` is its active path.
     #[serde(skip)]
     pub(super) branches: super::branches::BranchTree,
+    /// The run's taint (`permissions-modes` → Untrusted-content taint): the `untrusted`
+    /// records promoted since the last prompt with source `user`. Folded from settled
+    /// calls and promoted inbox rows, so a restart rebuilds it and compaction keeps it.
+    #[serde(skip)]
+    pub(crate) taint: cyber_core::untrusted::RunTaint,
 }
 
 const MAX_INSTRUCTION_CHARS: usize = 2000;
@@ -750,6 +755,7 @@ impl SessionState {
             loop_coalesced: BTreeSet::new(),
             goals: Default::default(),
             branches: Default::default(),
+            taint: Default::default(),
         }
     }
 
@@ -1258,6 +1264,13 @@ impl SessionState {
         };
         row.status = InputStatus::Promoted;
         row.promoted_seq = Some(seq);
+        // Only the user's own prompt re-anchors the run; every other source keeps the
+        // taint, and input with signals adds to it.
+        if row.source == "user" {
+            self.taint.clear();
+        } else if let Some(record) = &row.untrusted {
+            self.taint.note(record);
+        }
         let text = text_of(&row.parts);
         // Attached resources are untrusted user-turn data ahead of the prompt; the
         // task instructions keep only what the user wrote.
@@ -1417,6 +1430,9 @@ impl SessionState {
             call.output = Some(s.output);
             call.structured_output = s.structured_output;
             call.metadata = s.metadata;
+            if let Some(record) = &s.untrusted {
+                self.taint.note(record);
+            }
             call.untrusted = s.untrusted;
             self.result.settle(call);
         }

@@ -87,6 +87,12 @@ pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
             issues.extend(super::computer::layer_issue(&layer.label, &layer.value));
         }
         if layer.label.starts_with("project:") {
+            crate::untrusted::restrict_project_layer(
+                &mut layer.value,
+                &value,
+                &layer.label,
+                &mut warnings,
+            );
             subst::templates(&layer.value, "", &layer.label, &mut templates);
         }
         substitute_layer(layer, req, &mut issues);
@@ -738,10 +744,32 @@ fn apply_profile(
         map.remove("policy");
     }
     mcp_serve::strip(&mut overlay, warnings);
+    // A profile a project layer defined may only tighten the untrusted-content settings,
+    // as that layer itself may.
+    if let Some(project) = project_source(sources, &name, "/permissions/untrusted_content") {
+        crate::untrusted::restrict_project_layer(&mut overlay, value, &project, warnings);
+    }
     let label = format!("profile:{name}");
     issues.extend(super::computer::layer_issue(&label, &overlay));
     merge::merge_profile(value, &overlay, &name, sources);
     Some(label)
+}
+
+/// The project layer label that set anything under `pointer` in profile `name`, if any.
+fn project_source(sources: &Sources, name: &str, pointer: &str) -> Option<String> {
+    let prefix = format!(
+        "/profiles/{}{pointer}",
+        name.replace('~', "~0").replace('/', "~1")
+    );
+    sources
+        .iter()
+        .find(|(key, label)| {
+            label.starts_with("project:")
+                && key
+                    .strip_prefix(&prefix)
+                    .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+        })
+        .map(|(_, label)| label.clone())
 }
 
 fn cli_layers(req: &LoadRequest<'_>, issues: &mut Vec<String>) -> Vec<(String, Value)> {

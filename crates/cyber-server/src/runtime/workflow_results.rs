@@ -158,13 +158,44 @@ impl Runtime {
         admission.message_id = Some(message_id.clone());
         admission.source = "workflow".into();
         admission.resume = run.continue_owner;
-        match self.admit(&run.session_id, admission).await {
+        // Tainted agents taint the owner that reads the summary (`permissions-modes` →
+        // Untrusted-content taint).
+        let untrusted = self.agents_taint(&agents).await;
+        let admitted = self
+            .admit_recorded(
+                &run.session_id,
+                admission,
+                None,
+                super::PromptCheck::Checked(None),
+                Vec::new(),
+                untrusted,
+            )
+            .await;
+        match admitted {
             Ok(_) | Err(RuntimeError::PromptConflict(_)) => {}
             Err(error) => return Err(error),
         }
         self.run_log()
             .append(&run.id, RUN_NOTIFIED, json!({"message_id": message_id}))
             .map_err(RuntimeError::Invalid)
+    }
+
+    /// The record the run's tainted agents hand on together: the first one's source
+    /// and origin with the union of their kinds.
+    async fn agents_taint(
+        &self,
+        agents: &[super::WorkflowAgent],
+    ) -> Option<cyber_core::untrusted::UntrustedRecord> {
+        let mut taint = cyber_core::untrusted::RunTaint::default();
+        for session in agents
+            .iter()
+            .filter_map(|agent| agent.session_id.as_deref())
+        {
+            if let Some(record) = self.handed_taint(session).await {
+                taint.note(&record);
+            }
+        }
+        taint.inherited()
     }
 
     /// How often the run was resumed: its attempt number less one.

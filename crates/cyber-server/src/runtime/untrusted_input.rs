@@ -3,10 +3,10 @@
 //! when admitted, and a hit is recorded as `untrusted` on `session.prompt.admitted.1`.
 //! The text is admitted unchanged; only the record is added.
 
-use cyber_core::untrusted::UntrustedRecord;
+use cyber_core::untrusted::{RunTaint, UntrustedRecord};
 use cyber_llm::Content;
 
-use super::Admission;
+use super::{Admission, Runtime, RuntimeError};
 
 /// The record of a cross-session message's own text (not its `<cross_session_message>`
 /// block, whose tag the detector would report as markup), when it had hits. `from` is
@@ -30,6 +30,30 @@ pub(super) fn channel_record(admission: &Admission) -> Option<UntrustedRecord> {
         })
         .collect();
     record("channel", "channel", &text.join("\n"))
+}
+
+impl Runtime {
+    /// The taint of a Session's run (`permissions-modes` → Untrusted-content taint), as
+    /// folded from its events since the last prompt with source `user`.
+    pub async fn run_taint(&self, session_id: &str) -> Result<RunTaint, RuntimeError> {
+        let handle = self.inner.handle(session_id).await?;
+        let taint = handle.state.lock().await.taint.clone();
+        Ok(taint)
+    }
+
+    /// The record a Session's run hands on: to a child it spawns now, or to its parent
+    /// with its result. `None` when the run has read nothing untrusted.
+    pub async fn handed_taint(&self, session_id: &str) -> Option<UntrustedRecord> {
+        self.run_taint(session_id).await.ok()?.inherited()
+    }
+
+    /// For a prompt the parent hands `child`: the parent's taint at that moment, so a
+    /// child spawned (or resumed) by a tainted run starts tainted.
+    pub(super) async fn parent_taint(&self, child: &str) -> Option<UntrustedRecord> {
+        let handle = self.inner.handle(child).await.ok()?;
+        let parent = handle.state.lock().await.info.parent_id.clone()?;
+        self.handed_taint(&parent).await
+    }
 }
 
 fn record(source: &str, origin: &str, text: &str) -> Option<UntrustedRecord> {

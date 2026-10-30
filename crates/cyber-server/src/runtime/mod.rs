@@ -194,7 +194,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, Notify, RwLock, broadcast};
 use tokio_util::sync::CancellationToken;
 
-pub use auto::{AutoDecision, AutoEffect, AutoReview, AutoReviewStage};
+pub use auto::{AutoDecision, AutoEffect, AutoReview, AutoReviewStage, TAINTED_REVIEW};
 pub use bus::LiveEvent;
 pub use compaction::CompactionConfig;
 pub use context::{ContextInputs, Observed as ContextObservation, base_prompt};
@@ -1385,12 +1385,14 @@ impl Runtime {
         hook_context: Option<String>,
     ) -> Result<Receipt, RuntimeError> {
         let inherited = self.delegated_chain(session_id, &mut admission).await;
-        self.admit_attempt_with(
+        let untrusted = self.parent_taint(session_id).await;
+        self.admit_recorded(
             session_id,
             admission,
             None,
             PromptCheck::Checked(hook_context),
             inherited,
+            untrusted,
         )
         .await
     }

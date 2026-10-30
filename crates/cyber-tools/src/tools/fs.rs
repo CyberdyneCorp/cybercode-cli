@@ -345,7 +345,7 @@ pub(crate) async fn guarded_write(
     after: &[u8],
     diff: String,
 ) -> Result<String, ToolError> {
-    ctx.check_external(&[path.to_path_buf()]).await?;
+    ctx.check_external_writes(&[path.to_path_buf()]).await?;
     authorize_edit(ctx, path, diff).await?;
     let origin = super::intelligence::capture(ctx, path);
     let lock = ctx.host.path_lock(path);

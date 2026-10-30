@@ -267,7 +267,10 @@ fn tool_failure(tool: &str, error: ToolError) -> Diagnostic {
     if super::is_unattended_denial(&message) {
         return denied(cyber_server::runtime::NO_WORKFLOW_APPROVER);
     }
-    if message.starts_with("Permission denied") || message.starts_with("Rejected by user") {
+    if message.starts_with("Permission denied")
+        || message.starts_with("Rejected by user")
+        || super::is_taint_denial(&message)
+    {
         return denied(message);
     }
     tool_failed(message)

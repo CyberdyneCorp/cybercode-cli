@@ -155,6 +155,7 @@ fn policy(mode: cyber_tools::permissions::Mode) -> cyber_tools::permissions::Pol
         home: "/home/user".into(),
         plan_file: "/repo/.cyber/plans/ses_child.md".into(),
         ownership: None,
+        taint: Default::default(),
     }
 }
 

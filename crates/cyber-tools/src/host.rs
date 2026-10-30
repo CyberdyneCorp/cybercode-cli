@@ -30,7 +30,7 @@ use cyber_server::runtime::{
 };
 use cyber_store::Store;
 use futures::future::BoxFuture;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use crate::budget::Budget;
@@ -638,6 +638,17 @@ impl BuiltinHost {
         agent: Option<&str>,
         session: &Value,
     ) -> Result<Vec<permissions::Rule>, String> {
+        self.session_rules_with_config(location, agent, session)
+            .map(|(rules, _)| rules)
+    }
+
+    /// [`Self::session_rules`] and the merged config they came from, from one load.
+    fn session_rules_with_config(
+        &self,
+        location: &Path,
+        agent: Option<&str>,
+        session: &Value,
+    ) -> Result<(Vec<permissions::Rule>, Value), String> {
         let (config, sources) = (self.opts.config)(location)?;
         let profile = agent
             .map(|name| Self::profile_from(&config, name))
@@ -666,7 +677,7 @@ impl BuiltinHost {
             }
             rules.extend(immutable);
         }
-        Ok(rules)
+        Ok((rules, config))
     }
 
     /// Why a `workflow.run` rule of the owner Session denies `module`, for runs started or
@@ -709,7 +720,7 @@ impl BuiltinHost {
     ) -> Result<Policy, String> {
         let location = PathBuf::from(&inv.directory);
         let root = cyber_core::config::project_root(&location);
-        let mut rules = self.session_rules(&location, agent, &inv.rules)?;
+        let (mut rules, config) = self.session_rules_with_config(&location, agent, &inv.rules)?;
         let inherited = if agent.is_some() {
             self.inherited_permissions(&inv.session_id).await?
         } else {
@@ -729,6 +740,7 @@ impl BuiltinHost {
                 saved.push(rule);
             }
         }
+        let taint = self.run_taint(&inv.session_id, &config).await?;
         Ok(Policy {
             rules,
             saved,
@@ -740,6 +752,7 @@ impl BuiltinHost {
             location,
             home: self.opts.home.clone(),
             ownership,
+            taint,
         })
     }
 
@@ -1972,6 +1985,21 @@ impl Ctx<'_> {
 
     /// Ask for `external_directory` for any path whose canonical form leaves the Location.
     pub async fn check_external(&self, paths: &[PathBuf]) -> Result<(), ToolError> {
+        self.check_external_paths(paths, &[]).await
+    }
+
+    /// [`Self::check_external`] for paths the action writes: an external write is risky
+    /// in a tainted run (`permissions-modes` → Taint-aware approvals).
+    pub async fn check_external_writes(&self, paths: &[PathBuf]) -> Result<(), ToolError> {
+        self.check_external_paths(paths, paths).await
+    }
+
+    /// [`Self::check_external`] for `paths`, of which `writes` are written.
+    pub async fn check_external_paths(
+        &self,
+        paths: &[PathBuf],
+        writes: &[PathBuf],
+    ) -> Result<(), ToolError> {
         let location =
             std::fs::canonicalize(&self.location).unwrap_or_else(|_| self.location.clone());
         let mut dirs: Vec<String> = Vec::new();
@@ -1999,9 +2027,17 @@ impl Ctx<'_> {
             action: "external_directory".into(),
             resources: dirs.clone(),
             read_only: true,
+            external_write: writes.iter().any(|path| self.leaves_location(path)),
             ..Request::default()
         };
         self.authorize(req, dirs, Value::Null).await
+    }
+
+    fn leaves_location(&self, path: &Path) -> bool {
+        let location =
+            std::fs::canonicalize(&self.location).unwrap_or_else(|_| self.location.clone());
+        let canonical = canonical(path);
+        !canonical.starts_with(&location) && !canonical.starts_with(&self.location)
     }
 
     /// Decide, asking the user when the policy says `ask`.
@@ -2060,19 +2096,61 @@ impl Ctx<'_> {
         }
         let decision = self.policy.decide(&req);
         if let Decision::Deny(reason) = decision {
-            return Err(self.denied(&req, "rule", deny_message(&reason)).await);
+            let source = if is_taint_denial(&reason) {
+                "taint"
+            } else {
+                "rule"
+            };
+            return Err(self.denied(&req, source, deny_message(&reason)).await);
+        }
+        // A tainted run's risky action: no allow approves it alone, a hook's included.
+        let held = self.policy.taint_holds(&req);
+        if held {
+            self.note_taint(&mut metadata, None);
         }
         if self.hook_decision == Some(cyber_core::hooks::HookAction::Ask) {
             // Force the manual route without skipping current/ancestor auto blocks.
             self.auto_gate(&req, &mut metadata, false).await?;
-            return self.ask(req, always, metadata).await;
+            return self.ask(req, always, metadata, held).await;
         }
-        let needs_approval =
-            (decision == Decision::Ask && !hook_allowed) || self.policy.forces_classifier(&req);
-        if self.auto_gate(&req, &mut metadata, needs_approval).await? || !needs_approval {
+        let needs_approval = (decision == Decision::Ask && (!hook_allowed || held))
+            || self.policy.forces_classifier(&req);
+        let approval = self.auto_gate(&req, &mut metadata, needs_approval).await?;
+        // A classifier allow in a tainted run still asks for a risky action or a command
+        // that is not read-only; the prompt shows the classifier's reason.
+        let asks_after_review = match &approval {
+            AutoApproval::Classifier(reason) if self.policy.taint_asks_after_review(&req) => {
+                self.note_taint(&mut metadata, Some(reason));
+                true
+            }
+            AutoApproval::Rule if held => true,
+            _ => false,
+        };
+        let approved = !matches!(approval, AutoApproval::None) && !asks_after_review;
+        if approved || (!needs_approval && !asks_after_review) {
             return Ok(());
         }
-        self.ask(req, always, metadata).await
+        self.ask(req, always, metadata, held || asks_after_review)
+            .await
+    }
+
+    /// Mark a taint ask's request: `metadata.taint`, and the reason the prompt shows
+    /// (after any warning already there), with the classifier's reason when it allowed.
+    fn note_taint(&self, metadata: &mut Value, classifier: Option<&str>) {
+        if !metadata.is_object() {
+            *metadata = json!({});
+        }
+        let taint = &self.policy.taint;
+        metadata["taint"] = taint.metadata();
+        let mut warning = taint.reason();
+        if let Some(reason) = classifier {
+            metadata["classifier_reason"] = json!(reason);
+            warning.push_str(&format!("\nThe auto classifier allowed it: {reason}"));
+        }
+        if let Some(existing) = metadata["warning"].as_str() {
+            warning = format!("{existing}\n{warning}");
+        }
+        metadata["warning"] = json!(warning);
     }
 
     /// Current and ancestor auto-mode review; an auto block is a denial boundary.
@@ -2081,7 +2159,7 @@ impl Ctx<'_> {
         req: &Request,
         metadata: &mut Value,
         needs_approval: bool,
-    ) -> Result<bool, ToolError> {
+    ) -> Result<AutoApproval, ToolError> {
         match self
             .review_auto_permission(req, metadata, needs_approval)
             .await
@@ -2128,11 +2206,16 @@ impl Ctx<'_> {
         ToolError::Failed(message)
     }
 
+    /// Ask the user. A `tainted` ask (`permissions-modes` → Taint-aware approvals) is not
+    /// answered by a PermissionRequest hook's allow, and with no approver attached it is
+    /// denied as not pre-approved. An "always" reply still saves the approval; it covers
+    /// later calls once the run is no longer tainted.
     async fn ask(
         &self,
         req: Request,
         always: Vec<String>,
         metadata: Value,
+        tainted: bool,
     ) -> Result<(), ToolError> {
         let ask = PermissionAsk {
             action: req.action.clone(),
@@ -2147,6 +2230,7 @@ impl Ctx<'_> {
         )
         .await?
             == Some(cyber_core::hooks::HookAction::Allow)
+            && !tainted
         {
             return Ok(());
         }
@@ -2185,6 +2269,13 @@ impl Ctx<'_> {
             PermissionReply::Reject { message: None } => {
                 Err(self.denied(&req, "user", "Rejected by user".into()).await)
             }
+            PermissionReply::Unattended if tainted => Err(self
+                .denied(
+                    &req,
+                    "unattended",
+                    permissions::TAINT_NOT_PRE_APPROVED.into(),
+                )
+                .await),
             PermissionReply::Unattended => {
                 let message = match self.host.runtime() {
                     Some(runtime)
@@ -2203,8 +2294,27 @@ impl Ctx<'_> {
     }
 }
 
+/// A denial the run's taint made (`permissions-modes` → Taint-aware approvals).
+pub(crate) fn is_taint_denial(message: &str) -> bool {
+    message.contains(permissions::TAINT_NOT_PRE_APPROVED)
+        || message.contains(permissions::TAINT_BYPASS_DENIED)
+}
+
+/// How auto review left a request that needed approval.
+pub(crate) enum AutoApproval {
+    /// Not approved: the request still needs the user.
+    None,
+    /// Approved by a trusted rule (`always_allow`, read-only classification turned off).
+    Rule,
+    /// The user confirmed this exact call with a one-shot classifier override.
+    User,
+    /// Approved by the classifier, with its reason.
+    Classifier(String),
+}
+
 fn deny_message(reason: &str) -> String {
     if reason.starts_with("Plan mode")
+        || is_taint_denial(reason)
         || reason.starts_with("Not pre-approved")
         || reason.starts_with("Refused:")
         || reason.starts_with(cyber_server::runtime::teams::OWNED_PREFIX)

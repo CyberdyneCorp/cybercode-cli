@@ -6,8 +6,8 @@
 use std::path::Path;
 use std::sync::PoisonError;
 
-use cyber_core::untrusted::{Scan, ScanScope, UntrustedRecord};
-use cyber_server::runtime::{Invocation, Provenance};
+use cyber_core::untrusted::{Scan, ScanScope, UntrustedRecord, UntrustedSettings};
+use cyber_server::runtime::{Invocation, Provenance, RuntimeError};
 
 use super::{BuiltinHost, Ctx};
 use crate::tools::text;
@@ -23,7 +23,33 @@ impl BuiltinHost {
         self.note_untrusted(inv, record);
     }
 
-    fn note_untrusted(&self, inv: &Invocation, record: UntrustedRecord) {
+    /// The taint of `session_id`'s run for a permission evaluation under the Location's
+    /// merged `config` (`permissions-modes` → Taint-aware approvals): the records its
+    /// events promoted since the last `user` prompt, under its `untrusted_content`
+    /// settings.
+    pub(crate) async fn run_taint(
+        &self,
+        session_id: &str,
+        config: &serde_json::Value,
+    ) -> Result<crate::permissions::Taint, String> {
+        let settings = UntrustedSettings::effective(config);
+        let Some(runtime) = self.runtime() else {
+            return Ok(crate::permissions::Taint::new(Vec::new(), &settings));
+        };
+        let run = match runtime.run_taint(session_id).await {
+            Ok(run) => run,
+            // A Session with no events has promoted nothing.
+            Err(RuntimeError::SessionNotFound(_)) => Default::default(),
+            Err(error) => return Err(error.to_string()),
+        };
+        Ok(crate::permissions::Taint::new(
+            run.sources(settings.taint),
+            &settings,
+        ))
+    }
+
+    /// Note that a call's result carries `record` (a tainted child's result, say).
+    pub(crate) fn note_untrusted(&self, inv: &Invocation, record: UntrustedRecord) {
         self.call_untrusted
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

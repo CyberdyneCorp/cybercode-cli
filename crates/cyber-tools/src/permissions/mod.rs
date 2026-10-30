@@ -6,12 +6,15 @@ mod filesystem;
 mod instructions;
 mod removals;
 pub mod saved;
+mod taint;
 
 pub(crate) use filesystem::literal_edits;
 
 pub use dry_run::{Explained, layer_name};
 pub use instructions::instruction_read_gate;
 pub use removals::{RemovalRisk, RemovalScope, bash_removal, powershell_analysis};
+pub(crate) use taint::read_only_shell;
+pub use taint::{Risk, TAINT_BYPASS_DENIED, TAINT_NOT_PRE_APPROVED, Taint, risk};
 
 pub use engine::{
     COLLAB_MESSAGE_SEND, COLLAB_TASK_WRITE, Decision, Effect, GOAL_SET, MESSAGE_SEND, Mode, Policy,

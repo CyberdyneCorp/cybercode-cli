@@ -6,7 +6,8 @@
 use super::{UntrustedRecord, visible_value};
 
 /// `permissions.untrusted_content.taint`: which framed results taint the run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum TaintSetting {
     /// No run becomes tainted; notices are still shown.
     Off,
@@ -18,7 +19,8 @@ pub enum TaintSetting {
 }
 
 /// `permissions.untrusted_content.bypass`: what taint does in `bypass`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum BypassSetting {
     /// Risky actions run as they would without taint (the default).
     #[default]

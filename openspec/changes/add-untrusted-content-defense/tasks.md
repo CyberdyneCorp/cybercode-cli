@@ -49,23 +49,25 @@
 
 ## 4. Taint and approvals
 
-- [ ] 4.1 Derive the taint state in the runtime from settled and admitted events after the last promoted `source: "user"` prompt, with spawn inheritance and propagation through child results (`runtime/drain.rs`, `subtask.rs`).
+- [x] 4.1 Derive the taint state in the runtime from settled and admitted events after the last promoted `source: "user"` prompt, with spawn inheritance and propagation through child results (`runtime/drain.rs`, `subtask.rs`).
   - Tests: scenarios "Taint carries into the next Turn", "Loop prompt does not clear taint", "Taint survives restart" and "Subagent taints its parent", plus `taint: any` and `taint: off`.
-- [ ] 4.2 Classify risky actions in `permissions/engine.rs`: egress tools and commands, `external_directory` mutations, auto-allowed commands and secret paths.
+- [x] 4.2 Classify risky actions in `permissions/engine.rs`: egress tools and commands, `external_directory` mutations, auto-allowed commands and secret paths.
   - Table-driven tests for each class, including `git push` inside `a && b`, an unparseable command, and `.env.example` not being risky.
-- [ ] 4.3 The taint downgrade: every `allow` source becomes `ask` for risky actions, `allow_when_tainted` is kept, denies are unchanged, and the outcome is resolved per Mode, including non-interactive Sessions and `bypass`.
+- [x] 4.3 The taint downgrade: every `allow` source becomes `ask` for risky actions, `allow_when_tainted` is kept, denies are unchanged, and the outcome is resolved per Mode, including non-interactive Sessions and `bypass`.
   - Table-driven permission tests covering every scenario of "Taint-aware approvals"; a taint ask does not count toward the 3-block fallback.
-- [ ] 4.4 `permission.asked.1` `metadata.taint`, the prompt reason text, and an "always" reply that does not exempt later tainted calls.
+- [x] 4.4 `permission.asked.1` `metadata.taint`, the prompt reason text, and an "always" reply that does not exempt later tainted calls.
   - Tests: event payload, and a second tainted call after "always" still asks.
-- [ ] 4.5 Auto classifier: the `taint` evidence object, the trusted system line, and `tainted` on `permission.auto_decided.1` (`runtime/auto.rs`).
+- [x] 4.5 Auto classifier: the `taint` evidence object, the trusted system line, and `tainted` on `permission.auto_decided.1` (`runtime/auto.rs`).
   - Tests: scenarios "Classifier sees the taint" and "Classifier allow still asks for egress" with a stub evaluator.
 
 ## 5. Settings and prompt
 
-- [ ] 5.1 Add `permissions.untrusted_content` (`taint`, `bypass`, `scan`, `allow_when_tainted`) to the config schema and loader, with the project-layer tightening rule and one warning per load.
+- [x] 5.1 Add `permissions.untrusted_content` (`taint`, `bypass`, `scan`, `allow_when_tainted`) to the config schema and loader, with the project-layer tightening rule and one warning per load.
   - Tests: scenario "Project cannot switch taint off", tightening accepted, project `allow_when_tainted` ignored, change applied at the next Safe Boundary.
 - [ ] 5.2 Base prompts: replace the single tool-output sentence in `prompts/base/core.md` with the untrusted-content topic, cover it in every family addendum where tool habits differ, and raise the prompt version.
   - Tests: scenario "Prompt covers the frame" for each family, and scenario "Version bump starts a new epoch".
+- [ ] 5.3 Hand the effective `taint` and `bypass` settings to the TUI and the web dashboard, so a notice's consequence follows them instead of the defaults (design D5).
+  - Tests: the notice snapshot for a Location with `bypass: "deny"`, and the dashboard line for `taint: "off"`.
 
 ## 6. Evaluation
 

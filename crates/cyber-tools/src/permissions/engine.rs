@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use cyber_core::untrusted::BypassSetting;
 use cyber_core::wildcard::matches;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -414,6 +415,17 @@ pub struct Request {
     /// `team_merge`: the teammate whose branch lands. The ownership guard lets its own
     /// `owns` paths through, and still denies every path another member owns.
     pub merged_teammate: Option<String>,
+    /// The action sends its arguments out of the process (an MCP tool call): risky in a
+    /// tainted run (`permissions-modes` → Taint-aware approvals).
+    pub egress: bool,
+    /// An `external_directory` check made for a mutation outside the Location: risky in
+    /// a tainted run, unlike one made for a read.
+    pub external_write: bool,
+    /// The shell command could not be parsed into simple commands.
+    pub unparseable: bool,
+    /// Absolute paths the action reads beyond its resources (a search's base and file
+    /// filter), checked against the secret paths in a tainted run.
+    pub reads: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -440,6 +452,8 @@ pub struct Policy {
     /// Paths other members own in a shared-Location team (`agent-teams` → File conflict
     /// avoidance): mutating one is denied before any rule or ask.
     pub ownership: Option<cyber_server::runtime::teams::Ownership>,
+    /// The run's untrusted-content taint (`permissions-modes` → Taint-aware approvals).
+    pub taint: super::Taint,
 }
 
 const PLAN_DENY: &str = "Plan mode is read-only. Present the plan with plan_exit.";
@@ -450,6 +464,59 @@ impl Policy {
     }
 
     pub fn decide(&self, req: &Request) -> Decision {
+        let decision = self.decide_untainted(req);
+        if decision == Decision::Allow && self.taint_holds(req) {
+            return self.tainted_decision();
+        }
+        decision
+    }
+
+    /// Whether the run's taint governs `req`: the run is tainted, `req` is risky and no
+    /// `allow_when_tainted` pattern covers it. In `bypass` with `bypass: "allow"` the
+    /// taint is off.
+    pub(crate) fn taint_holds(&self, req: &Request) -> bool {
+        self.taint.is_tainted()
+            && !(self.mode == Mode::Bypass && self.taint.bypass == BypassSetting::Allow)
+            && super::risk(req, &self.location, &self.home).is_some()
+            && !self.taint.escapes(req)
+    }
+
+    /// Whether a classifier `allow` for `req` still asks in a tainted run: a risky
+    /// action, or (the auto-approved command class) a shell command that is not
+    /// read-only, unless an `allow_when_tainted` pattern covers it.
+    pub(crate) fn taint_asks_after_review(&self, req: &Request) -> bool {
+        self.taint_holds(req)
+            || (self.taint.is_tainted()
+                && self.mode == Mode::Auto
+                && req.action == "bash"
+                && !super::read_only_shell(req)
+                && !self.taint.escapes(req))
+    }
+
+    /// What an `allow` for a risky action becomes in a tainted run, in this Session's
+    /// Mode and its ancestors': `ask`, except a denial in `dont-ask` and in `bypass` with
+    /// `bypass: "deny"`, and the unchanged `allow` in `bypass` with `bypass: "allow"`.
+    fn tainted_decision(&self) -> Decision {
+        let mut decision = self.taint_outcome(self.mode);
+        for mode in &self.parent_modes {
+            decision = intersect(decision, self.taint_outcome(*mode));
+        }
+        decision
+    }
+
+    fn taint_outcome(&self, mode: Mode) -> Decision {
+        match (mode, self.taint.bypass) {
+            (Mode::Bypass, BypassSetting::Allow) => Decision::Allow,
+            (Mode::Bypass, BypassSetting::Deny) => {
+                Decision::Deny(super::TAINT_BYPASS_DENIED.into())
+            }
+            (Mode::DontAsk, _) => Decision::Deny(super::TAINT_NOT_PRE_APPROVED.into()),
+            _ => Decision::Ask,
+        }
+    }
+
+    /// The decision without the run's taint.
+    fn decide_untainted(&self, req: &Request) -> Decision {
         let ruled = request_effect(&self.rules, req);
         if let Some(denied) = self.rule_denial(req, ruled) {
             return denied;
@@ -771,6 +838,7 @@ mod tests {
             home: "/home/u".into(),
             plan_file: "/repo/.cyber/plans/ses_1.md".into(),
             ownership: None,
+            taint: Default::default(),
         }
     }
 

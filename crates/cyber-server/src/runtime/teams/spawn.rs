@@ -389,7 +389,17 @@ impl Runtime {
                 source: "team".into(),
                 ..Admission::text(prompt, Delivery::Queue)
             };
-            self.admit(&info.id, admission).await?;
+            // A teammate spawned by a tainted lead starts tainted.
+            let untrusted = self.handed_taint(&lead.id).await;
+            self.admit_recorded(
+                &info.id,
+                admission,
+                None,
+                crate::runtime::PromptCheck::Checked(None),
+                Vec::new(),
+                untrusted,
+            )
+            .await?;
         }
         Ok(SpawnedMember {
             name: spec.name,

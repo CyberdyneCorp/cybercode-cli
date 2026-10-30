@@ -152,7 +152,7 @@ impl BuiltinHost {
             let server = metadata["server"].as_str().unwrap_or(&inv.name).to_owned();
             let authorized = match ctx
                 .authorize(
-                    request(&inv, read_only, hints),
+                    request(&inv, read_only, hints, &metadata),
                     vec!["*".into()],
                     metadata.clone(),
                 )
@@ -278,7 +278,7 @@ impl BuiltinHost {
                     .to_owned();
                 match ctx
                     .authorize(
-                        request(&retried, retry.read_only, retry.hints),
+                        request(&retried, retry.read_only, retry.hints, &retry.metadata),
                         vec!["*".into()],
                         retry.metadata,
                     )
@@ -370,12 +370,15 @@ struct Retry<'a> {
     network_target: Option<&'a NetworkTarget>,
 }
 
-fn request(inv: &Invocation, read_only: bool, hints: ToolHints) -> Request {
+/// `metadata` marks an MCP call (a `server` with no other `source`): its arguments
+/// leave the process, which a tainted run treats as egress.
+fn request(inv: &Invocation, read_only: bool, hints: ToolHints, metadata: &Value) -> Request {
     Request {
         action: inv.name.clone(),
         resources: vec!["*".into()],
         read_only,
         destructive: hints.destructive,
+        egress: metadata.get("server").is_some() && metadata.get("source").is_none(),
         ..Default::default()
     }
 }

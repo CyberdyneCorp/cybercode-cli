@@ -409,6 +409,7 @@ mod tests {
             home: "/home/u".into(),
             plan_file: "/work/.cyber/plans/s.md".into(),
             ownership: None,
+            taint: Default::default(),
         };
         let request = |resource: &str| Request {
             tool: Some("mcp_read_resource".into()),
@@ -464,6 +465,7 @@ mod tests {
             home: "/home/u".into(),
             plan_file: "/work/.cyber/plans/s.md".into(),
             ownership: None,
+            taint: Default::default(),
         };
         let request = |tool: &str, resource: String| Request {
             tool: Some(tool.into()),

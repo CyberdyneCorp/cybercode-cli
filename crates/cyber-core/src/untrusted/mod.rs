@@ -9,6 +9,8 @@ mod detect;
 mod hidden;
 mod notice;
 mod rules;
+mod settings;
+mod taint;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -17,6 +19,8 @@ pub use detect::{Detector, scan};
 pub use hidden::{VALUE_LIMIT, expose_hidden, is_hidden, visible_value, without_userinfo};
 pub use notice::{BypassSetting, NoticePolicy, TaintSetting, consequence};
 pub use rules::{DETECTOR_VERSION, Matcher, RULES, Rule};
+pub use settings::{TaintedAllow, UntrustedSettings, restrict_project_layer};
+pub use taint::{RunTaint, TaintSource};
 
 /// At most this many hits are recorded per scanned text; all are counted.
 pub const MAX_RECORDED: usize = 10;
@@ -142,7 +146,8 @@ fn kinds(signals: &[Signal]) -> Vec<SignalKind> {
 }
 
 /// Which tool output the detector scans: `permissions.untrusted_content.scan`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ScanScope {
     /// Framed external results only (the default).
     #[default]

@@ -64,10 +64,20 @@ async fn scope(ctx: &Ctx<'_>, action: &str, resource: &str) -> Result<PathBuf, T
     let raw = text(&ctx.inv.input, "path");
     let base = ctx.resolve(if raw.is_empty() { "." } else { raw });
     ctx.check_external(std::slice::from_ref(&base)).await?;
+    // The searched base and file filter, for the secret-path check of a tainted run.
+    let filter = match action {
+        "glob" => resource,
+        _ => text(&ctx.inv.input, "include"),
+    };
+    let mut reads = vec![base.clone()];
+    if !filter.is_empty() {
+        reads.push(base.join(filter));
+    }
     let req = Request {
         action: action.into(),
         resources: vec![resource.into()],
         read_only: true,
+        reads,
         ..Request::default()
     };
     ctx.authorize(req, vec![resource.into()], Value::Null)
