@@ -68,14 +68,21 @@ mod probe {
         Seccomp,
         Broker,
         BrokerCancel,
+        BrokerMutation,
         Unix9,
     }
     impl Mode {
         fn ip_servers(self) -> bool {
-            matches!(self, Self::Unix9 | Self::Broker | Self::BrokerCancel)
+            matches!(
+                self,
+                Self::Unix9 | Self::Broker | Self::BrokerCancel | Self::BrokerMutation
+            )
         }
         fn broker(self) -> bool {
-            matches!(self, Self::Broker | Self::BrokerCancel)
+            matches!(
+                self,
+                Self::Broker | Self::BrokerCancel | Self::BrokerMutation
+            )
         }
     }
 
@@ -165,6 +172,13 @@ mod probe {
         mode: Mode,
     ) -> Vec<Value> {
         let mut rows = Vec::new();
+        if mode == Mode::BrokerMutation && label == "outside" {
+            let observed = super::cancellation::observe_mutation(&policy);
+            rows.push(
+                json!({"mode":"mutation","socket":label,"fs_read":policy.fs_read,
+                "fs_write":policy.fs_write,"shell":false,"observed":observed}),
+            );
+        }
         if mode == Mode::BrokerCancel && label == "outside" {
             let observed = super::cancellation::observe(&policy);
             rows.push(
@@ -192,6 +206,7 @@ mod probe {
             Some("--candidate") => Mode::Seccomp,
             Some("--broker") => Mode::Broker,
             Some("--broker-cancel") => Mode::BrokerCancel,
+            Some("--broker-mutation") => Mode::BrokerMutation,
             Some("--landlock9") => Mode::Unix9,
             _ => panic!("unknown candidate mode"),
         };
@@ -302,6 +317,7 @@ mod probe {
             "crates/cyber-sandbox/examples/plugin_unix_socket_probe.rs",
             "crates/cyber-sandbox/tests/fixtures/plugin_unix_socket.c",
             "crates/cyber-sandbox/tests/fixtures/plugin_socket_cancel.h",
+            "crates/cyber-sandbox/tests/fixtures/plugin_socket_mutation.h",
             "crates/cyber-sandbox/examples/support/plugin_socket_cancel.rs",
             "crates/cyber-sandbox/src/plugin_policy.rs",
             "crates/cyber-sandbox/src/plugin_policy/linux.rs",
@@ -316,6 +332,7 @@ mod probe {
             ".github/workflows/plugin-linux-ipc.yml",
             "scripts/probes/plugin-native-entry/linux_socket_candidate.h",
             "scripts/probes/plugin-native-entry/linux_socket_broker.h",
+            "scripts/probes/plugin-native-entry/linux_socket_broker_mutation.h",
             "scripts/probes/plugin-native-entry/linux_socket_landlock9.h",
             "scripts/probes/plugin-native-entry/linux_unix9_policy.h",
             "scripts/probes/plugin-native-entry/build_socket_candidate.py",
@@ -328,7 +345,7 @@ mod probe {
         }
         let report = json!({"platform": std::env::consts::OS, "architecture": std::env::consts::ARCH,
             "checkout": std::env::var("GITHUB_SHA").ok(), "run_id": std::env::var("GITHUB_RUN_ID").ok(),
-            "candidate": candidate, "landlock9": mode == Mode::Unix9, "socket_broker": mode.broker(), "cancellation_probe": mode == Mode::BrokerCancel, "sources": sources, "source_sha256": format!("{:x}", hash.finalize()),
+            "candidate": candidate, "landlock9": mode == Mode::Unix9, "socket_broker": mode.broker(), "cancellation_probe": mode == Mode::BrokerCancel, "mutation_probe": mode == Mode::BrokerMutation, "sources": sources, "source_sha256": format!("{:x}", hash.finalize()),
             "helper_sha256": format!("{:x}", Sha256::digest(std::fs::read(helper).unwrap())),
             "rows": rows, "scope": "Fixture-owned UNIX reachability and candidate private IP exchange only. Experimental syscall broker when selected; no ambient service contact or production capability acceptance."});
         std::fs::write(

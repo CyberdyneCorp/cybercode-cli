@@ -6,6 +6,7 @@ on:
       - crates/cyber-sandbox/examples/plugin_unix_socket_probe.rs
       - crates/cyber-sandbox/tests/fixtures/plugin_unix_socket.c
       - crates/cyber-sandbox/tests/fixtures/plugin_socket_cancel.h
+      - crates/cyber-sandbox/tests/fixtures/plugin_socket_mutation.h
       - crates/cyber-sandbox/examples/support/plugin_socket_cancel.rs
       - crates/cyber-sandbox/native/**
       - crates/cyber-sandbox/src/plugin_policy.rs
@@ -14,6 +15,7 @@ on:
       - .github/workflows/plugin-linux-ipc.yml
       - scripts/probes/plugin-native-entry/linux_socket_candidate.h
       - scripts/probes/plugin-native-entry/linux_socket_broker.h
+      - scripts/probes/plugin-native-entry/linux_socket_broker_mutation.h
       - scripts/probes/plugin-native-entry/build_socket_candidate.py
       - scripts/probes/plugin-native-entry/linux_socket_landlock9.h
       - scripts/probes/plugin-native-entry/linux_unix9_policy.h
@@ -84,6 +86,9 @@ jobs:
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker-no-thread" broker-no-thread
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker-audit" broker-audit
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker-no-cancel" broker-audit-no-cancel
+          for mode in mutation mutation-no-pin mutation-no-copy mutation-continue; do
+            python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker-$mode" "broker-$mode"
+          done
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/unix9-candidate" landlock9
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/unix9-missing-resolve" landlock9-no-resolve
           cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec --example plugin_unix_socket_probe
@@ -95,6 +100,7 @@ jobs:
           target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-candidate" "$RUNNER_TEMP/linux-ipc-candidate.json" --candidate
           target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker" "$RUNNER_TEMP/linux-ipc-broker.json" --broker
           target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker-audit" "$RUNNER_TEMP/linux-ipc-broker-cancel.json" --broker-cancel
+          target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker-mutation" "$RUNNER_TEMP/linux-ipc-broker-mutation.json" --broker-mutation
       - name: Reject blanket bind denial as broker acceptance
         shell: bash
         run: |
@@ -141,6 +147,29 @@ jobs:
           assert '"client_syn_sent":true' in text and '"cancelled":true' in text, text
           assert 'BCANCEL ' in text, text
           PY
+      - name: Reject descriptor and address re-resolution controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          for control in no-pin no-copy continue; do
+            log="$RUNNER_TEMP/broker-mutation-$control.log"
+            if target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker-mutation-$control" "$RUNNER_TEMP/linux-ipc-broker-mutation-$control.json" --broker-mutation > "$log" 2>&1; then
+              echo "Missing mutation safeguard unexpectedly passed: $control" >&2
+              exit 1
+            fi
+            python3 - "$log" "$control" <<'PY'
+          from pathlib import Path
+          import sys
+          text = Path(sys.argv[1]).read_text()
+          assert 'socket/address mutation changed the admitted operation' in text, text
+          for token in ['"fd_replaced":true', '"address_changed":true', '"result_ok":false', 'BPIN ']:
+              assert token in text, text
+          if sys.argv[2] == 'continue':
+              assert '"bound_original":true' in text, text
+          else:
+              assert '"bound_original":false' in text, text
+          PY
+          done
       - name: Record pathname policy kernel availability
         id: abi
         shell: bash
@@ -251,5 +280,6 @@ jobs:
             ${{ runner.temp }}/broker-no-bind.log
             ${{ runner.temp }}/broker-no-thread.log
             ${{ runner.temp }}/broker-no-cancel.log
+            ${{ runner.temp }}/broker-mutation-*.log
           if-no-files-found: warn
           retention-days: 14

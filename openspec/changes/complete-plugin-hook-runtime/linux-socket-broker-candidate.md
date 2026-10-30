@@ -75,7 +75,9 @@ single-thread TCP exchange still succeeds. Descriptor/address mutation during
 an already admitted operation and cancellation/saturation cases remain open.
 The [cancellation proof fixture](linux-socket-broker-cancellation.md) now tests
 a real blocked connect, targeted interruption and a normal-reap acknowledgement
-before target exit. Native execution of that new fixture is still required.
+before target exit, with source-bound native receipts on both architectures.
+The [post-inspection mutation fixture](linux-socket-broker-mutation.md) and its
+three controls still require native execution.
 
 The kernel's [seccomp notification documentation](https://docs.kernel.org/userspace-api/seccomp_filter.html)
 requires copied tracee arguments to avoid policy decisions on mutable memory.
@@ -91,7 +93,7 @@ shell blocks and embedded Python parse; formatting/diff checks, all 107
 strict OpenSpec items and spec lint (zero errors, 25 warnings) pass. The native C
 SDK build emits two Seatbelt deprecation warnings. Linux candidate compilation,
 kernel behavior for each revision requires corresponding hosted x64/arm64 jobs.
-The new cancellation case/control still requires hosted results. The separate
+The new post-inspection mutation case/controls still require hosted results. The separate
 thread-specific receipts below establish that earlier case and corrected report
 label; the first candidate receipts cannot prove those later changes.
 

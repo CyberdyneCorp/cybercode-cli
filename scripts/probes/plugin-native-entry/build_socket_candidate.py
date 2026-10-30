@@ -8,7 +8,9 @@ import tempfile
 root = Path(__file__).resolve().parents[3]
 output = Path(sys.argv[1]).resolve()
 mode = sys.argv[2] if len(sys.argv) == 3 else "seccomp"
-assert mode in {"seccomp", "broker", "broker-no-bind", "broker-no-thread", "broker-audit", "broker-audit-no-cancel", "landlock9", "landlock9-no-resolve"}
+assert mode in {"seccomp", "broker", "broker-no-bind", "broker-no-thread", "broker-audit", "broker-audit-no-cancel",
+                "broker-mutation", "broker-mutation-no-pin", "broker-mutation-no-copy", "broker-mutation-continue",
+                "landlock9", "landlock9-no-resolve"}
 unix9 = mode.startswith("landlock9")
 with tempfile.TemporaryDirectory(prefix="cyber-socket-candidate-") as temporary:
     target = Path(temporary)
@@ -24,7 +26,7 @@ with tempfile.TemporaryDirectory(prefix="cyber-socket-candidate-") as temporary:
             before = "syscall(SYS_pidfd_open, request->pid, PIDFD_THREAD)"
             assert text.count(before) == 1
             broker.write_text(text.replace(before, "syscall(SYS_pidfd_open, request->pid, 0)"))
-        if mode.startswith("broker-audit"):
+        if mode.startswith("broker-audit") or mode.startswith("broker-mutation"):
             # Fixture-only receipts from the actual worker owner. Logging is
             # injected solely into this temporary copy, never the base helper.
             broker = target / "socket_broker.h"
@@ -39,6 +41,43 @@ with tempfile.TemporaryDirectory(prefix="cyber-socket-candidate-") as temporary:
             before = "        *job = (struct broker_job){0};\n"
             assert text.count(before) == 1
             text = text.replace(before, '        fprintf(stderr, "BREAP %d\\n", (int)job->pid);\n' + before)
+            broker.write_text(text)
+        if mode.startswith("broker-mutation"):
+            shutil.copyfile(Path(__file__).with_name("linux_socket_broker_mutation.h"), target / "socket_mutation.h")
+            broker = target / "socket_broker.h"
+            text = broker.read_text()
+            before = "static void broker_tick(int signal_number)"
+            assert text.count(before) == 1
+            text = text.replace(before, '#include "socket_mutation.h"\n\n' + before)
+            before = "    call->socket = socket;\n    return 0;"
+            assert text.count(before) == 1
+            mutation = '''    int mutated = broker_mutation_pause(request);
+    if (mutated < 0) { close(socket); return EIO; }
+'''
+            if mode == "broker-mutation-no-pin":
+                mutation += '''    if (mutated) {
+        int thread = syscall(SYS_pidfd_open, request->pid, PIDFD_THREAD);
+        int replaced = thread < 0 ? -1 : syscall(SYS_pidfd_getfd, thread, (int)request->data.args[0], 0);
+        if (thread >= 0) close(thread);
+        close(socket);
+        if (replaced < 0) return EIO;
+        socket = replaced;
+    }
+'''
+            if mode == "broker-mutation-no-copy":
+                mutation += '''    if (mutated) {
+        struct iovec local = { .iov_base = &call->address, .iov_len = call->length };
+        struct iovec remote = { .iov_base = (void *)(uintptr_t)request->data.args[1], .iov_len = call->length };
+        if (process_vm_readv(request->pid, &local, 1, &remote, 1, 0) != (ssize_t)call->length) {
+            close(socket); return EIO;
+        }
+    }
+'''
+            text = text.replace(before, mutation + before)
+            if mode == "broker-mutation-continue":
+                before = "    struct seccomp_notif_resp response = { .id = id, .val = value, .error = -error };\n"
+                assert text.count(before) == 1
+                text = text.replace(before, before + '    if (broker_mutation_seen && id == broker_mutation_id) response.flags = SECCOMP_USER_NOTIF_FLAG_CONTINUE;\n')
             broker.write_text(text)
         # Preserve family/pair restrictions, replacing the blanket IP server
         # denial with the candidate's pinned-object syscall mediation.
