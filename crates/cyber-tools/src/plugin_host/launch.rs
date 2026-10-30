@@ -8,7 +8,6 @@
 //! `network: { hosts }` allows only those hosts through the proxy; `network: true` is
 //! as wide as the resolved sandbox network, never wider ([`super::network`]). A machine without sandbox enforcement does not start plugin hosts.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -40,13 +39,7 @@ pub(crate) struct PluginLaunch<'a> {
     pub capabilities: &'a Capabilities,
 }
 
-/// A started host and the native resources it owns until it stops.
-pub(crate) struct Started {
-    pub process: Process,
-    /// Removed when the host's resources are dropped.
-    pub _scratch: Scratch,
-    pub proxy: Option<Proxy>,
-}
+pub(crate) use super::lifetime::Started;
 
 impl LaunchContext<'_> {
     pub(crate) async fn start(
@@ -54,7 +47,7 @@ impl LaunchContext<'_> {
         plugin: &PluginLaunch<'_>,
         denials: &Denials,
     ) -> Result<Started, String> {
-        let (program, args) = command(plugin)?;
+        let (program, args) = command(plugin, self.location)?;
         let mut config = SandboxConfig::resolve(
             &self.resolved.value,
             &self.resolved.sources,
@@ -77,13 +70,14 @@ impl LaunchContext<'_> {
         );
         let wrapped = cyber_sandbox::wrap(&launch, &program, &args)
             .map_err(|error| format!("plugin {} cannot start: {error}", plugin.name))?;
-        let environment = self.environment(plugin, &launch.config, &scratch, &wrapped.env);
+        let environment =
+            super::environment::build(plugin.name, plugin.root, &scratch.path, &wrapped.env);
         let process =
             Process::spawn_with_stdin(&wrapped.program, &wrapped.args, self.helper, |child| {
                 child
                     .env_clear()
                     .envs(&environment)
-                    .current_dir(self.location)
+                    .current_dir(plugin.root)
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
@@ -91,11 +85,7 @@ impl LaunchContext<'_> {
             })
             .await
             .map_err(|error| format!("plugin {} failed to start: {error}", plugin.name))?;
-        Ok(Started {
-            process,
-            _scratch: scratch,
-            proxy,
-        })
+        Ok(Started::new(process, scratch, proxy, plugin.name))
     }
 
     /// Narrow the resolved network to the capability; a proxy records refused hosts.
@@ -140,31 +130,6 @@ impl LaunchContext<'_> {
             .map(Some)
             .map_err(|_| format!("plugin {}: network proxy creation failed", plugin.name))
     }
-
-    fn environment(
-        &self,
-        plugin: &PluginLaunch<'_>,
-        config: &SandboxConfig,
-        scratch: &Scratch,
-        wrapped: &BTreeMap<String, String>,
-    ) -> BTreeMap<String, String> {
-        let credentials = crate::sandboxing::credential_env_names(&self.resolved.value);
-        let mut env: BTreeMap<String, String> =
-            cyber_sandbox::policy_env(std::env::vars(), config, &credentials)
-                .into_iter()
-                .filter(|(key, _)| !proxy_variable(key))
-                .collect();
-        env.extend(wrapped.clone());
-        for key in ["TMPDIR", "TEMP", "TMP"] {
-            env.insert(key.into(), scratch.path.display().to_string());
-        }
-        env.insert("CYBER_PLUGIN_NAME".into(), plugin.name.into());
-        env.insert(
-            "CYBER_PLUGIN_ROOT".into(),
-            plugin.root.display().to_string(),
-        );
-        cyber_sandbox::owner_environment(env).into_iter().collect()
-    }
 }
 
 /// The sandbox of one host: it writes only its scratch directory (plus the Location
@@ -202,15 +167,8 @@ fn confinement(
     }
 }
 
-fn proxy_variable(key: &str) -> bool {
-    matches!(
-        key.to_ascii_uppercase().as_str(),
-        "HTTP_PROXY" | "HTTPS_PROXY" | "ALL_PROXY" | "NO_PROXY"
-    )
-}
-
 /// The program and arguments that run `main` with its runtime.
-fn command(plugin: &PluginLaunch<'_>) -> Result<(String, Vec<String>), String> {
+fn command(plugin: &PluginLaunch<'_>, location: &Path) -> Result<(String, Vec<String>), String> {
     let relative = cyber_core::plugins::manifest_path(&plugin.host.main)
         .ok_or_else(|| format!("plugin {}: main is outside the plugin", plugin.name))?;
     let main = plugin.root.join(relative);
@@ -225,16 +183,14 @@ fn command(plugin: &PluginLaunch<'_>) -> Result<(String, Vec<String>), String> {
     let (candidates, args): (&[&str], Vec<String>) = match plugin.host.runtime {
         Runtime::Native => return Ok((main_arg, Vec::new())),
         Runtime::Node => (&["node"], vec![main_arg]),
-        Runtime::Bun => (&["bun"], vec!["run".into(), main_arg]),
-        Runtime::Deno => (&["deno"], vec!["run".into(), "-A".into(), main_arg]),
+        Runtime::Bun => (&["bun"], bun_arguments(plugin, main_arg)?),
+        Runtime::Deno => (&["deno"], deno_arguments(plugin, main_arg)?),
         Runtime::Python => (&["python3", "python"], vec!["-u".into(), main_arg]),
     };
-    let program = candidates
-        .iter()
-        .find_map(|name| find_program(name))
+    let program = super::runtime_search::find(candidates, location, plugin.root)
         .ok_or_else(|| {
             format!(
-                "plugin {}: runtime {} is not installed",
+                "plugin {}: runtime {} needs an executable on an absolute PATH outside the Location and package",
                 plugin.name,
                 plugin.host.runtime.as_str()
             )
@@ -242,16 +198,60 @@ fn command(plugin: &PluginLaunch<'_>) -> Result<(String, Vec<String>), String> {
     Ok((program.display().to_string(), args))
 }
 
-fn find_program(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    let names: Vec<String> = if cfg!(windows) {
-        vec![format!("{name}.exe"), format!("{name}.cmd")]
-    } else {
-        vec![name.to_owned()]
+fn bun_arguments(plugin: &PluginLaunch<'_>, main: String) -> Result<Vec<String>, String> {
+    let config = runtime_config(plugin, &["bunfig.toml"])?
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| {
+            if cfg!(windows) {
+                "NUL".into()
+            } else {
+                "/dev/null".into()
+            }
+        });
+    Ok(vec![
+        format!("--config={config}"),
+        "--no-env-file".into(),
+        "--no-install".into(),
+        main,
+    ])
+}
+
+fn deno_arguments(plugin: &PluginLaunch<'_>, main: String) -> Result<Vec<String>, String> {
+    let configuration = match runtime_config(plugin, &["deno.json", "deno.jsonc"])? {
+        Some(path) => vec![format!("--config={}", path.display())],
+        None => vec!["--no-config".into()],
     };
-    std::env::split_paths(&path)
-        .flat_map(|dir| names.iter().map(move |name| dir.join(name)))
-        .find(|candidate| candidate.is_file())
+    let lock = match runtime_config(plugin, &["deno.lock"])? {
+        Some(path) => vec![
+            format!("--lock={}", path.display()),
+            "--frozen-lockfile".into(),
+        ],
+        None => vec!["--no-lock".into()],
+    };
+    let mut args = vec!["run".into(), "-A".into()];
+    args.extend(configuration);
+    args.extend(lock);
+    args.extend(["--node-modules-dir=manual".into(), main]);
+    Ok(args)
+}
+
+/// Select configuration only inside the approved package. This metadata check
+/// does not replace immutable package/ancestor admission at the final launch.
+fn runtime_config(plugin: &PluginLaunch<'_>, names: &[&str]) -> Result<Option<PathBuf>, String> {
+    for name in names {
+        let path = plugin.root.join(name);
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.is_file() => return Ok(Some(path)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            _ => {
+                return Err(format!(
+                    "plugin {}: runtime configuration must be a regular package file",
+                    plugin.name
+                ));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// A host's private temporary directory, removed when the host stops.
@@ -285,6 +285,7 @@ impl Drop for Scratch {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
 
     fn launch_of(
         root: &Path,
@@ -296,12 +297,15 @@ mod tests {
             runtime,
         };
         let capabilities = Capabilities::default();
-        command(&PluginLaunch {
-            name: "kit",
+        command(
+            &PluginLaunch {
+                name: "kit",
+                root,
+                host: &host,
+                capabilities: &capabilities,
+            },
             root,
-            host: &host,
-            capabilities: &capabilities,
-        })
+        )
     }
 
     /// Regression: the Windows AppContainer plan of a host held only its scratch
@@ -344,6 +348,38 @@ mod tests {
     }
 
     #[test]
+    fn runtime_configuration_directories_are_refused_before_startup() {
+        for (runtime, name) in [
+            (Runtime::Bun, "bunfig.toml"),
+            (Runtime::Deno, "deno.json"),
+            (Runtime::Deno, "deno.lock"),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            std::fs::write(root.path().join("host"), "").unwrap();
+            std::fs::create_dir(root.path().join(name)).unwrap();
+            assert!(
+                launch_of(root.path(), "host", runtime)
+                    .unwrap_err()
+                    .contains("runtime configuration must be a regular package file")
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runtime_configuration_symlinks_are_refused_before_startup() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("host"), "").unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("bunfig.toml")).unwrap();
+        assert!(
+            launch_of(root.path(), "host", Runtime::Bun)
+                .unwrap_err()
+                .contains("runtime configuration must be a regular package file")
+        );
+    }
+
+    #[test]
     fn each_runtime_starts_main_and_main_must_be_a_regular_file_inside_the_root() {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("host"), "").unwrap();
@@ -353,8 +389,29 @@ mod tests {
             (main.clone(), Vec::new())
         );
         for (runtime, args) in [
-            (Runtime::Bun, vec!["run".to_owned(), main.clone()]),
-            (Runtime::Deno, vec!["run".into(), "-A".into(), main.clone()]),
+            (
+                Runtime::Bun,
+                vec![
+                    format!(
+                        "--config={}",
+                        if cfg!(windows) { "NUL" } else { "/dev/null" }
+                    ),
+                    "--no-env-file".into(),
+                    "--no-install".into(),
+                    main.clone(),
+                ],
+            ),
+            (
+                Runtime::Deno,
+                vec![
+                    "run".into(),
+                    "-A".into(),
+                    "--no-config".into(),
+                    "--no-lock".into(),
+                    "--node-modules-dir=manual".into(),
+                    main.clone(),
+                ],
+            ),
             (Runtime::Python, vec!["-u".into(), main.clone()]),
             (Runtime::Node, vec![main.clone()]),
         ] {
@@ -365,7 +422,10 @@ mod tests {
                 }
                 Err(error) => assert_eq!(
                     error,
-                    format!("plugin kit: runtime {} is not installed", runtime.as_str())
+                    format!(
+                        "plugin kit: runtime {} needs an executable on an absolute PATH outside the Location and package",
+                        runtime.as_str()
+                    )
                 ),
             }
         }
@@ -377,3 +437,7 @@ mod tests {
         assert!(launch_of(root.path(), "dir", Runtime::Native).is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "startup_tests.rs"]
+mod startup_tests;

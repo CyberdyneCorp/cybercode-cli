@@ -1,15 +1,25 @@
 //! Retry policy (`provider-catalog` → Retry policy).
 //!
-//! Retries happen only before any assistant output: a stream that already produced output
-//! and then fails is returned to the caller, which settles the Turn as interrupted.
+//! A retryable failure before any assistant output reopens the request silently. One after
+//! partial output discards that attempt: the stream yields [`LlmEvent::Discarded`] and then
+//! the events of a fresh attempt of the same request. Retries before and after output share
+//! one budget. Nothing is replayed after protocol completion, since a completed stream ends.
+//!
+//! The stream never knows about tool dispatch: a consumer SHALL NOT start a tool call of the
+//! answer while the stream can still be replayed, which the Drain guarantees by dispatching
+//! only after the stream ended.
 
+use std::pin::Pin;
 use std::time::Duration;
 
-use futures::stream::{self, StreamExt};
+use futures::stream::{self, Stream, StreamExt};
 
 use crate::adapters::{Adapter, EventStream};
 use crate::error::LlmError;
 use crate::types::{LlmEvent, LlmRequest};
+
+/// A stream that may replay its request; it borrows the adapter it reopens with.
+pub type RetryingStream<'a> = Pin<Box<dyn Stream<Item = Result<LlmEvent, LlmError>> + Send + 'a>>;
 
 #[derive(Debug, Clone)]
 pub struct RetryPolicy {
@@ -44,30 +54,120 @@ impl RetryPolicy {
     }
 }
 
-/// Open a stream, retrying retryable failures that happen before any output.
-/// `on_retry(attempt, delay, error)` is called before each wait.
-pub async fn open_with_retry(
-    adapter: &dyn Adapter,
+/// One retry, announced before its wait.
+#[derive(Debug)]
+pub struct RetryNotice<'e> {
+    /// 1-based retry number.
+    pub attempt: u32,
+    pub delay: Duration,
+    pub error: &'e LlmError,
+    /// The failed attempt had streamed output, which the consumer must drop.
+    pub discarded: bool,
+}
+
+/// Open a stream, retrying retryable failures before any output, and replaying the request
+/// when a retryable failure interrupts partial output. `on_retry` is called before each wait.
+pub async fn open_with_retry<'a>(
+    adapter: &'a dyn Adapter,
     request: &LlmRequest,
     policy: &RetryPolicy,
-    mut on_retry: impl FnMut(u32, Duration, &LlmError),
-) -> Result<EventStream, LlmError> {
-    let mut attempt = 0;
-    loop {
-        let failure = match adapter.stream(request.clone()).await {
-            Ok(stream) => match first_output(stream).await {
-                Ok(stream) => return Ok(stream),
+    on_retry: impl FnMut(&RetryNotice<'_>) + Send + 'a,
+) -> Result<RetryingStream<'a>, LlmError> {
+    let mut replay = Replay {
+        adapter,
+        request: request.clone(),
+        policy: policy.clone(),
+        on_retry,
+        attempt: 0,
+    };
+    let first = replay.open().await?;
+    Ok(stream::unfold((replay, Phase::Live(first)), step).boxed())
+}
+
+struct Replay<'a, F> {
+    adapter: &'a dyn Adapter,
+    request: LlmRequest,
+    policy: RetryPolicy,
+    on_retry: F,
+    /// Retries used so far.
+    attempt: u32,
+}
+
+enum Phase {
+    Live(EventStream),
+    /// The attempt failed after output and was discarded; the next one opens after the wait.
+    Reopen(LlmError),
+    Done,
+}
+
+impl<F: FnMut(&RetryNotice<'_>)> Replay<'_, F> {
+    /// Open an attempt that reaches its first output, retrying failures before it.
+    async fn open(&mut self) -> Result<EventStream, LlmError> {
+        loop {
+            let failure = match self.adapter.stream(self.request.clone()).await {
+                Ok(stream) => match first_output(stream).await {
+                    Ok(stream) => return Ok(stream),
+                    Err(e) => e,
+                },
                 Err(e) => e,
-            },
-            Err(e) => e,
-        };
-        if !failure.kind.is_retryable() || attempt >= policy.max_retries {
+            };
+            self.wait(failure, false).await?;
+        }
+    }
+
+    fn may_retry(&self, failure: &LlmError) -> bool {
+        failure.kind.is_retryable() && self.attempt < self.policy.max_retries
+    }
+
+    /// Announce the next retry and wait for it, or give the failure back.
+    async fn wait(&mut self, failure: LlmError, discarded: bool) -> Result<(), LlmError> {
+        if !self.may_retry(&failure) {
             return Err(failure);
         }
-        attempt += 1;
-        let delay = policy.delay(attempt, &failure);
-        on_retry(attempt, delay, &failure);
+        self.attempt += 1;
+        let delay = self.policy.delay(self.attempt, &failure);
+        (self.on_retry)(&RetryNotice {
+            attempt: self.attempt,
+            delay,
+            error: &failure,
+            discarded,
+        });
         tokio::time::sleep(delay).await;
+        Ok(())
+    }
+}
+
+type Item = Result<LlmEvent, LlmError>;
+
+/// The next item of a replaying stream.
+async fn step<F: FnMut(&RetryNotice<'_>)>(
+    (mut replay, phase): (Replay<'_, F>, Phase),
+) -> Option<(Item, (Replay<'_, F>, Phase))> {
+    match phase {
+        Phase::Done => None,
+        Phase::Live(mut stream) => match stream.next().await {
+            None => None,
+            Some(Ok(event)) => Some((Ok(event), (replay, Phase::Live(stream)))),
+            // The attempt already streamed output (`first_output`), so a retry discards it.
+            Some(Err(e)) if replay.may_retry(&e) => {
+                Some((Ok(LlmEvent::Discarded), (replay, Phase::Reopen(e))))
+            }
+            Some(Err(e)) => Some((Err(e), (replay, Phase::Done))),
+        },
+        Phase::Reopen(failure) => {
+            let reopened = match replay.wait(failure, true).await {
+                Ok(()) => replay.open().await,
+                Err(e) => Err(e),
+            };
+            match reopened {
+                Ok(mut stream) => {
+                    // `first_output` returns a stream with at least one item unless it ended.
+                    let first = stream.next().await?;
+                    Some((first, (replay, Phase::Live(stream))))
+                }
+                Err(e) => Some((Err(e), (replay, Phase::Done))),
+            }
+        }
     }
 }
 

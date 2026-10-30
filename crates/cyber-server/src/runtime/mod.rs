@@ -135,6 +135,8 @@ mod usage_ledger;
 mod usage_limits;
 mod usage_origin;
 pub use usage_limits::{LimitReading, UsageLimits, UsageWindow, WindowPeriod};
+mod usage_wait;
+pub use usage_wait::{SystemClock, UsageLimitWait, WaitClock, WaitedBy};
 mod usage_stats;
 pub use usage_breakdown::{BudgetLimit, BudgetScope, BudgetUsage, ModelUsage, SessionUsage};
 pub use usage_insights::{
@@ -422,6 +424,9 @@ pub struct CreateSession {
     /// The Session's own output style; only for root Sessions. The caller checks that
     /// it is defined at the Location.
     pub output_style: Option<String>,
+    /// Nobody attends the Session (`cyber exec`): a usage limit with a known reset
+    /// waits (`session-runtime` → Usage limit wait).
+    pub unattended: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -871,6 +876,9 @@ pub(crate) struct Inner {
     pub(crate) waiters: StdMutex<Vec<requests::Waiter>>,
     /// The last background update check (`installation-upgrade`).
     update_status: StdMutex<Option<UpdateStatus>>,
+    /// The clock usage limit waits read and sleep on; the system clock unless a test
+    /// configures one.
+    wait_clock: std::sync::OnceLock<Arc<dyn usage_wait::WaitClock>>,
     pub(crate) me: std::sync::Weak<Inner>,
 }
 
@@ -966,6 +974,7 @@ impl Runtime {
             workflow_relaunch: std::sync::OnceLock::new(),
             workflow_progress: std::sync::OnceLock::new(),
             waiters: StdMutex::default(),
+            wait_clock: std::sync::OnceLock::new(),
             me: me.clone(),
         });
         Self { inner }
@@ -1241,6 +1250,7 @@ impl Runtime {
             messaging: req.messaging,
             team: req.team,
             output_style: req.output_style,
+            unattended: req.unattended,
         };
         output_style::check(&info, info.output_style.as_deref())?;
         if info.budget.is_none() {

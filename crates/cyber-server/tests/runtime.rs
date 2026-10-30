@@ -16,8 +16,9 @@ fn admit(text: &str, delivery: Delivery) -> Admission {
     Admission::text(text, delivery)
 }
 
-/// A transport failure after a prior mutation and a newly streamed call must not
-/// replay either Turn. Restart and explicit continuation retain both settlements.
+/// A transport failure after a prior mutation and a newly streamed call is replayed until
+/// the retry budget is spent, then settles; the dispatched mutation never runs again.
+/// Restart and explicit continuation retain both settlements.
 #[tokio::test]
 async fn transport_failure_preserves_tool_outcomes_without_replaying_actions() {
     use cyber_llm::adapters::ScriptStep;
@@ -42,7 +43,16 @@ async fn transport_failure_preserves_tool_outcomes_without_replaying_actions() {
     let h = Harness::new(Setup {
         scripts: vec![(
             "test/main",
-            vec![tools(&[("c1", "write", "{}")]), partial, text("resumed")],
+            // The original attempt and its 4 retries all break after the call.
+            vec![
+                tools(&[("c1", "write", "{}")]),
+                partial.clone(),
+                partial.clone(),
+                partial.clone(),
+                partial.clone(),
+                partial,
+                text("resumed"),
+            ],
         )],
         ..Setup::default()
     });
@@ -55,8 +65,8 @@ async fn transport_failure_preserves_tool_outcomes_without_replaying_actions() {
     let state = h.state(&id).await;
     assert_eq!(
         h.models.requests("test/main").len(),
-        2,
-        "no automatic request replay"
+        6,
+        "replays stop at the retry budget"
     );
     assert_eq!(h.tools.executed_names(), ["write"]);
     assert_eq!(state.calls["c1"].status, CallStatus::Ok);
@@ -74,7 +84,7 @@ async fn transport_failure_preserves_tool_outcomes_without_replaying_actions() {
     restarted.wait_idle(&id).await;
     assert_eq!(
         h.models.requests("test/main").len(),
-        2,
+        6,
         "restart cannot replay a settled failure"
     );
     assert_eq!(h.tools.executed_names(), ["write"]);
@@ -85,8 +95,8 @@ async fn transport_failure_preserves_tool_outcomes_without_replaying_actions() {
         .unwrap();
     restarted.wait_idle(&id).await;
     let requests = h.models.requests("test/main");
-    assert_eq!(requests.len(), 3);
-    let continued = transcript(&requests[2]);
+    assert_eq!(requests.len(), 7);
+    let continued = transcript(&requests[6]);
     assert!(
         continued.contains("c1") && continued.contains("c2"),
         "{continued}"
@@ -97,6 +107,177 @@ async fn transport_failure_preserves_tool_outcomes_without_replaying_actions() {
         ["write"],
         "continuation retains settled outcomes"
     );
+    restarted.shutdown().await;
+}
+
+/// An attempt that streamed reasoning, text and a complete call, interrupted by `step`.
+fn interrupted(
+    thought: &str,
+    text: &str,
+    step: cyber_llm::adapters::ScriptStep,
+) -> Vec<cyber_llm::adapters::ScriptStep> {
+    use cyber_llm::adapters::ScriptStep;
+    use cyber_llm::{LlmEvent, Opaque, OpaqueKind, ToolCall, Usage};
+    vec![
+        ScriptStep::Event(LlmEvent::ReasoningDelta {
+            text: thought.into(),
+        }),
+        ScriptStep::Event(LlmEvent::ReasoningItem {
+            text: String::new(),
+            opaque: Some(Opaque::new(OpaqueKind::Signature, "stale-sig")),
+        }),
+        ScriptStep::Event(LlmEvent::TextDelta { text: text.into() }),
+        ScriptStep::Event(LlmEvent::ToolCallDone(ToolCall {
+            id: "c1".into(),
+            name: "write".into(),
+            arguments: "{}".into(),
+            input: Some(serde_json::json!({})),
+            opaque: None,
+        })),
+        ScriptStep::Event(LlmEvent::Usage(Usage {
+            input: 50,
+            ..Usage::default()
+        })),
+        step,
+    ]
+}
+
+/// `provider-catalog` → Retry policy, "Partial answer replaced by the replay": a stream
+/// broken after reasoning, text and a complete call is discarded and replayed. History holds
+/// only the replayed attempt, before and after a restart; the call runs once; the
+/// discarded attempt's usage is recorded as a failed `turn` call, outside the step usage.
+#[tokio::test]
+async fn a_mid_stream_retry_records_only_the_replayed_attempt() {
+    use cyber_llm::LlmEvent;
+    use cyber_llm::adapters::ScriptStep;
+    let reset = ScriptStep::Error {
+        error: ErrorKind::Transport,
+        message: "connection reset".into(),
+    };
+    let mut replayed = reasoning_then_text("fresh thought", "Done.");
+    replayed.retain(|s| !matches!(s, ScriptStep::Event(LlmEvent::Finish { .. })));
+    replayed.extend(tools(&[("c1", "write", "{}")]));
+    let partial_answer = vec![
+        ScriptStep::Event(LlmEvent::TextDelta {
+            text: "stale follow-up".into(),
+        }),
+        reset.clone(),
+    ];
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                interrupted("stale thought", "stale text", reset),
+                replayed,
+                // The answer after the dispatched call is interrupted and replayed too;
+                // the call it follows is not run again.
+                partial_answer,
+                text("after"),
+            ],
+        )],
+        ..Setup::default()
+    });
+    let mut live = h.runtime.subscribe();
+    let id = h.session().await;
+    h.runtime
+        .admit(&id, admit("go", Delivery::Steer))
+        .await
+        .unwrap();
+    h.settle(&id).await;
+
+    assert_eq!(h.models.requests("test/main").len(), 4);
+    assert_eq!(h.tools.executed_names(), ["write"], "the call runs once");
+    let mut retries = Vec::new();
+    while let Ok(e) = live.try_recv() {
+        if let LiveEvent::Retry {
+            message_id,
+            discarded,
+            ..
+        } = e
+        {
+            retries.push((message_id, discarded));
+        }
+    }
+    let assistants = |state: &cyber_server::runtime::SessionState| -> Vec<cyber_server::runtime::AssistantEntry> {
+        state
+            .entries
+            .iter()
+            .filter_map(|e| match e {
+                Entry::Assistant(a) => Some(a.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    let state = h.state(&id).await;
+    let answers = assistants(&state);
+    assert_eq!(
+        retries,
+        [(answers[0].id.clone(), true), (answers[1].id.clone(), true)]
+    );
+    let check = |answers: &[cyber_server::runtime::AssistantEntry]| {
+        assert_eq!(answers.len(), 2);
+        assert_eq!(answers[0].text, "Done.");
+        assert_eq!(answers[0].calls, ["c1"]);
+        assert_eq!(answers[0].reasoning_items.len(), 1);
+        assert_eq!(answers[0].reasoning_items[0].text, "fresh thought");
+        assert_eq!(answers[1].text, "after");
+        assert!(answers.iter().all(|a| a.error.is_none()));
+    };
+    check(&answers);
+    assert_eq!(state.calls["c1"].status, CallStatus::Ok);
+    let events = h.store.read_events(&id, -1, 500).unwrap().events;
+    let all = serde_json::to_string(&events.iter().map(|e| &e.data).collect::<Vec<_>>()).unwrap();
+    assert!(
+        !all.contains("stale"),
+        "nothing of a discarded attempt is recorded: {all}"
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e.kind == "session.tool.called.1")
+            .count(),
+        1
+    );
+    let wasted: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == "usage.recorded.1")
+        .collect();
+    assert_eq!(
+        wasted.len(),
+        1,
+        "only the first discarded attempt reported usage"
+    );
+    assert_eq!(
+        (
+            &wasted[0].data["purpose"],
+            &wasted[0].data["failed"],
+            &wasted[0].data["call_id"]
+        ),
+        (
+            &serde_json::json!("turn"),
+            &serde_json::json!(true),
+            &serde_json::json!(answers[0].id)
+        )
+    );
+    assert_eq!(wasted[0].data["usage"]["input"], 50);
+    let step = events
+        .iter()
+        .find(|e| e.kind == "session.step.ended.1")
+        .unwrap();
+    assert_eq!(
+        step.data["usage"]["input"], 200,
+        "the step holds its own attempt"
+    );
+    assert_eq!(
+        state.totals.usage.input, 350,
+        "wasted tokens count toward totals"
+    );
+    let request = transcript(&h.models.requests("test/main")[3]);
+    assert!(!request.contains("stale"), "{request}");
+    h.runtime.shutdown().await;
+
+    let restarted = h.restart();
+    check(&assistants(&restarted.state(&id).await.unwrap()));
     restarted.shutdown().await;
 }
 
@@ -2435,11 +2616,12 @@ impl cyber_llm::Adapter for HeldStreamModel {
     }
 }
 
-/// `tool-registry` → Eager execution during streaming: a complete tool call is durable
-/// as soon as its input finishes streaming, while the provider stream is still open, and
-/// its result is present before the next Turn.
+/// `tool-registry` → Eager execution during streaming: while the stream may still be
+/// replayed, a complete call is not durable (`provider-catalog` → Retry policy). It is
+/// recorded when the stream completes, before it is dispatched, and its result is present
+/// before the next Turn.
 #[tokio::test]
-async fn complete_tool_call_is_durable_before_the_stream_finishes() {
+async fn a_complete_tool_call_is_recorded_when_its_stream_completes() {
     use cyber_server::runtime::*;
     let h = Harness::new(Setup::default());
     let release = Arc::new(tokio::sync::Notify::new());
@@ -2477,38 +2659,47 @@ async fn complete_tool_call_is_durable_before_the_stream_finishes() {
         .admit(&id, admit("read eagerly", Delivery::Queue))
         .await
         .unwrap();
-    let called = tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            let events = h.store.read_events(&id, -1, 500).unwrap().events;
-            if let Some(event) = events
-                .into_iter()
-                .find(|e| e.kind == "session.tool.called.1")
-            {
-                break event;
-            }
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while requests.lock().unwrap().is_empty() {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
     })
     .await
-    .expect("the complete call was not recorded while the stream was open");
-    assert_eq!(called.data["call_id"], "call_eager");
-    // The stream is still held open: only one request, and the step is not finished.
-    assert_eq!(requests.lock().unwrap().len(), 1);
+    .expect("the stream did not open");
+    // The call has streamed and the stream is held open: nothing of it is durable yet, also
+    // for a second store handle (as after a crash).
+    tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(runtime.is_running(&id));
-    // A second store handle (as after a crash) already sees the committed call.
     let reopened = open_store(&h.dir.path().join("cyber.db"));
     assert!(
-        reopened
+        !reopened
             .read_events(&id, -1, 500)
             .unwrap()
             .events
             .iter()
-            .any(|e| e.kind == "session.tool.called.1" && e.data["call_id"] == "call_eager")
+            .any(|e| e.kind == "session.tool.called.1")
     );
     release.notify_one();
     tokio::time::timeout(Duration::from_secs(30), runtime.wait_idle(&id))
         .await
         .expect("drain did not settle");
+    let kinds: Vec<String> = h
+        .store
+        .read_events(&id, -1, 500)
+        .unwrap()
+        .events
+        .into_iter()
+        .map(|e| e.kind)
+        .filter(|k| k.starts_with("session.tool.") || k.starts_with("session.step.ended"))
+        .collect();
+    assert_eq!(
+        kinds[..3],
+        [
+            "session.tool.called.1",
+            "session.step.ended.1",
+            "session.tool.dispatched.1"
+        ]
+    );
     let requests = requests.lock().unwrap().clone();
     assert_eq!(requests.len(), 2);
     let next = transcript(&requests[1]);

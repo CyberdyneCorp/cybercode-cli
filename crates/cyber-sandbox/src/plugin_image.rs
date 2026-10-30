@@ -21,6 +21,8 @@ pub enum Error {
     Request,
     #[error("plugin package staging or helper IO failed")]
     Io,
+    #[error("plugin package helper exit could not be confirmed")]
+    Unconfirmed,
     #[error("plugin package helper refused the requested copy")]
     Refused,
     #[error("plugin package helper exceeded its output limit")]
@@ -33,61 +35,9 @@ pub enum Error {
     Revoked,
 }
 
-/// A single owner-controlled generation. Issue a fresh authority for every host
-/// incarnation, even when plugin name, location and content digest are unchanged.
-/// Leases cannot renew or revoke authority. Dropping this owner revokes them all.
-#[derive(Debug)]
-pub struct Generation {
-    signal: tokio::sync::watch::Sender<bool>,
-}
-impl Generation {
-    pub fn new() -> Self {
-        let (signal, _) = tokio::sync::watch::channel(false);
-        Self { signal }
-    }
-    pub fn lease(&self) -> Lease {
-        Lease {
-            signal: self.signal.subscribe(),
-        }
-    }
-    pub fn revoke(&self) {
-        self.signal.send_replace(true);
-    }
-}
-impl Default for Generation {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-impl Drop for Generation {
-    fn drop(&mut self) {
-        self.revoke();
-    }
-}
-
-/// Read-only authority for one generation; cloning it does not keep the owner
-/// alive. Re-admission always requires a fresh Generation rather than renewal.
-#[derive(Debug, Clone)]
-pub struct Lease {
-    signal: tokio::sync::watch::Receiver<bool>,
-}
-impl Lease {
-    pub fn is_current(&self) -> bool {
-        !*self.signal.borrow() && self.signal.has_changed().is_ok()
-    }
-    fn check(&self) -> Result<(), Error> {
-        if self.is_current() {
-            Ok(())
-        } else {
-            Err(Error::Revoked)
-        }
-    }
-    #[cfg(unix)]
-    async fn revoked(&self) {
-        let mut signal = self.signal.clone();
-        let _ = signal.wait_for(|revoked| *revoked).await;
-    }
-}
+mod authority;
+pub mod private_roots;
+pub use authority::{Generation, Lease};
 
 /// An owned copy, not a sealed or execution-admitted image. Retain this value for
 /// as long as a launcher or host uses the copy. Do not publish without checking
@@ -96,6 +46,10 @@ impl Lease {
 pub struct Package {
     #[cfg(unix)]
     _root: cap_std::fs::Dir,
+    #[cfg(unix)]
+    _namespace: cap_std::fs::Dir,
+    #[cfg(unix)]
+    _workspace: cap_std::fs::File,
     _parent: tempfile::TempDir,
     report: PreparedCopy,
     lease: Lease,
@@ -106,6 +60,18 @@ impl Package {
     pub fn path(&self) -> Result<&Path, Error> {
         self.lease.check()?;
         Ok(&self.report.destination)
+    }
+    /// Serialize the final synchronous start with generation revocation. The
+    /// callback must actually perform the start, not return a future to run later.
+    /// This supplies only generation authority: private provenance, immutable
+    /// runtime/helper binding and native OS admission are still caller obligations.
+    /// Do not revoke the same generation from the callback (the gate is held).
+    pub fn commit<T>(
+        &self,
+        owner: &Generation,
+        start: impl FnOnce(&Path) -> T,
+    ) -> Result<T, Error> {
+        owner.commit(&self.lease, || start(&self.report.destination))
     }
     pub fn digest(&self) -> &str {
         &self.report.digest
@@ -223,7 +189,7 @@ async fn supervise(
     let stderr = child.stderr.take().expect("piped helper stderr");
     let capture = async {
         let (stdout, _) = tokio::try_join!(bounded(stdout, MAX_RESPONSE), bounded(stderr, 8192))?;
-        let status = child.wait().await.map_err(|_| Error::Io)?;
+        let status = child.wait().await.map_err(|_| Error::Unconfirmed)?;
         if !status.success() {
             return Err(Error::Refused);
         }
@@ -238,13 +204,14 @@ async fn supervise(
     };
     // On every terminal path, settle the exact process before releasing its
     // writable parent. The trusted worker cannot spawn descendants.
-    if child.try_wait().ok().flatten().is_none() {
-        let _ = child.start_kill();
-    }
-    if child.wait().await.is_err() {
+    let unconfirmed = matches!(result, Some(Err(Error::Unconfirmed)));
+    if settle_helper(child, unconfirmed, tokio::process::Child::start_kill)
+        .await
+        .is_err()
+    {
         // Do not delete a namespace that might still have a live writer. Leaking
         // this protected parent is safer than removing it before a proven reap.
-        let _ = reply.send(Err(Error::Io));
+        let _ = reply.send(Err(Error::Unconfirmed));
         return;
     }
     let parent = retained.0.take().expect("owned helper parent");
@@ -252,6 +219,35 @@ async fn supervise(
         let package = result.and_then(|report| bind(parent, &request, report, lease));
         let _ = reply.send(package);
     }
+}
+
+#[cfg(unix)]
+async fn settle_helper(
+    mut child: tokio::process::Child,
+    unconfirmed: bool,
+    terminate: impl FnOnce(&mut tokio::process::Child) -> std::io::Result<()>,
+) -> Result<(), Error> {
+    // An observed wait error ends our authority to signal a cached PID. Do not
+    // repoll it or let Tokio's kill-on-drop/orphan reaper act on that identity.
+    if unconfirmed {
+        std::mem::forget(child);
+        return Err(Error::Unconfirmed);
+    }
+    match child.try_wait() {
+        Ok(Some(_)) => return Ok(()),
+        Ok(None) => {
+            let _ = terminate(&mut child);
+        }
+        Err(_) => {
+            std::mem::forget(child);
+            return Err(Error::Unconfirmed);
+        }
+    }
+    if child.wait().await.is_err() {
+        std::mem::forget(child);
+        return Err(Error::Unconfirmed);
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -294,12 +290,38 @@ fn bind(
     if (metadata.dev(), metadata.ino()) != report.root_identity {
         return Err(Error::Binding);
     }
+    // A Deno package config otherwise searches arbitrary ancestors for a
+    // workspace, even when selected by an absolute --config argument. Keep this
+    // static boundary outside the approved image, so its digest stays unchanged.
+    // The caller's protected-namespace obligation applies to this file too.
+    let workspace = bootstrap_boundary(&directory)?;
     Ok(Package {
         _root: root,
+        _namespace: directory,
+        _workspace: workspace,
         _parent: parent,
         report,
         lease,
     })
+}
+
+#[cfg(unix)]
+fn bootstrap_boundary(directory: &cap_std::fs::Dir) -> Result<cap_std::fs::File, Error> {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    const NAME: &str = "package.json";
+    let mut options = cap_std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    let mut file = directory.open_with(NAME, &options).map_err(|_| Error::Io)?;
+    file.write_all(b"{\"private\":true,\"workspaces\":[]}\n")
+        .map_err(|_| Error::Io)?;
+    file.sync_all().map_err(|_| Error::Io)?;
+    file.set_permissions(cap_std::fs::Permissions::from_std(
+        std::fs::Permissions::from_mode(0o400),
+    ))
+    .map_err(|_| Error::Io)?;
+    drop(file);
+    directory.open(NAME).map_err(|_| Error::Io)
 }
 
 /// Runtime shutdown can drop the supervisor before its asynchronous reap ends.
@@ -319,6 +341,62 @@ impl Drop for RetainUntilReaped {
 mod tests {
     use super::*;
     use std::os::unix::fs::MetadataExt;
+
+    #[tokio::test]
+    #[allow(unsafe_code)]
+    async fn lost_wait_ownership_retains_staging_and_refuses_settlement() {
+        let parent = tempfile::tempdir().unwrap();
+        let path = parent.path().to_path_buf();
+        let retained = RetainUntilReaped(Some(parent));
+        let child = tokio::process::Command::new("/usr/bin/true")
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let pid = child.id().unwrap() as libc::pid_t;
+        // Reproduce a real ECHILD without polling Tokio's child future. Only
+        // this test's exact direct child is reaped; no process lookup is used.
+        let mut status = 0;
+        loop {
+            // SAFETY: status is writable and pid names our unreaped direct child.
+            let result = unsafe { libc::waitpid(pid, &mut status, 0) };
+            if result == pid {
+                break;
+            }
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::EINTR)
+            );
+        }
+        assert_eq!(
+            settle_helper(child, false, |_| panic!("must not signal an uncertain PID")).await,
+            Err(Error::Unconfirmed)
+        );
+        drop(retained);
+        assert!(
+            path.is_dir(),
+            "unknown settlement must retain the namespace"
+        );
+        std::fs::remove_dir(path).unwrap();
+    }
+
+    #[test]
+    fn workspace_boundary_refuses_existing_files_and_symlinks_without_modifying_them() {
+        let namespace = tempfile::tempdir().unwrap();
+        let directory =
+            cap_std::fs::Dir::open_ambient_dir(namespace.path(), cap_std::ambient_authority())
+                .unwrap();
+        let boundary = namespace.path().join("package.json");
+        std::fs::write(&boundary, b"existing metadata").unwrap();
+        assert!(matches!(bootstrap_boundary(&directory), Err(Error::Io)));
+        assert_eq!(std::fs::read(&boundary).unwrap(), b"existing metadata");
+        std::fs::remove_file(&boundary).unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(outside.path(), b"outside metadata").unwrap();
+        std::os::unix::fs::symlink(outside.path(), &boundary).unwrap();
+        assert!(matches!(bootstrap_boundary(&directory), Err(Error::Io)));
+        assert_eq!(std::fs::read(outside.path()).unwrap(), b"outside metadata");
+        assert!(std::fs::symlink_metadata(&boundary).unwrap().is_symlink());
+    }
 
     fn worker(root: &Path, control: u8) -> PathBuf {
         let helper = root.join(format!("helper-{control}"));

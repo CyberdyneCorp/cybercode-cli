@@ -681,6 +681,15 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .status(204),
         op(
             "post",
+            "/sessions/{sessionID}/usage-limit/resume",
+            "v1.session.resumeAtReset",
+            "Wait for the usage limit that failed the idle Session's last Turn to reset, then run that Turn again; publishes session.usage_limit.waiting.1",
+        )
+        .ok::<Data<crate::runtime::UsageLimitWait>>(g)
+        .error::<ErrorBody>(g, 400, "InvalidRequestError: the last Turn did not fail on a usage limit with a known reset, or the wait passes usage_limit.max_wait or a wall deadline")
+        .error::<ErrorBody>(g, 409, "SessionBusyError: the Session is running"),
+        op(
+            "post",
             "/sessions/{sessionID}/agent",
             "v1.session.agent",
             "Switch the agent",

@@ -1,0 +1,24 @@
+[1m[92m   Compiling[0m cyber-sandbox v0.1.0 (/home/runner/work/cybercode-cli/cybercode-cli/crates/cyber-sandbox)
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 4.00s
+[1m[92m     Running[0m tests/native_exec.rs (target/debug/deps/native_exec-5605358acd3324ea)
+
+running 1 test
+test linux::policy::rust_linux_policy_protects_ancestors_and_preserves_public_renames ... FAILED
+
+failures:
+
+---- linux::policy::rust_linux_policy_protects_ancestors_and_preserves_public_renames stdout ----
+
+thread 'linux::policy::rust_linux_policy_protects_ancestors_and_preserves_public_renames' (6419) panicked at crates/cyber-sandbox/tests/support/native_policy_linux.rs:277:5:
+assertion `left == right` failed: immutable package write
+  left: Object {"ok": Bool(true), "errno": Number(0)}
+ right: Object {"ok": Bool(false), "errno": Number(30)}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    linux::policy::rust_linux_policy_protects_ancestors_and_preserves_public_renames
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.28s
+
+[1m[91merror[0m: test failed, to rerun pass `-p cyber-sandbox --test native_exec`

@@ -446,6 +446,8 @@ export class Dashboard {
     if (event.durable?.aggregateID === session) this.#cursors.set(session, Math.max(this.#cursors.get(session) ?? -1, event.durable.seq));
     const payload = event.data as Record<string, unknown> | null;
     if (event.type === "session.text.delta" && payload?.session_id === session && typeof payload.text === "string" && typeof payload.message_id === "string") { this.textDelta(payload.message_id, payload.text); return; }
+    // `provider-catalog` → Retry policy: the partial answer was discarded and the request replays.
+    if (event.type === "session.retry" && payload?.session_id === session && payload.discarded === true && payload.message_id === this.state.liveMessage) { this.state.liveText = ""; this.emit(); return; }
     clearTimeout(this.#refreshTimer);
     this.#refreshTimer = setTimeout(() => { void this.refresh().catch((error) => this.showError(error)); }, 100);
   }

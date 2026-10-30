@@ -43,7 +43,7 @@ The first release prioritizes reliable editing, recovery and measurable coding q
 
 **Provider base prompts and output styles (`system-context`): Status: implemented** (change `add-output-styles`). Base prompts follow the catalog model's family rather than the provider id; built-in, user and trust-gated project output styles are selected per primary Session (`/output-style`, `cyber exec --output-style`, `output_style`) and apply through a new Context Epoch. Plugin-distributed styles and `cyber import` of `.claude/output-styles` are deferred.
 
-**Model protocol fidelity (`session-runtime`, `provider-catalog`, `system-context`, `builtin-tools`, `tool-registry`): Status: in progress** (change `improve-model-protocol-fidelity`). Reasoning is kept as ordered items with opaque provider state and replayed natively to the model that produced it; per-model behavior profiles replace family checks; requests gain the Responses fields and routing headers the models use; streams have an idle timeout; known provider error codes map to typed reasons with server-advised delays; the base prompts are rewritten per family, versioned, and checked clean-room against a reference product's prompts. Live tool-loop tests for OpenAI, Anthropic, DeepSeek and Gemini 3 are written and run with keys (`cargo test -p cyber-llm --test live -- --ignored`); they have not yet been run. The profile's `edit_tool` picks the edit tools, with a freeform `apply_patch` constrained by our own envelope grammar on OpenAI Responses; hunks match tolerantly (whitespace, typographic punctuation) and fail as ambiguous rather than guess; a shell `apply_patch` heredoc runs as the patch tool when no such program is installed; and the profile's token budget with `middle` truncation keeps both ends of long output. Remaining: a run of the live tests with provider keys and the before/after pinned-repository eval on `openai/gpt-6-sol`. The Responses WebSocket transport, zstd bodies and server-side compaction are separate follow-up changes.
+**Model protocol fidelity (`session-runtime`, `provider-catalog`, `system-context`, `builtin-tools`, `tool-registry`): Status: in progress** (change `improve-model-protocol-fidelity`). Reasoning is kept as ordered items with opaque provider state and replayed natively to the model that produced it; per-model behavior profiles replace family checks; requests gain the Responses fields and routing headers the models use; streams have an idle timeout; known provider error codes map to typed reasons with server-advised delays; the base prompts are rewritten per family, versioned, and checked clean-room against a reference product's prompts. Live tool-loop tests for OpenAI, Anthropic, DeepSeek and Gemini 3 are written and run with keys (`cargo test -p cyber-llm --test live -- --ignored`); they have not yet been run. The profile's `edit_tool` picks the edit tools, with a freeform `apply_patch` constrained by our own envelope grammar on OpenAI Responses; hunks match tolerantly (whitespace, typographic punctuation) and fail as ambiguous rather than guess; a shell `apply_patch` heredoc runs as the patch tool when no such program is installed; and the profile's token budget with `middle` truncation keeps both ends of long output. A retryable stream failure after partial output now discards the partial answer and replays the request, within the same retry budget and only while none of its tool calls has been dispatched (change `retry-interrupted-streams`, which followed a pilot task lost to a mid-answer transport error). Remaining: a run of the live tests with provider keys and the before/after pinned-repository eval on `openai/gpt-6-sol`. The Responses WebSocket transport, zstd bodies and server-side compaction are separate follow-up changes.
 
 **Exit criteria**
 - Runs a 50-turn coding task end-to-end with OpenAI, Anthropic and a local model through the compatible adapter. Each P0 adapter also passes the published live coding baseline in `harness-evaluation`; turn count alone is insufficient.
@@ -86,6 +86,8 @@ The [current inventory](docs/implementation/spec-doc-reconciliation.md) contains
 **TUI agent directory (`tui` and `cross-session-messaging`, P1): Status: implemented** (change [`add-tui-agents-directory`](openspec/changes/add-tui-agents-directory/proposal.md)). `/agents` lists every Session this Session can reach: local Sessions, subagents, workflow agents and teammates; direct-peer Sessions as `name@peer`, with `*@peer` for an offline peer; and the project hub's active agents and members when the Session is bound. Rows show the address, kind, state, whether they can receive and the Location, with actions to message, watch, open (local) or show the `cyber attach` command (peer), rename (local Sessions and subagents) and open held messages. It reads the existing `GET /api/v1/messaging/sessions` listing, which now tags teammates and workflow agents, and the hub People list, and adds no new transport. Open: the manual acceptance on the real binary and the archive; Relay machines arrive with `add-account-relay-messaging` (P3).
 
 **Sound alerts (`tui`, P1): Status: implemented** (change [`add-sound-alerts`](openspec/changes/add-sound-alerts/proposal.md); the check on real hardware remains). Six distinct alert sounds: input needed, done, error, workflow completed, workflow failed, and message. They play while the terminal is unfocused. There are four packs synthesized in code (`cyber`, `soft`, `retro` and `bell`), played through the OS player (`afplay`, `pw-play`/`paplay`/`aplay`, PowerShell), with a terminal-bell fallback over SSH or when no player is found. `/sounds` picks the pack and volume, toggles events and previews each sound. It also closes the gap where a permission or question request raised no attention notification. No native audio dependency.
+
+**Usage limit waits (`session-runtime`, `configuration`, `exec-mode`, `tui`, `web-client`, P1; `goals`, `loops-scheduling`, `workflows`, P2): Status: implemented** (change [`add-usage-limit-wait`](openspec/changes/add-usage-limit-wait/proposal.md)). An unattended run (`cyber exec`, a Goal, a loop iteration, a workflow agent, a teammate, or their subagents) that hits a subscription usage limit with a known reset waits for it and retries the Turn instead of failing: within `usage_limit.max_wait` (default 6 h), 10 s after the reset plus per-Session jitter, as one new attempt from the same history. The wait is durable (`session.usage_limit.waiting|resumed|abandoned.1`), cancelled by the normal interrupt, resumed after a restart for top-level Sessions and ended cleanly for owned ones; wall deadlines (Session, run, Goal and loop `max_wall_seconds`, `exec --timeout`) win over waiting. `exec` reports `usage_limit` stream-json lines, the TUI offers `/resume-at-reset` and a footer badge, and the dashboard shows the wait. The model fallback chain, once implemented, runs first.
 
 **Proposed binary hex editor (P1):** [`add-binary-hex-editor`](openspec/changes/add-binary-hex-editor/proposal.md) extends the current file explorer with paged hex/ASCII inspection, staged byte edits, review/undo/recovery and a bounded model-facing binary tool. Specification only; implementation awaits review and scheduling after the existing Plugins/hooks and Daily coding workstreams. It does not imply that `/files` already provides a general manual text editor.
 
@@ -211,16 +213,16 @@ The editor deferral is already reflected in canonical phase tags: 14 editor requ
 | `compaction` | 15 | 3 | 1 |  |  | 19 |
 | `compat-import` | 1 | 19 | 1 |  |  | 21 |
 | `computer-use` |  |  | 4 |  |  | 4 |
-| `configuration` | 18 | 3 |  |  |  | 21 |
+| `configuration` | 18 | 4 |  |  |  | 22 |
 | `cross-session-messaging` |  | 21 | 5 | 2 |  | 28 |
 | `cyber-account` |  |  |  | 18 |  | 18 |
 | `editor-integration` |  |  |  | 14 | 1 | 15 |
-| `exec-mode` | 11 | 5 | 2 | 1 |  | 19 |
-| `goals` |  |  | 21 |  |  | 21 |
+| `exec-mode` | 11 | 6 | 2 | 1 |  | 20 |
+| `goals` |  |  | 22 |  |  | 22 |
 | `harness-evaluation` | 7 |  | 1 |  |  | 8 |
 | `hooks` |  | 20 | 2 |  |  | 22 |
 | `installation-upgrade` | 12 | 1 |  |  |  | 13 |
-| `loops-scheduling` |  |  | 14 | 1 |  | 15 |
+| `loops-scheduling` |  |  | 15 | 1 |  | 16 |
 | `mcp` | 14 | 7 | 1 |  |  | 22 |
 | `mcp-server` |  | 11 | 4 | 1 |  | 16 |
 | `memory` |  | 13 |  | 1 |  | 14 |
@@ -236,22 +238,22 @@ The editor deferral is already reflected in canonical phase tags: 14 editor requ
 | `runners-cloud` |  |  |  | 22 |  | 22 |
 | `sandbox` | 7 | 9 |  | 1 |  | 17 |
 | `server-api` | 26 | 6 | 2 | 3 |  | 37 |
-| `session-runtime` | 23 | 6 |  |  |  | 29 |
+| `session-runtime` | 23 | 8 |  |  |  | 31 |
 | `session-sharing` |  |  |  | 10 | 2 | 12 |
 | `skills-commands` | 14 | 5 | 1 |  |  | 20 |
 | `snapshots-checkpoints` | 12 | 3 | 1 |  |  | 16 |
 | `storage-events` | 18 | 2 |  | 2 |  | 22 |
 | `system-context` | 14 | 5 | 1 |  |  | 20 |
 | `tool-registry` | 15 | 4 |  |  |  | 19 |
-| `tui` | 21 | 41 | 5 | 1 | 1 | 69 |
+| `tui` | 21 | 42 | 5 | 1 | 1 | 70 |
 | `vcs-integration` | 2 | 3 |  | 10 |  | 15 |
 | `verified-integrations` |  |  | 4 |  |  | 4 |
 | `verified-workflows` |  |  | 5 |  |  | 5 |
-| `web-client` |  | 5 |  | 1 | 1 | 7 |
-| `workflows` |  |  | 35 | 2 | 1 | 38 |
+| `web-client` |  | 6 |  | 1 | 1 | 8 |
+| `workflows` |  |  | 36 | 2 | 1 | 39 |
 | `workspace-trust` | 4 |  |  |  |  | 4 |
 | `worktrees` |  | 12 | 4 |  |  | 16 |
-| **Total** | **343** | **338** | **140** | **180** | **15** | **1016** |
+| **Total** | **343** | **344** | **143** | **180** | **15** | **1025** |
 
 
 Most capabilities span phases. A spec is a product contract, and each phase implements the slice tagged for it. For example, `tui` has its basics in P0, rewind and modes in P1, the agent view and workflow monitor in P2, remote indicators in P3 and mods panes in P4.

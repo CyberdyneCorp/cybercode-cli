@@ -1210,6 +1210,7 @@ dependencies = [
  "base64 0.22.1",
  "cap-fs-ext",
  "cap-std",
+ "cc",
  "cyber-core",
  "futures",
  "git2",

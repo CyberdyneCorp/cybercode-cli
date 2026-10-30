@@ -1,0 +1,197 @@
+{
+  "id": 123731111912,
+  "run_id": 40954544764,
+  "head_sha": "546641f97c0ef4dc539b017ad613397bbc250452",
+  "name": "Packaged entry (ubuntu-24.04)",
+  "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40954544764/job/123731111912",
+  "status": "completed",
+  "conclusion": "success",
+  "started_at": "2026-10-29T21:04:10Z",
+  "completed_at": "2026-10-29T21:06:36Z",
+  "steps": [
+    {
+      "name": "Set up job",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 1,
+      "started_at": "2026-10-29T21:04:11Z",
+      "completed_at": "2026-10-29T21:04:14Z"
+    },
+    {
+      "name": "Run actions/checkout@v4",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 2,
+      "started_at": "2026-10-29T21:04:14Z",
+      "completed_at": "2026-10-29T21:04:17Z"
+    },
+    {
+      "name": "Run actions/setup-node@v4",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 3,
+      "started_at": "2026-10-29T21:04:17Z",
+      "completed_at": "2026-10-29T21:04:17Z"
+    },
+    {
+      "name": "Run actions/setup-python@v5",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 4,
+      "started_at": "2026-10-29T21:04:17Z",
+      "completed_at": "2026-10-29T21:04:18Z"
+    },
+    {
+      "name": "Run oven-sh/setup-bun@v2",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 5,
+      "started_at": "2026-10-29T21:04:18Z",
+      "completed_at": "2026-10-29T21:04:19Z"
+    },
+    {
+      "name": "Run denoland/setup-deno@v2",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 6,
+      "started_at": "2026-10-29T21:04:19Z",
+      "completed_at": "2026-10-29T21:04:21Z"
+    },
+    {
+      "name": "Run dtolnay/rust-toolchain@stable",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 7,
+      "started_at": "2026-10-29T21:04:21Z",
+      "completed_at": "2026-10-29T21:04:21Z"
+    },
+    {
+      "name": "Run Swatinem/rust-cache@v2",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 8,
+      "started_at": "2026-10-29T21:04:21Z",
+      "completed_at": "2026-10-29T21:04:23Z"
+    },
+    {
+      "name": "Verify native musl C compilation",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 9,
+      "started_at": "2026-10-29T21:04:23Z",
+      "completed_at": "2026-10-29T21:04:31Z"
+    },
+    {
+      "name": "Verify packaged entry and explicit unsupported-mode behavior",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 10,
+      "started_at": "2026-10-29T21:04:31Z",
+      "completed_at": "2026-10-29T21:05:47Z"
+    },
+    {
+      "name": "Verify native policy composition and failure controls",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 11,
+      "started_at": "2026-10-29T21:05:47Z",
+      "completed_at": "2026-10-29T21:05:47Z"
+    },
+    {
+      "name": "Verify Linux composed policy controls",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 12,
+      "started_at": "2026-10-29T21:05:47Z",
+      "completed_at": "2026-10-29T21:06:06Z"
+    },
+    {
+      "name": "Verify packaged entry across supported runtimes",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 13,
+      "started_at": "2026-10-29T21:06:06Z",
+      "completed_at": "2026-10-29T21:06:15Z"
+    },
+    {
+      "name": "Verify high-descriptor regression detects missing cleanup",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 14,
+      "started_at": "2026-10-29T21:06:15Z",
+      "completed_at": "2026-10-29T21:06:20Z"
+    },
+    {
+      "name": "Record exact source and built helper provenance",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 15,
+      "started_at": "2026-10-29T21:06:20Z",
+      "completed_at": "2026-10-29T21:06:20Z"
+    },
+    {
+      "name": "Retain build provenance",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 16,
+      "started_at": "2026-10-29T21:06:20Z",
+      "completed_at": "2026-10-29T21:06:22Z"
+    },
+    {
+      "name": "Post Run Swatinem/rust-cache@v2",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 27,
+      "started_at": "2026-10-29T21:06:22Z",
+      "completed_at": "2026-10-29T21:06:31Z"
+    },
+    {
+      "name": "Post Run denoland/setup-deno@v2",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 28,
+      "started_at": "2026-10-29T21:06:31Z",
+      "completed_at": "2026-10-29T21:06:31Z"
+    },
+    {
+      "name": "Post Run oven-sh/setup-bun@v2",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 29,
+      "started_at": "2026-10-29T21:06:31Z",
+      "completed_at": "2026-10-29T21:06:34Z"
+    },
+    {
+      "name": "Post Run actions/setup-python@v5",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 30,
+      "started_at": "2026-10-29T21:06:34Z",
+      "completed_at": "2026-10-29T21:06:34Z"
+    },
+    {
+      "name": "Post Run actions/setup-node@v4",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 31,
+      "started_at": "2026-10-29T21:06:34Z",
+      "completed_at": "2026-10-29T21:06:34Z"
+    },
+    {
+      "name": "Post Run actions/checkout@v4",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 32,
+      "started_at": "2026-10-29T21:06:34Z",
+      "completed_at": "2026-10-29T21:06:34Z"
+    },
+    {
+      "name": "Complete job",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 33,
+      "started_at": "2026-10-29T21:06:34Z",
+      "completed_at": "2026-10-29T21:06:34Z"
+    }
+  ]
+}

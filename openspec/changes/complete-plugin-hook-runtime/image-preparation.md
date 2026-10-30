@@ -136,6 +136,22 @@ This exceptional retention is not normal cancellation cleanup or successful
 preparation, and requires later owner startup housekeeping after authority to
 remove stale generations is established.
 
+An observed helper wait error is reported as `Error::Unconfirmed`. The supervisor
+does not retry that uncertain wait or signal the cached PID, including through
+Tokio's kill-on-drop or orphan reaper. It intentionally retains the child handle
+and protected staging namespace. A real externally reaped direct-child regression
+produces `ECHILD`, verifies that the termination action is never called, and checks
+that the namespace survives. Ordinary live-worker cancellation still kills and
+reaps before removing staging. This is a preparation-owner safeguard, not native
+host admission or registry-wide quarantine.
+
+The merge-readiness fix passed all 66 sandbox library tests on local macOS,
+including the real lost-wait regression, and sandbox library/test Clippy with
+warnings denied. The native C build emits two deprecated Seatbelt SDK warnings.
+Formatting, diff checks and 107 strict OpenSpec items passed; spec lint reported
+zero errors and 25 warnings. Hosted platform checks must pass on the new head
+before merging the foundations milestone.
+
 A successful response must match the request destination, approved digest and
 bounds. The owner opens only directories, with no-follow on the image child,
 and compares the returned native directory identity. The resulting `Package`
@@ -260,3 +276,8 @@ an execution permit: the native launch commit must serialize its final authority
 check with revocation and ensure already-running processes stop. Complete private
 roots, immutable runtime/helper binding and OS policy integration remain required.
 The existing native proof/design gate and task 2.2 remain open.
+
+
+The [launch-authority follow-up](launch-authority.md) now provides that synchronous
+final commit gate and exact owner/lease binding. It does not supply native
+admission, stop a running process or complete production host reconciliation.

@@ -1,0 +1,4 @@
+
+thread 'main' (7608) panicked at crates/cyber-sandbox/examples/support/plugin_socket_cancel.rs:231:9:
+escaped descendant retained stdout after namespace owner exited: {"ready":{"phase":"escape-ready","escaped_session":true,"controlled_stdin":true},"finished":null,"cancelled_pid":null,"pinned_tid":null,"started":[],"reaped":[],"audit":[],"stdout_closed_before_cleanup":false,"owner_exited_before_cleanup":true}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

@@ -81,3 +81,10 @@ The web client is a browser UI for Cyber Code with the same surface as the TUI, 
 #### Scenario: Candidate report has no winner
 - **WHEN** the server returns `solve` evidence with no recommended candidate
 - **THEN** the dashboard shows the checks and reasons without labelling any branch the winner
+
+### Requirement: Usage limit wait notice
+(P1) While the attached Session's `usage_limit` is set, the dashboard SHALL show a status notice `Usage limit reached. Resuming at <local time>; Interrupt cancels the wait.`, and the Interrupt control SHALL stay available because the Session is running. The notice SHALL disappear when the Session view no longer carries the wait.
+
+#### Scenario: Waiting Session in the dashboard
+- **WHEN** the browser attaches to a Session that waits for a usage limit to reset at 02:40
+- **THEN** the conversation shows the notice with the resume time and the Interrupt button is enabled

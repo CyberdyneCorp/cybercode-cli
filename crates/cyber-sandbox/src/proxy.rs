@@ -87,12 +87,18 @@ impl Proxy {
         }
     }
 
-    /// Close every accepted client/upstream transport and acknowledge their disposal.
-    /// This settles local sockets; it cannot undo remote application effects.
-    pub async fn shutdown(mut self) -> std::io::Result<()> {
+    /// Request revocation while retaining the handle for disposal acknowledgement.
+    /// This is idempotent; it does not itself prove that sockets have closed.
+    pub fn request_shutdown(&mut self) {
         if let Some(stop) = self.stop.take() {
             let _ = stop.send(());
         }
+    }
+
+    /// Close every accepted client/upstream transport and acknowledge their disposal.
+    /// This settles local sockets; it cannot undo remote application effects.
+    pub async fn shutdown(mut self) -> std::io::Result<()> {
+        self.request_shutdown();
         if let Some(task) = self.task.as_mut() {
             task.await.map_err(std::io::Error::other)?;
         }
@@ -240,6 +246,47 @@ async fn reply<S: AsyncWrite + Unpin>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn shutdown_request_revokes_clients_while_owner_retains_the_proxy() {
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let signal = Arc::clone(&entered);
+        let decide: Decide = Arc::new(move |_| {
+            let signal = Arc::clone(&signal);
+            Box::pin(async move {
+                signal.notify_one();
+                std::future::pending::<bool>().await
+            })
+        });
+        let mut proxy = Proxy::start(decide).await.unwrap();
+        let Endpoint::Tcp(port) = proxy.endpoint else {
+            unreachable!()
+        };
+        let mut client = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        client
+            .write_all(b"CONNECT fixture.invalid:443 HTTP/1.1\r\n\r\n")
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(3), entered.notified())
+            .await
+            .unwrap();
+        proxy.request_shutdown();
+        proxy.request_shutdown();
+        let mut byte = [0];
+        let closed =
+            tokio::time::timeout(std::time::Duration::from_secs(3), client.read(&mut byte)).await;
+        if closed.is_err() {
+            drop(proxy);
+            panic!("proxy revocation left client open");
+        }
+        assert!(
+            matches!(closed, Ok(Ok(0)))
+                || matches!(closed, Ok(Err(ref error))
+            if error.kind() == std::io::ErrorKind::ConnectionReset),
+            "{closed:?}"
+        );
+        proxy.shutdown().await.unwrap();
+    }
 
     #[test]
     fn destinations_parse_connect_and_absolute_form() {

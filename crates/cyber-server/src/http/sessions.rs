@@ -52,6 +52,9 @@ pub struct Session {
     /// so clients state an injection notice's consequence as it applies
     /// (`untrusted-content` → Injection signal notices).
     pub untrusted_content: cyber_core::untrusted::NoticePolicy,
+    /// The pending usage limit wait (`session-runtime` → Usage limit wait); null when the
+    /// Session is not waiting for a limit to reset.
+    pub usage_limit: Option<crate::runtime::UsageLimitWait>,
 }
 
 /// A history entry with the tool calls it made.
@@ -109,6 +112,10 @@ pub struct CreateBody {
     /// The Session's own output style; refused when it is invalid, unknown or held at
     /// the Location, or for a child Session.
     pub output_style: Option<String>,
+    /// Nobody attends the Session (`cyber exec`): a usage limit with a known reset waits
+    /// for the reset instead of failing the Turn.
+    #[serde(default)]
+    pub unattended: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -325,6 +332,7 @@ pub fn routes() -> Router<AppState> {
             post(prompt).layer(DefaultBodyLimit::max(prompt_parts::PROMPT_BODY_LIMIT)),
         )
         .route(&format!("{s}/interrupt"), post(interrupt))
+        .route(&format!("{s}/usage-limit/resume"), post(resume_at_reset))
         .route(&format!("{s}/stop-subtree"), post(stop_subtree))
         .route(&format!("{s}/reopen-subtree"), post(reopen_subtree))
         .route(&format!("{s}/wake"), post(wake))
@@ -381,6 +389,7 @@ pub(super) fn session(state: &AppState, s: SessionState) -> Session {
     Session {
         context,
         untrusted_content,
+        usage_limit: s.usage_wait.pending.clone(),
         effective_mode,
         pending_mode,
         status: status.into(),
@@ -475,6 +484,7 @@ async fn create(
         // Only the team runtime makes team members; a client cannot claim membership.
         team: None,
         output_style: body.output_style,
+        unattended: body.unattended,
     };
     let info = state.runtime.create_session(req).await?;
     let data = session(&state, state.runtime.state(&info.id).await?);
@@ -744,6 +754,16 @@ async fn reopen_subtree(
         .reopen_subtree(&id, &review.scope_id, &review.stop_receipt_id)
         .await?;
     Ok(Json(Data { data: report }))
+}
+
+/// `/resume-at-reset`: wait for the usage limit that failed the last Turn, then run it
+/// again.
+async fn resume_at_reset(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Data<crate::runtime::UsageLimitWait>>> {
+    let wait = state.runtime.resume_at_reset(&id).await?;
+    Ok(Json(Data { data: wait }))
 }
 
 pub(crate) async fn interrupt(

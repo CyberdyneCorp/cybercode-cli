@@ -530,4 +530,42 @@ async fn a_usage_limit_shows_when_it_resets() {
         .find(|l| l.contains("error: QuotaExceeded: usage limit reached"))
         .unwrap_or_else(|| panic!("the status toast: {shown}"));
     assert!(reset(toast).is_some(), "{toast}");
+    // `tui` → Resume at usage limit reset: the notice offers the command.
+    let hint = app
+        .toast
+        .as_ref()
+        .map(|(text, _)| text.clone())
+        .unwrap_or_default();
+    assert!(
+        hint.ends_with(" · /resume-at-reset to continue then"),
+        "{hint}"
+    );
+
+    for c in "/resume-at-reset".chars() {
+        app.on_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    }
+    let actions = app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(actions, vec![Action::ResumeAtReset]);
+    let msg = crate::perform::perform(&server.client, &app.session, Action::ResumeAtReset).await;
+    crate::runner::apply(&mut app, msg, &mut Default::default());
+    let toast = app
+        .toast
+        .as_ref()
+        .map(|(text, _)| text.clone())
+        .unwrap_or_default();
+    assert!(toast.starts_with("resuming at "), "{toast}");
+    // The scheduled wait holds the Session; the footer shows when it resumes.
+    let mut app = server.load(&id).await;
+    let shown = render(&mut app, 120, 30, &Opts::default());
+    assert!(shown.contains("⏸ usage limit · resumes "), "{shown}");
+    // A second request finds the Session running.
+    let msg = crate::perform::perform(&server.client, &app.session, Action::ResumeAtReset).await;
+    crate::runner::apply(&mut app, msg, &mut Default::default());
+    let refused = app
+        .toast
+        .as_ref()
+        .map(|(text, _)| text.clone())
+        .unwrap_or_default();
+    assert!(refused.contains("SessionBusyError"), "{refused}");
+    server.host.runtime.interrupt(&id).await.unwrap();
 }

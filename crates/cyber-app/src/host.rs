@@ -120,6 +120,13 @@ impl ToolHost for AppHost {
         self.builtin.daily_budget(directory)
     }
 
+    fn usage_limit_settings(
+        &self,
+        directory: &str,
+    ) -> Result<cyber_core::usage_limit::UsageLimitSettings, String> {
+        self.builtin.usage_limit_settings(directory)
+    }
+
     fn goal_settings(
         &self,
         directory: &str,

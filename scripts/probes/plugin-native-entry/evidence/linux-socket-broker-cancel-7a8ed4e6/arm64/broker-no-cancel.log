@@ -1,0 +1,4 @@
+
+thread 'main' (6975) panicked at crates/cyber-sandbox/examples/support/plugin_socket_cancel.rs:209:5:
+cancelled socket worker was not reaped: {"ready":{"phase":"cancel-ready","client_syn_sent":true,"cancelled":true},"finished":null,"cancelled_pid":8,"started":[4,5,6,8],"reaped":[4,5,6],"audit":["BSTART 4","BSTART 5","BREAP 4","BSTART 6","BREAP 5","BREAP 6","BSTART 8","BCANCEL 8"]}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

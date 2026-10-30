@@ -1002,7 +1002,10 @@ async fn known_private_subtree_retires_old_public_descendants_without_callbacks(
 async fn shutdown_settles_a_held_observer_callback_and_restart_does_not_replay_it() {
     let mut flow = support::flow::Flow::new(vec![support::flow::text("Session reopened")], false);
     let gate = Arc::new(tokio::sync::Notify::new());
-    let recorder = Recorder::with_gate(Some(Arc::clone(&gate))).await;
+    // Hold only the callback whose cancellation is under test. A new observer
+    // may reconcile other paths before fresh-after-restart; those callbacks
+    // must not consume another gate wait and stall serial observation delivery.
+    let recorder = Recorder::with_first_gate(Arc::clone(&gate)).await;
     automatic_hooks(&flow, &recorder);
     let session = flow.session("default").await;
     await_condition("held-callback baseline", || {
@@ -1103,10 +1106,29 @@ async fn hook_writes_stop_at_the_durable_feedback_limit_after_quiet_time() {
         "SELECT COUNT(*) FROM event WHERE type=?1 AND json_extract(data,'$.dispatch')=0 AND json_array_length(json_extract(data,'$.updates'))>0",
         [records::CHANGED], |row| row.get::<_, i64>(0))?)).unwrap()
     };
-    await_condition("self-write loop reaches its durable pause", || {
-        suppressed() > 0
-    })
-    .await;
+    // This is 64 sequential native observations, each followed by an HTTP hook
+    // and a durable commit. A missed native hint may wait for the owner's
+    // three-second reconciliation. Bound the whole chain and each stalled step
+    // separately instead of applying the single-observation 45-second budget.
+    let deadline = tokio::time::Instant::now()
+        + Duration::from_secs(5 * u64::from(records::FEEDBACK_LIMIT + 1));
+    let mut progress_deadline = tokio::time::Instant::now() + Duration::from_secs(45);
+    let mut observed = 0;
+    while suppressed() == 0 {
+        let current = effects.load(Ordering::SeqCst);
+        assert!(current <= records::FEEDBACK_LIMIT as usize);
+        if current > observed {
+            observed = current;
+            progress_deadline = tokio::time::Instant::now() + Duration::from_secs(45);
+        }
+        let now = tokio::time::Instant::now();
+        assert!(
+            now < deadline && now < progress_deadline,
+            "self-write loop did not reach its durable pause: {current}/{} callbacks",
+            records::FEEDBACK_LIMIT
+        );
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
     assert_eq!(
         effects.load(Ordering::SeqCst),
         records::FEEDBACK_LIMIT as usize

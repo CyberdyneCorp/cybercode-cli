@@ -97,6 +97,12 @@ fn right_side(app: &App) -> Vec<Span<'static>> {
         }
         spans.push(Span::styled(text, Style::default().fg(t.accent)));
     }
+    if let Some(text) = app.session.usage_wait.map(crate::usage_wait::footer) {
+        if !spans.is_empty() {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(Span::styled(text, Style::default().fg(t.warning)));
+    }
     if let Some(key) = app.keymap.label("global", "command_palette") {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(key, Style::default().fg(t.text)));

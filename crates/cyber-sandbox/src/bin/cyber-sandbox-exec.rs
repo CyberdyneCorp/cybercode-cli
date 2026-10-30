@@ -3,6 +3,10 @@
 
 use std::process::ExitCode;
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[path = "../native_exec.rs"]
+mod native_exec;
+
 #[cfg(unix)]
 #[path = "../proxy_bridge.rs"]
 mod proxy_bridge;
@@ -12,6 +16,20 @@ mod proxy_bridge;
 mod windows_job;
 
 fn main() -> ExitCode {
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == "--plugin-native-exec")
+    {
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        return native_exec::run(std::env::args_os().skip(1));
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            eprintln!(
+                "cyber-sandbox-exec: native plugin exec entry is unavailable on this platform"
+            );
+            return ExitCode::from(69);
+        }
+    }
     if std::env::args_os()
         .nth(1)
         .is_some_and(|arg| arg == "--plugin-copy")
