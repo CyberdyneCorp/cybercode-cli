@@ -194,6 +194,54 @@ jobs:
                         '"private_aliases":[true,true]', '"private_peer_matches":true']:
               assert token in text, text
           PYCONTROL
+      - name: Reject missing private descriptor reception
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/unix-dropped-rights.log"
+          if node --experimental-strip-types scripts/probes/plugin-confinement/macos_private_ipc.mts --drop-rights > "$log" 2>&1; then
+            echo 'Missing SCM_RIGHTS reception unexpectedly passed' >&2
+            exit 1
+          fi
+          python3 - "$log" <<'PYCONTROL'
+          from pathlib import Path
+          import sys
+          text = Path(sys.argv[1]).read_text()
+          assert 'private SCM_RIGHTS exchange failed:' in text, text
+          for token in ['"original_closed":true', '"sent":true', '"token":true',
+                        '"received":false', '"rights_payload":"A"', '"private_aliases":[true,true]']:
+              assert token in text, text
+          PYCONTROL
+      - name: Reject owner payload path re-resolution
+        shell: bash
+        run: |
+          set -euo pipefail
+          control="$RUNNER_TEMP/macos-rights-path-reader"
+          python3 - "$control" <<'PYCONTROL'
+          from pathlib import Path
+          import shutil, sys
+          target = Path(sys.argv[1])
+          shutil.copytree('scripts/probes/plugin-confinement', target, ignore=shutil.ignore_patterns('evidence', '__pycache__'))
+          driver = target / 'macos_private_ipc.mts'
+          text = driver.read_text()
+          before = '    const rights_payload = contents.subarray(0, count).toString();'
+          assert text.count(before) == 1
+          driver.write_text(text.replace(before, '    const rights_payload = readFileSync(join(paths.scratch, "rights.bin"), "utf8");'))
+          PYCONTROL
+          log="$RUNNER_TEMP/unix-rights-path-reader.log"
+          if node --experimental-strip-types "$control/macos_private_ipc.mts" > "$log" 2>&1; then
+            echo 'Owner path re-resolution unexpectedly passed' >&2
+            exit 1
+          fi
+          python3 - "$log" <<'PYCONTROL'
+          from pathlib import Path
+          import sys
+          text = Path(sys.argv[1]).read_text()
+          assert 'received descriptor file effect:' in text, text
+          for token in ['"rights_path_replaced":true', '"rights_link_count":0',
+                        '"rights_payload":"XX"', '"written":true', '"original_closed":true']:
+              assert token in text, text
+          PYCONTROL
       - name: Retain signing-identity candidate evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -206,6 +254,8 @@ jobs:
             ${{ runner.temp }}/unix-boundary.json
             ${{ runner.temp }}/unix-boundary.log
             ${{ runner.temp }}/unix-missing-scope.log
+            ${{ runner.temp }}/unix-dropped-rights.log
+            ${{ runner.temp }}/unix-rights-path-reader.log
             ${{ runner.temp }}/exec.json
             ${{ runner.temp }}/exec.log
           if-no-files-found: error

@@ -91,6 +91,11 @@ listener. Its nine native cases require private socket aliases and correct peer
 PID/UID/GID while denying actual host delivery. `--missing-scope` must expose the
 owned host endpoint and fail the named isolation assertion. See the
 [owned-listener evidence and limits](../../../openspec/changes/complete-plugin-hook-runtime/macos-owned-unix-boundary.md).
+The same driver now requires real private SCM_RIGHTS reception after closing the
+sender's original descriptor. Its owner observes effects on a pre-pinned file
+after the guest replaces the pathname. `--drop-rights` and a copied path-reader
+control must fail their precise assertions. See
+[descriptor-passing evidence](../../../openspec/changes/complete-plugin-hook-runtime/macos-private-descriptor-passing.md).
 
 ## Boundary and coverage
 

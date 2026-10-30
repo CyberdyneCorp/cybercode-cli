@@ -79,3 +79,25 @@ Still required: concurrent alias replacement, datagram/seqpacket, ancillary FD
 and credential behavior, proxy/network intersections, immutable owner admission,
 full resource settlement and actual App/server execution. Native and parent
 task checkboxes remain open.
+
+## Hosted result for bf87b7b9
+
+[Run 41098929223](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41098929223)
+passes both native signing jobs on macOS arm64 and Intel, Darwin 24.6.0. Each
+architecture has nine owned-listener cases and nine native runtime cases.
+Private streams, both private aliases and all eight peer identity checks pass;
+only the unconfined control delivers its three host tokens. The missing-scope
+and missing-grant controls fail their exact assertions.
+
+Original reports and logs are retained under
+`scripts/probes/plugin-confinement/evidence/macos-owned-unix-bf87b7b9/{arm64,x64}`.
+Both checkout logs identify merge `de3eabe960ec62c2820eea11c56ff208cd48a9ae`;
+its tree equals source head `bf87b7b9ecc4e179902b78147fa9fd737c5bf629`.
+Both source manifests above were independently recomputed from that Git tree.
+A separate binding receipt records these checks without modifying the original
+reports. This is native-only hosted acceptance for the named cases, not the full
+five-runtime matrix or production support.
+
+The subsequent [private descriptor extension](macos-private-descriptor-passing.md)
+adds real SCM_RIGHTS transfer and a pinned owner file-effect check resilient to
+guest pathname replacement. The receipts above do not cover that extension.

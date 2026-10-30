@@ -1,0 +1,10 @@
+{
+  "scope": "Independent checkout/source binding; original reports are retained unmodified.",
+  "run_id": "41098929223",
+  "job_id": 124211899875,
+  "tested_merge": "de3eabe960ec62c2820eea11c56ff208cd48a9ae",
+  "source_head": "bf87b7b9ecc4e179902b78147fa9fd737c5bf629",
+  "tree_equal": true,
+  "checkout_evidence": "Git SHA printed by actions/checkout in this job log",
+  "source_manifests_independently_verified": true
+}

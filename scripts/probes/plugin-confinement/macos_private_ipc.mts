@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { release } from "node:os";
 import { dirname, join } from "node:path";
@@ -68,7 +68,7 @@ async function owner(path: string) {
   };
 }
 
-async function row(root: string, prepared: ReturnType<typeof prepare>, name: string, flags: Flags, missingScope: boolean) {
+async function row(root: string, prepared: ReturnType<typeof prepare>, name: string, flags: Flags, missingScope: boolean, dropRights: boolean) {
   const base = join(root, name);
   mkdirSync(base, { mode: 0o700 });
   const paths: Record<string, string> = { package: prepared.packagePath };
@@ -78,7 +78,9 @@ async function row(root: string, prepared: ReturnType<typeof prepare>, name: str
   }
   const host = join(paths.project, "host.sock");
   const listener = await owner(host);
+  let payload = -1;
   try {
+    payload = openSync(join(paths.scratch, "rights.bin"), constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     let profile = policy({ kind: "native", executable: prepared.target, libdir: "/usr/lib" }, paths, flags, false, prepared.identifier, true);
     if (missingScope) {
       const before = `(remote unix-socket (subpath ${JSON.stringify(paths.scratch)}))`;
@@ -88,14 +90,23 @@ async function row(root: string, prepared: ReturnType<typeof prepare>, name: str
     const file = join(root, `policy-${name}.sb`);
     writeFileSync(file, profile, { mode: 0o600 });
     const result = await execute(prepared.helper, [flags.unrestricted ? "-" : file, prepared.target, "unix-boundary", paths.scratch, host], {
-      cwd: paths.scratch, env: environment, encoding: "utf8", timeout: 15_000, maxBuffer: 65536,
+      cwd: paths.scratch, env: { ...environment, ...dropRights && !flags.unrestricted ? { CYBER_PROOF_DROP_RIGHTS: "1" } : {} },
+      encoding: "utf8", timeout: 15_000, maxBuffer: 65536,
     });
     const observed = JSON.parse(result.stdout);
     const receipt = listener.receipt();
     assert(!receipt.invalid, "invalid owned-listener protocol");
-    return { name, flags, observed, owner_receipts: receipt.count, owner_received_fixture: receipt.count > 0 };
+    const identity = fstatSync(payload);
+    assert(identity.isFile() && identity.size <= 2, "invalid owned rights payload");
+    const contents = Buffer.alloc(3);
+    const count = readSync(payload, contents, 0, contents.length, 0);
+    assert(count <= 2, "oversized owned rights payload");
+    const rights_payload = contents.subarray(0, count).toString();
+    return { name, flags, observed, rights_payload, rights_link_count: identity.nlink,
+      owner_receipts: receipt.count, owner_received_fixture: receipt.count > 0 };
   } finally {
-    await listener.close();
+    try { await listener.close(); }
+    finally { if (payload >= 0) closeSync(payload); }
   }
 }
 
@@ -105,6 +116,13 @@ function check(entry: Awaited<ReturnType<typeof row>>) {
   assert.deepEqual(entry.observed.private_aliases, [true, true], `private aliases: ${JSON.stringify(entry)}`);
   assert.equal(entry.observed.private_peer_checks, 8);
   assert.equal(entry.observed.private_peer_matches, true, `private peer identity: ${JSON.stringify(entry)}`);
+  assert.equal(entry.observed.rights_path_replaced, true);
+  assert.equal(entry.rights_link_count, 0, `original owner payload remained linked: ${JSON.stringify(entry)}`);
+  assert.deepEqual(entry.observed.rights, {
+    sent: true, original_closed: true, token: true, truncated: false, received: true,
+    same_inode: true, readable: true, written: true, cloexec: true,
+  }, `private SCM_RIGHTS exchange failed: ${JSON.stringify(entry)}`);
+  assert.equal(entry.rights_payload, "AB", `received descriptor file effect: ${JSON.stringify(entry)}`);
   if (entry.flags.unrestricted) {
     assert.equal(entry.observed.hardlink_created, true);
     assert.equal(entry.observed.symlink_created, true);
@@ -120,7 +138,8 @@ function check(entry: Awaited<ReturnType<typeof row>>) {
 }
 
 assert.equal(process.platform, "darwin", "macOS native UNIX boundary proof requires Darwin");
-const { values } = parseArgs({ options: { report: { type: "string" }, "missing-scope": { type: "boolean", default: false } } });
+const { values } = parseArgs({ options: { report: { type: "string" }, "missing-scope": { type: "boolean", default: false }, "drop-rights": { type: "boolean", default: false } } });
+assert(!(values["missing-scope"] && values["drop-rights"]), "select one precise control");
 const root = realpathSync(mkdtempSync("/tmp/cyber-unix-"));
 try {
   const prepared = prepare(root);
@@ -131,12 +150,12 @@ try {
     cases.push([`r${+read}w${+write}s${+shell}`, { read, write, shell }]);
   }
   for (const [name, flags] of cases) {
-    const observed = await row(root, prepared, name, flags, values["missing-scope"]);
+    const observed = await row(root, prepared, name, flags, values["missing-scope"], values["drop-rights"]);
     check(observed);
     rows.push(observed);
   }
   assert.equal(createHash("sha256").update(readFileSync(prepared.target)).digest("hex"), targetHash);
-  const sources = ["macos_private_ipc.mts", "macos_policy.mts", "fixture_native.c", "process_policy.h", "macos_exec.c"];
+  const sources = ["macos_private_ipc.mts", "macos_policy.mts", "macos_rights.h", "fixture_native.c", "process_policy.h", "macos_exec.c"];
   const hash = createHash("sha256");
   for (const file of sources) hash.update(file + "\0").update(readFileSync(join(source, file)));
   const report = { recorded_at: new Date().toISOString(), platform: process.platform, architecture: process.arch,

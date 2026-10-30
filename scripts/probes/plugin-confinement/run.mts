@@ -401,7 +401,7 @@ function main() {
     const rows = cases.filter(([name]) => !unsupported_cases.some(item => item.name === name))
       .map(([name, flags]) => check(root, artifacts, runtime, name, flags));
     const digest = createHash("sha256");
-    const sources = ["run.mts", "macos_policy.mts", "macos_python.c", "macos_node.c", "native_exec.c", "node_bootstrap.cjs", "fixture.py", "fixture.cjs", "private_unix.cjs", "process_policy.h", "linux_filter.h", "linux_exec.c", "linux_initial_exec.h", "fixture_native.c", "macos_exec.c", "macos_stage.mts"];
+    const sources = ["run.mts", "macos_policy.mts", "macos_rights.h", "macos_python.c", "macos_node.c", "native_exec.c", "node_bootstrap.cjs", "fixture.py", "fixture.cjs", "private_unix.cjs", "process_policy.h", "linux_filter.h", "linux_exec.c", "linux_initial_exec.h", "fixture_native.c", "macos_exec.c", "macos_stage.mts"];
     for (const file of sources) {
       digest.update(file + "\0").update(readFileSync(join(source, file)));
     }

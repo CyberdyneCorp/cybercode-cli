@@ -153,6 +153,7 @@ static int private_stream_probe(const char *scratch, int result[2]) {
 }
 
 #ifdef __APPLE__
+#include "macos_rights.h"
 struct unix_attempt { int connected, sent, acknowledged; };
 static struct unix_attempt host_unix_attempt(const char *path) {
     struct unix_attempt result = {0};
@@ -186,6 +187,9 @@ static int unix_boundary(const char *scratch, const char *host) {
     if (!joined(owned, scratch, "owned.sock") || !joined(owned_alias, scratch, "owned-alias.sock")) return 2;
     int own_hardlink = private_stream_exchange_to(owned, owned_alias, 1);
     int own_symlink = private_stream_exchange_to(owned, owned_alias, 2);
+    const char *drop = getenv("CYBER_PROOF_DROP_RIGHTS");
+    struct rights_result rights = private_rights(scratch, drop != NULL && strcmp(drop, "1") == 0);
+    int rights_path_replaced = replace_rights_path(scratch);
     struct unix_attempt direct = host_unix_attempt(host);
     char alias[PATH_MAX], symbolic[PATH_MAX];
     if (!joined(alias, scratch, "host-alias.sock") || !joined(symbolic, scratch, "host-symlink.sock")) return 2;
@@ -197,6 +201,8 @@ static int unix_boundary(const char *scratch, const char *host) {
         "\"private_peer_matches\":%s,\"hardlink_created\":%s,\"symlink_created\":%s",
         truth(ipc[0]), truth(ipc[1]), private_peer_checks, truth(private_peer_matches), truth(linked), truth(symlinked));
     printf(",\"private_aliases\":[%s,%s]", truth(own_hardlink), truth(own_symlink));
+    print_rights(rights);
+    printf(",\"rights_path_replaced\":%s", truth(rights_path_replaced));
     print_unix_attempt("direct", direct);
     print_unix_attempt("hardlink", hardlink);
     print_unix_attempt("symlink", symlink_result);
