@@ -32,10 +32,12 @@ Where we stand today (checked on `main` at `5a5c9bfb`):
 Tools stop formatting frames. A tool declares provenance on its outcome:
 
 ```
-ToolOutcome::{Ok, Structured, …} + provenance: Option<Provenance>
-Provenance { source: Source, origin: String }
-Source = Webfetch | Websearch | Mcp | McpResource | Browser
+ToolOutcome::External { output, value: Option<Value>, failed: bool, provenance: Provenance }
+Provenance { source: ContentSource, origin: String }
+ContentSource = Webfetch | Websearch | Mcp | McpResource | Browser | Overflow
 ```
+
+A built-in tool declares provenance on its call context (`Ctx::declare_provenance`); an MCP or browser call returns `External` with the bare text. Either way only the registry's projection writes the frame, and every `External` outcome that leaves the registry holds framed text. A separate variant, rather than a field on every variant, keeps the many existing workspace outcomes untouched and makes each consumer handle external results explicitly (the compiler lists them).
 
 The registry's projection step (`tool-registry` → Model output projection) then does three things, in this order:
 1. it truncates the body under the output budget;
@@ -43,6 +45,8 @@ The registry's projection step (`tool-registry` → Model output projection) the
 3. it wraps the body and appends the truncation notice after the closing tag.
 
 The registry, not the tool, owns the closing tag, so truncation can never cut it off. It also means a new tool only has to declare a `Provenance` to get the frame. It cannot get it wrong.
+
+With a `middle` output profile (both ends kept), the head and the tail are joined inside the frame by a line holding `…`, and the notice with the omitted counts and the overflow path follows the closing tag like any other truncation notice.
 
 ```
 <untrusted_content source="webfetch" origin="https://example.com/docs/install" signals="override_instructions,exfil_url">
@@ -56,15 +60,17 @@ Attributes:
 | attribute | value |
 |---|---|
 | `source` | `webfetch`, `websearch`, `mcp`, `mcp_resource`, `browser`; `overflow` only as the fallback for an overflow file without its provenance record |
-| `origin` | `webfetch`: the final URL after redirects, without userinfo. `websearch`: `search:<backend>` (`search:native` for provider search). `mcp`: `mcp:<server>/<tool>`. `mcp_resource`: `mcp:<server>:<uri>`, matching the permission resource, without userinfo. `browser`: `mcp:<server>/<tool>`. At most 512 characters; longer values are cut and end in `…`. |
+| `origin` | `webfetch`: the final URL after redirects, without userinfo. `websearch`: `search:<backend>` (`search:native` is reserved for provider search, which today never passes through the tool registry: no adapter returns provider search results as a tool result). `mcp`: `mcp:<server>/<tool>`. `mcp_resource`: `mcp:<server>:<uri>`, matching the permission resource, without userinfo. `browser`: `mcp:<server>/<tool>`. At most 512 characters; longer values are cut and end in `…`. |
 | `signals` | comma-separated signal kinds (D4), present only when there is a hit |
 
 - The browser source is chosen when the MCP server name equals `browser.server` (default `browser`).
 - A `websearch` result is one frame around the whole result list. Each hit's url is already inside, and one frame per hit would cost tokens for no gain.
 - **Structured output.** MCP `structuredContent` stays structured data for clients unchanged. The pretty-printed JSON the model sees is framed.
 - **Failed calls.** An MCP `isError` text is framed too, because the server wrote it.
-- **Overflow files.** When a framed result overflows, its managed overflow file is recorded with the same provenance, in a sidecar `<file>.provenance.json`. A later `read` (or `grep`) of that file returns framed output with `source` and `origin` copied from the original, so re-reading cannot strip the frame. A missing or corrupt sidecar fails closed: `source="overflow"`, `origin` the file path.
-- **The webfetch summarizer.** It receives the page inside the same frame, with the same escaping, instead of `<content>`. Its answer is returned framed with `source="webfetch"`, because it is derived from the page. The detector runs on both the page text and the summary, and the frame carries the union of their signals.
+- **Overflow files.** When a framed result overflows, its managed overflow file is recorded with the same provenance, in a sidecar `<file>.provenance.json`. A later `read` (or `grep`) of that file returns framed output with `source` and `origin` copied from the original, so re-reading cannot strip the frame. A missing or corrupt sidecar fails closed: `source="overflow"`, `origin` the file path. Because a missing sidecar cannot be told apart from an unframed result's overflow, every `read` of a path in the managed output directory, and every `grep` whose matches come from it, is framed: an unframed result's overflow file (a long `bash` log, say) is re-read as `overflow` data. One overflow file's matches take its recorded provenance; matches from several take `overflow` with the searched path as `origin`. `bash`/`powershell` output (`cat` of an overflow file) and Workflow scripts' direct `tools.read`/`tools.grep` values stay unframed, like all workspace tool output.
+- **MCP resources.** One frame per `mcp_read_resource` result, with `origin` `mcp:<server>:<uri>` for the requested URI. A single text content is the body as is. When a read returns several contents, each starts with a line `[resource <uri> (<mime>)]`; a blob is the `[binary resource: N bytes stored at <path>]` line. The MIME type is no longer an attribute.
+- **Browser results.** The browser frame also holds the harness's own capture lines for that call (`[browser evidence … recorded]`, console and network summaries), which follow the page text.
+- **The webfetch summarizer.** It receives the page inside the same frame, with the same escaping, instead of `<content>`; the URL it used to get as a separate line is the frame's `origin`. Its answer is returned framed with `source="webfetch"`, because it is derived from the page. The detector runs on both the page text and the summary, and the frame carries the union of their signals.
 
 *Alternatives considered:*
 - *Each tool keeps its own frame name* (`<web_page>`, `<mcp_resource>`, …). Rejected. The prompt and the detector would need a list, and each tool would repeat the escaping.
@@ -72,7 +78,7 @@ Attributes:
 
 ### D2. Escaping: neutralize the frame tag only
 
-Inside the body, every `<` that begins `untrusted_content` or `/untrusted_content` is written as `&lt;`. The match is case-insensitive, and ASCII whitespace is allowed between `<`, `/` and the name. Every other byte is kept. Attribute values escape `&`, `<`, `>` and `"`, and drop C0 control characters.
+Inside the body, every `<` that begins `untrusted_content` or `/untrusted_content` is written as `&lt;`. The match is case-insensitive, and ASCII whitespace is allowed between `<`, `/` and the name. Every other byte is kept. Attribute values drop C0 control characters, show the other hidden characters of D3 as markers (so a bidi control cannot disguise an origin), are cut to 512 characters, and then escape `&`, `<`, `>` and `"`.
 
 The goal is that content cannot close the frame or open a nested one that looks real. The current MCP rule escapes every `<`, `>` and `&`. That also achieves the goal, but it turns HTML, XML, generics (`Vec<T>`) and shell redirects in MCP results into entity soup. The model then reads code worse and spends more tokens. Forging *other* tags inside the frame (`<system>`, `<cross_session_message>`) does no harm, because everything inside the frame is data, and the detector reports those tags as `role_markup`.
 

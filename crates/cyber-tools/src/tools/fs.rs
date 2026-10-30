@@ -35,6 +35,8 @@ impl Tool for Read {
     fn run<'a>(&'a self, ctx: &'a Ctx<'a>) -> BoxFuture<'a, Result<String, ToolError>> {
         Box::pin(async move {
             let path = readable(ctx).await?;
+            // A managed overflow file is re-read in its original result's frame.
+            ctx.frame_overflow_reads(&path);
             let meta = tokio::fs::metadata(&path)
                 .await
                 .map_err(|_| failed(not_found(&path)))?;

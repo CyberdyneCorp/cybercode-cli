@@ -1,24 +1,24 @@
 ## 1. Frame and provenance
 
-- [ ] 1.1 Add `Provenance { source, origin }` to `ToolOutcome` (`cyber-server/src/runtime/host.rs`), and the frame builder `untrusted/frame.rs` in `cyber-tools`:
+- [x] 1.1 Add `Provenance { source, origin }` to `ToolOutcome` (`cyber-server/src/runtime/host.rs`), and the frame builder `untrusted/frame.rs` in `cyber-tools`:
   - neutralize `untrusted_content` tags in the body, case-insensitively and with whitespace;
   - escape attributes and cut them to 512 characters;
   - drop userinfo from URLs.
   
   Unit tests: forged closing tag, mixed-case and spaced variants, attribute injection with `"`, userinfo removal, `Vec<T>` kept byte for byte.
-- [ ] 1.2 Apply the frame in the projection step after budget truncation (`cyber-tools/src/budget.rs`), with the truncation notice after the closing tag.
+- [x] 1.2 Apply the frame in the projection step after budget truncation (`cyber-tools/src/budget.rs`), with the truncation notice after the closing tag.
   - Tests: scenario "Truncated result keeps its closing tag" for head truncation, and the same for tail truncation.
-- [ ] 1.3 Hidden character markers (`untrusted/frame.rs`):
+- [x] 1.3 Hidden character markers (`untrusted/frame.rs`):
   - zero-width, bidi, tag and C0 characters plus DEL, with BOM at offset 0 kept;
   - ZWJ kept between emoji;
   - `[ESC]` for ESC.
   
   Tests: scenarios "Smuggled tag characters" and "Emoji sequence kept", plus a property test that the framed body never loses a character (count markers and kept characters against the input).
-- [ ] 1.4 Declare provenance in `tools/web.rs`, `tools/websearch.rs` (one frame, `search:<backend>` or `search:native`), `mcp/pool.rs::output` (`mcp`, or `browser` when the server is `browser.server`, `isError` included, `structuredContent` kept), `tools/mcp.rs` and `mcp/mention.rs` (`mcp_resource`; remove `<mcp_resource>` formatting).
+- [x] 1.4 Declare provenance in `tools/web.rs`, `tools/websearch.rs` (one frame, `search:<backend>` or `search:native`), `mcp/pool.rs::output` (`mcp`, or `browser` when the server is `browser.server`, `isError` included, `structuredContent` kept), `tools/mcp.rs` and `mcp/mention.rs` (`mcp_resource`; remove `<mcp_resource>` formatting).
   - Golden output tests per source. Rewrite the existing `mcp.rs`/`mention.rs` frame tests against the new frame.
-- [ ] 1.5 Summarizer: pass the page in the frame instead of `<content>`, and return the summary framed with `source="webfetch"`.
+- [x] 1.5 Summarizer: pass the page in the frame instead of `<content>`, and return the summary framed with `source="webfetch"`.
   - Test: a page with a forged closing tag reaches the small-model request with one closing tag; the summary is framed.
-- [ ] 1.6 Overflow provenance: write `<file>.provenance.json` beside the overflow file, and frame `read`/`grep` of that file with the original source and origin.
+- [x] 1.6 Overflow provenance: write `<file>.provenance.json` beside the overflow file, and frame `read`/`grep` of that file with the original source and origin.
   - Test: scenario "Overflow re-read stays framed". Regression test: a missing or corrupt sidecar frames the output with `source="overflow"` and the file path as `origin`, never unframed.
 
 ## 2. Detector

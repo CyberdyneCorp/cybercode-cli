@@ -186,6 +186,7 @@ impl BuiltinHost {
         Ok(Ctx {
             skill_paths: Default::default(),
             loaded_skill: Default::default(),
+            provenance: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision,
             denial: Default::default(),
@@ -277,6 +278,11 @@ impl BuiltinHost {
         let output = match self.execute(invocation, cancel.clone()).await {
             ToolOutcome::Ok(output) => output,
             ToolOutcome::SkillSuggestions {
+                failed: false,
+                output,
+                ..
+            }
+            | ToolOutcome::External {
                 failed: false,
                 output,
                 ..

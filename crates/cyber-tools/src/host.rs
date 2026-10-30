@@ -23,8 +23,8 @@ use cyber_core::env::EnvSource;
 use cyber_core::hooks::HookAction;
 use cyber_core::skills::{self, Discovery, SkillScope};
 use cyber_server::runtime::{
-    CallState, Invocation, ModelResolver, PermissionAsk, PermissionReply, Reconciliation, Runtime,
-    ToolDef, ToolHost, ToolOutcome, TurnContext, WeakRuntime,
+    CallState, Invocation, ModelResolver, PermissionAsk, PermissionReply, Provenance,
+    Reconciliation, Runtime, ToolDef, ToolHost, ToolOutcome, TurnContext, WeakRuntime,
 };
 use cyber_store::Store;
 use futures::future::BoxFuture;
@@ -255,6 +255,14 @@ impl BuiltinHost {
         } else {
             None
         };
+        let provenance = ctx
+            .provenance
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(provenance) = provenance {
+            return self.settle_external(ctx, output, keep_tail, provenance);
+        }
         match self
             .budget(&ctx.location)
             .apply_for(output, keep_tail, ctx.inv.tool_output)
@@ -270,6 +278,30 @@ impl BuiltinHost {
                     Some(activation) => ToolOutcome::SkillLoaded { output, activation },
                     None => ToolOutcome::Ok(output),
                 },
+            },
+            Err(error) => ToolOutcome::Crashed(error),
+        }
+    }
+
+    /// A built-in result from outside the workspace: truncated, then framed.
+    fn settle_external(
+        &self,
+        ctx: &Ctx<'_>,
+        output: String,
+        keep_tail: bool,
+        provenance: Provenance,
+    ) -> ToolOutcome {
+        match self.budget(&ctx.location).apply_framed(
+            output,
+            keep_tail,
+            ctx.inv.tool_output,
+            &provenance,
+        ) {
+            Ok(output) => ToolOutcome::External {
+                output,
+                value: None,
+                failed: false,
+                provenance,
             },
             Err(error) => ToolOutcome::Crashed(error),
         }
@@ -1514,6 +1546,7 @@ impl ToolHost for BuiltinHost {
             let ctx = Ctx {
                 skill_paths: Default::default(),
                 loaded_skill: Default::default(),
+                provenance: Default::default(),
                 compiler_feedback: Default::default(),
                 hook_decision: None,
                 denial: Default::default(),
@@ -1650,6 +1683,7 @@ impl BuiltinHost {
         Ok(Ctx {
             skill_paths: Default::default(),
             loaded_skill: Default::default(),
+            provenance: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
             denial: Default::default(),
@@ -1747,6 +1781,7 @@ impl BuiltinHost {
         Ok(Ctx {
             skill_paths: Default::default(),
             loaded_skill: Default::default(),
+            provenance: Default::default(),
             compiler_feedback: Default::default(),
             host: self,
             policy,
@@ -1830,6 +1865,9 @@ impl BuiltinHost {
 pub(crate) struct Ctx<'a> {
     pub skill_paths: Mutex<Vec<PathBuf>>,
     pub loaded_skill: Mutex<Option<skills::SkillActivation>>,
+    /// Set by a tool whose result comes from outside the workspace; the projection
+    /// then frames it (`untrusted-content` → Framed tool results).
+    pub provenance: Mutex<Option<Provenance>>,
     pub compiler_feedback: std::sync::atomic::AtomicBool,
     pub host: &'a BuiltinHost,
     pub inv: &'a Invocation,
@@ -1869,6 +1907,21 @@ impl DenialHooks {
 }
 
 impl Ctx<'_> {
+    /// Declare where this call's result comes from, so the registry frames it.
+    pub(crate) fn declare_provenance(&self, provenance: Provenance) {
+        *self
+            .provenance
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(provenance);
+    }
+
+    /// A read or grep of a managed overflow file takes the original result's frame.
+    pub(crate) fn frame_overflow_reads(&self, path: &Path) {
+        if crate::untrusted::overflow::managed(&self.host.opts.tool_output_dir, path) {
+            self.declare_provenance(crate::untrusted::overflow::recorded(path));
+        }
+    }
+
     pub fn note_skill_path(&self, path: &Path) {
         self.skill_paths
             .lock()

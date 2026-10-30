@@ -376,10 +376,64 @@ pub enum ToolOutcome {
     },
     /// An expected failure; the message is shown to the model.
     Failed(String),
+    /// A result from outside the workspace (`untrusted-content` → Framed tool results).
+    /// The tool hands `output` over bare with its provenance; the registry's projection
+    /// truncates it and wraps it in the `<untrusted_content>` frame, so every External
+    /// outcome that leaves the registry carries framed text. `failed` is the source's
+    /// own error (an MCP `isError`), and `value` stays unchanged structured data.
+    External {
+        output: String,
+        value: Option<Value>,
+        failed: bool,
+        provenance: Provenance,
+    },
     /// Stopped by the abort signal before finishing.
     Aborted,
     /// A defect; the detail is logged, never shown to the model.
     Crashed(String),
+}
+
+/// Where an external tool result came from (`untrusted-content` → Untrusted content
+/// frame): the frame's `source` and `origin` attributes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Provenance {
+    pub source: ContentSource,
+    pub origin: String,
+}
+
+/// The `source` attribute of an `<untrusted_content>` frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContentSource {
+    Webfetch,
+    Websearch,
+    Mcp,
+    McpResource,
+    Browser,
+    /// A managed overflow file re-read without its provenance record.
+    Overflow,
+}
+
+impl ContentSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Webfetch => "webfetch",
+            Self::Websearch => "websearch",
+            Self::Mcp => "mcp",
+            Self::McpResource => "mcp_resource",
+            Self::Browser => "browser",
+            Self::Overflow => "overflow",
+        }
+    }
+}
+
+impl Provenance {
+    pub fn new(source: ContentSource, origin: impl Into<String>) -> Self {
+        Self {
+            source,
+            origin: origin.into(),
+        }
+    }
 }
 
 /// Read-only reconciliation of an outcome that became unknown.

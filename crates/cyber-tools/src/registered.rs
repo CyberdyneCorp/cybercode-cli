@@ -232,6 +232,7 @@ impl BuiltinHost {
         Ok(Ctx {
             skill_paths: Default::default(),
             loaded_skill: Default::default(),
+            provenance: Default::default(),
             compiler_feedback: Default::default(),
             host: self,
             inv,
@@ -304,11 +305,11 @@ impl BuiltinHost {
         match outcome {
             ToolOutcome::Ok(output) => self
                 .budget(&ctx.location)
-                .apply_registered(output, ctx.inv.tool_output, token_limit)
+                .apply_registered(output, ctx.inv.tool_output, token_limit, None)
                 .map_or_else(ToolOutcome::Crashed, ToolOutcome::Ok),
             ToolOutcome::Structured { output, value } => self
                 .budget(&ctx.location)
-                .apply_registered(output, ctx.inv.tool_output, token_limit)
+                .apply_registered(output, ctx.inv.tool_output, token_limit, None)
                 .map_or_else(ToolOutcome::Crashed, |output| ToolOutcome::Structured {
                     output,
                     value,
@@ -320,7 +321,7 @@ impl BuiltinHost {
                 skills,
             } => self
                 .budget(&ctx.location)
-                .apply_registered(output, ctx.inv.tool_output, token_limit)
+                .apply_registered(output, ctx.inv.tool_output, token_limit, None)
                 .map_or_else(ToolOutcome::Crashed, |output| {
                     ToolOutcome::SkillSuggestions {
                         failed,
@@ -331,8 +332,23 @@ impl BuiltinHost {
                 }),
             ToolOutcome::Failed(output) => self
                 .budget(&ctx.location)
-                .apply_registered(output, ctx.inv.tool_output, token_limit)
+                .apply_registered(output, ctx.inv.tool_output, token_limit, None)
                 .map_or_else(ToolOutcome::Crashed, ToolOutcome::Failed),
+            // The projection owns the frame: truncate the bare text, then frame it.
+            ToolOutcome::External {
+                output,
+                value,
+                failed,
+                provenance,
+            } => self
+                .budget(&ctx.location)
+                .apply_registered(output, ctx.inv.tool_output, token_limit, Some(&provenance))
+                .map_or_else(ToolOutcome::Crashed, |output| ToolOutcome::External {
+                    output,
+                    value,
+                    failed,
+                    provenance,
+                }),
             other => other,
         }
     }

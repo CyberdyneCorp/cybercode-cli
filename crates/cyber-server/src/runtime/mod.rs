@@ -201,12 +201,13 @@ pub use context_meter::ContextMeter;
 pub use cyber_core::prompts::ModelFamily;
 pub use events::{AuxiliaryUsage, CompactionTrigger, registry as event_registry};
 pub use host::{
-    AgentInference, CatalogResolver, CheckOutcome, ChildContinuation, FileDecision, FileDiff,
-    FileReadError, GoalWorktree, HookEffects, Invocation, LifecycleHook, LifecycleVerdict,
-    LocationGuard, LocationLease, ModelResolver, NoSnapshots, NoTools, Reconciliation,
-    ResolvedModel, RestoreError, RuleEffect, RunWorktree, SessionEnvelope, SkillSuggestion,
-    Snapshot, Snapshots, TeamWorktree, ToolDef, ToolHost, ToolOutcome, ToolScope, TurnContext,
-    TurnWorktree, WorkflowAgentOutput, WorkflowAgentRequest, WorkflowToolRequest,
+    AgentInference, CatalogResolver, CheckOutcome, ChildContinuation, ContentSource, FileDecision,
+    FileDiff, FileReadError, GoalWorktree, HookEffects, Invocation, LifecycleHook,
+    LifecycleVerdict, LocationGuard, LocationLease, ModelResolver, NoSnapshots, NoTools,
+    Provenance, Reconciliation, ResolvedModel, RestoreError, RuleEffect, RunWorktree,
+    SessionEnvelope, SkillSuggestion, Snapshot, Snapshots, TeamWorktree, ToolDef, ToolHost,
+    ToolOutcome, ToolScope, TurnContext, TurnWorktree, WorkflowAgentOutput, WorkflowAgentRequest,
+    WorkflowToolRequest,
 };
 pub use model::{
     AssistantEntry, CallState, CallStatus, Delivery, Entry, InboxRow, InputStatus, LastStep,

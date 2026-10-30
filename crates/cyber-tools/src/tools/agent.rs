@@ -393,6 +393,7 @@ pub(crate) async fn fork_skill(
     let child_ctx = Ctx {
         skill_paths: Default::default(),
         loaded_skill: Default::default(),
+        provenance: Default::default(),
         compiler_feedback: Default::default(),
         host: ctx.host,
         policy: ctx.host.policy(&inv).await.map_err(failed)?,

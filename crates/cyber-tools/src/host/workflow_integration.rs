@@ -228,6 +228,7 @@ impl BuiltinHost {
         Ok(Ctx {
             skill_paths: Default::default(),
             loaded_skill: Default::default(),
+            provenance: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
             denial: Default::default(),
@@ -297,6 +298,7 @@ impl BuiltinHost {
         let context = Ctx {
             skill_paths: Default::default(),
             loaded_skill: Default::default(),
+            provenance: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
             denial: Default::default(),
@@ -620,6 +622,7 @@ impl BuiltinHost {
         let check_ctx = Ctx {
             skill_paths: Default::default(),
             loaded_skill: Default::default(),
+            provenance: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
             denial: Default::default(),
