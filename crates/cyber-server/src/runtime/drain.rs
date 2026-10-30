@@ -2887,7 +2887,6 @@ mod queue_head_tests {
             digest: String::new(),
             admitted_seq: 0,
             promoted_seq: None,
-            redactions: None,
             untrusted: None,
         }
     }
