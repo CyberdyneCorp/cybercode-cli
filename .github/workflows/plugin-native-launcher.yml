@@ -1,0 +1,282 @@
+name: Packaged plugin native entry
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - crates/cyber-sandbox/**
+      - scripts/probes/plugin-confinement/**
+      - Cargo.lock
+      - .github/workflows/plugin-native-launcher.yml
+      - scripts/probes/plugin-native-entry/**
+  push:
+    branches: [main]
+    paths:
+      - crates/cyber-sandbox/**
+      - scripts/probes/plugin-confinement/**
+      - Cargo.lock
+      - .github/workflows/plugin-native-launcher.yml
+      - scripts/probes/plugin-native-entry/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plugin-native-entry-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  entry:
+    name: Packaged entry (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel, ubuntu-24.04, ubuntu-24.04-arm, windows-latest]
+    env:
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        if: runner.os != 'Windows'
+        with:
+          python-version: '3.13'
+      - uses: oven-sh/setup-bun@v2
+        if: runner.os != 'Windows'
+        with:
+          bun-version: '1.4.4'
+      - uses: denoland/setup-deno@v2
+        if: runner.os != 'Windows'
+        with:
+          deno-version: 'v2.9.8'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Verify native musl C compilation
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.*
+          sudo apt-get update
+          sudo apt-get install -y musl-tools bubblewrap linux-libc-dev strace
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          arch=$(uname -m)
+          musl-gcc -Wall -Wextra -Werror -idirafter "/usr/include/$arch-linux-gnu" -idirafter /usr/include -c crates/cyber-sandbox/native/linux_plugin_exec.c -o "$RUNNER_TEMP/linux-native-musl.o"
+      - name: Verify packaged entry and explicit unsupported-mode behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustfmt --edition 2024 --check crates/cyber-sandbox/tests/support/native_policy_macos.rs
+          cargo test --locked -p cyber-sandbox --lib plugin_policy
+          cargo test --locked -p cyber-sandbox --bin cyber-sandbox-exec native_exec
+          cargo test --locked -p cyber-sandbox --test native_exec
+      - name: Verify native policy composition and failure controls
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          source=crates/cyber-sandbox/src/plugin_policy.rs
+          cp "$source" "$RUNNER_TEMP/native-policy-positive.rs"
+          trap 'cp "$RUNNER_TEMP/native-policy-positive.rs" "$source"' EXIT
+          for control in ancestor immutable private exec; do
+            cp "$RUNNER_TEMP/native-policy-positive.rs" "$source"
+            python3 - "$source" "$control" <<'PY'
+          from pathlib import Path
+          import sys
+          p=Path(sys.argv[1]); text=p.read_text(); control=sys.argv[2]
+          if control=='ancestor':
+              start=text.index('        for ancestor in ancestors {')
+              end=text.index('        if profile.shell {',start)
+              text=text[:start]+'        let _ = ancestors;\n'+text[end:]
+          elif control=='immutable':
+              start=text.index('        for root in immutable(profile) {')
+              end=text.index('        for root in profile.read_only {',start)
+              text=text[:start]+text[end:]
+          elif control=='private':
+              start=text.index('        for root in profile.private {')
+              end=text.index('        let roots = immutable(profile)',start)
+              text=text[:start]+text[end:]
+          else:
+              before='        if profile.shell {'
+              assert text.count(before)==1
+              text=text.replace(before,'        if true {')
+          p.write_text(text)
+          PY
+            if [[ "$control" == ancestor || "$control" == immutable ]]; then
+              name=rust_plugin_policy_blocks_private_package_and_runtime_ancestor_mutation
+            else
+              name=rust_plugin_policy_preserves_native_startup_and_independent_capability_boundaries
+            fi
+            if cargo test --locked -p cyber-sandbox --test native_exec "macos::policy::$name" -- --exact > "$RUNNER_TEMP/native-policy-$control-control.log" 2>&1; then
+              cat "$RUNNER_TEMP/native-policy-$control-control.log"
+              echo "Missing-$control native policy control unexpectedly passed" >&2
+              exit 1
+            fi
+            python3 - "$RUNNER_TEMP/native-policy-$control-control.log" "$name" "$control" <<'PY'
+          from pathlib import Path
+          import re,sys
+          text=re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]','',Path(sys.argv[1]).read_text())
+          assert f'{sys.argv[2]} ... FAILED' in text
+          expected={'ancestor':'failed: protected ancestor rename:','immutable':'failed: immutable content write:','private':'failed: protected_write:','exec':'failed: shell:'}
+          assert expected[sys.argv[3]] in text, text
+          print('Missing',sys.argv[3],'fails intended native assertion')
+          PY
+          done
+          cp "$RUNNER_TEMP/native-policy-positive.rs" "$source"
+          cargo test --locked -p cyber-sandbox --lib plugin_policy
+          cargo test --locked -p cyber-sandbox --test native_exec
+      - name: Verify Linux composed policy controls
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          source=crates/cyber-sandbox/src/plugin_policy/linux.rs
+          cp "$source" "$RUNNER_TEMP/linux-policy-positive.rs"
+          trap 'cp "$RUNNER_TEMP/linux-policy-positive.rs" "$source"' EXIT
+          for control in ancestor immutable private read shell proc; do
+            cp "$RUNNER_TEMP/linux-policy-positive.rs" "$source"
+            python3 - "$source" "$control" <<'PY'
+          from pathlib import Path
+          import sys
+          path = Path(sys.argv[1])
+          text = path.read_text()
+          control = sys.argv[2]
+          if control == 'ancestor':
+              before, after = 'for parent in anchors(p) {', 'for parent in anchors(p).into_iter().take(0) {'
+          elif control == 'immutable':
+              start = text.index('    let readonly: BTreeSet<_> = immutable(p).collect();')
+              end = text.index('    for mask in masks(p) {', start)
+              before, after = text[start:end], ''
+          elif control == 'private':
+              before, after = 'for mask in masks(p) {', 'for mask in masks(p).into_iter().take(0) {'
+          elif control == 'read':
+              before, after = 'if p.fs_read {', 'if true {'
+          elif control == 'shell':
+              before, after = 'if p.shell {', 'if true {'
+          else:
+              before = '    args.bind("--bind", p.scratch)?;'
+              after = '    args.add(["--ro-bind", "/proc", "/proc"])?;\n' + before
+          assert text.count(before) == 1
+          path.write_text(text.replace(before, after))
+          PY
+            if [[ "$control" == ancestor || "$control" == immutable ]]; then
+              name=rust_linux_policy_protects_ancestors_and_preserves_public_renames
+            elif [[ "$control" == proc ]]; then
+              name=rust_linux_policy_private_proc_cannot_restore_host_or_private_file_reads
+            else
+              name=rust_linux_policy_composes_mounts_with_landlock_and_the_packaged_entry
+            fi
+            if cargo test --locked -p cyber-sandbox --test native_exec "linux::policy::$name" -- --exact > "$RUNNER_TEMP/linux-policy-$control-control.log" 2>&1; then
+              cat "$RUNNER_TEMP/linux-policy-$control-control.log"
+              echo "Missing Linux $control safeguard unexpectedly passed" >&2
+              exit 1
+            fi
+            python3 - "$RUNNER_TEMP/linux-policy-$control-control.log" "$name" "$control" <<'PY'
+          from pathlib import Path
+          import re, sys
+          text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', Path(sys.argv[1]).read_text())
+          assert f'{sys.argv[2]} ... FAILED' in text
+          expected = {'ancestor': 'failed: protected ancestor rename:', 'immutable': 'failed: immutable package write',
+              'private': 'failed: private_write:', 'read': 'failed: project_read:', 'shell': 'failed: shell:',
+              'proc': 'failed: private proc visibility:'}
+          assert expected[sys.argv[3]] in text, text
+          PY
+          done
+          cp "$RUNNER_TEMP/linux-policy-positive.rs" "$source"
+          cargo test --locked -p cyber-sandbox --lib plugin_policy
+          cargo test --locked -p cyber-sandbox --test native_exec
+      - name: Verify packaged entry across supported runtimes
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/packaged-runtime"
+          helper="$PWD/target/debug/cyber-sandbox-exec"
+          matrix_status=0
+          for runtime in node python bun deno native; do
+            args=(--runtime "$runtime" --packaged-helper "$helper" --report "$RUNNER_TEMP/packaged-runtime/$runtime.json")
+            if [[ "$runtime" == python ]]; then
+              args+=(--python "$(command -v python3)")
+            elif [[ "$runtime" == bun || "$runtime" == deno ]]; then
+              args+=(--executable "$(command -v "$runtime")")
+            fi
+            if [[ "$RUNNER_OS" == Linux ]]; then
+              args+=(--initial-exec --trace "$RUNNER_TEMP/packaged-runtime/trace-$runtime")
+            else
+              args+=(--macos-signing-runtime)
+            fi
+            if ! node --experimental-strip-types scripts/probes/plugin-confinement/run.mts "${args[@]}" > "$RUNNER_TEMP/packaged-runtime/$runtime.log" 2>&1; then
+              cat "$RUNNER_TEMP/packaged-runtime/$runtime.log"
+              matrix_status=1
+            fi
+          done
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            if ! node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime python --python /usr/bin/python3 --macos-signing-runtime --packaged-helper "$helper" --report "$RUNNER_TEMP/packaged-runtime/python-system.json" > "$RUNNER_TEMP/packaged-runtime/python-system.log" 2>&1; then
+              cat "$RUNNER_TEMP/packaged-runtime/python-system.log"
+              matrix_status=1
+            fi
+          fi
+          exit "$matrix_status"
+      - name: Verify high-descriptor regression detects missing cleanup
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          source=crates/cyber-sandbox/native/linux_plugin_exec.c
+          cp "$source" "$RUNNER_TEMP/linux-native-original.c"
+          trap 'cp "$RUNNER_TEMP/linux-native-original.c" "$source"' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('crates/cyber-sandbox/native/linux_plugin_exec.c')
+          text = path.read_text()
+          original = 'syscall(SYS_close_range, 3U, UINT_MAX, 0) != 0'
+          assert text.count(original) == 1
+          path.write_text(text.replace(original, '0 /* missing-cleanup control */'))
+          PY
+          if cargo test --locked -p cyber-sandbox --test native_exec inherited_descriptors_above_lowered_limit_are_closed > "$RUNNER_TEMP/native-fd-control.log" 2>&1; then
+            cat "$RUNNER_TEMP/native-fd-control.log"
+            echo 'Missing-cleanup control unexpectedly passed' >&2
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/native-fd-control.log"
+          python3 - "$RUNNER_TEMP/native-fd-control.log" <<'PYCONTROL'
+          import re, sys
+          from pathlib import Path
+          text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', Path(sys.argv[1]).read_text())
+          assert 'test linux::inherited_descriptors_above_lowered_limit_are_closed ... FAILED' in text
+          assert 'left: Bool(true)' in text and 'right: Bool(false)' in text
+          PYCONTROL
+          cp "$RUNNER_TEMP/linux-native-original.c" "$source"
+          cargo test --locked -p cyber-sandbox --test native_exec
+      - name: Record exact source and built helper provenance
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary=target/debug/cyber-sandbox-exec
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            binary+=.exe
+          fi
+          node --experimental-strip-types scripts/probes/plugin-native-entry/report.mts --binary "$binary" --out "$RUNNER_TEMP/native-entry-provenance.json"
+      - name: Retain build provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-entry-provenance-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/native-entry-provenance.json
+            ${{ runner.temp }}/packaged-runtime/
+            ${{ runner.temp }}/native-fd-control.log
+            ${{ runner.temp }}/linux-policy-*-control.log
+            ${{ runner.temp }}/native-policy-ancestor-control.log
+            ${{ runner.temp }}/native-policy-immutable-control.log
+            ${{ runner.temp }}/native-policy-private-control.log
+            ${{ runner.temp }}/native-policy-exec-control.log
+          if-no-files-found: error
+          retention-days: 14

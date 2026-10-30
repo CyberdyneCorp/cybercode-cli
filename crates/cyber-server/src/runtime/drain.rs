@@ -21,6 +21,7 @@ use super::host::{Invocation, Reconciliation, ResolvedModel, ToolDef, ToolOutcom
 use super::model::SessionState;
 use super::model::{CallState, CallStatus, Delivery, RetrySafety};
 use super::requests::{Asker, PermissionAsk, PermissionReply};
+use super::usage_wait::LimitOutcome;
 use super::view::{self, INTERRUPTED, UNKNOWN};
 use super::{CompactionTrigger, Handle, Inner, RuntimeError, context};
 
@@ -46,6 +47,8 @@ pub(crate) enum TurnEnd {
         kind: String,
         message: String,
     },
+    /// A usage limit the Session waits out (`session-runtime` → Usage limit wait).
+    UsageLimit,
 }
 
 struct PreparedModel {
@@ -204,17 +207,10 @@ async fn pass_owned(
     cancel: &CancellationToken,
 ) -> Result<(), RuntimeError> {
     inner.ensure_admission_open(&handle.state.lock().await.info.id)?;
-    // A resumed run, or one a previous process left unfinished, keeps its chain hops and
-    // the MCP depth its messages carried.
-    if inner.recover(handle).await? || forced {
-        let state = handle.state.lock().await;
-        let hops = super::messaging::hops::restored_hops(&state);
-        inner.raise_message_hops(&state.info.id, hops);
-        let depth = super::messaging::hops::restored_depth(&state);
-        inner.raise_mcp_depth(&state.info.id, depth);
-    }
+    let Some(mut first) = start_pass(inner, handle, forced, cancel).await? else {
+        return Ok(());
+    };
     let mut continue_tools = false;
-    let mut first = forced;
     let mut overflow_retried = false;
     let mut answered = false;
     loop {
@@ -285,8 +281,57 @@ async fn pass_owned(
                 failed(inner, handle, &kind, &message, cancel).await;
                 return Ok(());
             }
+            TurnEnd::UsageLimit => match resume_after_wait(inner, handle, cancel).await? {
+                Some(false) => return Ok(()),
+                _ => first = true,
+            },
         }
     }
+}
+
+/// Settle what a previous process left unfinished, then wait out a usage limit a restart
+/// or `/resume-at-reset` left pending. `None` ends the pass; else whether its first Turn
+/// runs even with no new input.
+async fn start_pass(
+    inner: &Arc<Inner>,
+    handle: &Arc<Handle>,
+    forced: bool,
+    cancel: &CancellationToken,
+) -> Result<Option<bool>, RuntimeError> {
+    // A resumed run, or one a previous process left unfinished, keeps its chain hops and
+    // the MCP depth its messages carried.
+    if inner.recover(handle).await? || forced {
+        let state = handle.state.lock().await;
+        let hops = super::messaging::hops::restored_hops(&state);
+        inner.raise_message_hops(&state.info.id, hops);
+        let depth = super::messaging::hops::restored_depth(&state);
+        inner.raise_mcp_depth(&state.info.id, depth);
+    }
+    Ok(match resume_after_wait(inner, handle, cancel).await? {
+        Some(false) => None,
+        Some(true) => Some(true),
+        None => Some(forced),
+    })
+}
+
+/// Wait out the Session's pending usage limit: `None` when none is pending, `true` to
+/// run the Turn again, `false` when the pass ends (an interrupt, which pauses the Goal
+/// like an interrupted Turn, a deadline, or a shutdown that keeps the wait pending).
+async fn resume_after_wait(
+    inner: &Arc<Inner>,
+    handle: &Arc<Handle>,
+    cancel: &CancellationToken,
+) -> Result<Option<bool>, RuntimeError> {
+    use super::usage_wait::WaitEnd;
+    Ok(match inner.await_usage_reset(handle, cancel).await? {
+        None => None,
+        Some(WaitEnd::Resumed) => Some(true),
+        Some(WaitEnd::Interrupted) => {
+            stopped(inner, handle).await?;
+            Some(false)
+        }
+        Some(WaitEnd::Ended | WaitEnd::Shutdown) => Some(false),
+    })
 }
 
 /// What may keep an answered Drain going at its idle exit: a Stop-hook continuation,
@@ -898,7 +943,7 @@ impl Inner {
     /// One Turn between a pre-Turn and a post-settlement snapshot.
     async fn run_turn(
         &self,
-        handle: &Handle,
+        handle: &Arc<Handle>,
         resolved: &PreparedModel,
         cancel: &CancellationToken,
     ) -> Result<TurnEnd, RuntimeError> {
@@ -921,7 +966,7 @@ impl Inner {
 
     async fn fail_opening_step(
         &self,
-        handle: &Handle,
+        handle: &Arc<Handle>,
         message_id: &str,
         gated: &super::budget::GatedAdapter<'_>,
         error: cyber_llm::LlmError,
@@ -969,7 +1014,7 @@ impl Inner {
 
     async fn turn(
         &self,
-        handle: &Handle,
+        handle: &Arc<Handle>,
         prepared: &PreparedModel,
         cancel: &CancellationToken,
         snapshot: Option<String>,
@@ -1388,13 +1433,22 @@ impl Inner {
         Ok(())
     }
 
-    /// Record a provider failure before any output.
+    /// Record a provider failure before any output. A usage limit either starts a wait,
+    /// committed with the failed step, or fails with why it did not wait.
     async fn fail_step(
         &self,
-        handle: &Handle,
+        handle: &Arc<Handle>,
         message_id: &str,
-        e: LlmError,
+        mut e: LlmError,
     ) -> Result<TurnEnd, RuntimeError> {
+        let limit = if e.kind == ErrorKind::QuotaExceeded {
+            self.usage_limit_outcome(handle, message_id, &e).await?
+        } else {
+            LimitOutcome::None
+        };
+        if let Some(note) = limit.note() {
+            e.message = format!("{} ({note})", e.message);
+        }
         let session_id = {
             let mut state = handle.state.lock().await;
             let payload = StepFailed {
@@ -1402,6 +1456,7 @@ impl Inner {
                 kind: kind_name(e.kind).into(),
                 message: e.message.clone(),
                 origin: state.step_origin.clone(),
+                resets_at_ms: e.resets_at.map(|seconds| seconds.saturating_mul(1000)),
             };
             let mut failed = event(STEP_FAILED, &payload);
             super::reservations::mark_for_call(
@@ -1410,11 +1465,21 @@ impl Inner {
                 message_id,
                 &mut failed,
             )?;
-            self.commit_locked(&mut state, vec![failed])?;
+            let events = std::iter::once(failed)
+                .chain(limit.waiting_event())
+                .collect();
+            self.commit_locked(&mut state, events)?;
             state.info.id.clone()
         };
         if e.kind == ErrorKind::ContextOverflow {
             return Ok(TurnEnd::Overflow);
+        }
+        match &limit {
+            LimitOutcome::Wait(_) => return Ok(TurnEnd::UsageLimit),
+            LimitOutcome::Fail { deadline, .. } => {
+                self.deadline_reached(handle, deadline.as_ref()).await?;
+            }
+            LimitOutcome::None => {}
         }
         let (kind, message) = (kind_name(e.kind).to_string(), e.to_string());
         self.bus.publish(LiveEvent::Error {
@@ -1443,6 +1508,7 @@ impl Inner {
                 kind: kind.into(),
                 message: message.into(),
                 origin: state.step_origin.clone(),
+                resets_at_ms: None,
             },
         );
         super::reservations::mark_for_call(&self.store, &state.info.id, message_id, &mut failed)?;
@@ -1936,6 +2002,7 @@ impl Inner {
                     kind: "interrupted".into(),
                     message: "Provider turn interrupted".into(),
                     origin,
+                    resets_at_ms: None,
                 },
             ));
         }

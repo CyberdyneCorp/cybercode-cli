@@ -401,6 +401,10 @@ pub struct StepFailed {
     pub message_id: String,
     pub kind: String,
     pub message: String,
+    /// When the usage limit that failed the step resets (`session-runtime` → Usage limit
+    /// wait), in Unix milliseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resets_at_ms: Option<i64>,
     /// The started step's origin.
     #[serde(flatten)]
     pub origin: super::usage_origin::StepOrigin,
@@ -538,12 +542,14 @@ pub fn registry() -> EventRegistry {
     super::loops::records::register(&mut registry);
     super::teams::records::register(&mut registry);
     super::goals::records::register(&mut registry);
+    super::usage_wait::register(&mut registry);
     super::workflows::register(&mut registry);
     registry.projector(project);
     registry.projector(super::messaging::records::project);
     registry.projector(super::loops::records::project);
     registry.projector(super::teams::records::project);
     registry.projector(super::goals::records::project);
+    registry.projector(super::usage_wait::project);
     crate::worktrees::register(&mut registry);
     registry
 }

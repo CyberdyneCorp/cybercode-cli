@@ -5,6 +5,7 @@ import type { Content, Message, PendingRequest, RunDetail } from "../../sdk/type
 import { Dashboard, type Card, type Tab } from "./model.js";
 import { messageInbox } from "./inbox-view.js";
 import { redactionNote } from "./redactions.js";
+import { usageLimitNotice } from "./usage-limit.js";
 
 function node<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text?: string): HTMLElementTagNameMap[K] {
   const element = document.createElement(tag); element.className = className;
@@ -108,6 +109,8 @@ export class View {
     }
     main.append(tabs);
     if (state.notice) { const notice = node("div", "notice", state.notice); notice.setAttribute("role", "status"); main.append(notice); }
+    const wait = usageLimitNotice(state.session);
+    if (wait) { const notice = node("div", "notice", wait); notice.setAttribute("role", "status"); main.append(notice); }
     if (state.connection !== "connected") main.append(node("p", "stale-banner", "Live state is being reconciled. Approvals and execution controls are disabled until the connection and browser attachment are current."));
     if (state.command) {
       const command = node("div", "notice"); command.append(node("span", "", state.command.status === "submitting" ? `${state.command.description}: awaiting server acknowledgement…` : `${state.command.description}: result unknown. Retrying preserves its original request identity.`));

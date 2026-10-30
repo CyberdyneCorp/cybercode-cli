@@ -19,7 +19,7 @@ mod turn;
 mod types;
 
 pub use adapters::{Adapter, ApiKind, Endpoint, EventStream};
-pub use error::{ErrorKind, LlmError, classify};
+pub use error::{ErrorKind, LlmError, classify, local_clock};
 pub use retry::{RetryPolicy, open_with_retry};
 pub use sse::{SseEvent, SseParser};
 pub use turn::{TurnOutput, collect};

@@ -99,6 +99,32 @@ fn autoupdate_rejects_values_other_than_true_false_or_notify() {
     f.load().unwrap();
 }
 
+/// `configuration` → Usage limit settings: a known key, validated on load.
+#[test]
+fn usage_limit_is_a_known_validated_key() {
+    let f = Fixture::new();
+    f.write(
+        "global:cyber.json",
+        r#"{"usage_limit": {"max_wait": "2 weeks"}}"#,
+    );
+    let error = f.load().unwrap_err().to_string();
+    assert!(
+        error
+            .contains("usage_limit.max_wait: expected a duration from 1s to 7d, such as 30m or 6h"),
+        "{error}"
+    );
+    f.write(
+        "global:cyber.json",
+        r#"{"usage_limit": {"mode": "always", "max_wait": "30m"}}"#,
+    );
+    let resolved = f.load().unwrap();
+    assert!(
+        !resolved.warnings.iter().any(|w| w.contains("usage_limit")),
+        "{:?}",
+        resolved.warnings
+    );
+}
+
 /// `installation-upgrade` → Background update policy: org policy's `policy.autoupdate`
 /// wins over the user's `autoupdate`, a user-written `policy.autoupdate` is not org
 /// policy, and an invalid value fails closed (off).

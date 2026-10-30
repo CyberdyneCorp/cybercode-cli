@@ -38,6 +38,8 @@ pub struct Run {
     max_cost: Option<f64>,
     /// `--goal` outcomes, in queue order.
     pub goals: Option<Vec<Value>>,
+    /// When `--timeout` ends the run, in Unix milliseconds.
+    pub deadline_ms: Option<i64>,
 }
 
 impl Run {
@@ -62,7 +64,24 @@ impl Run {
             max_tokens: args.max_tokens,
             max_cost: args.max_cost,
             goals: None,
+            deadline_ms: None,
         }
+    }
+
+    /// `--timeout` from now.
+    pub fn set_timeout(&mut self, timeout: Option<std::time::Duration>) {
+        self.deadline_ms = timeout
+            .map(|t| now_ms().saturating_add(i64::try_from(t.as_millis()).unwrap_or(i64::MAX)));
+    }
+
+    /// A usage limit wait that would resume after `--timeout` (`exec-mode` → Usage limit
+    /// waits in exec): the run ends now instead of waiting.
+    pub fn waits_past_timeout(&self, kind: &str, data: &Value) -> bool {
+        kind.starts_with("session.usage_limit.waiting")
+            && self
+                .deadline_ms
+                .zip(data["resume_at_ms"].as_i64())
+                .is_some_and(|(deadline, resume)| resume > deadline)
     }
 
     /// Whether `--max-tokens` or `--max-cost` limits this run.
@@ -567,8 +586,47 @@ impl Out {
                 self.line("budget", data.clone());
             }
             "budget.warned" => self.line("budget", data.clone()),
+            "session.usage_limit.waiting"
+            | "session.usage_limit.resumed"
+            | "session.usage_limit.abandoned" => self.usage_limit(base, data),
             "session.step.failed" => {}
             _ => {}
+        }
+    }
+
+    /// A usage limit wait started, resumed or was abandoned (`exec-mode` → Usage limit
+    /// waits in exec): a `usage_limit` line, and one stderr line in text mode.
+    fn usage_limit(&self, base: &str, data: &Value) {
+        let status = base.rsplit('.').next().unwrap_or_default();
+        let mut line = json!({ "status": status, "message_id": data["message_id"] });
+        let clock = |key: &str| {
+            data[key]
+                .as_i64()
+                .map(cyber_llm::local_clock)
+                .unwrap_or_default()
+        };
+        let text = match status {
+            "waiting" => {
+                line["resets_at_ms"] = data["resets_at_ms"].clone();
+                line["resume_at_ms"] = data["resume_at_ms"].clone();
+                format!(
+                    "usage limit reached; resets at {}, waiting until {} to continue",
+                    clock("resets_at_ms"),
+                    clock("resume_at_ms")
+                )
+            }
+            "abandoned" => {
+                line["reason"] = data["reason"].clone();
+                format!(
+                    "usage limit wait ended: {}",
+                    data["reason"].as_str().unwrap_or("unknown")
+                )
+            }
+            _ => "usage limit reset; continuing".into(),
+        };
+        self.line("usage_limit", line);
+        if self.format == Format::Text && !self.quiet {
+            eprintln!("{text}");
         }
     }
 

@@ -238,6 +238,7 @@ async fn create(
         max_steps: body.session.max_steps,
         messaging: body.session.messaging,
         output_style: body.session.output_style,
+        unattended: body.session.unattended,
         ..Default::default()
     };
     let started = state

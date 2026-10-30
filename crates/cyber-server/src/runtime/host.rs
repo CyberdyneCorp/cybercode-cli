@@ -1004,6 +1004,14 @@ pub trait ToolHost: Send + Sync {
         Ok((cyber_core::loops::LoopSettings::default(), None))
     }
 
+    /// `usage_limit` at the Location (`configuration` → Usage limit settings).
+    fn usage_limit_settings(
+        &self,
+        _directory: &str,
+    ) -> Result<cyber_core::usage_limit::UsageLimitSettings, String> {
+        Ok(cyber_core::usage_limit::UsageLimitSettings::default())
+    }
+
     /// Run a loop's `--until` check like a user `!` command (sandboxed, never asking)
     /// and report its exit code.
     fn check(

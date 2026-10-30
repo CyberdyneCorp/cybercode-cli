@@ -1,5 +1,12 @@
 ## 1. Review and baseline
 
+Delivery rule updated by the user on 2026-10-29: normally one open goal PR,
+maximum two only for independently reviewable work. #70–#75 were consolidated into
+#76 against `main`. On 2026-10-30 the user authorized merging that foundations
+milestone after green CI and merge review, then continuing in one follow-up PR.
+The full goal scope, order and acceptance gates remain unchanged. See
+[goal delivery rules](../../../docs/goal-delivery.md).
+
 - [x] 1.1 Inspect canonical plugin/hook contracts, SDK protocol, host confinement and explicit unsupported paths at `097b6278`.
 - [x] 1.2 Draft the proposal, design, supplemental scenarios and ordered implementation tasks.
 - [x] 1.3 Review proposal/design/tasks with the user before security-sensitive or capability implementation. Record approved scope and platform/runtime decisions. Approved on 2026-10-27: after PRs #53/#54 merged, the user explicitly requested implementation of both merged plans and then instructed goal resume. Native proof, baseline and acceptance gates remain required.
@@ -8,9 +15,36 @@
 ## 2. Native capability enforcement
 
 - [ ] 2.1 Prove a native enforcement mechanism and document runtime bootstrap, read roots, writes without implied broad reads, threads, exec/fork/descendant behavior and OS/runtime support. Present any required design revision before integration. Native CI at `59cae487` passed ten jobs (90 cases) covering Node/Python on macOS/Linux arm64/x86_64 and native Linux executables, including pre-main reads/forks and immutable one-shot exec filtering. Evidence and remaining runtime/platform/integration gates: [native-proof.md](native-proof.md); parent task stays open pending the complete support decisions and acceptance evidence.
-- [ ] 2.2 Implement plugin-specific confinement, reviewed runtime resolution and descriptor/environment isolation without weakening ordinary tools or protected roots. The content-bound helper copy foundation is documented in [image-preparation.md](image-preparation.md); owner admission and production launch integration remain open.
-- [ ] 2.3 Enforce `fs.read`, `fs.write`, `shell`, network and secret intersections; refuse unsupported confinement with actionable plugin diagnostics.
+- [ ] 2.2 Implement plugin-specific confinement, reviewed runtime resolution and descriptor/environment isolation without weakening ordinary tools or protected roots. The content-bound helper copy foundation is documented in [image-preparation.md](image-preparation.md), with packaged macOS entry progress in [packaged-native-entry.md](packaged-native-entry.md) and Linux entry progress in [packaged-linux-entry.md](packaged-linux-entry.md); [Generation-bound final commit](launch-authority.md) adds synchronous revocation/start ordering, and [host bootstrap environment](bootstrap-environment.md) replaces implicit environment inheritance; [Runtime startup isolation](runtime-startup.md) adds package CWD/config selection and prepared workspace resources; [Private-root inventory](private-root-inventory.md) adds bounded metadata-only alias detection; [Native policy composition](native-policy-composition.md) adds the bounded Rust macOS filesystem/process builder and packaged-helper receipts; [Linux protected mount ancestry](linux-mount-protection.md) records five passing primitive cases per Linux architecture, including actual ancestor-move counterexamples and regular-file masks, before [Rust Linux composition](linux-policy-composition.md), which supplies bounded arguments/profile and actual-helper regressions passing on Linux x64/arm64 at `546641f9`; complete owner admission and production native launch integration remain open.
+- [ ] 2.3 Enforce `fs.read`, `fs.write`, `shell`, network and secret intersections; refuse unsupported confinement with actionable plugin diagnostics. [Linux IPC diagnostic](linux-ipc-proof.md) proves fixture-owned host socket reachability through the composed production boundary; the [isolated socket-family candidate](linux-ipc-candidate.md) passes its fixture matrix but restricts bind/listen, while the [path-scoped ABI-9 alternative](linux-unix9-candidate.md) tests preserving private IP/UNIX functionality without production activation or an approved support-floor change. The [descriptor-pinned broker experiment](linux-socket-broker-candidate.md) now attempts private IP bind/listen/connect with bounded workers and a one-use startup-exec decision. Native and runtime results plus the support/design gate remain required. None closes this task.
 - [ ] 2.4 Add real-process positive/negative tests for native reads, home/Location/symlink bypass, spawning a shell/interpreter/native child, inherited restrictions, protected state, revocation and unsupported hosts. Obtain native macOS/Linux evidence and explicit Windows results/limits.
+
+Runtime-selection follow-up for task 2.2: the [production PATH guard](runtime-search.md)
+now excludes project/package directories, relative entries and symlink targets
+back into either tree. It is not fixed reviewed runtime/image admission; the
+parent native enforcement and support gates remain open.
+
+The [same-group host child cleanup](host-process-lifetime.md) routes crash and
+graceful waits through the existing tree-aware Process owner. Live-child and
+missing-fix regressions cover those paths; escaped descendants, startup/cancellation
+settlement and complete native resource lifetime remain open.
+
+The [cancellation-safe started-host owner](host-resource-ownership.md) now retains
+scratch through asynchronous cleanup and unconfirmed waits while revoking its
+proxy. Native containment, staging ancestry, quarantine and generation/retry
+fencing still gate complete host lifetime acceptance.
+
+The compatible Linux IPC investigation includes [descriptor-pinning
+prerequisites](linux-pidfd-proof.md), including independent thread file tables,
+descriptor-number replacement, copied arguments and actual private TCP exchange.
+The [broker candidate](linux-socket-broker-candidate.md) has source-bound initial
+socket/runtime and real thread-local descriptor receipts on x64 and arm64, with
+the precise missing-thread control. Its [cancellation case and control](linux-socket-broker-cancellation.md)
+also have source-bound native receipts, as do the [post-inspection mutation case and controls](linux-socket-broker-mutation.md).
+Its [escaped-descendant namespace case and control](linux-plugin-descendant-proof.md)
+also have source-bound native receipts. Its [trusted-worker capacity/recovery case and control](linux-socket-broker-capacity.md)
+passed on x64/arm64 in run 41049265434, with source-bound receipts retained. These
+experiments change no production policy or accepted support floor.
 
 ## 3. Host contribution lifecycle
 

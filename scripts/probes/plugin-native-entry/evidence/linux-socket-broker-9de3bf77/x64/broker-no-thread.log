@@ -1,0 +1,6 @@
+
+thread 'main' (3479) panicked at crates/cyber-sandbox/examples/plugin_unix_socket_probe.rs:139:9:
+assertion `left == right` failed: thread-local IP descriptor token exchange: {"started":true,"connected":false,"sent":false,"project_read":false,"pair_roundtrip":true,"pair_disconnect":false,"pair_reconnect":false,"pair_bind":false,"pair_listen":false,"pair_sendto":false,"pair_sendmsg":false,"datagram_pair":false,"seqpacket_pair":false,"landlock_abi":8,"tcp_roundtrip":true,"thread_tcp_roundtrip":false,"scratch_unix_roundtrip":false}
+  left: Bool(false)
+ right: true
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

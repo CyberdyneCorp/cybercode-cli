@@ -75,13 +75,40 @@ Known error codes from HTTP bodies and in-stream errors map onto the usual reaso
 |---|---|---|
 | `context_length_exceeded` | `ContextOverflow` | the overflow path (compaction, then the error) |
 | `insufficient_quota`, `credit_balance_exhausted`, `*_spend_limit_exceeded` | `QuotaExceeded` | fallback models are tried |
-| `usage_limit_reached` (ChatGPT plan) | `QuotaExceeded` | `usage limit reached; resets at <local time>` in the TUI status and in `exec` errors, after any fallback |
+| `usage_limit_reached` (ChatGPT plan) | `QuotaExceeded` | an unattended run [waits for the reset](#usage-limit-waits); otherwise `usage limit reached; resets at <local time>` in the TUI status and in `exec` errors, after any fallback |
 | `usage_not_included` | `Authentication` | `plan does not include this model` |
 | `server_is_overloaded`, `slow_down`, `policy_capacity_unavailable` | `ProviderInternal` | retried |
 | `rate_limit_exceeded` | `RateLimit` | retried |
 | `invalid_prompt`, `*_policy` | `ContentPolicy` | not retried |
 
 A retry waits the delay the server advises, taken from `retry-after-ms`, then `Retry-After`, then a message such as "try again in 2.5s", capped at 60 seconds, in place of the usual backoff. A Responses `response.incomplete` finishes as `Stop` for `interrupted`, `Length` for `max_output_tokens` and `ContentFilter` for `content_filter`; any other reason fails the step as `ProviderInternal` with the reason, rather than ending silently.
+
+### Usage limit waits
+
+When a subscription plan reports its usage limit with a reset time (ChatGPT `usage_limit_reached`), a run nobody is watching waits for the reset and then retries the Turn instead of failing:
+
+- **Who waits.** With `usage_limit.mode: "unattended"` (the default): `cyber exec`, a Session with an active Goal or a running loop iteration, a workflow agent, a teammate, and a subagent whose parent is one of these. An interactive TUI Session does not wait. `"always"` waits everywhere, `"never"` nowhere.
+- **When.** Only when the reset time is known and lies within `usage_limit.max_wait` (default `6h`, at most `7d`) of the Turn's first wait. The retry starts 10 s after the reset plus up to 30 s of per-Session jitter, so many runs do not retry at once.
+- **The retry** sends the same request from the same history, as one new attempt with a fresh retry budget. A second limit decides again; `max_wait` still counts from the first wait.
+- **Deadlines win.** When the resume time falls after a wall deadline (a Session or Workflow Run `max_wall_seconds`, a Goal's or a loop's `max_wall_seconds`, `cyber exec --timeout`), the run does not wait and ends with that deadline's outcome: `BudgetExceeded`, the Goal or loop ending `budget_exceeded`, or exec's `timeout` (exit 4).
+- **Not waiting** fails the Turn as before, and the message says why, for example `usage limit reached; resets at 14:20 (not waiting: the reset is more than usage_limit.max_wait (6h) away)`.
+
+```jsonc
+{ "usage_limit": { "mode": "unattended", "max_wait": "3h" } }
+```
+
+The wait is durable: `session.usage_limit.waiting.1` (with `resets_at_ms` and `resume_at_ms`), then `session.usage_limit.resumed.1` or `session.usage_limit.abandoned.1` (`interrupted`, `restarted`, `deadline`). The Session view's `usage_limit` field carries a pending wait. During the wait:
+
+- the Session stays `running`, so the normal interrupt (Esc, `POST …/interrupt`, the dashboard's Interrupt) cancels it, and input sent meanwhile joins the retried Turn;
+- the active Goal is not paused, and no budget reservation is held;
+- a workflow agent keeps its slot: the limit belongs to the account, so another agent on the same provider would hit it too;
+- a server restart resumes a top-level Session's wait for the time left. A subagent's, workflow agent's or teammate's wait ends (`restarted`) and its owner's own recovery applies.
+
+`cyber exec` prints `usage limit reached; resets at 14:20, waiting until 14:20 to continue` on stderr (unless `--quiet`) and, in `--format stream-json`, a `usage_limit` line for each change: `{"type": "usage_limit", "status": "waiting", "resets_at_ms": …, "resume_at_ms": …}`, then `"resumed"` or `"abandoned"` with its `reason`.
+
+In the TUI an interactive Session still fails, and the error notice ends with `/resume-at-reset to continue then`. `/resume-at-reset` (`POST /api/v1/sessions/{id}/usage-limit/resume`) schedules this Session to retry its last Turn after the reset, within `max_wait` and the deadlines; the footer then shows `⏸ usage limit · resumes 14:31`. The web dashboard shows the pending wait as a notice.
+
+For tests only, debug builds read `CYBER_TEST_USAGE_WAIT_SCALE=<n>`, which divides every wait by `n`; release builds ignore it.
 
 ## Reasoning replay
 
@@ -220,7 +247,7 @@ The sign-in uses OpenAI's OAuth flow with the Codex public client, which is what
 - `localhost:1455` is the port Codex uses too. If another login holds it, finish that login or use `--method code`.
 - Windows is not supported yet, because the login file cannot be made owner-only there.
 - Each request names its Session for routing: `session-id` (the root Session), `thread-id` and `x-client-request-id` (the requesting Session), and `x-openai-subagent` for compaction, titles, recaps and subagents. The first `x-codex-turn-state` the backend returns while answering a prompt is sent back on that prompt's later requests and retries, kept in memory only, and dropped when the next prompt starts. The `openai` provider at its default URL gets `session-id` alone; other providers, including custom Responses gateways, get none of these headers. `prompt_cache_key` is the root Session ID, or `<root>:<agent>` for a subagent.
-- When the plan's usage limit is reached, the fallback models are tried; with none left, the TUI and `exec` report `usage limit reached; resets at <local time>`.
+- When the plan's usage limit is reached, the fallback models are tried; with none left, an unattended run waits for the reset ([usage limit waits](#usage-limit-waits)), and the TUI and `exec` otherwise report `usage limit reached; resets at <local time>`.
 - OpenAI's acceptance of third-party harnesses is a public statement, not a contract. The `openai` provider with `OPENAI_API_KEY` is not affected by this login.
 
 ## Signing in with a GitHub Copilot subscription
@@ -1414,6 +1441,8 @@ A plugin that names `main` runs it as a host process, one per plugin and Locatio
 - **Tools.** Host tools are offered with the built-in and MCP tools, under the same schema check, hooks, permission rules (`readOnlyHint: true` runs without asking and is offered in plan mode, but only from a plugin that declares none of `fs.write`, `network`, `shell` and `session.prompt`; any other tool asks by default) and output budget, and are deferred like MCP tools above `tool_output.deferred_threshold_tokens`. A built-in name always wins and the first plugin to claim a name keeps it. The first Turn waits for hosts to start; a plugin enabled during a Session offers its tools once its host is running.
 - **Crashes.** A call whose host exits fails with `plugin <name> crashed` and the Turn goes on. The host restarts after 1 s, then 2, 4, 8 … up to 60 s for crashes in a row; the fifth crash within 10 minutes disables the plugin until the process ends (`plugin <name> disabled after repeated crashes`). Disabling, removing or updating a plugin stops its host before the next step and removes exactly its tools, hooks, commands and agents; no server restart is needed. `GET /api/v1/plugins` shows each host's `state` (`not_started`, `starting`, `running`, `restarting`, `disabled`, `failed`), `error`, `tools` and recent `crashes`.
 - **Capabilities.** `fs.read`, `fs.write`, `network` (`true`, or `{ "hosts": [...] }` with `*.` wildcards), `shell`, `secrets` and `session.prompt`; anything else fails the manifest. `install` and `enable` print them before committing. The host always runs in the sandbox, whatever the Session's policy: it writes only to its own temporary directory, and to the Location with `fs.write`. Without `network` every connection is refused, and a refused host adds `[sandbox] plugin <name> was denied network access to <host>` to the call's result; `{ hosts }` allows only those hosts. `fs.read` and `shell` are not enforced yet: a host reads what any sandboxed command reads and may start subprocesses. On Windows the AppContainer grants the host its plugin root and, without `fs.write`, the Location read-only. Where the sandbox is unavailable (Linux without bubblewrap) no host starts.
+- **Host environment.** Hosts receive an explicit environment: private scratch for home/temp/cache paths, fixed locale and Python encoding settings, plugin identity/root, and proxy endpoints created by the owner. They do not inherit provider credentials, loader/preload options, runtime search paths, project environment or ordinary-tool `sandbox.env.allow` / `sandbox.env.set` overlays. Unix child command lookup uses `/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin`; use an explicit executable path for other child programs. Windows retains the owner's absolute system-root locator for OS bootstrap and uses scratch for profile/application-data paths. This environment hardening does not complete the `fs.read` / `shell` enforcement work described above or reviewed initial runtime resolution.
+- **Runtime startup.** Host processes start in the plugin package directory. Use `initialize.location.directory` for the Session's workspace rather than assuming the process working directory is that workspace. Bun selects its package's regular `bunfig.toml` (or an empty config), ignores automatic dotenv loading and does not auto-install dependencies. Deno selects regular package `deno.json` / `deno.jsonc`; without one it disables config discovery. Package locks are read frozen; without a package lock it disables lock discovery. Node module directories are managed explicitly, and update checks are disabled. Prepared packages carry a private workspace boundary so Deno does not borrow an ancestor's workspace. The existing native admission/integration work remains required; startup flags are not filesystem or subprocess enforcement.
 - **Settings.** Values live under `plugins.<name>.config` and are checked against `userConfig`; an invalid or missing required value keeps the host down with an error naming the setting. A property marked `secret` is never read from a configuration file: it is stored in the OS keyring (macOS Keychain, Windows Credential Manager; an owner-only `<data>/plugin-secrets.json` on Linux, which every sandboxed command, hook, MCP, LSP and plugin host process is denied, like `<data>/mcp-auth.json`) and reaches the host only through `secrets/get`. Secrets belong to one plugin in one scope and checkout: a same-named plugin in another scope or checkout (say, from a cloned repository) never reads them, and `remove` deletes only the removed entries' secrets. `install`, `enable` and `update` ask for required values that are not set (secrets without echo on a terminal); `cyber plugins configure <name>` asks for every setting, `--set key=value` sets an ordinary one, and `remove` deletes the stored secrets.
 - **TypeScript.** `@cyber-code/plugin` (`sdk/plugin`) provides `definePlugin`, `tool` (JSON Schema or Zod-style input), typed hook handlers, `provider` and an in-memory `createHarness`; `export default definePlugin({ tools: { hello: tool({...}) } })` is a complete `main`.
 

@@ -8,6 +8,7 @@ mod isolation;
 #[cfg(target_os = "linux")]
 mod linux;
 pub mod plugin_image;
+pub mod plugin_policy;
 mod policy;
 mod profiles;
 pub mod proxy;
