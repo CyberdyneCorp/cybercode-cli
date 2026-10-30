@@ -79,6 +79,7 @@ jobs:
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-candidate"
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker" broker
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker-no-bind" broker-no-bind
+          python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker-no-thread" broker-no-thread
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/unix9-candidate" landlock9
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/unix9-missing-resolve" landlock9-no-resolve
           cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec --example plugin_unix_socket_probe
@@ -103,6 +104,21 @@ jobs:
           text = Path(sys.argv[1]).read_text()
           assert 'IP server/client token exchange' in text, text
           assert '"tcp_roundtrip":false' in text, text
+          PY
+      - name: Reject missing thread-specific descriptor ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          if target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker-no-thread" "$RUNNER_TEMP/linux-ipc-broker-thread-control.json" --broker > "$RUNNER_TEMP/broker-no-thread.log" 2>&1; then
+            echo 'Missing thread-specific pidfd unexpectedly passed' >&2
+            exit 1
+          fi
+          python3 - "$RUNNER_TEMP/broker-no-thread.log" <<'PY'
+          from pathlib import Path
+          import sys
+          text = Path(sys.argv[1]).read_text()
+          assert 'thread-local IP descriptor token exchange' in text, text
+          assert '"tcp_roundtrip":true' in text and '"thread_tcp_roundtrip":false' in text, text
           PY
       - name: Record pathname policy kernel availability
         id: abi
@@ -187,6 +203,7 @@ jobs:
             if [[ "$policy" == unix9 ]]; then helper="$RUNNER_TEMP/unix9-candidate"; fi
             for runtime in node python bun deno native; do
             args=(--runtime "$runtime" --initial-exec --packaged-helper "$helper" --report "$RUNNER_TEMP/socket-runtime/$policy/$runtime.json" --trace "$RUNNER_TEMP/socket-runtime/$policy/trace-$runtime")
+            if [[ "$policy" == broker ]]; then args+=(--socket-broker); fi
             if [[ "$policy" == unix9 ]]; then args+=(--unix-scratch-policy); fi
             if [[ "$runtime" == python ]]; then
               args+=(--python "$(command -v python3)")
@@ -211,5 +228,6 @@ jobs:
             ${{ runner.temp }}/unix9-missing-resolve.log
             ${{ runner.temp }}/unix9-unavailable.log
             ${{ runner.temp }}/broker-no-bind.log
+            ${{ runner.temp }}/broker-no-thread.log
           if-no-files-found: warn
           retention-days: 14

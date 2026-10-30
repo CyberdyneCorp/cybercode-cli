@@ -8,7 +8,7 @@ import tempfile
 root = Path(__file__).resolve().parents[3]
 output = Path(sys.argv[1]).resolve()
 mode = sys.argv[2] if len(sys.argv) == 3 else "seccomp"
-assert mode in {"seccomp", "broker", "broker-no-bind", "landlock9", "landlock9-no-resolve"}
+assert mode in {"seccomp", "broker", "broker-no-bind", "broker-no-thread", "landlock9", "landlock9-no-resolve"}
 unix9 = mode.startswith("landlock9")
 with tempfile.TemporaryDirectory(prefix="cyber-socket-candidate-") as temporary:
     target = Path(temporary)
@@ -18,6 +18,12 @@ with tempfile.TemporaryDirectory(prefix="cyber-socket-candidate-") as temporary:
     shutil.copyfile(Path(__file__).with_name(family), target / "socket_candidate.h")
     if mode.startswith("broker"):
         shutil.copyfile(Path(__file__).with_name("linux_socket_broker.h"), target / "socket_broker.h")
+        if mode == "broker-no-thread":
+            broker = target / "socket_broker.h"
+            text = broker.read_text()
+            before = "syscall(SYS_pidfd_open, request->pid, PIDFD_THREAD)"
+            assert text.count(before) == 1
+            broker.write_text(text.replace(before, "syscall(SYS_pidfd_open, request->pid, 0)"))
         # Preserve family/pair restrictions, replacing the blanket IP server
         # denial with the candidate's pinned-object syscall mediation.
         socket_header = target / "socket_candidate.h"

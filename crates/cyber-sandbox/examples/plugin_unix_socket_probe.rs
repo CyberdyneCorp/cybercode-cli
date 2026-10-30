@@ -116,6 +116,14 @@ mod probe {
                 "private pair escape: {key}: {observed}"
             );
         }
+        check_pair_support(&observed, mode);
+        let delivered = receipt(listener, &observed);
+        assert!(!delivered, "pair reached host: {observed}");
+        json!({"socket": label, "fs_read": pair_policy.fs_read, "fs_write": pair_policy.fs_write,
+                        "shell": false, "mode": "pair", "host_received_fixture": delivered, "observed": observed})
+    }
+
+    fn check_pair_support(observed: &Value, mode: Mode) {
         for key in ["datagram_pair", "seqpacket_pair", "scratch_unix_roundtrip"] {
             assert_eq!(
                 observed[key],
@@ -128,13 +136,14 @@ mod probe {
             matches!(mode, Mode::Unix9 | Mode::Broker),
             "IP server/client token exchange: {observed}"
         );
+        assert_eq!(
+            observed["thread_tcp_roundtrip"],
+            matches!(mode, Mode::Unix9 | Mode::Broker),
+            "thread-local IP descriptor token exchange: {observed}"
+        );
         if matches!(mode, Mode::Seccomp | Mode::Broker) {
             assert_eq!(observed["pair_listen"], false, "pair listener: {observed}");
         }
-        let delivered = receipt(listener, &observed);
-        assert!(!delivered, "pair reached host: {observed}");
-        json!({"socket": label, "fs_read": pair_policy.fs_read, "fs_write": pair_policy.fs_write,
-                        "shell": false, "mode": "pair", "host_received_fixture": delivered, "observed": observed})
     }
 
     fn options() -> (PathBuf, PathBuf, Mode) {
@@ -178,7 +187,7 @@ mod probe {
         run(Command::new("cc")
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
-            .args(["-Wall", "-Wextra", "-Werror"])
+            .args(["-Wall", "-Wextra", "-Werror", "-pthread"])
             .arg(workspace.join("crates/cyber-sandbox/tests/fixtures/plugin_unix_socket.c"))
             .arg("-o")
             .arg(&target));
