@@ -179,7 +179,9 @@ static void print_unix_attempt(const char *name, struct unix_attempt result) {
         truth(result.connected), truth(result.sent), truth(result.acknowledged));
 }
 
-static int unix_boundary(const char *scratch, const char *host) {
+#include "macos_datagram.h"
+
+static int unix_boundary(const char *scratch, const char *host, const char *datagram_host) {
     if (strlen(scratch) >= PATH_MAX || strlen(host) >= PATH_MAX) return 2;
     int ipc[2] = {0};
     if (!private_stream_probe(scratch, ipc)) return 2;
@@ -190,6 +192,7 @@ static int unix_boundary(const char *scratch, const char *host) {
     const char *drop = getenv("CYBER_PROOF_DROP_RIGHTS");
     struct rights_result rights = private_rights(scratch, drop != NULL && strcmp(drop, "1") == 0);
     int rights_path_replaced = replace_rights_path(scratch);
+    struct datagram_result datagram = datagram_probe(scratch, datagram_host);
     struct unix_attempt direct = host_unix_attempt(host);
     char alias[PATH_MAX], symbolic[PATH_MAX];
     if (!joined(alias, scratch, "host-alias.sock") || !joined(symbolic, scratch, "host-symlink.sock")) return 2;
@@ -203,6 +206,7 @@ static int unix_boundary(const char *scratch, const char *host) {
     printf(",\"private_aliases\":[%s,%s]", truth(own_hardlink), truth(own_symlink));
     print_rights(rights);
     printf(",\"rights_path_replaced\":%s", truth(rights_path_replaced));
+    print_datagram(datagram);
     print_unix_attempt("direct", direct);
     print_unix_attempt("hardlink", hardlink);
     print_unix_attempt("symlink", symlink_result);
@@ -299,7 +303,7 @@ static int parent_directory(const char *path, char *out) {
 
 int main(int argc, char **argv) {
 #ifdef __APPLE__
-    if (argc == 4 && strcmp(argv[1], "unix-boundary") == 0) return unix_boundary(argv[2], argv[3]);
+    if (argc == 5 && strcmp(argv[1], "unix-boundary") == 0) return unix_boundary(argv[2], argv[3], argv[4]);
 #endif
     if (argc == 2 && strcmp(argv[1], "receipt") == 0) {
         puts("{\"self_exec\":true}");

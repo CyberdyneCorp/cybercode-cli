@@ -101,3 +101,6 @@ five-runtime matrix or production support.
 The subsequent [private descriptor extension](macos-private-descriptor-passing.md)
 adds real SCM_RIGHTS transfer and a pinned owner file-effect check resilient to
 guest pathname replacement. The receipts above do not cover that extension.
+
+The [private datagram extension](macos-private-datagrams.md) adds actual packet
+receipt checks without replacing the stream, peer-identity or descriptor tests.

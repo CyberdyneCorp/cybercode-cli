@@ -9,6 +9,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs, promisify } from "node:util";
 import { policy } from "./macos_policy.mts";
+import { datagramOwner } from "./macos_datagram_owner.mts";
 
 const source = dirname(fileURLToPath(import.meta.url));
 const environment = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" };
@@ -24,14 +25,14 @@ function success(program: string, args: string[]) {
 function prepare(root: string) {
   const packagePath = join(root, "package");
   mkdirSync(packagePath, { mode: 0o700 });
-  const target = join(packagePath, "guest"), helper = join(root, "helper");
-  for (const [file, output] of [["fixture_native.c", target], ["macos_exec.c", helper]]) {
+  const target = join(packagePath, "guest"), helper = join(root, "helper"), datagram = join(root, "datagram-owner");
+  for (const [file, output] of [["fixture_native.c", target], ["macos_exec.c", helper], ["macos_datagram_owner.c", datagram]]) {
     success("/usr/bin/xcrun", ["clang", "-Wall", "-Wextra", "-Werror", "-Wno-error=deprecated-declarations", "-pthread", join(source, file), "-o", output]);
   }
   const identifier = `com.cyberdyne.probe.unix.helper.${randomUUID()}`;
   success("/usr/bin/codesign", ["--force", "--sign", "-", "--identifier", identifier, "--timestamp=none", helper]);
   success("/usr/bin/codesign", ["--verify", "--strict", "--all-architectures", helper]);
-  return { target, helper, identifier, packagePath };
+  return { target, helper, identifier, packagePath, datagram };
 }
 
 async function owner(path: string) {
@@ -79,7 +80,10 @@ async function row(root: string, prepared: ReturnType<typeof prepare>, name: str
   const host = join(paths.project, "host.sock");
   const listener = await owner(host);
   let payload = -1;
+  let datagram: Awaited<ReturnType<typeof datagramOwner>> | undefined;
   try {
+    const datagramHost = join(paths.project, "dgram-host.sock");
+    datagram = await datagramOwner(prepared.datagram, datagramHost, join(paths.scratch, "dgram-client.sock"));
     payload = openSync(join(paths.scratch, "rights.bin"), constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     let profile = policy({ kind: "native", executable: prepared.target, libdir: "/usr/lib" }, paths, flags, false, prepared.identifier, true);
     if (missingScope) {
@@ -89,12 +93,13 @@ async function row(root: string, prepared: ReturnType<typeof prepare>, name: str
     }
     const file = join(root, `policy-${name}.sb`);
     writeFileSync(file, profile, { mode: 0o600 });
-    const result = await execute(prepared.helper, [flags.unrestricted ? "-" : file, prepared.target, "unix-boundary", paths.scratch, host], {
+    const result = await execute(prepared.helper, [flags.unrestricted ? "-" : file, prepared.target, "unix-boundary", paths.scratch, host, datagramHost], {
       cwd: paths.scratch, env: { ...environment, ...dropRights && !flags.unrestricted ? { CYBER_PROOF_DROP_RIGHTS: "1" } : {} },
       encoding: "utf8", timeout: 15_000, maxBuffer: 65536,
     });
     const observed = JSON.parse(result.stdout);
     const receipt = listener.receipt();
+    const datagram_receipts = await datagram.stop();
     assert(!receipt.invalid, "invalid owned-listener protocol");
     const identity = fstatSync(payload);
     assert(identity.isFile() && identity.size <= 2, "invalid owned rights payload");
@@ -103,10 +108,14 @@ async function row(root: string, prepared: ReturnType<typeof prepare>, name: str
     assert(count <= 2, "oversized owned rights payload");
     const rights_payload = contents.subarray(0, count).toString();
     return { name, flags, observed, rights_payload, rights_link_count: identity.nlink,
-      owner_receipts: receipt.count, owner_received_fixture: receipt.count > 0 };
+      owner_receipts: receipt.count, owner_received_fixture: receipt.count > 0,
+      datagram_receipts, owner_datagram_received_fixture: datagram_receipts > 0 };
   } finally {
-    try { await listener.close(); }
-    finally { if (payload >= 0) closeSync(payload); }
+    try { if (datagram) await datagram.stop(); }
+    finally {
+      try { await listener.close(); }
+      finally { if (payload >= 0) closeSync(payload); }
+    }
   }
 }
 
@@ -123,6 +132,16 @@ function check(entry: Awaited<ReturnType<typeof row>>) {
     same_inode: true, readable: true, written: true, cloexec: true,
   }, `private SCM_RIGHTS exchange failed: ${JSON.stringify(entry)}`);
   assert.equal(entry.rights_payload, "AB", `received descriptor file effect: ${JSON.stringify(entry)}`);
+  assert.deepEqual(entry.observed.private_datagram, [true, true, true], `private datagram exchange: ${JSON.stringify(entry)}`);
+  assert.equal(entry.observed.datagram_symlink_created, true);
+  assert.equal(entry.datagram_receipts, entry.flags.unrestricted ? 6 : 0,
+    `macOS datagram endpoint escaped scratch: ${JSON.stringify(entry)}`);
+  for (const prefix of ["dgram_", "dgram_alias_"]) for (const method of ["connect", "sendto", "sendmsg"]) {
+    assert.deepEqual(entry.observed[prefix + method], {
+      connected: !!entry.flags.unrestricted && method === "connect",
+      sent: !!entry.flags.unrestricted, acknowledged: !!entry.flags.unrestricted,
+    }, `host datagram route: ${prefix}${method}: ${JSON.stringify(entry)}`);
+  }
   if (entry.flags.unrestricted) {
     assert.equal(entry.observed.hardlink_created, true);
     assert.equal(entry.observed.symlink_created, true);
@@ -137,12 +156,22 @@ function check(entry: Awaited<ReturnType<typeof row>>) {
   }
 }
 
+async function startupControls(root: string, program: string) {
+  const client = join(root, "startup-client.sock");
+  await assert.rejects(datagramOwner(join(root, "missing-owner"), join(root, "missing.sock"), client), { code: "ENOENT" });
+  const occupied = join(root, "occupied.sock");
+  writeFileSync(occupied, "owned fixture", { mode: 0o600 });
+  await assert.rejects(datagramOwner(program, occupied, client), /closed before ready: 2/);
+  assert.equal(readFileSync(occupied, "utf8"), "owned fixture", "failed bind changed an existing owned file");
+}
+
 assert.equal(process.platform, "darwin", "macOS native UNIX boundary proof requires Darwin");
 const { values } = parseArgs({ options: { report: { type: "string" }, "missing-scope": { type: "boolean", default: false }, "drop-rights": { type: "boolean", default: false } } });
 assert(!(values["missing-scope"] && values["drop-rights"]), "select one precise control");
 const root = realpathSync(mkdtempSync("/tmp/cyber-unix-"));
 try {
   const prepared = prepare(root);
+  await startupControls(root, prepared.datagram);
   const targetHash = createHash("sha256").update(readFileSync(prepared.target)).digest("hex");
   const rows = [];
   const cases: Array<[string, Flags]> = [["unconfined", { read: true, write: true, shell: true, unrestricted: true }]];
@@ -155,12 +184,13 @@ try {
     rows.push(observed);
   }
   assert.equal(createHash("sha256").update(readFileSync(prepared.target)).digest("hex"), targetHash);
-  const sources = ["macos_private_ipc.mts", "macos_policy.mts", "macos_rights.h", "fixture_native.c", "process_policy.h", "macos_exec.c"];
+  const sources = ["macos_private_ipc.mts", "macos_policy.mts", "macos_rights.h", "macos_datagram.h", "macos_datagram_owner.mts", "macos_datagram_owner.c", "fixture_native.c", "process_policy.h", "macos_exec.c"];
   const hash = createHash("sha256");
   for (const file of sources) hash.update(file + "\0").update(readFileSync(join(source, file)));
   const report = { recorded_at: new Date().toISOString(), platform: process.platform, architecture: process.arch,
-    kernel_release: release(), sources, source_sha256: hash.digest("hex"), target_sha256: targetHash, rows,
-    scope: "Experimental pre-runtime native UNIX stream controls only; complete IPC/proxy/ownership and App acceptance remain required." };
+    kernel_release: release(), sources, source_sha256: hash.digest("hex"), target_sha256: targetHash,
+    receiver_startup_controls: { missing_program_refused: true, failed_bind_refused: true }, rows,
+    scope: "Experimental pre-runtime native UNIX stream/datagram/descriptor controls; complete IPC/proxy/ownership and App acceptance remain required." };
   if (values.report) writeFileSync(values.report, JSON.stringify(report, null, 2) + "\n", { mode: 0o600 });
   console.log(JSON.stringify(report, null, 2));
 } finally {

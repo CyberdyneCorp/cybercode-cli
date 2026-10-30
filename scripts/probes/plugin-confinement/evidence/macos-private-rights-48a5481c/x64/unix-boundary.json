@@ -1,0 +1,506 @@
+{
+  "recorded_at": "2026-10-30T18:01:27.086Z",
+  "platform": "darwin",
+  "architecture": "x64",
+  "kernel_release": "24.6.0",
+  "sources": [
+    "macos_private_ipc.mts",
+    "macos_policy.mts",
+    "macos_rights.h",
+    "fixture_native.c",
+    "process_policy.h",
+    "macos_exec.c"
+  ],
+  "source_sha256": "76fa300cb4534e9d5e571d84b9560db6845eab015cefa10f02023721b4399c1c",
+  "target_sha256": "d91b46ab23fe98fddfec2462e8d292115acd2a45a457aa960f4eb03ac0c73646",
+  "rows": [
+    {
+      "name": "unconfined",
+      "flags": {
+        "read": true,
+        "write": true,
+        "shell": true,
+        "unrestricted": true
+      },
+      "observed": {
+        "started": true,
+        "private_unix": [
+          true,
+          true
+        ],
+        "private_peer_checks": 8,
+        "private_peer_matches": true,
+        "hardlink_created": true,
+        "symlink_created": true,
+        "private_aliases": [
+          true,
+          true
+        ],
+        "rights": {
+          "sent": true,
+          "original_closed": true,
+          "token": true,
+          "truncated": false,
+          "received": true,
+          "same_inode": true,
+          "readable": true,
+          "written": true,
+          "cloexec": true
+        },
+        "rights_path_replaced": true,
+        "direct": {
+          "connected": true,
+          "sent": true,
+          "acknowledged": true
+        },
+        "hardlink": {
+          "connected": true,
+          "sent": true,
+          "acknowledged": true
+        },
+        "symlink": {
+          "connected": true,
+          "sent": true,
+          "acknowledged": true
+        }
+      },
+      "rights_payload": "AB",
+      "rights_link_count": 0,
+      "owner_receipts": 3,
+      "owner_received_fixture": true
+    },
+    {
+      "name": "r0w0s0",
+      "flags": {
+        "read": false,
+        "write": false,
+        "shell": false
+      },
+      "observed": {
+        "started": true,
+        "private_unix": [
+          true,
+          true
+        ],
+        "private_peer_checks": 8,
+        "private_peer_matches": true,
+        "hardlink_created": false,
+        "symlink_created": true,
+        "private_aliases": [
+          true,
+          true
+        ],
+        "rights": {
+          "sent": true,
+          "original_closed": true,
+          "token": true,
+          "truncated": false,
+          "received": true,
+          "same_inode": true,
+          "readable": true,
+          "written": true,
+          "cloexec": true
+        },
+        "rights_path_replaced": true,
+        "direct": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "hardlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "symlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        }
+      },
+      "rights_payload": "AB",
+      "rights_link_count": 0,
+      "owner_receipts": 0,
+      "owner_received_fixture": false
+    },
+    {
+      "name": "r0w0s1",
+      "flags": {
+        "read": false,
+        "write": false,
+        "shell": true
+      },
+      "observed": {
+        "started": true,
+        "private_unix": [
+          true,
+          true
+        ],
+        "private_peer_checks": 8,
+        "private_peer_matches": true,
+        "hardlink_created": false,
+        "symlink_created": true,
+        "private_aliases": [
+          true,
+          true
+        ],
+        "rights": {
+          "sent": true,
+          "original_closed": true,
+          "token": true,
+          "truncated": false,
+          "received": true,
+          "same_inode": true,
+          "readable": true,
+          "written": true,
+          "cloexec": true
+        },
+        "rights_path_replaced": true,
+        "direct": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "hardlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "symlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        }
+      },
+      "rights_payload": "AB",
+      "rights_link_count": 0,
+      "owner_receipts": 0,
+      "owner_received_fixture": false
+    },
+    {
+      "name": "r0w1s0",
+      "flags": {
+        "read": false,
+        "write": true,
+        "shell": false
+      },
+      "observed": {
+        "started": true,
+        "private_unix": [
+          true,
+          true
+        ],
+        "private_peer_checks": 8,
+        "private_peer_matches": true,
+        "hardlink_created": false,
+        "symlink_created": true,
+        "private_aliases": [
+          true,
+          true
+        ],
+        "rights": {
+          "sent": true,
+          "original_closed": true,
+          "token": true,
+          "truncated": false,
+          "received": true,
+          "same_inode": true,
+          "readable": true,
+          "written": true,
+          "cloexec": true
+        },
+        "rights_path_replaced": true,
+        "direct": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "hardlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "symlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        }
+      },
+      "rights_payload": "AB",
+      "rights_link_count": 0,
+      "owner_receipts": 0,
+      "owner_received_fixture": false
+    },
+    {
+      "name": "r0w1s1",
+      "flags": {
+        "read": false,
+        "write": true,
+        "shell": true
+      },
+      "observed": {
+        "started": true,
+        "private_unix": [
+          true,
+          true
+        ],
+        "private_peer_checks": 8,
+        "private_peer_matches": true,
+        "hardlink_created": false,
+        "symlink_created": true,
+        "private_aliases": [
+          true,
+          true
+        ],
+        "rights": {
+          "sent": true,
+          "original_closed": true,
+          "token": true,
+          "truncated": false,
+          "received": true,
+          "same_inode": true,
+          "readable": true,
+          "written": true,
+          "cloexec": true
+        },
+        "rights_path_replaced": true,
+        "direct": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "hardlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "symlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        }
+      },
+      "rights_payload": "AB",
+      "rights_link_count": 0,
+      "owner_receipts": 0,
+      "owner_received_fixture": false
+    },
+    {
+      "name": "r1w0s0",
+      "flags": {
+        "read": true,
+        "write": false,
+        "shell": false
+      },
+      "observed": {
+        "started": true,
+        "private_unix": [
+          true,
+          true
+        ],
+        "private_peer_checks": 8,
+        "private_peer_matches": true,
+        "hardlink_created": false,
+        "symlink_created": true,
+        "private_aliases": [
+          true,
+          true
+        ],
+        "rights": {
+          "sent": true,
+          "original_closed": true,
+          "token": true,
+          "truncated": false,
+          "received": true,
+          "same_inode": true,
+          "readable": true,
+          "written": true,
+          "cloexec": true
+        },
+        "rights_path_replaced": true,
+        "direct": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "hardlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "symlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        }
+      },
+      "rights_payload": "AB",
+      "rights_link_count": 0,
+      "owner_receipts": 0,
+      "owner_received_fixture": false
+    },
+    {
+      "name": "r1w0s1",
+      "flags": {
+        "read": true,
+        "write": false,
+        "shell": true
+      },
+      "observed": {
+        "started": true,
+        "private_unix": [
+          true,
+          true
+        ],
+        "private_peer_checks": 8,
+        "private_peer_matches": true,
+        "hardlink_created": false,
+        "symlink_created": true,
+        "private_aliases": [
+          true,
+          true
+        ],
+        "rights": {
+          "sent": true,
+          "original_closed": true,
+          "token": true,
+          "truncated": false,
+          "received": true,
+          "same_inode": true,
+          "readable": true,
+          "written": true,
+          "cloexec": true
+        },
+        "rights_path_replaced": true,
+        "direct": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "hardlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "symlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        }
+      },
+      "rights_payload": "AB",
+      "rights_link_count": 0,
+      "owner_receipts": 0,
+      "owner_received_fixture": false
+    },
+    {
+      "name": "r1w1s0",
+      "flags": {
+        "read": true,
+        "write": true,
+        "shell": false
+      },
+      "observed": {
+        "started": true,
+        "private_unix": [
+          true,
+          true
+        ],
+        "private_peer_checks": 8,
+        "private_peer_matches": true,
+        "hardlink_created": false,
+        "symlink_created": true,
+        "private_aliases": [
+          true,
+          true
+        ],
+        "rights": {
+          "sent": true,
+          "original_closed": true,
+          "token": true,
+          "truncated": false,
+          "received": true,
+          "same_inode": true,
+          "readable": true,
+          "written": true,
+          "cloexec": true
+        },
+        "rights_path_replaced": true,
+        "direct": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "hardlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "symlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        }
+      },
+      "rights_payload": "AB",
+      "rights_link_count": 0,
+      "owner_receipts": 0,
+      "owner_received_fixture": false
+    },
+    {
+      "name": "r1w1s1",
+      "flags": {
+        "read": true,
+        "write": true,
+        "shell": true
+      },
+      "observed": {
+        "started": true,
+        "private_unix": [
+          true,
+          true
+        ],
+        "private_peer_checks": 8,
+        "private_peer_matches": true,
+        "hardlink_created": false,
+        "symlink_created": true,
+        "private_aliases": [
+          true,
+          true
+        ],
+        "rights": {
+          "sent": true,
+          "original_closed": true,
+          "token": true,
+          "truncated": false,
+          "received": true,
+          "same_inode": true,
+          "readable": true,
+          "written": true,
+          "cloexec": true
+        },
+        "rights_path_replaced": true,
+        "direct": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "hardlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "symlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        }
+      },
+      "rights_payload": "AB",
+      "rights_link_count": 0,
+      "owner_receipts": 0,
+      "owner_received_fixture": false
+    }
+  ],
+  "scope": "Experimental pre-runtime native UNIX stream controls only; complete IPC/proxy/ownership and App acceptance remain required."
+}

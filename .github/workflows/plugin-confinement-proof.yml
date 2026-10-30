@@ -189,8 +189,9 @@ jobs:
           from pathlib import Path
           import sys
           text = Path(sys.argv[1]).read_text()
-          assert 'macOS UNIX socket boundary escaped scratch:' in text, text
+          assert 'macOS datagram endpoint escaped scratch:' in text, text
           for token in ['"owner_received_fixture":true', '"acknowledged":true',
+                        '"owner_datagram_received_fixture":true', '"datagram_receipts":6',
                         '"private_aliases":[true,true]', '"private_peer_matches":true']:
               assert token in text, text
           PYCONTROL

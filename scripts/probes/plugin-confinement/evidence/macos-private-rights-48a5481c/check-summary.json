@@ -1,0 +1,402 @@
+{
+  "source_head": "48a5481c531fcf64db38b62a73c7fb79f290b642",
+  "scope": "GitHub check run conclusions for this prior revision only; not complete goal acceptance.",
+  "checks": [
+    {
+      "name": "Historical staged-system diagnostic (${{ matrix.os }})",
+      "status": "completed",
+      "conclusion": "skipped",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124227544577"
+    },
+    {
+      "name": "Host bootstrap (windows-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103135129/job/124225893610"
+    },
+    {
+      "name": "Host bootstrap (ubuntu-24.04)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103135129/job/124225893525"
+    },
+    {
+      "name": "Host bootstrap (macos-15)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103135129/job/124225893464"
+    },
+    {
+      "name": "Host bootstrap (macos-15-intel)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103135129/job/124225893306"
+    },
+    {
+      "name": "Host bootstrap (ubuntu-24.04-arm)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103135129/job/124225892907"
+    },
+    {
+      "name": "TypeScript SDK",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134926/job/124225594176"
+    },
+    {
+      "name": "Build (x86_64-apple-darwin)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134926/job/124225593797"
+    },
+    {
+      "name": "Build (aarch64-unknown-linux-gnu)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134926/job/124225593686"
+    },
+    {
+      "name": "Rust (ubuntu-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134926/job/124225593631"
+    },
+    {
+      "name": "Build (x86_64-pc-windows-msvc)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134926/job/124225593585"
+    },
+    {
+      "name": "Build (x86_64-unknown-linux-gnu)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134926/job/124225593554"
+    },
+    {
+      "name": "Build (aarch64-pc-windows-msvc)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134926/job/124225593541"
+    },
+    {
+      "name": "Build (aarch64-unknown-linux-musl)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134926/job/124225593535"
+    },
+    {
+      "name": "Build (x86_64-unknown-linux-musl)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134926/job/124225593511"
+    },
+    {
+      "name": "Build (aarch64-apple-darwin)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134926/job/124225593510"
+    },
+    {
+      "name": "Rust (macos-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134926/job/124225593374"
+    },
+    {
+      "name": "Windows lint",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134926/job/124225593370"
+    },
+    {
+      "name": "Windows build",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134926/job/124225593230"
+    },
+    {
+      "name": "Web dashboard",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134926/job/124225593183"
+    },
+    {
+      "name": "Changes",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134926/job/124225378977"
+    },
+    {
+      "name": "OpenSpec",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134926/job/124225378757"
+    },
+    {
+      "name": "Native proof (macos-15-intel, node)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224925447"
+    },
+    {
+      "name": "Native proof (ubuntu-24.04, node)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224925426"
+    },
+    {
+      "name": "Native proof (ubuntu-24.04, bun)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224925394"
+    },
+    {
+      "name": "Native proof (macos-15-intel, native)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224925329"
+    },
+    {
+      "name": "Native proof (macos-15, bun)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224925324"
+    },
+    {
+      "name": "Native proof (macos-15-intel, deno)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224925269"
+    },
+    {
+      "name": "Native proof (macos-15-intel, python)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224925263"
+    },
+    {
+      "name": "Native proof (macos-15-intel, bun)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224925232"
+    },
+    {
+      "name": "Native proof (ubuntu-24.04, python)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224925222"
+    },
+    {
+      "name": "Native proof (ubuntu-24.04, deno)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224925206"
+    },
+    {
+      "name": "Native proof (macos-15, node)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224925198"
+    },
+    {
+      "name": "Native proof (macos-15, native)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224925196"
+    },
+    {
+      "name": "Runtime signing-identity candidate (macos-15-intel, deno)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224925157"
+    },
+    {
+      "name": "Native proof (macos-15, python)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224925148"
+    },
+    {
+      "name": "Native proof (macos-15, deno)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224925127"
+    },
+    {
+      "name": "Runtime signing-identity candidate (macos-15, python-system)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224925125"
+    },
+    {
+      "name": "Runtime signing-identity candidate (macos-15-intel, python)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224925039"
+    },
+    {
+      "name": "Runtime signing-identity candidate (macos-15-intel, node)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224925030"
+    },
+    {
+      "name": "Runtime signing-identity candidate (macos-15, python)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224925002"
+    },
+    {
+      "name": "Runtime signing-identity candidate (macos-15-intel, bun)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224924987"
+    },
+    {
+      "name": "Runtime signing-identity candidate (macos-15-intel, python-system)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224924933"
+    },
+    {
+      "name": "Runtime signing-identity candidate (macos-15, deno)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224924722"
+    },
+    {
+      "name": "Native proof (ubuntu-24.04-arm, node)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224924719"
+    },
+    {
+      "name": "Native proof (ubuntu-24.04-arm, native)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224924659"
+    },
+    {
+      "name": "Runtime signing-identity candidate (macos-15, node)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224924607"
+    },
+    {
+      "name": "Native proof (ubuntu-24.04-arm, deno)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224924555"
+    },
+    {
+      "name": "Native proof (ubuntu-24.04, native)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224924530"
+    },
+    {
+      "name": "Native proof (ubuntu-24.04-arm, bun)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224924522"
+    },
+    {
+      "name": "Native proof (ubuntu-24.04-arm, python)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224924513"
+    },
+    {
+      "name": "Runtime signing-identity candidate (macos-15, bun)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224924510"
+    },
+    {
+      "name": "Native signing-identity candidate (macos-15)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224924428"
+    },
+    {
+      "name": "Native signing-identity candidate (macos-15-intel)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892/job/124224924194"
+    },
+    {
+      "name": "Packaged entry (windows-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103135247/job/124224921965"
+    },
+    {
+      "name": "Packaged entry (macos-15-intel)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103135247/job/124224921547"
+    },
+    {
+      "name": "Packaged entry (ubuntu-24.04)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103135247/job/124224921374"
+    },
+    {
+      "name": "Packaged entry (ubuntu-24.04-arm)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103135247/job/124224921365"
+    },
+    {
+      "name": "Package copy (macos-15)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103135140/job/124224921097"
+    },
+    {
+      "name": "Package copy (windows-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103135140/job/124224921094"
+    },
+    {
+      "name": "Package copy (ubuntu-24.04-arm)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103135140/job/124224921085"
+    },
+    {
+      "name": "Package copy (macos-15-intel)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103135140/job/124224921080"
+    },
+    {
+      "name": "Packaged entry (macos-15)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103135247/job/124224921011"
+    },
+    {
+      "name": "Package copy (ubuntu-24.04)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103135140/job/124224920592"
+    },
+    {
+      "name": "UNIX socket diagnostic (ubuntu-24.04-arm)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134910/job/124224920186"
+    },
+    {
+      "name": "UNIX socket diagnostic (ubuntu-24.04)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134910/job/124224919667"
+    }
+  ]
+}

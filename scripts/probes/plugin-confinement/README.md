@@ -96,6 +96,10 @@ sender's original descriptor. Its owner observes effects on a pre-pinned file
 after the guest replaces the pathname. `--drop-rights` and a copied path-reader
 control must fail their precise assertions. See
 [descriptor-passing evidence](../../../openspec/changes/complete-plugin-hook-runtime/macos-private-descriptor-passing.md).
+It also requires private connected/sendto/sendmsg datagram exchanges and denies
+six direct/symlink host routes. A bounded native owner records actual receipt
+after guest settlement; startup failure cannot count as zero delivery. See
+[datagram evidence and limits](../../../openspec/changes/complete-plugin-hook-runtime/macos-private-datagrams.md).
 
 ## Boundary and coverage
 

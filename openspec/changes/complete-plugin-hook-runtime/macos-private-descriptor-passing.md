@@ -48,8 +48,8 @@ SCM_RIGHTS transfer and the owner-observed `AB` effect on the unlinked original,
 while delivering no host token. All three counterexamples fail their named
 assertions after their required positive operations. The native fixture-built,
 native packaged-helper and Node runtime regressions each pass nine cases: 27
-runtime cases in addition to the nine extended native cases. Other runtime and
-hosted Intel/arm64 checks remain pending for this revision.
+runtime cases in addition to the nine extended native cases. This local run does not cover every runtime. Hosted results for the same
+source revision are recorded below.
 
 Reports and control logs are retained under
 `scripts/probes/plugin-confinement/evidence/macos-private-rights-local`.
@@ -58,7 +58,25 @@ The independently recomputed descriptor/listener manifest SHA-256 is
 the runtime manifest SHA-256 is
 `dc8028c477b35faa33f4b99183bc2c6e2c8f54c81d58e0785e462eeecdd8e67f`.
 
-Still required: concurrent endpoint mutation, datagram/seqpacket, ancillary
+## Hosted result for revision 48a5481c
+
+On macOS Intel and arm64/Darwin 24.6.0, both native signing jobs in
+[run 41103134892](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41103134892)
+passed nine native descriptor/listener cases and nine native runtime cases,
+including all three precise controls and the missing-private-grant control.
+Original reports and control logs are retained under
+`scripts/probes/plugin-confinement/evidence/macos-private-rights-48a5481c`.
+Separate source bindings verify the checkout merge
+`f40644b9e88fae0b8e1dfade009ffee2359a9495` has the same tree as
+`48a5481c531fcf64db38b62a73c7fb79f290b642`, and independently recompute both
+report manifests from that checkout. The check summary records 65 successful
+checks and one intentionally skipped historical diagnostic for that head.
+These results apply to that revision and do not verify subsequent datagram work.
+
+The [datagram extension](macos-private-datagrams.md) adds separately bounded
+packet ownership and route checks; its evidence remains distinct.
+
+Still required: concurrent endpoint mutation, full datagram/seqpacket, ancillary
 credential behavior and broader descriptor cases, proxy/network/secret ceilings,
 complete native resource ownership and actual App/server execution. Parent
 acceptance tasks remain open.
