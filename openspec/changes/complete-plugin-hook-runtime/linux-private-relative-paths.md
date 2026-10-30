@@ -43,7 +43,28 @@ so the project-native Clippy gate supplies the Rust measurement.
 Local checks cover Rust example Clippy, portable C fixture syntax excluding Linux
 branches, Python/workflow syntax, 20 compiler-intercepted builder transformations
 and formatting/diff. Actual Linux C compilation, mount/CWD semantics and both
-controls require hosted x64/arm64 execution; no new native result is claimed yet.
+controls require hosted x64/arm64 execution. The result below supplies that
+evidence for the exact tested source.
+
+## Native result for b227c833
+
+[Run 41084231069](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41084231069)
+passed on Linux x64 and arm64. Each architecture retains 32 cases: 16 host
+endpoint denials and 16 pair cases. Each pair exchanges a token and acknowledgement
+using both scratch-root relative and nested parent-relative names. Escape
+attempts neither connect nor send; the fixture-owned host listener receives no
+token. Independent read/write expectations remain enforced.
+
+The wrong-CWD control fails the named relative-root exchange while absolute
+scratch exchange succeeds. The missing-beneath control actually delivers to the
+owned host listener before failing the named escape assertion. Original reports
+and both logs are retained under
+`scripts/probes/plugin-native-entry/evidence/linux-private-relative-b227c833/{x64,arm64}`.
+They bind tested merge `b719d619418f36f66f553c1582b09a99195c7ce5`, whose tree
+equals head `b227c83329acf58b50a1239b937e25fc68475a5f`, and source manifest SHA-256
+`f53cfe901242e30b8fdcd3bab1a90ac62ff2f451722339f95052d7b378239cad`.
+The manifest and tree equality were independently verified. These reports do
+not cover the subsequent runtime API exchange extension.
 
 Relative names beginning from outside scratch, supported symlink/alias forms,
 datagram/seqpacket and destination-bearing sends, ancillary/peer-credential

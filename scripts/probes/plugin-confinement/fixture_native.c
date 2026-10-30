@@ -11,6 +11,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include "process_policy.h"
@@ -76,6 +79,49 @@ static int list(const char *path) {
 static int joined(char *out, const char *directory, const char *name) {
     int size = snprintf(out, PATH_MAX, "%s/%s", directory, name);
     return size > 0 && size < PATH_MAX;
+}
+
+static int private_stream_exchange(const char *path) {
+    struct sockaddr_un address = { .sun_family = AF_UNIX };
+    if (strlen(path) >= sizeof(address.sun_path)) return 0;
+    strcpy(address.sun_path, path);
+    int server = socket(AF_UNIX, SOCK_STREAM, 0), client = -1, peer = -1;
+    int bound = 0, result = 0;
+    struct timeval timeout = { .tv_sec = 2 };
+    if (server < 0 || setsockopt(server, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0 ||
+        bind(server, (struct sockaddr *)&address, sizeof(address)) != 0) goto done;
+    bound = 1;
+    if (listen(server, 1) != 0) goto done;
+    client = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (client < 0 || setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0 ||
+        setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) != 0 ||
+        connect(client, (struct sockaddr *)&address, sizeof(address)) != 0) goto done;
+    peer = accept(server, NULL, NULL);
+    if (peer < 0 || setsockopt(peer, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0) goto done;
+    char token = 0, ack = 0;
+    result = send(client, "T", 1, 0) == 1 && recv(peer, &token, 1, 0) == 1 && token == 'T' &&
+        send(peer, "A", 1, 0) == 1 && recv(client, &ack, 1, 0) == 1 && ack == 'A';
+done:
+    if (peer >= 0) close(peer);
+    if (client >= 0) close(client);
+    if (server >= 0) close(server);
+    if (bound) unlink(path);
+    return result;
+}
+
+static int private_stream_probe(const char *scratch, int result[2]) {
+    char absolute[PATH_MAX];
+    if (!joined(absolute, scratch, "a.sock")) return 0;
+    result[0] = private_stream_exchange(absolute);
+    int previous = open(".", O_RDONLY | O_DIRECTORY);
+    if (previous < 0) return 0;
+    int restored = 1;
+    if (chdir(scratch) == 0) {
+        result[1] = private_stream_exchange("r.sock");
+        restored = fchdir(previous) == 0;
+    }
+    close(previous);
+    return restored;
 }
 
 /* No untrusted shell strings: only fixed commands and separate fixture paths. */
@@ -229,6 +275,10 @@ int main(int argc, char **argv) {
         snprintf(native_children, sizeof(native_children), "[%s,%s]", truth(cat_read == 0), truth(cat_secret == 0));
     }
     int confined = strcmp(argv[13], "1") == 0;
+    const char *private_stream = getenv("CYBER_PROOF_PRIVATE_STREAM");
+    int probe_ipc = private_stream != NULL && strcmp(private_stream, "1") == 0;
+    int ipc[2] = {0};
+    if (probe_ipc && !private_stream_probe(scratch_dir, ipc)) return 2;
     printf("{\"jsonrpc\":\"2.0\",\"id\":\"native-proof\",\"result\":{\"stdio_tool\":true,\"package_read\":%s,\"scratch_write\":%s,\"scratch_read\":%s,",
            truth(native_read(package)), truth(scratch_write), truth(native_read(scratch)));
     printf("\"project_read\":%s,\"project_list\":%s,\"project_write\":%s,\"written_project_read\":%s,",
@@ -254,6 +304,7 @@ int main(int argc, char **argv) {
 #ifdef __linux__
     printf(",\"filter_replacement_denied\":%s", truth(proof_replacement_denied()));
 #endif
+    if (probe_ipc) printf(",\"private_unix\":[%s,%s]", truth(ipc[0]), truth(ipc[1]));
     puts("}}");
     return 0;
 }

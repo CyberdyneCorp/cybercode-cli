@@ -89,7 +89,10 @@ original receipts are not relabeled as execution of the rebased head.
 The [real broker pathname replacement case](linux-private-stream-mutation.md)
 has source-bound passing x64/arm64 evidence. The
 [caller-bound relative-path extension](linux-private-relative-paths.md) now adds
-scratch-relative handling; its native evidence remains pending.
+scratch-relative handling with retained x64/arm64 evidence. The
+[runtime API exchange extension](linux-private-runtime-ipc.md) adds acceptance
+for each runtime's own private pathname socket operations; hosted results for
+that extension remain pending.
 
 Still required before complete IPC/production acceptance: verified post-pin
 replacement, relative/alias forms, datagram/seqpacket and

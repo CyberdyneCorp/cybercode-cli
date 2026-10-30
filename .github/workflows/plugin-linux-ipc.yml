@@ -112,7 +112,7 @@ jobs:
           for variant in broker-private-stream broker-private-stream-no-makesock broker-private-stream-no-refer broker-private-stream-mutation broker-private-stream-mutation-no-endpoint; do
             python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/$variant" "$variant"
           done
-          for variant in wrong-cwd no-beneath; do
+          for variant in wrong-cwd no-beneath no-unix-create; do
             python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/broker-private-stream-$variant" "broker-private-stream-$variant"
           done
           for mode in mutation mutation-no-pin mutation-no-copy mutation-continue; do
@@ -402,6 +402,22 @@ jobs:
           done
           done
           exit "$status"
+      - name: Reject missing runtime private pathname socket support
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/private-runtime-no-create.log"
+          if node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime python --python "$(command -v python3)" --initial-exec --packaged-helper "$RUNNER_TEMP/broker-private-stream-no-unix-create" --socket-broker --broker-private-stream --report "$RUNNER_TEMP/private-runtime-no-create.json" > "$log" 2>&1; then
+            echo 'Missing private socket creation unexpectedly passed runtime acceptance' >&2
+            exit 1
+          fi
+          python3 - "$log" <<'PY'
+          from pathlib import Path
+          import sys
+          text = Path(sys.argv[1]).read_text()
+          assert 'no-capabilities: private UNIX runtime exchange failed: [false,false]' in text, text
+          PY
       - name: Retain diagnostic observations
         if: always()
         uses: actions/upload-artifact@v4
@@ -418,6 +434,7 @@ jobs:
             ${{ runner.temp }}/private-stream-no-endpoint.log
             ${{ runner.temp }}/private-stream-wrong-cwd.log
             ${{ runner.temp }}/private-stream-no-beneath.log
+            ${{ runner.temp }}/private-runtime-no-create.log
             ${{ runner.temp }}/broker-no-thread.log
             ${{ runner.temp }}/broker-no-cancel.log
             ${{ runner.temp }}/broker-mutation-*.log

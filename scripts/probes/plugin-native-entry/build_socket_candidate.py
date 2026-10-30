@@ -13,6 +13,7 @@ assert mode in {"seccomp", "broker", "broker-no-bind", "broker-no-thread", "brok
                 "broker-private-stream", "broker-private-stream-no-makesock", "broker-private-stream-no-refer",
                 "broker-private-stream-mutation", "broker-private-stream-mutation-no-endpoint",
                 "broker-private-stream-wrong-cwd", "broker-private-stream-no-beneath",
+                "broker-private-stream-no-unix-create",
                 "landlock9", "landlock9-no-resolve"}
 unix9 = mode.startswith("landlock9")
 private_stream = mode.startswith("broker-private-stream")
@@ -24,6 +25,12 @@ with tempfile.TemporaryDirectory(prefix="cyber-socket-candidate-") as temporary:
     family = "linux_socket_landlock9.h" if unix9 else (
         "linux_socket_private_stream.h" if private_stream else "linux_socket_candidate.h")
     shutil.copyfile(Path(__file__).with_name(family), target / "socket_candidate.h")
+    if mode == "broker-private-stream-no-unix-create":
+        header = target / "socket_candidate.h"
+        text = header.read_text()
+        before = "BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, AF_UNIX, 1, 0)"
+        assert text.count(before) == 2
+        header.write_text(text.replace(before, before.replace('AF_UNIX, 1, 0', 'AF_UNIX, 0, 0'), 1))
     if mode.startswith("broker"):
         shutil.copyfile(Path(__file__).with_name("linux_socket_broker.h"), target / "socket_broker.h")
         if private_stream:

@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 type Runtime = { kind: "python" | "node" | "bun" | "deno" | "native"; executable: string; prefix: string; include: string; libdir: string; library?: string; version: string };
-type Artifacts = { executable: string; addon?: string; landlock?: string; initialExec: boolean; stagedPlatform?: boolean; signingIdentifier?: string; trace?: string; packaged?: boolean; unixScratch?: boolean };
+type Artifacts = { executable: string; addon?: string; landlock?: string; initialExec: boolean; stagedPlatform?: boolean; signingIdentifier?: string; trace?: string; packaged?: boolean; unixScratch?: boolean; privateStream?: boolean };
 type Flags = { read: boolean; write: boolean; shell: boolean; unrestricted?: boolean };
 type Observation = Record<string, boolean | null | boolean[]>;
 const source = dirname(fileURLToPath(import.meta.url));
@@ -170,7 +170,7 @@ function fixture(root: string): Record<string, string> {
   // Runtime module loaders may open the entrypoint's directory as well as
   // the file. Stage the trusted bootstrap in the already admitted read-only
   // package instead of granting access to the repository containing it.
-  for (const file of ["fixture.py", "fixture.cjs", "node_bootstrap.cjs"]) copyFileSync(join(source, file), join(paths.package, file));
+  for (const file of ["fixture.py", "fixture.cjs", "private_unix.cjs", "node_bootstrap.cjs"]) copyFileSync(join(source, file), join(paths.package, file));
   for (const path of [join(paths.package, "data"), join(paths.project, "data"), join(paths.private, "data")]) {
     writeFileSync(path, "owned temporary fixture", { mode: 0o600 });
   }
@@ -229,7 +229,7 @@ function observe(artifacts: Artifacts, runtime: Runtime, paths: Record<string, s
   const workerAddon = join(paths.package, "native.node");
   if (artifacts.addon) copyFileSync(artifacts.addon, workerAddon);
   const identity = statSync(join(paths.private, "data"), { bigint: true });
-  const input = { kind: runtime.kind, initial_exec: artifacts.initialExec, platform: process.platform, runtime: runtime.executable, addon: workerAddon, private_dev: identity.dev.toString(), private_ino: identity.ino.toString(), python: runtime.executable, mode, confined: profile !== "-", package_file: join(paths.package, "data"),
+  const input = { kind: runtime.kind, initial_exec: artifacts.initialExec, private_stream: !!artifacts.privateStream, platform: process.platform, runtime: runtime.executable, addon: workerAddon, private_dev: identity.dev.toString(), private_ino: identity.ino.toString(), python: runtime.executable, mode, confined: profile !== "-", package_file: join(paths.package, "data"),
     project_file: join(paths.project, "data"), private_file: join(paths.private, "data"),
     scratch_file: join(paths.scratch, "roundtrip"), project_write: join(paths.project, "written"),
     symlink_private: join(paths.package, "escape"), protected_file: join(paths.protected, "data"),
@@ -271,7 +271,7 @@ function observe(artifacts: Artifacts, runtime: Runtime, paths: Record<string, s
       : { program: artifacts.executable, args };
     const options = { cwd: paths.cwd, env: { ...environment, HOME: paths.scratch, XDG_CONFIG_HOME: join(paths.scratch, "config"), DENO_DIR: join(paths.scratch, "deno-cache"),
           XDG_CACHE_HOME: join(paths.scratch, "cache"), BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(paths.scratch, "bun-cache"),
-          ...runtime.kind === "native" ? { CYBER_PROOF_PRIVATE: input.private_file } : {} },
+          ...runtime.kind === "native" ? { CYBER_PROOF_PRIVATE: input.private_file, CYBER_PROOF_PRIVATE_STREAM: artifacts.privateStream ? "1" : "0" } : {} },
         ...mode === "inspect" ? { input: JSON.stringify({ jsonrpc: "2.0", id: "native-proof", method: "tool/execute", params: { name: "native-probe", input: {} } }) + "\n" } : {},
         stdio: [mode === "inspect" ? "pipe" : "ignore", "pipe", "pipe", "ignore", "ignore", "ignore", "ignore", "ignore", "ignore", inherited] };
     let stdout: string;
@@ -325,6 +325,11 @@ function check(root: string, artifacts: Artifacts, runtime: Runtime, name: strin
   if (!flags.unrestricted) writeFileSync(profile, isLinux ? `shell=${flags.shell ? 1 : 0}\n` : policy(runtime, paths, flags, artifacts.stagedPlatform, artifacts.signingIdentifier), { mode: 0o600 });
   const actual = observe(artifacts, runtime, paths, profile, "inspect", flags);
   const expectations = expected(flags);
+  if (artifacts.privateStream) {
+    expectations.private_unix = [true, true];
+    assert.deepEqual(actual.private_unix, [true, true],
+      `${name}: private UNIX runtime exchange failed: ${JSON.stringify(actual.private_unix)}`);
+  }
   // Deno's direct unconfined control reports this descriptor absent too. It
   // cannot establish helper cleanup; the dedicated native FD control does that.
   if (artifacts.packaged && flags.unrestricted) expectations.inherited_descriptor = runtime.kind !== "deno";
@@ -398,7 +403,7 @@ function main() {
     // Literal exec admission must name the same physical executable the kernel
     // resolves, including framework Python's executable symlinks.
     if (signingRuntime && runtime.kind !== "native") runtime.executable = realpathSync(runtime.executable);
-    const artifacts: Artifacts = { ...build(root, runtime, initialExec, signingRuntime, packagedHelper), trace: values.trace, packaged: Boolean(packagedHelper), unixScratch: values["unix-scratch-policy"] || values["broker-private-stream"] };
+    const artifacts: Artifacts = { ...build(root, runtime, initialExec, signingRuntime, packagedHelper), trace: values.trace, packaged: Boolean(packagedHelper), unixScratch: values["unix-scratch-policy"] || values["broker-private-stream"], privateStream: values["broker-private-stream"] };
     if (signingRuntime) {
       artifacts.signingIdentifier = `com.cyberdyne.probe.bootstrap.${randomUUID()}`;
       command("/usr/bin/codesign", ["--force", "--sign", "-", "--identifier", artifacts.signingIdentifier, "--timestamp=none", artifacts.executable]);
@@ -424,7 +429,7 @@ function main() {
     const rows = cases.filter(([name]) => !unsupported_cases.some(item => item.name === name))
       .map(([name, flags]) => check(root, artifacts, runtime, name, flags));
     const digest = createHash("sha256");
-    const sources = ["run.mts", "macos_python.c", "macos_node.c", "native_exec.c", "node_bootstrap.cjs", "fixture.py", "fixture.cjs", "process_policy.h", "linux_filter.h", "linux_exec.c", "linux_initial_exec.h", "fixture_native.c", "macos_exec.c", "macos_stage.mts"];
+    const sources = ["run.mts", "macos_python.c", "macos_node.c", "native_exec.c", "node_bootstrap.cjs", "fixture.py", "fixture.cjs", "private_unix.cjs", "process_policy.h", "linux_filter.h", "linux_exec.c", "linux_initial_exec.h", "fixture_native.c", "macos_exec.c", "macos_stage.mts"];
     for (const file of sources) {
       digest.update(file + "\0").update(readFileSync(join(source, file)));
     }

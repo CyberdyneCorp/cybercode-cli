@@ -135,6 +135,7 @@ async function inspect() {
     written_project_read: native.read(c.project_write),
   };
   observations.project_rename = renameProject();
+  if (c.private_stream) observations.private_unix = await require("./private_unix.cjs")(c.scratch);
   if (c.initial_exec) observations.filter_replacement_denied = native.replacementDenied();
   if (c.platform === "linux" && c.kind === "bun") {
     observations.proc_root_reads = [native.read("/proc/self/root" + c.project_file), native.read("/proc/self/root" + c.private_file)];
