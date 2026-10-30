@@ -605,6 +605,11 @@ export type CreateBody = {
    * the Location, or for a child Session.
    */
   output_style?: string | null;
+  /**
+   * Nobody attends the Session (`cyber exec`): a usage limit with a known reset waits
+   * for the reset instead of failing the Turn.
+   */
+  unattended?: boolean;
 };
 
 /**
@@ -930,6 +935,10 @@ export type Data_TeamView = {
 
 export type Data_UsageInsights = {
   data: UsageInsights;
+};
+
+export type Data_UsageLimitWait = {
+  data: UsageLimitWait;
 };
 
 export type Data_UsageLimits = {
@@ -3943,6 +3952,11 @@ export type Session = {
    * `None` follows the Location's configuration. Only primary Sessions have one.
    */
   output_style?: string | null;
+  /**
+   * Nobody attends the Session (`cyber exec` creates its Sessions so): a usage limit
+   * with a known reset waits (`session-runtime` → Usage limit wait).
+   */
+  unattended?: boolean;
   /** `idle` or `running`. */
   status: string;
   /** Mode of the running Turn, or the selected mode while idle. */
@@ -3966,6 +3980,11 @@ export type Session = {
    * step and after a compaction.
    */
   context?: ContextMeter | null;
+  /**
+   * The pending usage limit wait (`session-runtime` → Usage limit wait); null when the
+   * Session is not waiting for a limit to reset.
+   */
+  usage_limit?: UsageLimitWait | null;
 };
 
 export type SessionContext = {
@@ -4053,6 +4072,11 @@ export type SessionInfo = {
    * `None` follows the Location's configuration. Only primary Sessions have one.
    */
   output_style?: string | null;
+  /**
+   * Nobody attends the Session (`cyber exec` creates its Sessions so): a usage limit
+   * with a known reset waits (`session-runtime` → Usage limit wait).
+   */
+  unattended?: boolean;
 };
 
 /** Where a Session runs. */
@@ -4752,6 +4776,16 @@ export type UsageInsights = {
   backfilling: boolean;
 };
 
+/** `session.usage_limit.waiting.1`, and the pending wait of the Session view. */
+export type UsageLimitWait = {
+  /** The failed step whose Turn runs again. */
+  message_id: string;
+  resets_at_ms: number;
+  resume_at_ms: number;
+  started_ms: number;
+  by: WaitedBy;
+};
+
 /** The `GET /usage/limits` reply. */
 export type UsageLimits = {
   /** The latest reading per provider and window, by provider then window. */
@@ -4814,6 +4848,12 @@ export type Viewport = {
   width: number;
   height: number;
 };
+
+/**
+ * Who planned a wait: the runtime for an unattended Session, or the user's
+ * `/resume-at-reset`.
+ */
+export type WaitedBy = "runtime" | "user";
 
 export type WakeupState = {
   n: number;

@@ -21,6 +21,8 @@ struct Seen {
     turns: Vec<(String, String)>,
     /// `(session-id, thread-id)` of each `/responses` request.
     routing: Vec<(String, String)>,
+    /// `/responses` requests of Turns, without hidden title requests.
+    main: usize,
 }
 
 struct Backend {
@@ -53,15 +55,21 @@ fn completed() -> String {
 impl Backend {
     /// The fake issuer and backend; `refresh_status` answers every token refresh.
     fn start(refresh_status: u16) -> Self {
-        Self::serve(refresh_status, false)
+        Self::serve(refresh_status, 0)
     }
 
     /// A backend whose plan has reached its usage limit, resetting in 40 minutes.
     fn usage_limited() -> Self {
-        Self::serve(200, true)
+        Self::serve(200, usize::MAX)
     }
 
-    fn serve(refresh_status: u16, limited: bool) -> Self {
+    /// A backend whose first answer is a usage limit resetting in 40 minutes.
+    fn usage_limited_once() -> Self {
+        Self::serve(200, 1)
+    }
+
+    /// `limited`: how many `/responses` requests answer with the usage limit.
+    fn serve(refresh_status: u16, limited: usize) -> Self {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
             .enable_all()
@@ -93,8 +101,11 @@ impl Backend {
             )
             .route(
                 "/responses",
-                axum::routing::post(move |headers: HeaderMap| async move {
+                axum::routing::post(move |headers: HeaderMap, body: String| async move {
                     let mut seen = turns.lock().unwrap();
+                    if !body.contains("Write a short title") {
+                        seen.main += 1;
+                    }
                     seen.turns.push((
                         header(&headers, "authorization"),
                         header(&headers, "chatgpt-account-id"),
@@ -103,7 +114,7 @@ impl Backend {
                         header(&headers, "session-id"),
                         header(&headers, "thread-id"),
                     ));
-                    if limited {
+                    if !body.contains("Write a short title") && seen.main <= limited {
                         let error = json!({"error": {"type": "usage_limit_reached",
                             "message": "The usage limit has been reached",
                             "plan_type": "plus", "resets_at": now() + 40 * 60}});
@@ -170,15 +181,29 @@ impl Env {
         env
     }
 
+    /// The global `cyber.json`.
+    fn config(&self, document: &Value) {
+        let dir = self.root.join("cyber/config");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("cyber.json"), document.to_string()).unwrap();
+    }
+
     fn auth_file(&self) -> PathBuf {
         self.root.join("cyber/data/chatgpt-auth.json")
     }
 
     fn exec(&self, origin: &str) -> Output {
+        self.exec_with(origin, &["--format", "json"], &[])
+    }
+
+    /// `cyber exec` with extra arguments and environment.
+    fn exec_with(&self, origin: &str, args: &[&str], envs: &[(&str, &str)]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_cyber"))
-            .args(["exec", "--embedded", "--ephemeral", "--format", "json"])
+            .args(["exec", "--embedded", "--ephemeral"])
+            .args(args)
             .args(["-m", "chatgpt/gpt-6-sol", "say hi"])
             .env_clear()
+            .envs(envs.iter().copied())
             .env("HOME", self.root.join("home"))
             .env("CYBER_HOME", self.root.join("cyber"))
             .env("CYBER_MODELS_PATH", self.root.join("models.json"))
@@ -274,10 +299,12 @@ fn exec_with_a_revoked_login_fails_closed_and_keeps_the_file() {
 }
 
 /// `provider-catalog` → "Subscription limit reached": with no fallback model, `exec`
-/// fails with the local time the plan's limit resets.
+/// fails with the local time the plan's limit resets, and (`session-runtime` → Usage
+/// limit wait) says why it did not wait for it.
 #[test]
 fn exec_reports_when_a_usage_limit_resets() {
     let (env, backend) = (Env::with_due_login(), Backend::usage_limited());
+    env.config(&json!({"usage_limit": {"max_wait": "30m"}}));
     let output = env.exec(&backend.origin);
     let transcript = describe(&output);
     assert!(!output.status.success(), "{transcript}");
@@ -295,4 +322,81 @@ fn exec_reports_when_a_usage_limit_resets() {
             .any(|w| w[2] == b':' && [0, 1, 3, 4].iter().all(|&i| w[i].is_ascii_digit())),
         "{transcript}"
     );
+    assert!(
+        stderr.contains("(not waiting: the reset is more than usage_limit.max_wait (30m) away)"),
+        "{transcript}"
+    );
+}
+
+fn stream_lines(output: &Output) -> Vec<Value> {
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect()
+}
+
+/// `exec-mode` → Usage limit waits in exec: an exec run waits for the reset (shortened
+/// by the debug-only clock scale), reports each change as a `usage_limit` line, and then
+/// finishes the Turn.
+#[test]
+fn exec_waits_for_a_usage_limit_reset_and_continues() {
+    let (env, backend) = (Env::with_due_login(), Backend::usage_limited_once());
+    let output = env.exec_with(
+        &backend.origin,
+        &["--format", "stream-json"],
+        &[("CYBER_TEST_USAGE_WAIT_SCALE", "100000")],
+    );
+    let transcript = describe(&output);
+    assert!(output.status.success(), "{transcript}");
+    let lines = stream_lines(&output);
+    let limits: Vec<&Value> = lines
+        .iter()
+        .filter(|l| l["type"] == "usage_limit")
+        .collect();
+    assert_eq!(limits.len(), 2, "{transcript}");
+    assert_eq!(limits[0]["status"], "waiting", "{transcript}");
+    let (resets, resume) = (
+        limits[0]["resets_at_ms"].as_i64().unwrap(),
+        limits[0]["resume_at_ms"].as_i64().unwrap(),
+    );
+    assert!(
+        resume >= resets + 10_000 && resume < resets + 40_000,
+        "{transcript}"
+    );
+    assert!(
+        limits[0]["session_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("ses_")
+    );
+    assert_eq!(limits[1]["status"], "resumed", "{transcript}");
+    let result = lines.last().unwrap();
+    assert_eq!(result["type"], "result", "{transcript}");
+    assert_eq!(result["exit_code"], 0, "{transcript}");
+    assert!(
+        result["result"].as_str().unwrap().contains("renewed hi"),
+        "{transcript}"
+    );
+    assert_eq!(backend.seen.lock().unwrap().main, 2);
+}
+
+/// `--timeout` before the planned resume ends the run at once instead of waiting.
+#[test]
+fn exec_timeout_before_the_reset_stops_without_waiting() {
+    let (env, backend) = (Env::with_due_login(), Backend::usage_limited());
+    let started = std::time::Instant::now();
+    let output = env.exec_with(
+        &backend.origin,
+        &["--format", "json", "--timeout", "10m"],
+        &[],
+    );
+    let transcript = describe(&output);
+    assert_eq!(output.status.code(), Some(4), "{transcript}");
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["stop_reason"], "timeout", "{transcript}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(60),
+        "{transcript}"
+    );
+    assert_eq!(backend.seen.lock().unwrap().main, 1);
 }

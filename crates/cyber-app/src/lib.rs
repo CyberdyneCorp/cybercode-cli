@@ -410,6 +410,13 @@ impl App {
         // Watches on peer Sessions ask those peers every 15 s (`cross-session-messaging`
         // → Peer watches and listing).
         runtime.spawn_remote_watch_poller();
+        // Usage limit waits a stopped server left: top-level Sessions wait for the time
+        // left and retry, owned ones end their wait (`session-runtime` → Usage limit wait
+        // recovery). Before goal recovery, which skips a Session already running.
+        runtime
+            .recover_usage_limit_waits()
+            .await
+            .map_err(|e| e.to_string())?;
         // Active Goals of Sessions a stopped server left are evaluated once on their last
         // Turn before continuing (`goals` → Goals survive resume and restart).
         runtime.spawn_goal_recovery();

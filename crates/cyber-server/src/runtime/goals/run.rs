@@ -345,6 +345,24 @@ impl Runtime {
         Ok(())
     }
 
+    /// The active Goal `goal_id` would pass its wall deadline waiting for a usage limit
+    /// to reset (`goals` → Usage limit waits under a Goal): it ends `budget_exceeded`.
+    pub(crate) async fn goal_wall_deadline(
+        &self,
+        handle: &Arc<Handle>,
+        goal_id: &str,
+        reason: &str,
+    ) -> Result<(), RuntimeError> {
+        let goal = handle.state.lock().await.goals.active().cloned();
+        match goal.filter(|goal| goal.goal_id == goal_id) {
+            Some(goal) => {
+                self.goal_stopped(handle, &goal, GoalStatus::BudgetExceeded, reason)
+                    .await
+            }
+            None => Ok(()),
+        }
+    }
+
     /// A Turn under an active Goal failed or was stopped (`goals` → Impossible and
     /// blocking errors): the Goal pauses with the reason, so nothing continues on its own.
     pub(crate) async fn goal_turn_ended_early(&self, handle: &Arc<Handle>, reason: &str) {

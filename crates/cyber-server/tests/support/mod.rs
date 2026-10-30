@@ -215,6 +215,8 @@ pub struct Tools {
     pub goal_check_exits: Mutex<std::collections::VecDeque<Option<i32>>>,
     /// The `goals` settings of every Location.
     pub goal_settings: Mutex<cyber_core::goals::GoalSettings>,
+    /// The `usage_limit` settings of every Location.
+    pub usage_limit: Mutex<cyber_core::usage_limit::UsageLimitSettings>,
 }
 
 pub fn def(name: &str, safety: RetrySafety, parallel: bool) -> ToolDef {
@@ -265,6 +267,7 @@ impl Tools {
             checks: Mutex::default(),
             goal_check_exits: Mutex::default(),
             goal_settings: Mutex::default(),
+            usage_limit: Mutex::default(),
         })
     }
 
@@ -291,6 +294,13 @@ impl LocationGuard for TestLocationGuard {
 }
 
 impl ToolHost for Tools {
+    fn usage_limit_settings(
+        &self,
+        _directory: &str,
+    ) -> Result<cyber_core::usage_limit::UsageLimitSettings, String> {
+        Ok(self.usage_limit.lock().unwrap().clone())
+    }
+
     fn goal_settings(
         &self,
         _directory: &str,
