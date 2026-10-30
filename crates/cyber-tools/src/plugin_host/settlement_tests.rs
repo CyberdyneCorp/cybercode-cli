@@ -45,10 +45,13 @@ impl Fixture {
         let input = process.stdin().unwrap();
         let mut output = BufReader::new(process.stdout().unwrap());
         let mut ready = String::new();
-        tokio::time::timeout(Duration::from_secs(3), output.read_line(&mut ready))
+        // Cold system-Python startup and fork can exceed three seconds on a
+        // busy hosted runner. This handshake precedes every measured cleanup;
+        // it must not consume or relax the descendant-settlement deadlines.
+        tokio::time::timeout(Duration::from_secs(30), output.read_line(&mut ready))
             .await
-            .unwrap()
-            .unwrap();
+            .expect("system Python fixture did not report child-ready within 30 seconds")
+            .expect("system Python fixture readiness pipe failed");
         let leader: i32 = ready
             .trim()
             .strip_prefix("child-ready ")
