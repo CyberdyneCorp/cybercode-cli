@@ -43,7 +43,10 @@ separate review. This changes delivery granularity, not feature scope or accepta
 - Preserve native proof and explicit support/design revision gates. Passing probes
   are not production feature acceptance. Never weaken the agreed contract merely
   to finish a PR. Merge only with user authorization; the conditional approval
-  above applies to #76.
+  above originally applied to #76. On 2026-10-30 the user additionally authorized
+  merging ready repository PRs as work continues. Check current-head CI, scope,
+  review and mergeability before each merge, and recheck composition as main
+  advances. This does not waive draft, native proof or design-revision gates.
 
 PR [#76](https://github.com/CyberdyneCorp/cybercode-cli/pull/76) merged on
 2026-10-30 at `ec31ff9fc7627a3a9262d99f0fc0606394368423`, after all 70 applicable
