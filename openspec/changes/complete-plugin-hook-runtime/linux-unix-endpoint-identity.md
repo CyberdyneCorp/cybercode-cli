@@ -45,4 +45,32 @@ these unimplemented properties.
 
 Local macOS verification covers driver self-checks and workflow syntax only;
 the Linux C branch and actual kernel operations require hosted x64/arm64 execution.
-No native result is claimed yet. No production policy or #76 head changes.
+No production policy or #76 head changes.
+
+## Native result
+
+The endpoint identity steps in
+[run 41053828357](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41053828357)
+passed on x64 (job 124056240517) and arm64 (job 124056240704). Each original
+report contains six unique cases in each of the host and private namespace
+contexts: 12 cases per architecture, 24 total. All require actual token/ack
+exchange, including the missing-pin controls reaching the second fixture endpoint.
+Every guard and pinned inode-retention assertion passed. The rest of that broader
+workflow remains separately pending; these step results do not claim its completion.
+
+Reports are retained unchanged at
+`scripts/probes/plugin-native-entry/evidence/linux-unix-endpoint-e968c44e/{x64,arm64}/linux-unix-endpoint.json`.
+Both bind checkout `e968c44e0c0d4d54d578630350a4ed9b65f0f02e`, kernel
+`7.0.0-1017-azure` and source manifest SHA-256
+`fccc9972e359ce3ecbfc5c240d8b2a6327a152b1ff40c53999773da234ca6f34`.
+That manifest was independently recomputed from the exact Git tree before
+retaining the reports. Binary digests remain in each original report; later
+revisions do not inherit these observations automatically.
+
+The scoped review covers owned fixture paths, exclusive temporary creation,
+bounded nonblocking socket I/O, cleanup, actual endpoint selection and reverse
+acknowledgement, exact missing-pin effects, strict case uniqueness and negative
+driver self-checks, private namespaces and retained source bindings. The positive
+result permits trying this primitive in the real broker. It does not complete
+general private IPC, notification ownership, bind/send mediation, network/proxy
+intersections or production activation acceptance.
