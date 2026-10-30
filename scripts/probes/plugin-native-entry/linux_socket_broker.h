@@ -16,11 +16,16 @@ struct broker_result { int value; int error; };
 struct broker_job { pid_t pid; int pipe; uint64_t id; };
 struct broker_call {
     int socket;
+    int endpoint;
     int operation;
     int backlog;
     socklen_t length;
     struct sockaddr_storage address;
 };
+
+#ifdef CYBER_PRIVATE_UNIX_STREAM
+#include "socket_private_unix.h"
+#endif
 
 static void broker_tick(int signal_number) { (void)signal_number; }
 
@@ -36,6 +41,7 @@ static void broker_reply(int listener, uint64_t id, int value, int error) {
 static int broker_copy(int listener, const struct seccomp_notif *request,
                        struct broker_call *call) {
     call->socket = -1;
+    call->endpoint = -1;
     call->operation = request->data.nr;
     if (request->flags != 0 || request->pid == 0 || request->data.arch != CYBER_ARCH ||
         (call->operation != SYS_bind && call->operation != SYS_listen &&
@@ -54,7 +60,13 @@ static int broker_copy(int listener, const struct seccomp_notif *request,
         size != sizeof(int)) goto failed;
     size = sizeof(int);
     if (getsockopt(socket, SOL_SOCKET, SO_TYPE, &type, &size) != 0 ||
-        size != sizeof(int) || (domain != AF_INET && domain != AF_INET6) ||
+        size != sizeof(int)) goto failed;
+#ifdef CYBER_PRIVATE_UNIX_STREAM
+    if (domain == AF_UNIX) {
+        if (type != SOCK_STREAM || call->operation != SYS_connect) goto failed;
+    } else
+#endif
+    if ((domain != AF_INET && domain != AF_INET6) ||
         (type != SOCK_STREAM && type != SOCK_DGRAM)) goto failed;
     if (call->operation == SYS_listen) {
         if (type != SOCK_STREAM) goto failed;
@@ -75,6 +87,12 @@ static int broker_copy(int listener, const struct seccomp_notif *request,
         }
         int family = call->address.ss_family;
         error = EPERM;
+#ifdef CYBER_PRIVATE_UNIX_STREAM
+        if (domain == AF_UNIX) {
+            error = private_endpoint(&call->address, call->length, &call->endpoint);
+            if (error != 0) goto failed;
+        } else
+#endif
         if (family == AF_UNSPEC && call->operation == SYS_connect) {
             /* Only IP objects reach here; UNIX pairs cannot disconnect/rebind. */
         } else if (family != domain ||
@@ -86,6 +104,7 @@ static int broker_copy(int listener, const struct seccomp_notif *request,
     call->socket = socket;
     return 0;
 failed:
+    if (call->endpoint >= 0) { close(call->endpoint); call->endpoint = -1; }
     close(socket);
     return error;
 }
@@ -93,11 +112,23 @@ failed:
 static void broker_worker(struct broker_call call, int result_pipe, pid_t parent) {
     if (prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0) != 0 || getppid() != parent) _exit(125);
     /* Duplicate above both fixed slots first, avoiding dup2 alias clobbering. */
-    int socket = fcntl(call.socket, F_DUPFD_CLOEXEC, 5);
-    int output = fcntl(result_pipe, F_DUPFD_CLOEXEC, 5);
+    int socket = fcntl(call.socket, F_DUPFD_CLOEXEC, 6);
+    int output = fcntl(result_pipe, F_DUPFD_CLOEXEC, 6);
+    int endpoint = call.endpoint < 0 ? -1 : fcntl(call.endpoint, F_DUPFD_CLOEXEC, 6);
     if (socket < 0 || output < 0 || dup2(socket, 3) != 3 || dup2(output, 4) != 4 ||
-        syscall(SYS_close_range, 5U, UINT_MAX, 0) != 0) _exit(125);
+        (call.endpoint >= 0 && (endpoint < 0 || dup2(endpoint, 5) != 5)) ||
+        syscall(SYS_close_range, 6U, UINT_MAX, 0) != 0) _exit(125);
+    if (call.endpoint < 0) close(5);
     close(0); close(1); close(2);
+#ifdef CYBER_PRIVATE_UNIX_STREAM
+    if (call.endpoint >= 0) {
+        struct sockaddr_un *address = (struct sockaddr_un *)&call.address;
+        memset(address, 0, sizeof(*address));
+        address->sun_family = AF_UNIX;
+        strcpy(address->sun_path, "/proc/self/fd/5");
+        call.length = sizeof(*address);
+    }
+#endif
     int value;
     if (call.operation == SYS_bind) value = bind(3, (struct sockaddr *)&call.address, call.length);
     else if (call.operation == SYS_listen) value = listen(3, call.backlog);
@@ -120,6 +151,7 @@ static int broker_start(int listener, const struct seccomp_notif *request,
     if (pipe2(channel, O_CLOEXEC | O_NONBLOCK) != 0) {
         error = errno;
         close(call.socket);
+        if (call.endpoint >= 0) close(call.endpoint);
         return error;
     }
     pid_t parent = getpid();
@@ -127,6 +159,7 @@ static int broker_start(int listener, const struct seccomp_notif *request,
     error = errno;
     if (worker == 0) broker_worker(call, channel[1], parent);
     close(call.socket);
+    if (call.endpoint >= 0) close(call.endpoint);
     close(channel[1]);
     if (worker < 0) { close(channel[0]); return error; }
     jobs[slot] = (struct broker_job){ .pid = worker, .pipe = channel[0], .id = request->id };
@@ -244,6 +277,9 @@ done:
 }
 
 static int broker_entry(const char *const argv[], int shell) {
+#ifdef CYBER_PRIVATE_UNIX_STREAM
+    if (private_initialize(argv[1]) != 0) return 2;
+#endif
     int channel[2];
     struct sigaction child_action = { .sa_handler = SIG_DFL };
     sigemptyset(&child_action.sa_mask);
@@ -262,6 +298,10 @@ static int broker_entry(const char *const argv[], int shell) {
         close(channel[0]);
         if (prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0) != 0 || getppid() != parent ||
             prctl(PR_SET_DUMPABLE, 1, 0, 0, 0) != 0 || confine(argv[1]) != 0) _exit(2);
+#ifdef CYBER_PRIVATE_UNIX_STREAM
+        if (private_make_sock() != 0) _exit(2);
+        close(private_root);
+#endif
         int listener = initial_filter(shell);
         int sent = listener < 0 ? -1 : transfer_listener(channel[1], listener);
         if (listener >= 0) close(listener);
@@ -276,6 +316,9 @@ static int broker_entry(const char *const argv[], int shell) {
     if (listener < 0) { (void)kill(guest, SIGKILL); broker_reap(guest); return 2; }
     int result = broker_loop(listener, guest, shell);
     close(listener);
+#ifdef CYBER_PRIVATE_UNIX_STREAM
+    close(private_root);
+#endif
     return result;
 }
 #endif

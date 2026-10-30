@@ -72,6 +72,7 @@ mod probe {
         BrokerEscape,
         BrokerEscapeNoPid,
         BrokerSaturation,
+        BrokerPrivateStream,
         Unix9,
     }
     impl Mode {
@@ -85,6 +86,7 @@ mod probe {
                     | Self::BrokerEscape
                     | Self::BrokerEscapeNoPid
                     | Self::BrokerSaturation
+                    | Self::BrokerPrivateStream
             )
         }
         fn broker(self) -> bool {
@@ -96,6 +98,7 @@ mod probe {
                     | Self::BrokerEscape
                     | Self::BrokerEscapeNoPid
                     | Self::BrokerSaturation
+                    | Self::BrokerPrivateStream
             )
         }
         fn escape(self) -> Option<bool> {
@@ -109,7 +112,7 @@ mod probe {
 
     fn observe(policy: &LinuxPolicy<'_>, mode: Mode) -> Value {
         let mut plan = policy.compose().unwrap();
-        if mode == Mode::Unix9 {
+        if matches!(mode, Mode::Unix9 | Mode::BrokerPrivateStream) {
             plan.landlock
                 .push_str(&format!("U\t{}\n", policy.scratch.display()));
         }
@@ -153,10 +156,25 @@ mod probe {
         for key in ["connected", "pair_reconnect", "pair_bind"] {
             assert_eq!(
                 observed[key], false,
-                "private pair escape: {key}: {observed}"
+                "private pair escape: {key}: {label} read={} write={}: {observed}",
+                pair_policy.fs_read, pair_policy.fs_write,
             );
         }
         check_pair_support(&observed, mode);
+        if mode == Mode::BrokerPrivateStream {
+            assert_eq!(
+                observed["regular_reparent"], pair_policy.fs_write,
+                "private IPC layer changed ordinary file moves: {label} read={} write={}: {observed}",
+                pair_policy.fs_read, pair_policy.fs_write,
+            );
+            if label == "public" && pair_policy.fs_write {
+                assert_eq!(
+                    observed["cross_mount_alias_errno"],
+                    libc::EXDEV,
+                    "a host socket alias crossed the private scratch mount: {observed}"
+                );
+            }
+        }
         let delivered = receipt(listener, &observed);
         assert!(!delivered, "pair reached host: {observed}");
         json!({"socket": label, "fs_read": pair_policy.fs_read, "fs_write": pair_policy.fs_write,
@@ -164,13 +182,18 @@ mod probe {
     }
 
     fn check_pair_support(observed: &Value, mode: Mode) {
-        for key in ["datagram_pair", "seqpacket_pair", "scratch_unix_roundtrip"] {
+        for key in ["datagram_pair", "seqpacket_pair"] {
             assert_eq!(
                 observed[key],
                 mode == Mode::Unix9,
                 "pair/local support: {key}: {observed}"
             );
         }
+        assert_eq!(
+            observed["scratch_unix_roundtrip"],
+            matches!(mode, Mode::Unix9 | Mode::BrokerPrivateStream),
+            "private scratch stream roundtrip: {observed}"
+        );
         assert_eq!(
             observed["tcp_roundtrip"],
             mode.ip_servers(),
@@ -245,6 +268,7 @@ mod probe {
             Some("--broker-escape") => Mode::BrokerEscape,
             Some("--broker-escape-no-pid") => Mode::BrokerEscapeNoPid,
             Some("--broker-saturation") => Mode::BrokerSaturation,
+            Some("--broker-private-stream") => Mode::BrokerPrivateStream,
             Some("--landlock9") => Mode::Unix9,
             _ => panic!("unknown candidate mode"),
         };
@@ -373,6 +397,8 @@ mod probe {
             "scripts/probes/plugin-native-entry/linux_socket_candidate.h",
             "scripts/probes/plugin-native-entry/linux_socket_broker.h",
             "scripts/probes/plugin-native-entry/linux_socket_broker_mutation.h",
+            "scripts/probes/plugin-native-entry/linux_socket_private_stream.h",
+            "scripts/probes/plugin-native-entry/linux_socket_private_unix.h",
             "scripts/probes/plugin-native-entry/linux_socket_landlock9.h",
             "scripts/probes/plugin-native-entry/linux_unix9_policy.h",
             "scripts/probes/plugin-native-entry/build_socket_candidate.py",
@@ -385,7 +411,7 @@ mod probe {
         }
         let report = json!({"platform": std::env::consts::OS, "architecture": std::env::consts::ARCH,
             "checkout": std::env::var("GITHUB_SHA").ok(), "run_id": std::env::var("GITHUB_RUN_ID").ok(),
-            "candidate": candidate, "landlock9": mode == Mode::Unix9, "socket_broker": mode.broker(), "cancellation_probe": mode == Mode::BrokerCancel, "mutation_probe": mode == Mode::BrokerMutation, "escape_probe": mode.escape(), "saturation_probe": mode == Mode::BrokerSaturation, "sources": sources, "source_sha256": format!("{:x}", hash.finalize()),
+            "candidate": candidate, "landlock9": mode == Mode::Unix9, "socket_broker": mode.broker(), "private_stream_probe": mode == Mode::BrokerPrivateStream, "cancellation_probe": mode == Mode::BrokerCancel, "mutation_probe": mode == Mode::BrokerMutation, "escape_probe": mode.escape(), "saturation_probe": mode == Mode::BrokerSaturation, "sources": sources, "source_sha256": format!("{:x}", hash.finalize()),
             "helper_sha256": format!("{:x}", Sha256::digest(std::fs::read(helper).unwrap())),
             "rows": rows, "scope": "Fixture-owned socket, caller and worker observations in experimental helpers only. Proof rows are case-specific; no ambient service contact or production capability acceptance."});
         std::fs::write(

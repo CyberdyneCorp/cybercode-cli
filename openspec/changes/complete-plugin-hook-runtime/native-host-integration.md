@@ -109,7 +109,8 @@ App's legacy launch path does not implement this sequence today.
   including private UNIX behavior and proxy endpoint identity. Retain positive
   runtime controls and denied ambient access, not only refusal cases. The
   [endpoint identity prerequisite](linux-unix-endpoint-identity.md) tests the first
-  pathname-object binding step; it does not complete this task.
+  pathname-object binding step; the [private stream candidate integration](linux-private-stream-integration.md)
+  applies that primitive in real connect notifications. Neither completes this task.
 - [ ] N3 Implement registry-owned generation admission and immutable resource
   binding with actual production startup, revocation and quarantine tests.
 - [ ] N4 Integrate the native launch owner and independently intersect all
