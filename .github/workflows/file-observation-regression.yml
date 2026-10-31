@@ -152,6 +152,38 @@ jobs:
           path: ${{ runner.temp }}/observation-membership-base.log
           if-no-files-found: error
           retention-days: 14
+      - name: Verify pending observer ownership without the fix
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYCONTROL'
+          import os,re,subprocess
+          from pathlib import Path
+          owner=Path('crates/cyber-tools/src/file_changes/owner.rs')
+          source=owner.read_text()
+          needle='self.sessions.is_empty() && !self.waiting_for_previous'
+          assert source.count(needle)==1
+          try:
+              owner.write_text(source.replace(needle,'self.sessions.is_empty()'))
+              name='file_changes::owner::tests::readmission_reuses_one_pending_replacement_until_previous_owner_settles'
+              result=subprocess.run(['cargo','test','--locked','-p','cyber-tools','--lib',name,'--','--exact'],capture_output=True,text=True)
+              log=result.stdout+result.stderr
+              Path(os.environ['RUNNER_TEMP'],'observation-pending-owner-base.log').write_text(log)
+              assert result.returncode!=0, log[-8000:]
+              assert re.search(r'^test '+re.escape(name)+r' \.\.\. FAILED$',log,re.M), log[-8000:]
+              assert 'readmission must not grow a task chain behind a settling owner' in log, log[-8000:]
+          finally:
+              owner.write_text(source)
+          PYCONTROL
+      - name: Preserve pending observer ownership regression evidence
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pending-observer-owner-baseline
+          path: ${{ runner.temp }}/observation-pending-owner-base.log
+          if-no-files-found: error
+          retention-days: 14
       - name: Verify known-private retirement without the fix
         if: runner.os == 'Linux'
         shell: bash

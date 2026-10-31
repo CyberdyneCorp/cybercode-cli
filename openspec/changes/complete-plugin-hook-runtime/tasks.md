@@ -86,3 +86,8 @@ then review reproduced false deletion dispatch when a known private inode/subtre
 replaces a public baseline name. The new silent-retirement correction has two
 real HTTP regressions and a missing-fix behavioral control. Task 5.2 remains open
 for current-source platform acceptance; see the integration evidence above.
+
+The [pending observer owner correction](file-observation-pending-owner.md) bounds
+remove/readmit replacement behind a settling owner while retaining cancellation
+and joined shutdown. Focused and platform acceptance remain required; task 5.2
+stays open.

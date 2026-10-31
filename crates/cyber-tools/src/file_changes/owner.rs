@@ -28,6 +28,9 @@ const RECONCILE: Duration = Duration::from_secs(3);
 #[derive(Default)]
 struct Membership {
     sessions: BTreeMap<String, CancellationToken>,
+    /// Readmission reuses this owner while the previous incarnation settles.
+    /// Cancelling an empty pending owner would grow an unbounded join chain.
+    waiting_for_previous: bool,
     /// Keep only the newest committed acknowledgement per current Session.
     /// Both maps share the 256-Session bound; input bursts cannot grow a queue.
     renewals: BTreeMap<String, Renewal>,
@@ -43,8 +46,8 @@ impl Membership {
         self.renewals.remove(session);
         self.scopes.remove(session);
     }
-    fn is_empty(&self) -> bool {
-        self.sessions.is_empty()
+    fn can_stop(&self) -> bool {
+        self.sessions.is_empty() && !self.waiting_for_previous
     }
 }
 
@@ -69,15 +72,20 @@ impl Registry {
             }
             let mut members = entry.members.lock().unwrap_or_else(PoisonError::into_inner);
             members.remove(session);
-            if members.is_empty() {
+            if members.can_stop() {
                 entry.cancel.cancel();
             }
         }
     }
 }
 impl Entry {
-    fn add(&self, host: &BuiltinHost, session: &str) {
+    fn add_if_live(&self, host: &BuiltinHost, session: &str) -> bool {
         let mut members = self.members.lock().unwrap_or_else(PoisonError::into_inner);
+        // Activation may cancel an empty pending owner. Serialize admission with
+        // that decision rather than adding an already-cancelled child token.
+        if self.cancel.is_cancelled() {
+            return false;
+        }
         if members.sessions.contains_key(session) || members.sessions.len() < MAX_SESSIONS {
             members
                 .sessions
@@ -91,6 +99,7 @@ impl Entry {
                 "FileChanged coverage unavailable: Session limit reached",
             );
         }
+        true
     }
 }
 
@@ -115,9 +124,8 @@ impl Observers {
             .retain(|_, entry| !entry.task.is_finished());
         registry.remove_other_memberships(&path, &info.id);
         if let Some(entry) = registry.entries.get(&path)
-            && !entry.cancel.is_cancelled()
+            && entry.add_if_live(host, &info.id)
         {
-            entry.add(host, &info.id);
             return;
         }
         let previous = registry.entries.remove(&path);
@@ -132,6 +140,7 @@ impl Observers {
         let cancel = CancellationToken::new();
         let members = Arc::new(Mutex::new(Membership {
             sessions: BTreeMap::from([(info.id.clone(), cancel.child_token())]),
+            waiting_for_previous: previous.is_some(),
             renewals: BTreeMap::new(),
             scopes: BTreeSet::new(),
             explicit: Hints::default(),
@@ -144,6 +153,13 @@ impl Observers {
         let task = executor.spawn(async move {
             if let Some(previous) = previous {
                 let _ = previous.task.await;
+            }
+            {
+                let mut members = membership.lock().unwrap_or_else(PoisonError::into_inner);
+                members.waiting_for_previous = false;
+                if members.sessions.is_empty() {
+                    owner.cancel();
+                }
             }
             run(weak, root, directory, membership, owner).await;
         });
@@ -210,7 +226,7 @@ impl Observers {
         for entry in registry.entries.values() {
             let mut members = entry.members.lock().unwrap_or_else(PoisonError::into_inner);
             members.remove(session);
-            if members.is_empty() {
+            if members.can_stop() {
                 entry.cancel.cancel();
             }
         }
@@ -858,6 +874,96 @@ async fn start_observation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn readmission_reuses_one_pending_replacement_until_previous_owner_settles() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let store = Arc::new(
+            cyber_store::Store::open(cyber_store::StoreOptions::new(
+                cyber_core::paths::DatabaseLocation::Memory,
+                cyber_server::runtime::Runtime::registry(),
+            ))
+            .unwrap(),
+        );
+        let host = BuiltinHost::new(crate::HostOptions {
+            store,
+            tool_output_dir: root.join("tool-output"),
+            allowed_dirs: Vec::new(),
+            home: root.join("home"),
+            shell: "bash".into(),
+            config: Arc::new(|_| Ok((serde_json::json!({}), BTreeMap::new()))),
+            global_config_dir: root.join("config"),
+            env: Arc::new(std::collections::HashMap::<String, String>::new()),
+            models: None,
+            temp_dir: root.join("tmp"),
+            sandbox_policy: None,
+            sandbox_helper: None,
+            isolation: crate::IsolationOptions {
+                dangerously_bypass: false,
+                container: false,
+            },
+        });
+        let info: SessionInfo = serde_json::from_value(serde_json::json!({
+            "id": "session", "title": "fixture", "directory": root,
+            "parent_id": null, "agent": "default", "model": "fixture/model",
+            "mode": "default", "created_ms": 0
+        }))
+        .unwrap();
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let held = Arc::clone(&gate);
+        let previous = tokio::spawn(async move { held.notified().await });
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let observers = Observers(Mutex::new(Registry {
+            entries: BTreeMap::from([(
+                root.clone(),
+                Entry {
+                    members: Arc::new(Mutex::new(Membership::default())),
+                    cancel,
+                    task: previous,
+                },
+            )]),
+            closed: false,
+        }));
+        let mut replacements = std::collections::HashSet::new();
+        let mut removed_tokens_cancelled = true;
+        for _ in 0..256 {
+            observers.refresh(&host, &info);
+            let token = {
+                let registry = observers.0.lock().unwrap();
+                let entry = &registry.entries[&root];
+                replacements.insert(entry.task.id());
+                member_cancellation(&entry.members, &info.id).unwrap()
+            };
+            observers.remove(&info.id);
+            removed_tokens_cancelled &= token.is_cancelled();
+        }
+        observers.refresh(&host, &info);
+        let final_token = {
+            let registry = observers.0.lock().unwrap();
+            let entry = &registry.entries[&root];
+            replacements.insert(entry.task.id());
+            member_cancellation(&entry.members, &info.id).unwrap()
+        };
+        let final_membership_live = !final_token.is_cancelled();
+        gate.notify_one();
+        observers.shutdown().await;
+        assert!(removed_tokens_cancelled);
+        assert!(
+            final_membership_live,
+            "readmission needs live callback authority"
+        );
+        assert!(
+            final_token.is_cancelled(),
+            "shutdown must revoke pending authority"
+        );
+        assert_eq!(
+            replacements.len(),
+            1,
+            "readmission must not grow a task chain behind a settling owner"
+        );
+    }
 
     #[test]
     fn removing_membership_cancels_held_delivery_without_stopping_other_members() {
