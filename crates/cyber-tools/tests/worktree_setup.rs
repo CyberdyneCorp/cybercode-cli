@@ -2692,6 +2692,104 @@ async fn cwd_changed_idle_exit_is_committed_once_and_replay_is_silent() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn cwd_changed_failed_idle_exit_commit_is_silent_and_retry_commits_once() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use support::flow::{call, text};
+
+    let flow = worktree_flow(vec![
+        call("enter", "enter_worktree", json!({"name":"failed-cwd-exit"})),
+        text("done"),
+    ]);
+    let recorder = CwdRecorder::start(false).await;
+    recorder.attach(&flow);
+    let id = flow.session("default").await;
+    flow.prompt(&id, "enter and finish").await;
+    flow.settle_within(&id, Duration::from_secs(60)).await;
+    let entered = recorder.events();
+    assert_eq!(entered.len(), 1);
+    assert_cwd_transition(&flow, &id, &entered[0]);
+    let directory = flow.runtime.state(&id).await.unwrap().info.directory;
+    assert_ne!(directory, flow.f.repo.display().to_string());
+
+    let attempted = Arc::new(AtomicBool::new(false));
+    let observed = Arc::clone(&attempted);
+    let session = id.clone();
+    flow.f
+        .store
+        .set_append_fault(Some(Arc::new(move |owner, event| {
+            let refuse = owner == session && event.kind == "session.worktree.exited.1";
+            if refuse {
+                observed.store(true, Ordering::SeqCst);
+            }
+            refuse
+        })));
+    let failed = tokio::time::timeout(
+        Duration::from_secs(30),
+        flow.runtime.exit_idle_worktree(&id),
+    )
+    .await;
+    flow.f.store.set_append_fault(None);
+    let error = failed.expect("failed commit settles").unwrap_err();
+    assert!(attempted.load(Ordering::SeqCst));
+    assert!(
+        error.to_string().contains("injected append fault"),
+        "{error}"
+    );
+    assert_eq!(
+        flow.runtime.state(&id).await.unwrap().info.directory,
+        directory
+    );
+    assert_eq!(
+        recorder.events(),
+        entered,
+        "a failed commit emits no CwdChanged"
+    );
+    assert!(
+        cwd_history(&flow, &id)
+            .iter()
+            .all(|event| event.kind != "session.worktree.exited.1")
+    );
+
+    tokio::time::timeout(
+        Duration::from_secs(30),
+        flow.runtime.exit_idle_worktree(&id),
+    )
+    .await
+    .expect("retry settles")
+    .unwrap()
+    .expect("retry commits the idle exit");
+    assert_eq!(
+        flow.runtime.state(&id).await.unwrap().info.directory,
+        flow.f.repo.display().to_string()
+    );
+    let events = recorder.events();
+    assert_eq!(events.len(), 2, "{events:?}");
+    assert_cwd_transition(&flow, &id, &events[1]);
+    assert_eq!(events[1]["transition"], "session.worktree.exited.1");
+    assert_eq!(events[1]["previous_directory"], directory);
+    assert_eq!(
+        cwd_history(&flow, &id)
+            .iter()
+            .filter(|event| event.kind == "session.worktree.exited.1")
+            .count(),
+        1
+    );
+    assert!(
+        flow.runtime
+            .exit_idle_worktree(&id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        recorder.events(),
+        events,
+        "an already exited Session is silent"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn cwd_changed_does_not_observe_permission_refusal() {
     use support::flow::{call, text};
     let flow = worktree_flow(vec![
