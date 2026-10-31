@@ -85,3 +85,15 @@ and 24 real HTTP cases each. Component/helper counts and log hashes remain
 explicit in the receipt. This confirms the earlier direct-branch acceptance on
 the actual PR composition; four broader PR checks were still running when this
 receipt was recorded. Task 5.2 remains open for their results and merge review.
+
+## Composition after the independent Setup correction
+
+PR #86 merged at `92a3240d`, correcting only the Setup design. The
+[composition receipt](evidence/file-observation-post86-composition.json) binds the
+prospective PR #85 tree `d8b104a7d4573f2ebcd33e2333d00dbf95d6a5d4` to that
+base and the original tested head. Compared with tested tree `119568e94f`, only
+`setup-design.md` differs; executable, test, build and workflow inputs are identical.
+The actual combined tree passes local strict OpenSpec (114 items), spec lint
+(0 errors, 25 warnings) and whitespace checks. Original CI is not claimed to have
+tested the new full documentation tree. The Linux workspace job remains active;
+task 5.2 stays open for its result and final merge review.
