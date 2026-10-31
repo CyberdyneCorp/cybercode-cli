@@ -57,6 +57,12 @@ writer thread and a thread-local one-shot arm, so parallel tests do not share th
 fault. Installing the callback performs no database writes and must not consume
 the arm. Hook installation does not add a production fault-injection API.
 
+The Windows nextest profile selects the portable `writer::tests::` module as well
+as the complete `location_activity` binary. This ensures the committed-WAL error,
+known deferred rollback and runtime lost-ack case require actual Windows
+execution; Linux/macOS already select the full workspace. Local nextest listing
+checks selection only and is not native Windows acceptance.
+
 Locally on macOS, all 49 Store tests (including the process-kill recovery test)
 and all 13 Location activity tests pass after the fix. Scoped Clippy for all Store
 targets and the actual Location test target passes with warnings denied. Formatting,
