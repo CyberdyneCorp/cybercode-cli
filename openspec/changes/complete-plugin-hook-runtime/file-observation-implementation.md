@@ -6,6 +6,13 @@ this is not an event without a producer. The #76 foundations milestone merged at
 contract. The [goal delivery record](../../../docs/goal-delivery.md) distinguishes
 that milestone from native plugin activation and the remaining producer work.
 
+The [acceptance audit](file-observation-acceptance.md) now records the complete
+producer contract and composed native results. At `01535d49`, Linux/macOS/Windows
+pass the full focused workflow, including both formerly Unix-only alias-retarget
+cases, 17 Store/runtime cases and 24 HTTP cases on every platform. Relevant PR
+checks and final merge review remain required before closing task 5.2. The
+sections below retain historical implementation and incremental results.
+
 The [pending-owner correction](file-observation-pending-owner.md) passed 58
 file-observation library tests and 24 actual HTTP lifecycle tests locally,
 including after integration with main at `550e9b39`. Its missing-fix control

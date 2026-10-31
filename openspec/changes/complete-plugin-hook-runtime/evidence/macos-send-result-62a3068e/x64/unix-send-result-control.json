@@ -1,0 +1,79 @@
+{
+  "scope": "Deterministic fault-injected verifier regression, not native confinement acceptance.",
+  "sources": [
+    "macos_datagram_send.h",
+    "macos_datagram_send_test.c"
+  ],
+  "source_sha256": "53afe42b7a5657591f70ac305745a29ab7633b61c793f145a5d8b6a017eeddf3",
+  "legacy_source_sha256": "38f398f51a6a7ce4bed476a76d8cffb1236c53f160a36c6711e1c74889cb8292",
+  "fixed": [
+    {
+      "case": "zero-stale-EPERM",
+      "attempted": 1,
+      "calls": 1,
+      "returned": 0,
+      "error": 0,
+      "outcome": "E",
+      "stage": "send_size",
+      "has_return": 1
+    },
+    {
+      "case": "short-stale-EACCES",
+      "attempted": 1,
+      "calls": 1,
+      "returned": 7,
+      "error": 0,
+      "outcome": "E",
+      "stage": "send_size",
+      "has_return": 1
+    },
+    {
+      "case": "failed-EACCES",
+      "attempted": 1,
+      "calls": 1,
+      "returned": -1,
+      "error": 13,
+      "outcome": "D",
+      "stage": "",
+      "has_return": 0
+    },
+    {
+      "case": "failed-EPERM",
+      "attempted": 1,
+      "calls": 1,
+      "returned": -1,
+      "error": 1,
+      "outcome": "D",
+      "stage": "",
+      "has_return": 0
+    },
+    {
+      "case": "failed-EINVAL",
+      "attempted": 1,
+      "calls": 1,
+      "returned": -1,
+      "error": 22,
+      "outcome": "E",
+      "stage": "send",
+      "has_return": 1
+    },
+    {
+      "case": "setup-with-stale-EPERM",
+      "attempted": 0,
+      "calls": 0,
+      "outcome": "E",
+      "stage": "send_setup",
+      "has_return": 0
+    }
+  ],
+  "invalid_legacy_guard": {
+    "case": "zero-stale-EPERM",
+    "attempted": 1,
+    "calls": 1,
+    "returned": 0,
+    "error": 1,
+    "outcome": "D",
+    "stage": "",
+    "has_return": 0
+  }
+}

@@ -1,0 +1,992 @@
+{
+  "recorded_at": "2026-10-31T13:01:11.488Z",
+  "platform": "darwin",
+  "architecture": "arm64",
+  "kernel_release": "24.6.0",
+  "sources": [
+    "macos_private_ipc.mts",
+    "macos_policy.mts",
+    "macos_rights.h",
+    "macos_datagram_send.h",
+    "macos_datagram.h",
+    "macos_datagram_race.h",
+    "macos_datagram_owner.mts",
+    "macos_datagram_owner.c",
+    "fixture_native.c",
+    "process_policy.h",
+    "macos_exec.c"
+  ],
+  "source_sha256": "cea84ef0e7df78eb6397dcc9c7e7c1a83516f140b683ad76eafbec8e55386e80",
+  "target_sha256": "357232f577b97eb6e95b3aa830f96580ceb70eb855f86d389b165c369808ce15",
+  "receiver_startup_controls": {
+    "missing_program_refused": true,
+    "failed_bind_refused": true
+  },
+  "rows": [
+    {
+      "name": "unconfined",
+      "flags": {
+        "read": true,
+        "write": true,
+        "shell": true,
+        "unrestricted": true
+      },
+      "observed": {
+        "started": true,
+        "pid": 2642,
+        "private_unix": [
+          true,
+          true
+        ],
+        "private_peer_checks": 8,
+        "private_peer_matches": true,
+        "hardlink_created": true,
+        "symlink_created": true,
+        "private_aliases": [
+          true,
+          true
+        ],
+        "rights": {
+          "sent": true,
+          "original_closed": true,
+          "token": true,
+          "truncated": false,
+          "received": true,
+          "same_inode": true,
+          "readable": true,
+          "written": true,
+          "cloexec": true
+        },
+        "rights_path_replaced": true,
+        "private_datagram": [
+          true,
+          true,
+          true
+        ],
+        "datagram_symlink_created": true,
+        "datagram_race": {
+          "private_control": true,
+          "host_control": true,
+          "settled": true,
+          "failed": false,
+          "attempts": 16,
+          "private_acks": 7,
+          "host_acks": 9,
+          "refused": 0,
+          "swaps": 18,
+          "failure_stage": "",
+          "failure_errno": 0,
+          "failure_return": null
+        },
+        "dgram_connect": {
+          "connected": true,
+          "sent": true,
+          "acknowledged": true
+        },
+        "dgram_sendto": {
+          "connected": false,
+          "sent": true,
+          "acknowledged": true
+        },
+        "dgram_sendmsg": {
+          "connected": false,
+          "sent": true,
+          "acknowledged": true
+        },
+        "dgram_alias_connect": {
+          "connected": true,
+          "sent": true,
+          "acknowledged": true
+        },
+        "dgram_alias_sendto": {
+          "connected": false,
+          "sent": true,
+          "acknowledged": true
+        },
+        "dgram_alias_sendmsg": {
+          "connected": false,
+          "sent": true,
+          "acknowledged": true
+        },
+        "direct": {
+          "connected": true,
+          "sent": true,
+          "acknowledged": true
+        },
+        "hardlink": {
+          "connected": true,
+          "sent": true,
+          "acknowledged": true
+        },
+        "symlink": {
+          "connected": true,
+          "sent": true,
+          "acknowledged": true
+        }
+      },
+      "rights_payload": "AB",
+      "rights_link_count": 0,
+      "owner_receipts": 3,
+      "owner_received_fixture": true,
+      "datagram_receipts": 16,
+      "owner_datagram_received_fixture": true
+    },
+    {
+      "name": "r0w0s0",
+      "flags": {
+        "read": false,
+        "write": false,
+        "shell": false
+      },
+      "observed": {
+        "started": true,
+        "pid": 2645,
+        "private_unix": [
+          true,
+          true
+        ],
+        "private_peer_checks": 8,
+        "private_peer_matches": true,
+        "hardlink_created": false,
+        "symlink_created": true,
+        "private_aliases": [
+          true,
+          true
+        ],
+        "rights": {
+          "sent": true,
+          "original_closed": true,
+          "token": true,
+          "truncated": false,
+          "received": true,
+          "same_inode": true,
+          "readable": true,
+          "written": true,
+          "cloexec": true
+        },
+        "rights_path_replaced": true,
+        "private_datagram": [
+          true,
+          true,
+          true
+        ],
+        "datagram_symlink_created": true,
+        "datagram_race": {
+          "private_control": true,
+          "host_control": false,
+          "settled": true,
+          "failed": false,
+          "attempts": 16,
+          "private_acks": 8,
+          "host_acks": 0,
+          "refused": 8,
+          "swaps": 16,
+          "failure_stage": "",
+          "failure_errno": 0,
+          "failure_return": null
+        },
+        "dgram_connect": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_sendto": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_sendmsg": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_alias_connect": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_alias_sendto": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_alias_sendmsg": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "direct": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "hardlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "symlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        }
+      },
+      "rights_payload": "AB",
+      "rights_link_count": 0,
+      "owner_receipts": 0,
+      "owner_received_fixture": false,
+      "datagram_receipts": 0,
+      "owner_datagram_received_fixture": false
+    },
+    {
+      "name": "r0w0s1",
+      "flags": {
+        "read": false,
+        "write": false,
+        "shell": true
+      },
+      "observed": {
+        "started": true,
+        "pid": 2647,
+        "private_unix": [
+          true,
+          true
+        ],
+        "private_peer_checks": 8,
+        "private_peer_matches": true,
+        "hardlink_created": false,
+        "symlink_created": true,
+        "private_aliases": [
+          true,
+          true
+        ],
+        "rights": {
+          "sent": true,
+          "original_closed": true,
+          "token": true,
+          "truncated": false,
+          "received": true,
+          "same_inode": true,
+          "readable": true,
+          "written": true,
+          "cloexec": true
+        },
+        "rights_path_replaced": true,
+        "private_datagram": [
+          true,
+          true,
+          true
+        ],
+        "datagram_symlink_created": true,
+        "datagram_race": {
+          "private_control": true,
+          "host_control": false,
+          "settled": true,
+          "failed": false,
+          "attempts": 16,
+          "private_acks": 8,
+          "host_acks": 0,
+          "refused": 8,
+          "swaps": 16,
+          "failure_stage": "",
+          "failure_errno": 0,
+          "failure_return": null
+        },
+        "dgram_connect": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_sendto": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_sendmsg": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_alias_connect": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_alias_sendto": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_alias_sendmsg": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "direct": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "hardlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "symlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        }
+      },
+      "rights_payload": "AB",
+      "rights_link_count": 0,
+      "owner_receipts": 0,
+      "owner_received_fixture": false,
+      "datagram_receipts": 0,
+      "owner_datagram_received_fixture": false
+    },
+    {
+      "name": "r0w1s0",
+      "flags": {
+        "read": false,
+        "write": true,
+        "shell": false
+      },
+      "observed": {
+        "started": true,
+        "pid": 2650,
+        "private_unix": [
+          true,
+          true
+        ],
+        "private_peer_checks": 8,
+        "private_peer_matches": true,
+        "hardlink_created": false,
+        "symlink_created": true,
+        "private_aliases": [
+          true,
+          true
+        ],
+        "rights": {
+          "sent": true,
+          "original_closed": true,
+          "token": true,
+          "truncated": false,
+          "received": true,
+          "same_inode": true,
+          "readable": true,
+          "written": true,
+          "cloexec": true
+        },
+        "rights_path_replaced": true,
+        "private_datagram": [
+          true,
+          true,
+          true
+        ],
+        "datagram_symlink_created": true,
+        "datagram_race": {
+          "private_control": true,
+          "host_control": false,
+          "settled": true,
+          "failed": false,
+          "attempts": 16,
+          "private_acks": 8,
+          "host_acks": 0,
+          "refused": 8,
+          "swaps": 16,
+          "failure_stage": "",
+          "failure_errno": 0,
+          "failure_return": null
+        },
+        "dgram_connect": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_sendto": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_sendmsg": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_alias_connect": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_alias_sendto": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_alias_sendmsg": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "direct": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "hardlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "symlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        }
+      },
+      "rights_payload": "AB",
+      "rights_link_count": 0,
+      "owner_receipts": 0,
+      "owner_received_fixture": false,
+      "datagram_receipts": 0,
+      "owner_datagram_received_fixture": false
+    },
+    {
+      "name": "r0w1s1",
+      "flags": {
+        "read": false,
+        "write": true,
+        "shell": true
+      },
+      "observed": {
+        "started": true,
+        "pid": 2652,
+        "private_unix": [
+          true,
+          true
+        ],
+        "private_peer_checks": 8,
+        "private_peer_matches": true,
+        "hardlink_created": false,
+        "symlink_created": true,
+        "private_aliases": [
+          true,
+          true
+        ],
+        "rights": {
+          "sent": true,
+          "original_closed": true,
+          "token": true,
+          "truncated": false,
+          "received": true,
+          "same_inode": true,
+          "readable": true,
+          "written": true,
+          "cloexec": true
+        },
+        "rights_path_replaced": true,
+        "private_datagram": [
+          true,
+          true,
+          true
+        ],
+        "datagram_symlink_created": true,
+        "datagram_race": {
+          "private_control": true,
+          "host_control": false,
+          "settled": true,
+          "failed": false,
+          "attempts": 16,
+          "private_acks": 7,
+          "host_acks": 0,
+          "refused": 9,
+          "swaps": 17,
+          "failure_stage": "",
+          "failure_errno": 0,
+          "failure_return": null
+        },
+        "dgram_connect": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_sendto": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_sendmsg": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_alias_connect": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_alias_sendto": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_alias_sendmsg": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "direct": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "hardlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "symlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        }
+      },
+      "rights_payload": "AB",
+      "rights_link_count": 0,
+      "owner_receipts": 0,
+      "owner_received_fixture": false,
+      "datagram_receipts": 0,
+      "owner_datagram_received_fixture": false
+    },
+    {
+      "name": "r1w0s0",
+      "flags": {
+        "read": true,
+        "write": false,
+        "shell": false
+      },
+      "observed": {
+        "started": true,
+        "pid": 2655,
+        "private_unix": [
+          true,
+          true
+        ],
+        "private_peer_checks": 8,
+        "private_peer_matches": true,
+        "hardlink_created": false,
+        "symlink_created": true,
+        "private_aliases": [
+          true,
+          true
+        ],
+        "rights": {
+          "sent": true,
+          "original_closed": true,
+          "token": true,
+          "truncated": false,
+          "received": true,
+          "same_inode": true,
+          "readable": true,
+          "written": true,
+          "cloexec": true
+        },
+        "rights_path_replaced": true,
+        "private_datagram": [
+          true,
+          true,
+          true
+        ],
+        "datagram_symlink_created": true,
+        "datagram_race": {
+          "private_control": true,
+          "host_control": false,
+          "settled": true,
+          "failed": false,
+          "attempts": 16,
+          "private_acks": 8,
+          "host_acks": 0,
+          "refused": 8,
+          "swaps": 16,
+          "failure_stage": "",
+          "failure_errno": 0,
+          "failure_return": null
+        },
+        "dgram_connect": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_sendto": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_sendmsg": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_alias_connect": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_alias_sendto": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_alias_sendmsg": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "direct": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "hardlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "symlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        }
+      },
+      "rights_payload": "AB",
+      "rights_link_count": 0,
+      "owner_receipts": 0,
+      "owner_received_fixture": false,
+      "datagram_receipts": 0,
+      "owner_datagram_received_fixture": false
+    },
+    {
+      "name": "r1w0s1",
+      "flags": {
+        "read": true,
+        "write": false,
+        "shell": true
+      },
+      "observed": {
+        "started": true,
+        "pid": 2659,
+        "private_unix": [
+          true,
+          true
+        ],
+        "private_peer_checks": 8,
+        "private_peer_matches": true,
+        "hardlink_created": false,
+        "symlink_created": true,
+        "private_aliases": [
+          true,
+          true
+        ],
+        "rights": {
+          "sent": true,
+          "original_closed": true,
+          "token": true,
+          "truncated": false,
+          "received": true,
+          "same_inode": true,
+          "readable": true,
+          "written": true,
+          "cloexec": true
+        },
+        "rights_path_replaced": true,
+        "private_datagram": [
+          true,
+          true,
+          true
+        ],
+        "datagram_symlink_created": true,
+        "datagram_race": {
+          "private_control": true,
+          "host_control": false,
+          "settled": true,
+          "failed": false,
+          "attempts": 16,
+          "private_acks": 8,
+          "host_acks": 0,
+          "refused": 8,
+          "swaps": 16,
+          "failure_stage": "",
+          "failure_errno": 0,
+          "failure_return": null
+        },
+        "dgram_connect": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_sendto": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_sendmsg": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_alias_connect": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_alias_sendto": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_alias_sendmsg": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "direct": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "hardlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "symlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        }
+      },
+      "rights_payload": "AB",
+      "rights_link_count": 0,
+      "owner_receipts": 0,
+      "owner_received_fixture": false,
+      "datagram_receipts": 0,
+      "owner_datagram_received_fixture": false
+    },
+    {
+      "name": "r1w1s0",
+      "flags": {
+        "read": true,
+        "write": true,
+        "shell": false
+      },
+      "observed": {
+        "started": true,
+        "pid": 2662,
+        "private_unix": [
+          true,
+          true
+        ],
+        "private_peer_checks": 8,
+        "private_peer_matches": true,
+        "hardlink_created": false,
+        "symlink_created": true,
+        "private_aliases": [
+          true,
+          true
+        ],
+        "rights": {
+          "sent": true,
+          "original_closed": true,
+          "token": true,
+          "truncated": false,
+          "received": true,
+          "same_inode": true,
+          "readable": true,
+          "written": true,
+          "cloexec": true
+        },
+        "rights_path_replaced": true,
+        "private_datagram": [
+          true,
+          true,
+          true
+        ],
+        "datagram_symlink_created": true,
+        "datagram_race": {
+          "private_control": true,
+          "host_control": false,
+          "settled": true,
+          "failed": false,
+          "attempts": 16,
+          "private_acks": 8,
+          "host_acks": 0,
+          "refused": 8,
+          "swaps": 16,
+          "failure_stage": "",
+          "failure_errno": 0,
+          "failure_return": null
+        },
+        "dgram_connect": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_sendto": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_sendmsg": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_alias_connect": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_alias_sendto": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_alias_sendmsg": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "direct": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "hardlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "symlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        }
+      },
+      "rights_payload": "AB",
+      "rights_link_count": 0,
+      "owner_receipts": 0,
+      "owner_received_fixture": false,
+      "datagram_receipts": 0,
+      "owner_datagram_received_fixture": false
+    },
+    {
+      "name": "r1w1s1",
+      "flags": {
+        "read": true,
+        "write": true,
+        "shell": true
+      },
+      "observed": {
+        "started": true,
+        "pid": 2664,
+        "private_unix": [
+          true,
+          true
+        ],
+        "private_peer_checks": 8,
+        "private_peer_matches": true,
+        "hardlink_created": false,
+        "symlink_created": true,
+        "private_aliases": [
+          true,
+          true
+        ],
+        "rights": {
+          "sent": true,
+          "original_closed": true,
+          "token": true,
+          "truncated": false,
+          "received": true,
+          "same_inode": true,
+          "readable": true,
+          "written": true,
+          "cloexec": true
+        },
+        "rights_path_replaced": true,
+        "private_datagram": [
+          true,
+          true,
+          true
+        ],
+        "datagram_symlink_created": true,
+        "datagram_race": {
+          "private_control": true,
+          "host_control": false,
+          "settled": true,
+          "failed": false,
+          "attempts": 16,
+          "private_acks": 7,
+          "host_acks": 0,
+          "refused": 9,
+          "swaps": 17,
+          "failure_stage": "",
+          "failure_errno": 0,
+          "failure_return": null
+        },
+        "dgram_connect": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_sendto": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_sendmsg": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_alias_connect": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_alias_sendto": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "dgram_alias_sendmsg": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "direct": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "hardlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        },
+        "symlink": {
+          "connected": false,
+          "sent": false,
+          "acknowledged": false
+        }
+      },
+      "rights_payload": "AB",
+      "rights_link_count": 0,
+      "owner_receipts": 0,
+      "owner_received_fixture": false,
+      "datagram_receipts": 0,
+      "owner_datagram_received_fixture": false
+    }
+  ],
+  "scope": "Experimental pre-runtime native UNIX stream/datagram/descriptor controls; complete IPC/proxy/ownership and App acceptance remain required."
+}

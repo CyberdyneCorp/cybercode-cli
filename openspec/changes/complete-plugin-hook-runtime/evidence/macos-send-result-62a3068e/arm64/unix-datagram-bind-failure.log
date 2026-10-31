@@ -1,0 +1,20 @@
+node:internal/modules/run_main:123
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: private datagram race control failed: {"name":"unconfined","flags":{"read":true,"write":true,"shell":true,"unrestricted":true},"observed":{"started":true,"pid":2706,"private_unix":[true,true],"private_peer_checks":8,"private_peer_matches":true,"hardlink_created":true,"symlink_created":true,"private_aliases":[true,true],"rights":{"sent":true,"original_closed":true,"token":true,"truncated":false,"received":true,"same_inode":true,"readable":true,"written":true,"cloexec":true},"rights_path_replaced":true,"private_datagram":[true,true,true],"datagram_symlink_created":true,"datagram_race":{"private_control":false,"host_control":false,"settled":false,"failed":false,"attempts":0,"private_acks":0,"host_acks":0,"refused":0,"swaps":0,"failure_stage":"client_bind","failure_errno":48,"failure_return":null},"dgram_connect":{"connected":true,"sent":true,"acknowledged":true},"dgram_sendto":{"connected":false,"sent":true,"acknowledged":true},"dgram_sendmsg":{"connected":false,"sent":true,"acknowledged":true},"dgram_alias_connect":{"connected":true,"sent":true,"acknowledged":true},"dgram_alias_sendto":{"connected":false,"sent":true,"acknowledged":true},"dgram_alias_sendmsg":{"connected":false,"sent":true,"acknowledged":true},"direct":{"connected":true,"sent":true,"acknowledged":true},"hardlink":{"connected":true,"sent":true,"acknowledged":true},"symlink":{"connected":true,"sent":true,"acknowledged":true}},"rights_payload":"AB","rights_link_count":0,"kernel_diagnostic":{"pid":2706,"status":0,"signal":null,"error":"","stderr":"","output":"[]"},"owner_receipts":3,"owner_received_fixture":true,"datagram_receipts":6,"owner_datagram_received_fixture":true}
+
+false !== true
+
+    at check (file:///Users/runner/work/_temp/macos-datagram-bind-failure/macos_private_ipc.mts:150:10)
+    at file:///Users/runner/work/_temp/macos-datagram-bind-failure/macos_private_ipc.mts:207:5
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: false,
+  expected: true,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v22.23.4

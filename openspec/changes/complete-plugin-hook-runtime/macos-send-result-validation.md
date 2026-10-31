@@ -112,3 +112,27 @@ failed); spec lint (zero errors, 25 warnings). The evidence report source hashes
 were independently recomputed against the actual fixture bytes. No Rust tests
 were run for this probe-only change. Hosted macOS arm64/x64 and the configured
 Linux checks have not yet been run on this revision.
+
+## Corrected hosted result at 62a3068e
+
+Both [Intel](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41202794586/job/124541776102)
+and [arm64](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41202794586/job/124541775744)
+native signing jobs pass all eight steps. Each has nine real IPC cases and all
+six deterministic send-result cases, plus the precise missing-guard failure and
+original scope, scratch, descriptor and path controls. No native assertion,
+unknown-error rule or concurrent mutation was relaxed, and no retry was added.
+
+Original reports and logs are retained under
+`evidence/macos-send-result-62a3068e/{x64,arm64}`. Downloaded archive digests
+match GitHub metadata. Both actual tested merges have tree
+`e3d7bbf7b2d76bbc4c309ed14e6931198a4aa865`, equal to source head
+`62a3068e14ab0d54e980f21848a1c3a21af93597`. All declared IPC, native matrix,
+signing/exec and deterministic fixed/legacy source manifests were independently
+recomputed from those Git bytes. The six fixed cases and the invalid legacy
+classification were inspected separately from the real IPC positive evidence.
+
+This accepts the verifier correction for the named platform runs. The historical
+unknown native race cause remains unresolved, and full IPC/runtime compatibility,
+production native admission and the Linux design decision remain open. The
+remaining broad PR checks and merge review are recorded separately; these native
+results do not imply they completed.

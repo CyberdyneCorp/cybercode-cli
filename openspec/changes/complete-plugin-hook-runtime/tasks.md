@@ -55,10 +55,13 @@ also have source-bound native receipts. Its [trusted-worker capacity/recovery ca
 passed on x64/arm64 in run 41049265434, with source-bound receipts retained. These
 experiments change no production policy or accepted support floor.
 
-The [raw datagram send-result correction](macos-send-result-validation.md) adds a
-real copied-fixture regression for stale errno after a zero return and retains
-current-source local evidence. Hosted verification and native admission remain
-required; this correction does not close tasks 2.1–2.4.
+The [raw datagram send-result correction](macos-send-result-validation.md) retains
+raw syscall results and tests the shared verifier helpers with six deterministic
+fault-injection cases and a precise missing-guard control. Both corrected hosted
+macOS jobs at `62a3068e` passed those controls and the unchanged real IPC matrix.
+The control is verifier evidence, not native confinement acceptance. The historical
+unknown race cause and production native admission remain open; this correction
+does not close tasks 2.1–2.4.
 
 ## 3. Host contribution lifecycle
 
@@ -95,6 +98,11 @@ remains required. Task 5.3 stays open.
 
 Task 5.2 is in progress. The full focused suite at `3e852288` passed Linux/macOS/Windows. At `c0cc40e3`, complete Linux/Windows jobs also passed all 18 HTTP/runtime scenarios, including idle-return ownership, archive/resume and native burst recovery; macOS remained queued. Review then reproduced an oversized metadata baseline within the count/path limits. The new publication/batch byte-budget fix passes 63 local source-library tests and scoped Clippy, and its focused owner/application regression workflow at `5aa08018` now passes on Linux/macOS/Windows. Combined producer acceptance is pending on this integration branch. Remaining resource/lifecycle acceptance, broader workspace checks and substantive review are still open. See [the scope integration design](file-observation-scope-design.md) and [implementation notes](file-observation-implementation.md).
 
+The [DirectoryAdded prerequisite proposal](directory-added-design.md) maps the
+unimplemented additional-directory owner operation to permission, sandbox and
+Context Source publication at a Safe Boundary. Tasks D1–D6 require review and
+implementation; no standalone emitter or successful addition is claimed.
+
 Setup ownership is expanded in [setup-design.md](setup-design.md). Its Store
 epoch and exact-directory marker choices are proposed for review; marker/schema
 and init behavior are not implemented by this specification. Tasks S1–S6 there
@@ -118,3 +126,11 @@ The [pending observer owner correction](file-observation-pending-owner.md) bound
 remove/readmit replacement behind a settling owner while retaining cancellation
 and joined shutdown. Focused and platform acceptance remain required; task 5.2
 stays open.
+
+## FileChanged acceptance after main integration
+
+Task 5.2 is in progress. The [acceptance audit](file-observation-acceptance.md) maps the full producer contract to actual native/runtime evidence and records verified Windows retarget coverage and the remaining PR/merge acceptance.
+
+PR #85 now incorporates the accepted Setup design and CwdChanged regression from
+main. Fresh checks of this composed revision and final merge review remain
+required; the earlier focused receipts do not close task 5.2 by themselves.

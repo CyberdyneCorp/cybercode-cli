@@ -1,0 +1,2 @@
+send-result regression failed: zero-stale-EPERM
+{"case":"zero-stale-EPERM","attempted":1,"calls":1,"returned":0,"error":1,"outcome":"D","stage":"","has_return":0}

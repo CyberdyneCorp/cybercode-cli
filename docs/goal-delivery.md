@@ -58,10 +58,18 @@ remaining required before activation. The original tested sources remain on
 `evidence/plugin-native-host-pre-76-merge`. Follow-up #80 merged at `2745b4f0`
 and #83 at `c3bd34c4` on 2026-10-31. These are foundations, diagnostics and the
 observer resource correction; production native admission remains incomplete.
-Continue the first workstream on one follow-up branch,
-`feat/plugin-native-admission-followup`, retaining the same review and acceptance
-gates. The raw datagram send-result correction strengthens measurement and does
-not authorize Linux support changes or production activation.
+PR #84 merged at `dd0c9279` after all 55 configured checks passed on
+`62a3068e`, with one intentional historical diagnostic skip. Its corrected
+native result witness and deterministic missing-guard regression passed Intel
+and arm64; that accepts the verifier correction rather than production native
+admission or the historical unknown race cause.
+
+Continue the first workstream on the single follow-up branch
+`test/file-observer-windows-alias-acceptance`: native Windows retarget acceptance,
+retained source-bound native evidence, and the DirectoryAdded prerequisite design
+for review. Keep native activation and Linux dependency changes behind their
+existing review/acceptance gates. The Setup marker choices and DirectoryAdded
+proposal also require their recorded review before implementation.
 
 Native confinement foundations and regressions exist, but
 production enforcement and the remaining plugin/hook scope are incomplete. The
