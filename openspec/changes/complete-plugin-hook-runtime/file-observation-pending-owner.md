@@ -35,3 +35,12 @@ assertion; compilation failure cannot satisfy the control. The exact control
 was executed locally and failed at that assertion. Platform CI and composed-feature
 acceptance remain required. Task 5.2 stays open, as do the separate plugin native
 admission and protocol gates.
+
+## Composed platform verification at 3f7067dd
+
+The [fresh workflow](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41180219218)
+completed successfully on Linux, macOS and Windows after the main integrations.
+Its exact source is `3f7067dd058b91c11320c99c556b60451b103098`. This supplies
+current composed platform results rather than treating the earlier d689d2f3
+jobs as evidence for later main changes. Full task-5.2 requirement-by-requirement
+acceptance review remains open; native plugin admission is a separate gate.

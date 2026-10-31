@@ -401,3 +401,11 @@ results remain required. CI separately checks both configured and OS-provided
 Python, including direct framework-image resolution. The existing runtime
 bootstrap matrices continue to run independently. All production identity,
 package, lifecycle and support-review gates above remain open.
+
+The deterministic `macos_datagram_send_test.c` compiles the actual shared
+`macos_datagram_send.h` helpers with explicit sendmsg fault injection. It checks
+zero/short returns with stale errno, true permission failures, unknown errors,
+setup-before-send and first-failure preservation. Its copied missing-guard control
+must fail specifically on zero/stale-EPERM classification. These are verifier
+regressions, separate from the unchanged nine-row real IPC/concurrent alias
+matrix; they do not count as native confinement acceptance.

@@ -29,19 +29,45 @@ stages. No error is retried or silently recategorized as a successful exchange.
 
 ## Regression and missing-guard control
 
-A copied fixture substitutes zero with stale EPERM only for sendmsg through the
-r0w1s1 race alias. Its other exchanges, unrestricted control and private positive
-control remain real. The corrected driver must execute and fail the named
-mutation assertion on attempt two, with `send_size`, raw return zero, error zero,
-a settled thread and zero owner host receipts. Compilation or startup failure
-cannot satisfy the control.
+The initial control injected zero with stale EPERM into a copied full IPC matrix,
+then required a second matrix with the old guards to falsely pass. That design
+coupled a deterministic send-result regression to unrelated concurrent alias
+lookups. The corrected control compiles the exact shared send/result helpers in
+`macos_datagram_send_test.c`, with only sendmsg replaced by an explicit fault
+injector. It is verifier regression evidence, not native syscall or confinement
+acceptance. The normal nine-case IPC matrix still performs all real concurrent
+host/private alias replacements and retains every existing assertion.
 
-A separate copy restores the old unconditional errno capture and removes the
-raw-return qualification. That copy must falsely pass all nine cases, including
-at least eight refusal counts in the injected case. This demonstrates that the
-fixture does not reject the injected condition for an unrelated reason. Its
-report is labeled as an invalid legacy-guard counterexample, never acceptance.
-Both copies and the main run still use source-bound reports.
+Six deterministic cases cover zero with stale EPERM, short with stale EACCES,
+actual -1 permission results, -1/EINVAL, and setup refusal before any send. They
+also verify first-failure preservation. The shared helper reports ENAMETOOLONG
+for an oversized socket path instead of leaving stale errno. Only -1 plus a
+permission error can count as refusal; nonnegative and unknown results must fail.
+
+A copied shared header restores both old guards: unconditional errno capture and
+permission classification without an attempted -1 send. The same compiled test
+must execute and fail specifically at `zero-stale-EPERM`, showing raw zero and
+outcome D. Compiler/startup failure cannot satisfy this control. The workflow
+retains both logs and a source-bound report that labels the legacy classification
+invalid. It does not demand that an unrelated native race falsely pass.
+
+## Hosted failure at 3f7067dd
+
+The [Intel job](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41173821688/job/124457138622)
+passed all nine primary IPC rows, then correctly rejected the injected zero send
+at `r0w1s1`. Its legacy comparison failed earlier at the unmodified `r0w0s1` race:
+raw return -1, errno 22, seven private acknowledgements and eight classifications
+as refusals in sixteen attempts. The thread settled and host receipts were zero.
+This new raw-return witness establishes an actual failed send in that copied
+comparison run. It does not establish the cause, nor prove that an earlier
+historical report without a raw result had the same cause.
+
+The failed job remains failed evidence, retained under
+`scripts/probes/plugin-confinement/evidence/macos-send-result-intel-3f7067dd`.
+The archive digest, actual tested merge/head tree equality, and normal IPC
+manifest were independently verified. The deterministic regression removes the
+unrelated-race dependency; it does not fix or accept an unknown native race
+outcome. Unknown send errors still fail the full normal matrix without retries.
 
 ## Evidence and remaining work
 
@@ -57,11 +83,15 @@ result. It cannot establish that send returned -1/EINVAL rather than a short
 nonnegative result with stale errno. The cause of that historical row remains
 unresolved. Fresh native results must use the corrected raw-result witness.
 
-Local arm64/Darwin checks pass all nine normal rows, the six exact workflow steps
-and the original native capability/signature/exec setup. The zero-result control
-fails precisely and its legacy-guard copy reproduces false acceptance. Evidence
-is retained under
-`scripts/probes/plugin-confinement/evidence/macos-send-result-local`.
+The initial local arm64/Darwin checks and copied-matrix counterexample remain
+historical evidence under `scripts/probes/plugin-confinement/evidence/macos-send-result-local`.
+After isolating the regression, all eight exact native-signing workflow steps
+pass locally, including all nine real IPC rows, the native capability matrix,
+signature/exec controls, missing scratch/scope/rights/path controls, and the six
+send-result cases with their precise missing-guard failure. Current-source
+reports/logs are retained under
+`scripts/probes/plugin-confinement/evidence/macos-send-result-deterministic-local`;
+the actual source bytes were independently matched to every report manifest.
 Current-source hosted/runtime/platform acceptance remains required; neither a
 passing diagnostic nor this verifier correction completes production enforcement.
 
@@ -74,9 +104,9 @@ nullable JSON output, cleanup and control specificity. No blocking code or
 security findings remain in this diff. The injected copies remain outside the
 source checkout, and only the corrected normal reports count as positive evidence.
 
-Verification: all nine local normal IPC rows; all six IPC workflow steps,
-including the deliberately failing zero-send case and its invalid legacy-guard
-counterexample; native capability/signature/exec setup; YAML, shell and embedded
+Verification: all nine local normal IPC rows; all eight native-signing workflow steps,
+including the zero/short/unknown/setup cases and its deliberately failing
+legacy-guard counterexample; native capability/signature/exec setup; YAML, shell and embedded
 Python syntax; `git diff --check`; strict OpenSpec validation (114 passed, zero
 failed); spec lint (zero errors, 25 warnings). The evidence report source hashes
 were independently recomputed against the actual fixture bytes. No Rust tests

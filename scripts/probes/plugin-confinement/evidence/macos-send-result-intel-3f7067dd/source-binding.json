@@ -1,0 +1,10 @@
+{
+  "head": "3f7067dd058b91c11320c99c556b60451b103098",
+  "tested_merge": "328e02ef44a1b9259ceece4844117aed4d553765",
+  "tree": "8c841844cbfa7152f4badfac46a903b72002f05d",
+  "verified_tested_merge_matches_head": true,
+  "artifact_id": 13031558479,
+  "artifact_sha256": "8c1696c0618bd351d62122da5a4491d64b290b8a0199a3fc8a4bbf906347e7a2",
+  "verified_actual_ipc_source_bytes": "c5c5989e24f0223fe09f3b41aded63a49606af4a6c62afcfccbc881bdcc7697d",
+  "scope": "Primary nine IPC rows passed, zero-send injection rejected, but legacy comparison failed on a different real -1/EINVAL race before the injected row. Failed job is not accepted platform evidence."
+}

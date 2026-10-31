@@ -36,22 +36,6 @@ static int await_datagram_swap(struct datagram_mutator *state, unsigned previous
     return 1;
 }
 
-struct datagram_failure { const char *stage; int error, has_return; ssize_t returned; };
-
-static char datagram_failed(struct datagram_failure *failure, const char *stage, int error) {
-    if (!failure->stage) { failure->stage = stage; failure->error = error; }
-    return 'E';
-}
-
-static char datagram_send_failure(struct unix_attempt sent, struct datagram_failure *failure) {
-    if (sent.attempted && sent.returned == -1 && (sent.error == EACCES || sent.error == EPERM)) return 'D';
-    if (!failure->stage && sent.attempted) {
-        failure->returned = sent.returned; failure->has_return = 1;
-    }
-    const char *stage = !sent.attempted ? "send_setup" : sent.returned == -1 ? "send" : "send_size";
-    return datagram_failed(failure, stage, sent.error);
-}
-
 /* Returns P for an actual private acknowledgement, A for the owned host,
  * D for a policy refusal and E for any invalid/unknown exchange. */
 static char datagram_race_exchange(int server, const char *scratch, const char *alias, int method,
