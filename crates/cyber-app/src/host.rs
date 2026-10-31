@@ -324,6 +324,22 @@ impl ToolHost for AppHost {
         self.builtin.take_call_metadata(session_id, call_id)
     }
 
+    fn redact_model_text(
+        &self,
+        directory: &str,
+        text: String,
+    ) -> (String, cyber_core::redact::Redactions) {
+        self.builtin.redact_model_text(directory, text)
+    }
+
+    fn take_call_redactions(
+        &self,
+        session_id: &str,
+        call_id: &str,
+    ) -> cyber_core::redact::Redactions {
+        self.builtin.take_call_redactions(session_id, call_id)
+    }
+
     fn take_call_untrusted(
         &self,
         session_id: &str,

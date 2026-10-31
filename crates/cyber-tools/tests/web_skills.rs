@@ -636,19 +636,21 @@ async fn webfetch_summary_budget_case(reserved: bool) {
         }
     }
     let mut fixture = Fixture::new();
+    fixture.env.set("DEPLOY_TOKEN", "plainwordsecretvalue");
     let summary = Arc::new(ScriptedAdapter::new(vec![text("page summary")]));
     fixture.renew_host_with_models(None, Some(Arc::new(Models(summary.clone()))));
     fixture.set_config(
         json!({"permissions":{"webfetch":"allow"},"budgets":{"session":{"max_tokens":205,"enforcement":if reserved {"reserved"} else {"soft"}}}}),
     );
-    let base = serve(|_, _| html("<p>Page evidence</p>")).await;
+    let base =
+        serve(|_, _| html("<p>Page evidence ghp_abcdefgh12345678 plainwordsecretvalue</p>")).await;
     let flow = Flow::with(
         fixture,
         vec![
             call(
                 "call_webfetch",
                 "webfetch",
-                json!({"url":base,"prompt":"summarize"}),
+                json!({"url":format!("{base}/?key=plainwordsecretvalue"),"prompt":"summarize"}),
             ),
             text("unbudgeted extra turn"),
         ],
@@ -666,7 +668,7 @@ async fn webfetch_summary_budget_case(reserved: bool) {
     )
     .await
     .unwrap();
-    assert_eq!(summary.requests().len(), usize::from(!reserved));
+    assert_summary_request_redaction(&summary.requests(), reserved);
     assert_eq!(flow.main.requests().len(), 1);
     let state = flow.runtime.state(&id).await.unwrap();
     let expected_usage = if reserved { (100, 5) } else { (200, 15) };
@@ -685,6 +687,18 @@ async fn webfetch_summary_budget_case(reserved: bool) {
     );
     if !reserved {
         assert!(events.iter().any(|e| e.kind == "budget.exceeded.1"));
+    }
+}
+
+fn assert_summary_request_redaction(requests: &[cyber_llm::LlmRequest], reserved: bool) {
+    assert_eq!(requests.len(), usize::from(!reserved));
+    if !reserved {
+        let request = serde_json::to_string(&requests[0]).unwrap();
+        assert!(
+            !request.contains("abcdefgh12345678") && !request.contains("plainwordsecretvalue"),
+            "summary provider must not receive page or origin credentials: {request}"
+        );
+        assert!(request.contains("[REDACTED:"));
     }
 }
 

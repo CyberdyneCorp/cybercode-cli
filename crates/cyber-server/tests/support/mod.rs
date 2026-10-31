@@ -199,6 +199,7 @@ pub struct Tools {
     pub call_metadata: Mutex<HashMap<String, serde_json::Value>>,
     /// `untrusted` records a call leaves on its settlement, by call id; taken once.
     pub call_untrusted: Mutex<HashMap<String, cyber_core::untrusted::UntrustedRecord>>,
+    pub known_redaction_values: Mutex<Vec<String>>,
     /// A `UserPromptSubmit` hook denying every prompt with this reason.
     pub prompt_denial: Mutex<Option<String>>,
     /// A `UserPromptSubmit` hook that holds each prompt until notified.
@@ -260,6 +261,7 @@ impl Tools {
             hook_effects: Mutex::default(),
             call_metadata: Mutex::default(),
             call_untrusted: Mutex::default(),
+            known_redaction_values: Mutex::default(),
             prompt_denial: Mutex::default(),
             prompt_hold: Mutex::default(),
             prompt_reached: tokio::sync::Semaphore::new(0),
@@ -297,6 +299,18 @@ impl LocationGuard for TestLocationGuard {
 }
 
 impl ToolHost for Tools {
+    fn redact_model_text(
+        &self,
+        _directory: &str,
+        text: String,
+    ) -> (String, cyber_core::redact::Redactions) {
+        cyber_core::redact::Redactor::new(
+            &Default::default(),
+            self.known_redaction_values.lock().unwrap().clone(),
+        )
+        .redact_owned(text)
+    }
+
     fn usage_limit_settings(
         &self,
         _directory: &str,

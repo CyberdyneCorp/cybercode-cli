@@ -76,9 +76,31 @@ impl Tool for Read {
             let offset = number(&ctx.inv.input, "offset").unwrap_or(1).max(1) as usize;
             let limit = number(&ctx.inv.input, "limit")
                 .map_or(PAGE_LINES, |l| (l as usize).min(PAGE_LINES));
-            Ok(page(&String::from_utf8_lossy(&bytes), offset, limit))
+            Ok(redacted_page(
+                ctx,
+                &String::from_utf8_lossy(&bytes),
+                offset,
+                limit,
+            ))
         })
     }
+}
+
+/// A page of the file redacted as a whole first, so a secret that the page boundary
+/// cuts (a private key) is still hidden; markers keep line breaks, so line numbers are
+/// the file's. What the page hides is noted for the settlement.
+fn redacted_page(ctx: &Ctx<'_>, content: &str, offset: usize, limit: usize) -> String {
+    let redacted = ctx.host.location_redactor(&ctx.location).redact(content);
+    let shown = page(&redacted.text, offset, limit);
+    if !redacted.redactions.is_empty() {
+        let raw = page(content, offset, limit);
+        ctx.host.note_redactions(
+            &ctx.inv.session_id,
+            &ctx.inv.call_id,
+            cyber_core::redact::added_markers(&raw, &shown),
+        );
+    }
+    shown
 }
 
 /// The `path` input, once `external_directory`, the `read` permission and the hidden
@@ -346,6 +368,10 @@ pub(crate) async fn guarded_write(
     after: &[u8],
     diff: String,
 ) -> Result<String, ToolError> {
+    crate::host::refuse_marker(
+        &String::from_utf8_lossy(before.unwrap_or_default()),
+        &String::from_utf8_lossy(after),
+    )?;
     ctx.check_external_writes(&[path.to_path_buf()]).await?;
     authorize_edit(ctx, path, diff).await?;
     let origin = super::intelligence::capture(ctx, path);
@@ -471,8 +497,13 @@ impl Tool for Edit {
                 .unwrap_or(false);
             match count {
                 0 => {
+                    // The file holds the real value where the model saw a marker.
+                    let hidden = cyber_core::redact::markers(&old).next().map_or_else(
+                        String::new,
+                        |marker| format!("; old_string contains the redaction marker {marker}, which stands in for a hidden value the file holds, so it cannot match"),
+                    );
                     return Err(failed(format!(
-                        "old_string was not found in {}",
+                        "old_string was not found in {}{hidden}",
                         ctx.resource(&path)
                     )));
                 }

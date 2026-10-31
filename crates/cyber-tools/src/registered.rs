@@ -302,18 +302,20 @@ impl BuiltinHost {
         outcome: ToolOutcome,
         token_limit: Option<usize>,
     ) -> ToolOutcome {
-        let bounded = |output: String| {
-            self.budget(&ctx.location)
+        let budget = self.budget(&ctx.location);
+        let bound = |output: String| {
+            budget
                 .apply_registered(output, ctx.inv.tool_output, token_limit, None)
                 .map(|(output, _)| output)
         };
-        match outcome {
+        let outcome = match outcome {
             ToolOutcome::Ok(output) => {
-                bounded(output).map_or_else(ToolOutcome::Crashed, ToolOutcome::Ok)
+                bound(output).map_or_else(ToolOutcome::Crashed, ToolOutcome::Ok)
             }
             ToolOutcome::Structured { output, value } => {
-                bounded(output).map_or_else(ToolOutcome::Crashed, |output| {
-                    ToolOutcome::Structured { output, value }
+                bound(output).map_or_else(ToolOutcome::Crashed, |output| ToolOutcome::Structured {
+                    output,
+                    value,
                 })
             }
             ToolOutcome::SkillSuggestions {
@@ -321,7 +323,7 @@ impl BuiltinHost {
                 output,
                 value,
                 skills,
-            } => bounded(output).map_or_else(ToolOutcome::Crashed, |output| {
+            } => bound(output).map_or_else(ToolOutcome::Crashed, |output| {
                 ToolOutcome::SkillSuggestions {
                     failed,
                     output,
@@ -330,7 +332,7 @@ impl BuiltinHost {
                 }
             }),
             ToolOutcome::Failed(output) => {
-                bounded(output).map_or_else(ToolOutcome::Crashed, ToolOutcome::Failed)
+                bound(output).map_or_else(ToolOutcome::Crashed, ToolOutcome::Failed)
             }
             // The projection owns the frame: truncate the bare text, then scan and frame
             // it, and note its `untrusted` record for the settlement.
@@ -339,7 +341,7 @@ impl BuiltinHost {
                 value,
                 failed,
                 provenance,
-            } => match self.budget(&ctx.location).apply_registered(
+            } => match budget.apply_registered(
                 output,
                 ctx.inv.tool_output,
                 token_limit,
@@ -357,7 +359,14 @@ impl BuiltinHost {
                 Err(error) => ToolOutcome::Crashed(error),
             },
             other => other,
-        }
+        };
+        // What the projection hid from the raw result before cutting it.
+        self.note_redactions(
+            &ctx.inv.session_id,
+            &ctx.inv.call_id,
+            budget.redaction.take(),
+        );
+        outcome
     }
 }
 

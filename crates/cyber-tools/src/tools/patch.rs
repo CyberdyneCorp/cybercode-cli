@@ -385,6 +385,7 @@ pub(crate) async fn apply(
         ops.iter_mut().for_each(|op| op.rebase(base));
     }
     let changes = plan(ctx, ops).await?;
+    refuse_markers(&changes)?;
     let paths: Vec<PathBuf> = changes.iter().map(|c| c.path.clone()).collect();
     ctx.check_external_writes(&paths).await?;
     let resources: Vec<String> = paths.iter().map(|p| ctx.resource(p)).collect();
@@ -410,6 +411,28 @@ pub(crate) async fn apply(
     ctx.authorize_as("apply_patch", req, resources, json!({ "diff": diff }))
         .await?;
     write_all(ctx, &changes).await
+}
+
+/// A patch may not add a redaction marker; one moved or kept with its file is no addition.
+fn refuse_markers(changes: &[Change]) -> Result<(), ToolError> {
+    let text = |bytes: &Option<Vec<u8>>| {
+        bytes
+            .as_deref()
+            .map(String::from_utf8_lossy)
+            .unwrap_or_default()
+            .into_owned()
+    };
+    let before: String = changes
+        .iter()
+        .map(|c| text(&c.before))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let after: String = changes
+        .iter()
+        .map(|c| text(&c.after))
+        .collect::<Vec<_>>()
+        .join("\n");
+    crate::host::refuse_marker(&before, &after)
 }
 
 async fn write_all(ctx: &Ctx<'_>, changes: &[Change]) -> Result<String, ToolError> {

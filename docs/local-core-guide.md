@@ -152,6 +152,74 @@ The profile is resolved field by field, a later layer winning: defaults by famil
 
 An unknown key or an invalid value warns, naming the key, and is ignored. When an agent, a workflow tier or a model role asks for an effort the model does not list, the nearest lower listed effort is used and one `info` log line names both; an effort you name yourself (`provider/model#xhigh`) still fails with `VariantUnavailableError`, as does any effort under `effort_clamp: "fail"`.
 
+## Secrets in tool output
+
+Secrets that show up in tool output never reach the model provider. Before a tool result goes to the model, Cyber Code replaces each secret it finds with a marker of the form `[REDACTED:<kind>]`, such as `[REDACTED:github_token]`. The marker tells the model that a value is there without showing it. The base prompt explains the marker.
+
+Redaction applies to the output of every kind of tool:
+- built-in tools (`read`, `grep`, `bash`, `powershell`, Job output, `webfetch`, `websearch`);
+- MCP, browser, plugin and client tools;
+- subagent results;
+- the output of `!` shell commands;
+- background Job completion notices and workflow run summaries.
+
+It runs before the output budget cuts a long result, so a secret is hidden whole even when the cut falls through it. The text that the model gets is also the text the Session stores, so the TUI, the dashboard, exports and replay never show more than the model saw.
+
+The full overflow file (`full output at <path>`) and the Job log (`<data>/jobs/<job_id>.log`) stay unredacted on your machine. Reading them back through a tool redacts them again. `read` redacts the whole file before it selects the page you asked for. A private key's line breaks are kept, so line numbers do not move.
+
+**What is detected:**
+
+1. **Credential formats.** Detection covers:
+   - AWS access keys (`AKIA…`, `ASIA…`);
+   - GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`);
+   - OpenAI (`sk-`, `sk-proj-`) and Anthropic (`sk-ant-`) keys;
+   - Slack (`xoxb-` and the like), Stripe live (`sk_live_`, `rk_live_`), Google (`AIza`), GitLab (`glpat-`) and npm (`npm_`) tokens;
+   - JWTs, GitHub Copilot and peer grant tokens;
+   - PEM `-----BEGIN … PRIVATE KEY-----` blocks through their `END` line;
+   - `Authorization` header values;
+   - passwords in URLs (`postgres://app:<password>@db`).
+2. **Exact values of known secrets**, at least 8 characters long. These are the values of:
+   - the server's environment variables whose names look secret (`*_TOKEN`, `*_SECRET`, `*_PASSWORD`, `*_API_KEY`, `*_ACCESS_KEY`, `*_PRIVATE_KEY`, `*CREDENTIAL*`, but not `*_PATH`, `*_FILE`, `*_URL` and the like);
+   - secret-named config entries, such as `providers.<p>.api_key` and MCP servers' `env` and `headers`;
+   - the resolved provider API keys.
+3. **Your own `patterns`.**
+4. **Assignments** whose name looks secret: `DB_PASSWORD=…`, `"apiKey": "…"`, `client_secret: '…'` or `aws_secret_access_key = …`. Only the value is replaced, and only when it looks like a secret: at least 8 characters, with two of lowercase letters, uppercase letters and digits, and not a placeholder (`${…}`, `<your key>`), a number, a code path (`process.env.X`) or an expression (`token = self.next()`).
+
+Random-looking text alone is never redacted, so git SHAs, UUIDs, lockfile hashes and base64 images stay readable.
+
+**Writing.** `write`, `edit`, `apply_patch` and `notebook_edit` refuse new text that holds a marker the file does not already hold, and `bash`, `powershell`, `pty_start` and `pty_write` refuse any command or input that holds one. This stops the model from replacing a real secret in a file with its placeholder. The error tells the model that the value is hidden, and that it should leave that line alone or refer to the secret through the variable or file that holds it. A file that already shows a marker literally, such as this guide, can still be edited.
+
+**Seeing what was hidden.** A tool call that hid anything carries `redactions: {count, kinds}` on its `session.tool.settled` event and on the Session's calls (`CallState.redactions` in the API and SDK).
+- The TUI shows `⊘ 2 secrets hidden from the model` under the tool card.
+- The dashboard shows an amber badge.
+- `cyber exec` adds `redactions` to the `tool_result` line of `--format stream-json`, and prints `bash: 2 secrets hidden from the model` to stderr in text mode.
+
+**Settings.** The settings live under `tool_output.redact` in `cyber.jsonc`:
+
+```jsonc
+{ "tool_output": { "redact": {
+  "enabled": true,                                  // false turns it off (user config only)
+  "patterns": ["corp_[a-z0-9]{32}"],                // extra regexes, redacted as `custom`
+  "allow": ["AKIAIOSFODNN7EXAMPLE", "/sk-test-[a-z0-9]+/"]  // never redacted; /re/ is a regex
+} } }
+```
+
+The limits are:
+- at most 32 patterns and 64 allow entries;
+- at most 1024 bytes each;
+- each regex within the engine's size limits, and not able to match empty text.
+
+An invalid entry fails loading with `tool_output.redact.patterns[<i>]: <reason>`.
+
+A project's or a plugin's config can only make redaction stricter, even in a trusted checkout. Its `patterns` apply and add to yours. Its `enabled: false` and `allow` entries, including those inside its `profiles`, are ignored with a warning.
+
+**Not covered:**
+- Tool input that the model wrote.
+- What you type, paste or attach (`@file`, MCP resource mentions, the text of `!` commands).
+- Structured values that programs read (`structured_output`).
+- Fragments that lost their recognizable shape. Examples are a private key's body lines printed without the `BEGIN` line (`sed -n 2,5p key.pem`), a token a tool cut short, and a lowercase-only password such as `secret=changeme`.
+- OAuth tokens in the MCP credential store, which are not matched as exact values.
+
 ## Signing in with a ChatGPT subscription
 
 A ChatGPT Plus or Pro plan can pay for OpenAI models instead of an API key:
@@ -1091,7 +1159,7 @@ The system prompt starts with the agent's `system` text when the agent sets one.
 
 ### Base prompts by model family
 
-Every base prompt is one shared core text plus a family addendum: `openai`, `anthropic`, `gemini`, `local` (open-weights models) or `default` (the core text alone). The core text is a short operating manual: scope, reading before editing and making the smallest sufficient change, editing only through the edit tools (never shell redirection), fast search and parallel independent reads, carrying the task to a verified result and asking only when a real decision is blocked, leaving changes it did not make alone, care before destructive actions, brief progress notes during long work, and a final answer that leads with the result and cites `path:line`. The addenda tune it to the family: OpenAI and local models edit with `apply_patch` and batch reads, Anthropic models edit with `edit` and call tools in parallel, and Gemini models make small sequential edits and verify each one explicitly. The family comes from the catalog model, not the provider id, so `openrouter/anthropic/claude-sonnet` gets the Anthropic prompt and `groq/gpt-oss-120b` the local one. The order is:
+Every base prompt is one shared core text plus a family addendum: `openai`, `anthropic`, `gemini`, `local` (open-weights models) or `default` (the core text alone). The core text is a short operating manual: scope, reading before editing and making the smallest sufficient change, editing only through the edit tools (never shell redirection), fast search and parallel independent reads, carrying the task to a verified result and asking only when a real decision is blocked, leaving changes it did not make alone, care before destructive actions, never writing a `[REDACTED:<kind>]` marker over a hidden secret, brief progress notes during long work, and a final answer that leads with the result and cites `path:line`. The addenda tune it to the family: OpenAI and local models edit with `apply_patch` and batch reads, Anthropic models edit with `edit` and call tools in parallel, and Gemini models make small sequential edits and verify each one explicitly. The family comes from the catalog model, not the provider id, so `openrouter/anthropic/claude-sonnet` gets the Anthropic prompt and `groq/gpt-oss-120b` the local one. The order is:
 
 1. Open-weights names (`gpt-oss`, `llama`, `qwen`, `mistral`, `deepseek`, `gemma`, `phi`, `glm`, `kimi`, …) select `local`.
 2. `claude` selects `anthropic`; `gpt`, `o1`, `o3`, `o4`, `codex` and `chatgpt` select `openai`; `gemini` selects `gemini`. The catalog family name is checked first, then the last `/` segment of the model id.

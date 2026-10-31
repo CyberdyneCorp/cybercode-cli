@@ -153,7 +153,7 @@ Text is never deleted, so the user can see it and the model cannot be fed instru
   - nothing when `taint` is `off`.
   
   Expanding the tool result (Ctrl+O) shows the excerpts. For a promoted message or Channel event the line says `message` instead of `result` (`! Possible prompt injection in session message (permission_change).`), since it is not a tool result. The message carries its admission's record as `untrusted` on `GET /sessions/:id/messages` (taken from its inbox row, only when it has signals), so clients need no event decoding. The wording and the consequence live in `cyber-core` (`untrusted::notice`), and the dashboard mirrors them in `web/src/untrusted.ts`.
-  
+
   The consequence needs the effective `taint` and `bypass` settings, which task 5.1 adds to the config loader (`untrusted::UntrustedSettings`) together with the project-layer tightening rule. The server reports them on the Session (`GET /sessions/:id` `untrusted_content: { taint, bypass }`, from the tool host's `untrusted_policy` for the Session's Location, task 5.3); the TUI reads them with the Session and the dashboard passes them to its notice line. Both renderings are checked against one fixture, `eval/fixtures/untrusted-content/notices.json`, so their wording cannot drift.
 - **`cyber exec`.** Text mode writes `warning: possible prompt injection in webfetch result from <origin>: <kinds>` to stderr; `--quiet` suppresses it with all other non-result output (`exec-mode`). stream-json adds `untrusted` to `tool_result`, an additive change under `schema_version` 1.
 - **Web dashboard.** The same line on the tool card and on a message, rendered with `textContent`; the excerpts are in the tool's details (a details of their own for a message).

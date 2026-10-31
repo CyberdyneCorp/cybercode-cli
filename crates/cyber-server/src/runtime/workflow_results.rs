@@ -154,7 +154,18 @@ impl Runtime {
         }
         let agents = self.workflow_agents(&run.id)?;
         let message_id = attempt_handback_message_id(&run.id, self.workflow_run_resumes(&run.id)?);
-        let mut admission = Admission::text(handback_text(run, &agents), Delivery::Queue);
+        // The summary embeds the result as JSON: redact its strings before encoding.
+        let directory = self.state(&run.session_id).await?.info.directory;
+        let tools = self.inner.tools.as_ref();
+        let mut shown = run.clone();
+        if let Some(result) = &mut shown.result {
+            super::redaction::redact_value(tools, &directory, result);
+        }
+        shown.result_preview = shown
+            .result_preview
+            .map(|preview| super::redaction::redact_text(tools, &directory, preview));
+        let text = super::redaction::redact_text(tools, &directory, handback_text(&shown, &agents));
+        let mut admission = Admission::text(text, Delivery::Queue);
         admission.message_id = Some(message_id.clone());
         admission.source = "workflow".into();
         admission.resume = run.continue_owner;

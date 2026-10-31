@@ -10,7 +10,7 @@ use super::merge::{self, Sources};
 use super::subst::{self, SubstContext};
 use super::{
     ConfigError, Resolved, SCHEMA_URL, TrustReport, jsonc, managed, mcp_files, mcp_serve, peers,
-    validate,
+    redaction, validate,
 };
 use crate::env::EnvSource;
 use crate::paths::Paths;
@@ -78,10 +78,8 @@ pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
     let mut labels = Vec::new();
     let mut templates = Vec::new();
     for layer in &mut layers {
+        restrict_layer(layer, &mut warnings);
         let scope = layer.label.split(':').next();
-        if !matches!(scope, Some("default" | "global")) {
-            mcp_serve::strip(&mut layer.value, &mut warnings);
-        }
         if !matches!(scope, Some("default" | "global" | "project")) {
             issues.extend(peers::layer_issue(&layer.label, &layer.value));
             issues.extend(super::computer::layer_issue(&layer.label, &layer.value));
@@ -179,6 +177,18 @@ pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
         plugins: plugins.statuses,
         pure,
     })
+}
+
+/// What a layer below user config may not set: `mcp_serve` outside the global layers,
+/// and loosening `tool_output.redact` settings in a project or plugin layer.
+fn restrict_layer(layer: &mut Layer, warnings: &mut Vec<String>) {
+    let scope = layer.label.split(':').next();
+    if !matches!(scope, Some("default" | "global")) {
+        mcp_serve::strip(&mut layer.value, warnings);
+    }
+    if matches!(scope, Some("project" | "plugin")) && redaction::strip_loosening(&mut layer.value) {
+        warnings.push(redaction::warning(&layer.label));
+    }
 }
 
 /// `--pure`: hooks and MCP servers come only from organization policy.

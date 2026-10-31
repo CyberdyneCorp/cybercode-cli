@@ -271,6 +271,7 @@ fn messages_render_text_tools_and_collapsed_output() {
                 input: json!({"command": "cargo test"}),
                 status: "ok".into(),
                 output,
+                redactions: 0,
                 untrusted: None,
             }],
             error: None,
@@ -286,6 +287,26 @@ fn messages_render_text_tools_and_collapsed_output() {
     assert!(s.contains("All good: cargo test passed."));
     app.on_key(with(KeyCode::Char('o'), KeyModifiers::CONTROL));
     assert!(!screen(&app).contains("lines hidden"));
+}
+
+/// `tui` → Redaction notice on tool cards: a settled call that hid secrets says how many,
+/// on one line under its card; the transcript shows only the markers.
+#[test]
+fn redacted_tool_results_say_how_many_secrets_were_hidden() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    let message = json!({"id": "m2", "kind": "assistant", "text": "", "tools": [{
+        "call_id": "c1", "name": "bash", "input": {"command": "env"}, "status": "ok",
+        "output": "GITHUB_TOKEN=[REDACTED:github_token]\nDB_PASSWORD=[REDACTED:assignment]",
+        "redactions": {"count": 2, "kinds": ["assignment", "github_token"]},
+    }]});
+    app.items = vec![Item::parse(&message).unwrap()];
+    let s = screen(&app);
+    assert!(s.contains("⊘ 2 secrets hidden from the model"), "{s}");
+    assert!(s.contains("GITHUB_TOKEN=[REDACTED:github_token]"), "{s}");
+    if let Item::Assistant { tools, .. } = &mut app.items[0] {
+        tools[0].redactions = 0;
+    }
+    assert!(!screen(&app).contains("hidden from the model"));
 }
 
 #[test]

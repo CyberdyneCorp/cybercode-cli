@@ -11,6 +11,12 @@ pub trait EnvSource {
         self.get(key)
             .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
     }
+
+    /// Every variable, where the source can list them: the exact values of secret-named
+    /// ones are redacted from tool output (`tool-registry` → Tool output redaction).
+    fn vars(&self) -> Vec<(String, String)> {
+        Vec::new()
+    }
 }
 
 /// The real process environment.
@@ -19,6 +25,13 @@ pub struct ProcessEnv;
 impl EnvSource for ProcessEnv {
     fn get(&self, key: &str) -> Option<String> {
         std::env::var(key).ok().filter(|v| !v.is_empty())
+    }
+
+    fn vars(&self) -> Vec<(String, String)> {
+        std::env::vars_os()
+            .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
+            .filter(|(_, value)| !value.is_empty())
+            .collect()
     }
 }
 
@@ -34,5 +47,12 @@ impl EnvSource for FnEnv<'_> {
 impl EnvSource for HashMap<String, String> {
     fn get(&self, key: &str) -> Option<String> {
         HashMap::get(self, key).filter(|v| !v.is_empty()).cloned()
+    }
+
+    fn vars(&self) -> Vec<(String, String)> {
+        self.iter()
+            .filter(|(_, value)| !value.is_empty())
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect()
     }
 }

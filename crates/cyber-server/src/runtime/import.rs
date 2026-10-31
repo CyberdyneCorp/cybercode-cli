@@ -67,9 +67,15 @@ impl Runtime {
         for message in document.messages {
             entries.push(untrusted(message.entry)?);
             // Opaque provider state is never taken from a document: exports redact it.
-            calls.extend(message.tools.into_iter().map(|call| CallState {
-                opaque: None,
-                ..call
+            // An imported result reaches the model again, so it is redacted as on settlement.
+            calls.extend(message.tools.into_iter().map(|call| {
+                CallState {
+                    opaque: None,
+                    output: call
+                        .output
+                        .map(|output| self.inner.tools.redact_model_text(&directory, output).0),
+                    ..call
+                }
             }));
         }
         let store = self.attachments()?;

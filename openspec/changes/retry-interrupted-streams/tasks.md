@@ -8,7 +8,7 @@
   - one shared budget before and after output, with the final partial output returned;
   - a stalled stream replayed after the idle window;
   - no replay after protocol completion.
-  
+
   Also in `tests/adapters.rs`: an in-stream Anthropic overload is replayed, and a discarded attempt's usage is kept by `collect`.
 
 ## 2. Runtime (`cyber-server`)

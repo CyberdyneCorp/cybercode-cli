@@ -208,6 +208,7 @@ mod tests {
                 input: serde_json::Value::Null,
                 status: "interrupted".into(),
                 output: String::new(),
+                redactions: 0,
                 untrusted: None,
             });
         }
