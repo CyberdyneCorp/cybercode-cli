@@ -39,9 +39,12 @@ no filesystem I/O. Retained path strings obey existing Session validation.
 
 Use `Store::append_checked` for Session creation: decide automatic eligibility
 under its writer transaction, then append `session.created.1` and an owned Setup
-attempt event in the same Session aggregate/transaction. The marker projection
-has a unique installation/directory key. Concurrent creators still create their
-Sessions successfully; only the winner records a dispatchable automatic attempt.
+attempt event atomically across their separate aggregates. The Setup event and
+marker belong to the installation/Location owner, not the Session aggregate that
+normal Session deletion purges. The marker projection has a unique
+installation/directory key and no cascading Session ownership. Concurrent creators
+still create their Sessions successfully; only the winner records a dispatchable
+automatic attempt.
 A rolled-back creation records neither Session nor marker. A child Session
 cannot claim the automatic marker. Child-only history does not consume it.
 
@@ -60,18 +63,71 @@ reported as an empty completed init. A bounded live-invocation registry identifi
 currently running attempts; an admitted, unsettled attempt without that owner is
 unknown. Transport retry inspects that state and never restarts dispatch.
 
-For an existing Store without markers, prior root creation events at the same stored directory (including Sessions
-later moved, archived or deleted) consume the legacy automatic marker without dispatching any
-new effect. Decide this in the writer transaction, not a filesystem scan or
-startup replay. A historical attempt may already have mutated external state.
+For an existing Store without markers, surviving root creation events at the same
+stored directory (including roots later moved or archived) are positive evidence
+for consuming a legacy automatic marker without dispatching another effect.
+Deleted roots need the separate legacy review below: their creation events are
+not retained. Decide migrations in the writer transaction, not a filesystem scan
+or startup replay. A historical attempt may already have mutated external state.
 Do not infer successful execution from history, replay uncertain effects, or
-blanket-mark legacy handlers completed. Explicit init remains available.
+blanket-mark legacy handlers completed. Explicit init remains a new user-owned
+attempt rather than a replay of old execution.
 
 Dispatch only after commit, outside Session/writer locks and shutdown admission
 held by creation. Recheck the live Session/directory and existing hook policy
 before handler admission. Session moves/archive, shutdown and ownership loss
 cannot turn an old attempt into a newly authorized effect. A crash after marker
 commit may skip an unlaunched effect; it must not automatically replay it.
+
+## Session deletion and legacy-history review
+
+Source inspection at `ecce8b38` establishes a limitation in the preceding draft.
+`runtime/deletion.rs::Runtime::delete` removes the Session/descendant aggregates'
+non-team events, their sequence rows and Session projections. Consequently a
+query of `session.created.1` cannot recover every previously used Location after
+normal deletion. Replacing the current eligibility query with only
+`parent_id IS NULL` could turn child-only surviving history into a fresh Setup
+even when an earlier root and its potentially mutating attempt were deleted.
+The surviving child can belong to another root's subtree; deletion removes the
+deleted root's own descendants.
+No such query change has been implemented.
+
+The independent `hook.started.1` aggregates can retain positive Setup receipt
+facts, while the `hook_execution` projection cascades with Session deletion.
+Retained, non-synthetic Setup receipt facts may therefore establish an earlier
+attempt; they do not establish successful settlement or a complete set of prior
+Locations. The usage ledger retains only provider/auxiliary-call facts, so a
+Session that ran no model call supplies no complete setup-history substitute.
+The computer-deletion tombstone records an ID/time rather than a Location.
+Absence from any of these sources is not proof that Setup never ran.
+
+Future installation markers, attempt admission/settlement and request deduplication
+must survive Session deletion in their own durable aggregates/projections. Their
+records retain bounded owner facts needed for this contract, not deleted prompt
+history or handler IO. Checked live admission validates the real root Session
+under the writer transaction; replay validates self-contained marker/attempt
+facts without requiring a Session projection that may legitimately be gone.
+Rebuilding projections must preserve an admitted or unknown attempt rather than
+making it eligible again. Deletion cannot clear a consumed automatic marker or
+allow an old init request ID to create another Session.
+
+Legacy bootstrap remains an explicit review item before S2. A migration can
+consume positive historical evidence, but cannot manufacture the missing
+pre-marker history of deleted roots. The complete migration/support decision
+must explain how unproven legacy Locations obtain fresh user authority without
+replaying uncertain effects. An explicit init is one available user-owned action;
+no policy that silently reruns Setup, silently resets installation identity or
+universally refuses automatic Setup is selected by this document. Approval of
+the two epoch/key choices alone does not settle this newly identified legacy
+bootstrap requirement. The full original Setup contract remains required until
+a revised compatibility decision is reviewed.
+
+Required adversarial cases include root/attempt deletion before restart, a
+previously deleted root with another parent's child surviving at that Location,
+an empty settled attempt,
+unknown execution, projection rebuild after Session deletion, and an exact init
+retry whose original Session was deleted. Each must retain the original attempt
+identity and outcome/uncertainty; none may manufacture another mutating dispatch.
 
 ## Explicit init surface
 
@@ -107,17 +163,19 @@ remain authoritative; init grants no additional permissions.
 
 ## Implementation and acceptance tasks
 
-- [ ] S1 Review both decisions above and update this document with the decision.
+- [ ] S1 Review both epoch/key decisions and the legacy-deletion bootstrap requirement above; record the accepted complete migration/support decision before implementation.
 - [ ] S2 Add bounded events, marker projection/migration and writer-atomic root
-  Session admission; cover concurrent creation, children, legacy history and
-  projection rebuild with actual Store transactions.
+  Session admission across separate durable owners; cover concurrent creation,
+  children, legacy/deleted history and rebuild after Session deletion with actual
+  Store transactions.
 - [ ] S3 Bind Setup receipts to the admitted attempt; test duplicate, moved,
   archived and forged/synthetic admission, empty-settlement versus lost-owner
   ambiguity, failed/unknown outcomes, cancellation
   and crash points before/after marker and handler acknowledgement.
 - [ ] S4 Add the owner operation and top-level init CLI/API/SDK/schema artifacts;
   test transport retries, request-binding refusal, no model Turn/TUI and
-  explicit/automatic coalescing through the real App and CLI.
+  explicit/automatic coalescing and retry after Session deletion through the real
+  App and CLI.
 - [ ] S5 Verify unchanged hook trust/pure/managed rules and outcome reporting on
   Linux/macOS/Windows, including native command hooks and HTTP handlers where
   configured. Record unavailable checks explicitly.
