@@ -1,0 +1,10 @@
+{
+  "head": "62a3068e14ab0d54e980f21848a1c3a21af93597",
+  "tested_merge": "f7bf065227e72b37970feb2f4c6e6f45068e355b",
+  "verified_tested_tree": "e3d7bbf7b2d76bbc4c309ed14e6931198a4aa865",
+  "artifact_id": 13043254184,
+  "artifact_sha256": "10241c13c8e39c48e3719e80f79f5e84b5e3282b9e13819bdb524b91843374b4",
+  "job_id": 124541775744,
+  "run_id": 41202794586,
+  "scope": "Both native positive and counterexample steps passed for this source. All declared normal and fixed/legacy control source bytes independently verified against the Git inputs. Does not complete native plugin enforcement or resolve historical unknown race outcomes."
+}

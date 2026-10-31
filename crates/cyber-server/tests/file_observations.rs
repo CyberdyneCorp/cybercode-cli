@@ -244,13 +244,30 @@ async fn exhausted_pinned_feedback_survives_alias_restart_and_requires_owned_use
 }
 
 #[cfg(unix)]
+fn directory_alias(target: &std::path::Path, alias: &std::path::Path) {
+    std::os::unix::fs::symlink(target, alias).unwrap();
+}
+#[cfg(windows)]
+fn directory_alias(target: &std::path::Path, alias: &std::path::Path) {
+    std::os::windows::fs::symlink_dir(target, alias).unwrap();
+}
+#[cfg(unix)]
+fn remove_directory_alias(alias: &std::path::Path) {
+    std::fs::remove_file(alias).unwrap();
+}
+#[cfg(windows)]
+fn remove_directory_alias(alias: &std::path::Path) {
+    std::fs::remove_dir(alias).unwrap();
+}
+
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn unused_user_acknowledgement_cannot_follow_a_retargeted_alias() {
     let h = Harness::new(Setup::default());
     let alias = h.dir.path().join("alias");
     let other = h.dir.path().join("other");
     std::fs::create_dir(&other).unwrap();
-    std::os::unix::fs::symlink(&h.repo, &alias).unwrap();
+    directory_alias(&h.repo, &alias);
     let session = h
         .runtime
         .create_session(cyber_server::runtime::CreateSession {
@@ -266,8 +283,8 @@ async fn unused_user_acknowledgement_cannot_follow_a_retargeted_alias() {
         .await
         .unwrap();
     let original = admission_event(&h, &session.id, "user").await;
-    std::fs::remove_file(&alias).unwrap();
-    std::os::unix::fs::symlink(&other, &alias).unwrap();
+    remove_directory_alias(&alias);
+    directory_alias(&other, &alias);
     let mut current = h
         .runtime
         .claim_pinned_file_watch(other.clone(), opened_directory(&other), BTreeMap::new())

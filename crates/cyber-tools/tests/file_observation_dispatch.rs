@@ -1974,6 +1974,23 @@ async fn alias_joining_first_shares_the_canonical_owner_and_preserves_raw_sessio
 }
 
 #[cfg(unix)]
+fn directory_alias(target: &std::path::Path, alias: &std::path::Path) {
+    std::os::unix::fs::symlink(target, alias).unwrap();
+}
+#[cfg(windows)]
+fn directory_alias(target: &std::path::Path, alias: &std::path::Path) {
+    std::os::windows::fs::symlink_dir(target, alias).unwrap();
+}
+#[cfg(unix)]
+fn remove_directory_alias(alias: &std::path::Path) {
+    std::fs::remove_file(alias).unwrap();
+}
+#[cfg(windows)]
+fn remove_directory_alias(alias: &std::path::Path) {
+    std::fs::remove_dir(alias).unwrap();
+}
+
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn symlink_retarget_loses_old_delivery_and_user_input_admits_the_new_physical_scope() {
     let flow = support::flow::Flow::new(vec![], false);
@@ -1983,7 +2000,7 @@ async fn symlink_retarget_loses_old_delivery_and_user_input_admits_the_new_physi
     initialize_project(&other, "https://example.test/alias-retarget.git");
     let new_project = cyber_core::project::identify(&other).id;
     let alias_path = flow.f.dir.path().join("location-alias");
-    std::os::unix::fs::symlink(&flow.f.repo, &alias_path).unwrap();
+    directory_alias(&flow.f.repo, &alias_path);
     let recorder = Recorder::start().await;
     automatic_hooks(&flow, &recorder);
     let alias = flow
@@ -2010,8 +2027,8 @@ async fn symlink_retarget_loses_old_delivery_and_user_input_admits_the_new_physi
             .any(|event| event["session_id"] == alias.id && event["file_path"] == "before-retarget")
     })
     .await;
-    std::fs::remove_file(&alias_path).unwrap();
-    std::os::unix::fs::symlink(&other, &alias_path).unwrap();
+    remove_directory_alias(&alias_path);
+    directory_alias(&other, &alias_path);
     std::fs::write(
         flow.f.repo.join("old-root-only"),
         "other Session still observes this",
