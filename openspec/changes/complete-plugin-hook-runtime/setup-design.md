@@ -91,7 +91,7 @@ commit may skip an unlaunched effect; it must not automatically replay it.
 
 ## Session deletion and legacy-history review
 
-Source inspection at `ecce8b38` establishes a limitation in the preceding draft.
+Source inspection at `dd0c9279` establishes a limitation in the preceding draft.
 `runtime/deletion.rs::Runtime::delete` removes the Session/descendant aggregates'
 non-team events, their sequence rows and Session projections. Consequently a
 query of `session.created.1` cannot recover every previously used Location after
