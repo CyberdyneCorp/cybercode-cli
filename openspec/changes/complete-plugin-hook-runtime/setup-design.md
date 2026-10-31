@@ -37,14 +37,24 @@ Create the installation epoch once through the existing single writer. Automatic
 markers are keyed by `(installation_epoch, stored_directory)`. Projectors perform
 no filesystem I/O. Retained path strings obey existing Session validation.
 
-Use `Store::append_checked` for Session creation: decide automatic eligibility
-under its writer transaction, then append `session.created.1` and an owned Setup
-attempt event atomically across their separate aggregates. The Setup event and
+Extend the checked-append facility for Session creation: decide automatic
+eligibility under its writer transaction, then append `session.created.1` and an
+owned Setup attempt event atomically across their separate aggregates. The
+current `Store::append_checked` accepts only one aggregate; it cannot already
+perform this operation. The Setup event and
 marker belong to the installation/Location owner, not the Session aggregate that
 normal Session deletion purges. The marker projection has a unique
 installation/directory key and no cascading Session ownership. Concurrent creators
 still create their Sessions successfully; only the winner records a dispatchable
 automatic attempt.
+The Store extension must bound the aggregate/event groups, retain registered
+event validation, expected-sequence checks and fault injection, and run all
+projectors in the same writer transaction. A late conflict or projector error
+rolls back every group's events, sequence rows and projection effects. Publish
+notifications only after the combined commit. Do not emulate this with two
+separate acknowledged appends or call a public Store mutation from inside its
+writer callback; `append_in_tx` is currently private to `cyber-store`.
+
 A rolled-back creation records neither Session nor marker. A child Session
 cannot claim the automatic marker. Child-only history does not consume it.
 
@@ -167,7 +177,9 @@ remain authoritative; init grants no additional permissions.
 - [ ] S2 Add bounded events, marker projection/migration and writer-atomic root
   Session admission across separate durable owners; cover concurrent creation,
   children, legacy/deleted history and rebuild after Session deletion with actual
-  Store transactions.
+  Store transactions. Extend checked append across the bounded owner aggregates;
+  test late CAS/validation/projector failures, complete rollback, ordering and
+  absence of uncommitted notifications through the actual writer.
 - [ ] S3 Bind Setup receipts to the admitted attempt; test duplicate, moved,
   archived and forged/synthetic admission, empty-settlement versus lost-owner
   ambiguity, failed/unknown outcomes, cancellation
