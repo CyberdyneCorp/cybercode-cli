@@ -4,6 +4,9 @@ Delivery rule updated by the user on 2026-10-29: normally one open goal PR,
 maximum two only for independently reviewable work. #70–#75 were consolidated into
 #76 against `main`. On 2026-10-30 the user authorized merging that foundations
 milestone after green CI and merge review, then continuing in one follow-up PR.
+PR #76 merged at `ec31ff9f` after 70 passing checks and one intentional diagnostic
+skip. Its tree matches the tested `e6fd3d2f` tree. Continue on the single native
+host admission follow-up; the foundations milestone does not complete task 2.
 The full goal scope, order and acceptance gates remain unchanged. See
 [goal delivery rules](../../../docs/goal-delivery.md).
 
@@ -13,6 +16,12 @@ The full goal scope, order and acceptance gates remain unchanged. See
 - [x] 1.4 Inventory actual producers and protocol operations; map existing tests and stale parent tasks. Run relevant unchanged-main baseline checks and record outcomes. [baseline.md](baseline.md) records the initial failed compilation and SDK results, followed by 14 real-process plugin tests passing on unchanged main `2ae7957d` on macOS arm64 and the same 14 passing on the integration revision. This completes the baseline inventory, not native capability enforcement or later acceptance gates.
 
 ## 2. Native capability enforcement
+
+The user approved the [Linux broker integration direction](native-host-integration.md)
+on 2026-10-30, including capability detection of the exact-thread pidfd dependency
+and retaining private IPC/network compatibility as an activation requirement.
+Only that direction decision is complete; the parent proof, implementation and
+acceptance tasks below remain open.
 
 - [ ] 2.1 Prove a native enforcement mechanism and document runtime bootstrap, read roots, writes without implied broad reads, threads, exec/fork/descendant behavior and OS/runtime support. Present any required design revision before integration. Native CI at `59cae487` passed ten jobs (90 cases) covering Node/Python on macOS/Linux arm64/x86_64 and native Linux executables, including pre-main reads/forks and immutable one-shot exec filtering. Evidence and remaining runtime/platform/integration gates: [native-proof.md](native-proof.md); parent task stays open pending the complete support decisions and acceptance evidence.
 - [ ] 2.2 Implement plugin-specific confinement, reviewed runtime resolution and descriptor/environment isolation without weakening ordinary tools or protected roots. The content-bound helper copy foundation is documented in [image-preparation.md](image-preparation.md), with packaged macOS entry progress in [packaged-native-entry.md](packaged-native-entry.md) and Linux entry progress in [packaged-linux-entry.md](packaged-linux-entry.md); [Generation-bound final commit](launch-authority.md) adds synchronous revocation/start ordering, and [host bootstrap environment](bootstrap-environment.md) replaces implicit environment inheritance; [Runtime startup isolation](runtime-startup.md) adds package CWD/config selection and prepared workspace resources; [Private-root inventory](private-root-inventory.md) adds bounded metadata-only alias detection; [Native policy composition](native-policy-composition.md) adds the bounded Rust macOS filesystem/process builder and packaged-helper receipts; [Linux protected mount ancestry](linux-mount-protection.md) records five passing primitive cases per Linux architecture, including actual ancestor-move counterexamples and regular-file masks, before [Rust Linux composition](linux-policy-composition.md), which supplies bounded arguments/profile and actual-helper regressions passing on Linux x64/arm64 at `546641f9`; complete owner admission and production native launch integration remain open.

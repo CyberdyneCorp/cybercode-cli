@@ -1,0 +1,20 @@
+node:internal/modules/run_main:123
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: received descriptor file effect: {"name":"unconfined","flags":{"read":true,"write":true,"shell":true,"unrestricted":true},"observed":{"started":true,"private_unix":[true,true],"private_peer_checks":8,"private_peer_matches":true,"hardlink_created":true,"symlink_created":true,"private_aliases":[true,true],"rights":{"sent":true,"original_closed":true,"token":true,"truncated":false,"received":true,"same_inode":true,"readable":true,"written":true,"cloexec":true},"rights_path_replaced":true,"direct":{"connected":true,"sent":true,"acknowledged":true},"hardlink":{"connected":true,"sent":true,"acknowledged":true},"symlink":{"connected":true,"sent":true,"acknowledged":true}},"rights_payload":"XX","rights_link_count":0,"owner_receipts":3,"owner_received_fixture":true}
+
+'XX' !== 'AB'
+
+    at check (file:///Users/runner/work/_temp/macos-rights-path-reader/macos_private_ipc.mts:125:10)
+    at file:///Users/runner/work/_temp/macos-rights-path-reader/macos_private_ipc.mts:154:5
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 'XX',
+  expected: 'AB',
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v22.23.4

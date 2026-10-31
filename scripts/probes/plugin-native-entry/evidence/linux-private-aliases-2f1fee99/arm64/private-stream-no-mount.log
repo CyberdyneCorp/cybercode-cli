@@ -1,0 +1,4 @@
+
+thread 'main' (5798) panicked at crates/cyber-sandbox/examples/plugin_unix_socket_probe.rs:425:21:
+socket denial: outside: {"host_received_fixture":true,"observed":{"started":true,"connected":true,"sent":true,"errno":0,"project_read":false,"landlock_abi":8}}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

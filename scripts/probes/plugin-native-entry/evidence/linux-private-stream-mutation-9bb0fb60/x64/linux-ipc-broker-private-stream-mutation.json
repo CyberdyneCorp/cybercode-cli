@@ -1,0 +1,921 @@
+{
+  "platform": "linux",
+  "architecture": "x86_64",
+  "checkout": "0aed910c2e00671ecf2dd3d88fb98b028fdba546",
+  "run_id": "41076338785",
+  "candidate": true,
+  "landlock9": false,
+  "socket_broker": true,
+  "private_stream_probe": true,
+  "unix_mutation_probe": true,
+  "cancellation_probe": false,
+  "mutation_probe": false,
+  "escape_probe": null,
+  "saturation_probe": false,
+  "sources": [
+    "crates/cyber-sandbox/examples/plugin_unix_socket_probe.rs",
+    "crates/cyber-sandbox/tests/fixtures/plugin_unix_socket.c",
+    "crates/cyber-sandbox/tests/fixtures/plugin_socket_cancel.h",
+    "crates/cyber-sandbox/tests/fixtures/plugin_socket_mutation.h",
+    "crates/cyber-sandbox/tests/fixtures/plugin_unix_mutation.h",
+    "crates/cyber-sandbox/tests/fixtures/plugin_process_escape.h",
+    "crates/cyber-sandbox/tests/fixtures/plugin_socket_saturation.h",
+    "crates/cyber-sandbox/examples/support/plugin_socket_cancel.rs",
+    "crates/cyber-sandbox/src/plugin_policy.rs",
+    "crates/cyber-sandbox/src/plugin_policy/linux.rs",
+    "crates/cyber-sandbox/native/linux_plugin_exec.c",
+    "crates/cyber-sandbox/native/linux_filter.h",
+    "crates/cyber-sandbox/native/linux_initial_exec.h",
+    "crates/cyber-sandbox/src/native_exec.rs",
+    "crates/cyber-sandbox/src/bin/cyber-sandbox-exec.rs",
+    "crates/cyber-sandbox/build.rs",
+    "crates/cyber-sandbox/Cargo.toml",
+    "Cargo.lock",
+    ".github/workflows/plugin-linux-ipc.yml",
+    "scripts/probes/plugin-native-entry/linux_socket_candidate.h",
+    "scripts/probes/plugin-native-entry/linux_socket_broker.h",
+    "scripts/probes/plugin-native-entry/linux_socket_broker_mutation.h",
+    "scripts/probes/plugin-native-entry/linux_socket_private_stream.h",
+    "scripts/probes/plugin-native-entry/linux_socket_private_unix.h",
+    "scripts/probes/plugin-native-entry/linux_socket_landlock9.h",
+    "scripts/probes/plugin-native-entry/linux_unix9_policy.h",
+    "scripts/probes/plugin-native-entry/build_socket_candidate.py"
+  ],
+  "source_sha256": "a59ac3e0c8fed62905517f9ce468b13810f8f6d79955de4b902ee4f04db7b643",
+  "helper_sha256": "b2bfe623e0dca611d09382997b1ddb819e6c4ffb8f81e714c9f540283db5c5d9",
+  "rows": [
+    {
+      "socket": "outside",
+      "fs_read": false,
+      "fs_write": false,
+      "shell": false,
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "errno": 1,
+        "project_read": false,
+        "landlock_abi": 8
+      }
+    },
+    {
+      "mode": "unix-mutation",
+      "socket": "outside",
+      "fs_read": false,
+      "fs_write": false,
+      "shell": false,
+      "observed": {
+        "ready": {
+          "phase": "mutation-ready",
+          "request_tid": 4
+        },
+        "finished": {
+          "phase": "mutation-finished",
+          "fd_replaced": true,
+          "address_changed": true,
+          "path_replaced": true,
+          "original_unlinked": true,
+          "result_ok": true,
+          "sent": true,
+          "private_roundtrip": true
+        },
+        "cancelled_pid": null,
+        "pinned_tid": 4,
+        "started": [
+          5
+        ],
+        "reaped": [
+          5
+        ],
+        "audit": [
+          "BPIN 4",
+          "BSTART 5",
+          "BREAP 5"
+        ],
+        "stdout_closed_before_cleanup": null,
+        "owner_exited_before_cleanup": null,
+        "pressure": null,
+        "pressure_cancelled": null,
+        "cancelled_workers": [],
+        "host_received_fixture": false
+      }
+    },
+    {
+      "socket": "outside",
+      "fs_read": false,
+      "fs_write": false,
+      "shell": false,
+      "mode": "pair",
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "project_read": false,
+        "pair_roundtrip": true,
+        "pair_disconnect": false,
+        "pair_reconnect": false,
+        "pair_bind": false,
+        "pair_listen": false,
+        "pair_sendto": false,
+        "pair_sendmsg": false,
+        "datagram_pair": false,
+        "seqpacket_pair": false,
+        "landlock_abi": 8,
+        "tcp_roundtrip": true,
+        "thread_tcp_roundtrip": true,
+        "scratch_unix_roundtrip": true,
+        "regular_reparent": false,
+        "cross_mount_alias_errno": 18
+      }
+    },
+    {
+      "socket": "outside",
+      "fs_read": false,
+      "fs_write": true,
+      "shell": false,
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "errno": 1,
+        "project_read": false,
+        "landlock_abi": 8
+      }
+    },
+    {
+      "mode": "unix-mutation",
+      "socket": "outside",
+      "fs_read": false,
+      "fs_write": true,
+      "shell": false,
+      "observed": {
+        "ready": {
+          "phase": "mutation-ready",
+          "request_tid": 4
+        },
+        "finished": {
+          "phase": "mutation-finished",
+          "fd_replaced": true,
+          "address_changed": true,
+          "path_replaced": true,
+          "original_unlinked": true,
+          "result_ok": true,
+          "sent": true,
+          "private_roundtrip": true
+        },
+        "cancelled_pid": null,
+        "pinned_tid": 4,
+        "started": [
+          5
+        ],
+        "reaped": [
+          5
+        ],
+        "audit": [
+          "BPIN 4",
+          "BSTART 5",
+          "BREAP 5"
+        ],
+        "stdout_closed_before_cleanup": null,
+        "owner_exited_before_cleanup": null,
+        "pressure": null,
+        "pressure_cancelled": null,
+        "cancelled_workers": [],
+        "host_received_fixture": false
+      }
+    },
+    {
+      "socket": "outside",
+      "fs_read": false,
+      "fs_write": true,
+      "shell": false,
+      "mode": "pair",
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "project_read": false,
+        "pair_roundtrip": true,
+        "pair_disconnect": false,
+        "pair_reconnect": false,
+        "pair_bind": false,
+        "pair_listen": false,
+        "pair_sendto": false,
+        "pair_sendmsg": false,
+        "datagram_pair": false,
+        "seqpacket_pair": false,
+        "landlock_abi": 8,
+        "tcp_roundtrip": true,
+        "thread_tcp_roundtrip": true,
+        "scratch_unix_roundtrip": true,
+        "regular_reparent": true,
+        "cross_mount_alias_errno": 18
+      }
+    },
+    {
+      "socket": "outside",
+      "fs_read": true,
+      "fs_write": false,
+      "shell": false,
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "errno": 1,
+        "project_read": true,
+        "landlock_abi": 8
+      }
+    },
+    {
+      "mode": "unix-mutation",
+      "socket": "outside",
+      "fs_read": true,
+      "fs_write": false,
+      "shell": false,
+      "observed": {
+        "ready": {
+          "phase": "mutation-ready",
+          "request_tid": 4
+        },
+        "finished": {
+          "phase": "mutation-finished",
+          "fd_replaced": true,
+          "address_changed": true,
+          "path_replaced": true,
+          "original_unlinked": true,
+          "result_ok": true,
+          "sent": true,
+          "private_roundtrip": true
+        },
+        "cancelled_pid": null,
+        "pinned_tid": 4,
+        "started": [
+          5
+        ],
+        "reaped": [
+          5
+        ],
+        "audit": [
+          "BPIN 4",
+          "BSTART 5",
+          "BREAP 5"
+        ],
+        "stdout_closed_before_cleanup": null,
+        "owner_exited_before_cleanup": null,
+        "pressure": null,
+        "pressure_cancelled": null,
+        "cancelled_workers": [],
+        "host_received_fixture": false
+      }
+    },
+    {
+      "socket": "outside",
+      "fs_read": true,
+      "fs_write": false,
+      "shell": false,
+      "mode": "pair",
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "project_read": true,
+        "pair_roundtrip": true,
+        "pair_disconnect": false,
+        "pair_reconnect": false,
+        "pair_bind": false,
+        "pair_listen": false,
+        "pair_sendto": false,
+        "pair_sendmsg": false,
+        "datagram_pair": false,
+        "seqpacket_pair": false,
+        "landlock_abi": 8,
+        "tcp_roundtrip": true,
+        "thread_tcp_roundtrip": true,
+        "scratch_unix_roundtrip": true,
+        "regular_reparent": false,
+        "cross_mount_alias_errno": 18
+      }
+    },
+    {
+      "socket": "outside",
+      "fs_read": true,
+      "fs_write": true,
+      "shell": false,
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "errno": 1,
+        "project_read": true,
+        "landlock_abi": 8
+      }
+    },
+    {
+      "mode": "unix-mutation",
+      "socket": "outside",
+      "fs_read": true,
+      "fs_write": true,
+      "shell": false,
+      "observed": {
+        "ready": {
+          "phase": "mutation-ready",
+          "request_tid": 4
+        },
+        "finished": {
+          "phase": "mutation-finished",
+          "fd_replaced": true,
+          "address_changed": true,
+          "path_replaced": true,
+          "original_unlinked": true,
+          "result_ok": true,
+          "sent": true,
+          "private_roundtrip": true
+        },
+        "cancelled_pid": null,
+        "pinned_tid": 4,
+        "started": [
+          5
+        ],
+        "reaped": [
+          5
+        ],
+        "audit": [
+          "BPIN 4",
+          "BSTART 5",
+          "BREAP 5"
+        ],
+        "stdout_closed_before_cleanup": null,
+        "owner_exited_before_cleanup": null,
+        "pressure": null,
+        "pressure_cancelled": null,
+        "cancelled_workers": [],
+        "host_received_fixture": false
+      }
+    },
+    {
+      "socket": "outside",
+      "fs_read": true,
+      "fs_write": true,
+      "shell": false,
+      "mode": "pair",
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "project_read": true,
+        "pair_roundtrip": true,
+        "pair_disconnect": false,
+        "pair_reconnect": false,
+        "pair_bind": false,
+        "pair_listen": false,
+        "pair_sendto": false,
+        "pair_sendmsg": false,
+        "datagram_pair": false,
+        "seqpacket_pair": false,
+        "landlock_abi": 8,
+        "tcp_roundtrip": true,
+        "thread_tcp_roundtrip": true,
+        "scratch_unix_roundtrip": true,
+        "regular_reparent": true,
+        "cross_mount_alias_errno": 18
+      }
+    },
+    {
+      "socket": "public",
+      "fs_read": false,
+      "fs_write": false,
+      "shell": false,
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "errno": 1,
+        "project_read": false,
+        "landlock_abi": 8
+      }
+    },
+    {
+      "socket": "public",
+      "fs_read": false,
+      "fs_write": false,
+      "shell": false,
+      "mode": "pair",
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "project_read": false,
+        "pair_roundtrip": true,
+        "pair_disconnect": false,
+        "pair_reconnect": false,
+        "pair_bind": false,
+        "pair_listen": false,
+        "pair_sendto": false,
+        "pair_sendmsg": false,
+        "datagram_pair": false,
+        "seqpacket_pair": false,
+        "landlock_abi": 8,
+        "tcp_roundtrip": true,
+        "thread_tcp_roundtrip": true,
+        "scratch_unix_roundtrip": true,
+        "regular_reparent": false,
+        "cross_mount_alias_errno": 18
+      }
+    },
+    {
+      "socket": "public",
+      "fs_read": false,
+      "fs_write": true,
+      "shell": false,
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "errno": 1,
+        "project_read": false,
+        "landlock_abi": 8
+      }
+    },
+    {
+      "socket": "public",
+      "fs_read": false,
+      "fs_write": true,
+      "shell": false,
+      "mode": "pair",
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "project_read": false,
+        "pair_roundtrip": true,
+        "pair_disconnect": false,
+        "pair_reconnect": false,
+        "pair_bind": false,
+        "pair_listen": false,
+        "pair_sendto": false,
+        "pair_sendmsg": false,
+        "datagram_pair": false,
+        "seqpacket_pair": false,
+        "landlock_abi": 8,
+        "tcp_roundtrip": true,
+        "thread_tcp_roundtrip": true,
+        "scratch_unix_roundtrip": true,
+        "regular_reparent": true,
+        "cross_mount_alias_errno": 18
+      }
+    },
+    {
+      "socket": "public",
+      "fs_read": true,
+      "fs_write": false,
+      "shell": false,
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "errno": 1,
+        "project_read": true,
+        "landlock_abi": 8
+      }
+    },
+    {
+      "socket": "public",
+      "fs_read": true,
+      "fs_write": false,
+      "shell": false,
+      "mode": "pair",
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "project_read": true,
+        "pair_roundtrip": true,
+        "pair_disconnect": false,
+        "pair_reconnect": false,
+        "pair_bind": false,
+        "pair_listen": false,
+        "pair_sendto": false,
+        "pair_sendmsg": false,
+        "datagram_pair": false,
+        "seqpacket_pair": false,
+        "landlock_abi": 8,
+        "tcp_roundtrip": true,
+        "thread_tcp_roundtrip": true,
+        "scratch_unix_roundtrip": true,
+        "regular_reparent": false,
+        "cross_mount_alias_errno": 18
+      }
+    },
+    {
+      "socket": "public",
+      "fs_read": true,
+      "fs_write": true,
+      "shell": false,
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "errno": 1,
+        "project_read": true,
+        "landlock_abi": 8
+      }
+    },
+    {
+      "socket": "public",
+      "fs_read": true,
+      "fs_write": true,
+      "shell": false,
+      "mode": "pair",
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "project_read": true,
+        "pair_roundtrip": true,
+        "pair_disconnect": false,
+        "pair_reconnect": false,
+        "pair_bind": false,
+        "pair_listen": false,
+        "pair_sendto": false,
+        "pair_sendmsg": false,
+        "datagram_pair": false,
+        "seqpacket_pair": false,
+        "landlock_abi": 8,
+        "tcp_roundtrip": true,
+        "thread_tcp_roundtrip": true,
+        "scratch_unix_roundtrip": true,
+        "regular_reparent": true,
+        "cross_mount_alias_errno": 18
+      }
+    },
+    {
+      "socket": "private-mask",
+      "fs_read": false,
+      "fs_write": false,
+      "shell": false,
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "errno": 1,
+        "project_read": false,
+        "landlock_abi": 8
+      }
+    },
+    {
+      "socket": "private-mask",
+      "fs_read": false,
+      "fs_write": false,
+      "shell": false,
+      "mode": "pair",
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "project_read": false,
+        "pair_roundtrip": true,
+        "pair_disconnect": false,
+        "pair_reconnect": false,
+        "pair_bind": false,
+        "pair_listen": false,
+        "pair_sendto": false,
+        "pair_sendmsg": false,
+        "datagram_pair": false,
+        "seqpacket_pair": false,
+        "landlock_abi": 8,
+        "tcp_roundtrip": true,
+        "thread_tcp_roundtrip": true,
+        "scratch_unix_roundtrip": true,
+        "regular_reparent": false,
+        "cross_mount_alias_errno": 13
+      }
+    },
+    {
+      "socket": "private-mask",
+      "fs_read": false,
+      "fs_write": true,
+      "shell": false,
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "errno": 1,
+        "project_read": false,
+        "landlock_abi": 8
+      }
+    },
+    {
+      "socket": "private-mask",
+      "fs_read": false,
+      "fs_write": true,
+      "shell": false,
+      "mode": "pair",
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "project_read": false,
+        "pair_roundtrip": true,
+        "pair_disconnect": false,
+        "pair_reconnect": false,
+        "pair_bind": false,
+        "pair_listen": false,
+        "pair_sendto": false,
+        "pair_sendmsg": false,
+        "datagram_pair": false,
+        "seqpacket_pair": false,
+        "landlock_abi": 8,
+        "tcp_roundtrip": true,
+        "thread_tcp_roundtrip": true,
+        "scratch_unix_roundtrip": true,
+        "regular_reparent": true,
+        "cross_mount_alias_errno": 13
+      }
+    },
+    {
+      "socket": "private-mask",
+      "fs_read": true,
+      "fs_write": false,
+      "shell": false,
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "errno": 1,
+        "project_read": true,
+        "landlock_abi": 8
+      }
+    },
+    {
+      "socket": "private-mask",
+      "fs_read": true,
+      "fs_write": false,
+      "shell": false,
+      "mode": "pair",
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "project_read": true,
+        "pair_roundtrip": true,
+        "pair_disconnect": false,
+        "pair_reconnect": false,
+        "pair_bind": false,
+        "pair_listen": false,
+        "pair_sendto": false,
+        "pair_sendmsg": false,
+        "datagram_pair": false,
+        "seqpacket_pair": false,
+        "landlock_abi": 8,
+        "tcp_roundtrip": true,
+        "thread_tcp_roundtrip": true,
+        "scratch_unix_roundtrip": true,
+        "regular_reparent": false,
+        "cross_mount_alias_errno": 13
+      }
+    },
+    {
+      "socket": "private-mask",
+      "fs_read": true,
+      "fs_write": true,
+      "shell": false,
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "errno": 1,
+        "project_read": true,
+        "landlock_abi": 8
+      }
+    },
+    {
+      "socket": "private-mask",
+      "fs_read": true,
+      "fs_write": true,
+      "shell": false,
+      "mode": "pair",
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "project_read": true,
+        "pair_roundtrip": true,
+        "pair_disconnect": false,
+        "pair_reconnect": false,
+        "pair_bind": false,
+        "pair_listen": false,
+        "pair_sendto": false,
+        "pair_sendmsg": false,
+        "datagram_pair": false,
+        "seqpacket_pair": false,
+        "landlock_abi": 8,
+        "tcp_roundtrip": true,
+        "thread_tcp_roundtrip": true,
+        "scratch_unix_roundtrip": true,
+        "regular_reparent": true,
+        "cross_mount_alias_errno": 13
+      }
+    },
+    {
+      "socket": "symlink-outside",
+      "fs_read": false,
+      "fs_write": false,
+      "shell": false,
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "errno": 1,
+        "project_read": false,
+        "landlock_abi": 8
+      }
+    },
+    {
+      "socket": "symlink-outside",
+      "fs_read": false,
+      "fs_write": false,
+      "shell": false,
+      "mode": "pair",
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "project_read": false,
+        "pair_roundtrip": true,
+        "pair_disconnect": false,
+        "pair_reconnect": false,
+        "pair_bind": false,
+        "pair_listen": false,
+        "pair_sendto": false,
+        "pair_sendmsg": false,
+        "datagram_pair": false,
+        "seqpacket_pair": false,
+        "landlock_abi": 8,
+        "tcp_roundtrip": true,
+        "thread_tcp_roundtrip": true,
+        "scratch_unix_roundtrip": true,
+        "regular_reparent": false,
+        "cross_mount_alias_errno": 18
+      }
+    },
+    {
+      "socket": "symlink-outside",
+      "fs_read": false,
+      "fs_write": true,
+      "shell": false,
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "errno": 1,
+        "project_read": false,
+        "landlock_abi": 8
+      }
+    },
+    {
+      "socket": "symlink-outside",
+      "fs_read": false,
+      "fs_write": true,
+      "shell": false,
+      "mode": "pair",
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "project_read": false,
+        "pair_roundtrip": true,
+        "pair_disconnect": false,
+        "pair_reconnect": false,
+        "pair_bind": false,
+        "pair_listen": false,
+        "pair_sendto": false,
+        "pair_sendmsg": false,
+        "datagram_pair": false,
+        "seqpacket_pair": false,
+        "landlock_abi": 8,
+        "tcp_roundtrip": true,
+        "thread_tcp_roundtrip": true,
+        "scratch_unix_roundtrip": true,
+        "regular_reparent": true,
+        "cross_mount_alias_errno": 18
+      }
+    },
+    {
+      "socket": "symlink-outside",
+      "fs_read": true,
+      "fs_write": false,
+      "shell": false,
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "errno": 1,
+        "project_read": true,
+        "landlock_abi": 8
+      }
+    },
+    {
+      "socket": "symlink-outside",
+      "fs_read": true,
+      "fs_write": false,
+      "shell": false,
+      "mode": "pair",
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "project_read": true,
+        "pair_roundtrip": true,
+        "pair_disconnect": false,
+        "pair_reconnect": false,
+        "pair_bind": false,
+        "pair_listen": false,
+        "pair_sendto": false,
+        "pair_sendmsg": false,
+        "datagram_pair": false,
+        "seqpacket_pair": false,
+        "landlock_abi": 8,
+        "tcp_roundtrip": true,
+        "thread_tcp_roundtrip": true,
+        "scratch_unix_roundtrip": true,
+        "regular_reparent": false,
+        "cross_mount_alias_errno": 18
+      }
+    },
+    {
+      "socket": "symlink-outside",
+      "fs_read": true,
+      "fs_write": true,
+      "shell": false,
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "errno": 1,
+        "project_read": true,
+        "landlock_abi": 8
+      }
+    },
+    {
+      "socket": "symlink-outside",
+      "fs_read": true,
+      "fs_write": true,
+      "shell": false,
+      "mode": "pair",
+      "host_received_fixture": false,
+      "observed": {
+        "started": true,
+        "connected": false,
+        "sent": false,
+        "project_read": true,
+        "pair_roundtrip": true,
+        "pair_disconnect": false,
+        "pair_reconnect": false,
+        "pair_bind": false,
+        "pair_listen": false,
+        "pair_sendto": false,
+        "pair_sendmsg": false,
+        "datagram_pair": false,
+        "seqpacket_pair": false,
+        "landlock_abi": 8,
+        "tcp_roundtrip": true,
+        "thread_tcp_roundtrip": true,
+        "scratch_unix_roundtrip": true,
+        "regular_reparent": true,
+        "cross_mount_alias_errno": 18
+      }
+    }
+  ],
+  "scope": "Fixture-owned socket, caller and worker observations in experimental helpers only. Proof rows are case-specific; no ambient service contact or production capability acceptance."
+}

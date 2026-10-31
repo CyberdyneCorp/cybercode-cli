@@ -1,0 +1,4 @@
+
+thread 'main' (8522) panicked at crates/cyber-sandbox/examples/plugin_unix_socket_probe.rs:191:9:
+private relative path escaped scratch: {"host_received_fixture":true,"observed":{"started":true,"connected":false,"sent":false,"project_read":false,"pair_roundtrip":true,"pair_disconnect":false,"pair_reconnect":false,"pair_bind":false,"pair_listen":false,"pair_sendto":false,"pair_sendmsg":false,"datagram_pair":false,"seqpacket_pair":false,"landlock_abi":8,"tcp_roundtrip":true,"thread_tcp_roundtrip":true,"scratch_unix_roundtrip":true,"regular_reparent":false,"cross_mount_alias_errno":18,"relative_root_roundtrip":true,"relative_parent_roundtrip":true,"relative_escape_connected":true,"relative_escape_sent":true}}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

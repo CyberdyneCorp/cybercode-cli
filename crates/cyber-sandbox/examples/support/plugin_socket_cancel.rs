@@ -3,6 +3,7 @@ use cyber_sandbox::plugin_policy::LinuxPolicy;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::os::unix::net::UnixListener;
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
@@ -17,6 +18,7 @@ enum Message {
 enum Case {
     Cancellation,
     Mutation,
+    UnixMutation,
     Escape,
     Saturation,
 }
@@ -25,6 +27,7 @@ impl Case {
         match self {
             Self::Cancellation => "cancel",
             Self::Mutation => "mutation",
+            Self::UnixMutation => "unix-mutation",
             Self::Escape => "escape",
             Self::Saturation => "saturation",
         }
@@ -92,6 +95,7 @@ struct Trace {
     owner_exited_before_cleanup: Option<bool>,
     pressure: Option<Value>,
     pressure_cancelled: Option<Value>,
+    host_received: Option<bool>,
 }
 impl Trace {
     fn record(&mut self, message: Message) -> Result<(), String> {
@@ -160,7 +164,7 @@ impl Trace {
         if matches!(case, Case::Escape) {
             return false;
         }
-        if matches!(case, Case::Mutation) {
+        if matches!(case, Case::Mutation | Case::UnixMutation) {
             let Some(tid) = self.pinned else {
                 return false;
             };
@@ -202,12 +206,14 @@ impl Trace {
         json!({"ready":self.ready,"finished":self.finished,"cancelled_pid":self.cancelled,
             "pinned_tid":self.pinned,"started":self.started,"reaped":self.reaped,"audit":self.audit,
             "stdout_closed_before_cleanup":self.closed_before_cleanup,"owner_exited_before_cleanup":self.owner_exited_before_cleanup,
-            "pressure":self.pressure,"pressure_cancelled":self.pressure_cancelled,"cancelled_workers":self.cancelled_workers})
+            "pressure":self.pressure,"pressure_cancelled":self.pressure_cancelled,"cancelled_workers":self.cancelled_workers,
+            "host_received_fixture":self.host_received})
     }
     fn verify(&self, case: Case, released: bool, status: ExitStatus) {
         match case {
             Case::Cancellation => self.verify_cancel(released, status),
             Case::Mutation => self.verify_mutation(released, status),
+            Case::UnixMutation => self.verify_unix_mutation(released, status),
             Case::Escape => self.verify_escape(status),
             Case::Saturation => self.verify_pressure(released, status),
         }
@@ -253,6 +259,33 @@ impl Trace {
         assert!(
             status.success() && correct,
             "socket/address mutation changed the admitted operation: {}",
+            self.report()
+        );
+    }
+    fn verify_unix_mutation(&self, released: bool, status: ExitStatus) {
+        assert!(
+            released,
+            "missing UNIX post-pin handshake: {}",
+            self.report()
+        );
+        let finished = self
+            .finished
+            .as_ref()
+            .expect("missing UNIX mutation result");
+        let correct = [
+            "fd_replaced",
+            "address_changed",
+            "path_replaced",
+            "original_unlinked",
+            "result_ok",
+            "sent",
+            "private_roundtrip",
+        ]
+        .iter()
+        .all(|key| finished[key] == true);
+        assert!(
+            status.success() && correct && self.host_received == Some(false),
+            "private UNIX mutation escaped the pinned endpoint: {}",
             self.report()
         );
     }
@@ -369,29 +402,51 @@ fn drive(
 }
 
 pub fn observe(policy: &LinuxPolicy<'_>) -> Value {
-    observe_case(policy, Case::Cancellation, true)
+    observe_case(policy, Case::Cancellation, true, None)
 }
 pub fn observe_mutation(policy: &LinuxPolicy<'_>) -> Value {
-    observe_case(policy, Case::Mutation, true)
+    observe_case(policy, Case::Mutation, true, None)
+}
+pub fn observe_unix_mutation(policy: &LinuxPolicy<'_>, listener: &UnixListener) -> Value {
+    observe_case(policy, Case::UnixMutation, true, Some(listener))
 }
 pub fn observe_escape(policy: &LinuxPolicy<'_>, private_pid: bool) -> Value {
-    observe_case(policy, Case::Escape, private_pid)
+    observe_case(policy, Case::Escape, private_pid, None)
 }
 pub fn observe_saturation(policy: &LinuxPolicy<'_>) -> Value {
-    observe_case(policy, Case::Saturation, true)
+    observe_case(policy, Case::Saturation, true, None)
 }
-fn observe_case(policy: &LinuxPolicy<'_>, case: Case, private_pid: bool) -> Value {
-    let args = [
+fn observe_case(
+    policy: &LinuxPolicy<'_>,
+    case: Case,
+    private_pid: bool,
+    listener: Option<&UnixListener>,
+) -> Value {
+    let mut args = vec![
         policy.target_args[0].clone(),
         policy.target_args[1].clone(),
         case.argument().into(),
     ];
+    if matches!(case, Case::UnixMutation) {
+        args.push(
+            policy
+                .scratch
+                .join("mutation.sock")
+                .to_str()
+                .unwrap()
+                .into(),
+        );
+    }
     let policy = LinuxPolicy {
         target_args: &args,
         shell: matches!(case, Case::Escape) || policy.shell,
         ..*policy
     };
     let mut plan = policy.compose().unwrap();
+    if matches!(case, Case::UnixMutation) {
+        plan.landlock
+            .push_str(&format!("U\t{}\n", policy.scratch.display()));
+    }
     if !private_pid {
         assert_eq!(
             plan.arguments
@@ -462,6 +517,27 @@ fn observe_case(policy: &LinuxPolicy<'_>, case: Case, private_pid: bool) -> Valu
         "fixture protocol failed: {outcome:?} {errors:?}: {}",
         trace.report()
     );
+    if let Some(listener) = listener {
+        trace.host_received = Some(host_receipt(listener));
+    }
     trace.verify(case, handshakes == case.handshakes(), status);
     trace.report()
+}
+
+fn host_receipt(listener: &UnixListener) -> bool {
+    match listener.accept() {
+        Ok((mut stream, _)) => {
+            stream
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            let mut token = [0; 12];
+            stream.read_exact(&mut token).unwrap();
+            assert_eq!(&token, b"fixture-only");
+            true
+        }
+        Err(error) => {
+            assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
+            false
+        }
+    }
 }

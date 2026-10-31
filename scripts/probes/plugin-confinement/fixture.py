@@ -210,9 +210,49 @@ def inspect():
     }
     observations["written_project_read"] = native_read(case["project_write"])
     observations["project_rename"] = rename_project()
+    if case.get("private_stream"):
+        observations["private_unix"] = private_unix()
     if case["initial_exec"]:
         observations["filter_replacement_denied"] = filter_replacement_denied()
     print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": observations}, sort_keys=True))
+
+
+def private_unix():
+    import socket
+
+    def exchange(endpoint):
+        bound = False
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+                server.settimeout(2)
+                server.bind(endpoint)
+                bound = True
+                server.listen(1)
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                    client.settimeout(2)
+                    client.connect(endpoint)
+                    peer, _ = server.accept()
+                    with peer:
+                        peer.settimeout(2)
+                        client.sendall(b"T")
+                        if peer.recv(1) != b"T":
+                            return False
+                        peer.sendall(b"A")
+                        return client.recv(1) == b"A"
+        except OSError:
+            return False
+        finally:
+            if bound:
+                os.unlink(endpoint)
+
+    absolute = exchange(os.path.join(case["scratch"], "a.sock"))
+    previous = os.open(".", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.chdir(case["scratch"])
+        return [absolute, exchange("r.sock")]
+    finally:
+        os.fchdir(previous)
+        os.close(previous)
 
 
 if case["mode"] == "exec":

@@ -1,0 +1,10 @@
+{
+  "required_abi": 9,
+  "observed_abi": 8,
+  "available": false,
+  "acceptance": "unverified; kernel unsupported",
+  "checkout": "1f27f418bf3654e99e01e44f9d38760ff7f473c1",
+  "run_id": "41092065028",
+  "source_sha256": "97e1ca54276e939ba4abe7bb0e648ac9a74fec98da1010a85df64e821924dad7",
+  "scope": "Kernel availability only; refusal on an older kernel is not confinement acceptance."
+}

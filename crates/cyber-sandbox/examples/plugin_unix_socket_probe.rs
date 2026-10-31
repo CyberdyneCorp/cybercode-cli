@@ -41,10 +41,20 @@ mod probe {
 
     fn receipt(listener: &UnixListener, observed: &Value) -> bool {
         assert_eq!(observed["started"], true);
+        let connected = [
+            "connected",
+            "relative_escape_connected",
+            "alias_escape_connected",
+        ]
+        .iter()
+        .any(|key| observed[*key] == true);
+        let sent = ["sent", "relative_escape_sent", "alias_escape_sent"]
+            .iter()
+            .any(|key| observed[*key] == true);
         match listener.accept() {
             Ok((mut stream, _)) => {
-                assert_eq!(observed["connected"], true);
-                assert_eq!(observed["sent"], true);
+                assert!(connected);
+                assert!(sent);
                 stream
                     .set_read_timeout(Some(Duration::from_secs(1)))
                     .unwrap();
@@ -55,8 +65,8 @@ mod probe {
             }
             Err(error) => {
                 assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
-                assert_eq!(observed["connected"], false);
-                assert_eq!(observed["sent"], false);
+                assert!(!connected);
+                assert!(!sent);
                 false
             }
         }
@@ -72,6 +82,8 @@ mod probe {
         BrokerEscape,
         BrokerEscapeNoPid,
         BrokerSaturation,
+        BrokerPrivateStream,
+        BrokerPrivateStreamMutation,
         Unix9,
     }
     impl Mode {
@@ -85,6 +97,8 @@ mod probe {
                     | Self::BrokerEscape
                     | Self::BrokerEscapeNoPid
                     | Self::BrokerSaturation
+                    | Self::BrokerPrivateStream
+                    | Self::BrokerPrivateStreamMutation
             )
         }
         fn broker(self) -> bool {
@@ -96,6 +110,14 @@ mod probe {
                     | Self::BrokerEscape
                     | Self::BrokerEscapeNoPid
                     | Self::BrokerSaturation
+                    | Self::BrokerPrivateStream
+                    | Self::BrokerPrivateStreamMutation
+            )
+        }
+        fn private_stream(self) -> bool {
+            matches!(
+                self,
+                Self::BrokerPrivateStream | Self::BrokerPrivateStreamMutation
             )
         }
         fn escape(self) -> Option<bool> {
@@ -109,7 +131,7 @@ mod probe {
 
     fn observe(policy: &LinuxPolicy<'_>, mode: Mode) -> Value {
         let mut plan = policy.compose().unwrap();
-        if mode == Mode::Unix9 {
+        if mode == Mode::Unix9 || mode.private_stream() {
             plan.landlock
                 .push_str(&format!("U\t{}\n", policy.scratch.display()));
         }
@@ -142,6 +164,10 @@ mod probe {
             ..policy
         };
         let observed = observe(&pair_policy, mode);
+        let delivered = receipt(listener, &observed);
+        if mode.private_stream() {
+            check_private_stream(&observed, &pair_policy, label, delivered);
+        }
         assert_eq!(
             observed["project_read"], pair_policy.fs_read,
             "native pair read control: {observed}"
@@ -153,24 +179,71 @@ mod probe {
         for key in ["connected", "pair_reconnect", "pair_bind"] {
             assert_eq!(
                 observed[key], false,
-                "private pair escape: {key}: {observed}"
+                "private pair escape: {key}: {label} read={} write={}: {observed}",
+                pair_policy.fs_read, pair_policy.fs_write,
             );
         }
         check_pair_support(&observed, mode);
-        let delivered = receipt(listener, &observed);
         assert!(!delivered, "pair reached host: {observed}");
         json!({"socket": label, "fs_read": pair_policy.fs_read, "fs_write": pair_policy.fs_write,
                         "shell": false, "mode": "pair", "host_received_fixture": delivered, "observed": observed})
     }
 
+    fn check_private_stream(
+        observed: &Value,
+        policy: &LinuxPolicy<'_>,
+        label: &str,
+        delivered: bool,
+    ) {
+        assert!(
+            !delivered,
+            "private relative path escaped scratch: {}",
+            json!({"host_received_fixture":delivered,"observed":observed})
+        );
+        for key in [
+            "relative_root_roundtrip",
+            "relative_parent_roundtrip",
+            "outside_cwd_roundtrip",
+            "alias_relative_roundtrip",
+            "alias_absolute_roundtrip",
+            "alias_directory_roundtrip",
+        ] {
+            assert_eq!(
+                observed[key], true,
+                "private relative stream exchange: {key}: {observed}"
+            );
+        }
+        assert_eq!(observed["relative_escape_connected"], false);
+        assert_eq!(observed["relative_escape_sent"], false);
+        assert_eq!(observed["alias_escape_connected"], false);
+        assert_eq!(observed["alias_escape_sent"], false);
+        assert_eq!(
+            observed["regular_reparent"], policy.fs_write,
+            "private IPC layer changed ordinary file moves: {label} read={} write={}: {observed}",
+            policy.fs_read, policy.fs_write,
+        );
+        if label == "public" && policy.fs_write {
+            assert_eq!(
+                observed["cross_mount_alias_errno"],
+                libc::EXDEV,
+                "a host socket alias crossed the private scratch mount: {observed}"
+            );
+        }
+    }
+
     fn check_pair_support(observed: &Value, mode: Mode) {
-        for key in ["datagram_pair", "seqpacket_pair", "scratch_unix_roundtrip"] {
+        for key in ["datagram_pair", "seqpacket_pair"] {
             assert_eq!(
                 observed[key],
                 mode == Mode::Unix9,
                 "pair/local support: {key}: {observed}"
             );
         }
+        assert_eq!(
+            observed["scratch_unix_roundtrip"],
+            mode == Mode::Unix9 || mode.private_stream(),
+            "private scratch stream roundtrip: {observed}"
+        );
         assert_eq!(
             observed["tcp_roundtrip"],
             mode.ip_servers(),
@@ -186,6 +259,55 @@ mod probe {
         }
     }
 
+    fn peer_identity_row(policy: &LinuxPolicy<'_>) -> Value {
+        let target_args = [
+            policy.target_args[0].clone(),
+            policy.target_args[1].clone(),
+            "peer-identity".into(),
+            policy
+                .scratch
+                .join("identity.sock")
+                .to_str()
+                .unwrap()
+                .into(),
+        ];
+        let control: Value = serde_json::from_slice(
+            &run(Command::new(policy.target).args(&target_args).env_clear()).stdout,
+        )
+        .unwrap();
+        assert_eq!(
+            control["exchanged"], true,
+            "unconfined peer exchange: {control}"
+        );
+        assert_eq!(control["peer_checks"], 1);
+        assert_eq!(
+            control["peer_matches"], true,
+            "unconfined accepted peer: {control}"
+        );
+        assert_eq!(control["client_peer_matches"], true);
+        let observed = observe(
+            &LinuxPolicy {
+                target_args: &target_args,
+                ..*policy
+            },
+            Mode::BrokerPrivateStream,
+        );
+        assert_eq!(
+            observed["exchanged"], true,
+            "broker peer exchange: {observed}"
+        );
+        assert_eq!(observed["peer_checks"], 1);
+        assert_eq!(
+            observed["client_peer_matches"], true,
+            "broker listener identity: {observed}"
+        );
+        // Record the accepted side honestly. A successful byte exchange cannot
+        // turn a peer-identity mismatch into private IPC compatibility.
+        json!({"mode":"peer-identity", "fs_read":policy.fs_read, "fs_write":policy.fs_write,
+            "shell":false,"compatibility_accepted":observed["peer_matches"] == true,
+            "unconfined_control":control,"observed":observed})
+    }
+
     fn candidate_rows(
         policy: LinuxPolicy<'_>,
         listener: &UnixListener,
@@ -193,6 +315,14 @@ mod probe {
         mode: Mode,
     ) -> Vec<Value> {
         let mut rows = Vec::new();
+        if mode == Mode::BrokerPrivateStream && label == "outside" {
+            rows.push(peer_identity_row(&policy));
+        }
+        if mode == Mode::BrokerPrivateStreamMutation && label == "outside" {
+            let observed = super::cancellation::observe_unix_mutation(&policy, listener);
+            rows.push(json!({"mode":"unix-mutation","socket":label,
+                "fs_read":policy.fs_read,"fs_write":policy.fs_write,"shell":false,"observed":observed}));
+        }
         if mode == Mode::BrokerSaturation && label == "outside" {
             let observed = super::cancellation::observe_saturation(&policy);
             rows.push(
@@ -245,6 +375,8 @@ mod probe {
             Some("--broker-escape") => Mode::BrokerEscape,
             Some("--broker-escape-no-pid") => Mode::BrokerEscapeNoPid,
             Some("--broker-saturation") => Mode::BrokerSaturation,
+            Some("--broker-private-stream") => Mode::BrokerPrivateStream,
+            Some("--broker-private-stream-mutation") => Mode::BrokerPrivateStreamMutation,
             Some("--landlock9") => Mode::Unix9,
             _ => panic!("unknown candidate mode"),
         };
@@ -342,7 +474,11 @@ mod probe {
                 assert_eq!(observed["project_read"], read, "native read control");
                 let delivered = receipt(&listeners[index], &observed);
                 if candidate || label == "private-mask" {
-                    assert!(!delivered, "socket denial: {label}: {observed}");
+                    assert!(
+                        !delivered,
+                        "socket denial: {label}: {}",
+                        json!({"host_received_fixture":delivered,"observed":observed})
+                    );
                 }
                 rows.push(json!({"socket": label, "fs_read": read, "fs_write": write,
                     "shell": false, "host_received_fixture": delivered, "observed": observed}));
@@ -356,6 +492,8 @@ mod probe {
             "crates/cyber-sandbox/tests/fixtures/plugin_unix_socket.c",
             "crates/cyber-sandbox/tests/fixtures/plugin_socket_cancel.h",
             "crates/cyber-sandbox/tests/fixtures/plugin_socket_mutation.h",
+            "crates/cyber-sandbox/tests/fixtures/plugin_unix_mutation.h",
+            "crates/cyber-sandbox/tests/fixtures/plugin_unix_relative.h",
             "crates/cyber-sandbox/tests/fixtures/plugin_process_escape.h",
             "crates/cyber-sandbox/tests/fixtures/plugin_socket_saturation.h",
             "crates/cyber-sandbox/examples/support/plugin_socket_cancel.rs",
@@ -373,6 +511,8 @@ mod probe {
             "scripts/probes/plugin-native-entry/linux_socket_candidate.h",
             "scripts/probes/plugin-native-entry/linux_socket_broker.h",
             "scripts/probes/plugin-native-entry/linux_socket_broker_mutation.h",
+            "scripts/probes/plugin-native-entry/linux_socket_private_stream.h",
+            "scripts/probes/plugin-native-entry/linux_socket_private_unix.h",
             "scripts/probes/plugin-native-entry/linux_socket_landlock9.h",
             "scripts/probes/plugin-native-entry/linux_unix9_policy.h",
             "scripts/probes/plugin-native-entry/build_socket_candidate.py",
@@ -385,7 +525,7 @@ mod probe {
         }
         let report = json!({"platform": std::env::consts::OS, "architecture": std::env::consts::ARCH,
             "checkout": std::env::var("GITHUB_SHA").ok(), "run_id": std::env::var("GITHUB_RUN_ID").ok(),
-            "candidate": candidate, "landlock9": mode == Mode::Unix9, "socket_broker": mode.broker(), "cancellation_probe": mode == Mode::BrokerCancel, "mutation_probe": mode == Mode::BrokerMutation, "escape_probe": mode.escape(), "saturation_probe": mode == Mode::BrokerSaturation, "sources": sources, "source_sha256": format!("{:x}", hash.finalize()),
+            "candidate": candidate, "landlock9": mode == Mode::Unix9, "socket_broker": mode.broker(), "private_stream_probe": mode.private_stream(), "unix_mutation_probe": mode == Mode::BrokerPrivateStreamMutation, "cancellation_probe": mode == Mode::BrokerCancel, "mutation_probe": mode == Mode::BrokerMutation, "escape_probe": mode.escape(), "saturation_probe": mode == Mode::BrokerSaturation, "sources": sources, "source_sha256": format!("{:x}", hash.finalize()),
             "helper_sha256": format!("{:x}", Sha256::digest(std::fs::read(helper).unwrap())),
             "rows": rows, "scope": "Fixture-owned socket, caller and worker observations in experimental helpers only. Proof rows are case-specific; no ambient service contact or production capability acceptance."});
         std::fs::write(

@@ -1,11 +1,18 @@
 # File observation implementation notes
 
-Status: **in progress; task 5.2 remains open**. Revision `3e852288` passed the
-full focused Linux/macOS/Windows suite. At `c0cc40e3`, Linux/Windows also passed
-all 18 HTTP/runtime lifecycle scenarios and AppHost checks; macOS remained
-queued. The later inventory/batch byte-budget fix passes 63 local source-library
-tests and scoped Clippy, but its owner/application/platform checks await fresh
-CI. Broader verification and final substantive review remain required.
+Status: **in progress; task 5.2 remains open**. The observer is implemented;
+this is not an event without a producer. The #76 foundations milestone merged at
+`ec31ff9f` after its applicable CI passed, without closing the full acceptance
+contract. The [goal delivery record](../../../docs/goal-delivery.md) distinguishes
+that milestone from native plugin activation and the remaining producer work.
+
+The [pending-owner correction](file-observation-pending-owner.md) passed 58
+file-observation library tests and 24 actual HTTP lifecycle tests locally,
+including after integration with main at `550e9b39`. Its missing-fix control
+executes and fails the task-growth assertion. Current-source platform and
+composed-feature acceptance, broader verification and final review remain open.
+The sections below retain the implementation rationale and earlier incremental
+evidence; historical passing subsets do not close the parent task.
 
 ## Ownership and native observation
 

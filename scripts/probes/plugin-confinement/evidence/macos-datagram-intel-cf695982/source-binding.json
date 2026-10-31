@@ -1,0 +1,20 @@
+{
+  "run_id": 41143313110,
+  "job_id": 124362484197,
+  "artifact_id": 13020204256,
+  "artifact_sha256": "a4827a1d4f429c832f6a1a6c5e9717f1b1303c1822b8d4f207be4867e0279701",
+  "head": "cf695982a574c64a643a8fbd4f9db04256b91ec1",
+  "tested_merge": "b00e721289fdb81107369df6bcf163c5a4a9028d",
+  "base": "3ecf0755b80f2bf04e718e846197baabfd03a8ce",
+  "tree": "7d9ce794f1c6b8a74e9a0bfeb8e3551d5cd77887",
+  "result": "failure",
+  "stage": "send",
+  "errno": 22,
+  "runtime_source_sha256": "6c37cd93aadebedbda57d81f700cf436fe7b970bd56c86430cfea78ae03ad611",
+  "files": {
+    "exec.json": "33162f25ecfac65c27cd42070a3909aecd7e613e981699c9f95b7849ffc5882a",
+    "job.log": "2833b9bc2e996b02c670561fc0f9c1455983cd6d0de10bbd6dbbe426f01686c7",
+    "matrix.json": "db56e414a41b97c20a43cfe6202911f41321812cb2de51b12cab2e811c85f47a",
+    "unix-boundary.log": "06366bb18ce4e5eb6ce10b854c9a86eadfe172ff78de75c410d8eb5f36f432e8"
+  }
+}

@@ -7,6 +7,8 @@ on:
       - crates/cyber-sandbox/tests/fixtures/plugin_unix_socket.c
       - crates/cyber-sandbox/tests/fixtures/plugin_socket_cancel.h
       - crates/cyber-sandbox/tests/fixtures/plugin_socket_mutation.h
+      - crates/cyber-sandbox/tests/fixtures/plugin_unix_mutation.h
+      - crates/cyber-sandbox/tests/fixtures/plugin_unix_relative.h
       - crates/cyber-sandbox/tests/fixtures/plugin_process_escape.h
       - crates/cyber-sandbox/tests/fixtures/plugin_socket_saturation.h
       - crates/cyber-sandbox/examples/support/plugin_socket_cancel.rs
@@ -17,12 +19,16 @@ on:
       - .github/workflows/plugin-linux-ipc.yml
       - scripts/probes/plugin-native-entry/linux_socket_candidate.h
       - scripts/probes/plugin-native-entry/linux_socket_broker.h
+      - scripts/probes/plugin-native-entry/linux_socket_private_stream.h
+      - scripts/probes/plugin-native-entry/linux_socket_private_unix.h
       - scripts/probes/plugin-native-entry/linux_socket_broker_mutation.h
       - scripts/probes/plugin-native-entry/build_socket_candidate.py
       - scripts/probes/plugin-native-entry/linux_socket_landlock9.h
       - scripts/probes/plugin-native-entry/linux_unix9_policy.h
       - scripts/probes/plugin-native-entry/linux_pidfd_probe.c
       - scripts/probes/plugin-native-entry/pidfd.mts
+      - scripts/probes/plugin-native-entry/linux_unix_endpoint_pin.c
+      - scripts/probes/plugin-native-entry/unix-endpoint.mts
 permissions:
   contents: read
 concurrency:
@@ -69,6 +75,20 @@ jobs:
           set -euo pipefail
           cc -Wall -Wextra -Werror -pthread scripts/probes/plugin-native-entry/linux_pidfd_probe.c -o "$RUNNER_TEMP/pidfd-probe"
           node --experimental-strip-types scripts/probes/plugin-native-entry/pidfd.mts --probe "$RUNNER_TEMP/pidfd-probe" --report "$RUNNER_TEMP/linux-pidfd.json"
+      - name: Observe pinned private UNIX endpoint identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -Wall -Wextra -Werror scripts/probes/plugin-native-entry/linux_unix_endpoint_pin.c -o "$RUNNER_TEMP/unix-endpoint-pin"
+          node --experimental-strip-types scripts/probes/plugin-native-entry/unix-endpoint.mts --probe "$RUNNER_TEMP/unix-endpoint-pin" --report "$RUNNER_TEMP/linux-unix-endpoint.json"
+      - name: Retain UNIX endpoint identity observations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-unix-endpoint-${{ matrix.os }}
+          path: ${{ runner.temp }}/linux-unix-endpoint.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Retain descriptor prerequisite observations
         if: always()
         uses: actions/upload-artifact@v4
@@ -89,6 +109,12 @@ jobs:
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker-audit" broker-audit
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker-no-cancel" broker-audit-no-cancel
           python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker-wrong-cap" broker-audit-wrong-cap
+          for variant in broker-private-stream broker-private-stream-no-makesock broker-private-stream-no-refer broker-private-stream-mutation broker-private-stream-mutation-no-endpoint; do
+            python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/$variant" "$variant"
+          done
+          for variant in wrong-cwd no-mount no-unix-create no-alias; do
+            python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/broker-private-stream-$variant" "broker-private-stream-$variant"
+          done
           for mode in mutation mutation-no-pin mutation-no-copy mutation-continue; do
             python3 scripts/probes/plugin-native-entry/build_socket_candidate.py "$RUNNER_TEMP/socket-broker-$mode" "broker-$mode"
           done
@@ -106,6 +132,98 @@ jobs:
           target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker-mutation" "$RUNNER_TEMP/linux-ipc-broker-mutation.json" --broker-mutation
           target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker" "$RUNNER_TEMP/linux-ipc-broker-escape.json" --broker-escape
           target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/socket-broker-audit" "$RUNNER_TEMP/linux-ipc-broker-saturation.json" --broker-saturation
+          target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/broker-private-stream" "$RUNNER_TEMP/linux-ipc-broker-private-stream.json" --broker-private-stream
+          target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/broker-private-stream-mutation" "$RUNNER_TEMP/linux-ipc-broker-private-stream-mutation.json" --broker-private-stream-mutation
+      - name: Record accepted-side kernel peer identity compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP/linux-ipc-broker-private-stream.json" <<'PY'
+          import json
+          import sys
+          report = json.load(open(sys.argv[1]))
+          rows = [row for row in report['rows'] if row.get('mode') == 'peer-identity']
+          assert len(rows) == 4, rows
+          for row in rows:
+              control, observed = row['unconfined_control'], row['observed']
+              assert control['exchanged'] and control['peer_checks'] == 1, row
+              assert control['peer_matches'] and control['client_peer_matches'], row
+              assert control['accepted_pid'] == control['expected_pid'], row
+              assert observed['exchanged'] and observed['peer_checks'] == 1, row
+              assert observed['client_peer_matches'], row
+              assert observed['accepted_pid'] != observed['expected_pid'], row
+              assert not observed['peer_matches'] and not row['compatibility_accepted'], row
+          print('Recorded accepted-side peer PID mismatch in all four capability combinations; full IPC acceptance remains open')
+          PY
+      - name: Reject pathname re-resolution after private endpoint pinning
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/private-stream-no-endpoint.log"
+          if target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/broker-private-stream-mutation-no-endpoint" "$RUNNER_TEMP/linux-ipc-private-no-endpoint.json" --broker-private-stream-mutation > "$log" 2>&1; then
+            echo 'Missing private endpoint pin unexpectedly passed' >&2
+            exit 1
+          fi
+          python3 - "$log" <<'PY'
+          from pathlib import Path
+          import sys
+          text = Path(sys.argv[1]).read_text()
+          assert 'private UNIX mutation escaped the pinned endpoint' in text, text
+          for token in ['"fd_replaced":true', '"address_changed":true', '"path_replaced":true',
+                        '"original_unlinked":true', '"result_ok":true', '"sent":true',
+                        '"private_roundtrip":false', '"host_received_fixture":true', 'BPIN ']:
+              assert token in text, text
+          PY
+      - name: Reject wrong relative context and missing endpoint mount boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          for control in wrong-cwd no-mount no-alias; do
+            log="$RUNNER_TEMP/private-stream-$control.log"
+            if target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/broker-private-stream-$control" "$RUNNER_TEMP/linux-ipc-private-$control.json" --broker-private-stream > "$log" 2>&1; then
+              echo "Private relative-path control unexpectedly passed: $control" >&2
+              exit 1
+            fi
+            python3 - "$log" "$control" <<'PY'
+          from pathlib import Path
+          import sys
+          text = Path(sys.argv[1]).read_text()
+          if sys.argv[2] == 'wrong-cwd':
+              assert 'private relative stream exchange: relative_root_roundtrip' in text, text
+              assert '"scratch_unix_roundtrip":true' in text and '"relative_root_roundtrip":false' in text, text
+          elif sys.argv[2] == 'no-mount':
+              assert 'socket denial: outside:' in text, text
+              for token in ['"host_received_fixture":true', '"connected":true', '"sent":true']:
+                  assert token in text, text
+          else:
+              assert 'private relative stream exchange: alias_relative_roundtrip' in text, text
+              for token in ['"scratch_unix_roundtrip":true', '"relative_root_roundtrip":true',
+                            '"outside_cwd_roundtrip":true', '"alias_relative_roundtrip":false']:
+                  assert token in text, text
+          PY
+          done
+      - name: Reject missing private socket creation and file-move compatibility guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          for control in no-makesock no-refer; do
+            log="$RUNNER_TEMP/broker-private-stream-$control.log"
+            if target/debug/examples/plugin_unix_socket_probe "$RUNNER_TEMP/broker-private-stream-$control" "$RUNNER_TEMP/linux-ipc-private-stream-$control.json" --broker-private-stream > "$log" 2>&1; then
+              echo "Private stream control unexpectedly passed: $control" >&2
+              exit 1
+            fi
+            python3 - "$log" "$control" <<'PY'
+          from pathlib import Path
+          import sys
+          text = Path(sys.argv[1]).read_text()
+          if sys.argv[2] == 'no-makesock':
+              assert 'private pair escape: pair_bind: public read=false write=true' in text, text
+              assert '"pair_bind":true' in text, text
+          else:
+              assert 'private IPC layer changed ordinary file moves:' in text, text
+              assert 'write=true' in text and '"regular_reparent":false' in text, text
+          PY
+          done
       - name: Reject blanket bind denial as broker acceptance
         shell: bash
         run: |
@@ -283,7 +401,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/socket-runtime"
           status=0
-          for policy in seccomp broker unix9; do
+          for policy in seccomp broker private-stream unix9; do
             if [[ "$policy" == unix9 && '${{ steps.abi.outputs.supported }}' != true ]]; then
               echo 'UNVERIFIED: skipping ABI-9 runtime matrix on this unsupported kernel.'
               continue
@@ -291,10 +409,12 @@ jobs:
             mkdir -p "$RUNNER_TEMP/socket-runtime/$policy"
             helper="$RUNNER_TEMP/socket-candidate"
             if [[ "$policy" == broker ]]; then helper="$RUNNER_TEMP/socket-broker"; fi
+            if [[ "$policy" == private-stream ]]; then helper="$RUNNER_TEMP/broker-private-stream"; fi
             if [[ "$policy" == unix9 ]]; then helper="$RUNNER_TEMP/unix9-candidate"; fi
             for runtime in node python bun deno native; do
             args=(--runtime "$runtime" --initial-exec --packaged-helper "$helper" --report "$RUNNER_TEMP/socket-runtime/$policy/$runtime.json" --trace "$RUNNER_TEMP/socket-runtime/$policy/trace-$runtime")
             if [[ "$policy" == broker ]]; then args+=(--socket-broker); fi
+            if [[ "$policy" == private-stream ]]; then args+=(--socket-broker --broker-private-stream); fi
             if [[ "$policy" == unix9 ]]; then args+=(--unix-scratch-policy); fi
             if [[ "$runtime" == python ]]; then
               args+=(--python "$(command -v python3)")
@@ -308,6 +428,22 @@ jobs:
           done
           done
           exit "$status"
+      - name: Reject missing runtime private pathname socket support
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/private-runtime-no-create.log"
+          if node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime python --python "$(command -v python3)" --initial-exec --packaged-helper "$RUNNER_TEMP/broker-private-stream-no-unix-create" --socket-broker --broker-private-stream --report "$RUNNER_TEMP/private-runtime-no-create.json" > "$log" 2>&1; then
+            echo 'Missing private socket creation unexpectedly passed runtime acceptance' >&2
+            exit 1
+          fi
+          python3 - "$log" <<'PY'
+          from pathlib import Path
+          import sys
+          text = Path(sys.argv[1]).read_text()
+          assert 'no-capabilities: private UNIX runtime exchange failed: [false,false]' in text, text
+          PY
       - name: Retain diagnostic observations
         if: always()
         uses: actions/upload-artifact@v4
@@ -319,6 +455,13 @@ jobs:
             ${{ runner.temp }}/unix9-missing-resolve.log
             ${{ runner.temp }}/unix9-unavailable.log
             ${{ runner.temp }}/broker-no-bind.log
+            ${{ runner.temp }}/broker-private-stream-no-makesock.log
+            ${{ runner.temp }}/broker-private-stream-no-refer.log
+            ${{ runner.temp }}/private-stream-no-endpoint.log
+            ${{ runner.temp }}/private-stream-wrong-cwd.log
+            ${{ runner.temp }}/private-stream-no-mount.log
+            ${{ runner.temp }}/private-stream-no-alias.log
+            ${{ runner.temp }}/private-runtime-no-create.log
             ${{ runner.temp }}/broker-no-thread.log
             ${{ runner.temp }}/broker-no-cancel.log
             ${{ runner.temp }}/broker-mutation-*.log

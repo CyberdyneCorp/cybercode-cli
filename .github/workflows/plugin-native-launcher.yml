@@ -209,7 +209,7 @@ jobs:
             if [[ "$RUNNER_OS" == Linux ]]; then
               args+=(--initial-exec --trace "$RUNNER_TEMP/packaged-runtime/trace-$runtime")
             else
-              args+=(--macos-signing-runtime)
+              args+=(--macos-signing-runtime --macos-private-unix)
             fi
             if ! node --experimental-strip-types scripts/probes/plugin-confinement/run.mts "${args[@]}" > "$RUNNER_TEMP/packaged-runtime/$runtime.log" 2>&1; then
               cat "$RUNNER_TEMP/packaged-runtime/$runtime.log"
@@ -217,7 +217,7 @@ jobs:
             fi
           done
           if [[ "$RUNNER_OS" == macOS ]]; then
-            if ! node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime python --python /usr/bin/python3 --macos-signing-runtime --packaged-helper "$helper" --report "$RUNNER_TEMP/packaged-runtime/python-system.json" > "$RUNNER_TEMP/packaged-runtime/python-system.log" 2>&1; then
+            if ! node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime python --python /usr/bin/python3 --macos-signing-runtime --macos-private-unix --packaged-helper "$helper" --report "$RUNNER_TEMP/packaged-runtime/python-system.json" > "$RUNNER_TEMP/packaged-runtime/python-system.log" 2>&1; then
               cat "$RUNNER_TEMP/packaged-runtime/python-system.log"
               matrix_status=1
             fi
