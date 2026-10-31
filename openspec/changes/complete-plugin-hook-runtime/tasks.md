@@ -84,6 +84,11 @@ Task 5.2 is in progress. The [acceptance audit](file-observation-acceptance.md) 
 
 Task 5.2 is in progress. The full focused suite at `3e852288` passed Linux/macOS/Windows. At `c0cc40e3`, complete Linux/Windows jobs also passed all 18 HTTP/runtime scenarios, including idle-return ownership, archive/resume and native burst recovery; macOS remained queued. Review then reproduced an oversized metadata baseline within the count/path limits. The new publication/batch byte-budget fix passes 63 local source-library tests and scoped Clippy, and its focused owner/application regression workflow at `5aa08018` now passes on Linux/macOS/Windows. Combined producer acceptance is pending on this integration branch. Remaining resource/lifecycle acceptance, broader workspace checks and substantive review are still open. See [the scope integration design](file-observation-scope-design.md) and [implementation notes](file-observation-implementation.md).
 
+The [DirectoryAdded prerequisite proposal](directory-added-design.md) maps the
+unimplemented additional-directory owner operation to permission, sandbox and
+Context Source publication at a Safe Boundary. Tasks D1–D6 require review and
+implementation; no standalone emitter or successful addition is claimed.
+
 Setup ownership is expanded in [setup-design.md](setup-design.md). Its Store
 epoch and exact-directory marker choices are proposed for review; marker/schema
 and init behavior are not implemented by this specification. Tasks S1–S6 there
