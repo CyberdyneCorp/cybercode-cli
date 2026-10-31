@@ -132,6 +132,11 @@ the two epoch/key choices alone does not settle this newly identified legacy
 bootstrap requirement. The full original Setup contract remains required until
 a revised compatibility decision is reviewed.
 
+The [owner-resolution proposal](setup-legacy-bootstrap-review.md) supplies a
+concrete candidate for that review, including a deliberate legacy compatibility
+exception and its CLI/API, concurrency and retry consequences. It is not accepted
+by recording the proposal; S1 and the original full contract remain open.
+
 Required adversarial cases include root/attempt deletion before restart, a
 previously deleted root with another parent's child surviving at that Location,
 an empty settled attempt,
@@ -173,7 +178,7 @@ remain authoritative; init grants no additional permissions.
 
 ## Implementation and acceptance tasks
 
-- [ ] S1 Review both epoch/key decisions and the legacy-deletion bootstrap requirement above; record the accepted complete migration/support decision before implementation.
+- [ ] S1 Review both epoch/key decisions and the legacy-deletion bootstrap requirement above, including the [owner-resolution candidate](setup-legacy-bootstrap-review.md); record the accepted complete migration/support decision before implementation.
 - [ ] S2 Add bounded events, marker projection/migration and writer-atomic root
   Session admission across separate durable owners; cover concurrent creation,
   children, legacy/deleted history and rebuild after Session deletion with actual

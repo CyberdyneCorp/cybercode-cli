@@ -112,6 +112,10 @@ Setup ownership is expanded in [setup-design.md](setup-design.md). Its Store
 epoch and exact-directory marker choices are proposed for review; marker/schema
 and init behavior are not implemented by this specification. Tasks S1–S6 there
 expand task 5.1 without closing it or the other producer obligations.
+The [legacy owner-resolution candidate](setup-legacy-bootstrap-review.md) makes
+the remaining compatibility policy concrete, including the changed behavior for
+unproven legacy root creation. It is proposed only; the complete S1 decision and
+the original full contract remain open until review.
 
 ## 6. Acceptance and delivery
 
