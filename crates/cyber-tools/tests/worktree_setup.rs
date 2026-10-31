@@ -6,7 +6,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 use std::sync::Arc;
 use std::sync::Mutex;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::time::Duration;
 
 use cyber_core::worktrees::{
@@ -2148,7 +2148,7 @@ async fn worktree_create_hook_deny_refuses_creation_before_git_effects() {
 }
 
 /// Attach a live hook resolver whose global configuration holds `hooks`.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn attach_global_hooks(flow: &support::flow::Flow, hooks: serde_json::Value) {
     let env = std::collections::HashMap::from([(
         "CYBER_HOME".into(),
@@ -2474,7 +2474,7 @@ async fn exit_worktree_is_not_offered_to_isolated_children() {
 }
 
 /// Real HTTP hook dispatch, with an optional held response for shutdown ordering.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 struct CwdRecorder {
     seen: Arc<Mutex<Vec<serde_json::Value>>>,
     entered: Arc<Notify>,
@@ -2483,7 +2483,7 @@ struct CwdRecorder {
     task: tokio::task::JoinHandle<()>,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl CwdRecorder {
     async fn start(held: bool) -> Self {
         let seen = Arc::new(Mutex::new(Vec::new()));
@@ -2538,7 +2538,7 @@ impl CwdRecorder {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl Drop for CwdRecorder {
     fn drop(&mut self) {
         self.release.cancel();
@@ -2546,7 +2546,7 @@ impl Drop for CwdRecorder {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn cwd_history(flow: &support::flow::Flow, id: &str) -> Vec<cyber_store::StoredEvent> {
     let mut events = Vec::new();
     let mut after = -1;
@@ -2566,7 +2566,7 @@ fn cwd_history(flow: &support::flow::Flow, id: &str) -> Vec<cyber_store::StoredE
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn assert_cwd_transition(flow: &support::flow::Flow, id: &str, hook: &serde_json::Value) {
     let events = cwd_history(flow, id);
     let transition = events
@@ -2586,7 +2586,7 @@ fn assert_cwd_transition(flow: &support::flow::Flow, id: &str, hook: &serde_json
     assert!(hook["timestamp"].is_number());
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn cwd_changed_hooks_observe_committed_enter_and_exit_only() {
     use support::flow::{call, text};
@@ -2629,7 +2629,7 @@ async fn cwd_changed_hooks_observe_committed_enter_and_exit_only() {
     );
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn cwd_changed_idle_exit_is_committed_once_and_replay_is_silent() {
     use support::flow::{call, text};
@@ -2690,7 +2690,105 @@ async fn cwd_changed_idle_exit_is_committed_once_and_replay_is_silent() {
     assert_eq!(cwd_history(&flow, &id), before);
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
+#[tokio::test]
+async fn cwd_changed_failed_idle_exit_commit_is_silent_and_retry_commits_once() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use support::flow::{call, text};
+
+    let flow = worktree_flow(vec![
+        call("enter", "enter_worktree", json!({"name":"failed-cwd-exit"})),
+        text("done"),
+    ]);
+    let recorder = CwdRecorder::start(false).await;
+    recorder.attach(&flow);
+    let id = flow.session("default").await;
+    flow.prompt(&id, "enter and finish").await;
+    flow.settle_within(&id, Duration::from_secs(60)).await;
+    let entered = recorder.events();
+    assert_eq!(entered.len(), 1);
+    assert_cwd_transition(&flow, &id, &entered[0]);
+    let directory = flow.runtime.state(&id).await.unwrap().info.directory;
+    assert_ne!(directory, flow.f.repo.display().to_string());
+
+    let attempted = Arc::new(AtomicBool::new(false));
+    let observed = Arc::clone(&attempted);
+    let session = id.clone();
+    flow.f
+        .store
+        .set_append_fault(Some(Arc::new(move |owner, event| {
+            let refuse = owner == session && event.kind == "session.worktree.exited.1";
+            if refuse {
+                observed.store(true, Ordering::SeqCst);
+            }
+            refuse
+        })));
+    let failed = tokio::time::timeout(
+        Duration::from_secs(30),
+        flow.runtime.exit_idle_worktree(&id),
+    )
+    .await;
+    flow.f.store.set_append_fault(None);
+    let error = failed.expect("failed commit settles").unwrap_err();
+    assert!(attempted.load(Ordering::SeqCst));
+    assert!(
+        error.to_string().contains("injected append fault"),
+        "{error}"
+    );
+    assert_eq!(
+        flow.runtime.state(&id).await.unwrap().info.directory,
+        directory
+    );
+    assert_eq!(
+        recorder.events(),
+        entered,
+        "a failed commit emits no CwdChanged"
+    );
+    assert!(
+        cwd_history(&flow, &id)
+            .iter()
+            .all(|event| event.kind != "session.worktree.exited.1")
+    );
+
+    tokio::time::timeout(
+        Duration::from_secs(30),
+        flow.runtime.exit_idle_worktree(&id),
+    )
+    .await
+    .expect("retry settles")
+    .unwrap()
+    .expect("retry commits the idle exit");
+    assert_eq!(
+        flow.runtime.state(&id).await.unwrap().info.directory,
+        flow.f.repo.display().to_string()
+    );
+    let events = recorder.events();
+    assert_eq!(events.len(), 2, "{events:?}");
+    assert_cwd_transition(&flow, &id, &events[1]);
+    assert_eq!(events[1]["transition"], "session.worktree.exited.1");
+    assert_eq!(events[1]["previous_directory"], directory);
+    assert_eq!(
+        cwd_history(&flow, &id)
+            .iter()
+            .filter(|event| event.kind == "session.worktree.exited.1")
+            .count(),
+        1
+    );
+    assert!(
+        flow.runtime
+            .exit_idle_worktree(&id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        recorder.events(),
+        events,
+        "an already exited Session is silent"
+    );
+}
+
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn cwd_changed_does_not_observe_permission_refusal() {
     use support::flow::{call, text};
@@ -2713,7 +2811,7 @@ async fn cwd_changed_does_not_observe_permission_refusal() {
     assert!(!branch_exists(&flow.f.repo, "cyber/denied-cwd"));
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn cwd_changed_hook_shutdown_releases_outer_worktree_admission() {
     use support::flow::{call, text};

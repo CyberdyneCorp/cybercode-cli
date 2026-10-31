@@ -83,7 +83,18 @@ does not close tasks 2.1–2.4.
 - [ ] 5.2 Implement bounded `FileChanged` observation/reconciliation for tools, formatters, shell/background and external edits, including overflow and self-write loop prevention. Verify alias-aware Session admission and resource/lifecycle behavior before closing this task. See [file-observation-implementation.md](file-observation-implementation.md) for implementation and verification evidence.
 - [ ] 5.3 Test no false post-effect success for refused/failed/unknown transitions, pre-effect WorktreeCreate veto/no Git mutation, stable event identity, correct scope/order, rename/delete, multiple Sessions, shutdown/restart and unknown handler outcomes.
 
-Task 5.2 is in progress. The [acceptance audit](file-observation-acceptance.md) maps the full producer contract to actual native/runtime evidence and records verified Windows retarget coverage and the remaining PR/merge acceptance.
+The CwdChanged regression
+`cwd_changed_failed_idle_exit_commit_is_silent_and_retry_commits_once` in
+`crates/cyber-tools/tests/worktree_setup.rs` exercises a real failed idle-exit
+append and HTTP hook delivery. It verifies that the fault was reached, the
+Location stays unchanged, and no durable exit or CwdChanged appears. After the
+fault is cleared, retry commits one exit with the matching hook identity; another
+exit is silent. This is a known before-append failure, not proof of an unknown
+commit outcome. All five HTTP CwdChanged cases are enabled on Unix and Windows
+with unchanged assertions. The Windows CI profile already selects the complete
+`worktree_setup` binary, so these cases must execute there. All five pass locally
+on macOS; Windows execution is unavailable locally and hosted Windows acceptance
+remains required. Task 5.3 stays open.
 
 Task 5.2 is in progress. The full focused suite at `3e852288` passed Linux/macOS/Windows. At `c0cc40e3`, complete Linux/Windows jobs also passed all 18 HTTP/runtime scenarios, including idle-return ownership, archive/resume and native burst recovery; macOS remained queued. Review then reproduced an oversized metadata baseline within the count/path limits. The new publication/batch byte-budget fix passes 63 local source-library tests and scoped Clippy, and its focused owner/application regression workflow at `5aa08018` now passes on Linux/macOS/Windows. Combined producer acceptance is pending on this integration branch. Remaining resource/lifecycle acceptance, broader workspace checks and substantive review are still open. See [the scope integration design](file-observation-scope-design.md) and [implementation notes](file-observation-implementation.md).
 
@@ -115,3 +126,11 @@ The [pending observer owner correction](file-observation-pending-owner.md) bound
 remove/readmit replacement behind a settling owner while retaining cancellation
 and joined shutdown. Focused and platform acceptance remain required; task 5.2
 stays open.
+
+## FileChanged acceptance after main integration
+
+Task 5.2 is in progress. The [acceptance audit](file-observation-acceptance.md) maps the full producer contract to actual native/runtime evidence and records verified Windows retarget coverage and the remaining PR/merge acceptance.
+
+PR #85 now incorporates the accepted Setup design and CwdChanged regression from
+main. Fresh checks of this composed revision and final merge review remain
+required; the earlier focused receipts do not close task 5.2 by themselves.
