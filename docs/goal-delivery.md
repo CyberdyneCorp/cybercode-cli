@@ -64,12 +64,22 @@ native result witness and deterministic missing-guard regression passed Intel
 and arm64; that accepts the verifier correction rather than production native
 admission or the historical unknown race cause.
 
-Continue the first workstream on the single follow-up branch
-`test/file-observer-windows-alias-acceptance`: native Windows retarget acceptance,
-retained source-bound native evidence, and the DirectoryAdded prerequisite design
-for review. Keep native activation and Linux dependency changes behind their
-existing review/acceptance gates. The Setup marker choices and DirectoryAdded
-proposal also require their recorded review before implementation.
+PR #85 merged at `5d5826b7` after all 19 checks passed. It accepts bounded
+FileChanged task 5.2 with verified native Windows retarget coverage and a reviewed
+main composition; see the
+[acceptance audit](../openspec/changes/complete-plugin-hook-runtime/file-observation-acceptance.md).
+PR #88 merged at `9cbbf08b` after all 18 checks passed, including all five
+CwdChanged lifecycle cases on Windows.
+
+Continue the first workstream in PR #89 on `test/cwd-unknown-settlement`:
+unacknowledged Location settlement must not emit successful CwdChanged, and the
+FileChanged acceptance record is reconciled against accepted main. The regression
+uses the actual runtime/Store with a simulated lease owner; its local positive
+suite and behavioral negative control pass, while current-head hosted acceptance
+is required. No production native activation or protocol implementation is
+claimed. Keep native activation and Linux dependency changes behind their
+existing review/acceptance gates. The complete Setup marker/migration choices
+and DirectoryAdded proposal also need their recorded review before implementation.
 
 Native confinement foundations and regressions exist, but
 production enforcement and the remaining plugin/hook scope are incomplete. The

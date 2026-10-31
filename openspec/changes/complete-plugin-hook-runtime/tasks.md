@@ -80,7 +80,7 @@ does not close tasks 2.1–2.4.
 ## 5. Missing event producers
 
 - [ ] 5.1 Implement committed `DirectoryAdded`/`CwdChanged`, complete existing `Setup` init/marker semantics and fill proven isolated-child `WorktreeCreate` coverage gaps without moving its pre-effect veto. Isolated-child creation/recreation admission is implemented with regression coverage in `isolated_subagents.rs`; at source commit `b5ff9553`, all 16 broad CI jobs and both Linux/macOS before/after regression jobs passed ([broad CI](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40572548204), [regressions](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/40572548267)). The parent task remains incomplete. Committed CwdChanged is implemented by PR #57; code revision d9932631 passed all 36 focused worktree tests on Linux/macOS plus broader CI. DirectoryAdded/Setup and combined event acceptance remain open.
-- [ ] 5.2 Implement bounded `FileChanged` observation/reconciliation for tools, formatters, shell/background and external edits, including overflow and self-write loop prevention. Verify alias-aware Session admission and resource/lifecycle behavior before closing this task. See [file-observation-implementation.md](file-observation-implementation.md) for implementation and verification evidence.
+- [x] 5.2 Implement bounded `FileChanged` observation/reconciliation for tools, formatters, shell/background and external edits, including overflow and self-write loop prevention. Verify alias-aware Session admission and resource/lifecycle behavior before closing this task. See [file-observation-implementation.md](file-observation-implementation.md) for implementation and verification evidence.
 - [ ] 5.3 Test no false post-effect success for refused/failed/unknown transitions, pre-effect WorktreeCreate veto/no Git mutation, stable event identity, correct scope/order, rename/delete, multiple Sessions, shutdown/restart and unknown handler outcomes.
 
 The CwdChanged regression
@@ -93,10 +93,15 @@ exit is silent. This is a known before-append failure, not proof of an unknown
 commit outcome. All five HTTP CwdChanged cases are enabled on Unix and Windows
 with unchanged assertions. The Windows CI profile already selects the complete
 `worktree_setup` binary, so these cases must execute there. All five pass locally
-on macOS; Windows execution is unavailable locally and hosted Windows acceptance
-remains required. Task 5.3 stays open.
+on macOS; the [merged PR #88 native Windows job](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41221552314/job/124597023928)
+also executes all five successfully. Its Linux/macOS checks pass as well. This
+accepts those cases, not the full producer matrix; task 5.3 stays open.
 
-Task 5.2 is in progress. The full focused suite at `3e852288` passed Linux/macOS/Windows. At `c0cc40e3`, complete Linux/Windows jobs also passed all 18 HTTP/runtime scenarios, including idle-return ownership, archive/resume and native burst recovery; macOS remained queued. Review then reproduced an oversized metadata baseline within the count/path limits. The new publication/batch byte-budget fix passes 63 local source-library tests and scoped Clippy, and its focused owner/application regression workflow at `5aa08018` now passes on Linux/macOS/Windows. Combined producer acceptance is pending on this integration branch. Remaining resource/lifecycle acceptance, broader workspace checks and substantive review are still open. See [the scope integration design](file-observation-scope-design.md) and [implementation notes](file-observation-implementation.md).
+Task 5.2 is accepted by merged PR #85 (`5d5826b7`). The
+[acceptance audit](file-observation-acceptance.md) maps the complete FileChanged
+contract to actual native/runtime results, all three final platform jobs, broad
+checks and the exact accepted main composition. Earlier byte-budget, private
+retirement and pending-owner regressions are included in this acceptance.
 
 The [DirectoryAdded prerequisite proposal](directory-added-design.md) maps the
 unimplemented additional-directory owner operation to permission, sandbox and
@@ -116,21 +121,31 @@ expand task 5.1 without closing it or the other producer obligations.
 - [ ] 6.4 Record accepted first-workstream evidence, then begin the reviewed Daily coding workstream. Archive only after accepted merge and reconcile overlapping deltas.
 
 
-Composed-review follow-up: `6385cabe` passed all 16 broad and seven focused jobs,
-then review reproduced false deletion dispatch when a known private inode/subtree
-replaces a public baseline name. The new silent-retirement correction has two
-real HTTP regressions and a missing-fix behavioral control. Task 5.2 remains open
-for current-source platform acceptance; see the integration evidence above.
+## CwdChanged acknowledgement regression
 
-The [pending observer owner correction](file-observation-pending-owner.md) bounds
-remove/readmit replacement behind a settling owner while retaining cancellation
-and joined shutdown. Focused and platform acceptance remain required; task 5.2
-stays open.
+`location_activity::cwd_changed_requires_acknowledged_previous_location_settlement`
+compares successful previous-Location settlement with an injected unacknowledged
+settlement after the new Location has committed. Both paths retain one durable
+enter record. Only acknowledged settlement emits CwdChanged with that record's
+identity; the uncertain path returns an error, emits no success observation, and
+refuses subsequent entry/idle-exit until recovery. It also checks that releasing
+the running call and shutting down releases the remaining admission without a
+delayed success hook. This exercises the real runtime and Store with a simulated
+Location owner, not native OS confinement or an uncertain Store commit.
+
+The complete 12-case Location activity suite passes locally on macOS. A behavioral
+negative control that falls through after failed settlement executes this exact
+case and fails because it emitted CwdChanged; production source is restored.
+Hosted platform acceptance and final review remain required. Task 5.3 stays open
+for the complete producer matrix, including DirectoryAdded and Setup.
 
 ## FileChanged acceptance after main integration
 
-Task 5.2 is in progress. The [acceptance audit](file-observation-acceptance.md) maps the full producer contract to actual native/runtime evidence and records verified Windows retarget coverage and the remaining PR/merge acceptance.
-
-PR #85 now incorporates the accepted Setup design and CwdChanged regression from
-main. Fresh checks of this composed revision and final merge review remain
-required; the earlier focused receipts do not close task 5.2 by themselves.
+PR #85 merged after all 19 current-head checks passed. Final source-bound
+Linux/macOS/Windows suites pass both retarget regressions, bounded native and
+runtime observation, durable feedback, private-state retirement and joined
+observer/pending-owner lifetime checks. The accepted merge tree equals the
+reviewed composition with PR #88. See the
+[acceptance audit](file-observation-acceptance.md) and its final receipts for the
+scope, intentional skips and unverified Windows leaked-process warning. This
+closes only task 5.2; tasks 5.1, 5.3 and full workstream acceptance stay open.

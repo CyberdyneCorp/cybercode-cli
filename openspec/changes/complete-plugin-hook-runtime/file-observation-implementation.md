@@ -1,5 +1,12 @@
 # File observation implementation notes
 
+Status: bounded FileChanged task 5.2 is accepted by merged PR #85. The
+[final acceptance audit](file-observation-acceptance.md#final-accepted-source-and-merge)
+records the actual source-bound platform results and accepted composition.
+Incremental results and then-pending checks below are historical development
+notes, superseded by that final record. Other plugin/hook tasks remain open.
+
+
 Status: **in progress; task 5.2 remains open**. The observer is implemented;
 this is not an event without a producer. The #76 foundations milestone merged at
 `ec31ff9f` after its applicable CI passed, without closing the full acceptance
