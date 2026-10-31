@@ -86,9 +86,12 @@ The CwdChanged regression
 append and HTTP hook delivery. It verifies that the fault was reached, the
 Location stays unchanged, and no durable exit or CwdChanged appears. After the
 fault is cleared, retry commits one exit with the matching hook identity; another
-exit is silent. The exact case passes locally on macOS. This is a known
-before-append failure, not proof of an unknown commit outcome. The test is
-Unix-only and hosted acceptance remains required; task 5.3 stays open.
+exit is silent. This is a known before-append failure, not proof of an unknown
+commit outcome. All five HTTP CwdChanged cases are enabled on Unix and Windows
+with unchanged assertions. The Windows CI profile already selects the complete
+`worktree_setup` binary, so these cases must execute there. All five pass locally
+on macOS; Windows execution is unavailable locally and hosted Windows acceptance
+remains required. Task 5.3 stays open.
 
 Task 5.2 is in progress. The full focused suite at `3e852288` passed Linux/macOS/Windows. At `c0cc40e3`, complete Linux/Windows jobs also passed all 18 HTTP/runtime scenarios, including idle-return ownership, archive/resume and native burst recovery; macOS remained queued. Review then reproduced an oversized metadata baseline within the count/path limits. The new publication/batch byte-budget fix passes 63 local source-library tests and scoped Clippy, and its focused owner/application regression workflow at `5aa08018` now passes on Linux/macOS/Windows. Combined producer acceptance is pending on this integration branch. Remaining resource/lifecycle acceptance, broader workspace checks and substantive review are still open. See [the scope integration design](file-observation-scope-design.md) and [implementation notes](file-observation-implementation.md).
 
