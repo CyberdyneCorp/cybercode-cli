@@ -11,7 +11,7 @@ close native plugin enforcement, the remaining producers, or the full goal.
 | External, foreground and background edits; rename/delete | `native.rs`/`scan.rs`/`owner.rs`; `native_owner_delivers_external_edits_rename_removal_to_shared_sessions_and_joins`, `native_foreground_and_background_shell_writes_are_observed_after_the_turn` | Composed platform suite passes. |
 | Bounded observation, queue loss, partial inventory and recovery | Native queue/registration component cases; real-runtime `location_limit_is_visible_without_disabling_other_location_observations`, `session_limit_is_visible_and_released_membership_admits_a_waiting_session`, `directory_registration_limit_is_visible_and_reconciliation_covers_its_tail`, `long_path_inventory_publishes_a_partial_baseline_and_keeps_existing_files_live` | Composed platform suite passes; incomplete coverage remains visible and is not treated as absence. |
 | Private state, symlinks and hard-link scope | Pinned root/private identities, no-follow metadata scanner and link accounting; actual AppHost moved-private-root check, `hard_link_scope_allows_owned_aliases_and_suppresses_private_state_aliases`, both known-private retirement HTTP regressions | Composed platform suite passes. |
-| Session scope, aliases and current project identity | Native leases, writer-validated scope records and admission-time physical input; alias-first sharing, root replacement, archive/resume and idle return regressions | Ordinary spelling aliases pass on all platforms. Retarget and unused-old-ack tests previously compiled only on Unix; new Windows execution is required below. |
+| Session scope, aliases and current project identity | Native leases, writer-validated scope records and admission-time physical input; alias-first sharing, root replacement, archive/resume and idle return regressions | Spelling aliases and both retarget/unused-old-ack cases pass on Linux, macOS and Windows at 01535d49. |
 | Feedback, deduplication and unknown-effect recovery | Durable finite credit and owned user-ack validation; `hook_writes_stop_at_the_durable_feedback_limit_after_quiet_time`, `native_owner_feedback_renews_only_for_new_committed_user_input`, exhausted-credit/restart and unknown-handler Store regressions | Composed platform suite passes; quiet time or replay cannot manufacture renewal. |
 | Cancellation and bounded resource lifetime | Per-membership cancellation, held-batch identity, joined scanner/observer shutdown and pending-owner reuse; all held-member HTTP cases and `readmission_reuses_one_pending_replacement_until_previous_owner_settles` | Composed platform suite passes; Linux missing-fix controls also pass their required failure assertions. |
 
@@ -46,11 +46,16 @@ unused old-root acknowledgement must lose authority, while fresh owned input
 admits the new physical root and project identity. Creating/removing the alias
 uses filesystem APIs, not a shell command or a recursive target deletion.
 
-Both extended regressions pass locally on macOS arm64. Windows is unavailable
-locally; require actual Windows execution before claiming that acceptance.
-Symlink creation failure must fail visibly rather than silently skip the cases.
-Current-source platform verification, relevant checks and final substantive
-review remain required before task 5.2 is closed.
+The [new platform run](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41203255017)
+passes all three platforms at `01535d49e7a454536fdf66e788567e7442eb01c7`.
+The [verified receipt](evidence/file-observation-01535d49.json) binds each actual
+checkout and original log hash, and explicitly confirms both named tests executed
+and passed on every platform. Windows now runs 17 Store/runtime and 24 HTTP cases,
+matching the corresponding Unix suites. This is actual Windows execution, not
+cross-compilation or an optional skip. Local Windows execution was unavailable.
+
+Current-source relevant PR checks and final merge review remain required before
+task 5.2 is closed. Parent plugin/native support and other producer tasks stay open.
 
 ## Review and local checks
 
@@ -65,4 +70,6 @@ The two named regressions pass on macOS arm64. Scoped Clippy with warnings
 denied passes both actual test targets (`cyber-server --test file_observations`
 and `cyber-tools --test file_observation_dispatch`); Rust formatting and whitespace
 checks pass. Strict OpenSpec passes 114 items; spec lint reports zero errors and
-25 warnings. Windows/Linux execution on this revised test source is pending.
+25 warnings. The subsequent native platform run above verifies the revised tests
+on Linux/macOS/Windows. It retains the existing intentional Unix subprocess-helper
+parent ignores and platform-specific component counts explicitly in the receipt.

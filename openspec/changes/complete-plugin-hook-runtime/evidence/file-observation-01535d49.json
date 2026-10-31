@@ -1,0 +1,152 @@
+{
+  "source_head": "01535d49e7a454536fdf66e788567e7442eb01c7",
+  "workflow_run": 41203255017,
+  "scope": "Real native file observation, Store/runtime and HTTP/platform execution, including both retarget cases on all platforms. Does not establish plugin confinement.",
+  "suite_order": [
+    "core records",
+    "core envelope",
+    "native/scanner/owner",
+    "runtime roots",
+    "Store/runtime",
+    "HTTP callbacks",
+    "AppHost forwarding",
+    "MCP"
+  ],
+  "jobs": [
+    {
+      "platform": "macos",
+      "job_id": 124543123187,
+      "url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41203255017/job/124543123187",
+      "actual_checkout_verified": "01535d49e7a454536fdf66e788567e7442eb01c7",
+      "job_log_sha256": "bc9ab9028485d8abad9c14cba211a9b66cf5dad141eb8eea040408152eb4142d",
+      "named_retarget_regressions_executed": [
+        "unused_user_acknowledgement_cannot_follow_a_retargeted_alias",
+        "symlink_retarget_loses_old_delivery_and_user_input_admits_the_new_physical_scope"
+      ],
+      "suites": [
+        {
+          "passed": 13,
+          "ignored": 0
+        },
+        {
+          "passed": 1,
+          "ignored": 0
+        },
+        {
+          "passed": 58,
+          "ignored": 1
+        },
+        {
+          "passed": 6,
+          "ignored": 1
+        },
+        {
+          "passed": 17,
+          "ignored": 0
+        },
+        {
+          "passed": 24,
+          "ignored": 0
+        },
+        {
+          "passed": 2,
+          "ignored": 0
+        },
+        {
+          "passed": 30,
+          "ignored": 0
+        }
+      ]
+    },
+    {
+      "platform": "linux",
+      "job_id": 124543123302,
+      "url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41203255017/job/124543123302",
+      "actual_checkout_verified": "01535d49e7a454536fdf66e788567e7442eb01c7",
+      "job_log_sha256": "9b0793e2d57ff9a23158634eaffae5f653069541cc815bc5178d0dcdbbacb5b4",
+      "named_retarget_regressions_executed": [
+        "unused_user_acknowledgement_cannot_follow_a_retargeted_alias",
+        "symlink_retarget_loses_old_delivery_and_user_input_admits_the_new_physical_scope"
+      ],
+      "suites": [
+        {
+          "passed": 13,
+          "ignored": 0
+        },
+        {
+          "passed": 1,
+          "ignored": 0
+        },
+        {
+          "passed": 58,
+          "ignored": 1
+        },
+        {
+          "passed": 7,
+          "ignored": 1
+        },
+        {
+          "passed": 17,
+          "ignored": 0
+        },
+        {
+          "passed": 24,
+          "ignored": 0
+        },
+        {
+          "passed": 2,
+          "ignored": 0
+        },
+        {
+          "passed": 30,
+          "ignored": 0
+        }
+      ]
+    },
+    {
+      "platform": "windows",
+      "job_id": 124543123309,
+      "url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41203255017/job/124543123309",
+      "actual_checkout_verified": "01535d49e7a454536fdf66e788567e7442eb01c7",
+      "job_log_sha256": "1c4f5e5585f5baf73092aa855e955334628ef4eced2cea4da4f0eb3737e5da4c",
+      "named_retarget_regressions_executed": [
+        "unused_user_acknowledgement_cannot_follow_a_retargeted_alias",
+        "symlink_retarget_loses_old_delivery_and_user_input_admits_the_new_physical_scope"
+      ],
+      "suites": [
+        {
+          "passed": 13,
+          "ignored": 0
+        },
+        {
+          "passed": 1,
+          "ignored": 0
+        },
+        {
+          "passed": 49,
+          "ignored": 0
+        },
+        {
+          "passed": 2,
+          "ignored": 0
+        },
+        {
+          "passed": 17,
+          "ignored": 0
+        },
+        {
+          "passed": 24,
+          "ignored": 0
+        },
+        {
+          "passed": 2,
+          "ignored": 0
+        },
+        {
+          "passed": 29,
+          "ignored": 0
+        }
+      ]
+    }
+  ]
+}
