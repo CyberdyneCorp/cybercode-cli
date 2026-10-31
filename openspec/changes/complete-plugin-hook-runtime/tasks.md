@@ -55,10 +55,13 @@ also have source-bound native receipts. Its [trusted-worker capacity/recovery ca
 passed on x64/arm64 in run 41049265434, with source-bound receipts retained. These
 experiments change no production policy or accepted support floor.
 
-The [raw datagram send-result correction](macos-send-result-validation.md) adds a
-real copied-fixture regression for stale errno after a zero return and retains
-current-source local evidence. Hosted verification and native admission remain
-required; this correction does not close tasks 2.1–2.4.
+The [raw datagram send-result correction](macos-send-result-validation.md) retains
+raw syscall results and tests the shared verifier helpers with six deterministic
+fault-injection cases and a precise missing-guard control. Both corrected hosted
+macOS jobs at `62a3068e` passed those controls and the unchanged real IPC matrix.
+The control is verifier evidence, not native confinement acceptance. The historical
+unknown race cause and production native admission remain open; this correction
+does not close tasks 2.1–2.4.
 
 ## 3. Host contribution lifecycle
 
