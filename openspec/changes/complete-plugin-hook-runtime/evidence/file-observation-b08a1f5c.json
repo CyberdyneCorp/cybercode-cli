@@ -1,0 +1,273 @@
+{
+  "head": "b08a1f5c12491451ca8c9f011aab8427010039c3",
+  "platforms": {
+    "linux": {
+      "tested_merge": "151144ea4f94f53866710ff9a25d74d64ca6a605",
+      "job_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41222546533/job/124599977235",
+      "suites_passed_ignored": [
+        [
+          "13",
+          "0"
+        ],
+        [
+          "1",
+          "0"
+        ],
+        [
+          "58",
+          "1"
+        ],
+        [
+          "7",
+          "1"
+        ],
+        [
+          "17",
+          "0"
+        ],
+        [
+          "24",
+          "0"
+        ],
+        [
+          "2",
+          "0"
+        ],
+        [
+          "30",
+          "0"
+        ]
+      ],
+      "log_sha256": "963b3b1bfba2f77590c764b1968269c81d1087714967b0fcf09c77062923497e"
+    },
+    "macos": {
+      "tested_merge": "151144ea4f94f53866710ff9a25d74d64ca6a605",
+      "job_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41222546533/job/124599977368",
+      "suites_passed_ignored": [
+        [
+          "13",
+          "0"
+        ],
+        [
+          "1",
+          "0"
+        ],
+        [
+          "58",
+          "1"
+        ],
+        [
+          "6",
+          "1"
+        ],
+        [
+          "17",
+          "0"
+        ],
+        [
+          "24",
+          "0"
+        ],
+        [
+          "2",
+          "0"
+        ],
+        [
+          "30",
+          "0"
+        ]
+      ],
+      "log_sha256": "172795fc0d39673b14dd82c8ccc445ed1a34160c50e67783d56655783ea8fce4"
+    },
+    "windows": {
+      "tested_merge": "151144ea4f94f53866710ff9a25d74d64ca6a605",
+      "job_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41222546533/job/124599976970",
+      "suites_passed_ignored": [
+        [
+          "13",
+          "0"
+        ],
+        [
+          "1",
+          "0"
+        ],
+        [
+          "49",
+          "0"
+        ],
+        [
+          "2",
+          "0"
+        ],
+        [
+          "17",
+          "0"
+        ],
+        [
+          "24",
+          "0"
+        ],
+        [
+          "2",
+          "0"
+        ],
+        [
+          "29",
+          "0"
+        ]
+      ],
+      "log_sha256": "daf65a2301f6d17a7159f40e78f7581eb8dab028adbaf7525f1df567ca221b10"
+    }
+  },
+  "tested_tree": "4ead043efe3fd5908a55a134544cdd1efaa139ec",
+  "head_tree_equal": true,
+  "requirements_checked": {
+    "builtin_write_and_edit_produce_observations_without_language_services": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "directory_registration_limit_is_visible_and_reconciliation_covers_its_tail": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "hard_link_scope_allows_owned_aliases_and_suppresses_private_state_aliases": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "hook_writes_stop_at_the_durable_feedback_limit_after_quiet_time": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "location_limit_is_visible_without_disabling_other_location_observations": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "long_path_inventory_publishes_a_partial_baseline_and_keeps_existing_files_live": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "native_foreground_and_background_shell_writes_are_observed_after_the_turn": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "native_formatter_settlement_produces_a_file_observation": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "native_owner_delivers_external_edits_rename_removal_to_shared_sessions_and_joins": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "native_owner_feedback_renews_only_for_new_committed_user_input": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "readmission_reuses_one_pending_replacement_until_previous_owner_settles": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "session_limit_is_visible_and_released_membership_admits_a_waiting_session": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "symlink_retarget_loses_old_delivery_and_user_input_admits_the_new_physical_scope": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "unused_user_acknowledgement_cannot_follow_a_retargeted_alias": [
+      "linux",
+      "macos",
+      "windows"
+    ]
+  },
+  "broad": {
+    "linux": {
+      "job_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41222546523/job/124600042654",
+      "log_sha256": "fbb5e60dc594c1ebdb2790c44aadb3be9aecbf94cbda3a21b4dbbdd77be7e5b5",
+      "summaries": [
+        "Summary [ 859.487s] 5504 tests run: 5504 passed (1 slow), 21 skipped"
+      ],
+      "warnings": []
+    },
+    "macos": {
+      "job_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41222546523/job/124600042618",
+      "log_sha256": "604c1d958d51a133fd2625345953a4b2260b76604f903f68f8ac4d6df095f1af",
+      "summaries": [
+        "Summary [1333.486s] 5504 tests run: 5504 passed (2 slow), 23 skipped"
+      ],
+      "warnings": []
+    },
+    "windows": {
+      "job_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41222546523/job/124600042571",
+      "log_sha256": "5055d9012c5003fbc0d8a3b557c344d26439e97386702d4ce7af251156f46af2",
+      "summaries": [
+        "Summary [1042.035s] 3775 tests run: 3775 passed (1 leaky), 648 skipped",
+        "Summary [   0.030s] 4 tests run: 4 passed, 387 skipped",
+        "Summary [   0.094s] 9 tests run: 9 passed, 0 skipped",
+        "Summary [   1.905s] 18 tests run: 18 passed, 0 skipped"
+      ],
+      "warnings": [
+        "LEAK [  20.250s] ( 520/3775) cyber-cli::messages_cli an_exec_session_refuses_messages_unless_it_accepts_them"
+      ]
+    }
+  },
+  "checks_passed": 19,
+  "accepted_merge": "5d5826b72d41d6a833b523237bdbbd85ac51d31a",
+  "accepted_tree": "ad445cb227b0a7d1cc8593cc25d7cd3efc4b9e3f",
+  "limits": "Windows selected suite and Unix subprocess-helper ignores are explicit; leaked-process cause unverified; this is FileChanged acceptance, not plugin confinement or complete producer acceptance.",
+  "additional_component_contracts": {
+    "queue_loss_is_reported_even_without_another_successful_callback": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "coalesced_tool_and_native_hints_stay_bounded_and_signal_lost_names": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "registrations_are_bounded_and_partial_scans_preserve_existing_coverage": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "removing_membership_cancels_held_delivery_without_stopping_other_members": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "protected_subtrees_are_excluded_without_reading_contents": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "unknown_file_handler_delivery_remains_consumed_without_reexecution": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "readmitting_membership_does_not_revive_a_held_batch": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "incomplete_scan_prioritizes_existing_updates_and_preserves_unknown_preimages": [
+      "linux",
+      "macos",
+      "windows"
+    ]
+  }
+}

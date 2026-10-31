@@ -1,0 +1,58 @@
+{
+  "head": "b08a1f5c12491451ca8c9f011aab8427010039c3",
+  "base": "9cbbf08b3382622625335210360928a729a47e33",
+  "tree": "ad445cb227b0a7d1cc8593cc25d7cd3efc4b9e3f",
+  "changes_from_tested_head": [
+    "crates/cyber-tools/tests/worktree_setup.rs",
+    "openspec/changes/complete-plugin-hook-runtime/tasks.md"
+  ],
+  "binding": "FileChanged test files and nextest configuration equal tested PR85 head; CwdChanged test file equals accepted PR88 main; no production source changes.",
+  "checks": [
+    {
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--check"
+      ],
+      "exit_code": 0,
+      "summary": []
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--cached",
+        "--check"
+      ],
+      "exit_code": 0,
+      "summary": []
+    },
+    {
+      "command": [
+        "node",
+        "/Users/edvane/.npm/_npx/0aaef5be8686a8bb/node_modules/@fission-ai/openspec/bin/openspec.js",
+        "validate",
+        "--all",
+        "--strict"
+      ],
+      "exit_code": 0,
+      "summary": [
+        "Totals: 114 passed, 0 failed (114 items)"
+      ]
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/spec_lint.py"
+      ],
+      "exit_code": 0,
+      "summary": [
+        "0 errors, 25 warnings"
+      ]
+    }
+  ],
+  "accepted_merge": "5d5826b72d41d6a833b523237bdbbd85ac51d31a",
+  "accepted_tree": "ad445cb227b0a7d1cc8593cc25d7cd3efc4b9e3f",
+  "accepted_tree_matches": true
+}

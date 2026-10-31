@@ -1,0 +1,20 @@
+{
+  "tested_head": "ecce8b381c91e22f25b43f9a1cf6f8761c991cce",
+  "tested_merge": "8de13b5445509a214d4f70f1082728a65b202df1",
+  "tested_tree": "119568e94fdef8498056b4448a17980c440f483f",
+  "current_base": "92a3240dafdf8aac37c7bd647f36b551453deacb",
+  "prospective_tree": "d8b104a7d4573f2ebcd33e2333d00dbf95d6a5d4",
+  "differences_from_tested_tree": [
+    "openspec/changes/complete-plugin-hook-runtime/setup-design.md"
+  ],
+  "code_build_test_workflow_inputs_identical": true,
+  "ci_tested_prospective_tree": false,
+  "note": "Only the independently reviewed Setup design document differs. Combined strict OpenSpec/lint validation is recorded separately; original CI remains evidence for identical executable/test inputs.",
+  "combined_local_validation": {
+    "openspec_passed": 114,
+    "openspec_failed": 0,
+    "spec_lint_errors": 0,
+    "spec_lint_warnings": 25,
+    "whitespace_passed": true
+  }
+}

@@ -1,0 +1,157 @@
+{
+  "head": "ecce8b381c91e22f25b43f9a1cf6f8761c991cce",
+  "scope": "Exact PR85 native platform acceptance; all relevant test/source bytes match the tested merge tree. Broader PR checks and merge review remain separate. This does not establish plugin confinement or Setup completion.",
+  "suite_order": [
+    "core records",
+    "core envelope",
+    "native/scanner/owner",
+    "runtime roots",
+    "Store/runtime",
+    "HTTP callbacks",
+    "AppHost forwarding",
+    "MCP"
+  ],
+  "jobs": [
+    {
+      "platform": "windows",
+      "job_id": 124555532039,
+      "url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41207519078/job/124555532039",
+      "tested_merge": "8de13b5445509a214d4f70f1082728a65b202df1",
+      "tree": "119568e94fdef8498056b4448a17980c440f483f",
+      "verified_tree_matches_head": true,
+      "log_sha256": "90f80e014e4eac8bd08b360299261cccc14776a91325a2b961362d3b24e2a244",
+      "named_retarget_cases_executed": [
+        "unused_user_acknowledgement_cannot_follow_a_retargeted_alias",
+        "symlink_retarget_loses_old_delivery_and_user_input_admits_the_new_physical_scope"
+      ],
+      "suite_counts": [
+        {
+          "passed": 13,
+          "ignored": 0
+        },
+        {
+          "passed": 1,
+          "ignored": 0
+        },
+        {
+          "passed": 49,
+          "ignored": 0
+        },
+        {
+          "passed": 2,
+          "ignored": 0
+        },
+        {
+          "passed": 17,
+          "ignored": 0
+        },
+        {
+          "passed": 24,
+          "ignored": 0
+        },
+        {
+          "passed": 2,
+          "ignored": 0
+        },
+        {
+          "passed": 29,
+          "ignored": 0
+        }
+      ]
+    },
+    {
+      "platform": "linux",
+      "job_id": 124555531908,
+      "url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41207519078/job/124555531908",
+      "tested_merge": "8de13b5445509a214d4f70f1082728a65b202df1",
+      "tree": "119568e94fdef8498056b4448a17980c440f483f",
+      "verified_tree_matches_head": true,
+      "log_sha256": "b8d397f46a5c00ecbe9a619497042161b360ce5ca5a743f187e6fc147afc9bd3",
+      "named_retarget_cases_executed": [
+        "unused_user_acknowledgement_cannot_follow_a_retargeted_alias",
+        "symlink_retarget_loses_old_delivery_and_user_input_admits_the_new_physical_scope"
+      ],
+      "suite_counts": [
+        {
+          "passed": 13,
+          "ignored": 0
+        },
+        {
+          "passed": 1,
+          "ignored": 0
+        },
+        {
+          "passed": 58,
+          "ignored": 1
+        },
+        {
+          "passed": 7,
+          "ignored": 1
+        },
+        {
+          "passed": 17,
+          "ignored": 0
+        },
+        {
+          "passed": 24,
+          "ignored": 0
+        },
+        {
+          "passed": 2,
+          "ignored": 0
+        },
+        {
+          "passed": 30,
+          "ignored": 0
+        }
+      ]
+    },
+    {
+      "platform": "macos",
+      "job_id": 124555532069,
+      "url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41207519078/job/124555532069",
+      "tested_merge": "8de13b5445509a214d4f70f1082728a65b202df1",
+      "tree": "119568e94fdef8498056b4448a17980c440f483f",
+      "verified_tree_matches_head": true,
+      "log_sha256": "2e9854e6f144ecbb6393cfe015c1e77ba8b22efd2bb0a0890c4874ed286daf6d",
+      "named_retarget_cases_executed": [
+        "unused_user_acknowledgement_cannot_follow_a_retargeted_alias",
+        "symlink_retarget_loses_old_delivery_and_user_input_admits_the_new_physical_scope"
+      ],
+      "suite_counts": [
+        {
+          "passed": 13,
+          "ignored": 0
+        },
+        {
+          "passed": 1,
+          "ignored": 0
+        },
+        {
+          "passed": 58,
+          "ignored": 1
+        },
+        {
+          "passed": 6,
+          "ignored": 1
+        },
+        {
+          "passed": 17,
+          "ignored": 0
+        },
+        {
+          "passed": 24,
+          "ignored": 0
+        },
+        {
+          "passed": 2,
+          "ignored": 0
+        },
+        {
+          "passed": 30,
+          "ignored": 0
+        }
+      ]
+    }
+  ]
+}
