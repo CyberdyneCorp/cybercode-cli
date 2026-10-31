@@ -136,8 +136,11 @@ Location owner, not native OS confinement or an uncertain Store commit.
 The complete 12-case Location activity suite passes locally on macOS. A behavioral
 negative control that falls through after failed settlement executes this exact
 case and fails because it emitted CwdChanged; production source is restored.
-Hosted platform acceptance and final review remain required. Task 5.3 stays open
-for the complete producer matrix, including DirectoryAdded and Setup.
+The original case is accepted by merged PR #89: the
+[receipt](evidence/cwd-settlement-9ad0b369.json) verifies actual execution on
+Linux/macOS/Windows at its original source. The new Store-commit follow-up below
+requires its own current-head acceptance. Task 5.3 stays open for the complete
+producer matrix, including DirectoryAdded and Setup.
 
 ## FileChanged acceptance after main integration
 
