@@ -16,6 +16,7 @@ ignore = "0.4"
 globset = "0.4"
 same-file = "=1.0.6"
 regex = "1"
+aho-corasick = "1"
 semver = "1"
 flate2 = "1"
 jsonschema = { version = "0.58.6", default-features = false }

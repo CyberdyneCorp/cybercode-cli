@@ -21,6 +21,7 @@ fn call(name: &str, input: Value) -> CallState {
         status: CallStatus::Dispatched,
         output: None,
         metadata: None,
+        redactions: None,
         untrusted: None,
     }
 }

@@ -2311,6 +2311,75 @@ fn native_global_loading_ignores_process_feature_and_config_overrides() {
     );
 }
 
+/// `configuration` → Tool output redaction settings: a project, even a trusted one, can
+/// add patterns but cannot turn redaction off, allow values or drop the user's patterns.
+#[test]
+fn project_config_can_only_tighten_tool_output_redaction() {
+    let f = Fixture::new();
+    f.write(
+        "global:cyber.jsonc",
+        &json!({"tool_output":{"redact":{"patterns":["user_[0-9]{8}"],"allow":["AKIAIOSFODNN7EXAMPLE"]}}}).to_string(),
+    );
+    f.write(
+        "cyber.jsonc",
+        &json!({
+            "tool_output":{"redact":{"enabled":false,"patterns":["proj_[0-9]{8}"],"allow":["/.+/"]}},
+            "profiles":{"lax":{"tool_output":{"redact":{"enabled":false}}}},
+            "default_profile":"lax",
+            // A sensitive definition, so the checkout has something to trust.
+            "formatters":{},
+        })
+        .to_string(),
+    );
+    for trusted in [false, true] {
+        if trusted {
+            f.approve_current();
+        }
+        let resolved = f.load().unwrap();
+        let settings = cyber_core::redact::RedactSettings::from_config(&resolved.value).unwrap();
+        assert!(settings.enabled, "trusted={trusted}");
+        assert_eq!(settings.patterns, ["user_[0-9]{8}", "proj_[0-9]{8}"]);
+        assert_eq!(settings.allow, ["AKIAIOSFODNN7EXAMPLE"]);
+        assert!(
+            resolved
+                .warnings
+                .iter()
+                .any(|w| w.contains("tool_output.redact.enabled: false")),
+            "{:?}",
+            resolved.warnings
+        );
+    }
+    // The user's own config may turn it off.
+    f.write(
+        "global:cyber.jsonc",
+        &json!({"tool_output":{"redact":{"enabled":false}}}).to_string(),
+    );
+    let resolved = f.load().unwrap();
+    assert!(
+        !cyber_core::redact::RedactSettings::from_config(&resolved.value)
+            .unwrap()
+            .enabled
+    );
+}
+
+#[test]
+fn invalid_redaction_patterns_fail_configuration_loading() {
+    let f = Fixture::new();
+    f.write(
+        "cyber.jsonc",
+        &json!({"tool_output":{"redact":{"patterns":["(unclosed"]}}}).to_string(),
+    );
+    let Err(ConfigError::Invalid { issues }) = f.load() else {
+        panic!("expected an invalid configuration");
+    };
+    assert!(
+        issues
+            .iter()
+            .any(|i| i.contains("tool_output.redact.patterns[0]")),
+        "{issues:?}"
+    );
+}
+
 /// Scenario "Project tightens scanning" (`permissions-modes` → Untrusted content
 /// settings): a project layer's `scan: "all"` is effective even in a checkout that was
 /// never approved, since it only adds scanning, and loads without warnings.

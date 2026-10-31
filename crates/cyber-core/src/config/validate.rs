@@ -148,6 +148,7 @@ fn settings_issues(value: &Value) -> Vec<String> {
         crate::browser::BrowserSettings::from_config(value).err(),
         super::AutoUpdate::from_config(value).err(),
         super::AttachmentSettings::from_config(value).err(),
+        crate::redact::RedactSettings::from_config(value).err(),
         crate::usage_limit::UsageLimitSettings::from_config(value).err(),
     ];
     let mut issues: Vec<String> = sections.into_iter().flatten().collect();

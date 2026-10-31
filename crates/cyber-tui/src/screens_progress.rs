@@ -171,6 +171,7 @@ async fn a_running_tool_is_named_in_the_label() {
             input: json!({ "command": "cargo test -p cyber-tui\nmore" }),
             status: "dispatched".into(),
             output: String::new(),
+            redactions: 0,
             untrusted: None,
         }],
         error: None,

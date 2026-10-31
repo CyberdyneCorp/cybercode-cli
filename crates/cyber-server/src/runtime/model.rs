@@ -309,6 +309,10 @@ pub struct CallState {
     /// the shell).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
+    /// Secrets hidden from `output` before it reached the model (`tool-registry` → Tool
+    /// output redaction).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redactions: Option<cyber_core::redact::Redactions>,
     /// The settled result's provenance and injection signals (`untrusted-content` →
     /// Injection signal notices).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1421,6 +1425,7 @@ impl SessionState {
                 status: CallStatus::Called,
                 output: None,
                 metadata: None,
+                redactions: None,
                 untrusted: None,
             },
         );
@@ -1450,6 +1455,7 @@ impl SessionState {
             call.output = Some(s.output);
             call.structured_output = s.structured_output;
             call.metadata = s.metadata;
+            call.redactions = s.redactions;
             if let Some(record) = &s.untrusted {
                 self.taint.note(record);
             }

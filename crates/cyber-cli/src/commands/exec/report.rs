@@ -677,14 +677,14 @@ impl Out {
     fn tool_result(&self, run: &mut Run, data: &Value) {
         let id = data["call_id"].as_str().unwrap_or_default();
         let output = data["output"].as_str().unwrap_or_default();
-        let truncated: String = output.chars().take(RESULT_LIMIT).collect();
-        let mut result = json!({ "call_id": id, "status": data["status"], "output": truncated });
-        // `untrusted-content` → Injection signal notices: the record is an additive field
-        // under `schema_version` 1, present whenever the settlement carries one.
-        if let Some(record) = data.get("untrusted").filter(|v| !v.is_null()) {
-            result["untrusted"] = record.clone();
+        self.line("tool_result", tool_result_line(id, data));
+        let tool = run.calls.get(id).map_or("tool", |(tool, _)| tool.as_str());
+        if let Some(note) = redaction_note(tool, data)
+            && self.format == Format::Text
+            && !self.quiet
+        {
+            eprintln!("{note}");
         }
-        self.line("tool_result", result);
         self.injection_warning(data);
         let Some(reason) = denial_reason(output) else {
             return;
@@ -1020,10 +1020,48 @@ fn summary(input: &Value) -> String {
     String::new()
 }
 
+/// The `tool_result` stream line of a settlement, with its `redactions` when any.
+fn tool_result_line(id: &str, data: &Value) -> Value {
+    let output = data["output"].as_str().unwrap_or_default();
+    let truncated: String = output.chars().take(RESULT_LIMIT).collect();
+    let mut line = json!({ "call_id": id, "status": data["status"], "output": truncated });
+    if data["redactions"]["count"].as_u64().unwrap_or(0) > 0 {
+        line["redactions"] = data["redactions"].clone();
+    }
+    if let Some(record) = data.get("untrusted").filter(|v| !v.is_null()) {
+        line["untrusted"] = record.clone();
+    }
+    line
+}
+
+/// `bash: 2 secrets hidden from the model` (`exec-mode` → Redaction notes in exec output).
+fn redaction_note(tool: &str, data: &Value) -> Option<String> {
+    let count = data["redactions"]["count"]
+        .as_u64()
+        .filter(|count| *count > 0)?;
+    let noun = if count == 1 { "secret" } else { "secrets" };
+    Some(format!("{tool}: {count} {noun} hidden from the model"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn settlements_with_redactions_report_them() {
+        let data = json!({"call_id": "c1", "status": "ok", "output": "T=[REDACTED:assignment]",
+            "redactions": {"count": 2, "kinds": ["assignment", "jwt"]}});
+        let line = tool_result_line("c1", &data);
+        assert_eq!(line["redactions"]["kinds"], json!(["assignment", "jwt"]));
+        assert_eq!(
+            redaction_note("bash", &data).as_deref(),
+            Some("bash: 2 secrets hidden from the model")
+        );
+        let plain = json!({"call_id": "c2", "status": "ok", "output": "fine"});
+        assert!(tool_result_line("c2", &plain).get("redactions").is_none());
+        assert_eq!(redaction_note("read", &plain), None);
+    }
 
     #[derive(Parser)]
     struct Wrapper {
@@ -1107,6 +1145,14 @@ mod tests {
         );
         assert_eq!(run.text, "Done.");
         assert_eq!(out.summary(&run, 0)["result"], "Done.");
+    }
+
+    #[test]
+    fn tool_results_keep_both_redaction_and_injection_records() {
+        let data = json!({"status":"ok", "output":"[REDACTED:known_secret]", "redactions":{"count":1,"kinds":["known_secret"]}, "untrusted":{"source":"mcp","origin":"owned fixture","detector_version":1,"signals":[],"signal_count":0}});
+        let result = tool_result_line("call_1", &data);
+        assert_eq!(result["redactions"], data["redactions"]);
+        assert_eq!(result["untrusted"], data["untrusted"]);
     }
 
     #[test]

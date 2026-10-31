@@ -738,7 +738,8 @@ fn log_prompts_exports_redacted_content() {
     );
     assert_eq!(
         attr_text(&turn, "cyber.response").as_deref(),
-        Some("done with ***")
+        // Only the value is a secret; the assignment's name stays readable.
+        Some("done with password=***")
     );
     let input: Value =
         serde_json::from_str(&attr_text(&f.span("cyber.tool"), "cyber.tool.input").unwrap())

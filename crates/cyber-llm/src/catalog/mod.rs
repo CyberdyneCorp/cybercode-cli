@@ -305,6 +305,14 @@ impl Catalog {
         self.credentials.get(provider_id)
     }
 
+    /// Every resolved API key, for exact-value redaction of tool output.
+    pub fn credential_values(&self) -> Vec<String> {
+        self.credentials
+            .values()
+            .filter_map(|credential| credential.api_key.clone())
+            .collect()
+    }
+
     pub fn availability(&self, model: &Model) -> Availability {
         let Some(provider) = self.providers.get(&model.provider_id) else {
             return Availability::Unavailable("provider_not_found");

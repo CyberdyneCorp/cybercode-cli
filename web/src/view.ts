@@ -4,6 +4,7 @@ import { integrationsView } from "./integrations-view.js";
 import type { Content, Message, NoticePolicy, PendingRequest, RunDetail, UntrustedRecord } from "../../sdk/typescript/src/generated/types.js";
 import { Dashboard, type Card, type Tab } from "./model.js";
 import { messageInbox } from "./inbox-view.js";
+import { redactionNote } from "./redactions.js";
 import { noticeLine } from "./untrusted.js";
 import { usageLimitNotice } from "./usage-limit.js";
 
@@ -166,7 +167,7 @@ export class View {
       article.append(node("div", "prose", live.startsWith(message.text) && live.length > message.text.length ? live : message.text));
     }
     for (const tool of message.tools ?? []) {
-      const detail = node("details", "tool"); const summary = node("summary", "", `${tool.name} · ${prettyStatus(tool.status)}`); detail.append(summary, code(tool.arguments, "Tool arguments")); if (tool.output) detail.append(code(tool.output, "Tool output"));
+      const detail = node("details", "tool"); const summary = node("summary", "", `${tool.name} · ${prettyStatus(tool.status)}`); const hidden = redactionNote(tool); if (hidden) summary.append(" ", node("span", "badge amber", hidden)); detail.append(summary, code(tool.arguments, "Tool arguments")); if (tool.output) detail.append(code(tool.output, "Tool output"));
       const [notice, excerpts] = untrustedNotice(tool.untrusted, mode, policy, false); if (excerpts) detail.append(excerpts); article.append(detail); if (notice) article.append(notice);
     }
     if (message.kind === "assistant" && message.error) article.append(node("p", "tool-error", "This step ended with an error. Review its tool output and the current Session state."));
