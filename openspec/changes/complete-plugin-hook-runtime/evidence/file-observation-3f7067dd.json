@@ -1,0 +1,164 @@
+{
+  "source_head": "3f7067dd058b91c11320c99c556b60451b103098",
+  "workflow_run": 41180219218,
+  "scope": "Composed production FileChanged verification; Unix-only retarget tests are not Windows evidence. New cross-platform test changes remain unverified on Windows.",
+  "jobs": [
+    {
+      "platform": "linux",
+      "job_id": 124475915323,
+      "url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41180219218/job/124475915323",
+      "job_log_sha256": "4c74000b505351140ac76acb60ef96aebef022799729039ea5524bd9c1ad59bb",
+      "actual_checkout_verified": "3f7067dd058b91c11320c99c556b60451b103098",
+      "suite_order": [
+        "core records",
+        "core envelope",
+        "native/scanner/owner",
+        "runtime roots",
+        "Store/runtime",
+        "HTTP callbacks",
+        "AppHost forwarding",
+        "MCP"
+      ],
+      "suites": [
+        {
+          "passed": 13,
+          "ignored": 0
+        },
+        {
+          "passed": 1,
+          "ignored": 0
+        },
+        {
+          "passed": 58,
+          "ignored": 1
+        },
+        {
+          "passed": 7,
+          "ignored": 1
+        },
+        {
+          "passed": 17,
+          "ignored": 0
+        },
+        {
+          "passed": 24,
+          "ignored": 0
+        },
+        {
+          "passed": 2,
+          "ignored": 0
+        },
+        {
+          "passed": 30,
+          "ignored": 0
+        }
+      ],
+      "retarget_tests_executed": true
+    },
+    {
+      "platform": "windows",
+      "job_id": 124475915393,
+      "url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41180219218/job/124475915393",
+      "job_log_sha256": "8aa590f3158101869f9756913e83c478a3b1486f1781b2367adbc94a96227f5c",
+      "actual_checkout_verified": "3f7067dd058b91c11320c99c556b60451b103098",
+      "suite_order": [
+        "core records",
+        "core envelope",
+        "native/scanner/owner",
+        "runtime roots",
+        "Store/runtime",
+        "HTTP callbacks",
+        "AppHost forwarding",
+        "MCP"
+      ],
+      "suites": [
+        {
+          "passed": 13,
+          "ignored": 0
+        },
+        {
+          "passed": 1,
+          "ignored": 0
+        },
+        {
+          "passed": 49,
+          "ignored": 0
+        },
+        {
+          "passed": 2,
+          "ignored": 0
+        },
+        {
+          "passed": 16,
+          "ignored": 0
+        },
+        {
+          "passed": 23,
+          "ignored": 0
+        },
+        {
+          "passed": 2,
+          "ignored": 0
+        },
+        {
+          "passed": 29,
+          "ignored": 0
+        }
+      ],
+      "retarget_tests_executed": false
+    },
+    {
+      "platform": "macos",
+      "job_id": 124475915480,
+      "url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41180219218/job/124475915480",
+      "job_log_sha256": "f270c3d64f7225bd8ac3a0b464ff8ad65f3c29b3fe9a2b5af67c4c230bf355ce",
+      "actual_checkout_verified": "3f7067dd058b91c11320c99c556b60451b103098",
+      "suite_order": [
+        "core records",
+        "core envelope",
+        "native/scanner/owner",
+        "runtime roots",
+        "Store/runtime",
+        "HTTP callbacks",
+        "AppHost forwarding",
+        "MCP"
+      ],
+      "suites": [
+        {
+          "passed": 13,
+          "ignored": 0
+        },
+        {
+          "passed": 1,
+          "ignored": 0
+        },
+        {
+          "passed": 58,
+          "ignored": 1
+        },
+        {
+          "passed": 6,
+          "ignored": 1
+        },
+        {
+          "passed": 17,
+          "ignored": 0
+        },
+        {
+          "passed": 24,
+          "ignored": 0
+        },
+        {
+          "passed": 2,
+          "ignored": 0
+        },
+        {
+          "passed": 30,
+          "ignored": 0
+        }
+      ],
+      "retarget_tests_executed": true
+    }
+  ],
+  "rust_inputs_unchanged_at": "62a3068e14ab0d54e980f21848a1c3a21af93597"
+}
