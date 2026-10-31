@@ -152,6 +152,7 @@ function check(entry: Awaited<ReturnType<typeof row>>) {
   assert.equal(race.failed, false, `datagram mutation failed: ${JSON.stringify(entry)}`);
   assert.equal(race.failure_stage, "");
   assert.equal(race.failure_errno, 0);
+  assert.equal(race.failure_return, null);
   assert.equal(race.attempts, 16);
   assert(race.swaps >= race.attempts && race.swaps <= 4096);
   assert.equal(race.private_acks + race.host_acks + race.refused, race.attempts);
@@ -207,7 +208,7 @@ try {
     rows.push(observed);
   }
   assert.equal(createHash("sha256").update(readFileSync(prepared.target)).digest("hex"), targetHash);
-  const sources = ["macos_private_ipc.mts", "macos_policy.mts", "macos_rights.h", "macos_datagram.h", "macos_datagram_race.h", "macos_datagram_owner.mts", "macos_datagram_owner.c", "fixture_native.c", "process_policy.h", "macos_exec.c"];
+  const sources = ["macos_private_ipc.mts", "macos_policy.mts", "macos_rights.h", "macos_datagram_send.h", "macos_datagram.h", "macos_datagram_race.h", "macos_datagram_owner.mts", "macos_datagram_owner.c", "fixture_native.c", "process_policy.h", "macos_exec.c"];
   const hash = createHash("sha256");
   for (const file of sources) hash.update(file + "\0").update(readFileSync(join(source, file)));
   const report = { recorded_at: new Date().toISOString(), platform: process.platform, architecture: process.arch,

@@ -3,43 +3,6 @@
 #define CYBER_MACOS_DATAGRAM_H
 #include <sys/uio.h>
 
-static int datagram_address(const char *path, struct sockaddr_un *address) {
-    if (strlen(path) >= sizeof(address->sun_path)) return 0;
-    memset(address, 0, sizeof(*address));
-    address->sun_family = AF_UNIX;
-    strcpy(address->sun_path, path);
-    return 1;
-}
-
-static int datagram_socket(const char *path) {
-    struct sockaddr_un address;
-    if (!datagram_address(path, &address)) return -1;
-    int fd = socket(AF_UNIX, SOCK_DGRAM, 0);
-    if (fd < 0) return -1;
-    struct timeval timeout = { .tv_sec = 2 };
-    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0 ||
-        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) != 0 ||
-        bind(fd, (struct sockaddr *)&address, sizeof(address)) != 0) { close(fd); return -1; }
-    return fd;
-}
-
-static struct unix_attempt datagram_send(int fd, const char *path, int method) {
-    struct unix_attempt result = {0};
-    struct sockaddr_un address;
-    if (!datagram_address(path, &address)) return result;
-    if (method == 0) {
-        result.connected = connect(fd, (struct sockaddr *)&address, sizeof(address)) == 0;
-        result.sent = result.connected && send(fd, "fixture-only", 12, 0) == 12;
-    } else if (method == 1) {
-        result.sent = sendto(fd, "fixture-only", 12, 0, (struct sockaddr *)&address, sizeof(address)) == 12;
-    } else {
-        struct iovec body = { .iov_base = (void *)"fixture-only", .iov_len = 12 };
-        struct msghdr message = { .msg_name = &address, .msg_namelen = sizeof(address), .msg_iov = &body, .msg_iovlen = 1 };
-        result.sent = sendmsg(fd, &message, 0) == 12;
-    }
-    return result;
-}
-
 static int private_datagram(const char *scratch, int method) {
     char server_path[PATH_MAX], client_path[PATH_MAX];
     if (!joined(server_path, scratch, "dgram-private.sock") || !joined(client_path, scratch, "dgram-client.sock")) return 0;

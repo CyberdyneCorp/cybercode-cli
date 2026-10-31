@@ -36,13 +36,6 @@ static int await_datagram_swap(struct datagram_mutator *state, unsigned previous
     return 1;
 }
 
-struct datagram_failure { const char *stage; int error; };
-
-static char datagram_failed(struct datagram_failure *failure, const char *stage, int error) {
-    if (!failure->stage) { failure->stage = stage; failure->error = error; }
-    return 'E';
-}
-
 /* Returns P for an actual private acknowledgement, A for the owned host,
  * D for a policy refusal and E for any invalid/unknown exchange. */
 static char datagram_race_exchange(int server, const char *scratch, const char *alias, int method,
@@ -52,9 +45,8 @@ static char datagram_race_exchange(int server, const char *scratch, const char *
     int client = datagram_socket(client_path);
     if (client < 0) return datagram_failed(failure, "client_bind", errno);
     struct unix_attempt sent = datagram_send(client, alias, method);
-    int send_error = errno;
     if (!sent.sent) {
-        ack = send_error == EACCES || send_error == EPERM ? 'D' : datagram_failed(failure, "send", send_error);
+        ack = datagram_send_failure(sent, failure);
     } else {
         ssize_t size = recv(server, token, sizeof(token), MSG_DONTWAIT);
         if (size == 12 && memcmp(token, "fixture-only", 12) == 0) {
@@ -62,8 +54,10 @@ static char datagram_race_exchange(int server, const char *scratch, const char *
             if (!datagram_address(client_path, &reply)) {
                 ack = datagram_failed(failure, "private_reply_path", ENAMETOOLONG); goto done;
             }
-            if (sendto(server, "P", 1, 0, (struct sockaddr *)&reply, sizeof(reply)) != 1) {
-                ack = datagram_failed(failure, "private_reply", errno); goto done;
+            ssize_t replied = sendto(server, "P", 1, 0, (struct sockaddr *)&reply, sizeof(reply));
+            if (replied != 1) {
+                if (!failure->stage) { failure->returned = replied; failure->has_return = 1; }
+                ack = datagram_failed(failure, "private_reply", replied == -1 ? errno : 0); goto done;
             }
         } else if (size >= 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) {
             ack = datagram_failed(failure, "private_receive", size < 0 ? errno : EPROTO); goto done;
@@ -132,9 +126,12 @@ done:
 static void print_datagram_race(struct datagram_race_result result) {
     printf(",\"datagram_race\":{\"private_control\":%s,\"host_control\":%s,\"settled\":%s,\"failed\":%s,"
         "\"attempts\":%d,\"private_acks\":%d,\"host_acks\":%d,\"refused\":%d,\"swaps\":%u,"
-        "\"failure_stage\":\"%s\",\"failure_errno\":%d}",
+        "\"failure_stage\":\"%s\",\"failure_errno\":%d,\"failure_return\":",
         truth(result.private_control), truth(result.host_control), truth(result.settled), truth(result.failed),
         result.attempts, result.private_acks, result.host_acks, result.refused, result.swaps,
         result.failure.stage ? result.failure.stage : "", result.failure.error);
+    if (result.failure.has_return) printf("%zd", result.failure.returned);
+    else fputs("null", stdout);
+    putchar('}');
 }
 #endif

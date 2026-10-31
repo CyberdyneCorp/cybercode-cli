@@ -107,8 +107,9 @@ Its first unexpected operation/errno is retained in `failure_stage` and
 `failure_errno`; successful rows require both to be empty/zero. The occupied-bind
 control must report `client_bind`/`EADDRINUSE` and fail the real private exchange
 assertion. Unknown errors never count as policy refusals. The retained Intel
-failure now identifies a race-time send returning `EINVAL`, with its cause
-still unresolved. The follow-up collects bounded kernel messages for the exact
+failure recorded errno 22 without its raw send result; its cause remains
+unresolved. [Raw send-result validation](../../../openspec/changes/complete-plugin-hook-runtime/macos-send-result-validation.md)
+now distinguishes a -1 error from a short result with stale errno. The follow-up collects bounded kernel messages for the exact
 fixture PID/directory on error and runs differential controls independently after
 a positive-test failure. The positive failure still fails the job; missing logs
 cannot count as confinement.
@@ -400,3 +401,11 @@ results remain required. CI separately checks both configured and OS-provided
 Python, including direct framework-image resolution. The existing runtime
 bootstrap matrices continue to run independently. All production identity,
 package, lifecycle and support-review gates above remain open.
+
+The deterministic `macos_datagram_send_test.c` compiles the actual shared
+`macos_datagram_send.h` helpers with explicit sendmsg fault injection. It checks
+zero/short returns with stale errno, true permission failures, unknown errors,
+setup-before-send and first-failure preservation. Its copied missing-guard control
+must fail specifically on zero/stale-EPERM classification. These are verifier
+regressions, separate from the unchanged nine-row real IPC/concurrent alias
+matrix; they do not count as native confinement acceptance.

@@ -246,6 +246,59 @@ jobs:
           assert diagnostic['pid'] == entry['observed']['pid'] > 0, entry
           assert len(diagnostic['output']) <= 16384 and len(diagnostic['stderr']) <= 2048, entry
           PYCONTROL
+      - name: Reject stale errno after a nonnegative send return
+        if: always() && !cancelled() && steps.native_setup.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          source=scripts/probes/plugin-confinement
+          xcrun clang -Wall -Wextra -Werror -pthread "$source/macos_datagram_send_test.c" -o "$RUNNER_TEMP/send-result-test"
+          "$RUNNER_TEMP/send-result-test" > "$RUNNER_TEMP/unix-zero-send.log" 2>&1
+          legacy="$RUNNER_TEMP/macos-stale-errno-guard"
+          python3 - "$legacy" <<'PYCONTROL'
+          from pathlib import Path
+          import shutil, sys
+          target = Path(sys.argv[1])
+          target.mkdir()
+          for name in ('macos_datagram_send.h', 'macos_datagram_send_test.c'):
+              shutil.copyfile(Path('scripts/probes/plugin-confinement') / name, target / name)
+          fixture = target / 'macos_datagram_send.h'
+          source = fixture.read_text()
+          changes = {
+              'result.error = result.returned == -1 ? errno : 0;': 'result.error = errno;',
+              'sent.attempted && sent.returned == -1 && (sent.error == EACCES || sent.error == EPERM)': '(sent.error == EACCES || sent.error == EPERM)',
+          }
+          for needle, replacement in changes.items():
+              assert source.count(needle) == 1
+              source = source.replace(needle, replacement)
+          fixture.write_text(source)
+          PYCONTROL
+          xcrun clang -Wall -Wextra -Werror -pthread "$legacy/macos_datagram_send_test.c" -o "$legacy/send-result-test"
+          if "$legacy/send-result-test" > "$RUNNER_TEMP/unix-stale-errno-guard.log" 2>&1; then
+            echo 'Missing raw-return guards unexpectedly passed the verifier regression' >&2
+            exit 1
+          fi
+          python3 - "$RUNNER_TEMP" <<'PYCONTROL'
+          from pathlib import Path
+          import hashlib, json, sys
+          root = Path(sys.argv[1])
+          fixed = [json.loads(line) for line in (root / 'unix-zero-send.log').read_text().splitlines()]
+          assert [row['case'] for row in fixed] == ['zero-stale-EPERM', 'short-stale-EACCES', 'failed-EACCES', 'failed-EPERM', 'failed-EINVAL', 'setup-with-stale-EPERM'], fixed
+          text = (root / 'unix-stale-errno-guard.log').read_text()
+          assert 'send-result regression failed: zero-stale-EPERM' in text, text
+          legacy = json.loads(next(line for line in text.splitlines() if line.startswith('{')))
+          assert legacy['case'] == 'zero-stale-EPERM' and legacy['returned'] == 0 and legacy['outcome'] == 'D', legacy
+          paths = ['macos_datagram_send.h', 'macos_datagram_send_test.c']
+          digest = hashlib.sha256()
+          legacy_digest = hashlib.sha256()
+          for name in paths:
+              digest.update((name + '\0').encode())
+              digest.update((Path('scripts/probes/plugin-confinement') / name).read_bytes())
+              legacy_digest.update((name + '\0').encode())
+              legacy_digest.update((root / 'macos-stale-errno-guard' / name).read_bytes())
+          report = {'scope': 'Deterministic fault-injected verifier regression, not native confinement acceptance.', 'sources': paths, 'source_sha256': digest.hexdigest(), 'legacy_source_sha256': legacy_digest.hexdigest(), 'fixed': fixed, 'invalid_legacy_guard': legacy}
+          (root / 'unix-send-result-control.json').write_text(json.dumps(report, indent=2) + '\n')
+          PYCONTROL
       - name: Reject missing private descriptor reception
         if: always() && !cancelled() && steps.native_setup.outcome == 'success'
         shell: bash
@@ -309,6 +362,9 @@ jobs:
             ${{ runner.temp }}/unix-boundary.log
             ${{ runner.temp }}/unix-missing-scope.log
             ${{ runner.temp }}/unix-datagram-bind-failure.log
+            ${{ runner.temp }}/unix-zero-send.log
+            ${{ runner.temp }}/unix-send-result-control.json
+            ${{ runner.temp }}/unix-stale-errno-guard.log
             ${{ runner.temp }}/unix-dropped-rights.log
             ${{ runner.temp }}/unix-rights-path-reader.log
             ${{ runner.temp }}/exec.json

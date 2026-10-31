@@ -55,6 +55,11 @@ also have source-bound native receipts. Its [trusted-worker capacity/recovery ca
 passed on x64/arm64 in run 41049265434, with source-bound receipts retained. These
 experiments change no production policy or accepted support floor.
 
+The [raw datagram send-result correction](macos-send-result-validation.md) adds a
+real copied-fixture regression for stale errno after a zero return and retains
+current-source local evidence. Hosted verification and native admission remain
+required; this correction does not close tasks 2.1–2.4.
+
 ## 3. Host contribution lifecycle
 
 - [ ] 3.1 Validate initialize contributions and add plugin/digest/Location/generation ownership, collision handling, atomic replacement and late-result fences.
