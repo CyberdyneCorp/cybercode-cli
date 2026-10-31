@@ -1,0 +1,19 @@
+{
+  "run_id": 41146156599,
+  "job_id": 124371641477,
+  "artifact_id": 13021948909,
+  "artifact_sha256": "4a09e3bb6c4799f1d87bc4780b5753eb1b0b483b024c7f5a98cbdf1029737874",
+  "head": "d689d2f3ef2c4a0745a27adc363aafa2107699ad",
+  "tested_merge": "c5d9128d91d6e06bc458e4586a1815c5d65078a2",
+  "tree": "9db9168f6eb67b49c67834b782ffa209796e24bb",
+  "ipc_source_sha256": "a6d7fc68ceb9c768184f1c31964c687f16d8f89b97aeb0041dcad1da41656cae",
+  "scope": "Historical successful run before raw send return validation; does not resolve earlier errno ambiguity or complete native acceptance.",
+  "files": {
+    "job.log": "81f6e605a00c515a4b6b289913efbf85a8f651b598f1f3d8ec15de556e9641ae",
+    "unix-boundary.json": "eb3ae36b5cb5ab3e9b3424ca417d39ea647ac00f4b14e02d821a475883004b78",
+    "unix-datagram-bind-failure.log": "8329c88f156daa88bcd88d421112fdcf58f43ee2c1073693a87c1f7ee6823c39",
+    "unix-dropped-rights.log": "37887b766a038757d07952ddb94abcdd29117a397db37acfde32dbe979267a6d",
+    "unix-missing-scope.log": "c1a8fddf9de299805ef99042d3c39be978b773d8aca34bf87b23932e286ea10e",
+    "unix-rights-path-reader.log": "2258cfab0924f93f3243d1d9549bddc95f7d80be17669b6149baa45c097db95b"
+  }
+}

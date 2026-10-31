@@ -88,10 +88,12 @@ The IPC source digest at `cf695982` is
 These results establish diagnostic behavior, not a fix for the Intel failure.
 Fresh hosted verification remains required.
 
-## Intel EINVAL result and kernel-context follow-up
+## Intel errno-22 observation and kernel-context follow-up
 
 The diagnostic [Intel job at cf695982](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41143313110/job/124362484197)
-failed again at `r0w1s1`, now identifying `send` with errno 22 (`EINVAL`). Ten
+failed again at `r0w1s1`, recording stage `send` and errno 22. The raw send
+return was not retained; the [result-validation correction](macos-send-result-validation.md)
+shows why this cannot establish a -1/EINVAL syscall failure. Ten
 attempts were recorded: four private acknowledgements, five policy refusals and
 one unknown error. The thread settled and the owner recorded zero host packets;
 this incomplete row still fails acceptance. The exact cause remains unresolved.

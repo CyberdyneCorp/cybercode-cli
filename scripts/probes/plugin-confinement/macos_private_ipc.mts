@@ -152,6 +152,7 @@ function check(entry: Awaited<ReturnType<typeof row>>) {
   assert.equal(race.failed, false, `datagram mutation failed: ${JSON.stringify(entry)}`);
   assert.equal(race.failure_stage, "");
   assert.equal(race.failure_errno, 0);
+  assert.equal(race.failure_return, null);
   assert.equal(race.attempts, 16);
   assert(race.swaps >= race.attempts && race.swaps <= 4096);
   assert.equal(race.private_acks + race.host_acks + race.refused, race.attempts);

@@ -19,24 +19,33 @@ static int datagram_socket(const char *path) {
     struct timeval timeout = { .tv_sec = 2 };
     if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0 ||
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) != 0 ||
-        bind(fd, (struct sockaddr *)&address, sizeof(address)) != 0) { close(fd); return -1; }
+        bind(fd, (struct sockaddr *)&address, sizeof(address)) != 0) {
+        int error = errno;
+        close(fd); errno = error; return -1;
+    }
     return fd;
 }
 
 static struct unix_attempt datagram_send(int fd, const char *path, int method) {
-    struct unix_attempt result = {0};
+    struct unix_attempt result = { .returned = -1 };
     struct sockaddr_un address;
-    if (!datagram_address(path, &address)) return result;
+    if (!datagram_address(path, &address)) { result.error = ENAMETOOLONG; return result; }
     if (method == 0) {
         result.connected = connect(fd, (struct sockaddr *)&address, sizeof(address)) == 0;
-        result.sent = result.connected && send(fd, "fixture-only", 12, 0) == 12;
+        if (!result.connected) { result.error = errno; return result; }
+    }
+    result.attempted = 1;
+    if (method == 0) {
+        result.returned = send(fd, "fixture-only", 12, 0);
     } else if (method == 1) {
-        result.sent = sendto(fd, "fixture-only", 12, 0, (struct sockaddr *)&address, sizeof(address)) == 12;
+        result.returned = sendto(fd, "fixture-only", 12, 0, (struct sockaddr *)&address, sizeof(address));
     } else {
         struct iovec body = { .iov_base = (void *)"fixture-only", .iov_len = 12 };
         struct msghdr message = { .msg_name = &address, .msg_namelen = sizeof(address), .msg_iov = &body, .msg_iovlen = 1 };
-        result.sent = sendmsg(fd, &message, 0) == 12;
+        result.returned = sendmsg(fd, &message, 0);
     }
+    result.error = result.returned == -1 ? errno : 0;
+    result.sent = result.returned == 12;
     return result;
 }
 

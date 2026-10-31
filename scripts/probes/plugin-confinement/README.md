@@ -107,8 +107,9 @@ Its first unexpected operation/errno is retained in `failure_stage` and
 `failure_errno`; successful rows require both to be empty/zero. The occupied-bind
 control must report `client_bind`/`EADDRINUSE` and fail the real private exchange
 assertion. Unknown errors never count as policy refusals. The retained Intel
-failure now identifies a race-time send returning `EINVAL`, with its cause
-still unresolved. The follow-up collects bounded kernel messages for the exact
+failure recorded errno 22 without its raw send result; its cause remains
+unresolved. [Raw send-result validation](../../../openspec/changes/complete-plugin-hook-runtime/macos-send-result-validation.md)
+now distinguishes a -1 error from a short result with stale errno. The follow-up collects bounded kernel messages for the exact
 fixture PID/directory on error and runs differential controls independently after
 a positive-test failure. The positive failure still fails the job; missing logs
 cannot count as confinement.

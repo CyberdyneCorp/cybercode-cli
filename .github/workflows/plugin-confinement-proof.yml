@@ -246,6 +246,63 @@ jobs:
           assert diagnostic['pid'] == entry['observed']['pid'] > 0, entry
           assert len(diagnostic['output']) <= 16384 and len(diagnostic['stderr']) <= 2048, entry
           PYCONTROL
+      - name: Reject stale errno after a nonnegative send return
+        if: always() && !cancelled() && steps.native_setup.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          control="$RUNNER_TEMP/macos-zero-send"
+          legacy="$RUNNER_TEMP/macos-stale-errno-guard"
+          python3 - "$control" "$legacy" <<'PYCONTROL'
+          from pathlib import Path
+          import shutil, sys
+          control, legacy = map(Path, sys.argv[1:])
+          shutil.copytree('scripts/probes/plugin-confinement', control, ignore=shutil.ignore_patterns('evidence', '__pycache__'))
+          fixture = control / 'macos_datagram.h'
+          source = fixture.read_text()
+          needle = 'result.returned = sendmsg(fd, &message, 0);'
+          assert source.count(needle) == 1
+          replacement = 'result.returned = strstr(path, "/r0w1s1/scratch/dgram-race.sock") ? (errno = EPERM, (ssize_t)0) : sendmsg(fd, &message, 0);'
+          fixture.write_text(source.replace(needle, replacement))
+          shutil.copytree(control, legacy)
+          fixture = legacy / 'macos_datagram.h'
+          source = fixture.read_text()
+          needle = 'result.error = result.returned == -1 ? errno : 0;'
+          assert source.count(needle) == 1
+          fixture.write_text(source.replace(needle, 'result.error = errno;'))
+          fixture = legacy / 'macos_datagram_race.h'
+          source = fixture.read_text()
+          needle = 'sent.attempted && sent.returned == -1 && (sent.error == EACCES || sent.error == EPERM)'
+          assert source.count(needle) == 1
+          fixture.write_text(source.replace(needle, '(sent.error == EACCES || sent.error == EPERM)'))
+          PYCONTROL
+          log="$RUNNER_TEMP/unix-zero-send.log"
+          if node --experimental-strip-types "$control/macos_private_ipc.mts" > "$log" 2>&1; then
+            echo 'Zero-return send with stale EPERM unexpectedly passed' >&2
+            exit 1
+          fi
+          python3 - "$log" <<'PYCONTROL'
+          from pathlib import Path
+          import json, re, sys
+          text = Path(sys.argv[1]).read_text()
+          match = re.search(r'datagram mutation failed: (\{[^\n]+\})', text)
+          assert match, text
+          entry = json.loads(match[1])
+          race = entry['observed']['datagram_race']
+          assert entry['name'] == 'r0w1s1' and race['private_control'] and race['settled'] and race['failed'], entry
+          assert race['failure_stage'] == 'send_size' and race['failure_return'] == 0 and race['failure_errno'] == 0, entry
+          assert race['attempts'] == 2 and race['refused'] <= 1 and entry['datagram_receipts'] == 0, entry
+          PYCONTROL
+          node --experimental-strip-types "$legacy/macos_private_ipc.mts" --report "$RUNNER_TEMP/unix-stale-errno-guard.json" > "$RUNNER_TEMP/unix-stale-errno-guard.log" 2>&1
+          python3 - "$RUNNER_TEMP/unix-stale-errno-guard.json" <<'PYCONTROL'
+          from pathlib import Path
+          import json, sys
+          report = json.loads(Path(sys.argv[1]).read_text())
+          assert len(report['rows']) == 9, report
+          entry = next(row for row in report['rows'] if row['name'] == 'r0w1s1')
+          race = entry['observed']['datagram_race']
+          assert not race['failed'] and race['attempts'] == 16 and race['refused'] >= 8, entry
+          PYCONTROL
       - name: Reject missing private descriptor reception
         if: always() && !cancelled() && steps.native_setup.outcome == 'success'
         shell: bash
@@ -309,6 +366,9 @@ jobs:
             ${{ runner.temp }}/unix-boundary.log
             ${{ runner.temp }}/unix-missing-scope.log
             ${{ runner.temp }}/unix-datagram-bind-failure.log
+            ${{ runner.temp }}/unix-zero-send.log
+            ${{ runner.temp }}/unix-stale-errno-guard.json
+            ${{ runner.temp }}/unix-stale-errno-guard.log
             ${{ runner.temp }}/unix-dropped-rights.log
             ${{ runner.temp }}/unix-rights-path-reader.log
             ${{ runner.temp }}/exec.json
