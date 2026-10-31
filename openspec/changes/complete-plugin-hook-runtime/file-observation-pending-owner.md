@@ -4,7 +4,9 @@ Review reproduced a resource-lifetime defect in the existing observer registry.
 A cancelled owner could still be settling. Each remove/readmit cycle then created
 another Tokio task awaiting the previous task. The registry held one entry while
 its nested chain grew: 256 cycles created 257 replacement tasks in the regression.
-This is candidate evidence, without attributing the defect to an unchecked base.
+The new regression executed against unchanged production code at main
+`3ecf0755` and failed with 257 replacement tasks. Only the test was added for
+that baseline run.
 
 A pending replacement now retains its owner token until its predecessor settles.
 Removing a Session still cancels that Session's callback token immediately and
@@ -24,12 +26,12 @@ tests with one subprocess helper intentionally ignored by the parent test runner
 All 24 actual HTTP callback lifecycle regressions also pass locally. These
 component results do not prove native confinement or current-source platform
 acceptance. Scoped `cyber-tools --lib` Clippy with warnings denied and Rust
-formatting pass. Strict OpenSpec validates all 107 items; spec lint reports zero
+formatting pass. Strict OpenSpec validates all 114 items; spec lint reports zero
 errors and 25 warnings.
 
 The focused workflow removes only the pending-owner cancellation guard as a
 counterexample. It must execute the regression and fail its exact task-chain
 assertion; compilation failure cannot satisfy the control. The exact control
 was executed locally and failed at that assertion. Platform CI and composed-feature
-acceptance remain required. Task 5.2
-stays open, as do the separate plugin native admission and protocol gates.
+acceptance remain required. Task 5.2 stays open, as do the separate plugin native
+admission and protocol gates.
