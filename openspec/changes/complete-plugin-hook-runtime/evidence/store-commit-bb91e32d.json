@@ -1,0 +1,74 @@
+{
+  "head": "bb91e32d35a22fcd459b488c1f24eea6cac78091",
+  "base": "bbc233d572b44468bd906308687de33f6e7c7954",
+  "prospective_merge": "89d99aeea8acefff6c1d809af1f3dcb92e093beb",
+  "tree": "e6aedfa0600fc2ea74b11108d9d6ee3fc8812881",
+  "head_tree_equal": true,
+  "status": "Accepted Store correction: all 16 current-head checks passed; the full goal remains incomplete.",
+  "checks_passed": 16,
+  "platforms": {
+    "linux": {
+      "head": "bb91e32d35a22fcd459b488c1f24eea6cac78091",
+      "checkout": "89d99aeea8acefff6c1d809af1f3dcb92e093beb",
+      "tree": "e6aedfa0600fc2ea74b11108d9d6ee3fc8812881",
+      "platform": "linux",
+      "named_cases_passed": [
+        "committed_wal_error_stops_later_mutations",
+        "rejected_commit_rolls_back_without_stopping_the_writer",
+        "cwd_changed_lost_commit_ack_is_silent_and_replay_does_not_dispatch",
+        "full_queue_times_out_with_busy"
+      ],
+      "summaries": [
+        "2026-10-31T20:54:07.9029731Z      Summary [1244.447s] 5508 tests run: 5508 passed (2 slow), 21 skipped"
+      ],
+      "warnings": [],
+      "log_sha256": "9d971f8f9ccc76e5b997d4460f0c778c48c532c1328313f1a4706630342cd200",
+      "job_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41238584041/job/124647570206"
+    },
+    "macos": {
+      "head": "bb91e32d35a22fcd459b488c1f24eea6cac78091",
+      "checkout": "89d99aeea8acefff6c1d809af1f3dcb92e093beb",
+      "tree": "e6aedfa0600fc2ea74b11108d9d6ee3fc8812881",
+      "platform": "macos",
+      "named_cases_passed": [
+        "committed_wal_error_stops_later_mutations",
+        "rejected_commit_rolls_back_without_stopping_the_writer",
+        "cwd_changed_lost_commit_ack_is_silent_and_replay_does_not_dispatch",
+        "full_queue_times_out_with_busy"
+      ],
+      "summaries": [
+        "2026-10-31T21:13:23.6390030Z      Summary [1190.236s] 5508 tests run: 5508 passed (1 slow), 23 skipped"
+      ],
+      "warnings": [],
+      "log_sha256": "cf704f297ef38e45ba952bbc7b81986991997b2ef6b016a9b81ee43bcac06dbc",
+      "job_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41238584041/job/124647570302"
+    },
+    "windows": {
+      "head": "bb91e32d35a22fcd459b488c1f24eea6cac78091",
+      "checkout": "89d99aeea8acefff6c1d809af1f3dcb92e093beb",
+      "tree": "e6aedfa0600fc2ea74b11108d9d6ee3fc8812881",
+      "platform": "windows",
+      "named_cases_passed": [
+        "committed_wal_error_stops_later_mutations",
+        "rejected_commit_rolls_back_without_stopping_the_writer",
+        "cwd_changed_lost_commit_ack_is_silent_and_replay_does_not_dispatch",
+        "full_queue_times_out_with_busy"
+      ],
+      "summaries": [
+        "2026-10-31T21:09:04.5968084Z      Summary [1002.821s] 3785 tests run: 3785 passed (1 leaky), 647 skipped",
+        "2026-10-31T21:09:06.8480681Z      Summary [   0.028s] 4 tests run: 4 passed, 387 skipped",
+        "2026-10-31T21:09:10.8798012Z      Summary [   0.094s] 9 tests run: 9 passed, 0 skipped",
+        "2026-10-31T21:09:45.7707334Z      Summary [   1.791s] 18 tests run: 18 passed, 0 skipped"
+      ],
+      "warnings": [
+        "2026-10-31T20:57:50.4748467Z         LEAK [  22.337s] ( 520/3785) cyber-cli::messages_cli an_exec_session_refuses_messages_unless_it_accepts_them"
+      ],
+      "log_sha256": "8bbfe6f0736c573f1df589b97704d2f6e103b44fd435ff160dacdb7e37b4436b",
+      "job_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41238584041/job/124647570101"
+    }
+  },
+  "accepted_merge": "5ed50bffe185877d0a95392a9dafeb03384ebbec",
+  "accepted_tree": "e6aedfa0600fc2ea74b11108d9d6ee3fc8812881",
+  "accepted_tree_matches": true,
+  "limits": "Store correction acceptance only. Runtime replay uses the same failed Store, not a restarted process. The Windows messaging leaked-process warning has unverified cause. Native plugin enforcement, other producers and task 5.3 remain incomplete."
+}

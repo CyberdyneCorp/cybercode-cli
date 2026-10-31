@@ -77,16 +77,21 @@ verifies the original unacknowledged Location-settlement regression actually
 executed on Linux/macOS/Windows. This accepts its simulated lease-owner case,
 not native confinement or the complete producer matrix.
 
-Continue the first workstream on `test/cwd-wal-commit-ack`: the
-[Store commit correction](../openspec/changes/complete-plugin-hook-runtime/store-commit-uncertainty.md)
-fences generic errors after a transaction has ended, preserves known rollback,
-and verifies no CwdChanged or later shell dispatch follows the uncertain outcome.
-The real WAL-error fixture and main comparison pass locally after correction;
-current-head hosted acceptance remains required. The new replay case uses a fresh
-runtime over the same Store rather than a process restart. Keep native activation
-and Linux dependency changes behind their existing review/acceptance gates. The
-complete Setup marker/migration choices and DirectoryAdded proposal also need
-their recorded review before implementation.
+PR #90 merged at `5ed50bff` after all 16 checks passed. Its
+[source-bound receipt](../openspec/changes/complete-plugin-hook-runtime/evidence/store-commit-bb91e32d.json)
+verifies both commit-boundary cases and runtime lost-ack/replay behavior on
+Linux/macOS/Windows, with suite totals and the unverified Windows leaked-process
+warning retained. It accepts that correction, not the full producer matrix.
+The replay case uses a fresh runtime over the same Store rather than a process
+restart.
+
+Continue review on `spec/setup-legacy-admission-review`. The
+[legacy Setup owner-resolution candidate](../openspec/changes/complete-plugin-hook-runtime/setup-legacy-bootstrap-review.md)
+proposes the missing migration policy and its compatibility exception. The
+complete S1 decision is pending; publishing or merging the proposal does not
+approve it or implement markers/init. Preserve the separate Linux support and
+DirectoryAdded design-review gates. No dependent behavior or native activation
+is selected by this documentation follow-up.
 
 Native confinement foundations and regressions exist, but
 production enforcement and the remaining plugin/hook scope are incomplete. The

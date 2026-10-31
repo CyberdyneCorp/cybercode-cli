@@ -1,6 +1,7 @@
 # Unacknowledged Store commits and CwdChanged
 
-This fixes an observed durability-boundary gap while implementing task 5.3. It
+This fixes an observed durability-boundary gap while implementing task 5.3.
+PR #90 is accepted at `5ed50bff` after all 16 current-head checks passed. This
 does not close the full producer matrix or the plugin/native workstream.
 
 ## Failure and main comparison
@@ -68,6 +69,31 @@ and all 13 Location activity tests pass after the fix. Scoped Clippy for all Sto
 targets and the actual Location test target passes with warnings denied. Formatting,
 strict OpenSpec (114/0) and spec lint (0 errors/25 warnings) pass. Those results do not claim
 the new uncertain-commit case was tested through a process restart, on Windows
-or Linux, or across the full local workspace. Local code/security review found no blocking issue. Hosted acceptance and final
-PR review remain required before merging this follow-up. Native support/design
+or Linux, or across the full local workspace. Local code/security review found no blocking issue. The platform acceptance and
+final merge review recorded below complete this Store correction only. Native support/design
 review gates, DirectoryAdded/Setup and task 5.3 remain open.
+
+
+## Accepted platform execution
+
+The [source-bound receipt](evidence/store-commit-bb91e32d.json) records actual
+Linux/macOS/Windows execution at head
+`bb91e32d35a22fcd459b488c1f24eea6cac78091`. All three checkout logs identify merge
+`89d99aeea8acefff6c1d809af1f3dcb92e093beb`, tree
+`e6aedfa0600fc2ea74b11108d9d6ee3fc8812881`, equal to the reviewed head and
+accepted main merge `5ed50bffe185877d0a95392a9dafeb03384ebbec`.
+
+Both new Store regressions, the bounded writer-queue case and the runtime
+lost-ack/replay case execute and pass on every platform. Linux/macOS each pass
+5,508 workspace tests (21/23 skipped, 2/1 slow). Windows passes 3,785 selected
+tests (647 skipped), plus four metadata, nine migration and 18 AppContainer
+checks. Its corrected profile executes the writer unit tests instead of
+silently omitting them. The receipt retains actual suite totals and log hashes.
+
+Windows reports one leaked-process warning in
+`messages_cli::an_exec_session_refuses_messages_unless_it_accepts_them`; its cause
+is unverified. No flaky or timeout result is reported in the three inspected
+jobs. This record does not turn source listing or cross-compilation into native
+execution evidence. It preserves the runtime replay/process-restart distinction
+above and leaves the complete task 5.3, native admission and other goal features
+open.

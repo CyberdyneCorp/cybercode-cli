@@ -112,6 +112,10 @@ Setup ownership is expanded in [setup-design.md](setup-design.md). Its Store
 epoch and exact-directory marker choices are proposed for review; marker/schema
 and init behavior are not implemented by this specification. Tasks S1–S6 there
 expand task 5.1 without closing it or the other producer obligations.
+The [legacy owner-resolution candidate](setup-legacy-bootstrap-review.md) makes
+the remaining compatibility policy concrete, including the changed behavior for
+unproven legacy root creation. It is proposed only; the complete S1 decision and
+the original full contract remain open until review.
 
 ## 6. Acceptance and delivery
 
@@ -162,5 +166,8 @@ SQLite WAL callback can report an error after the exit has persisted. The
 failing regression on main, distinguish unknown completed COMMIT from a known
 rollback, and verify that CwdChanged stays silent while reducer replay recovers
 its committed identity. All 49 Store and 13 Location activity tests pass locally
-on macOS. Hosted platform acceptance and final review remain required; task 5.3
-and the other native/producer/workstream obligations stay open.
+on macOS. Merged PR #90 passes all 16 checks; the
+[receipt](evidence/store-commit-bb91e32d.json) verifies the named cases actually
+execute on Linux/macOS/Windows at the accepted tree. The Windows leaked-process
+warning has unverified cause. This accepts the Store correction; task 5.3 and the
+other native/producer/workstream obligations stay open.
