@@ -154,7 +154,12 @@ static int private_stream_probe(const char *scratch, int result[2]) {
 
 #ifdef __APPLE__
 #include "macos_rights.h"
-struct unix_attempt { int connected, sent, acknowledged; };
+struct unix_attempt {
+    int connected, sent, acknowledged;
+    /* Datagram diagnostics retain errno only for a real failed send. */
+    int attempted, error;
+    ssize_t returned;
+};
 static struct unix_attempt host_unix_attempt(const char *path) {
     struct unix_attempt result = {0};
     struct sockaddr_un address = { .sun_family = AF_UNIX };

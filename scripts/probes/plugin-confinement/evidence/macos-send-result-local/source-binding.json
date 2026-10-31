@@ -1,0 +1,23 @@
+{
+  "scope": "Local Darwin arm64 diagnostic verification only; no hosted, production admission or complete platform acceptance claim. unix-stale-errno-guard is an intentionally invalid copied-fixture counterexample, not acceptance.",
+  "reports": {
+    "matrix.json": "382f0ddb6f3fb60ec7395a6bb769191c64ffbce9f059bb4654cebe3c13fbe07a",
+    "exec.json": "7a06af58c27b8b134dd4833f6947b1a27623c4c3ef34c74542528d05ae284723",
+    "unix-boundary.json": "c5c5989e24f0223fe09f3b41aded63a49606af4a6c62afcfccbc881bdcc7697d"
+  },
+  "evidence_sha256": {
+    "exec.json": "7559db1d97edf066e6674b3b7a67ea49c8701d6a49e499ee4d2f16d63d7807eb",
+    "exec.log": "7559db1d97edf066e6674b3b7a67ea49c8701d6a49e499ee4d2f16d63d7807eb",
+    "matrix.json": "85034482db415b793006b3b75563497f1415436cf19bf5623c58a4296ec6f7cd",
+    "matrix.log": "85034482db415b793006b3b75563497f1415436cf19bf5623c58a4296ec6f7cd",
+    "unix-boundary.json": "d169b59468dbcb297d3493a32035c219deb61fb6efe8557b995937aba93fc01e",
+    "unix-boundary.log": "d169b59468dbcb297d3493a32035c219deb61fb6efe8557b995937aba93fc01e",
+    "unix-datagram-bind-failure.log": "b10144096f8b7431a731ef1b4b13620daffb74486e685330bfae15fd276d56f8",
+    "unix-dropped-rights.log": "8b39f894ca90701eec80ada2932923edf5d576c6e717b4b571f6113a61749423",
+    "unix-missing-scope.log": "63114f11dbf5a689ab132c1d0635eb0bbcb628022a3cebc88dcdf10b7038b158",
+    "unix-rights-path-reader.log": "9fd81154f97b5e3612c795cb054c1966a028d49830f7fd9e5d1554015a118db4",
+    "unix-stale-errno-guard.json": "f3934bf4ca38a4dc231d12f38f0e3d648474977b563620b97e6eddc28698de99",
+    "unix-stale-errno-guard.log": "f3934bf4ca38a4dc231d12f38f0e3d648474977b563620b97e6eddc28698de99",
+    "unix-zero-send.log": "5f75dcc55134cd929c7a13c4d9277b94b8934e476ae42973691a5f76156b545b"
+  }
+}

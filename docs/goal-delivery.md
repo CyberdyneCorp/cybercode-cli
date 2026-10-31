@@ -54,10 +54,14 @@ checks passed and the optional diagnostic was intentionally skipped. Its merge
 tree matches the reviewed/tested `e6fd3d2f` tree. The user approved continuing the
 [Linux broker direction](../openspec/changes/complete-plugin-hook-runtime/native-host-integration.md)
 with runtime kernel capability checks and full private IPC/network compatibility
-remaining required before activation. Continue on the single
-[draft #80](https://github.com/CyberdyneCorp/cybercode-cli/pull/80), branch
-`feat/plugin-native-host-admission`, retaining its original
-tested sources on `evidence/plugin-native-host-pre-76-merge` across rebase.
+remaining required before activation. The original tested sources remain on
+`evidence/plugin-native-host-pre-76-merge`. Follow-up #80 merged at `2745b4f0`
+and #83 at `c3bd34c4` on 2026-10-31. These are foundations, diagnostics and the
+observer resource correction; production native admission remains incomplete.
+Continue the first workstream on one follow-up branch,
+`feat/plugin-native-admission-followup`, retaining the same review and acceptance
+gates. The raw datagram send-result correction strengthens measurement and does
+not authorize Linux support changes or production activation.
 
 Native confinement foundations and regressions exist, but
 production enforcement and the remaining plugin/hook scope are incomplete. The
