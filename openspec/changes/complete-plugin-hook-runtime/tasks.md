@@ -115,3 +115,21 @@ The [pending observer owner correction](file-observation-pending-owner.md) bound
 remove/readmit replacement behind a settling owner while retaining cancellation
 and joined shutdown. Focused and platform acceptance remain required; task 5.2
 stays open.
+
+## CwdChanged acknowledgement regression
+
+`location_activity::cwd_changed_requires_acknowledged_previous_location_settlement`
+compares successful previous-Location settlement with an injected unacknowledged
+settlement after the new Location has committed. Both paths retain one durable
+enter record. Only acknowledged settlement emits CwdChanged with that record's
+identity; the uncertain path returns an error, emits no success observation, and
+refuses subsequent entry/idle-exit until recovery. It also checks that releasing
+the running call and shutting down releases the remaining admission without a
+delayed success hook. This exercises the real runtime and Store with a simulated
+Location owner, not native OS confinement or an uncertain Store commit.
+
+The complete 12-case Location activity suite passes locally on macOS. A behavioral
+negative control that falls through after failed settlement executes this exact
+case and fails because it emitted CwdChanged; production source is restored.
+Hosted platform acceptance and final review remain required. Task 5.3 stays open
+for the complete producer matrix, including DirectoryAdded and Setup.

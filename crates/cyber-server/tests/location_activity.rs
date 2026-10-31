@@ -3,7 +3,7 @@ mod support;
 use cyber_server::runtime::*;
 use futures::future::BoxFuture;
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::time::Duration;
@@ -17,6 +17,9 @@ struct Activity {
     deny: AtomicBool,
     shell_unresponsive: AtomicBool,
     claim_unresponsive: AtomicBool,
+    preserve_binding: AtomicBool,
+    fail_settlement: AtomicBool,
+    cwd_hooks: Mutex<Vec<LifecycleHook>>,
 }
 
 struct Guard {
@@ -26,6 +29,9 @@ struct Guard {
 
 impl LocationGuard for Guard {
     fn settle(mut self: Box<Self>) -> Result<(), String> {
+        if self.activity.fail_settlement.swap(false, Ordering::SeqCst) {
+            return Err("previous Location settlement unacknowledged".into());
+        }
         self.settled = true;
         Ok(())
     }
@@ -58,10 +64,15 @@ impl ToolHost for Host {
             {
                 return Err("checkout admission refused".into());
             }
-            assert!(creating || info.worktree_id.as_deref() == Some("wt_test"));
+            let preserve_binding = self.activity.preserve_binding.load(Ordering::SeqCst);
+            assert!(preserve_binding || creating || info.worktree_id.as_deref() == Some("wt_test"));
             self.activity.active.fetch_add(1, Ordering::SeqCst);
-            let lease = LocationLease::managed(
-                "wt_test".into(),
+            let lease = LocationLease::guarded(
+                if preserve_binding {
+                    info.worktree_id.clone()
+                } else {
+                    Some("wt_test".into())
+                },
                 Box::new(Guard {
                     activity: Arc::clone(&self.activity),
                     settled: false,
@@ -73,6 +84,17 @@ impl ToolHost for Host {
             }
             Ok(lease)
         })
+    }
+
+    fn lifecycle_hooks(
+        &self,
+        event: LifecycleHook,
+        _: CancellationToken,
+    ) -> BoxFuture<'_, Result<LifecycleVerdict, String>> {
+        if event.kind == "CwdChanged" {
+            self.activity.cwd_hooks.lock().unwrap().push(event);
+        }
+        Box::pin(async { Ok(LifecycleVerdict::default()) })
     }
 
     fn definitions(&self, turn: &TurnContext) -> Vec<ToolDef> {
@@ -451,4 +473,127 @@ fn retained_location_proof_preserves_acknowledged_guard_until_disposal() {
     assert_eq!(activity.active.load(Ordering::SeqCst), 0);
     assert!(!activity.unknown.load(Ordering::SeqCst));
     drop(LocationLease::unmanaged().settle_retained().unwrap());
+}
+
+#[tokio::test]
+async fn cwd_changed_requires_acknowledged_previous_location_settlement() {
+    use cyber_core::worktrees::Managed;
+
+    for unacknowledged in [false, true] {
+        let h = Harness::new(Setup {
+            scripts: vec![(
+                "test/main",
+                vec![tools(&[("lease_call", "read", "{}")]), text("done")],
+            )],
+            ..Default::default()
+        });
+        h.tools.set("read", Behavior::Gated);
+        let (runtime, activity) = owned_runtime(&h);
+        activity.preserve_binding.store(true, Ordering::SeqCst);
+        let info = create(&runtime, &h, "test/main").await;
+        assert!(info.worktree_id.is_none());
+        let destination = h.dir.path().join("destination");
+        std::fs::create_dir(&destination).unwrap();
+        let managed = Managed {
+            id: "wt_test".into(),
+            name: "destination".into(),
+            path: destination.clone(),
+            branch: "cyber/destination".into(),
+            base: "main".into(),
+            common_dir: h.repo.join(".git"),
+            ready: true,
+            included: vec![],
+        };
+        runtime
+            .admit(&info.id, Admission::text("run", Delivery::Queue))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), h.tools.started.notified())
+            .await
+            .unwrap();
+        assert_eq!(activity.active.load(Ordering::SeqCst), 1);
+        activity
+            .fail_settlement
+            .store(unacknowledged, Ordering::SeqCst);
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            runtime.enter_worktree(
+                &info.id,
+                "lease_call",
+                &managed,
+                false,
+                CancellationToken::new(),
+            ),
+        )
+        .await
+        .unwrap();
+        // The path is committed before settlement of the previous admission. An
+        // uncertain acknowledgement must not turn that record into a success hook.
+        let state = runtime.state(&info.id).await.unwrap();
+        assert_eq!(state.info.directory, destination.display().to_string());
+        assert_eq!(state.info.worktree_id.as_deref(), Some("wt_test"));
+        let events = h
+            .store
+            .read_events(&info.id, -1, cyber_store::MAX_PAGE_LIMIT)
+            .unwrap()
+            .events;
+        let entered: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind == "session.worktree.entered.1")
+            .collect();
+        assert_eq!(entered.len(), 1);
+        assert!(!activity.fail_settlement.load(Ordering::SeqCst));
+        assert_eq!(activity.unknown.load(Ordering::SeqCst), unacknowledged);
+        {
+            let hooks = activity.cwd_hooks.lock().unwrap();
+            if unacknowledged {
+                assert!(
+                    hooks.is_empty(),
+                    "an unacknowledged transition emitted CwdChanged"
+                );
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("settlement unacknowledged")
+                );
+            } else {
+                result.unwrap();
+                assert_eq!(hooks.len(), 1);
+                assert_eq!(hooks[0].directory, state.info.directory);
+                assert_eq!(hooks[0].fields["transition_id"], entered[0].id);
+                assert_eq!(hooks[0].fields["transition_sequence"], entered[0].seq);
+            }
+        }
+        if unacknowledged {
+            let error = runtime.exit_idle_worktree(&info.id).await.unwrap_err();
+            assert!(error.to_string().contains("Location outcome unknown"));
+            let error = runtime
+                .check_enterable(&info.id, "lease_call")
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("Location outcome unknown"));
+            assert_eq!(
+                h.store
+                    .read_events(&info.id, -1, cyber_store::MAX_PAGE_LIMIT)
+                    .unwrap()
+                    .events
+                    .len(),
+                events.len()
+            );
+            assert!(activity.cwd_hooks.lock().unwrap().is_empty());
+        }
+        h.tools.release.notify_one();
+        tokio::time::timeout(Duration::from_secs(5), runtime.wait_idle(&info.id))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), runtime.shutdown())
+            .await
+            .unwrap();
+        assert_eq!(activity.active.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            activity.cwd_hooks.lock().unwrap().len(),
+            usize::from(!unacknowledged)
+        );
+    }
 }
