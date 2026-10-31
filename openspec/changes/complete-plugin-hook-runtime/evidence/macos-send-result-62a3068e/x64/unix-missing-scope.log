@@ -1,0 +1,20 @@
+node:internal/modules/run_main:123
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: macOS datagram endpoint escaped scratch: {"name":"r0w0s0","flags":{"read":false,"write":false,"shell":false},"observed":{"started":true,"pid":5259,"private_unix":[true,true],"private_peer_checks":8,"private_peer_matches":true,"hardlink_created":false,"symlink_created":true,"private_aliases":[true,true],"rights":{"sent":true,"original_closed":true,"token":true,"truncated":false,"received":true,"same_inode":true,"readable":true,"written":true,"cloexec":true},"rights_path_replaced":true,"private_datagram":[true,true,true],"datagram_symlink_created":true,"datagram_race":{"private_control":true,"host_control":true,"settled":true,"failed":false,"attempts":16,"private_acks":7,"host_acks":9,"refused":0,"swaps":17,"failure_stage":"","failure_errno":0,"failure_return":null},"dgram_connect":{"connected":true,"sent":true,"acknowledged":true},"dgram_sendto":{"connected":false,"sent":true,"acknowledged":true},"dgram_sendmsg":{"connected":false,"sent":true,"acknowledged":true},"dgram_alias_connect":{"connected":true,"sent":true,"acknowledged":true},"dgram_alias_sendto":{"connected":false,"sent":true,"acknowledged":true},"dgram_alias_sendmsg":{"connected":false,"sent":true,"acknowledged":true},"direct":{"connected":true,"sent":true,"acknowledged":true},"hardlink":{"connected":false,"sent":false,"acknowledged":false},"symlink":{"connected":true,"sent":true,"acknowledged":true}},"rights_payload":"AB","rights_link_count":0,"owner_receipts":2,"owner_received_fixture":true,"datagram_receipts":16,"owner_datagram_received_fixture":true}
+
+16 !== 0
+
+    at check (file:///Users/runner/work/cybercode-cli/cybercode-cli/scripts/probes/plugin-confinement/macos_private_ipc.mts:159:10)
+    at file:///Users/runner/work/cybercode-cli/cybercode-cli/scripts/probes/plugin-confinement/macos_private_ipc.mts:207:5
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 16,
+  expected: 0,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v22.23.2

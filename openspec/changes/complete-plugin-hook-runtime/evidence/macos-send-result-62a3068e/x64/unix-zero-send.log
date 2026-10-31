@@ -1,0 +1,6 @@
+{"case":"zero-stale-EPERM","attempted":1,"calls":1,"returned":0,"error":0,"outcome":"E","stage":"send_size","has_return":1}
+{"case":"short-stale-EACCES","attempted":1,"calls":1,"returned":7,"error":0,"outcome":"E","stage":"send_size","has_return":1}
+{"case":"failed-EACCES","attempted":1,"calls":1,"returned":-1,"error":13,"outcome":"D","stage":"","has_return":0}
+{"case":"failed-EPERM","attempted":1,"calls":1,"returned":-1,"error":1,"outcome":"D","stage":"","has_return":0}
+{"case":"failed-EINVAL","attempted":1,"calls":1,"returned":-1,"error":22,"outcome":"E","stage":"send","has_return":1}
+{"case":"setup-with-stale-EPERM","attempted":0,"calls":0,"outcome":"E","stage":"send_setup","has_return":0}
