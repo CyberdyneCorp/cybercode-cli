@@ -26,6 +26,11 @@
 - **WHEN** a Session successfully enters or exits a worktree, returns while idle, or is rebound to a different effective path
 - **THEN** `CwdChanged` uses the resulting Session Location and includes the previous/destination directories and durable transition ID, sequence and kind, after ownership locks settle
 - **AND** a refused or unknown transition, same-path rebind, no-op exit or reducer replay does not emit a successful path observation
+
+#### Scenario: Unacknowledged committed Location transition
+- **WHEN** a Location transition persists but COMMIT reports an error after its transaction ended
+- **THEN** no successful CwdChanged observation is emitted and later mutations remain fenced for recovery
+- **AND** replay may recover the persisted Location and stable transition identity without dispatching the uncertain transition's handler
 - **AND** observational decisions or unavailable handlers do not veto the already committed transition or change its reported result
 #### Scenario: Durable file observation ownership
 - **WHEN** a new watcher generation claims a Location whose metadata and feedback allowance were already recorded

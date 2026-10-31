@@ -136,8 +136,11 @@ Location owner, not native OS confinement or an uncertain Store commit.
 The complete 12-case Location activity suite passes locally on macOS. A behavioral
 negative control that falls through after failed settlement executes this exact
 case and fails because it emitted CwdChanged; production source is restored.
-Hosted platform acceptance and final review remain required. Task 5.3 stays open
-for the complete producer matrix, including DirectoryAdded and Setup.
+The original case is accepted by merged PR #89: the
+[receipt](evidence/cwd-settlement-9ad0b369.json) verifies actual execution on
+Linux/macOS/Windows at its original source. The new Store-commit follow-up below
+requires its own current-head acceptance. Task 5.3 stays open for the complete
+producer matrix, including DirectoryAdded and Setup.
 
 ## FileChanged acceptance after main integration
 
@@ -149,3 +152,15 @@ reviewed composition with PR #88. See the
 [acceptance audit](file-observation-acceptance.md) and its final receipts for the
 scope, intentional skips and unverified Windows leaked-process warning. This
 closes only task 5.2; tasks 5.1, 5.3 and full workstream acceptance stay open.
+
+
+## Store commit uncertainty correction
+
+Task 5.3's unknown-transition acceptance exposed a Store boundary gap: a real
+SQLite WAL callback can report an error after the exit has persisted. The
+[correction and main comparison](store-commit-uncertainty.md) record the named
+failing regression on main, distinguish unknown completed COMMIT from a known
+rollback, and verify that CwdChanged stays silent while reducer replay recovers
+its committed identity. All 49 Store and 13 Location activity tests pass locally
+on macOS. Hosted platform acceptance and final review remain required; task 5.3
+and the other native/producer/workstream obligations stay open.

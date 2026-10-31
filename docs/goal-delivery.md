@@ -71,15 +71,22 @@ main composition; see the
 PR #88 merged at `9cbbf08b` after all 18 checks passed, including all five
 CwdChanged lifecycle cases on Windows.
 
-Continue the first workstream in PR #89 on `test/cwd-unknown-settlement`:
-unacknowledged Location settlement must not emit successful CwdChanged, and the
-FileChanged acceptance record is reconciled against accepted main. The regression
-uses the actual runtime/Store with a simulated lease owner; its local positive
-suite and behavioral negative control pass, while current-head hosted acceptance
-is required. No production native activation or protocol implementation is
-claimed. Keep native activation and Linux dependency changes behind their
-existing review/acceptance gates. The complete Setup marker/migration choices
-and DirectoryAdded proposal also need their recorded review before implementation.
+PR #89 merged at `bbc233d5` after all 16 current-head checks passed. Its
+[receipt](../openspec/changes/complete-plugin-hook-runtime/evidence/cwd-settlement-9ad0b369.json)
+verifies the original unacknowledged Location-settlement regression actually
+executed on Linux/macOS/Windows. This accepts its simulated lease-owner case,
+not native confinement or the complete producer matrix.
+
+Continue the first workstream on `test/cwd-wal-commit-ack`: the
+[Store commit correction](../openspec/changes/complete-plugin-hook-runtime/store-commit-uncertainty.md)
+fences generic errors after a transaction has ended, preserves known rollback,
+and verifies no CwdChanged or later shell dispatch follows the uncertain outcome.
+The real WAL-error fixture and main comparison pass locally after correction;
+current-head hosted acceptance remains required. The new replay case uses a fresh
+runtime over the same Store rather than a process restart. Keep native activation
+and Linux dependency changes behind their existing review/acceptance gates. The
+complete Setup marker/migration choices and DirectoryAdded proposal also need
+their recorded review before implementation.
 
 Native confinement foundations and regressions exist, but
 production enforcement and the remaining plugin/hook scope are incomplete. The

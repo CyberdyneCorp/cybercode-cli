@@ -1,0 +1,20 @@
+   Compiling cyber-core v0.1.0 (/Users/edvane/work/cybercode-file-observation-acceptance/crates/cyber-core)
+   Compiling cyber-store v0.1.0 (/Users/edvane/work/cybercode-file-observation-acceptance/crates/cyber-store)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.25s
+     Running unittests src/lib.rs (/Users/edvane/work/cybercode-cli/target/debug/deps/cyber_store-0a7f402bc991f0d9)
+
+running 1 test
+
+thread 'writer::tests::committed_wal_error_stops_later_mutations' (20790699) panicked at crates/cyber-store/src/writer.rs:198:9:
+an unacknowledged completed transaction was not fatal: Err(Sqlite(SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("SQL logic error"))))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test writer::tests::committed_wal_error_stops_later_mutations ... FAILED
+
+failures:
+
+failures:
+    writer::tests::committed_wal_error_stops_later_mutations
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p cyber-store --lib`

@@ -1,0 +1,46 @@
+{
+  "head": "9ad0b369c4b43349a2df582150d5c9fa0d09b5ff",
+  "tested_merge": "db443ee1e468e055fa040196948936eaff267afb",
+  "tree": "e5c0cf825c640ff6637d8855a167da62b8591608",
+  "checks_passed": 16,
+  "platforms": {
+    "linux": {
+      "checkout": "db443ee1e468e055fa040196948936eaff267afb",
+      "new_case_executed": true,
+      "log_sha256": "508d58723b2ea135f0acec0d848d7fa1a467ad5b845df1fe7ef8af06b7c6a2ff",
+      "summaries": [
+        "Summary [1254.059s] 5505 tests run: 5505 passed (2 slow), 21 skipped"
+      ],
+      "warnings": [],
+      "job_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41229206650/job/124619766981"
+    },
+    "macos": {
+      "checkout": "db443ee1e468e055fa040196948936eaff267afb",
+      "new_case_executed": true,
+      "log_sha256": "30f7762a32f70ff382c562e0cdb3b4ada808938477957d7407a9e1d94164d366",
+      "summaries": [
+        "Summary [1294.429s] 5505 tests run: 5505 passed (2 slow), 23 skipped"
+      ],
+      "warnings": [],
+      "job_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41229206650/job/124619767050"
+    },
+    "windows": {
+      "checkout": "db443ee1e468e055fa040196948936eaff267afb",
+      "new_case_executed": true,
+      "log_sha256": "8f061728fc0c194fc2e5b84668ec23d45d8309325e88ff49842966429b837e5a",
+      "summaries": [
+        "Summary [1225.725s] 3781 tests run: 3781 passed (1 slow, 1 leaky), 648 skipped",
+        "Summary [   0.033s] 4 tests run: 4 passed, 387 skipped",
+        "Summary [   0.122s] 9 tests run: 9 passed, 0 skipped",
+        "Summary [   2.480s] 18 tests run: 18 passed, 0 skipped"
+      ],
+      "warnings": [
+        "LEAK [  26.449s] ( 520/3781) cyber-cli::messages_cli an_exec_session_refuses_messages_unless_it_accepts_them"
+      ],
+      "job_url": "https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41229206650/job/124619766932"
+    }
+  },
+  "accepted_merge": "bbc233d572b44468bd906308687de33f6e7c7954",
+  "accepted_tree_matches": true,
+  "limits": "This accepts the original simulated Location-settlement case at 9ad0b369, not the new WAL-error follow-up, native confinement, or the complete producer matrix."
+}
