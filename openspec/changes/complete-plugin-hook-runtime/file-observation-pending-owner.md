@@ -26,12 +26,12 @@ tests with one subprocess helper intentionally ignored by the parent test runner
 All 24 actual HTTP callback lifecycle regressions also pass locally. These
 component results do not prove native confinement or current-source platform
 acceptance. Scoped `cyber-tools --lib` Clippy with warnings denied and Rust
-formatting pass. Strict OpenSpec validates all 113 items; spec lint reports zero
+formatting pass. Strict OpenSpec validates all 114 items; spec lint reports zero
 errors and 25 warnings.
 
 The focused workflow removes only the pending-owner cancellation guard as a
 counterexample. It must execute the regression and fail its exact task-chain
 assertion; compilation failure cannot satisfy the control. The exact control
 was executed locally and failed at that assertion. Platform CI and composed-feature
-acceptance remain required. Task 5.2
-stays open, as do the separate plugin native admission and protocol gates.
+acceptance remain required. Task 5.2 stays open, as do the separate plugin native
+admission and protocol gates.
