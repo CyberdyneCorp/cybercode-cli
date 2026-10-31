@@ -73,3 +73,21 @@ checks pass. Strict OpenSpec passes 114 items; spec lint reports zero errors and
 25 warnings. The subsequent native platform run above verifies the revised tests
 on Linux/macOS/Windows. It retains the existing intentional Unix subprocess-helper
 parent ignores and platform-specific component counts explicitly in the receipt.
+
+## Superseded workspace run and bounded attempts
+
+The old [Linux workspace job](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41207519002/job/124555564239)
+was cancelled by the CI concurrency policy after PR #85 required a task-ledger
+conflict resolution against merged main. Its log reports
+`messages_cli::stats_separate_message_driven_usage` still running beyond 9,180
+seconds; cancellation supplies no completed assertion result or proven cause.
+The same named case passed in PR #87's Linux/macOS runs (4.464/1.850 seconds),
+which also does not establish why the earlier attempt stalled.
+
+The `ci` nextest profile now uses the existing `ci-windows` ten-minute
+per-attempt slow timeout. The existing single retry is retained, so a retried
+case can consume two attempts. Timeouts remain failures; this bounds future
+stalls without claiming an application deadlock fix or FileChanged acceptance.
+The largest reported passing-test times in those PR #87 runs were 99.147 seconds
+on Linux and 75.484 on macOS. Current-revision CI and final review remain
+required before task 5.2 closes.
