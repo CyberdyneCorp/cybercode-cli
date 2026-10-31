@@ -73,3 +73,15 @@ checks pass. Strict OpenSpec passes 114 items; spec lint reports zero errors and
 25 warnings. The subsequent native platform run above verifies the revised tests
 on Linux/macOS/Windows. It retains the existing intentional Unix subprocess-helper
 parent ignores and platform-specific component counts explicitly in the receipt.
+
+## Exact PR85 platform verification
+
+The [current-source receipt](evidence/file-observation-ecce8b38.json) verifies all
+three focused jobs on `ecce8b381c91e22f25b43f9a1cf6f8761c991cce`. Each actual
+checkout uses merge `8de13b5445509a214d4f70f1082728a65b202df1`, whose tree
+`119568e94fdef8498056b4448a17980c440f483f` equals the PR head. Both named
+retarget regressions execute and pass on every platform, with 17 Store/runtime
+and 24 real HTTP cases each. Component/helper counts and log hashes remain
+explicit in the receipt. This confirms the earlier direct-branch acceptance on
+the actual PR composition; four broader PR checks were still running when this
+receipt was recorded. Task 5.2 remains open for their results and merge review.
