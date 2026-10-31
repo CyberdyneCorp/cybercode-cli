@@ -69,6 +69,50 @@ sources, and actual observations. A failure exits nonzero and does not produce a
 new success report. Use a fresh report destination or check its timestamp and
 digest before treating an existing report as evidence.
 
+## macOS private UNIX stream candidate
+
+`--macos-private-unix` extends the pre-runtime signing candidate with scratch-only
+UNIX inbound/outbound rules and real absolute/relative socket exchanges in every
+capability row. For example:
+
+```sh
+node --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime native --macos-signing-native --macos-private-unix --report /tmp/native-private-unix.json
+```
+
+Use `--macos-signing-runtime` for Node/Python/Bun/Deno and supply the same explicit
+runtime arguments as the existing pre-runtime matrix. This opt-in experiment
+uses an owned short temporary root under canonical `/tmp` to retain a genuine
+absolute-path exchange within Darwin's UNIX address bound. CI includes a precise
+missing-grant control. See the [evidence and remaining acceptance](../../../openspec/changes/complete-plugin-hook-runtime/macos-private-runtime-ipc.md).
+This is not production launch policy or complete private IPC/network acceptance.
+
+`macos_private_ipc.mts` also runs the shared profile against a fixture-owned host
+listener. Its nine native cases require private socket aliases and correct peer
+PID/UID/GID while denying actual host delivery. `--missing-scope` must expose the
+owned host endpoint and fail the named isolation assertion. See the
+[owned-listener evidence and limits](../../../openspec/changes/complete-plugin-hook-runtime/macos-owned-unix-boundary.md).
+The same driver now requires real private SCM_RIGHTS reception after closing the
+sender's original descriptor. Its owner observes effects on a pre-pinned file
+after the guest replaces the pathname. `--drop-rights` and a copied path-reader
+control must fail their precise assertions. See
+[descriptor-passing evidence](../../../openspec/changes/complete-plugin-hook-runtime/macos-private-descriptor-passing.md).
+It also requires private connected/sendto/sendmsg datagram exchanges and denies
+six direct/symlink host routes. A bounded native owner records actual receipt
+after guest settlement; startup failure cannot count as zero delivery. See
+[datagram evidence and limits](../../../openspec/changes/complete-plugin-hook-runtime/macos-private-datagrams.md).
+The [concurrent alias test](../../../openspec/changes/complete-plugin-hook-runtime/macos-datagram-alias-race.md)
+replaces a scratch symlink while native sendto/sendmsg run and compares actual
+private acknowledgements, policy refusals and owner-recorded host packets.
+Its first unexpected operation/errno is retained in `failure_stage` and
+`failure_errno`; successful rows require both to be empty/zero. The occupied-bind
+control must report `client_bind`/`EADDRINUSE` and fail the real private exchange
+assertion. Unknown errors never count as policy refusals. The retained Intel
+failure now identifies a race-time send returning `EINVAL`, with its cause
+still unresolved. The follow-up collects bounded kernel messages for the exact
+fixture PID/directory on error and runs differential controls independently after
+a positive-test failure. The positive failure still fails the job; missing logs
+cannot count as confinement.
+
 ## Boundary and coverage
 
 `macos_python.c` embeds an isolated Python and preloads trusted standard-library

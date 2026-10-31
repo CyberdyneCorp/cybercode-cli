@@ -1,0 +1,56 @@
+node:internal/modules/run_main:123
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: private SCM_RIGHTS exchange failed: {"name":"r0w0s0","flags":{"read":false,"write":false,"shell":false},"observed":{"started":true,"private_unix":[true,true],"private_peer_checks":8,"private_peer_matches":true,"hardlink_created":false,"symlink_created":true,"private_aliases":[true,true],"rights":{"sent":true,"original_closed":true,"token":true,"truncated":false,"received":false,"same_inode":false,"readable":false,"written":false,"cloexec":false},"rights_path_replaced":true,"direct":{"connected":false,"sent":false,"acknowledged":false},"hardlink":{"connected":false,"sent":false,"acknowledged":false},"symlink":{"connected":false,"sent":false,"acknowledged":false}},"rights_payload":"A","rights_link_count":0,"owner_receipts":0,"owner_received_fixture":false}
++ actual - expected
+
+  {
++   cloexec: false,
+-   cloexec: true,
+    original_closed: true,
++   readable: false,
++   received: false,
++   same_inode: false,
+-   readable: true,
+-   received: true,
+-   same_inode: true,
+    sent: true,
+    token: true,
+    truncated: false,
++   written: false
+-   written: true
+  }
+
+    at check (file:///Users/runner/work/cybercode-cli/cybercode-cli/scripts/probes/plugin-confinement/macos_private_ipc.mts:121:10)
+    at file:///Users/runner/work/cybercode-cli/cybercode-cli/scripts/probes/plugin-confinement/macos_private_ipc.mts:154:5
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: {
+    sent: true,
+    original_closed: true,
+    token: true,
+    truncated: false,
+    received: false,
+    same_inode: false,
+    readable: false,
+    written: false,
+    cloexec: false
+  },
+  expected: {
+    sent: true,
+    original_closed: true,
+    token: true,
+    truncated: false,
+    received: true,
+    same_inode: true,
+    readable: true,
+    written: true,
+    cloexec: true
+  },
+  operator: 'deepStrictEqual',
+  diff: 'simple'
+}
+
+Node.js v22.23.4

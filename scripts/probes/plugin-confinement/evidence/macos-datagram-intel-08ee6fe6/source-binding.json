@@ -1,0 +1,21 @@
+{
+  "run_id": 41119882444,
+  "job_id": 124283606909,
+  "artifact_id": 13015572224,
+  "artifact_sha256": "24c3a99bbff97fba00dd1a977ceb5fc6ebd14b3110f6ec9b4a3cc3e807a0f654",
+  "head": "08ee6fe6eb932a3926470f3c113257b97aa26b2d",
+  "tested_merge": "ebdb3f33d47590f23511be698fe84068b338e1ce",
+  "base": "ec31ff9fc7627a3a9262d99f0fc0606394368423",
+  "tree": "b10649b8f6ca411a8506705bbe88f8bc9d5ca44b",
+  "result": "failure",
+  "scope": "Intel Darwin native datagram race; incomplete row is a failure, not denial evidence.",
+  "files": {
+    "exec.json": "54c4668f40492f18c104a4f5beecdabcac14b9507bd2da9d3e09b008399a1efe",
+    "exec.log": "54c4668f40492f18c104a4f5beecdabcac14b9507bd2da9d3e09b008399a1efe",
+    "job.log": "a54d7bbc34b920a0c788cb1b4a5a79025b0e827d074bd94e84833f3901ffb298",
+    "matrix.json": "df65e1d727190e5dc6c7d778eecb450cd6f63c05b2859332c4977a2a403cf0b7",
+    "matrix.log": "df65e1d727190e5dc6c7d778eecb450cd6f63c05b2859332c4977a2a403cf0b7",
+    "private-unix-missing-grant.log": "f803d3e97f09d5b75b95e7d4c1d32ca7590328132d3e29e2bbfd11647fbdf278",
+    "unix-boundary.log": "3b5bba5357500a5f04e83e986676632e739a46f178b52114b7aae3f535eba14e"
+  }
+}

@@ -1,0 +1,4 @@
+
+thread 'main' (6336) panicked at crates/cyber-sandbox/examples/plugin_unix_socket_probe.rs:27:17:
+fixture bootstrap failed: Output { status: ExitStatus(unix_wait_status(512)), stdout: "", stderr: "experimental pathname UNIX policy requires Landlock ABI >= 9 (observed 8)\nnative Landlock admission failed\n" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

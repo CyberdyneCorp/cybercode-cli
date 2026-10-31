@@ -1,0 +1,6 @@
+
+thread 'main' (5213) panicked at crates/cyber-sandbox/examples/plugin_unix_socket_probe.rs:157:13:
+assertion `left == right` failed: private pair escape: pair_bind: public read=false write=true: {"started":true,"connected":false,"sent":false,"project_read":false,"pair_roundtrip":true,"pair_disconnect":false,"pair_reconnect":false,"pair_bind":true,"pair_listen":true,"pair_sendto":false,"pair_sendmsg":false,"datagram_pair":false,"seqpacket_pair":false,"landlock_abi":8,"tcp_roundtrip":true,"thread_tcp_roundtrip":true,"scratch_unix_roundtrip":true,"regular_reparent":true,"cross_mount_alias_errno":18}
+  left: Bool(true)
+ right: false
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

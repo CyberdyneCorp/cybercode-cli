@@ -1,0 +1,312 @@
+﻿2026-10-30T22:02:52.4207790Z Current runner version: '2.338.2'
+2026-10-30T22:02:52.4261020Z ##[group]Runner Image Provisioner
+2026-10-30T22:02:52.4263560Z Hosted Compute Agent
+2026-10-30T22:02:52.4265550Z Version: 20260819.586
+2026-10-30T22:02:52.4267570Z Commit: 3cc4a88dfa507ef76119ad1bb3eccc6378bb2b76
+2026-10-30T22:02:52.4269720Z Build Date: 2026-08-18T23:20:18Z
+2026-10-30T22:02:52.4271680Z Worker ID: {78a93ab6-de64-4a5f-9755-c10aa5fb6d89}
+2026-10-30T22:02:52.4273710Z Azure Region: westus
+2026-10-30T22:02:52.4275550Z ##[endgroup]
+2026-10-30T22:02:52.4280750Z ##[group]Operating System
+2026-10-30T22:02:52.4282650Z macOS
+2026-10-30T22:02:52.4284200Z 15.7.9
+2026-10-30T22:02:52.4286160Z 24G830
+2026-10-30T22:02:52.4287830Z ##[endgroup]
+2026-10-30T22:02:52.4289490Z ##[group]Runner Image
+2026-10-30T22:02:52.4291380Z Image: macos-15
+2026-10-30T22:02:52.4293130Z Version: 20260824.0482.1
+2026-10-30T22:02:52.4296880Z Included Software: https://github.com/actions/runner-images/blob/macos-15/20260824.0482/images/macos/macos-15-Readme.md
+2026-10-30T22:02:52.4303330Z Image Release: https://github.com/actions/runner-images/releases/tag/macos-15%2F20260824.0482
+2026-10-30T22:02:52.4305670Z ##[endgroup]
+2026-10-30T22:02:52.4309950Z ##[group]GITHUB_TOKEN Permissions
+2026-10-30T22:02:52.4314100Z Contents: read
+2026-10-30T22:02:52.4315420Z Metadata: read
+2026-10-30T22:02:52.4316970Z ##[endgroup]
+2026-10-30T22:02:52.4320420Z Secret source: Actions
+2026-10-30T22:02:52.4322380Z Cache mode: write
+2026-10-30T22:02:52.4323940Z Prepare workflow directory
+2026-10-30T22:02:52.5002820Z Prepare all required actions
+2026-10-30T22:02:52.5090780Z Getting action download info
+2026-10-30T22:02:52.9880850Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-10-30T22:02:53.3184690Z Download action repository 'actions/setup-node@v4' (SHA:49933ea5288caeca8642d1e84afbd3f7d6820020)
+2026-10-30T22:02:53.4948170Z Download action repository 'actions/upload-artifact@v4' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+2026-10-30T22:02:53.8757040Z Complete job name: Native signing-identity candidate (macos-15-intel)
+2026-10-30T22:02:54.1005950Z ##[group]Run actions/checkout@v4
+2026-10-30T22:02:54.1007930Z with:
+2026-10-30T22:02:54.1008790Z   repository: CyberdyneCorp/cybercode-cli
+2026-10-30T22:02:54.1018430Z   token: ***
+2026-10-30T22:02:54.1019400Z   ssh-strict: true
+2026-10-30T22:02:54.1020320Z   ssh-user: git
+2026-10-30T22:02:54.1021250Z   persist-credentials: true
+2026-10-30T22:02:54.1022570Z   clean: true
+2026-10-30T22:02:54.1023790Z   sparse-checkout-cone-mode: true
+2026-10-30T22:02:54.1024870Z   fetch-depth: 1
+2026-10-30T22:02:54.1025680Z   fetch-tags: false
+2026-10-30T22:02:54.1026830Z   show-progress: true
+2026-10-30T22:02:54.1028050Z   lfs: false
+2026-10-30T22:02:54.1029090Z   submodules: false
+2026-10-30T22:02:54.1030110Z   set-safe-directory: true
+2026-10-30T22:02:54.1031190Z   allow-unsafe-pr-checkout: false
+2026-10-30T22:02:54.1033740Z ##[endgroup]
+2026-10-30T22:02:54.5415550Z Syncing repository: CyberdyneCorp/cybercode-cli
+2026-10-30T22:02:54.5419500Z ##[group]Getting Git version info
+2026-10-30T22:02:54.5421360Z Working directory is '/Users/runner/work/cybercode-cli/cybercode-cli'
+2026-10-30T22:02:54.5423700Z [command]/usr/local/bin/git version
+2026-10-30T22:02:54.5424940Z git version 2.55.0
+2026-10-30T22:02:54.5429510Z ##[endgroup]
+2026-10-30T22:02:54.6630550Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/7276f405-808a-4a73-9337-6d175d301f21/.gitconfig'
+2026-10-30T22:02:54.6666430Z Temporarily overriding HOME='/Users/runner/work/_temp/7276f405-808a-4a73-9337-6d175d301f21' before making global git config changes
+2026-10-30T22:02:54.6700040Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-30T22:02:54.6721060Z [command]/usr/local/bin/git config --global --add safe.directory /Users/runner/work/cybercode-cli/cybercode-cli
+2026-10-30T22:02:54.6753860Z Deleting the contents of '/Users/runner/work/cybercode-cli/cybercode-cli'
+2026-10-30T22:02:54.6770210Z ##[group]Initializing the repository
+2026-10-30T22:02:54.6784270Z [command]/usr/local/bin/git init /Users/runner/work/cybercode-cli/cybercode-cli
+2026-10-30T22:02:54.6806950Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-10-30T22:02:54.6813550Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-10-30T22:02:54.6846850Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-10-30T22:02:54.6877320Z hint: call:
+2026-10-30T22:02:54.6924440Z hint:
+2026-10-30T22:02:54.6941600Z hint: 	git config --global init.defaultBranch <name>
+2026-10-30T22:02:54.6963530Z hint:
+2026-10-30T22:02:54.6980480Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-10-30T22:02:54.6990490Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-10-30T22:02:54.7000650Z hint:
+2026-10-30T22:02:54.7026320Z hint: 	git branch -m <name>
+2026-10-30T22:02:54.7041100Z hint:
+2026-10-30T22:02:54.7079000Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-10-30T22:02:54.7093370Z Initialized empty Git repository in /Users/runner/work/cybercode-cli/cybercode-cli/.git/
+2026-10-30T22:02:54.7150160Z [command]/usr/local/bin/git remote add origin https://github.com/CyberdyneCorp/cybercode-cli
+2026-10-30T22:02:54.7188700Z ##[endgroup]
+2026-10-30T22:02:54.7200910Z ##[group]Disabling automatic garbage collection
+2026-10-30T22:02:54.7219510Z [command]/usr/local/bin/git config --local gc.auto 0
+2026-10-30T22:02:54.7254060Z ##[endgroup]
+2026-10-30T22:02:54.7267110Z ##[group]Setting up auth
+2026-10-30T22:02:54.7284540Z [command]/usr/local/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-30T22:02:54.7338040Z [command]/usr/local/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-30T22:02:54.9302530Z [command]/usr/local/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-30T22:02:54.9389790Z [command]/usr/local/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-30T22:02:55.2295340Z [command]/usr/local/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-30T22:02:55.2392070Z [command]/usr/local/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-30T22:02:55.3536620Z [command]/usr/local/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-10-30T22:02:55.3726000Z ##[endgroup]
+2026-10-30T22:02:55.3730720Z ##[group]Fetching the repository
+2026-10-30T22:02:55.3757050Z [command]/usr/local/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +ebdb3f33d47590f23511be698fe84068b338e1ce:refs/remotes/pull/80/merge
+2026-10-30T22:02:57.2707900Z From https://github.com/CyberdyneCorp/cybercode-cli
+2026-10-30T22:02:57.3713030Z  * [new ref]         ebdb3f33d47590f23511be698fe84068b338e1ce -> pull/80/merge
+2026-10-30T22:02:57.5664140Z ##[endgroup]
+2026-10-30T22:02:57.6669960Z ##[group]Determining the checkout info
+2026-10-30T22:02:57.7674810Z ##[endgroup]
+2026-10-30T22:02:57.8344680Z [command]/usr/local/bin/git sparse-checkout disable
+2026-10-30T22:02:57.8677960Z [command]/usr/local/bin/git config --local --unset-all extensions.worktreeConfig
+2026-10-30T22:02:57.8982970Z ##[group]Checking out the ref
+2026-10-30T22:02:57.9034020Z [command]/usr/local/bin/git checkout --progress --force refs/remotes/pull/80/merge
+2026-10-30T22:02:58.3234470Z Updating files:  31% (1223/3889)
+2026-10-30T22:02:58.4473870Z Updating files:  32% (1245/3889)
+2026-10-30T22:02:58.4889580Z Updating files:  33% (1284/3889)
+2026-10-30T22:02:58.5127090Z Updating files:  34% (1323/3889)
+2026-10-30T22:02:58.5270100Z Updating files:  35% (1362/3889)
+2026-10-30T22:02:58.5402470Z Updating files:  36% (1401/3889)
+2026-10-30T22:02:58.5543400Z Updating files:  37% (1439/3889)
+2026-10-30T22:02:58.5736600Z Updating files:  38% (1478/3889)
+2026-10-30T22:02:58.5952840Z Updating files:  39% (1517/3889)
+2026-10-30T22:02:58.6810570Z Updating files:  40% (1556/3889)
+2026-10-30T22:02:58.7415050Z Updating files:  41% (1595/3889)
+2026-10-30T22:02:58.8452710Z Updating files:  42% (1634/3889)
+2026-10-30T22:02:58.9496200Z Updating files:  43% (1673/3889)
+2026-10-30T22:02:58.9801790Z Updating files:  44% (1712/3889)
+2026-10-30T22:02:58.9838970Z Updating files:  45% (1751/3889)
+2026-10-30T22:02:59.0012020Z Updating files:  46% (1789/3889)
+2026-10-30T22:02:59.0147800Z Updating files:  47% (1828/3889)
+2026-10-30T22:02:59.0387500Z Updating files:  48% (1867/3889)
+2026-10-30T22:02:59.0487830Z Updating files:  49% (1906/3889)
+2026-10-30T22:02:59.0904590Z Updating files:  50% (1945/3889)
+2026-10-30T22:02:59.1665480Z Updating files:  51% (1984/3889)
+2026-10-30T22:02:59.1959940Z Updating files:  52% (2023/3889)
+2026-10-30T22:02:59.2146500Z Updating files:  53% (2062/3889)
+2026-10-30T22:02:59.2329570Z Updating files:  54% (2101/3889)
+2026-10-30T22:02:59.2895150Z Updating files:  55% (2139/3889)
+2026-10-30T22:02:59.3088030Z Updating files:  56% (2178/3889)
+2026-10-30T22:02:59.3602210Z Updating files:  56% (2184/3889)
+2026-10-30T22:02:59.4308920Z Updating files:  57% (2217/3889)
+2026-10-30T22:02:59.4403820Z Updating files:  58% (2256/3889)
+2026-10-30T22:02:59.4511850Z Updating files:  59% (2295/3889)
+2026-10-30T22:02:59.4642320Z Updating files:  60% (2334/3889)
+2026-10-30T22:02:59.4744350Z Updating files:  61% (2373/3889)
+2026-10-30T22:02:59.4885800Z Updating files:  62% (2412/3889)
+2026-10-30T22:02:59.4975980Z Updating files:  63% (2451/3889)
+2026-10-30T22:02:59.5148630Z Updating files:  64% (2489/3889)
+2026-10-30T22:02:59.5249000Z Updating files:  65% (2528/3889)
+2026-10-30T22:02:59.5388920Z Updating files:  66% (2567/3889)
+2026-10-30T22:02:59.5560970Z Updating files:  67% (2606/3889)
+2026-10-30T22:02:59.5744160Z Updating files:  68% (2645/3889)
+2026-10-30T22:02:59.5985320Z Updating files:  69% (2684/3889)
+2026-10-30T22:02:59.6133470Z Updating files:  70% (2723/3889)
+2026-10-30T22:02:59.6344040Z Updating files:  71% (2762/3889)
+2026-10-30T22:02:59.6753840Z Updating files:  72% (2801/3889)
+2026-10-30T22:02:59.8594970Z Updating files:  73% (2839/3889)
+2026-10-30T22:02:59.9599380Z Updating files:  74% (2878/3889)
+2026-10-30T22:03:00.0191470Z Updating files:  75% (2917/3889)
+2026-10-30T22:03:00.0427880Z Updating files:  76% (2956/3889)
+2026-10-30T22:03:00.0520500Z Updating files:  77% (2995/3889)
+2026-10-30T22:03:00.1692540Z Updating files:  78% (3034/3889)
+2026-10-30T22:03:00.2658800Z Updating files:  79% (3073/3889)
+2026-10-30T22:03:00.3749530Z Updating files:  80% (3112/3889)
+2026-10-30T22:03:00.4089120Z Updating files:  80% (3123/3889)
+2026-10-30T22:03:00.4157810Z Updating files:  81% (3151/3889)
+2026-10-30T22:03:00.4218560Z Updating files:  82% (3189/3889)
+2026-10-30T22:03:00.4314050Z Updating files:  83% (3228/3889)
+2026-10-30T22:03:00.4369100Z Updating files:  84% (3267/3889)
+2026-10-30T22:03:00.4514160Z Updating files:  85% (3306/3889)
+2026-10-30T22:03:00.5071250Z Updating files:  86% (3345/3889)
+2026-10-30T22:03:00.5352090Z Updating files:  87% (3384/3889)
+2026-10-30T22:03:00.5758250Z Updating files:  88% (3423/3889)
+2026-10-30T22:03:00.5913980Z Updating files:  89% (3462/3889)
+2026-10-30T22:03:00.6061880Z Updating files:  90% (3501/3889)
+2026-10-30T22:03:00.6217930Z Updating files:  91% (3539/3889)
+2026-10-30T22:03:00.6368330Z Updating files:  92% (3578/3889)
+2026-10-30T22:03:00.6527850Z Updating files:  93% (3617/3889)
+2026-10-30T22:03:00.6726630Z Updating files:  94% (3656/3889)
+2026-10-30T22:03:00.6870680Z Updating files:  95% (3695/3889)
+2026-10-30T22:03:00.7042960Z Updating files:  96% (3734/3889)
+2026-10-30T22:03:00.7305810Z Updating files:  97% (3773/3889)
+2026-10-30T22:03:00.7567200Z Updating files:  98% (3812/3889)
+2026-10-30T22:03:00.7880660Z Updating files:  99% (3851/3889)
+2026-10-30T22:03:00.7911050Z Updating files: 100% (3889/3889)
+2026-10-30T22:03:00.7940340Z Updating files: 100% (3889/3889), done.
+2026-10-30T22:03:00.8165490Z HEAD is now at ebdb3f3 Merge 08ee6fe6eb932a3926470f3c113257b97aa26b2d into ec31ff9fc7627a3a9262d99f0fc0606394368423
+2026-10-30T22:03:00.8295060Z ##[endgroup]
+2026-10-30T22:03:00.8467400Z [command]/usr/local/bin/git log -1 --format=%H
+2026-10-30T22:03:00.8605330Z ebdb3f33d47590f23511be698fe84068b338e1ce
+2026-10-30T22:03:00.9213530Z ##[group]Run actions/setup-node@v4
+2026-10-30T22:03:00.9214240Z with:
+2026-10-30T22:03:00.9214710Z   node-version: 22
+2026-10-30T22:03:00.9215260Z   always-auth: false
+2026-10-30T22:03:00.9215810Z   check-latest: false
+2026-10-30T22:03:00.9223930Z   token: ***
+2026-10-30T22:03:00.9224460Z ##[endgroup]
+2026-10-30T22:03:01.2868930Z (node:2328) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-30T22:03:01.2918540Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-30T22:03:01.3597040Z Found in cache @ /Users/runner/hostedtoolcache/node/22.23.2/x64
+2026-10-30T22:03:01.3712780Z ##[group]Environment details
+2026-10-30T22:03:04.8035020Z node: v22.23.2
+2026-10-30T22:03:04.8116560Z npm: 10.9.8
+2026-10-30T22:03:04.8145750Z yarn: 1.22.22
+2026-10-30T22:03:04.8190740Z ##[endgroup]
+2026-10-30T22:03:04.8486660Z ##[group]Run set -euo pipefail
+2026-10-30T22:03:04.8489510Z [36;1mset -euo pipefail[0m
+2026-10-30T22:03:04.8490780Z [36;1m# Acceptance requires original-image positive startup, denied self-exec,[0m
+2026-10-30T22:03:04.8492460Z [36;1m# matching-identity counterexamples and descriptor isolation.[0m
+2026-10-30T22:03:04.8493980Z [36;1m# The historical re-signing experiment remains an opt-in diagnostic;[0m
+2026-10-30T22:03:04.8495980Z [36;1m# its failed startup control is never counted as confinement.[0m
+2026-10-30T22:03:04.8499290Z [36;1mnode --experimental-strip-types scripts/probes/plugin-confinement/run.mts --runtime native --macos-signing-native --macos-private-unix --report "$RUNNER_TEMP/matrix.json" > "$RUNNER_TEMP/matrix.log" 2>&1[0m
+2026-10-30T22:03:04.8503530Z [36;1mnode --experimental-strip-types scripts/probes/plugin-confinement/macos_signing_exec.mts --report "$RUNNER_TEMP/exec.json" > "$RUNNER_TEMP/exec.log" 2>&1[0m
+2026-10-30T22:03:04.8678340Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-30T22:03:04.8679730Z ##[endgroup]
+2026-10-30T22:03:11.8817160Z ##[group]Run set -euo pipefail
+2026-10-30T22:03:11.8818170Z [36;1mset -euo pipefail[0m
+2026-10-30T22:03:11.8819260Z [36;1mcontrol="$RUNNER_TEMP/macos-private-unix-missing-grant"[0m
+2026-10-30T22:03:11.8820920Z [36;1mpython3 - "$control" <<'PYCONTROL'[0m
+2026-10-30T22:03:11.8821570Z [36;1mfrom pathlib import Path[0m
+2026-10-30T22:03:11.8822140Z [36;1mimport shutil, sys[0m
+2026-10-30T22:03:11.8822660Z [36;1mtarget = Path(sys.argv[1])[0m
+2026-10-30T22:03:11.8824220Z [36;1mshutil.copytree('scripts/probes/plugin-confinement', target, ignore=shutil.ignore_patterns('evidence', '__pycache__'))[0m
+2026-10-30T22:03:11.8825670Z [36;1mdriver = target / 'macos_policy.mts'[0m
+2026-10-30T22:03:11.8826310Z [36;1mtext = driver.read_text()[0m
+2026-10-30T22:03:11.8826880Z [36;1mbefore = '  if (privateUnix) {'[0m
+2026-10-30T22:03:11.8827480Z [36;1massert text.count(before) == 1[0m
+2026-10-30T22:03:11.8828690Z [36;1mdriver.write_text(text.replace(before, '  if (false) { // Missing scratch UNIX grant control.'))[0m
+2026-10-30T22:03:11.8829740Z [36;1mPYCONTROL[0m
+2026-10-30T22:03:11.8830330Z [36;1mlog="$RUNNER_TEMP/private-unix-missing-grant.log"[0m
+2026-10-30T22:03:11.8832140Z [36;1mif node --experimental-strip-types "$control/run.mts" --runtime native --macos-signing-native --macos-private-unix --report "$control/result.json" > "$log" 2>&1; then[0m
+2026-10-30T22:03:11.8834020Z [36;1m  echo 'Missing private UNIX policy unexpectedly passed' >&2[0m
+2026-10-30T22:03:11.8834800Z [36;1m  exit 1[0m
+2026-10-30T22:03:11.8835210Z [36;1mfi[0m
+2026-10-30T22:03:11.8836320Z [36;1mpython3 - "$log" <<'PYCONTROL'[0m
+2026-10-30T22:03:11.8836920Z [36;1mfrom pathlib import Path[0m
+2026-10-30T22:03:11.8837460Z [36;1mimport sys[0m
+2026-10-30T22:03:11.8837950Z [36;1mtext = Path(sys.argv[1]).read_text()[0m
+2026-10-30T22:03:11.8839020Z [36;1massert 'no-capabilities: private UNIX runtime exchange failed: [false,false]' in text, text[0m
+2026-10-30T22:03:11.8840270Z [36;1mPYCONTROL[0m
+2026-10-30T22:03:11.8917690Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-30T22:03:11.8918390Z ##[endgroup]
+2026-10-30T22:03:13.1878030Z ##[group]Run set -euo pipefail
+2026-10-30T22:03:13.1878740Z [36;1mset -euo pipefail[0m
+2026-10-30T22:03:13.1880400Z [36;1mnode --experimental-strip-types scripts/probes/plugin-confinement/macos_private_ipc.mts --report "$RUNNER_TEMP/unix-boundary.json" > "$RUNNER_TEMP/unix-boundary.log" 2>&1[0m
+2026-10-30T22:03:13.1882280Z [36;1mlog="$RUNNER_TEMP/unix-missing-scope.log"[0m
+2026-10-30T22:03:13.1883730Z [36;1mif node --experimental-strip-types scripts/probes/plugin-confinement/macos_private_ipc.mts --missing-scope > "$log" 2>&1; then[0m
+2026-10-30T22:03:13.1885380Z [36;1m  echo 'Missing UNIX outbound scope unexpectedly passed' >&2[0m
+2026-10-30T22:03:13.1886150Z [36;1m  exit 1[0m
+2026-10-30T22:03:13.1886560Z [36;1mfi[0m
+2026-10-30T22:03:13.1886990Z [36;1mpython3 - "$log" <<'PYCONTROL'[0m
+2026-10-30T22:03:13.1887600Z [36;1mfrom pathlib import Path[0m
+2026-10-30T22:03:13.1888130Z [36;1mimport sys[0m
+2026-10-30T22:03:13.1888730Z [36;1mtext = Path(sys.argv[1]).read_text()[0m
+2026-10-30T22:03:13.1889580Z [36;1massert 'macOS datagram endpoint escaped scratch:' in text, text[0m
+2026-10-30T22:03:13.1890400Z [36;1mimport json, re[0m
+2026-10-30T22:03:13.1891220Z [36;1mmatch = re.search(r'macOS datagram endpoint escaped scratch: (\{[^\n]+\})', text)[0m
+2026-10-30T22:03:13.1892180Z [36;1massert match, text[0m
+2026-10-30T22:03:13.1892670Z [36;1mentry = json.loads(match[1])[0m
+2026-10-30T22:03:13.1893310Z [36;1mrace = entry['observed']['datagram_race'][0m
+2026-10-30T22:03:13.1894300Z [36;1massert race['host_control'] and race['settled'] and not race['failed'], entry[0m
+2026-10-30T22:03:13.1895440Z [36;1massert entry['datagram_receipts'] == 7 + race['host_acks'], entry[0m
+2026-10-30T22:03:13.1896500Z [36;1mfor token in ['"owner_received_fixture":true', '"acknowledged":true',[0m
+2026-10-30T22:03:13.1897740Z [36;1m              '"owner_datagram_received_fixture":true', '"private_datagram":[true,true,true]',[0m
+2026-10-30T22:03:13.1898980Z [36;1m              '"private_aliases":[true,true]', '"private_peer_matches":true']:[0m
+2026-10-30T22:03:13.1899860Z [36;1m    assert token in text, text[0m
+2026-10-30T22:03:13.1900430Z [36;1mPYCONTROL[0m
+2026-10-30T22:03:13.1965520Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-30T22:03:13.1966210Z ##[endgroup]
+2026-10-30T22:03:14.0614850Z ##[error]Process completed with exit code 1.
+2026-10-30T22:03:14.1217420Z ##[group]Run actions/upload-artifact@v4
+2026-10-30T22:03:14.1218270Z with:
+2026-10-30T22:03:14.1218750Z   name: native-signing-candidate-macos-15-intel
+2026-10-30T22:03:14.1222920Z   path: /Users/runner/work/_temp/matrix.json
+/Users/runner/work/_temp/matrix.log
+/Users/runner/work/_temp/private-unix-missing-grant.log
+/Users/runner/work/_temp/unix-boundary.json
+/Users/runner/work/_temp/unix-boundary.log
+/Users/runner/work/_temp/unix-missing-scope.log
+/Users/runner/work/_temp/unix-dropped-rights.log
+/Users/runner/work/_temp/unix-rights-path-reader.log
+/Users/runner/work/_temp/exec.json
+/Users/runner/work/_temp/exec.log
+
+2026-10-30T22:03:14.1227660Z   if-no-files-found: error
+2026-10-30T22:03:14.1228150Z   retention-days: 14
+2026-10-30T22:03:14.1228650Z   compression-level: 6
+2026-10-30T22:03:14.1229130Z   overwrite: false
+2026-10-30T22:03:14.1229750Z   include-hidden-files: false
+2026-10-30T22:03:14.1230260Z ##[endgroup]
+2026-10-30T22:03:14.4570960Z (node:2666) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-30T22:03:14.4588150Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-30T22:03:14.5147660Z Multiple search paths detected. Calculating the least common ancestor of all paths
+2026-10-30T22:03:14.5271620Z The least common ancestor is /Users/runner/work/_temp. This will be the root directory of the artifact
+2026-10-30T22:03:14.5277540Z With the provided path, there will be 6 files uploaded
+2026-10-30T22:03:14.5291390Z Artifact name is valid!
+2026-10-30T22:03:14.5292350Z Root directory input is valid!
+2026-10-30T22:03:14.9570430Z Beginning upload of artifact content to blob storage
+2026-10-30T22:03:15.0371100Z (node:2666) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-10-30T22:03:15.3337580Z Uploaded bytes 6355
+2026-10-30T22:03:15.4144990Z Finished uploading artifact content to blob storage!
+2026-10-30T22:03:15.4155660Z SHA256 digest of uploaded artifact zip is 24c3a99bbff97fba00dd1a977ceb5fc6ebd14b3110f6ec9b4a3cc3e807a0f654
+2026-10-30T22:03:15.4157170Z Finalizing artifact upload
+2026-10-30T22:03:15.9749220Z Artifact native-signing-candidate-macos-15-intel.zip successfully finalized. Artifact ID 13015572224
+2026-10-30T22:03:15.9758930Z Artifact native-signing-candidate-macos-15-intel has been successfully uploaded! Final size is 6355 bytes. Artifact ID is 13015572224
+2026-10-30T22:03:15.9865070Z Artifact download URL: https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/41119882444/artifacts/13015572224
+2026-10-30T22:03:16.1055130Z Post job cleanup.
+2026-10-30T22:03:16.3043530Z [command]/usr/local/bin/git version
+2026-10-30T22:03:16.3142540Z git version 2.55.0
+2026-10-30T22:03:16.3179840Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/0eca3df1-d668-4cfa-af87-84ed0402681e/.gitconfig'
+2026-10-30T22:03:16.3196120Z Temporarily overriding HOME='/Users/runner/work/_temp/0eca3df1-d668-4cfa-af87-84ed0402681e' before making global git config changes
+2026-10-30T22:03:16.3198500Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-30T22:03:16.3204890Z [command]/usr/local/bin/git config --global --add safe.directory /Users/runner/work/cybercode-cli/cybercode-cli
+2026-10-30T22:03:16.3322400Z [command]/usr/local/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-30T22:03:16.3413040Z [command]/usr/local/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-30T22:03:16.4658730Z [command]/usr/local/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-30T22:03:16.4741020Z http.https://github.com/.extraheader
+2026-10-30T22:03:16.4753800Z [command]/usr/local/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-10-30T22:03:16.4855350Z [command]/usr/local/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-30T22:03:16.6374730Z [command]/usr/local/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-30T22:03:16.6466020Z [command]/usr/local/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-30T22:03:16.7771960Z Cleaning up orphan processes
+2026-10-30T22:03:16.9305080Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

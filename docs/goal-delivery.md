@@ -43,11 +43,33 @@ separate review. This changes delivery granularity, not feature scope or accepta
 - Preserve native proof and explicit support/design revision gates. Passing probes
   are not production feature acceptance. Never weaken the agreed contract merely
   to finish a PR. Merge only with user authorization; the conditional approval
-  above applies to #76.
+  above originally applied to #76. On 2026-10-30 the user additionally authorized
+  merging ready repository PRs as work continues. Check current-head CI, scope,
+  review and mergeability before each merge, and recheck composition as main
+  advances. This does not waive draft, native proof or design-revision gates.
 
-As of consolidation, native confinement foundations and regressions exist, but
+PR [#76](https://github.com/CyberdyneCorp/cybercode-cli/pull/76) merged on
+2026-10-30 at `ec31ff9fc7627a3a9262d99f0fc0606394368423`, after all 70 applicable
+checks passed and the optional diagnostic was intentionally skipped. Its merge
+tree matches the reviewed/tested `e6fd3d2f` tree. The user approved continuing the
+[Linux broker direction](../openspec/changes/complete-plugin-hook-runtime/native-host-integration.md)
+with runtime kernel capability checks and full private IPC/network compatibility
+remaining required before activation. Continue on the single
+[draft #80](https://github.com/CyberdyneCorp/cybercode-cli/pull/80), branch
+`feat/plugin-native-host-admission`, retaining its original
+tested sources on `evidence/plugin-native-host-pre-76-merge` across rebase.
+
+Native confinement foundations and regressions exist, but
 production enforcement and the remaining plugin/hook scope are incomplete. The
 Linux UNIX-socket diagnostic found a real host-reachability gap. Its experimental
-filter and runtime checks are under investigation; no support revision or host
-activation is accepted. Daily coding and binary editor implementation have not
+filter and runtime checks remain experimental. The broker direction is approved;
+complete support acceptance and host activation remain pending. Daily coding and binary editor implementation have not
 started. The linked task lists remain authoritative for completion.
+
+The [Linux peer-identity diagnostic](../openspec/changes/complete-plugin-hook-runtime/linux-private-peer-identity.md)
+confirms that the current broker changes the caller PID observed by a UNIX
+listener, despite successful data exchange. The
+[kernel UNIX revision](../openspec/changes/complete-plugin-hook-runtime/linux-kernel-unix-revision.md)
+is a concrete proposal awaiting review. It does not reduce IPC requirements or
+authorize a new production support floor. Preserve this review gate before
+production activation or protocol-feature integration.

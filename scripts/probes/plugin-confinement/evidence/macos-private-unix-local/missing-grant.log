@@ -1,0 +1,31 @@
+node:internal/modules/run_main:123
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: no-capabilities: private UNIX runtime exchange failed: [false,false]
++ actual - expected
+
+  [
++   false,
++   false
+-   true,
+-   true
+  ]
+
+    at check (file:///private/tmp/cyber-mac-unix-control-w87dehyc/source/run.mts:334:12)
+    at file:///private/tmp/cyber-mac-unix-control-w87dehyc/source/run.mts:438:31
+    at Array.map (<anonymous>)
+    at main (file:///private/tmp/cyber-mac-unix-control-w87dehyc/source/run.mts:438:8)
+    at file:///private/tmp/cyber-mac-unix-control-w87dehyc/source/run.mts:461:1
+    at ModuleJob.run (node:internal/modules/esm/module_job:345:25)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:665:26)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: [ false, false ],
+  expected: [ true, true ],
+  operator: 'deepStrictEqual',
+  diff: 'simple'
+}
+
+Node.js v22.20.0
