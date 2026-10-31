@@ -1,5 +1,6 @@
 mod support;
 
+use cyber_core::worktrees::Managed;
 use cyber_server::runtime::*;
 use futures::future::BoxFuture;
 use std::sync::{
@@ -19,6 +20,7 @@ struct Activity {
     claim_unresponsive: AtomicBool,
     preserve_binding: AtomicBool,
     fail_settlement: AtomicBool,
+    shell_launches: AtomicUsize,
     cwd_hooks: Mutex<Vec<LifecycleHook>>,
 }
 
@@ -111,6 +113,7 @@ impl ToolHost for Host {
         _: &str,
         cancel: CancellationToken,
     ) -> BoxFuture<'_, Result<String, String>> {
+        self.activity.shell_launches.fetch_add(1, Ordering::SeqCst);
         Box::pin(async move {
             self.tools.started.notify_one();
             if self.activity.shell_unresponsive.load(Ordering::SeqCst) {
@@ -475,43 +478,66 @@ fn retained_location_proof_preserves_acknowledged_guard_until_disposal() {
     drop(LocationLease::unmanaged().settle_retained().unwrap());
 }
 
+struct Relocation {
+    h: Harness,
+    runtime: Runtime,
+    activity: Arc<Activity>,
+    info: SessionInfo,
+    managed: Managed,
+}
+
+async fn running_relocation() -> Relocation {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![tools(&[("lease_call", "read", "{}")]), text("done")],
+        )],
+        ..Default::default()
+    });
+    h.tools.set("read", Behavior::Gated);
+    let (runtime, activity) = owned_runtime(&h);
+    activity.preserve_binding.store(true, Ordering::SeqCst);
+    let info = create(&runtime, &h, "test/main").await;
+    assert!(info.worktree_id.is_none());
+    let destination = h.dir.path().join("destination");
+    std::fs::create_dir(&destination).unwrap();
+    let managed = Managed {
+        id: "wt_test".into(),
+        name: "destination".into(),
+        path: destination.clone(),
+        branch: "cyber/destination".into(),
+        base: "main".into(),
+        common_dir: h.repo.join(".git"),
+        ready: true,
+        included: vec![],
+    };
+    runtime
+        .admit(&info.id, Admission::text("run", Delivery::Queue))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), h.tools.started.notified())
+        .await
+        .unwrap();
+    assert_eq!(activity.active.load(Ordering::SeqCst), 1);
+    Relocation {
+        h,
+        runtime,
+        activity,
+        info,
+        managed,
+    }
+}
+
 #[tokio::test]
 async fn cwd_changed_requires_acknowledged_previous_location_settlement() {
-    use cyber_core::worktrees::Managed;
-
     for unacknowledged in [false, true] {
-        let h = Harness::new(Setup {
-            scripts: vec![(
-                "test/main",
-                vec![tools(&[("lease_call", "read", "{}")]), text("done")],
-            )],
-            ..Default::default()
-        });
-        h.tools.set("read", Behavior::Gated);
-        let (runtime, activity) = owned_runtime(&h);
-        activity.preserve_binding.store(true, Ordering::SeqCst);
-        let info = create(&runtime, &h, "test/main").await;
-        assert!(info.worktree_id.is_none());
-        let destination = h.dir.path().join("destination");
-        std::fs::create_dir(&destination).unwrap();
-        let managed = Managed {
-            id: "wt_test".into(),
-            name: "destination".into(),
-            path: destination.clone(),
-            branch: "cyber/destination".into(),
-            base: "main".into(),
-            common_dir: h.repo.join(".git"),
-            ready: true,
-            included: vec![],
-        };
-        runtime
-            .admit(&info.id, Admission::text("run", Delivery::Queue))
-            .await
-            .unwrap();
-        tokio::time::timeout(Duration::from_secs(5), h.tools.started.notified())
-            .await
-            .unwrap();
-        assert_eq!(activity.active.load(Ordering::SeqCst), 1);
+        let Relocation {
+            h,
+            runtime,
+            activity,
+            info,
+            managed,
+        } = running_relocation().await;
         activity
             .fail_settlement
             .store(unacknowledged, Ordering::SeqCst);
@@ -530,7 +556,7 @@ async fn cwd_changed_requires_acknowledged_previous_location_settlement() {
         // The path is committed before settlement of the previous admission. An
         // uncertain acknowledgement must not turn that record into a success hook.
         let state = runtime.state(&info.id).await.unwrap();
-        assert_eq!(state.info.directory, destination.display().to_string());
+        assert_eq!(state.info.directory, managed.path.display().to_string());
         assert_eq!(state.info.worktree_id.as_deref(), Some("wt_test"));
         let events = h
             .store
@@ -596,4 +622,145 @@ async fn cwd_changed_requires_acknowledged_previous_location_settlement() {
             usize::from(!unacknowledged)
         );
     }
+}
+
+#[tokio::test]
+async fn cwd_changed_lost_commit_ack_is_silent_and_replay_does_not_dispatch() {
+    use std::cell::RefCell;
+
+    // SQLite invokes this callback after committing and propagates its error to
+    // COMMIT. Each fixture owns a writer thread, so parallel tests share no arm.
+    std::thread_local! {
+        static FAIL_WAL_ACK: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) };
+    }
+    fn fail_wal_ack(_: &rusqlite::hooks::Wal, _: i32) -> rusqlite::Result<()> {
+        FAIL_WAL_ACK.with(|state| match state.borrow_mut().take() {
+            Some(reached) => {
+                reached.store(true, Ordering::SeqCst);
+                Err(rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                    Some("injected lost WAL commit acknowledgement".into()),
+                ))
+            }
+            None => Ok(()),
+        })
+    }
+
+    let Relocation {
+        h,
+        runtime,
+        activity,
+        info,
+        managed,
+    } = running_relocation().await;
+    runtime
+        .enter_worktree(
+            &info.id,
+            "lease_call",
+            &managed,
+            false,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    h.tools.release.notify_one();
+    tokio::time::timeout(Duration::from_secs(5), runtime.wait_idle(&info.id))
+        .await
+        .unwrap();
+    assert_eq!(activity.cwd_hooks.lock().unwrap().len(), 1);
+    let before = h
+        .store
+        .read_events(&info.id, -1, cyber_store::MAX_PAGE_LIMIT)
+        .unwrap();
+    assert!(!before.has_more);
+
+    let reached = Arc::new(AtomicBool::new(false));
+    let fault = Arc::clone(&reached);
+    h.store
+        .transaction(move |tx| {
+            FAIL_WAL_ACK.with(|state| *state.borrow_mut() = Some(fault));
+            tx.wal_hook(Some(fail_wal_ack));
+            Ok(())
+        })
+        .unwrap();
+    // Installing the callback writes no pages and must not consume the fault.
+    assert!(!reached.load(Ordering::SeqCst));
+    assert!(!h.store.has_failed());
+
+    let error = tokio::time::timeout(Duration::from_secs(5), runtime.exit_idle_worktree(&info.id))
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("StorageUnavailableError"),
+        "{error}"
+    );
+    assert!(
+        reached.load(Ordering::SeqCst),
+        "the real WAL commit boundary was not reached"
+    );
+    assert!(
+        h.store.has_failed(),
+        "unknown fatal storage outcome must stop mutations"
+    );
+    let after = h
+        .store
+        .read_events(&info.id, -1, cyber_store::MAX_PAGE_LIMIT)
+        .unwrap();
+    assert!(!after.has_more);
+    assert_eq!(after.events.len(), before.events.len() + 1);
+    let exit = after.events.last().unwrap();
+    assert_eq!(exit.kind, "session.worktree.exited.1");
+    assert_eq!(exit.data["to"]["path"], info.directory);
+    // The caller did not receive the acknowledgement and cannot claim success.
+    assert_eq!(
+        runtime.state(&info.id).await.unwrap().info.directory,
+        managed.path.display().to_string()
+    );
+    assert_eq!(
+        activity.cwd_hooks.lock().unwrap().len(),
+        1,
+        "an uncertain committed exit emitted CwdChanged"
+    );
+    assert!(runtime.exit_idle_worktree(&info.id).await.is_err());
+    let shell = tokio::time::timeout(
+        Duration::from_secs(5),
+        runtime.shell(&info.id, "must not dispatch after uncertain commit"),
+    )
+    .await
+    .unwrap();
+    assert!(
+        shell.is_err(),
+        "a failed Store admitted another shell: {shell:?}"
+    );
+    assert_eq!(activity.shell_launches.load(Ordering::SeqCst), 0);
+
+    // A fresh runtime reads the committed exit, without replaying its handler.
+    // This is reducer/runtime replay over the same failed Store, not a restarted process.
+    let (replayed, replay_activity) = owned_runtime(&h);
+    let state = replayed.state(&info.id).await.unwrap();
+    assert_eq!(state.info.directory, info.directory);
+    assert!(state.info.worktree_id.is_none());
+    assert!(
+        replayed
+            .exit_idle_worktree(&info.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(replay_activity.cwd_hooks.lock().unwrap().is_empty());
+    let final_events = h
+        .store
+        .read_events(&info.id, -1, cyber_store::MAX_PAGE_LIMIT)
+        .unwrap();
+    assert!(!final_events.has_more);
+    assert_eq!(final_events.events.len(), after.events.len());
+    assert_eq!(final_events.events.last().unwrap().id, exit.id);
+    for instance in [runtime, replayed] {
+        tokio::time::timeout(Duration::from_secs(5), instance.shutdown())
+            .await
+            .unwrap();
+    }
+    assert_eq!(activity.active.load(Ordering::SeqCst), 0);
+    assert_eq!(replay_activity.active.load(Ordering::SeqCst), 0);
 }

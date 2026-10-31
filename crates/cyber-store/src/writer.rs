@@ -90,7 +90,17 @@ impl Writer {
         self.submit(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let value = f(&tx)?;
-            tx.commit()?;
+            // Inspect the transaction before its Drop can roll it back. SQLite
+            // can report an error after COMMIT completed (for example, a WAL
+            // hook error); that outcome must fence the writer regardless of code.
+            if let Err(error) = tx.execute_batch("COMMIT") {
+                if tx.is_autocommit() {
+                    return Err(StoreError::Unavailable(format!(
+                        "commit outcome unknown: {error}"
+                    )));
+                }
+                return Err(error.into());
+            }
             Ok(value)
         })
     }
@@ -160,5 +170,95 @@ mod tests {
         release.send(()).unwrap();
         assert!(blocker.join().unwrap().is_ok());
         assert_eq!(queued.join().unwrap().unwrap(), 7);
+    }
+
+    #[test]
+    fn committed_wal_error_stops_later_mutations() {
+        fn lost_ack(_: &rusqlite::hooks::Wal, _: i32) -> rusqlite::Result<()> {
+            Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                Some("injected lost commit acknowledgement".into()),
+            ))
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("writer.db");
+        let conn = Connection::open(&database).unwrap();
+        conn.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE committed (value INTEGER)")
+            .unwrap();
+        let writer = Writer::spawn(conn, 1, Duration::from_secs(1)).unwrap();
+        writer
+            .transaction(|tx| {
+                tx.wal_hook(Some(lost_ack));
+                Ok(())
+            })
+            .unwrap();
+        let result = writer.transaction(|tx| {
+            tx.execute("INSERT INTO committed VALUES (7)", [])?;
+            Ok(7)
+        });
+        // A second connection proves this was committed, not a before-write fault.
+        let reader = Connection::open(&database).unwrap();
+        assert_eq!(
+            reader
+                .query_row("SELECT value FROM committed", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            7
+        );
+        assert!(
+            matches!(result, Err(StoreError::Unavailable(_))),
+            "an unacknowledged completed transaction was not fatal: {result:?}"
+        );
+        assert!(writer.has_failed());
+        assert!(matches!(
+            writer.transaction(|tx| {
+                tx.execute("INSERT INTO committed VALUES (8)", [])?;
+                Ok(())
+            }),
+            Err(StoreError::Unavailable(_))
+        ));
+        assert_eq!(
+            reader
+                .query_row("SELECT count(*) FROM committed", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn rejected_commit_rolls_back_without_stopping_the_writer() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "PRAGMA foreign_keys=ON;
+             CREATE TABLE parent (id INTEGER PRIMARY KEY);
+             CREATE TABLE child (parent_id INTEGER REFERENCES parent(id)
+                 DEFERRABLE INITIALLY DEFERRED)",
+        )
+        .unwrap();
+        let writer = Writer::spawn(conn, 1, Duration::from_secs(1)).unwrap();
+        let result = writer.transaction(|tx| {
+            tx.execute("INSERT INTO child VALUES (7)", [])?;
+            Ok(())
+        });
+        assert!(matches!(result, Err(StoreError::Sqlite(_))), "{result:?}");
+        assert!(!writer.has_failed());
+        assert_eq!(
+            writer
+                .submit(|conn| Ok(
+                    conn.query_row("SELECT count(*) FROM child", [], |row| row.get::<_, i64>(0))?
+                ))
+                .unwrap(),
+            0
+        );
+        writer
+            .transaction(|tx| {
+                tx.execute("INSERT INTO parent VALUES (7)", [])?;
+                tx.execute("INSERT INTO child VALUES (7)", [])?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(!writer.has_failed());
     }
 }

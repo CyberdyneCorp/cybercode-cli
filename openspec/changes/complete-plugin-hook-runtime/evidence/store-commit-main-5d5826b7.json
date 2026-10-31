@@ -1,0 +1,14 @@
+{
+  "main": "5d5826b72d41d6a833b523237bdbbd85ac51d31a",
+  "test": "writer::tests::committed_wal_error_stops_later_mutations",
+  "exit_code": 101,
+  "outcome": "named behavior assertion failed after a second connection verified committed data",
+  "log": "store-commit-main-5d5826b7.log",
+  "log_sha256": "10cfaf1f6c969585b768ee9013a711ea842f14b9181305cce40cc2cc5d49cd99",
+  "production_writer_sha256": "bad2bfd6e839535160f02c591f4508fc10caa7920340fb9b454a7bdc42e31931",
+  "overlays": [
+    "crates/cyber-store/Cargo.toml: dev-only rusqlite hooks",
+    "crates/cyber-store/src/writer.rs: the new test only; production code unchanged"
+  ],
+  "proof": "The test first verifies value 7 from a second SQLite connection, then fails because the completed COMMIT error was not fatal."
+}

@@ -149,3 +149,15 @@ reviewed composition with PR #88. See the
 [acceptance audit](file-observation-acceptance.md) and its final receipts for the
 scope, intentional skips and unverified Windows leaked-process warning. This
 closes only task 5.2; tasks 5.1, 5.3 and full workstream acceptance stay open.
+
+
+## Store commit uncertainty correction
+
+Task 5.3's unknown-transition acceptance exposed a Store boundary gap: a real
+SQLite WAL callback can report an error after the exit has persisted. The
+[correction and main comparison](store-commit-uncertainty.md) record the named
+failing regression on main, distinguish unknown completed COMMIT from a known
+rollback, and verify that CwdChanged stays silent while reducer replay recovers
+its committed identity. All 49 Store and 13 Location activity tests pass locally
+on macOS. Hosted platform acceptance and final review remain required; task 5.3
+and the other native/producer/workstream obligations stay open.
