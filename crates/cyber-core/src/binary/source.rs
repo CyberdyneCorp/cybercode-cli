@@ -102,6 +102,67 @@ impl Document {
         Ok(doc)
     }
 
+    /// Preparation requires the caller's fresh read+edit admission. It refuses
+    /// mutation aliases and creates an immutable private base, never changing the target.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub fn prepare(
+        &mut self,
+        store: &super::storage::Store,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<(super::storage::Base, super::native::Target), Error> {
+        if cancelled() {
+            return Err(Error::Cancelled);
+        }
+        self.validate()?;
+        if Path::new(&self.requested) != self.relative {
+            return Err(Error::File);
+        }
+        let target = super::native::Target::capture(&self.root, &self.relative)?;
+        if super::native::id(self.identity.as_file())? != target.file {
+            return Err(Error::Changed);
+        }
+        let parents: Result<Vec<_>, _> = self
+            .directories
+            .iter()
+            .map(|handle| super::native::id(handle.as_file()))
+            .collect();
+        if parents? != target.parents {
+            return Err(Error::Changed);
+        }
+        target.same_filesystem(store.directory())?;
+        let base = store.base_cancellable(
+            self.length,
+            |writer| {
+                let mut hash = Sha256::new();
+                let mut at = 0;
+                while at < self.length {
+                    if cancelled() {
+                        return Err(Error::Cancelled);
+                    }
+                    let size = (self.length - at).min(DEFAULT_PAGE as u64) as usize;
+                    let bytes = self.read_at(at, size)?;
+                    if bytes.len() != size {
+                        return Err(Error::Changed);
+                    }
+                    writer.write_all(&bytes).map_err(|_| Error::Io)?;
+                    hash.update(&bytes);
+                    at += size as u64;
+                }
+                self.validate()?;
+                target.validate()?;
+                Ok(format!("{:x}", hash.finalize()))
+            },
+            &cancelled,
+        )?;
+        self.validate()?;
+        target.validate()?;
+        Ok((base, target))
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     pub fn path(&self) -> PathBuf {
         self.root.join(&self.relative)
     }

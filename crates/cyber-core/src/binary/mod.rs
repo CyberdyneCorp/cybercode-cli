@@ -2,7 +2,13 @@
 //! Authorization belongs to the caller; the source pins regular-file and directory
 //! identities across that authorization wait and every later read.
 
+pub mod draft;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub mod editor;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub mod native;
 mod source;
+pub mod storage;
 pub use source::Document;
 
 use schemars::JsonSchema;

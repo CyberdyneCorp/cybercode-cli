@@ -1,0 +1,55 @@
+name: Binary editor native proof
+on:
+  pull_request:
+    paths:
+      - crates/cyber-core/src/binary/**
+      - crates/cyber-core/Cargo.toml
+      - Cargo.lock
+      - .github/workflows/binary-editor-proof.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: binary-editor-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  native:
+    name: Binary storage (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: binary-editor-proof
+      - name: Check native core
+        run: cargo clippy --locked -p cyber-core --lib --tests -- -D warnings
+      - name: Run native storage, draft and recovery proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked -p cyber-core --lib binary:: -- --nocapture 2>&1 | tee binary-editor-proof.log
+      - name: Prove cross-filesystem refusal on actual Linux mounts
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked -p cyber-core --lib binary::native::tests::native_cross_filesystem_replacement_refuses_without_copy_delete_fallback -- --ignored --exact --nocapture 2>&1 | tee -a binary-editor-proof.log
+      - name: Retain native evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-editor-proof-${{ matrix.os }}
+          path: binary-editor-proof.log
+          if-no-files-found: warn

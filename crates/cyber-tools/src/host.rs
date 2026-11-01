@@ -934,7 +934,7 @@ impl ToolHost for BuiltinHost {
         asker: cyber_server::runtime::Asker,
         cancel: CancellationToken,
     ) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(self.authorize_browse(turn, action, path, asker, cancel))
+        Box::pin(self.authorize_browse(turn, action, path, asker, cancel, Value::Null))
     }
 
     fn resolve_prompt_resources<'a>(

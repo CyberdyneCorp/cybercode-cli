@@ -1143,6 +1143,7 @@ dependencies = [
  "jsonschema",
  "libc",
  "regex",
+ "rustix",
  "same-file",
  "schemars",
  "semver",

@@ -89,6 +89,37 @@ fn resolve(
     )
 }
 
+/// In-process binary writes retain the selected sandbox filesystem ceiling.
+/// Private storage IO is privileged host work; this check covers the source target.
+pub(crate) fn binary_edit_boundary(ctx: &Ctx<'_>, path: &Path) -> Result<(), String> {
+    let (config, sources) = configuration(ctx)?;
+    let sandbox = resolve(ctx, &config, &sources);
+    if sandbox.error.is_some() || sandbox.policy == Policy::ReadOnly {
+        return Err("Binary editing is unavailable under the selected sandbox".into());
+    }
+    let hidden = sandbox
+        .deny_read_for(&ctx.location, &ctx.host.opts.home)
+        .with_hidden_paths(&sandbox.unreadable(&ctx.host.opts.home));
+    if hidden.denies(path) {
+        return Err("Sandbox denied: binary target is private".into());
+    }
+    if sandbox.policy == Policy::WorkspaceWrite {
+        let writable = std::iter::once(&ctx.location).chain(sandbox.extra_writable.iter());
+        let admitted = writable
+            .filter_map(|root| root.canonicalize().ok())
+            .any(|root| {
+                path.starts_with(&root)
+                    && !protected_in(&root)
+                        .iter()
+                        .any(|private| path.starts_with(private))
+            });
+        if !admitted {
+            return Err("Sandbox denied: binary target is not writable".into());
+        }
+    }
+    Ok(())
+}
+
 /// The Workflow Run of the Session a tool process was started for
 /// (`workflows` → agent() call): set for workflow agents and their subagents only.
 pub(crate) const WORKFLOW_RUN_ENV: &str = "CYBER_WORKFLOW_RUN_ID";

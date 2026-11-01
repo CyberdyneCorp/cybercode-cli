@@ -375,6 +375,9 @@ pub(crate) async fn guarded_write(
     ctx.check_external_writes(&[path.to_path_buf()]).await?;
     authorize_edit(ctx, path, diff).await?;
     let origin = super::intelligence::capture(ctx, path);
+    let workspace = cyber_server::workspace::mutation_lock(&ctx.location)
+        .map_err(|error| failed(error.to_string()))?;
+    let workspace_guard = workspace.lock_owned().await;
     let lock = ctx.host.path_lock(path);
     let _guard = lock.lock().await;
     let current = tokio::fs::read(path).await.ok();
@@ -394,6 +397,7 @@ pub(crate) async fn guarded_write(
     ctx.host.mark_read(&ctx.inv.session_id, path);
     ctx.note_skill_path(path);
     drop(_guard);
+    drop(workspace_guard);
     Ok(super::intelligence::feedback(ctx, path, after, origin).await)
 }
 
