@@ -63,18 +63,22 @@ passed 78 tests; CLI parsing and generated documentation did not change afterwar
 A real macOS arm64 PTY run used a 9007199254741249-byte sparse file (8192 bytes
 allocated) on a 24 GiB machine. It navigated to the odd offset 9007199254741245,
 rendered the final bytes and integer inspector, and made zero inference requests.
-First view took 5.113 seconds including fresh private app/TUI/server startup; RSS
-at first view was 245216 KiB, not a peak measurement. The unoptimized executable
-used SHA-256 `813ffc0d31bb90f41621f10a7961e86f5ed86f0ab64ba604aad7cc7ca6c47ae2`;
-it predates the final authorization/disposal/page validation refinements. This is
+First view took 7.649 seconds including fresh private app/TUI/server startup; RSS
+at first view was 248544 KiB, not a peak measurement. The unoptimized executable
+used SHA-256 `842da52ae8d9e66dc8d93b97c50040be0af4645c8fe0e095a25077db815e1093`;
+its Rust sources match commit `39cdcf7f`, including the final authorization,
+disposal and page validation refinements. This is
 local viewer evidence, not a current-head platform/performance acceptance result.
 The [terminal frame and measurements](../../../docs/evidence/binary-view/README.md)
 retain the executable identity and limitations.
 The 16 MiB editing benchmark, input/cancellation latency and peak RSS remain open.
 
 The new SDK suite typechecks; its complete unit/mock suite passes 121 tests with
-nine external end-to-end tests explicitly skipped without `CYBER_BIN`. This is not
-real-binary SDK acceptance. The cognitive-complexity skill's TypeScript analyzer
+ten external end-to-end tests explicitly skipped without `CYBER_BIN`. The new
+binary-specific end-to-end test also passed separately against the rebuilt executable:
+every byte, literal search/EOF, cross-Session refusal, stale-file refusal, repeated
+close/reopen capacity release and zero inference requests. The nine unrelated
+external SDK tests were not run locally. The cognitive-complexity skill's TypeScript analyzer
 reports maximum score 5 for the new helper. Rust uses the repository's Clippy gate,
 since the skill does not provide a Rust analyzer.
 
@@ -118,8 +122,9 @@ The SHA-256 dependency is a normal TUI dependency, not only a test dependency.
 - Clippy: all targets for core/server/TUI/CLI/App passed with Rust warnings denied.
   The native compiler emitted macOS sandbox API deprecation warnings; test linking
   also reported a large `__eh_frame` compact-unwind warning. No origin is assigned.
-- SDK: typecheck passed; 121 unit/mock tests passed and nine external real-binary
-  SDK tests skipped because this run did not set `CYBER_BIN`.
+- SDK: typecheck passed; 121 unit/mock tests passed and ten external real-binary
+  SDK tests skipped in the mock/unit run because it did not set `CYBER_BIN`;
+  the new binary-specific external test passed separately with the rebuilt executable.
 - Generated OpenAPI test passed; SDK generator check and Rust formatting passed.
 - Strict OpenSpec 1.13.2: 114 items passed, zero failed. Spec lint: zero errors,
   25 warnings. TypeScript helper cognitive complexity maximum: 5, remeasured after

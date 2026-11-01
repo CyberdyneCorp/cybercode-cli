@@ -1,5 +1,5 @@
  HEX  fixture.bin   9007199254741249 bytes
-LIVE VIEW  ·  observed 7e379dd8c973  ·  read only
+LIVE VIEW  ·  observed 3ff782e16e98  ·  read only
 OFFSET            HEX BYTES                                           ASCII
 0020000000000030   00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00   ................
 0020000000000040   00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00   ................
