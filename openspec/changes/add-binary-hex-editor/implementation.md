@@ -254,3 +254,11 @@ read grants/readable-path configuration, and includes a successful public-file
 read control. The 16 existing production file-route tests and this new regression
 passed locally; affected core/server/App Clippy passed. Initial Windows CI found
 unused Unix-only access and needless Windows returns; those branches were corrected.
+
+
+Linux native CI at the first core commit exposed `fsync` on cap-std's `O_PATH`
+directory routing handle. Directory flush now obtains a readable descriptor for
+`.` relative to that retained handle, including the target parent at settlement.
+A Linux-only regression proves the direct descriptor fails with `EBADF`, then
+flushes the pinned directory successfully after its ambient pathname is replaced.
+The remote full storage/save proof must pass before Linux support is accepted.

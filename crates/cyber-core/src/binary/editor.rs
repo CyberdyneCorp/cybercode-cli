@@ -562,12 +562,7 @@ impl Editor {
                 return Err(Error::Changed);
             }
             native::sync(&installed)?;
-            parent
-                .try_clone()
-                .map_err(|_| Error::Io)?
-                .into_std_file()
-                .sync_all()
-                .map_err(|_| Error::Io)?;
+            super::storage::flush_dir(&parent)?;
             self.store.sync()?;
             installed_target.validate()?;
             if native::generation(&displaced)? != displaced_stamp {

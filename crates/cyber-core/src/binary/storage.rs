@@ -271,15 +271,31 @@ fn flush_file(file: &File) -> Result<(), Error> {
     rustix::fs::fcntl_fullfsync(file).map_err(|_| Error::Io)?;
     Ok(())
 }
-fn flush_dir(dir: &Dir) -> Result<(), Error> {
-    let file = dir.try_clone().map_err(|_| Error::Io)?.into_std_file();
+pub(super) fn flush_dir(dir: &Dir) -> Result<(), Error> {
     #[cfg(windows)]
     {
+        let file = dir.try_clone().map_err(|_| Error::Io)?.into_std_file();
         crate::memory::windows::sync_private(&file).map_err(|_| Error::Io)
     }
-    #[cfg(not(windows))]
+    #[cfg(unix)]
     {
-        file.sync_all().map_err(|_| Error::Io)
+        // cap-std directory handles can be O_PATH on Linux. They retain routing
+        // identity but cannot be fsynced. Open the same directory through that
+        // retained handle with read access, without consulting its ambient path.
+        let fd = rustix::fs::openat(
+            dir,
+            ".",
+            rustix::fs::OFlags::RDONLY
+                | rustix::fs::OFlags::DIRECTORY
+                | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+        )
+        .map_err(|_| Error::Io)?;
+        File::from(fd).sync_all().map_err(|_| Error::Io)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        Err(Error::File)
     }
 }
 
@@ -693,6 +709,33 @@ mod tests {
             })
             .unwrap()
     }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn directory_flush_uses_a_readable_descriptor_from_a_retained_path_handle() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("pinned");
+        std::fs::create_dir(&path).unwrap();
+        let fd = rustix::fs::open(
+            &path,
+            rustix::fs::OFlags::PATH | rustix::fs::OFlags::DIRECTORY | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+        )
+        .unwrap();
+        let file = File::from(fd);
+        assert_eq!(
+            file.sync_all().unwrap_err().raw_os_error(),
+            Some(libc::EBADF)
+        );
+        let pinned = Dir::from_std_file(file);
+        std::fs::rename(&path, root.path().join("moved")).unwrap();
+        std::fs::write(&path, b"replacement is not a directory").unwrap();
+        flush_dir(&pinned).unwrap();
+        assert_eq!(
+            std::fs::read(path).unwrap(),
+            b"replacement is not a directory"
+        );
+    }
+
     #[test]
     fn prepared_root_refuses_project_overlap_and_root_replacement() {
         let root = tempfile::tempdir().unwrap();
