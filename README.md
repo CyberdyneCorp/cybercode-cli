@@ -70,6 +70,7 @@ The password grants **owner access** and stays in page memory. Off-loopback acce
 ./target/debug/cyber workflows run audit --wait    # run a bundled audit
 ./target/debug/cyber service status                # inspect the shared server
 ./target/debug/cyber computer status               # inspect native support and OS consent
+./target/debug/cyber hex fixtures/header.bin        # inspect exact bytes without inference
 ./target/debug/cyber doctor                        # check your setup
 ./target/debug/cyber upgrade                       # verified upgrade of an installed release
 ```
@@ -79,6 +80,8 @@ The server owns execution and stores state in SQLite, so work can outlive a term
 For independent patch attempts, host-recorded tests and a separate read-only judge, start with the [verified `solve` workflow](docs/verified-workflows.md). Candidate patches remain available for human review; nothing is merged automatically. To combine complementary commits, use the [verified integration queue](docs/verified-integrations.md): submit a dependency manifest, test the combined patch, review independent advice, then explicitly publish a branch and PR.
 
 Experimental [native computer use](docs/computer-use.md) adds macOS 14+ application/display screenshots and input with expiring owner grants, CLI/browser owner controls, private evidence and emergency Stop. Off by default; controlled macOS capture, input and Stop acceptance passed. Other layouts and signed distribution remain release checks.
+
+The [binary workspace](docs/binary-editor.md) provides paged hex/ASCII viewing, literal search, exact goto, bookmarks and an LE/BE inspector. Editing and recoverable saves remain in progress.
 
 ## Sessions and people working together
 

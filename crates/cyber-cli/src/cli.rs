@@ -94,6 +94,8 @@ pub struct GlobalArgs {
 /// TUI launch flags (`tui` → Launch flags).
 #[derive(Debug, Default, Args)]
 pub struct LaunchArgs {
+    #[arg(skip)]
+    pub hex: Option<cyber_tui::HexStart>,
     /// Start a new Session in a managed worktree; omit NAME to generate one.
     #[arg(long, num_args = 0..=1, default_missing_value = "", value_name = "NAME")]
     pub worktree: Option<String>,
@@ -147,6 +149,8 @@ pub enum Format {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Open the project file in the owner hex/ASCII workspace without inference.
+    Hex(crate::commands::hex::HexArgs),
     /// Sign in to a Cyber Account for collaboration and other networked features.
     Login {
         /// Print the login URL and accept a pasted redirect; use device login if advertised.

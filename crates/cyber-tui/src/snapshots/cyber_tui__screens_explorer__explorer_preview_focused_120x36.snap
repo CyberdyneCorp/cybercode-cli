@@ -36,7 +36,7 @@ expression: shown
                                                 │
                                                 │
  7 shown · 4 hidden · .gitignore                │
-  ↑↓  move  ←→  fold  enter  open  tab  focus  /  filter  g  changed  .  hidden  m  raw/rendered  @  mention
+  ↑↓  move  ←→  fold  esc  close  enter  open  tab  focus  x  hex  /  filter  g  changed  .  hidden  m  raw/rendered
                                                            100 · —  ctrl+p commands
 row 0: 0-13 fg=#d6e4f0 bg=#171c21 bold
 row 0: 14-14 fg=#6b7a8f bg=#171c21

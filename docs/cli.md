@@ -39,6 +39,7 @@ cyber [OPTIONS] [COMMAND]
 
 **Subcommands:**
 
+- [`hex`](#cyber-hex): Open the project file in the owner hex/ASCII workspace without inference
 - [`login`](#cyber-login): Sign in to a Cyber Account for collaboration and other networked features
 - [`whoami`](#cyber-whoami): Show the current Cyber Account without exposing tokens
 - [`logout`](#cyber-logout): Remove Cyber Account credentials, keeping provider logins and local Sessions
@@ -82,6 +83,24 @@ cyber [OPTIONS] [COMMAND]
 - [`upgrade`](#cyber-upgrade): Upgrade cyber to the channel's latest version or to VERSION
 - [`uninstall`](#cyber-uninstall): Remove cyber: its binary (script installs), PATH lines and directories
 - [`eval`](#cyber-eval): Run evaluation manifests and write reports
+
+## `cyber hex`
+
+Open the project file in the owner hex/ASCII workspace without inference
+
+```text
+cyber hex [OPTIONS] <PATH>
+```
+
+**Arguments:**
+
+- `<PATH>`: File, resolved against --cwd and confined to its project.
+
+**Options:**
+
+- `--offset <OFFSET>`: Initial byte offset, as decimal or 0x hexadecimal. Default: `0`.
+- `--session <SESSION>`: Open an existing Session without rebinding its Location.
+- `--read-only`: Inspect bytes without entering an edit draft.
 
 ## `cyber login`
 

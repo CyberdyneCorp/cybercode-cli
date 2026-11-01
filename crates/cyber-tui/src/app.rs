@@ -91,6 +91,7 @@ pub enum Action {
     SearchFiles(String),
     /// A file's preview; an `ask` file raises the permission request first.
     LoadPreview(String),
+    Hex(crate::hex::Request),
     /// Save a Config tab preference to `kv.json`.
     SavePreference {
         key: &'static str,
@@ -340,6 +341,7 @@ pub enum Overlay {
     Settings,
     /// The file explorer; its state is `App::explorer`.
     Files,
+    Hex,
     /// The theme switcher.
     Themes(Box<crate::switcher::Switcher>),
     /// The Workflow monitor; its state is `App::workflows`.
@@ -505,6 +507,7 @@ pub struct App {
     pub client_build: String,
     /// The file explorer's tree, filter and preview.
     pub explorer: crate::explorer::Explorer,
+    pub hex: crate::hex::Workspace,
     pub quit: bool,
     pub focused: bool,
     /// The Session recap line.
@@ -618,6 +621,7 @@ impl App {
             client_version: env!("CARGO_PKG_VERSION").to_owned(),
             client_build: cyber_core::version::build_info().build.to_owned(),
             explorer: Default::default(),
+            hex: Default::default(),
             quit: false,
             focused: true,
             recap: Default::default(),
@@ -733,6 +737,7 @@ impl App {
 
     pub(crate) fn set_session(&mut self, session: Session) {
         if session.id != self.session.id || session.directory != self.session.directory {
+            self.forget_hex();
             self.memory.forget_location();
             if matches!(self.overlay, Overlay::Memory) {
                 self.overlay = Overlay::None;
@@ -1012,6 +1017,7 @@ impl App {
             Overlay::Palette(_) => self.palette_key(key),
             Overlay::Settings => self.settings_key(key),
             Overlay::Files => self.explorer_key(key),
+            Overlay::Hex => self.hex_key(key),
             Overlay::Themes(_) => self.switcher_key(key),
             Overlay::Workflows => self.workflows_key(key),
             Overlay::Rename(_) => self.rename_key(key),
@@ -1845,6 +1851,7 @@ impl App {
                 Vec::new()
             }
             "files" => self.open_explorer(),
+            "hex" => self.open_hex(args),
             "workflows" => self.open_workflows(),
             "messages" => self.open_messages(),
             "agents" => self.open_agents(),
@@ -2150,6 +2157,9 @@ impl App {
         }
         self.overlay = Overlay::None;
         self.sync_overlay();
+        if matches!(self.overlay, Overlay::None) && self.hex.wanted {
+            self.overlay = Overlay::Hex;
+        }
         // A preview waiting for this approval brings the explorer back.
         if matches!(self.overlay, Overlay::None) && self.explorer.awaiting.is_some() {
             self.overlay = Overlay::Files;

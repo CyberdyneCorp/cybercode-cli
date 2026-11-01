@@ -6,6 +6,7 @@ mod collaboration;
 mod composer;
 mod explorer;
 pub(crate) mod footer;
+pub(crate) mod hex;
 pub mod layout;
 mod login;
 mod messages;
@@ -75,6 +76,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         app.overlay,
         Overlay::Settings
             | Overlay::Files
+            | Overlay::Hex
             | Overlay::Workflows
             | Overlay::Messages
             | Overlay::Team
@@ -132,6 +134,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Overlay::None
         | Overlay::Settings
         | Overlay::Files
+        | Overlay::Hex
         | Overlay::Workflows
         | Overlay::Messages
         | Overlay::Team
@@ -229,6 +232,7 @@ pub(super) fn push_lines(app: &App, body: Rect, lines: Range<usize>, skip: usize
 fn full_screen(f: &mut Frame, app: &App, panel: Rect) {
     match app.overlay {
         Overlay::Files => explorer::draw(f, app, panel),
+        Overlay::Hex => hex::draw(f, app, panel),
         Overlay::Workflows => workflows::draw(f, app, panel),
         Overlay::Messages => messaging::view(f, app, panel),
         Overlay::Team => team::view(f, app, panel),

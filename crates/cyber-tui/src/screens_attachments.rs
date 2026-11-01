@@ -174,6 +174,7 @@ async fn large_paste_becomes_a_chip_and_submits_in_full() {
         agent: None,
         mode: None,
         prompt: None,
+        hex: None,
     };
     let (mut restored, _) = crate::runner::start(&server.client, &store, &opts, &|_| None)
         .await

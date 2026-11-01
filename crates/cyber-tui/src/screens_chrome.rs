@@ -373,6 +373,7 @@ async fn a_rebound_palette_key_updates_the_footer_hint_and_disabled_keys_are_hid
         agent: None,
         mode: None,
         prompt: None,
+        hex: None,
     };
     let store = crate::store::LocalStore::new(&opts.state_dir);
     let (mut app, _) = crate::runner::start(&server.client, &store, &opts, &|_: &str| None)
@@ -430,6 +431,7 @@ async fn a_disabled_composer_history_binding_leaves_up_moving_the_cursor() {
         agent: None,
         mode: None,
         prompt: None,
+        hex: None,
     };
     let store = crate::store::LocalStore::new(&opts.state_dir);
     let (mut app, _) = crate::runner::start(&server.client, &store, &opts, &|_: &str| None)

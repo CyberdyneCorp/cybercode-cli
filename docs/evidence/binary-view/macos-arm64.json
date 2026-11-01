@@ -1,0 +1,19 @@
+{
+  "reference": "local-macos-arm64",
+  "platform": "macOS-26.7-arm64-arm-64bit",
+  "physical_ram_bytes": 25769803776,
+  "sparse_fixture_bytes": "9007199254741249",
+  "file_allocated_bytes": 8192,
+  "initial_offset": "16",
+  "goto_offset": "9007199254741245",
+  "goto_confirmed": true,
+  "first_view_seconds": 5.112984583,
+  "rss_kib_at_first_view": 245216,
+  "provider_inference_requests": 0,
+  "exit_code": 0,
+  "capture_bytes": 40119,
+  "binary_sha256": "813ffc0d31bb90f41621f10a7961e86f5ed86f0ab64ba604aad7cc7ca6c47ae2",
+  "view_seen": true,
+  "inspector_seen": true,
+  "scope": "Local viewer proof from a working-tree executable before final authorization/disposal/page-validation refinements; not current-head CI or editor/save acceptance."
+}

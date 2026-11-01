@@ -93,6 +93,7 @@ impl Runtime {
                 sessions.remove(id);
             }
         }
+        self.binary_documents().remove_sessions(&ids);
         self.lift_deletion_fence(&ids);
         remove_artifacts(&artifacts);
         self.prune_computer_captures().await;

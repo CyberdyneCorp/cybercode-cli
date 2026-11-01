@@ -14,6 +14,7 @@ mod explorer;
 mod export;
 mod fuzzy;
 mod goals;
+mod hex;
 mod highlight;
 mod hook_definitions;
 mod hooks;
@@ -143,6 +144,14 @@ pub enum Start {
     PickPr(u64),
 }
 
+#[derive(Debug, Clone)]
+pub struct HexStart {
+    pub path: String,
+    pub root: String,
+    pub offset: u64,
+    pub read_only: bool,
+}
+
 pub struct TuiOptions {
     pub client: cyber_client::Client,
     pub directory: String,
@@ -157,6 +166,7 @@ pub struct TuiOptions {
     pub mode: Option<String>,
     /// Submitted once the UI is up.
     pub prompt: Option<String>,
+    pub hex: Option<HexStart>,
 }
 
 /// Printed after the TUI exits.

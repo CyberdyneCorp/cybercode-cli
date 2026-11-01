@@ -302,6 +302,7 @@ mod tests {
             agent: None,
             mode: None,
             prompt: None,
+            hex: None,
         };
         let store = crate::store::LocalStore::new(&opts.state_dir);
         let env = |_: &str| None;
@@ -364,6 +365,7 @@ mod tests {
             agent: None,
             mode: None,
             prompt: None,
+            hex: None,
         };
         let store = crate::store::LocalStore::new(&opts.state_dir);
         let (app, _) = crate::runner::start(&server.client, &store, &opts, &|_| None)

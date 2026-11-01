@@ -1553,6 +1553,41 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
     ];
     ops.extend(vec![
         op(
+            "post",
+            "/files/binary/documents",
+            "v1.fs.binaryOpen",
+            "Open a Session-owned live binary view; no eager whole-file copy or hash",
+        )
+        .located()
+        .body::<super::binary_files::OpenRequest>(g)
+        .ok::<Located<super::binary_files::OpenedDocument>>(g),
+        op(
+            "get",
+            "/files/binary/documents/{id}/bytes",
+            "v1.fs.binaryBytes",
+            "Read a bounded byte page at an exact decimal offset",
+        )
+        .located()
+        .query(&["session_id", "revision", "offset", "limit"])
+        .ok::<Located<super::binary_files::BytePage>>(g),
+        op(
+            "post",
+            "/files/binary/documents/{id}/search",
+            "v1.fs.binarySearch",
+            "Search live bytes with bounded scanning and revision-bound continuation",
+        )
+        .located()
+        .body::<super::binary_files::SearchBody>(g)
+        .ok::<Located<cyber_core::binary::SearchResult>>(g),
+        op(
+            "delete",
+            "/files/binary/documents/{id}",
+            "v1.fs.binaryClose",
+            "Close a Session-owned live binary view",
+        )
+        .query(&["session_id"])
+        .ok::<Data<bool>>(g),
+        op(
             "get",
             "/tools/computer/health",
             "v1.tool.computerHealth",

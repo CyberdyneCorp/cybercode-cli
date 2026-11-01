@@ -43,3 +43,5 @@ export {
 
 export type { CollaborationHandle, CollaborationStatus, CollaborationSnapshot, CollaborationMutationOptions, CollaborationWatchOptions, CollaborationQueuedReceipt, CollaborationMutationResult } from "./collaboration.js";
 export { isCollaborationQueued } from "./collaboration.js";
+
+export { byteOffset, type BinaryDocument } from "./binary.js";

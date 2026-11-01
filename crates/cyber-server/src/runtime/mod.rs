@@ -51,6 +51,7 @@ mod hook_tests;
 mod hooks;
 mod installation;
 pub use installation::{InstallationNotice, UpdateStatus};
+pub(crate) mod binary_documents;
 mod file_observation_hooks;
 mod file_observation_roots;
 mod file_observation_scopes;
@@ -799,6 +800,7 @@ pub(crate) struct Inner {
     pub tools: Arc<dyn ToolHost>,
     pub bus: Bus,
     pub options: RuntimeOptions,
+    binary_documents: binary_documents::Registry,
     file_observation_roots: file_observation_roots::Roots,
     sessions: StdMutex<HashMap<String, Arc<Handle>>>,
     drains: StdMutex<HashMap<String, DrainEntry>>,
@@ -933,6 +935,7 @@ impl Runtime {
             tools: Arc::clone(&options.tools),
             bus: Bus::new(),
             options,
+            binary_documents: binary_documents::Registry::default(),
             file_observation_roots: file_observation_roots::Roots::default(),
             sessions: StdMutex::default(),
             drains: StdMutex::default(),

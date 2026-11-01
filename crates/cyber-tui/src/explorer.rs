@@ -552,6 +552,7 @@ impl App {
             }
             "explorer_close" => self.overlay = Overlay::None,
             "explorer_open" => return self.open_row(),
+            "explorer_hex" => return self.hex_row(),
             "explorer_mention" => self.mention_row(),
             "explorer_copy" => return self.copy_row(),
             "explorer_refresh" => return e.reload(),
@@ -639,6 +640,7 @@ impl App {
             Some("explorer_markdown") => self.explorer.raw = !self.explorer.raw,
             Some("explorer_mention") => self.mention_row(),
             Some("explorer_copy") => return self.copy_row(),
+            Some("explorer_hex") => return self.hex_row(),
             _ => self.scroll_preview(key.code),
         }
         Vec::new()
@@ -667,6 +669,20 @@ impl App {
     }
 
     /// Enter: fold or unfold a directory, or open a file's preview.
+    fn hex_row(&mut self) -> Vec<Action> {
+        let Some(row) = self.explorer.current() else {
+            return vec![];
+        };
+        if row.node.dir {
+            return vec![];
+        }
+        if row.node.read == Read::Deny {
+            self.toast("Reading is denied");
+            return vec![];
+        }
+        self.open_hex(&row.node.path)
+    }
+
     fn open_row(&mut self) -> Vec<Action> {
         let Some(row) = self.explorer.current() else {
             return Vec::new();

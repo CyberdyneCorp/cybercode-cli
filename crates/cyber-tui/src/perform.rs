@@ -95,6 +95,19 @@ pub enum Msg {
         hits: Vec<crate::explorer::Node>,
     },
     /// A file preview, or why it was refused.
+    HexSearch {
+        session_id: String,
+        directory: String,
+        generation: u64,
+        result: Result<cyber_core::binary::SearchResult, String>,
+    },
+    Hex {
+        session_id: String,
+        directory: String,
+        generation: u64,
+        opened: bool,
+        result: Result<crate::hex::Loaded, String>,
+    },
     Preview {
         session_id: String,
         path: String,
@@ -957,7 +970,8 @@ pub async fn perform_owned(
         | Action::LoadPlugins { .. }
         | Action::LoadAgents
         | Action::FindFiles(_) => load_choices(client, session, action).await,
-        Action::ComputerStatus
+        Action::Hex(_)
+        | Action::ComputerStatus
         | Action::ComputerStop
         | Action::Loop(_)
         | Action::Goal(_)
@@ -987,6 +1001,7 @@ pub async fn perform_owned(
 /// and the update check; and the branch tree (`/tree`, `/label`).
 async fn scheduled(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
     match action {
+        Action::Hex(request) => Ok(crate::hex::perform(client, session, request).await),
         Action::ComputerStatus | Action::ComputerStop => {
             crate::computer::perform(client, session, action).await
         }

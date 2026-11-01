@@ -36,5 +36,5 @@ expression: "render(&mut app, 150, 36, &plain)"
                                                             │
                                                             │
  7 shown · 4 hidden · .gitignore                            │
-  ↑↓  move  ←→  fold  enter  open  tab  focus  /  filter  g  changed  .  hidden  m  raw/rendered  @  mention  y  copy path  r  refresh  esc  close
+  ↑↓  move  ←→  fold  esc  close  enter  open  tab  focus  x  hex  /  filter  g  changed  .  hidden  m  raw/rendered  @  mention  y  copy path
                                                                                 100 · —  ctrl+p commands

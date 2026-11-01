@@ -1,3 +1,4 @@
+import { openBinaryDocument, type BinaryDocument } from "./binary.js";
 import { Connection, type ConnectOptions } from "./connection.js";
 import {
   createGroups,
@@ -59,6 +60,11 @@ export interface CyberClient extends Omit<Groups, "messaging"> {
  */
 export class CyberClient implements Caller {
   readonly #transport: Transport;
+
+  readonly binary = {
+    /** Open a live exact-byte view scoped to a Session and this client's Location. */
+    open: (sessionID: string, path: string, options: RequestOptions & { expectedRoot?: string } = {}): Promise<BinaryDocument> => openBinaryDocument(this, sessionID, path, options),
+  };
 
   readonly collaborations = {
     /** Project collaboration for one local Session, scoped to this client's checkout. */

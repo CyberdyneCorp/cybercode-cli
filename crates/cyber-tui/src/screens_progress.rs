@@ -482,6 +482,7 @@ async fn tui_spinner_is_read_at_startup() {
         agent: None,
         mode: None,
         prompt: None,
+        hex: None,
     };
     let store = crate::store::LocalStore::new(&opts.state_dir);
     let env = |_: &str| None;

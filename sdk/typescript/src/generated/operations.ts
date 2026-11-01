@@ -231,6 +231,37 @@ export interface Operations {
     body: undefined;
     response: S.Located_Array_of_FormatterStatus;
   };
+  "v1.fs.binaryBytes": {
+    path: { id: string };
+    query: {
+      session_id?: QueryValue;
+      revision?: QueryValue;
+      offset?: QueryValue;
+      limit?: QueryValue;
+    };
+    body: undefined;
+    response: S.Located_BytePage;
+  };
+  "v1.fs.binaryClose": {
+    path: { id: string };
+    query: {
+      session_id?: QueryValue;
+    };
+    body: undefined;
+    response: boolean;
+  };
+  "v1.fs.binaryOpen": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.OpenRequest;
+    response: S.Located_OpenedDocument;
+  };
+  "v1.fs.binarySearch": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: S.SearchBody;
+    response: S.Located_SearchResult;
+  };
   "v1.fs.content": {
     path: Record<string, never>;
     query: {
@@ -2042,6 +2073,54 @@ export const operations = {
     pathParams: [],
     query: [],
     body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.fs.binaryBytes": {
+    tag: "fs",
+    name: "binaryBytes",
+    method: "GET",
+    path: "/api/v1/files/binary/documents/{id}/bytes",
+    pathParams: ["id"],
+    query: ["session_id", "revision", "offset", "limit"],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.fs.binaryClose": {
+    tag: "fs",
+    name: "binaryClose",
+    method: "DELETE",
+    path: "/api/v1/files/binary/documents/{id}",
+    pathParams: ["id"],
+    query: ["session_id"],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.fs.binaryOpen": {
+    tag: "fs",
+    name: "binaryOpen",
+    method: "POST",
+    path: "/api/v1/files/binary/documents",
+    pathParams: [],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.fs.binarySearch": {
+    tag: "fs",
+    name: "binarySearch",
+    method: "POST",
+    path: "/api/v1/files/binary/documents/{id}/search",
+    pathParams: ["id"],
+    query: [],
+    body: "required",
     located: true,
     unwrap: false,
     stream: false,
@@ -4897,6 +4976,18 @@ export function createGroups(caller: Caller) {
         caller.call("v1.formatter.status", {}, options),
     },
     fs: {
+      /** Read a bounded byte page at an exact decimal offset (`GET /api/v1/files/binary/documents/{id}/bytes`) */
+      binaryBytes: (id: string, query?: Operations["v1.fs.binaryBytes"]["query"], options?: RequestOptions): Promise<Operations["v1.fs.binaryBytes"]["response"]> =>
+        caller.call("v1.fs.binaryBytes", { path: { id }, query }, options),
+      /** Close a Session-owned live binary view (`DELETE /api/v1/files/binary/documents/{id}`) */
+      binaryClose: (id: string, query?: Operations["v1.fs.binaryClose"]["query"], options?: RequestOptions): Promise<Operations["v1.fs.binaryClose"]["response"]> =>
+        caller.call("v1.fs.binaryClose", { path: { id }, query }, options),
+      /** Open a Session-owned live binary view; no eager whole-file copy or hash (`POST /api/v1/files/binary/documents`) */
+      binaryOpen: (body: Operations["v1.fs.binaryOpen"]["body"], options?: RequestOptions): Promise<Operations["v1.fs.binaryOpen"]["response"]> =>
+        caller.call("v1.fs.binaryOpen", { body }, options),
+      /** Search live bytes with bounded scanning and revision-bound continuation (`POST /api/v1/files/binary/documents/{id}/search`) */
+      binarySearch: (id: string, body: Operations["v1.fs.binarySearch"]["body"], options?: RequestOptions): Promise<Operations["v1.fs.binarySearch"]["response"]> =>
+        caller.call("v1.fs.binarySearch", { path: { id }, body }, options),
       /** A project file's text (at most 1 MiB) when the Session's rules allow read (`GET /api/v1/files/content`) */
       content: (query?: Operations["v1.fs.content"]["query"], options?: RequestOptions): Promise<Operations["v1.fs.content"]["response"]> =>
         caller.call("v1.fs.content", { query }, options),

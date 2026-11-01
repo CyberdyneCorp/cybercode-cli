@@ -4,6 +4,7 @@
 //! transport mark each request with a [`Transport`], which decides authentication.
 
 pub mod account;
+mod binary_files;
 mod branches;
 mod catalog;
 mod children;
@@ -747,6 +748,7 @@ pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router 
         .merge(teams::routes())
         .merge(output_styles::routes())
         .merge(files::routes())
+        .merge(binary_files::routes())
         .merge(worktrees::routes())
         .merge(workflows::routes())
         .merge(events::routes())

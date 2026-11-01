@@ -301,6 +301,7 @@ fn options(server: &Server, root: &Path, id: &str) -> crate::TuiOptions {
         agent: None,
         mode: None,
         prompt: None,
+        hex: None,
     }
 }
 

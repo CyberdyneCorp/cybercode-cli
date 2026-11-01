@@ -1,6 +1,6 @@
 # Active implementation goal and delivery rules
 
-The full approved scope from PRs #53/#54 remains active, in this order:
+The full approved scope from PRs #53/#54 remains required. Its original delivery order was:
 
 1. [Plugins and hooks](../openspec/changes/complete-plugin-hook-runtime/tasks.md):
    production native capability enforcement, complete host protocol operations,
@@ -10,6 +10,15 @@ The full approved scope from PRs #53/#54 remains active, in this order:
    root structured output and streaming JSONL input.
 3. [Binary hex editor](../openspec/changes/add-binary-hex-editor/tasks.md):
    the full reviewed CLI/TUI editor, owner/SDK/model operations and integrations.
+
+On 2026-11-01 the user explicitly requested implementation of [binary editor
+issue #94](https://github.com/CyberdyneCorp/cybercode-cli/issues/94) now. This
+supersedes the scheduling dependency on completing the first two workstreams;
+implement the binary editor while preserving all shared snapshot, permission,
+native-save and FileChanged contracts. Remaining plugins/hooks and daily coding
+stay tracked in issues #92 and #93. Their separate pending policy decisions are
+not selected by this scheduling change. The binary workspace implementation is
+partial; its live view does not complete the editor goal.
 
 ## Delivery constraint approved on 2026-10-29
 
@@ -97,8 +106,8 @@ Native confinement foundations and regressions exist, but
 production enforcement and the remaining plugin/hook scope are incomplete. The
 Linux UNIX-socket diagnostic found a real host-reachability gap. Its experimental
 filter and runtime checks remain experimental. The broker direction is approved;
-complete support acceptance and host activation remain pending. Daily coding and binary editor implementation have not
-started. The linked task lists remain authoritative for completion.
+complete support acceptance and host activation remain pending. Daily coding implementation has not started. Binary editor implementation began
+on 2026-11-01 under the scheduling override above and remains partial. The linked task lists remain authoritative for completion.
 
 The [Linux peer-identity diagnostic](../openspec/changes/complete-plugin-hook-runtime/linux-private-peer-identity.md)
 confirms that the current broker changes the caller PID observed by a UNIX
