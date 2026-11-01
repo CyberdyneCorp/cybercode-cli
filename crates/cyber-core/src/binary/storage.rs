@@ -16,6 +16,77 @@ use std::sync::Arc;
 pub const MAX_STORAGE: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_RECORD: u64 = 256 * 1024 * 1024;
 
+fn open_root(data: &Path) -> Result<(PathBuf, Dir, Dir), Error> {
+    if !data.is_absolute() {
+        return Err(Error::Invalid);
+    }
+    let data_path = data.canonicalize().map_err(|_| Error::File)?;
+    let data =
+        Dir::open_ambient_dir(&data_path, cap_std::ambient_authority()).map_err(|_| Error::File)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if data
+            .try_clone()
+            .map_err(|_| Error::Io)?
+            .into_std_file()
+            .metadata()
+            .map_err(|_| Error::Io)?
+            .mode()
+            & 0o022
+            != 0
+        {
+            return Err(Error::File);
+        }
+    }
+    let root = child(&data, "binary")?;
+    flush_dir(&root)?;
+    flush_dir(&data)?;
+    Ok((data_path, data, root))
+}
+
+/// Prepared before untrusted child launch so its existing native directory can be
+/// hidden by the sandbox. A later document open cannot silently bind a replacement.
+pub struct StorageRoot {
+    data: PathBuf,
+    root: Dir,
+}
+impl StorageRoot {
+    pub fn prepare(data: &Path) -> Result<Self, Error> {
+        let (data, _parent, root) = open_root(data)?;
+        Ok(Self { data, root })
+    }
+    pub fn path(&self) -> PathBuf {
+        self.data.join("binary")
+    }
+    pub fn open(&self, id: &str) -> Result<Store, Error> {
+        let store = Store::open(&self.data, id)?;
+        if identity(&store.root)? != identity(&self.root)? {
+            return Err(Error::Changed);
+        }
+        Ok(store)
+    }
+    /// A writable project containing private storage could rename or inspect the
+    /// staging directory under its filesystem grant. Such editing is unsupported.
+    pub fn admit_project(&self, project: &Path) -> Result<(), Error> {
+        let project = project.canonicalize().map_err(|_| Error::File)?;
+        if self.path().starts_with(&project) || project.starts_with(self.path()) {
+            return Err(Error::File);
+        }
+        // Validate the root binding without capturing any source content.
+        let root = Dir::open_ambient_dir(self.path(), cap_std::ambient_authority())
+            .map_err(|_| Error::File)?;
+        if identity(&root)? != identity(&self.root)? {
+            return Err(Error::Changed);
+        }
+        private(
+            &root,
+            &root.try_clone().map_err(|_| Error::Io)?.into_std_file(),
+            true,
+        )
+    }
+}
+
 pub struct Store {
     data_path: PathBuf,
     data: Dir,
@@ -139,11 +210,11 @@ fn create(dir: &Dir, name: &str) -> Result<File, Error> {
     component(name)?;
     #[cfg(windows)]
     {
-        return crate::memory::windows::create_private_file(
+        crate::memory::windows::create_private_file(
             &dir.try_clone().map_err(|_| Error::Io)?.into_std_file(),
             name,
         )
-        .map_err(|_| Error::Io);
+        .map_err(|_| Error::Io)
     }
     #[cfg(not(windows))]
     {
@@ -170,12 +241,12 @@ fn read_file(dir: &Dir, name: &str) -> Result<File, Error> {
     component(name)?;
     #[cfg(windows)]
     {
-        return crate::memory::windows::open_private_file(
+        crate::memory::windows::open_private_file(
             &dir.try_clone().map_err(|_| Error::Io)?.into_std_file(),
             name,
             crate::memory::windows::Access::Read,
         )
-        .map_err(|_| Error::File);
+        .map_err(|_| Error::File)
     }
     #[cfg(not(windows))]
     {
@@ -204,7 +275,7 @@ fn flush_dir(dir: &Dir) -> Result<(), Error> {
     let file = dir.try_clone().map_err(|_| Error::Io)?.into_std_file();
     #[cfg(windows)]
     {
-        return crate::memory::windows::sync_private(&file).map_err(|_| Error::Io);
+        crate::memory::windows::sync_private(&file).map_err(|_| Error::Io)
     }
     #[cfg(not(windows))]
     {
@@ -213,6 +284,7 @@ fn flush_dir(dir: &Dir) -> Result<(), Error> {
 }
 
 impl Store {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub(super) fn directory(&self) -> &Dir {
         &self.dir
     }
@@ -235,29 +307,7 @@ impl Store {
 
     pub fn open(data: &Path, id: &str) -> Result<Self, Error> {
         component(id)?;
-        if !data.is_absolute() {
-            return Err(Error::Invalid);
-        }
-        let data_path = data.canonicalize().map_err(|_| Error::File)?;
-        let data = Dir::open_ambient_dir(&data_path, cap_std::ambient_authority())
-            .map_err(|_| Error::File)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            if data
-                .try_clone()
-                .map_err(|_| Error::Io)?
-                .into_std_file()
-                .metadata()
-                .map_err(|_| Error::Io)?
-                .mode()
-                & 0o022
-                != 0
-            {
-                return Err(Error::File);
-            }
-        }
-        let root = child(&data, "binary")?;
+        let (data_path, data, root) = open_root(data)?;
         let dir = child(&root, id)?;
         #[cfg(windows)]
         let lock = {
@@ -643,6 +693,42 @@ mod tests {
             })
             .unwrap()
     }
+    #[test]
+    fn prepared_root_refuses_project_overlap_and_root_replacement() {
+        let root = tempfile::tempdir().unwrap();
+        let data = root.path().join("data");
+        let project = root.path().join("project");
+        std::fs::create_dir(&data).unwrap();
+        std::fs::create_dir(&project).unwrap();
+        let storage = StorageRoot::prepare(&data).unwrap();
+        storage.admit_project(&project).unwrap();
+        assert!(storage.admit_project(root.path()).is_err());
+        assert!(storage.admit_project(&storage.path()).is_err());
+        storage.open("bin_positive").unwrap();
+        #[cfg(not(windows))]
+        {
+            std::fs::rename(storage.path(), data.join("moved")).unwrap();
+            let replacement = StorageRoot::prepare(&data).unwrap();
+            assert!(storage.admit_project(&project).is_err());
+            assert!(storage.open("bin_rebound").is_err());
+            replacement.admit_project(&project).unwrap();
+            replacement.open("bin_rebound").unwrap();
+        }
+        #[cfg(windows)]
+        {
+            // Retained Windows directory handles deny rename rather than allowing
+            // replacement followed by a later identity refusal.
+            assert!(std::fs::rename(storage.path(), data.join("moved")).is_err());
+            storage.open("bin_still_bound").unwrap();
+            drop(storage);
+            std::fs::rename(data.join("binary"), data.join("moved")).unwrap();
+            StorageRoot::prepare(&data)
+                .unwrap()
+                .open("bin_new_root")
+                .unwrap();
+        }
+    }
+
     #[test]
     fn private_base_survives_store_reopen_and_feeds_a_recoverable_draft() {
         let data = tempfile::tempdir().unwrap();

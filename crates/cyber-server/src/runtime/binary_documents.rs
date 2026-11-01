@@ -18,6 +18,7 @@ pub(crate) struct Entry {
 pub(crate) struct Registry(
     Mutex<HashMap<String, Arc<Entry>>>,
     std::sync::OnceLock<Arc<tokio::sync::Semaphore>>,
+    std::sync::OnceLock<Arc<cyber_core::binary::storage::StorageRoot>>,
 );
 
 impl Registry {
@@ -92,6 +93,19 @@ impl Registry {
 }
 
 impl super::Runtime {
+    /// Install only after bootstrap has prepared and hidden the existing root from
+    /// all child launches. An unconfigured runtime keeps binary editing disabled.
+    pub fn configure_binary_storage(
+        &self,
+        root: Arc<cyber_core::binary::storage::StorageRoot>,
+    ) -> Result<(), Error> {
+        self.inner
+            .binary_documents
+            .2
+            .set(root)
+            .map_err(|_| Error::Changed)
+    }
+
     pub(crate) fn binary_documents(&self) -> &Registry {
         &self.inner.binary_documents
     }

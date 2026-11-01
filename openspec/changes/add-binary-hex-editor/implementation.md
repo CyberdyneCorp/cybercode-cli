@@ -242,3 +242,15 @@ The native adapter and its owned macOS ACL allocation wrappers were inspected fo
 path admission, bounded allocations, identity retention and native resource disposal.
 This core increment makes no production authorization or full-editor acceptance
 claim; the integration gaps listed above remain explicit delivery requirements.
+
+
+Bootstrap follow-up: the App now prepares and pins the binary private root before
+any untrusted launch, registers its original/canonical paths with the existing
+home-scoped unreadable-root protection, and configures the runtime only when the
+private root is safe. Unsafe storage retains viewer availability. Project overlap
+and a replaced prepared root are refused. A production App regression creates a
+draft file after bootstrap, proves model `read` cannot disclose it even with broad
+read grants/readable-path configuration, and includes a successful public-file
+read control. The 16 existing production file-route tests and this new regression
+passed locally; affected core/server/App Clippy passed. Initial Windows CI found
+unused Unix-only access and needless Windows returns; those branches were corrected.
