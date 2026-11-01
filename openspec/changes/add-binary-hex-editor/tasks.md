@@ -1,3 +1,9 @@
+Delivery update, 2026-11-01: the user requested implementing issue #94 now,
+superseding the earlier workstream scheduling prerequisite. The full editor scope,
+native storage proof and shared snapshot/permission/FileChanged invariants remain.
+See [implementation progress](implementation.md); the live view does not close the
+staged-edit/save/model/integration requirements below.
+
 ## 1. Specification and review
 
 - [x] 1.1 Verify PR #53 merged; inspect current explorer/preview, project file admission, text tools and snapshot contracts at `d36388d6`.

@@ -266,6 +266,16 @@ export type BudgetUsage = {
 /** `permissions.untrusted_content.bypass`: what taint does in `bypass`. */
 export type BypassSetting = "allow" | "deny";
 
+export type BytePage = {
+  revision: string;
+  source: Source2;
+  offset: Offset;
+  length: Offset;
+  base64: string;
+  page_sha256: string;
+  eof: boolean;
+};
+
 export type CallState = {
   structured_output?: unknown;
   call_id: string;
@@ -968,6 +978,10 @@ export type Data_Watch = {
 
 export type Data_WorkflowRun = {
   data: WorkflowRun;
+};
+
+export type Data_boolean = {
+  data: boolean;
 };
 
 /** A definition file that did not load, and why. */
@@ -2399,6 +2413,12 @@ export type Located_Array_of_string = {
 };
 
 /** A Location-scoped response. */
+export type Located_BytePage = {
+  location: LocationInfo;
+  data: BytePage;
+};
+
+/** A Location-scoped response. */
 export type Located_CommitMessage = {
   location: LocationInfo;
   data: CommitMessage;
@@ -2525,6 +2545,12 @@ export type Located_Nullable_MemoryRequestStatus = {
 };
 
 /** A Location-scoped response. */
+export type Located_OpenedDocument = {
+  location: LocationInfo;
+  data: OpenedDocument;
+};
+
+/** A Location-scoped response. */
 export type Located_Page_SessionRow = {
   location: LocationInfo;
   data: Page_SessionRow;
@@ -2546,6 +2572,12 @@ export type Located_PrDescription = {
 export type Located_RemovedWorktree = {
   location: LocationInfo;
   data: RemovedWorktree;
+};
+
+/** A Location-scoped response. */
+export type Located_SearchResult = {
+  location: LocationInfo;
+  data: SearchResult;
 };
 
 /** A Location-scoped response. */
@@ -3095,6 +3127,9 @@ export type NoticePolicy = {
   bypass?: BypassSetting;
 };
 
+/** Lossless JSON decimal integer. Never accepts JSON numbers or noncanonical strings. */
+export type Offset = string;
+
 /**
  * Provider state that must travel back with reasoning or a tool call. `data` is stored
  * exactly as received and never decoded; `provider` and `model` name its producer, so
@@ -3111,6 +3146,22 @@ export type Opaque = {
 
 /** The kind of provider state an [`Opaque`] carries. */
 export type OpaqueKind = "encrypted_reasoning" | "signature" | "redacted" | "details";
+
+export type OpenRequest = {
+  session_id: string;
+  path: string;
+  expected_root?: string | null;
+};
+
+export type OpenedDocument = {
+  document_id: string;
+  path: string;
+  length: Offset;
+  /** Observed metadata generation, not an immutable whole-file content digest. */
+  revision: string;
+  source: Source2;
+  within_edit_size_limit: boolean;
+};
 
 export type Organization = {
   id: string;
@@ -3884,6 +3935,22 @@ export type SavedScript = {
 /** One of the usage reports a scope returns, discriminated by `scope`. */
 export type ScopeUsage = SessionUsage | RunUsageReport;
 
+export type SearchBody = {
+  session_id: string;
+  revision: string;
+  hex: string;
+  offset: Offset;
+};
+
+export type SearchResult = {
+  revision: string;
+  source: Source2;
+  offsets: Offset[];
+  /** Next unexamined candidate offset. Reuse the same revision and pattern. */
+  next_offset?: Offset | null;
+  scanned: Offset;
+};
+
 /** `POST /api/v1/messaging/send`. */
 export type SendMessage = {
   /**
@@ -4361,6 +4428,8 @@ export type Source = {
   path?: string | null;
   type: "git";
 };
+
+export type Source2 = "live";
 
 /** A user statement with its source, kept outside generated prose. */
 export type Sourced = {

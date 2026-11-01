@@ -12,6 +12,24 @@ const result = await client.sessions.prompt(session.id, "fix the failing test", 
 console.log(result.text, result.stopReason, result.usage);
 ```
 
+## Exact binary viewing
+
+```ts
+const document = await client.binary.open(session.id, "fixtures/header.bin");
+try {
+  const bytes = await document.bytes(0n, 256);
+  const matches = await document.search("7f454c46");
+} finally {
+  await document.close();
+}
+```
+
+Offsets are `bigint` or canonical decimal strings. Pages are bounded and verified
+against their returned revision, offset, length and SHA-256; these are live
+observations, not immutable whole-file snapshots. Owner/Session/Location and read
+rules apply. Editing and save/recovery remain unfinished; see the
+[binary workspace guide](../../docs/binary-editor.md).
+
 ## Connecting
 
 `Cyber.connect({ baseUrl?, auth?, fetch?, headers?, directory?, timeoutMs?, retry?, reconnect? })`

@@ -1,0 +1,20 @@
+{
+  "reference": "local-macos-arm64",
+  "platform": "macOS-26.7-arm64-arm-64bit",
+  "physical_ram_bytes": 25769803776,
+  "sparse_fixture_bytes": "9007199254741249",
+  "file_allocated_bytes": 8192,
+  "initial_offset": "16",
+  "goto_offset": "9007199254741245",
+  "goto_confirmed": true,
+  "first_view_seconds": 7.649402625,
+  "rss_kib_at_first_view": 248544,
+  "provider_inference_requests": 0,
+  "exit_code": 0,
+  "capture_bytes": 38875,
+  "binary_sha256": "842da52ae8d9e66dc8d93b97c50040be0af4645c8fe0e095a25077db815e1093",
+  "view_seen": true,
+  "inspector_seen": true,
+  "source_commit": "39cdcf7f",
+  "scope": "Rebuilt executable with Rust sources matching 39cdcf7f; local viewer proof, not editor/save or multi-platform acceptance."
+}

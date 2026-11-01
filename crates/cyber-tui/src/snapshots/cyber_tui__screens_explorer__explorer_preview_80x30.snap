@@ -30,7 +30,7 @@ expression: shown
 
 
 
-  ↑↓  move  ←→  fold  enter  open  tab  focus  /  filter  g  changed  .  hidden
+  ↑↓  move  ←→  fold  esc  close  enter  open  tab  focus  x  hex  /  filter
                                                        100 · —  ctrl+p commands
 row 4: 0-0 fg=#d6e4f0 bg=#0b0f14
 row 4: 1-1 fg=#666f77 bg=#0b0f14

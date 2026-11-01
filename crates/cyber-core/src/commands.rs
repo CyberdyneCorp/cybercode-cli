@@ -278,6 +278,7 @@ pub const BUILTIN: &[(&str, &str)] = &[
         "Sessions this one can message: message, watch, open, rename",
     ),
     ("files", "Browse project files"),
+    ("hex", "Inspect exact bytes: /hex <project-relative path>"),
     ("settings", "Open settings"),
     ("status", "Show Session, server and machine status"),
     ("config", "Edit TUI preferences"),

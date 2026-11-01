@@ -351,6 +351,14 @@ async fn event_loop(
 /// its Session even if another owner attachment remains; a failed network delivery is
 /// still fenced by presence.
 async fn exited(app: &mut App, client: &Client) {
+    app.hex.forget(&app.session);
+    for request in app.hex.pending_closes.drain(..) {
+        let _ = tokio::time::timeout(
+            Duration::from_secs(2),
+            crate::hex::perform(client, &app.session, request),
+        )
+        .await;
+    }
     app.sounds.stop();
     if app.computer.supported {
         let _ = tokio::time::timeout(
@@ -465,6 +473,9 @@ fn initial_actions(
             Start::PickPr(pr) => Action::LoadPrSessions(pr),
             _ => Action::LoadSessions,
         });
+    }
+    if let Some(hex) = &opts.hex {
+        initial.extend(app.open_hex_at(&hex.path, Some(hex.root.clone()), hex.offset));
     }
     if let Some(prompt) = &opts.prompt {
         initial.push(Action::Prompt {
@@ -741,6 +752,7 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
         | Msg::Insights { .. }
         | Msg::Limits { .. }
         | Msg::Recap { .. }) => settings_reply(app, msg),
+        msg @ (Msg::Hex { .. } | Msg::HexSearch { .. }) => return crate::hex::apply(app, msg),
         msg @ (Msg::Dir { .. } | Msg::FileHits { .. } | Msg::Preview { .. }) => {
             explorer_reply(app, msg)
         }
@@ -1026,8 +1038,10 @@ fn dispatch(
     tx: &mpsc::Sender<Result<Msg, String>>,
     refresh: &mut Refresh,
     terminal: &mut Term,
-    actions: Vec<Action>,
+    mut actions: Vec<Action>,
 ) {
+    app.sync_hex_visibility();
+    actions.extend(app.hex.pending_closes.drain(..).map(Action::Hex));
     for action in actions {
         match action {
             Action::Quit => app.quit = true,

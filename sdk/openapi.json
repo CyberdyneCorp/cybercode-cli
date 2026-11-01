@@ -14802,6 +14802,225 @@
         ],
         "description": "A file's content, or that it is binary."
       },
+      "OpenRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "expected_root": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "session_id",
+          "path"
+        ]
+      },
+      "Located_OpenedDocument": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenedDocument"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "OpenedDocument": {
+        "type": "object",
+        "properties": {
+          "document_id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "length": {
+            "$ref": "#/components/schemas/Offset"
+          },
+          "revision": {
+            "type": "string",
+            "description": "Observed metadata generation, not an immutable whole-file content digest."
+          },
+          "source": {
+            "$ref": "#/components/schemas/Source2"
+          },
+          "within_edit_size_limit": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "document_id",
+          "path",
+          "length",
+          "revision",
+          "source",
+          "within_edit_size_limit"
+        ]
+      },
+      "Offset": {
+        "type": "string",
+        "description": "Lossless JSON decimal integer. Never accepts JSON numbers or noncanonical strings."
+      },
+      "Source2": {
+        "type": "string",
+        "enum": [
+          "live"
+        ]
+      },
+      "Located_BytePage": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/BytePage"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "BytePage": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/Source2"
+          },
+          "offset": {
+            "$ref": "#/components/schemas/Offset"
+          },
+          "length": {
+            "$ref": "#/components/schemas/Offset"
+          },
+          "base64": {
+            "type": "string"
+          },
+          "page_sha256": {
+            "type": "string"
+          },
+          "eof": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "revision",
+          "source",
+          "offset",
+          "length",
+          "base64",
+          "page_sha256",
+          "eof"
+        ]
+      },
+      "SearchBody": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "string"
+          },
+          "hex": {
+            "type": "string"
+          },
+          "offset": {
+            "$ref": "#/components/schemas/Offset"
+          }
+        },
+        "required": [
+          "session_id",
+          "revision",
+          "hex",
+          "offset"
+        ]
+      },
+      "Located_SearchResult": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/SearchResult"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "SearchResult": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/Source2"
+          },
+          "offsets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Offset"
+            }
+          },
+          "next_offset": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Offset"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Next unexamined candidate offset. Reuse the same revision and pattern."
+          },
+          "scanned": {
+            "$ref": "#/components/schemas/Offset"
+          }
+        },
+        "required": [
+          "revision",
+          "source",
+          "offsets",
+          "scanned"
+        ]
+      },
+      "Data_boolean": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
       "Data_ComputerHealthReport": {
         "type": "object",
         "properties": {
@@ -28470,6 +28689,294 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Located_Content"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/binary/documents": {
+      "post": {
+        "operationId": "v1.fs.binaryOpen",
+        "summary": "Open a Session-owned live binary view; no eager whole-file copy or hash",
+        "tags": [
+          "fs"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_OpenedDocument"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/binary/documents/{id}/bytes": {
+      "get": {
+        "operationId": "v1.fs.binaryBytes",
+        "summary": "Read a bounded byte page at an exact decimal offset",
+        "tags": [
+          "fs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "revision",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_BytePage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/binary/documents/{id}/search": {
+      "post": {
+        "operationId": "v1.fs.binarySearch",
+        "summary": "Search live bytes with bounded scanning and revision-bound continuation",
+        "tags": [
+          "fs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_SearchResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/binary/documents/{id}": {
+      "delete": {
+        "operationId": "v1.fs.binaryClose",
+        "summary": "Close a Session-owned live binary view",
+        "tags": [
+          "fs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_boolean"
                 }
               }
             }

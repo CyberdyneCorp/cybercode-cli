@@ -159,6 +159,7 @@ const BUILTINS: &[(&str, &str, Option<&str>, bool)] = &[
         None,
         false,
     ),
+    ("hex", "inspect exact bytes: /hex <path>", None, false),
     ("config", "edit TUI preferences", None, false),
     (
         "stats",

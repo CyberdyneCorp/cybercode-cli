@@ -18,3 +18,9 @@ Playwright traces/videos are deliberately disabled: network traces would persist
 The tests use a real terminal CLI, a second Chromium browser context, actual pending requests and production HTTP/SSE routes. Network interception introduces lost acknowledgements/offline periods; it does not fabricate successful API responses. Two expiry tests wait through the real 45-second lease window. The TCP forward reproduces an SSH local-forward transport without starting an SSH daemon or modifying the machine's network configuration.
 
 Physical second-device/private-network certificate acceptance remains a separate manual check. Headless Chromium and a fixture TLS endpoint do not establish that a physical phone trusts an operator's production certificate.
+
+The integration submission scenario runs both with its original page and after an
+immediate navigation away from the response. The assertion uses retained HTTP
+status metadata: Chromium can evict the response body on navigation. The navigated
+case reconnects through fresh owner attachment and loads the durable queue entry
+before continuing the real host verification and no-publication assertions.

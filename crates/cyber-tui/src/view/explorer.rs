@@ -249,8 +249,10 @@ fn chips(app: &App) -> Vec<Chip> {
         }
     }
     for (action, what) in [
+        ("explorer_close", "close"),
         ("explorer_open", "open"),
         ("explorer_focus", "focus"),
+        ("explorer_hex", "hex"),
         ("explorer_filter", "filter"),
         ("explorer_changed", "changed"),
         ("explorer_hidden", "hidden"),
@@ -258,7 +260,6 @@ fn chips(app: &App) -> Vec<Chip> {
         ("explorer_mention", "mention"),
         ("explorer_copy", "copy path"),
         ("explorer_refresh", "refresh"),
-        ("explorer_close", "close"),
     ] {
         if let Some(key) = label(action) {
             out.push((key, what, app.keymap.event("explorer", action)));

@@ -3713,6 +3713,7 @@ async fn the_tui_opens_a_peer_session_through_an_attach() {
         agent: None,
         mode: None,
         prompt: None,
+        hex: None,
     };
     let store = crate::store::LocalStore::new(state.path());
     let (app, _) = crate::runner::start(&client, &store, &opts, &|_| None)

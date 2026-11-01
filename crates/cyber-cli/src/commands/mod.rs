@@ -13,6 +13,7 @@ pub mod eval;
 pub mod exec;
 pub mod features;
 pub mod git;
+pub mod hex;
 pub mod hooks;
 pub mod import;
 pub mod intelligence;
@@ -89,6 +90,10 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
     if let Command::Uninstall(args) = &command {
         return uninstall::run(args, &cli.global);
     }
+    let command = match command {
+        Command::Hex(args) => return hex::run(args, cli.launch, &cli.global),
+        command => command,
+    };
     let ctx = Context::new(&cli.global)?;
     // The MCP serve bridge logs to its own file and never loads the project configuration
     // first.
@@ -146,7 +151,8 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
         Command::External(_)
         | Command::Import(_)
         | Command::HelpMarkdown
-        | Command::Uninstall(_) => {
+        | Command::Uninstall(_)
+        | Command::Hex(_) => {
             unreachable!("handled above")
         }
     }
@@ -162,7 +168,7 @@ fn pure(cli: &mut Cli) -> Result<(), CliError> {
     match &mut cli.command {
         Some(Command::Exec(args)) => in_process(&mut args.embedded, args.ephemeral, &args.attach),
         Some(Command::Review(args)) => in_process(&mut args.embedded, args.ephemeral, &args.attach),
-        None | Some(Command::External(_)) => {
+        None | Some(Command::External(_)) | Some(Command::Hex(_)) => {
             cli.launch.embedded = true;
             Ok(())
         }

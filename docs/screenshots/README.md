@@ -28,6 +28,20 @@ The refreshed TUI captures use source `8defd812e49ea4db1181ab2215e6098b0dff06c6`
 /tmp/cyber-shots/bin/python -m unittest discover -s scripts/screens -p test_capture.py
 ```
 
+The binary workspace can be captured separately without running the other demo flows:
+
+```bash
+/tmp/cyber-shots/bin/python scripts/capture_tui_screens.py --only hex \
+  --binary target/debug/cyber --chrome /path/to/chrome
+```
+
+`binary-hex.png` is a 140×36 real PTY capture with synthetic 512-byte firmware data,
+a shared cursor at offset 0x20 and an LE inspector. It shows the current read-only
+workspace, not staged editing or saves. Its executable SHA-256 is
+`842da52ae8d9e66dc8d93b97c50040be0af4645c8fe0e095a25077db815e1093`
+(the Rust viewer implementation at `39cdcf7f`). The capture runs an embedded server
+inside the owned PTY, with isolated application state and the local scripted provider.
+
 ## Images
 
 | File | Screen |
@@ -39,6 +53,7 @@ The refreshed TUI captures use source `8defd812e49ea4db1181ab2215e6098b0dff06c6`
 | [`thinking.png`](thinking.png), [`thinking.gif`](thinking.gif) | A Turn in progress with the Nyan comet trail, `Thinking`, the elapsed time and the interrupt hint (the GIF is 24 consecutive captures) |
 | [`rename.png`](rename.png) | The `/rename` dialog, prefilled with the Session's current title |
 | [`themes.png`](themes.png) | The `/theme` switcher previewing `synthwave-84` |
+| [`binary-hex.png`](binary-hex.png) | Read-only hex/ASCII workspace, exact cursor offset and LE byte inspector over synthetic firmware bytes |
 | [`explorer.png`](explorer.png) | The file explorer with `docs/` expanded and `docs/README.md` rendered |
 | [`usage.png`](usage.png) | Settings › Usage: cost, durations, usage by model, tokens and contributing factors |
 | [`stats.png`](stats.png) | Settings › Stats: activity heatmap, streaks, totals and the book comparison line |

@@ -76,7 +76,7 @@ pub fn routes() -> Router<AppState> {
 }
 
 /// The decision context and the canonical project root.
-async fn scope(
+pub(super) async fn scope(
     state: &AppState,
     parts: &Parts,
     session_id: Option<&str>,
@@ -116,12 +116,12 @@ fn denied(decision: FileDecision, message: &str) -> ApiError {
 
 /// Allow `action` on `path`: at once, after the user approves an `ask` (only with a
 /// Session, which owns the request), or never.
-async fn permit(
+pub(super) async fn permit(
     state: &AppState,
     turn: &TurnContext,
     action: &str,
     path: &Path,
-) -> Result<(), ApiError> {
+) -> Result<FileDecision, ApiError> {
     let decision = state
         .runtime
         .file_decisions(turn, action, &[path.to_path_buf()])
@@ -130,11 +130,12 @@ async fn permit(
         .copied()
         .unwrap_or(FileDecision::Deny);
     match decision {
-        FileDecision::Allow => Ok(()),
+        FileDecision::Allow => Ok(FileDecision::Allow),
         FileDecision::Ask if !turn.session_id.is_empty() => state
             .runtime
             .authorize_file(turn, action, path)
             .await
+            .map(|_| FileDecision::Ask)
             .map_err(|message| denied(FileDecision::Ask, &message)),
         _ => Err(denied(decision, &format!("Permission denied: {action}"))),
     }

@@ -58,7 +58,11 @@ pub fn run(
         start = cyber_tui::Start::PickPr(number);
     }
     refuse_in_ci(&ctx)?;
-    let prompt = prompt(launch)?;
+    let prompt = if launch.hex.is_some() {
+        None
+    } else {
+        prompt(launch)?
+    };
     if !std::io::stdout().is_terminal() {
         return Err(
             CliError::usage("the TUI needs a terminal").with_hint("use \"cyber exec\" for scripts")
@@ -91,6 +95,7 @@ pub fn run(
             agent: launch.agent.clone(),
             mode: global.mode.clone(),
             prompt,
+            hex:launch.hex.clone(),
         };
         let summary = cyber_tui::run(opts).await.map_err(CliError::runtime);
         if let Some(id) = &owned {

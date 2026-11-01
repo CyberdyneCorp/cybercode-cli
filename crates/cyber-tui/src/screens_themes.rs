@@ -58,6 +58,7 @@ async fn started(server: &Server, id: &str) -> App {
         agent: None,
         mode: None,
         prompt: None,
+        hex: None,
     };
     let store = crate::store::LocalStore::new(&opts.state_dir);
     let (app, _) = crate::runner::start(&server.client, &store, &opts, &|_: &str| None)

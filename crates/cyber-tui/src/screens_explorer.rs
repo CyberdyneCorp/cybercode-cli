@@ -821,3 +821,149 @@ async fn the_wheel_scrolls_the_pane_under_the_pointer() {
     assert_eq!(scroll(&app), 0);
     assert_eq!(app.scroll, 0, "the transcript under the explorer stays");
 }
+
+#[tokio::test]
+async fn hex_workspace_reads_real_binary_bytes_navigates_searches_and_never_starts_inference() {
+    let f = Fixture::new().await;
+    let bytes: Vec<u8> = (0..=255).collect();
+    std::fs::write(f.work.join("fixture.bin"), &bytes).unwrap();
+    let mut app = f.app().await;
+    let before = f
+        .server
+        .client
+        .get(&format!("/sessions/{}/messages", app.session.id))
+        .await
+        .unwrap();
+    let actions = app.open_hex("fixture.bin");
+    f.run(&mut app, actions).await;
+    assert!(matches!(app.overlay, Overlay::Hex));
+    assert_eq!(app.hex.bytes, bytes);
+    assert_eq!(app.hex.document.as_ref().unwrap().length, 256);
+    for (name, width, height, opts) in [
+        ("hex_wide", 140, 36, Opts::default()),
+        ("hex_narrow", 60, 28, Opts::default()),
+        (
+            "hex_light",
+            100,
+            30,
+            Opts {
+                light: true,
+                ..Opts::default()
+            },
+        ),
+        (
+            "hex_no_color",
+            100,
+            30,
+            Opts {
+                no_color: true,
+                ..Opts::default()
+            },
+        ),
+    ] {
+        let shown = render(&mut app, width, height, &opts);
+        assert!(shown.contains("LIVE VIEW"));
+        assert!(shown.contains("INSPECTOR LE"));
+        assert!(!shown.contains("\u{1b}"));
+        let revision = app
+            .hex
+            .document
+            .as_ref()
+            .unwrap()
+            .revision
+            .chars()
+            .take(12)
+            .collect::<String>();
+        insta::assert_snapshot!(name, shown.replace(&revision, "obs_revision"));
+    }
+    press(&mut app, KeyCode::Char('g'));
+    for c in "0x10".chars() {
+        press(&mut app, KeyCode::Char(c));
+    }
+    let actions = press(&mut app, KeyCode::Enter);
+    f.run(&mut app, actions).await;
+    assert_eq!(app.hex.cursor, 16);
+    assert_eq!(
+        press(&mut app, KeyCode::Char('c')),
+        vec![Action::Copy("10".into())]
+    );
+    press(&mut app, KeyCode::Char('b'));
+    for c in "header".chars() {
+        press(&mut app, KeyCode::Char(c));
+    }
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.hex.bookmarks, [("header".into(), 16)]);
+    press(&mut app, KeyCode::Char('/'));
+    for c in "202122".chars() {
+        press(&mut app, KeyCode::Char(c));
+    }
+    let actions = press(&mut app, KeyCode::Enter);
+    f.run(&mut app, actions).await;
+    assert_eq!(app.hex.cursor, 32);
+    assert_eq!(app.hex.found, [32]);
+    assert_eq!(std::fs::read(f.work.join("fixture.bin")).unwrap(), bytes);
+    let after = f
+        .server
+        .client
+        .get(&format!("/sessions/{}/messages", app.session.id))
+        .await
+        .unwrap();
+    assert_eq!(
+        before["data"], after["data"],
+        "manual byte operations do not start inference"
+    );
+    let doc = app.hex.document.as_ref().unwrap().id.clone();
+    let actions = press(&mut app, KeyCode::Esc);
+    f.run(&mut app, actions).await;
+    assert!(app.hex.document.is_none());
+    let error = f
+        .server
+        .client
+        .at(&app.session.directory)
+        .get(&format!(
+            "/files/binary/documents/{doc}/bytes?session_id={}&revision=x",
+            app.session.id
+        ))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        cyber_client::ClientError::Api { status: 404, .. }
+    ));
+}
+
+#[tokio::test]
+async fn hex_stale_open_is_closed_and_session_switch_forgets_private_bytes() {
+    let f = Fixture::new().await;
+    std::fs::write(f.work.join("fixture.bin"), [0, 255, 27]).unwrap();
+    let mut app = f.app().await;
+    let mut actions = app.open_hex("fixture.bin");
+    let pending = f.perform(&app, actions.pop().unwrap()).await;
+    press(&mut app, KeyCode::Esc);
+    let cleanup = crate::runner::apply(&mut app, pending, &mut Default::default());
+    assert!(matches!(
+        &cleanup[..],
+        [Action::Hex(crate::hex::Request::Close { .. })]
+    ));
+    f.run(&mut app, cleanup).await;
+    assert!(app.hex.bytes.is_empty());
+    let actions = app.open_hex("fixture.bin");
+    f.run(&mut app, actions).await;
+    let old = app.session.clone();
+    let mut other = old.clone();
+    other.id = "ses_other".into();
+    app.set_session(other);
+    assert!(app.hex.bytes.is_empty());
+    assert!(app.hex.document.is_none());
+    assert!(matches!(app.overlay, Overlay::None));
+    let requests = app.hex.pending_closes.drain(..).map(Action::Hex).collect();
+    f.run(&mut app, requests).await;
+    app.set_session(old);
+    for _ in 0..5 {
+        let actions = app.open_hex("fixture.bin");
+        f.run(&mut app, actions).await;
+        assert!(app.hex.error.is_none());
+        let actions = press(&mut app, KeyCode::Esc);
+        f.run(&mut app, actions).await;
+    }
+}
