@@ -16,8 +16,11 @@ use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 
+#[path = "editor/catalog.rs"]
+mod catalog;
 #[path = "editor/restore.rs"]
 mod restore;
+pub use catalog::{StoredDocument, StoredDocuments};
 
 const MAX_OPERATIONS: usize = 4096;
 const EFFECTS: &str = "Permissions, executable bits, owner/group, supported extended attributes and ACL are preserved. Native replacement changes file identity and updates modification time. Save checkpoints draft undo/redo; Restore Last Save uses the retained preimage. External checksums, signatures and irreversible observer effects are not repaired. Uncooperative writers can leave an unknown outcome; evidence is retained.";
@@ -26,7 +29,16 @@ const EFFECTS: &str = "Permissions, executable bits, owner/group, supported exte
 #[serde(deny_unknown_fields)]
 pub struct Owner {
     pub session_id: String,
+    /// Exact canonical Session Location, which can be below the project root.
     pub directory: PathBuf,
+    pub root: PathBuf,
+    pub scope: DraftScope,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum DraftScope {
+    Manual,
+    Model { operation: String },
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -185,15 +197,22 @@ impl Editor {
         document: &mut Document,
         cancelled: impl Fn() -> bool,
     ) -> Result<Self, Error> {
-        if owner.session_id.is_empty() || !owner.directory.is_absolute() {
+        if owner.session_id.is_empty()
+            || !owner.directory.is_absolute()
+            || !owner.root.is_absolute()
+        {
             return Err(Error::Invalid);
+        }
+        if document.root() != owner.root || !owner.directory.starts_with(&owner.root) {
+            return Err(Error::File);
         }
         // Never replace an existing document, including one with unresolved evidence.
         if store.directory().symlink_metadata("document.json").is_ok() {
             return Err(Error::Changed);
         }
+        catalog::publish_header(&mut store, &owner, document)?;
         let (base, target) = document.prepare(&store, cancelled)?;
-        if target.root != owner.directory {
+        if target.root != owner.root {
             return Err(Error::File);
         }
         let draft = Draft::new(base)?;
@@ -220,7 +239,7 @@ impl Editor {
         if record.version != 1
             || &record.owner != owner
             || record.operations.len() > MAX_OPERATIONS
-            || record.target.root != owner.directory
+            || record.target.root != owner.root
         {
             return Err(Error::File);
         }
@@ -293,6 +312,21 @@ impl Editor {
         candidate.patch(&batch)?;
         self.commit_draft(id, "patch", payload, candidate)
     }
+    /// Explicitly discard local commands without changing the source, preimages,
+    /// operation receipts or unresolved native evidence.
+    pub fn discard(&mut self, id: &str, revision: &str) -> Result<Operation, Error> {
+        let payload = signature(&("discard-v1", revision))?;
+        if let Some(prior) = self.prior(id, &payload)? {
+            return Ok(prior);
+        }
+        self.available()?;
+        if revision != self.draft.revision() {
+            return Err(Error::Changed);
+        }
+        let candidate = Draft::new(self.draft.base().clone())?;
+        self.commit_draft(id, "discard", payload, candidate)
+    }
+
     pub fn history(&mut self, id: &str, revision: &str, redo: bool) -> Result<Operation, Error> {
         let kind = if redo { "redo" } else { "undo" };
         let payload = signature(&(kind, revision))?;
@@ -653,6 +687,8 @@ mod tests {
         let owner = Owner {
             session_id: "ses_one".into(),
             directory: project.canonicalize().unwrap(),
+            root: project.canonicalize().unwrap(),
+            scope: DraftScope::Manual,
         };
         let mut document = Document::open(&owner.directory, "bytes").unwrap();
         let editor = Editor::create(
@@ -721,6 +757,77 @@ mod tests {
             Outcome::Acknowledged
         );
         assert_eq!(std::fs::read(path).unwrap(), [0, 255, 128, 27]);
+    }
+
+    #[test]
+    fn explicit_discard_survives_restart_without_changing_source_or_losing_receipts() {
+        let (root, mut editor, path, owner) = setup();
+        patch(&mut editor, "patch_discard");
+        let revision = editor.draft().revision();
+        assert!(editor.discard("discard_stale", "stale").is_err());
+        let receipt = editor.discard("discard_one", &revision).unwrap();
+        assert_eq!(receipt.file_effect, FileEffect::None);
+        assert!(!receipt.notification_pending);
+        assert!(!editor.draft().can_undo() && !editor.draft().can_redo());
+        assert_eq!(editor.draft().read(0, 8).unwrap(), b"original");
+        assert_eq!(std::fs::read(&path).unwrap(), b"original");
+        drop(editor);
+        let mut editor = Editor::resume(
+            Store::open(&root.path().join("data"), "bin_one").unwrap(),
+            &owner,
+        )
+        .unwrap();
+        assert_eq!(
+            editor.discard("discard_one", &revision).unwrap().revision,
+            receipt.revision
+        );
+        assert!(editor.operation("patch_discard").is_some());
+        assert!(!editor.draft().can_undo());
+    }
+
+    #[test]
+    fn owner_namespace_and_exact_location_cannot_be_rebound_on_resume() {
+        let (root, editor, _path, owner) = setup();
+        drop(editor);
+        let mut wrong = owner.clone();
+        wrong.scope = DraftScope::Model {
+            operation: "call_model".into(),
+        };
+        assert!(
+            Editor::resume(
+                Store::open(&root.path().join("data"), "bin_one").unwrap(),
+                &wrong
+            )
+            .is_err()
+        );
+        let nested = owner.root.join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        wrong = owner.clone();
+        wrong.directory = nested.clone();
+        assert!(
+            Editor::resume(
+                Store::open(&root.path().join("data"), "bin_one").unwrap(),
+                &wrong
+            )
+            .is_err()
+        );
+        // A new document can bind a nested Location without confusing it with
+        // its project-root source routing authority.
+        let mut document = Document::open(&owner.root, "bytes").unwrap();
+        let editor = Editor::create(
+            Store::open(&root.path().join("data"), "bin_nested").unwrap(),
+            wrong.clone(),
+            &mut document,
+            || false,
+        )
+        .unwrap();
+        assert_eq!(editor.owner().directory, nested);
+        drop(editor);
+        Editor::resume(
+            Store::open(&root.path().join("data"), "bin_nested").unwrap(),
+            &wrong,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -1003,7 +1110,9 @@ mod tests {
                 store,
                 &Owner {
                     session_id: "ses_other".into(),
-                    directory: owner.directory.clone()
+                    directory: owner.directory.clone(),
+                    root: owner.root.clone(),
+                    scope: owner.scope.clone(),
                 }
             )
             .is_err()

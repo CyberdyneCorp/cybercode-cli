@@ -262,3 +262,21 @@ directory routing handle. Directory flush now obtains a readable descriptor for
 A Linux-only regression proves the direct descriptor fails with `EBADF`, then
 flushes the pinned directory successfully after its ambient pathname is replaced.
 The remote full storage/save proof must pass before Linux support is accepted.
+
+
+Recovery follow-up adds an atomic bounded owner header before preparation, paged
+restart discovery that works while documents are exclusively open, explicit manual
+versus model-invocation namespaces, and separate exact Session Location/project-root
+bindings (including nested Locations). Explicit discard checkpoints unsaved commands
+without source mutation or deletion of receipts/preimages; unresolved intents refuse
+discard. New regressions cover scope isolation, active-document listing, pagination,
+interrupted preparation, restart discard and idempotent discard retry.
+
+At `38214334`, dedicated Linux and macOS native CI passed. Windows native execution
+exposed startup-container flushing: an inherited data namespace is not a private
+payload directory. The follow-up opens that selected namespace with read/write
+metadata access and uses the existing native namespace flush, while private roots
+use private flushes and deny-delete directory pins. Windows results at the corrected
+head remain pending. Local full core tests before this Windows-specific adjustment
+passed 368 tests (one child helper); the later binary selection passed 51 tests
+(one child helper). These counts include the new recovery regressions.

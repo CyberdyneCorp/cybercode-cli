@@ -16,13 +16,51 @@ use std::sync::Arc;
 pub const MAX_STORAGE: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_RECORD: u64 = 256 * 1024 * 1024;
 
+fn open_data_directory(path: &Path) -> Result<Dir, Error> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
+            FILE_GENERIC_WRITE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        };
+        let file = std::fs::OpenOptions::new()
+            .access_mode(FILE_GENERIC_READ | FILE_GENERIC_WRITE)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+            .map_err(|_| Error::File)?;
+        crate::memory::windows::identity(&file).map_err(|_| Error::File)?;
+        if !file.metadata().map_err(|_| Error::Io)?.is_dir() {
+            return Err(Error::File);
+        }
+        Ok(Dir::from_std_file(file))
+    }
+    #[cfg(not(windows))]
+    {
+        Dir::open_ambient_dir(path, cap_std::ambient_authority()).map_err(|_| Error::File)
+    }
+}
+fn flush_namespace(dir: &Dir) -> Result<(), Error> {
+    #[cfg(windows)]
+    {
+        crate::memory::windows::sync_namespace_directory(
+            &dir.try_clone().map_err(|_| Error::Io)?.into_std_file(),
+        )
+        .map_err(|_| Error::Io)
+    }
+    #[cfg(not(windows))]
+    {
+        flush_dir(dir)
+    }
+}
+
 fn open_root(data: &Path) -> Result<(PathBuf, Dir, Dir), Error> {
     if !data.is_absolute() {
         return Err(Error::Invalid);
     }
     let data_path = data.canonicalize().map_err(|_| Error::File)?;
-    let data =
-        Dir::open_ambient_dir(&data_path, cap_std::ambient_authority()).map_err(|_| Error::File)?;
+    let data = open_data_directory(&data_path)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -41,7 +79,7 @@ fn open_root(data: &Path) -> Result<(PathBuf, Dir, Dir), Error> {
     }
     let root = child(&data, "binary")?;
     flush_dir(&root)?;
-    flush_dir(&data)?;
+    flush_namespace(&data)?;
     Ok((data_path, data, root))
 }
 
@@ -58,6 +96,23 @@ impl StorageRoot {
     }
     pub fn path(&self) -> PathBuf {
         self.data.join("binary")
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(super) fn directory(&self) -> Result<&Dir, Error> {
+        let data = Dir::open_ambient_dir(&self.data, cap_std::ambient_authority())
+            .map_err(|_| Error::File)?;
+        let root = data
+            .open_dir_nofollow("binary")
+            .map_err(|_| Error::Changed)?;
+        if identity(&root)? != identity(&self.root)? {
+            return Err(Error::Changed);
+        }
+        private(
+            &data,
+            &root.try_clone().map_err(|_| Error::Io)?.into_std_file(),
+            true,
+        )?;
+        Ok(&self.root)
     }
     pub fn open(&self, id: &str) -> Result<Store, Error> {
         let store = Store::open(&self.data, id)?;
@@ -127,7 +182,7 @@ fn identity(dir: &Dir) -> Result<crate::memory::windows::FileIdentity, Error> {
 }
 
 #[cfg(unix)]
-fn private(dir: &Dir, file: &File, directory: bool) -> Result<(), Error> {
+pub(super) fn private(dir: &Dir, file: &File, directory: bool) -> Result<(), Error> {
     use std::os::unix::fs::MetadataExt;
     let owner = dir
         .try_clone()
@@ -148,7 +203,7 @@ fn private(dir: &Dir, file: &File, directory: bool) -> Result<(), Error> {
     Ok(())
 }
 #[cfg(windows)]
-fn private(_dir: &Dir, file: &File, directory: bool) -> Result<(), Error> {
+pub(super) fn private(_dir: &Dir, file: &File, directory: bool) -> Result<(), Error> {
     crate::memory::windows::verify_private(file).map_err(|_| Error::File)?;
     if file.metadata().map_err(|_| Error::Io)?.is_dir() != directory {
         return Err(Error::File);
@@ -156,7 +211,7 @@ fn private(_dir: &Dir, file: &File, directory: bool) -> Result<(), Error> {
     Ok(())
 }
 #[cfg(not(any(unix, windows)))]
-fn private(_dir: &Dir, _file: &File, _directory: bool) -> Result<(), Error> {
+pub(super) fn private(_dir: &Dir, _file: &File, _directory: bool) -> Result<(), Error> {
     Err(Error::File)
 }
 
@@ -166,7 +221,7 @@ fn child(parent: &Dir, name: &str) -> Result<Dir, Error> {
     {
         use crate::memory::{MemoryStorageError, windows as native};
         let owner = parent.try_clone().map_err(|_| Error::Io)?.into_std_file();
-        match native::open_private_directory(&owner, name, native::Access::DataWrite) {
+        match native::open_pinned_private_directory(&owner, name, true) {
             Ok(file) => Ok(Dir::from_std_file(file)),
             Err(MemoryStorageError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
                 let created =
@@ -174,7 +229,7 @@ fn child(parent: &Dir, name: &str) -> Result<Dir, Error> {
                 native::verify_private(&created).map_err(|_| Error::File)?;
                 let expected = native::identity(&created).map_err(|_| Error::File)?;
                 drop(created);
-                let file = native::open_private_directory(&owner, name, native::Access::DataWrite)
+                let file = native::open_pinned_private_directory(&owner, name, true)
                     .map_err(|_| Error::File)?;
                 if native::identity(&file).map_err(|_| Error::File)? != expected {
                     return Err(Error::Changed);
@@ -265,6 +320,22 @@ fn read_file(dir: &Dir, name: &str) -> Result<File, Error> {
         Ok(file)
     }
 }
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(super) fn small_record(dir: &Dir, name: &str, limit: u64) -> Result<Vec<u8>, Error> {
+    let file = read_file(dir, name)?;
+    if file.metadata().map_err(|_| Error::Io)?.len() > limit {
+        return Err(Error::Limit);
+    }
+    let mut bytes = vec![];
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| Error::Io)?;
+    if bytes.len() as u64 > limit {
+        return Err(Error::Limit);
+    }
+    Ok(bytes)
+}
+
 fn flush_file(file: &File) -> Result<(), Error> {
     file.sync_all().map_err(|_| Error::Io)?;
     #[cfg(target_os = "macos")]
@@ -354,7 +425,7 @@ impl Store {
         lock.try_lock().map_err(|_| Error::Limit)?;
         flush_dir(&dir)?;
         flush_dir(&root)?;
-        flush_dir(&data)?;
+        flush_namespace(&data)?;
         let store = Self {
             data_path,
             data,

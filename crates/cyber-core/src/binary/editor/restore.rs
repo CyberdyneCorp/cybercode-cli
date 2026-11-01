@@ -160,6 +160,8 @@ mod tests {
         let owner = Owner {
             session_id: "ses_restore".into(),
             directory: root.path().join("project").canonicalize().unwrap(),
+            root: root.path().join("project").canonicalize().unwrap(),
+            scope: DraftScope::Manual,
         };
         std::fs::write(owner.directory.join("bytes"), [0, 255, 128, 27]).unwrap();
         let mut doc = Document::open(&owner.directory, "bytes").unwrap();

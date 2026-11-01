@@ -19,6 +19,8 @@ fn owner(root: &Path) -> Owner {
     Owner {
         session_id: "ses_death".into(),
         directory: root.join("project").canonicalize().unwrap(),
+        root: root.join("project").canonicalize().unwrap(),
+        scope: DraftScope::Manual,
     }
 }
 fn prepare(root: &Path) -> (Owner, String) {

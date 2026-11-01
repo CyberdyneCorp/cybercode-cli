@@ -159,6 +159,10 @@ impl Document {
         Ok((base, target))
     }
 
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     pub fn path(&self) -> PathBuf {
         self.root.join(&self.relative)
     }
