@@ -152,3 +152,25 @@ new platform-specific regression in CI; local macOS results do not establish it.
 Issue #94 remains open until its full scope and acceptance are complete and the
 implementing changes have been correctly merged; merging the viewer alone does
 not meet that condition.
+
+## Dashboard CI response-body regression
+
+The dashboard job `124921966692` at `3fa40abf` passed 29 browser cases and failed
+integration submission while evaluating an assertion's diagnostic message. The
+message eagerly called `response.text()` after Chromium had evicted the body.
+The assertion now uses retained HTTP status metadata, preserving the success
+condition without requesting a disposable body. The integration scenario runs
+both normally and with immediate navigation after submission; the latter freshly
+attaches the owner, reopens the durable queue entry, and completes the original
+host-verification/no-publication checks. With the original assertion, the new
+navigation case reproduces the exact protocol error; with the correction, both
+focused cases pass. No retries, skipped cases or production authority changes are
+introduced. Dashboard E2E typechecking and static artifact currency checks pass.
+
+The complete local browser run finished with 30 passing cases and one failure in
+`transport.spec.ts`'s TLS server-reuse check: the reused CLI reported that its
+server did not become healthy. The same TLS check failed in a focused diagnostic
+run; temporary diagnostic instrumentation was restored. No origin is assigned to
+that failure and no TLS behavior or acceptance assertion is changed by this fix.
+The reported CI failure and its navigation negative control are corrected; local
+full-suite results do not claim all browser acceptance passed.

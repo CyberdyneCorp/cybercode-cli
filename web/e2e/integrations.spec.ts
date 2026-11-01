@@ -4,117 +4,127 @@ import { join, dirname } from "node:path";
 import { test, expect, login, select, tab } from "./browser.js";
 import { eventually, hostile } from "./fixture.js";
 
-test("integration queue verifies actual combined source and renders evidence without publishing", async ({
-  dashboard,
-  page,
-}) => {
-  const git = (args: string[]) => {
-    const result = spawnSync("git", args, {
-      cwd: dashboard.repo,
-      env: {
-        PATH: process.env.PATH,
-        HOME: join(dashboard.root, "home"),
-        GIT_CONFIG_NOSYSTEM: "1",
-        GIT_CONFIG_GLOBAL: join(dashboard.root, "empty-git-config"),
-      },
-      encoding: "utf8",
+for (const navigateAfterSubmit of [false, true]) {
+  test(`integration queue verifies actual combined source and renders evidence without publishing${navigateAfterSubmit ? " after navigation" : ""}`, async ({
+    dashboard,
+    page,
+  }) => {
+    const git = (args: string[]) => {
+      const result = spawnSync("git", args, {
+        cwd: dashboard.repo,
+        env: {
+          PATH: process.env.PATH,
+          HOME: join(dashboard.root, "home"),
+          GIT_CONFIG_NOSYSTEM: "1",
+          GIT_CONFIG_GLOBAL: join(dashboard.root, "empty-git-config"),
+        },
+        encoding: "utf8",
+      });
+      expect(result.status, result.stderr).toBe(0);
+      return result.stdout.trim();
+    };
+    const target = git(["symbolic-ref", "--short", "HEAD"]);
+    git(["checkout", "--quiet", "-b", "integration-contributor"]);
+    await writeFile(join(dashboard.repo, "contribution.txt"), hostile);
+    git(["add", "contribution.txt"]);
+    git(["commit", "--quiet", "-m", "browser contribution"]);
+    const commit = git(["rev-parse", "HEAD"]);
+    git(["checkout", "--quiet", target]);
+    const configPath = join(dashboard.home, "config/cyber.json");
+    const config = JSON.parse(await readFile(configPath, "utf8"));
+    config.permissions = {
+      bash: "allow",
+      read: "allow",
+      edit: "allow",
+      worktree: "allow",
+      external_directory: "allow",
+    };
+    await writeFile(configPath, JSON.stringify(config));
+    const owner = await dashboard.session("Integration owner");
+    await login(page, dashboard);
+    await select(page, "Integration owner");
+    await tab(page, "Integrations");
+    const publications: string[] = [];
+    page.on("request", (request) => {
+      if (request.url().endsWith("/publish")) publications.push(request.url());
     });
-    expect(result.status, result.stderr).toBe(0);
-    return result.stdout.trim();
-  };
-  const target = git(["symbolic-ref", "--short", "HEAD"]);
-  git(["checkout", "--quiet", "-b", "integration-contributor"]);
-  await writeFile(join(dashboard.repo, "contribution.txt"), hostile);
-  git(["add", "contribution.txt"]);
-  git(["commit", "--quiet", "-m", "browser contribution"]);
-  const commit = git(["rev-parse", "HEAD"]);
-  git(["checkout", "--quiet", target]);
-  const configPath = join(dashboard.home, "config/cyber.json");
-  const config = JSON.parse(await readFile(configPath, "utf8"));
-  config.permissions = {
-    bash: "allow",
-    read: "allow",
-    edit: "allow",
-    worktree: "allow",
-    external_directory: "allow",
-  };
-  await writeFile(configPath, JSON.stringify(config));
-  const owner = await dashboard.session("Integration owner");
-  await login(page, dashboard);
-  await select(page, "Integration owner");
-  await tab(page, "Integrations");
-  const publications: string[] = [];
-  page.on("request", (request) => {
-    if (request.url().endsWith("/publish")) publications.push(request.url());
+    await page.getByLabel("Integration manifest (JSON)", { exact: true }).fill(
+      JSON.stringify({
+        target_branch: target,
+        contributions: [{ label: "browser", commit }],
+        checks: [{ argv: ["true"] }],
+        reviewer_model: "missing/model",
+      }),
+    );
+    const submitted = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname.endsWith("/workflows/integrations"),
+      { timeout: 15000 },
+    );
+    await page
+      .getByRole("button", { name: "Submit integration", exact: true })
+      .click();
+    const submitResponse = await submitted;
+    if (navigateAfterSubmit) await page.goto("about:blank");
+    // Chromium may evict the body on navigation; status metadata remains available.
+    expect(submitResponse.ok(), `Integration submission returned HTTP ${submitResponse.status()}`).toBe(true);
+    const queued = await eventually(
+      () =>
+        dashboard.api<{ id: string; status: string; session_id: string }[]>(
+          "/workflows/integrations",
+        ),
+      (rows) => rows.some((row) => row.session_id === owner),
+    );
+    const batch = queued.find((row) => row.session_id === owner)!;
+    if (navigateAfterSubmit) {
+      await login(page, dashboard);
+      await select(page, "Integration owner");
+      await tab(page, "Integrations");
+      await page.getByRole("button", { name: new RegExp(`^${batch.id} ·`) }).click();
+    }
+    await expect(
+      page.getByRole("heading", { name: new RegExp(batch.id) }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Run a new attempt", exact: true })
+      .click();
+    await eventually(
+      () =>
+        dashboard.api<{ status: string }>(`/workflows/integrations/${batch.id}`),
+      (row) => row.status === "ready",
+      30_000,
+    );
+    await page
+      .getByRole("button", { name: "Refresh selected evidence", exact: true })
+      .click();
+    await expect(
+      page.locator("pre", { hasText: "review_unavailable" }),
+    ).toContainText('"outcome": "passed"');
+    await expect(
+      page.locator("pre", { hasText: "review_unavailable" }),
+    ).toContainText(hostile.split("\n")[0]!);
+    await expect(
+      page.getByRole("button", {
+        name: "Publish reviewed integration",
+        exact: true,
+      }),
+    ).toBeDisabled();
+    expect(publications).toEqual([]);
+    expect(await page.locator("iframe").count()).toBe(0);
+    expect(await page.evaluate(() => "__dashboardPwned" in globalThis)).toBe(
+      false,
+    );
+    await page
+      .getByRole("button", { name: "Cancel integration", exact: true })
+      .click();
+    await eventually(
+      () =>
+        dashboard.api<{ status: string }>(`/workflows/integrations/${batch.id}`),
+      (row) => row.status === "cancelled",
+    );
   });
-  await page.getByLabel("Integration manifest (JSON)", { exact: true }).fill(
-    JSON.stringify({
-      target_branch: target,
-      contributions: [{ label: "browser", commit }],
-      checks: [{ argv: ["true"] }],
-      reviewer_model: "missing/model",
-    }),
-  );
-  const submitted = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname.endsWith("/workflows/integrations"),
-    { timeout: 15000 },
-  );
-  await page
-    .getByRole("button", { name: "Submit integration", exact: true })
-    .click();
-  const submitResponse = await submitted;
-  expect(submitResponse.ok(), await submitResponse.text()).toBe(true);
-  const queued = await eventually(
-    () =>
-      dashboard.api<{ id: string; status: string; session_id: string }[]>(
-        "/workflows/integrations",
-      ),
-    (rows) => rows.some((row) => row.session_id === owner),
-  );
-  const batch = queued.find((row) => row.session_id === owner)!;
-  await expect(
-    page.getByRole("heading", { name: new RegExp(batch.id) }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Run a new attempt", exact: true })
-    .click();
-  await eventually(
-    () =>
-      dashboard.api<{ status: string }>(`/workflows/integrations/${batch.id}`),
-    (row) => row.status === "ready",
-    30_000,
-  );
-  await page
-    .getByRole("button", { name: "Refresh selected evidence", exact: true })
-    .click();
-  await expect(
-    page.locator("pre", { hasText: "review_unavailable" }),
-  ).toContainText('"outcome": "passed"');
-  await expect(
-    page.locator("pre", { hasText: "review_unavailable" }),
-  ).toContainText(hostile.split("\n")[0]!);
-  await expect(
-    page.getByRole("button", {
-      name: "Publish reviewed integration",
-      exact: true,
-    }),
-  ).toBeDisabled();
-  expect(publications).toEqual([]);
-  expect(await page.locator("iframe").count()).toBe(0);
-  expect(await page.evaluate(() => "__dashboardPwned" in globalThis)).toBe(
-    false,
-  );
-  await page
-    .getByRole("button", { name: "Cancel integration", exact: true })
-    .click();
-  await eventually(
-    () =>
-      dashboard.api<{ status: string }>(`/workflows/integrations/${batch.id}`),
-    (row) => row.status === "cancelled",
-  );
-});
+}
 
 test("a server crash during native verification remains unknown and never reexecutes the check", async ({
   dashboard,
