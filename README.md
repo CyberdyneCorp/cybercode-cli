@@ -70,7 +70,7 @@ The password grants **owner access** and stays in page memory. Off-loopback acce
 ./target/debug/cyber workflows run audit --wait    # run a bundled audit
 ./target/debug/cyber service status                # inspect the shared server
 ./target/debug/cyber computer status               # inspect native support and OS consent
-./target/debug/cyber hex fixtures/header.bin        # inspect exact bytes without inference
+./target/debug/cyber hex fixtures/header.bin       # inspect exact bytes without inference
 ./target/debug/cyber doctor                        # check your setup
 ./target/debug/cyber upgrade                       # verified upgrade of an installed release
 ```
@@ -81,7 +81,11 @@ For independent patch attempts, host-recorded tests and a separate read-only jud
 
 Experimental [native computer use](docs/computer-use.md) adds macOS 14+ application/display screenshots and input with expiring owner grants, CLI/browser owner controls, private evidence and emergency Stop. Off by default; controlled macOS capture, input and Stop acceptance passed. Other layouts and signed distribution remain release checks.
 
-The [binary workspace](docs/binary-editor.md) provides paged hex/ASCII viewing, literal search, exact goto, bookmarks and an LE/BE inspector. Editing and recoverable saves remain in progress.
+The [binary workspace](docs/binary-editor.md) provides read-only, paged hex/ASCII viewing, literal hex/UTF-8 search, exact goto, bookmarks, byte copying and an LE/BE inspector. Open it with `cyber hex <path>`, `/hex <path>`, or `x` on an explorer file, without starting inference. Session read permissions apply. Staged editing, draft undo/redo, recoverable saves, model binary operations and snapshot/hooks integration remain tracked in [#94](https://github.com/CyberdyneCorp/cybercode-cli/issues/94).
+
+![Binary hex workspace with a shared hex/ASCII cursor and little-endian byte inspector](docs/screenshots/binary-hex.png)
+
+*Actual TUI capture of a synthetic 512-byte fixture, opened with `cyber hex fixtures/firmware.bin --offset 0x20 --read-only`.*
 
 ## Sessions and people working together
 
@@ -146,6 +150,7 @@ mindmap
       MCP client and server
       Hooks and skills
       Image and PDF input
+      Binary hex/ASCII viewing
       Output styles and model-family prompts
     Collaboration
       Local Session messages
@@ -187,6 +192,7 @@ The TUI, web dashboard, CLI, SDK and MCP clients call one server. That server en
 | Configure providers, permissions, MCP or Sessions | [Local core guide](docs/local-core-guide.md) |
 | Send traces, metrics and logs to my OpenTelemetry collector | [OpenTelemetry export](docs/local-core-guide.md#opentelemetry-export) · `cyber telemetry show` |
 | Use the browser dashboard and remote approvals | [Dashboard guide](docs/web-dashboard.md) |
+| Inspect binary file bytes without inference | [Binary workspace](docs/binary-editor.md) |
 | Enable native screenshots and input | [Native computer use](docs/computer-use.md) |
 | Run agents across machines or a group project | [Direct peers](docs/peers.md) · [Project hub](docs/collaboration.md) |
 | Build or customize a workflow | [Workflow guide](docs/local-core-guide.md#workflows-p2-m21) · [Verified solve](docs/verified-workflows.md) · [Integration queue](docs/verified-integrations.md) |

@@ -43,6 +43,8 @@ Actions use the `hex` keybinding context; explorer entry uses `explorer_hex` in
 A live revision describes an **observed metadata generation**, not an immutable
 whole-file digest. Pages carry their own SHA-256. Replacement of a file or parent,
 or an observed metadata change, invalidates the document; close and reopen it.
+On Windows, retained native directory handles can prevent a parent directory from
+being renamed until the view closes.
 Live search is best-effort against external writers. Mutation will require a
 separately prepared immutable base and exact content evidence.
 

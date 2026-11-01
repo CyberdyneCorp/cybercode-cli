@@ -131,3 +131,24 @@ The SHA-256 dependency is a normal TUI dependency, not only a test dependency.
   the final bounds refinement.
 - Linux/Windows native cases and repository-wide remote CI remain pending. This
   is review of a live-view increment, not acceptance of the complete editor.
+
+## PR #95 Windows regression and README capture
+
+The Windows job at head `abf43ad1` passed 3,807 tests and failed the new parent
+replacement test before its validation assertion: renaming a retained directory
+returned `ERROR_SHARING_VIOLATION` (32). The test assumed Unix rename semantics.
+Production pinning remains unchanged. The regression now distinguishes Unix
+replacement detection from Windows prevention: the native Windows case requires
+rename refusal, verifies the original bytes, closes the document, then requires a
+successful rename and reopening of the replacement with the original preserved.
+The Windows test remains selected by the existing core nextest profile.
+
+Local macOS verification after the change: nine binary core tests passed and
+core all-target Clippy passed. The screenshot harness's 11 tests passed; its new
+`--only hex` path was exercised against the real executable and its PNG inspected.
+README feature claims now explicitly match the read-only viewer, including actual
+entry points and unfinished #94 scope. Native Windows execution must confirm the
+new platform-specific regression in CI; local macOS results do not establish it.
+Issue #94 remains open until its full scope and acceptance are complete and the
+implementing changes have been correctly merged; merging the viewer alone does
+not meet that condition.

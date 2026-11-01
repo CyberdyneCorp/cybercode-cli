@@ -158,7 +158,7 @@ fn overlapping_search_is_bounded_and_cancellable() {
 }
 
 #[test]
-fn nonregular_traversal_and_parent_replacement_are_refused() {
+fn nonregular_and_traversal_are_refused() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
     std::fs::create_dir(root.join("nested")).unwrap();
@@ -166,6 +166,15 @@ fn nonregular_traversal_and_parent_replacement_are_refused() {
     for path in ["", ".", "..", "/etc/passwd", "nested"] {
         assert!(Document::open(&root, path).is_err(), "{path}");
     }
+}
+
+#[cfg(not(windows))]
+#[test]
+fn parent_replacement_and_alias_retargeting_are_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir(root.join("nested")).unwrap();
+    std::fs::write(root.join("nested/bytes"), b"original").unwrap();
     let mut doc = Document::open(&root, "nested/bytes").unwrap();
     std::fs::rename(root.join("nested"), root.join("old")).unwrap();
     std::fs::create_dir(root.join("nested")).unwrap();
@@ -200,6 +209,37 @@ fn nonregular_traversal_and_parent_replacement_are_refused() {
         assert!(Document::open(&root, "outside").is_err());
         assert!(Document::open(&root, "/dev/zero").is_err());
     }
+}
+
+#[cfg(windows)]
+#[test]
+fn native_windows_parent_pin_prevents_replacement_and_releases_on_close() {
+    use windows_sys::Win32::Foundation::ERROR_SHARING_VIOLATION;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir(root.join("nested")).unwrap();
+    std::fs::write(root.join("nested/bytes"), b"original").unwrap();
+    let mut doc = Document::open(&root, "nested/bytes").unwrap();
+    let revision = doc.metadata().revision;
+    let refused = std::fs::rename(root.join("nested"), root.join("old")).unwrap_err();
+    assert_eq!(refused.raw_os_error(), Some(ERROR_SHARING_VIOLATION as i32));
+    assert!(!root.join("old").exists());
+    assert_eq!(
+        doc.page(&revision, Offset(0), 8).unwrap().bytes,
+        b"original"
+    );
+    drop(doc);
+    // Positive control: closing the document releases the native directory pin.
+    std::fs::rename(root.join("nested"), root.join("old")).unwrap();
+    std::fs::create_dir(root.join("nested")).unwrap();
+    std::fs::write(root.join("nested/bytes"), b"replaced").unwrap();
+    let mut reopened = Document::open(&root, "nested/bytes").unwrap();
+    let revision = reopened.metadata().revision;
+    assert_eq!(
+        reopened.page(&revision, Offset(0), 8).unwrap().bytes,
+        b"replaced"
+    );
+    assert_eq!(std::fs::read(root.join("old/bytes")).unwrap(), b"original");
 }
 
 #[cfg(target_os = "macos")]

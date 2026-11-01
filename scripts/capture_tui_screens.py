@@ -469,7 +469,30 @@ def capture(env):
         return runs and all(r.get("status") not in ("running", "queued") for r in runs)
     wait("runs finished", finished, 120, step=1.0, tui=tui)
     tui.close()
+    capture_hex(env)
 
+
+
+def capture_hex(env):
+    """Capture an actual read-only byte view with synthetic, non-executable data."""
+    relative = "fixtures/firmware.bin"
+    path = os.path.join(env.project, relative)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    payload = bytearray(range(256)) * 2
+    header = b"CYBERCODE\x00FW\x01\x00\x00\x00HEX/ASCII VIEW"
+    payload[:len(header)] = header
+    payload[32:40] = bytes([0, 255, 128, 27, 120, 86, 52, 18])
+    with open(path, "wb") as f:
+        f.write(payload)
+    env.tui_config("cyber", "dark")
+    # The embedded server belongs to this PTY; cleanup cannot leave a daemon behind.
+    tui = env.launch("--embedded", "hex", relative, "--offset", "0x20", "--read-only", cols=140, rows=36)
+    wait("binary page and inspector", lambda: (
+        relative in tui.text() and "offset 0x20 / 32" in tui.text()
+        and "u16 65280" in tui.text() and "loading…" not in tui.text()
+    ), 30, tui=tui)
+    env.shot(tui, "binary-hex.png")
+    tui.close()
 
 
 def main():
@@ -477,6 +500,7 @@ def main():
     parser.add_argument("--binary", default=os.path.join(REPO, "target", "debug", "cyber"))
     parser.add_argument("--out", default=os.path.join(REPO, "docs", "screenshots"))
     parser.add_argument("--chrome", default=os.environ.get("CYBER_SHOTS_CHROME", CHROME))
+    parser.add_argument("--only", choices=["hex"], help="capture just the binary hex workspace")
     args = parser.parse_args()
     if not os.path.exists(args.chrome):
         sys.exit(f"Chrome not found at {args.chrome}; pass --chrome or set CYBER_SHOTS_CHROME. Skipping the capture.")
@@ -485,7 +509,13 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     env = Env(os.path.abspath(args.binary), args.out, args.chrome)
     try:
-        capture(env)
+        if args.only == "hex":
+            env.machine_fixture()
+            env.project_fixture()
+            env.config(env.start_provider())
+            capture_hex(env)
+        else:
+            capture(env)
     finally:
         env.close()
 
