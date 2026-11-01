@@ -439,6 +439,35 @@ mod tests {
     }
     #[cfg(target_os = "linux")]
     #[test]
+    #[ignore = "requires /dev/shm on a distinct filesystem; run explicitly in native CI"]
+    fn native_cross_filesystem_replacement_refuses_without_copy_delete_fallback() {
+        let (root, target, _private) = setup();
+        let staging = tempfile::Builder::new()
+            .prefix("cyber-binary-cross-fs-")
+            .tempdir_in("/dev/shm")
+            .unwrap();
+        let private = Dir::open_ambient_dir(staging.path(), cap_std::ambient_authority()).unwrap();
+        assert_ne!(
+            std::fs::metadata(root.path()).unwrap().dev(),
+            std::fs::metadata(staging.path()).unwrap().dev(),
+            "proof requires distinct filesystems"
+        );
+        std::fs::write(staging.path().join("replacement"), b"after!").unwrap();
+        assert!(matches!(target.same_filesystem(&private), Err(Error::File)));
+        assert!(matches!(
+            exchange(&private, "replacement", &target),
+            Err(Error::File)
+        ));
+        assert_eq!(
+            std::fs::read(root.path().join("target")).unwrap(),
+            b"before"
+        );
+        assert_eq!(private.read("replacement").unwrap(), b"after!");
+        target.validate().unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn native_linux_posix_acl_is_fingerprinted_and_preserved_without_data_copy() {
         let (root, target, _private) = setup();
         let before = target.metadata;

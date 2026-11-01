@@ -221,3 +221,33 @@ async fn gc_runs_on_shadow_repositories() {
     r.snaps.gc().await;
     assert!(r.data.join("snapshot").exists());
 }
+
+#[tokio::test]
+async fn snapshot_restore_waits_for_the_shared_workspace_mutation_owner() {
+    use std::time::Duration;
+    let r = Repo::new();
+    let before = r.track().await;
+    let original = std::fs::read(r.root.join("a.txt")).unwrap();
+    std::fs::write(r.root.join("a.txt"), "changed by an editor\n").unwrap();
+    let after = r.track().await;
+    let lock = cyber_server::workspace::mutation_lock(&r.root).unwrap();
+    let held = lock.lock_owned().await;
+    let directory = r.dir();
+    let restore = r.snaps.restore(&directory, &before, &after);
+    tokio::pin!(restore);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut restore)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read(r.root.join("a.txt")).unwrap(),
+        b"changed by an editor\n"
+    );
+    drop(held);
+    tokio::time::timeout(Duration::from_secs(5), restore)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(std::fs::read(r.root.join("a.txt")).unwrap(), original);
+}

@@ -20,8 +20,8 @@ staged-edit/save/model/integration requirements below.
 
 ## 3. Editing, review, save and recovery
 
-- [ ] 3.1 Add expected-revision overwrite/insert/delete splice batches, exact preimage checks, bounded payloads and atomic draft undo/redo.
-- [ ] 3.2 Add stable byte-diff review with original offsets, base/proposed fingerprints, length/changed-range totals, metadata and effect disclosure.
+- [x] 3.1 Add expected-revision overwrite/insert/delete splice batches, exact preimage checks, bounded payloads and atomic draft undo/redo.
+- [x] 3.2 Add stable byte-diff review with original offsets, base/proposed fingerprints, length/changed-range totals, metadata and effect disclosure.
 - [ ] 3.3 Implement edit permission/Mode/checkout lease gates, capacity reservation and journaled save with operation idempotency and queryable acknowledged/conflict/unknown outcomes.
 - [ ] 3.4 Preserve dirty drafts and unresolved receipts over disconnect/restart; add explicit discard and reviewed Restore Last Save without unguarded overwrite.
 - [ ] 3.5 Test stale revision/review, same-size/same-mtime edits, all-or-nothing multi-splice changes, concurrent Sessions/external writers, cancel/kill cuts, retry identity and backup integrity.

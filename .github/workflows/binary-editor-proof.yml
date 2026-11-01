@@ -40,6 +40,12 @@ jobs:
         run: |
           set -euo pipefail
           cargo test --locked -p cyber-core --lib binary:: -- --nocapture 2>&1 | tee binary-editor-proof.log
+      - name: Prove cross-filesystem refusal on actual Linux mounts
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked -p cyber-core --lib binary::native::tests::native_cross_filesystem_replacement_refuses_without_copy_delete_fallback -- --ignored --exact --nocapture 2>&1 | tee -a binary-editor-proof.log
       - name: Retain native evidence
         if: always()
         uses: actions/upload-artifact@v4

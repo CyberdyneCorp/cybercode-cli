@@ -936,3 +936,58 @@ async fn binary_private_root_is_hidden_before_drafts_exist_even_with_readable_pa
     sandbox.readable_paths.push(private.clone());
     assert!(sandbox.unreadable(&f.root.join("home")).contains(&private));
 }
+
+#[tokio::test]
+async fn owner_binary_edit_permission_remains_manual_in_auto_mode_without_inference() {
+    let f = Fixture::with(json!({"read": "allow", "edit": "ask"})).await;
+    let (status, session) = f
+        .send(
+            "POST",
+            "/sessions",
+            Some(json!({"model": "test/main", "mode": "auto"})),
+        )
+        .await;
+    assert_eq!(status, 201, "{session}");
+    let id = session["data"]["id"].as_str().unwrap();
+    let turn = f
+        ._app
+        .runtime
+        .file_turn(Some(id), &f.project)
+        .await
+        .unwrap();
+    let runtime = f._app.runtime.clone();
+    let path = f.project.join("blob.bin");
+    let authorize = tokio::spawn(async move { runtime.authorize_file(&turn, "edit", &path).await });
+    let mut asked = vec![];
+    for _ in 0..500 {
+        asked = pending(&f, id).await;
+        if !asked.is_empty() || authorize.is_finished() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(asked.len(), 1, "manual permission was not requested");
+    assert_eq!(
+        asked[0]["metadata"]["requires_confirmation"], true,
+        "{asked:?}"
+    );
+    assert!(
+        f._model.requests().is_empty(),
+        "owner operation invoked a provider"
+    );
+    let request = asked[0]["id"].as_str().unwrap();
+    let (status, result) = f
+        .send(
+            "POST",
+            &format!("/sessions/{id}/permissions/{request}/reply"),
+            Some(json!({"reply": "once"})),
+        )
+        .await;
+    assert_eq!(status, 204, "{result}");
+    authorize.await.unwrap().unwrap();
+    assert!(f._model.requests().is_empty());
+    assert_eq!(
+        std::fs::read(f.project.join("blob.bin")).unwrap(),
+        [0, 159, 146, 150]
+    );
+}

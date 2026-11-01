@@ -280,3 +280,38 @@ use private flushes and deny-delete directory pins. Windows results at the corre
 head remain pending. Local full core tests before this Windows-specific adjustment
 passed 368 tests (one child helper); the later binary selection passed 51 tests
 (one child helper). These counts include the new recovery regressions.
+
+
+Shared mutation admission now uses one bounded process-local workspace lock for
+Git snapshot capture/restore and in-process text write/edit/patch operations. Git
+Locations below the same checkout share its canonical root. This is additional to
+existing per-path and native Location ownership, and will be retained by binary
+save workers through settlement. It does not claim coordination with arbitrary
+external processes. The lock is released before LSP diagnostic feedback.
+
+Local regressions passed: two retained-worker/checkout identity tests, two actual
+text-write/patch serialization tests (including stale preimage refusal after a
+queued external edit), and all nine real Git snapshot integration tests including
+restore waiting for the shared workspace owner. Native save admission is still not
+exposed by production routes.
+
+
+The file-admission host now treats `edit` as a mutation rather than a synthetic
+read. Current/ancestor Plan ceilings, declared edit rules, ownership mutation paths,
+read-only sandbox profiles, hidden paths and protected workspace metadata remain
+effective. Unknown file actions refuse. The new gate regression includes successful
+read/edit controls and explicit Plan/private/read-only refusals without writing the
+source. All three text/patch/admission tests passed; they are included in the native
+Windows curated suite. Production binary writes are still not activated.
+
+
+Dedicated native proof at `2f8ae42f` passed on Linux, macOS and Windows. This accepts
+core storage/draft proof on Windows, not Windows replacement support. An additional
+explicit Linux `/dev/shm` cross-filesystem refusal proof is configured for the next
+CI run; its required distinct-mount negative control cannot be inferred locally.
+
+Owner edit authorization marks its permission review as requiring confirmation,
+so an owner operation cannot invoke the Auto-mode classifier. A production App
+regression verifies the exact manual permission request and zero provider requests
+before/after approval. Broad core task items 3.1/3.2 now reflect implemented draft
+and review engines. Save admission and all delivery/integration tasks remain open.
