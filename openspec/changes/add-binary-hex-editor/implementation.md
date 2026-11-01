@@ -174,3 +174,71 @@ run; temporary diagnostic instrumentation was restored. No origin is assigned to
 that failure and no TLS behavior or acceptance assertion is changed by this fix.
 The reported CI failure and its navigation negative control are corrected; local
 full-suite results do not claim all browser acceptance passed.
+
+
+## Follow-up increment: draft and native save core (2026-11-01)
+
+PR #95 merged at `9d3e708a`. The unchanged merged-main baseline selected nine
+`cyber-core binary::` tests on macOS arm64; all passed. The follow-up adds core
+primitives only. Production owner routes and the CLI/TUI remain read-only until
+fresh authority, private-root admission, recovery and integration are wired.
+
+The core piece table stages expected-byte overwrite/insert/delete batches in
+original coordinates, with monotonic revisions, atomic undo/redo, bounded history
+and restart replay. Reviews hash both private base and proposed content, page
+original-offset ranges and disclose metadata/native replacement effects. Equivalent
+hex case and independent splice order share one operation payload identity.
+
+Private storage retains pinned directory/file identities, private permissions/ACLs,
+exclusive document locks, bounded records and disk budgets. Private base creation
+and verification stream in bounded chunks and honor cancellation. Atomic record
+publication flushes file and directory; uncertain publication fences further IO
+until reopen. Existing unsafe directories are refused rather than repaired.
+
+Native save preparation verifies live identity, metadata and full source digest,
+streams a private replacement and persists an intent before one native exchange.
+Commit rechecks the source content after preparation. Acknowledgement requires
+installed and displaced identities, full content proofs and durable namespace
+flushes. A response loss or pending intent never automatically re-executes exchange.
+Unknown outcomes preserve evidence. Restore Last Save reviews a separate retained
+preimage and refuses dirty drafts or externally changed source content.
+
+Core scope does not supply application authorization: callers must retain fresh
+owner/read+edit/Mode admission and lifecycle/checkout leases through settlement.
+It does not activate a model tool, HTTP mutations or notifications. Private-root
+protection before child launch, owner/model isolation, discard/retention, snapshot
+integration and the acknowledged observation outbox are still required.
+
+### Candidate native storage matrix
+
+| Platform | Core proof | Production editing admission |
+| --- | --- | --- |
+| macOS/APFS, same filesystem | Native exchange, metadata/xattrs/executable bits and extended ACL, process-death recovery exercised locally | Not activated; integration gates remain |
+| Linux, same filesystem | Native exchange and POSIX ACL/xattr preservation implemented; native CI pending | Not activated; filesystem/platform evidence required |
+| Windows | Private DACL/frozen-base and draft support implemented; native CI pending; no Windows replacement implementation | Viewer remains available; editing unsupported |
+| Cross-filesystem or missing exchange/private storage guarantees | Refuse preparation; no copy-and-delete fallback | Unsupported for editing |
+
+Special files, symlink mutation aliases, multi-link targets, read-only targets,
+privileged metadata that cannot be preserved, unsafe private ACLs and exceeded
+budgets are refused. The native exchange protocol does not claim compare-and-swap
+against arbitrary outside writers; failures after intent remain queryable unknown
+outcomes with retained evidence.
+
+Local verification at this increment: `cargo test --locked -p cyber-core --lib`
+passed 363 tests with one ignored child helper. The parent crash tests explicitly
+execute that helper in owned subprocesses at preparation/intent/exchange/ack cuts.
+The binary selection passed 45 tests before the final owner/Location regression;
+the full run includes it. Strict OpenSpec validation passed all 114 items.
+Formatting, diff whitespace and core Clippy checks passed. Native Linux/Windows
+workflow results remain pending until CI executes; they are not inferred from
+macOS.
+
+Code/security review used the code-review skill with the repository's existing
+core/native boundary. Findings resolved during implementation: full-content
+revalidation at commit after preparation, private-base integrity verification at
+review, cancellation inside private verification, canonical operation payloads,
+and owner/Location binding at creation/reopen. Regression tests cover these paths.
+The native adapter and its owned macOS ACL allocation wrappers were inspected for
+path admission, bounded allocations, identity retention and native resource disposal.
+This core increment makes no production authorization or full-editor acceptance
+claim; the integration gaps listed above remain explicit delivery requirements.
