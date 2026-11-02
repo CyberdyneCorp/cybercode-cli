@@ -640,7 +640,7 @@ during approval and separation from the manual draft namespace. Strict OpenSpec
 validation passed all 114 items. All six existing server-worker regressions and
 core/server/tools all-target Clippy passed. Review identified and corrected the
 production AppHost forwarding of the independent worker lease; its dedicated
-regression and app all-target Clippy are being checked before merge.
+regression and app all-target Clippy passed. Formatting and diff checks passed.
 
 This is not full #94 acceptance. Dedicated model receipt recovery, configured
 retention/checkpoint/rewind adapters, remaining UI recovery/accessibility and named
