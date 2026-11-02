@@ -402,7 +402,7 @@ impl<B: ImmutableBase> Draft<B> {
         Ok(format!("{:x}", hash.finalize()))
     }
 
-    fn ranges(&self) -> Vec<(u64, u64, u64, u64)> {
+    pub(super) fn ranges(&self) -> Vec<(u64, u64, u64, u64)> {
         let (mut original, mut after, mut start) = (0, 0, 0);
         let mut ranges = Vec::new();
         for piece in &self.pieces {
@@ -452,7 +452,12 @@ impl<B: ImmutableBase> Draft<B> {
         proof.update(&proposed_sha256);
         let (mut original_bytes, mut proposed_bytes, mut count) = (0, 0, 0);
         let mut ranges = Vec::new();
-        for (before, removed, after, inserted) in self.ranges() {
+        let candidates = if proposed_sha256 == self.base.sha256() {
+            vec![]
+        } else {
+            self.ranges()
+        };
+        for (before, removed, after, inserted) in candidates {
             let before_sha256 = self.range_hash(true, before, removed, &cancelled)?;
             let after_sha256 = self.range_hash(false, after, inserted, &cancelled)?;
             if removed == inserted && before_sha256 == after_sha256 {

@@ -135,6 +135,36 @@ impl StorageRoot {
         let data = open_data_directory(&self.data)?;
         Store::locked(self.data.clone(), data, root, dir, id)
     }
+    /// Read acknowledged immutable evidence without acquiring or manufacturing a
+    /// mutation lock. Only the saved-version service can select these object names.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(super) fn saved_base(
+        &self,
+        document: &str,
+        name: &str,
+        length: u64,
+        digest: &str,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Base, Error> {
+        component(document)?;
+        let root = self.directory()?;
+        let dir = root.open_dir_nofollow(document).map_err(|_| Error::File)?;
+        private(
+            root,
+            &dir.try_clone().map_err(|_| Error::Io)?.into_std_file(),
+            true,
+        )?;
+        let dir = Arc::new(dir);
+        let base = immutable_base(dir.clone(), name, length, digest, cancelled)?;
+        let current = root
+            .open_dir_nofollow(document)
+            .map_err(|_| Error::Changed)?;
+        if identity(&current)? != identity(&dir)? {
+            return Err(Error::Changed);
+        }
+        self.directory()?;
+        Ok(base)
+    }
     /// A writable project containing private storage could rename or inspect the
     /// staging directory under its filesystem grant. Such editing is unsupported.
     pub fn admit_project(&self, project: &Path) -> Result<(), Error> {
@@ -707,58 +737,69 @@ impl Store {
         digest: &str,
         cancelled: impl Fn() -> bool,
     ) -> Result<Base, Error> {
+        self.validate()?;
+        let base = immutable_base(self.dir.clone(), name, length, digest, cancelled)?;
+        self.validate()?;
+        Ok(base)
+    }
+}
+fn immutable_base(
+    dir: Arc<Dir>,
+    name: &str,
+    length: u64,
+    digest: &str,
+    cancelled: impl Fn() -> bool,
+) -> Result<Base, Error> {
+    if cancelled() {
+        return Err(Error::Cancelled);
+    }
+    if length > MAX_EDIT_SIZE {
+        return Err(Error::Limit);
+    }
+    let file = read_file(&dir, name)?;
+    if file.metadata().map_err(|_| Error::Io)?.len() != length {
+        return Err(Error::Changed);
+    }
+    #[cfg(windows)]
+    let file = {
+        let expected = crate::memory::windows::identity(&file).map_err(|_| Error::File)?;
+        drop(file);
+        crate::memory::windows::freeze_private_file(
+            &dir.try_clone().map_err(|_| Error::Io)?.into_std_file(),
+            name,
+            expected,
+        )
+        .map_err(|_| Error::File)?
+    };
+    let before = generation(&file)?;
+    let mut observed = Sha256::new();
+    let mut at = 0;
+    while at < length {
         if cancelled() {
             return Err(Error::Cancelled);
         }
-        self.validate()?;
-        if length > MAX_EDIT_SIZE {
-            return Err(Error::Limit);
-        }
-        let file = read_file(&self.dir, name)?;
-        if file.metadata().map_err(|_| Error::Io)?.len() != length {
-            return Err(Error::Changed);
-        }
-        #[cfg(windows)]
-        let file = {
-            let expected = crate::memory::windows::identity(&file).map_err(|_| Error::File)?;
-            drop(file);
-            crate::memory::windows::freeze_private_file(
-                &self.dir.try_clone().map_err(|_| Error::Io)?.into_std_file(),
-                name,
-                expected,
-            )
-            .map_err(|_| Error::File)?
-        };
-        let before = generation(&file)?;
-        let mut observed = Sha256::new();
-        let mut at = 0;
-        while at < length {
-            if cancelled() {
-                return Err(Error::Cancelled);
-            }
-            let take = (length - at).min(DEFAULT_PAGE as u64) as usize;
-            let bytes = positioned(&file, at, take)?;
-            observed.update(&bytes);
-            at += take as u64;
-        }
-        if format!("{:x}", observed.finalize()) != digest {
-            return Err(Error::Changed);
-        }
-        let observed = generation(&file)?;
-        if before != observed {
-            return Err(Error::Changed);
-        }
-        Ok(Base {
-            inner: Arc::new(BaseInner {
-                file,
-                _dir: self.dir.clone(),
-                name: name.into(),
-                length,
-                digest: digest.into(),
-                generation: observed,
-            }),
-        })
+        let take = (length - at).min(DEFAULT_PAGE as u64) as usize;
+        let bytes = positioned(&file, at, take)?;
+        observed.update(&bytes);
+        at += take as u64;
     }
+    if format!("{:x}", observed.finalize()) != digest {
+        return Err(Error::Changed);
+    }
+    let observed = generation(&file)?;
+    if before != observed {
+        return Err(Error::Changed);
+    }
+    Ok(Base {
+        inner: Arc::new(BaseInner {
+            file,
+            _dir: dir.clone(),
+            name: name.into(),
+            length,
+            digest: digest.into(),
+            generation: observed,
+        }),
+    })
 }
 fn positioned(file: &File, offset: u64, length: usize) -> Result<Vec<u8>, Error> {
     let mut bytes = vec![0; length];
