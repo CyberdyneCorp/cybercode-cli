@@ -1115,6 +1115,25 @@ async fn binary_reviewed_save_retry_and_restore_use_the_production_router_withou
     let (code,edited)=f.send("POST",&format!("{path}/patches"),Some(json!({"session_id":session,"operation_id":"patch_save",
         "revision":prepared["data"]["revision"],"splices":[{"offset":"1","delete_length":"2","expected_hex":"9f92","insert_hex":"ff0041"}]}))).await;
     assert_eq!(code, 200, "{edited}");
+    let other_session = f.session().await;
+    let reader = f.binary(&other_session, "blob.bin").await;
+    let reader_path = format!(
+        "/files/binary/documents/{}",
+        reader["document_id"].as_str().unwrap()
+    );
+    let (code, private_history) = f
+        .get(&format!(
+            "{reader_path}/versions?session_id={other_session}"
+        ))
+        .await;
+    assert_eq!(code, 200, "{private_history}");
+    assert!(
+        private_history["data"]["versions"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "unsaved draft leaked into shared history"
+    );
     let (code, review) = f
         .send(
             "POST",
@@ -1128,7 +1147,6 @@ async fn binary_reviewed_save_retry_and_restore_use_the_production_router_withou
     stale["review"] = json!("0".repeat(64));
     let (code, refused) = f.send("POST", &format!("{path}/save"), Some(stale)).await;
     assert!(code >= 400, "stale review accepted: {refused}");
-    let other_session = f.session().await;
     let mut cross_session = request.clone();
     cross_session["session_id"] = json!(other_session);
     let (code, refused) = f
@@ -1158,6 +1176,58 @@ async fn binary_reviewed_save_retry_and_restore_use_the_production_router_withou
     let (code, replayed) = f.send("POST", &format!("{path}/save"), Some(request)).await;
     assert_eq!(code, 200, "{replayed}");
     assert_eq!(replayed["data"]["operation"]["id"], "save_one");
+    assert_eq!(
+        f.get(&format!(
+            "{reader_path}/versions?session_id={other_session}"
+        ))
+        .await
+        .0,
+        400,
+        "an invalidated live view must be reopened"
+    );
+    assert_eq!(
+        f.send(
+            "DELETE",
+            &format!("{reader_path}?session_id={other_session}"),
+            None
+        )
+        .await
+        .0,
+        200
+    );
+    let reader = f.binary(&other_session, "blob.bin").await;
+    let reader_path = format!(
+        "/files/binary/documents/{}",
+        reader["document_id"].as_str().unwrap()
+    );
+    let (code, shared) = f
+        .get(&format!(
+            "{reader_path}/versions?session_id={other_session}"
+        ))
+        .await;
+    assert_eq!(code, 200, "{shared}");
+    let version = &shared["data"]["versions"][0];
+    assert_eq!(version["operation_id"], "save_one");
+    let version_path = format!(
+        "{reader_path}/versions/{}/{}/review?session_id={other_session}",
+        version["document_id"].as_str().unwrap(),
+        version["version_id"].as_str().unwrap()
+    );
+    let (code, shared_review) = f.get(&version_path).await;
+    assert_eq!(code, 200, "{shared_review}");
+    assert_eq!(shared_review["data"]["ranges"][0]["before_hex"], "9f92");
+    assert_eq!(shared_review["data"]["ranges"][0]["after_hex"], "ff0041");
+    f.set_permissions(json!({"read":"deny","edit":"allow"}));
+    assert_eq!(f.get(&version_path).await.0, 403);
+    assert_eq!(
+        f.get(&format!(
+            "{reader_path}/versions?session_id={other_session}"
+        ))
+        .await
+        .0,
+        403
+    );
+    f.set_permissions(json!({"read":"allow","edit":"allow"}));
     let (code, restore) = f
         .send(
             "POST",

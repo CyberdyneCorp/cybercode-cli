@@ -76,6 +76,8 @@ The authenticated `fs` group adds:
 | Prepare private draft | `POST …/{id}/prepare` (`session_id`, current `revision`) |
 | Atomic draft patch | `POST …/{id}/patches` (`session_id`, `operation_id`, `revision`, `splices`) |
 | Undo/redo/discard | `POST …/{id}/history` (`session_id`, `operation_id`, `revision`, `action`) |
+| Shared saved history | `GET …/{id}/versions?session_id=…&after=…&limit=64` |
+| Saved byte diff | `GET …/{id}/versions/{stored_document}/{version}/review?session_id=…&start=0&limit=128` |
 | Reviewed native save | `POST …/{id}/save` (`session_id`, stable `operation_id`, exact review fingerprint in `review`) |
 | Review Restore Last Save | `POST …/{id}/restore-review` (`session_id`, current `revision`) |
 | Apply reviewed restore | `POST …/{id}/restore` (`session_id`, stable `operation_id`, `review`) |
@@ -177,3 +179,26 @@ Only acknowledged source changes enter the existing native FileChanged producer.
 Draft edits produce no source notification. Receipt acknowledgement, native
 observation and hook delivery remain separate states; pending notifications may be
 settled by fresh status/receipt reads without producing a duplicate callback.
+
+
+## Shared saved history
+
+An authorized reader can enumerate published acknowledged versions of the current
+source across Sessions, and review each immutable net byte diff. This does not
+expose unsaved owner/model command journals. Both routes refresh the requesting
+Session's read authority and bind the saved evidence to the current source root,
+canonical path and every source parent. Original-coordinate offsets and before/
+after fingerprints remain available even after a later save replaces the leaf.
+A live owner handle invalidated by replacement must first be closed and reopened.
+
+The SDK exposes `document.versions(after, limit)` and
+`document.versionReview(storedDocumentId, versionId, start, limit)`. History cursors
+are opaque identities, not timestamps. A bounded page visits at most 64 matching
+private namespaces and returns at most 64 versions; an empty page may still carry
+a continuation. Only immutable saved evidence is read, with no draft recovery or
+source mutation. Known acknowledgements interrupted before metadata publication
+become discoverable when explicit owner recovery resumes their publication.
+
+Shared history is not yet wired into Session snapshot/diff screens or rewind.
+The core retention primitive exists, but the configured retention/checkpoint
+adapter remains unfinished; public history access does not silently delete data.

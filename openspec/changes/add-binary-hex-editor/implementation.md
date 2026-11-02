@@ -563,3 +563,26 @@ existing durable observed/suppressed result after a later save; it cannot enqueu
 an observation or mint callback authority. Current native observation still needs
 its retained source proof. Review pages preserve the full fingerprint while the
 terminal can visit every returned range and request subsequent bounded pages.
+
+
+### Shared acknowledged history adapter (in progress)
+
+The native storage service now discovers published saved-source versions across
+Session namespaces using small source headers and immutable version evidence,
+without opening private command journals. Source-relative root/path/parent checks
+remain mandatory. Enumeration is bounded to 64 matching namespaces and 64 returned
+versions per page, including empty continuations. Owner-authenticated history and
+saved-review routes reuse fresh Session/Location/read admission and cancellable
+workers. A stale live viewer must reopen after source replacement. Generated
+OpenAPI/SDK operations and explicit helpers expose the same metadata and byte diff.
+Session snapshot/diff references, saved-view UX and the retention policy adapter
+remain pending; this is not full binary editor acceptance.
+
+Shared-history verification: the binary core selector passed 83 tests (one helper
+ignored); the focused cross-Session/paging regression also passed after making
+continuation anchors omit unsaved private document IDs. The production-router
+regression proves unsaved history exclusion, reopened-reader access to saved byte
+diffs and fresh read-denial refusal. Core/server all-target Clippy, SDK typecheck,
+125 unit/mock SDK tests (ten external tests skipped), a separate real-executable
+SDK history/save/restore test and strict OpenSpec validation passed. The shared
+snapshot/rewind and retention adapters remain pending.

@@ -206,6 +206,63 @@ impl StorageRoot {
     }
 }
 
+impl StorageRoot {
+    /// Discover candidate namespaces by their small source header. No private
+    /// command journal, base image or Session metadata is returned to the caller.
+    pub(super) fn source_document_ids(
+        &self,
+        source: &Document,
+        cancelled: &impl Fn() -> bool,
+    ) -> Result<Vec<String>, Error> {
+        source.validate()?;
+        let root = self.directory()?;
+        let mut found = Vec::new();
+        for (count, entry) in root.entries().map_err(|_| Error::Io)?.enumerate() {
+            if count >= 4096 {
+                return Err(Error::Limit);
+            }
+            if cancelled() {
+                return Err(Error::Cancelled);
+            }
+            let name = entry.map_err(|_| Error::Io)?.file_name();
+            let id = name.to_str().ok_or(Error::File)?;
+            if !id.starts_with("bin_") {
+                continue;
+            }
+            let dir = root.open_dir_nofollow(id).map_err(|_| Error::File)?;
+            crate::binary::storage::private(
+                root,
+                &dir.try_clone().map_err(|_| Error::Io)?.into_std_file(),
+                true,
+            )?;
+            if !dir.try_exists("owner.json").map_err(|_| Error::Io)? {
+                continue;
+            }
+            let header: Header =
+                serde_json::from_slice(&small_record(&dir, "owner.json", HEADER_LIMIT)?)
+                    .map_err(|_| Error::Invalid)?;
+            if header.version != 1
+                || header.relative.as_os_str().is_empty()
+                || header
+                    .relative
+                    .components()
+                    .any(|part| !matches!(part, Component::Normal(_)))
+            {
+                return Err(Error::Changed);
+            }
+            if header.owner.root == source.root()
+                && header.owner.root.join(&header.relative) == source.path()
+            {
+                found.push(id.to_owned());
+            }
+        }
+        found.sort();
+        source.validate()?;
+        self.directory()?;
+        Ok(found)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -19,6 +19,8 @@ use std::path::PathBuf;
 mod catalog;
 #[path = "editor/changes.rs"]
 mod changes;
+#[path = "editor/history.rs"]
+mod history;
 #[path = "editor/restore.rs"]
 mod restore;
 #[path = "editor/retention.rs"]

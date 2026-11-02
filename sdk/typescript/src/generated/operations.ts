@@ -342,6 +342,26 @@ export interface Operations {
     body: undefined;
     response: S.Located_BinaryStatus;
   };
+  "v1.fs.binaryVersionReview": {
+    path: { id: string; document: string; version: string };
+    query: {
+      session_id?: QueryValue;
+      start?: QueryValue;
+      limit?: QueryValue;
+    };
+    body: undefined;
+    response: S.Located_BinaryReview;
+  };
+  "v1.fs.binaryVersions": {
+    path: { id: string };
+    query: {
+      session_id?: QueryValue;
+      after?: QueryValue;
+      limit?: QueryValue;
+    };
+    body: undefined;
+    response: S.Located_BinaryVersions;
+  };
   "v1.fs.content": {
     path: Record<string, never>;
     query: {
@@ -2344,6 +2364,30 @@ export const operations = {
     path: "/api/v1/files/binary/documents/{id}",
     pathParams: ["id"],
     query: ["session_id"],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.fs.binaryVersionReview": {
+    tag: "fs",
+    name: "binaryVersionReview",
+    method: "GET",
+    path: "/api/v1/files/binary/documents/{id}/versions/{document}/{version}/review",
+    pathParams: ["id", "document", "version"],
+    query: ["session_id", "start", "limit"],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.fs.binaryVersions": {
+    tag: "fs",
+    name: "binaryVersions",
+    method: "GET",
+    path: "/api/v1/files/binary/documents/{id}/versions",
+    pathParams: ["id"],
+    query: ["session_id", "after", "limit"],
     body: "none",
     located: true,
     unwrap: false,
@@ -5248,6 +5292,12 @@ export function createGroups(caller: Caller) {
       /** Read current binary draft status under fresh owner authority (`GET /api/v1/files/binary/documents/{id}`) */
       binaryStatus: (id: string, query?: Operations["v1.fs.binaryStatus"]["query"], options?: RequestOptions): Promise<Operations["v1.fs.binaryStatus"]["response"]> =>
         caller.call("v1.fs.binaryStatus", { path: { id }, query }, options),
+      /** Read an immutable saved-source byte diff under fresh source read authority (`GET /api/v1/files/binary/documents/{id}/versions/{document}/{version}/review`) */
+      binaryVersionReview: (id: string, document: string, version: string, query?: Operations["v1.fs.binaryVersionReview"]["query"], options?: RequestOptions): Promise<Operations["v1.fs.binaryVersionReview"]["response"]> =>
+        caller.call("v1.fs.binaryVersionReview", { path: { id, document, version }, query }, options),
+      /** List acknowledged source history across Sessions without exposing private drafts (`GET /api/v1/files/binary/documents/{id}/versions`) */
+      binaryVersions: (id: string, query?: Operations["v1.fs.binaryVersions"]["query"], options?: RequestOptions): Promise<Operations["v1.fs.binaryVersions"]["response"]> =>
+        caller.call("v1.fs.binaryVersions", { path: { id }, query }, options),
       /** A project file's text (at most 1 MiB) when the Session's rules allow read (`GET /api/v1/files/content`) */
       content: (query?: Operations["v1.fs.content"]["query"], options?: RequestOptions): Promise<Operations["v1.fs.content"]["response"]> =>
         caller.call("v1.fs.content", { query }, options),

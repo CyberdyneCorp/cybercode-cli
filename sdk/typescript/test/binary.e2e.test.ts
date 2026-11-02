@@ -65,6 +65,16 @@ test("binary helper reads every byte, preserves scope and releases real owner do
     assert.deepEqual(readFileSync(editedPath), Buffer.from([0, 0, 65, 27, 128]));
     const replayed = await editor.save("sdk_save", review.fingerprint);
     assert.equal(replayed.operation.id, saved.operation.id);
+    const readerSession = (await client.session.create({title:"shared binary history"})).data.id;
+    const reader = await client.binary.open(readerSession,"edited.bin");
+    const history = await reader.versions();
+    assert.equal(history.versions.length,1);
+    const version = history.versions[0]!;
+    assert.equal(version.operation_id,"sdk_save");
+    const savedReview = await reader.versionReview(version.document_id,version.version_id);
+    assert.equal(savedReview.ranges[0]!.before_hex,"ff");
+    assert.equal(savedReview.ranges[0]!.after_hex,"0041");
+    await reader.close();
     const restore = await editor.restoreReview();
     await editor.restore("sdk_restore", restore.fingerprint);
     assert.deepEqual(readFileSync(editedPath), original);
