@@ -556,6 +556,19 @@ impl Editor {
         prepared: PreparedSave,
         cancelled: impl Fn() -> bool,
     ) -> Result<Operation, Error> {
+        self.commit_save_checked(prepared, cancelled, || Ok(()))
+    }
+    /// The host rechecks trusted current read/edit/Mode and ancestor authority
+    /// after content verification and capacity reservation, before native intent.
+    /// The check must not prompt, invoke hooks/models, or release mutation owners.
+    /// A refusal has no native effect and leaves the operation eligible for an
+    /// explicit newly authorized attempt. It does not manufacture a save receipt.
+    pub fn commit_save_checked(
+        &mut self,
+        prepared: PreparedSave,
+        cancelled: impl Fn() -> bool,
+        authorize: impl FnOnce() -> Result<(), Error>,
+    ) -> Result<Operation, Error> {
         if let Some(prior) = self.prior(
             &prepared.intent.operation.id,
             &prepared.intent.operation.payload_sha256,
@@ -626,6 +639,10 @@ impl Editor {
                 .0
                 .saturating_sub(prepared.intent.after.length.0),
         )?;
+        authorize()?;
+        if cancelled() {
+            return Err(Error::Cancelled);
+        }
         self.record.pending = Some(prepared.intent);
         persist(&mut self.store, &self.record)?;
         let intent = self.record.pending.as_ref().ok_or(Error::Invalid)?;
@@ -803,6 +820,54 @@ mod tests {
             SavePreparation::Ready(ready) => ready,
             _ => panic!("new save must prepare"),
         }
+    }
+    #[test]
+    fn final_save_authority_refusal_preserves_source_draft_and_receipt_absence() {
+        let (_root, mut editor, path, _owner) = setup();
+        patch(&mut editor, "patch_one");
+        let revision = editor.draft().revision();
+        let prepared = ready(&mut editor, "save_checked");
+        let called = std::cell::Cell::new(false);
+        let result = editor.commit_save_checked(
+            *prepared,
+            || false,
+            || {
+                called.set(true);
+                Err(Error::Changed)
+            },
+        );
+        assert!(called.get());
+        assert!(matches!(result, Err(Error::Changed)));
+        assert_eq!(std::fs::read(&path).unwrap(), b"original");
+        assert_eq!(editor.draft().revision(), revision);
+        assert_eq!(editor.draft().read(0, 4).unwrap(), [0, 255, 128, 27]);
+        assert!(!editor.unresolved());
+        assert!(editor.lookup_operation("save_checked").unwrap().is_none());
+        // A stricter check can also observe Stop while checking authority.
+        let cancelled = std::cell::Cell::new(false);
+        let prepared = ready(&mut editor, "save_checked");
+        assert!(matches!(
+            editor.commit_save_checked(
+                *prepared,
+                || cancelled.get(),
+                || {
+                    cancelled.set(true);
+                    Ok(())
+                }
+            ),
+            Err(Error::Cancelled)
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), b"original");
+        assert!(!editor.unresolved());
+        let prepared = ready(&mut editor, "save_checked");
+        assert_eq!(
+            editor
+                .commit_save_checked(*prepared, || false, || Ok(()))
+                .unwrap()
+                .outcome,
+            Outcome::Acknowledged
+        );
+        assert_eq!(std::fs::read(path).unwrap(), [0, 255, 128, 27]);
     }
     #[test]
     fn prepared_editors_keep_native_source_and_directory_pins_after_the_live_view_is_dropped() {

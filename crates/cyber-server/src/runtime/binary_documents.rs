@@ -64,6 +64,58 @@ pub(crate) struct EditAdmission {
     pub authority: super::AdmissionAuthority,
 }
 
+/// Retained host authority for the actual filesystem worker. Verification only
+/// refreshes trusted policy; prompts and hook/model execution belong before it.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) struct BinaryWork {
+    runtime: super::Runtime,
+    executor: tokio::runtime::Handle,
+    turn: super::TurnContext,
+    resource: cyber_core::binary::Resource,
+    grants: (super::FileDecision, super::FileDecision),
+    authority: super::AdmissionAuthority,
+    cancel: tokio_util::sync::CancellationToken,
+}
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl BinaryWork {
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel.is_cancelled()
+    }
+    /// Invoke from the blocking filesystem worker, immediately before its effect.
+    pub fn verify(&self) -> Result<(), Error> {
+        if self.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        self.authority
+            .verify(&self.runtime, &self.turn.session_id)
+            .map_err(|_| Error::Changed)?;
+        self.executor.block_on(async {
+            let current = self
+                .runtime
+                .file_turn(
+                    Some(&self.turn.session_id),
+                    std::path::Path::new(&self.turn.directory),
+                )
+                .await
+                .map_err(|_| Error::Changed)?;
+            if current != self.turn {
+                return Err(Error::Changed);
+            }
+            self.runtime
+                .verify_binary_grants(&self.turn, &self.resource, self.grants)
+                .await
+                .map_err(|_| Error::Changed)
+        })?;
+        self.authority
+            .verify(&self.runtime, &self.turn.session_id)
+            .map_err(|_| Error::Changed)?;
+        if self.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        Ok(())
+    }
+}
+
 pub(crate) struct Entry {
     pub session_id: String,
     pub directory: String,
@@ -262,7 +314,7 @@ impl super::Runtime {
         document: String,
         resource: cyber_core::binary::Resource,
         grants: (super::FileDecision, super::FileDecision),
-        work: impl FnOnce(tokio_util::sync::CancellationToken) -> T + Send + 'static,
+        work: impl FnOnce(BinaryWork) -> T + Send + 'static,
     ) -> Result<T, super::RuntimeError> {
         let edit_permit = self
             .binary_documents()
@@ -284,6 +336,7 @@ impl super::Runtime {
                 "Binary operation scope changed".into(),
             ));
         }
+        let authority = self.capture_child_admission(&turn.session_id)?;
         let mut activity =
             super::activity::Scope::reserve_binary(&self.inner, &handle, document).await?;
         let cancel = activity.control.stop.clone();
@@ -323,11 +376,20 @@ impl super::Runtime {
             .binary_documents()
             .worker()
             .map_err(|error| super::RuntimeError::Invalid(error.to_string()))?;
+        let context = BinaryWork {
+            runtime: self.clone(),
+            executor: tokio::runtime::Handle::current(),
+            turn,
+            resource,
+            grants,
+            authority,
+            cancel,
+        };
         tokio::task::spawn_blocking(move || {
             let (_lifecycle, _location, _paths, _permit, _edit_permit) =
                 (lifecycle, location, paths, permit, edit_permit);
             activity.launch()?;
-            let result = work(cancel);
+            let result = work(context);
             // A returned unknown file outcome is not a live/unowned native process.
             // Its durable intent remains unresolved in the document journal.
             activity.settle()?;

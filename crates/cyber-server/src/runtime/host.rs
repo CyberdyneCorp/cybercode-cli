@@ -1210,6 +1210,8 @@ pub trait ToolHost: Send + Sync {
 
     /// Decisions use the document's recorded canonical resource. Resolving this
     /// name through a later symlink would check permission for the wrong bytes.
+    /// This is a trusted policy-only query: no prompts, hooks, model calls or
+    /// subprocesses. It may run while a filesystem worker retains mutation owners.
     fn binary_file_decision<'a>(
         &'a self,
         _turn: &'a TurnContext,

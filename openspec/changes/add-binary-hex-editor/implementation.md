@@ -429,3 +429,22 @@ to publish unknown/corrupt evidence. This is core history infrastructure: public
 save/restore/history integration, retention, durable FileChanged dispatch and the
 remaining terminal/model/acceptance work are still outstanding. Platform CI remains
 required for this increment.
+
+## Final worker authority checkpoint
+
+The retained filesystem worker now carries its captured ancestor authority,
+original Turn/Location, frozen resource, granted read/edit decisions and Stop token.
+Its trusted policy-only checkpoint refreshes current Turn and both decisions on
+the actual blocking worker while keeping native Location, workspace/path and
+lifecycle ownership. This query cannot prompt or run hooks/models/subprocesses.
+Patch/history invoke it before their private journal effects. Core native commit
+accepts a final checkpoint after full source/stage verification and capacity
+reservation, immediately before intent publication, and rechecks cancellation.
+Production save routes must supply the retained worker checkpoint there.
+
+Regressions verify policy revocation after preparation while path ownership stays
+held, refusal without source changes/pending intent/fabricated receipts, Stop at
+the final check and an explicitly authorized successful follow-up. Local results:
+66 binary core tests, five runtime worker/proof tests and all 23 production file
+route tests passed; affected core/server library/test Clippy passed. This does not
+activate public save or complete the outstanding history/notification integrations.

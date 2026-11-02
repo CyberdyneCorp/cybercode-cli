@@ -13,7 +13,10 @@ impl ModelResolver for Models {
         Err("inference is forbidden in this test".into())
     }
 }
-struct Host(Arc<tokio::sync::Semaphore>);
+struct Host(
+    Arc<tokio::sync::Semaphore>,
+    Arc<std::sync::atomic::AtomicBool>,
+);
 impl ToolHost for Host {
     fn definitions(&self, _: &TurnContext) -> Vec<ToolDef> {
         vec![]
@@ -27,7 +30,13 @@ impl ToolHost for Host {
         _: &'a str,
         _: &'a cyber_core::binary::Resource,
     ) -> BoxFuture<'a, FileDecision> {
-        Box::pin(async { FileDecision::Allow })
+        Box::pin(async {
+            if self.1.load(std::sync::atomic::Ordering::SeqCst) {
+                FileDecision::Deny
+            } else {
+                FileDecision::Allow
+            }
+        })
     }
     fn file_mutation_guard<'a>(
         &'a self,
@@ -43,6 +52,17 @@ impl ToolHost for Host {
     }
 }
 async fn fixture() -> (
+    tempfile::TempDir,
+    Runtime,
+    String,
+    cyber_core::binary::Resource,
+    Arc<tokio::sync::Semaphore>,
+) {
+    fixture_with_policy(Arc::new(std::sync::atomic::AtomicBool::new(false))).await
+}
+async fn fixture_with_policy(
+    denied: Arc<std::sync::atomic::AtomicBool>,
+) -> (
     tempfile::TempDir,
     Runtime,
     String,
@@ -65,7 +85,7 @@ async fn fixture() -> (
             .unwrap(),
         ),
         resolver: Arc::new(Models),
-        tools: Arc::new(Host(paths.clone())),
+        tools: Arc::new(Host(paths.clone(), denied)),
         global_config_dir: root.join("config"),
         shell: "test".into(),
         claude_compat: false,
@@ -86,6 +106,50 @@ async fn fixture() -> (
         .unwrap()
         .id;
     (temp, runtime, session, resource, paths)
+}
+
+#[tokio::test]
+async fn binary_worker_refreshes_policy_after_preparation_without_releasing_owners() {
+    let denied = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (temp, runtime, session, resource, paths) = fixture_with_policy(denied.clone()).await;
+    let turn = runtime
+        .file_turn(Some(&session), temp.path())
+        .await
+        .unwrap();
+    let (started, running) = tokio::sync::oneshot::channel();
+    let (finish, wait) = std::sync::mpsc::channel();
+    let worker_paths = paths.clone();
+    let task = {
+        let runtime = runtime.clone();
+        tokio::spawn(async move {
+            runtime
+                .binary_file_work(
+                    turn,
+                    "bin_final_policy".into(),
+                    resource,
+                    (FileDecision::Allow, FileDecision::Allow),
+                    move |work| {
+                        work.verify().unwrap();
+                        started.send(()).unwrap();
+                        wait.recv().unwrap();
+                        assert_eq!(worker_paths.available_permits(), 0);
+                        work.verify()
+                    },
+                )
+                .await
+        })
+    };
+    running.await.unwrap();
+    denied.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(paths.available_permits(), 0);
+    finish.send(()).unwrap();
+    assert!(matches!(
+        task.await.unwrap().unwrap(),
+        Err(cyber_core::binary::Error::Changed)
+    ));
+    assert_eq!(paths.available_permits(), 1);
+    assert_eq!(std::fs::read(temp.path().join("bytes")).unwrap(), [0, 255]);
+    runtime.shutdown().await;
 }
 
 #[tokio::test]

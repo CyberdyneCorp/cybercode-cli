@@ -225,6 +225,7 @@ pub(super) async fn prepare(
                 resource,
                 (authority.grant, grant),
                 move |cancel| {
+                    cancel.verify()?;
                     let mut content = entry.document.lock().map_err(|_| Error::Io)?;
                     if content.metadata().revision != input.revision {
                         return Err(Error::Changed);
@@ -338,6 +339,7 @@ pub(super) async fn patch(
                     let Content::Draft(editor) = &mut *content else {
                         return Err(Error::Invalid);
                     };
+                    cancel.verify()?;
                     let operation = editor.patch(
                         &input.operation_id,
                         &PatchBatch {
@@ -399,6 +401,7 @@ pub(super) async fn history(
                     let Content::Draft(editor) = &mut *content else {
                         return Err(Error::Invalid);
                     };
+                    cancel.verify()?;
                     let operation = match input.action {
                         HistoryAction::Undo => {
                             editor.history(&input.operation_id, &input.revision, false)?
