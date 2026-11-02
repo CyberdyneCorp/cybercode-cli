@@ -1327,3 +1327,50 @@ async fn binary_prepare_rechecks_plan_ceiling_after_manual_permission_wait() {
     );
     assert!(f._model.requests().is_empty());
 }
+
+#[cfg(windows)]
+#[tokio::test]
+async fn binary_edit_routes_are_explicitly_unsupported_and_preserve_live_viewing() {
+    let f = Fixture::with(json!({"read":"allow","edit":"allow"})).await;
+    let session = f.session().await;
+    let opened = f.binary(&session, "blob.bin").await;
+    let id = opened["document_id"].as_str().unwrap();
+    let revision = opened["revision"].as_str().unwrap();
+    let path = format!("/files/binary/documents/{id}");
+    let (code, status) = f.get(&format!("{path}?session_id={session}")).await;
+    assert_eq!(code, 200, "{status}");
+    assert_eq!(status["data"]["source"], "live");
+    assert_eq!(status["data"]["edit_supported"], false);
+    let cases = [
+        ("prepare", json!({"session_id":session,"revision":revision})),
+        (
+            "patches",
+            json!({"session_id":session,"revision":revision,"operation_id":"patch_one","splices":[]}),
+        ),
+        (
+            "history",
+            json!({"session_id":session,"revision":revision,"operation_id":"undo_one","action":"undo"}),
+        ),
+        ("review", json!({"session_id":session,"revision":revision})),
+        ("recover", json!({"session_id":session})),
+    ];
+    for (operation, input) in cases {
+        let (code, result) = f
+            .send("POST", &format!("{path}/{operation}"), Some(input))
+            .await;
+        assert_eq!(code, 400, "{operation}: {result}");
+        assert_eq!(result["reason"], "binary_edit_unsupported");
+    }
+    let (code, page) = f
+        .get(&format!(
+            "{path}/bytes?session_id={session}&revision={revision}"
+        ))
+        .await;
+    assert_eq!(code, 200, "{page}");
+    assert_eq!(page["data"]["source"], "live");
+    assert_eq!(
+        std::fs::read(f.project.join("blob.bin")).unwrap(),
+        [0, 159, 146, 150]
+    );
+    assert!(f._model.requests().is_empty());
+}

@@ -3,14 +3,14 @@ use super::*;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use cyber_core::binary::editor::{DraftScope, Editor, Owner};
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RecoveryQuery {
     pub session_id: String,
     pub after: Option<String>,
     pub limit: Option<usize>,
 }
-#[derive(Deserialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "BinaryRecoverRequest")]
 pub struct RecoverRequest {

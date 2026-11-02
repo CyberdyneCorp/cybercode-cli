@@ -32,14 +32,14 @@ pub struct Status {
     pub edit_supported: bool,
     pub edit_decision: FileDecision,
 }
-#[derive(Deserialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "BinaryPrepareRequest")]
 pub struct PrepareRequest {
     pub session_id: String,
     pub revision: String,
 }
-#[derive(Deserialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "BinaryPatchRequest")]
 pub struct PatchRequest {
@@ -48,7 +48,7 @@ pub struct PatchRequest {
     pub revision: String,
     pub splices: Vec<Splice>,
 }
-#[derive(Deserialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[schemars(rename = "BinaryHistoryAction")]
 pub enum HistoryAction {
@@ -56,7 +56,7 @@ pub enum HistoryAction {
     Redo,
     Discard,
 }
-#[derive(Deserialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "BinaryHistoryRequest")]
 pub struct HistoryRequest {
@@ -65,7 +65,7 @@ pub struct HistoryRequest {
     pub revision: String,
     pub action: HistoryAction,
 }
-#[derive(Deserialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "BinaryReviewRequest")]
 pub struct ReviewRequest {
@@ -461,5 +461,30 @@ pub(super) async fn review(
             location,
             data: result,
         }))
+    }
+}
+
+#[cfg(test)]
+mod wire_tests {
+    use super::*;
+    #[test]
+    fn binary_wire_requests_roundtrip_on_supported_and_unsupported_platforms() {
+        fn check<T: serde::de::DeserializeOwned + Serialize>(value: serde_json::Value) {
+            let request: T = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(serde_json::to_value(request).unwrap(), value);
+        }
+        check::<PrepareRequest>(serde_json::json!({"session_id":"ses_one","revision":"r"}));
+        check::<PatchRequest>(
+            serde_json::json!({"session_id":"ses_one","operation_id":"patch_one","revision":"r","splices":[{"offset":"9007199254740993","delete_length":"1","expected_hex":"00","insert_hex":"ff"}]}),
+        );
+        check::<HistoryRequest>(
+            serde_json::json!({"session_id":"ses_one","operation_id":"undo_one","revision":"r","action":"undo"}),
+        );
+        check::<ReviewRequest>(
+            serde_json::json!({"session_id":"ses_one","revision":"r","start":0,"limit":128}),
+        );
+        check::<super::super::recovery::RecoverRequest>(
+            serde_json::json!({"session_id":"ses_one","read_only":true}),
+        );
     }
 }

@@ -368,3 +368,10 @@ macOS native sandbox deprecation and linker messages were observed; no origin is
 assigned without a corresponding main-branch comparison. The CLI read-only flag
 now reaches immutable server admission. Recovery header lookup opens existing
 namespaces only and does not create a document for an absent caller-provided ID.
+
+Initial PR #97 Windows lint found unread fields in the common draft wire requests
+because native edit handlers are unavailable there. Requests now support serialization
+as well as deserialization, with a cross-platform round-trip regression that checks
+an offset above 2^53. A Windows production-route regression explicitly checks native
+edit refusal alongside successful live viewing and unchanged source bytes; that
+Windows-only test remains subject to native CI. The local wire regression passed.
