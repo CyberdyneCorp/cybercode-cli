@@ -27,7 +27,7 @@ pub(super) async fn list(
 ) -> Result<Json<Located<Versions>>, ApiError> {
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
-        let _ = (state, parts, id, query);
+        let _ = (state, parts, id, query.session_id, query.after, query.limit);
         Err(editing::unsupported())
     }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -67,7 +67,16 @@ pub(super) async fn review(
 ) -> Result<Json<Located<Review>>, ApiError> {
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
-        let _ = (state, parts, id, document, version, query);
+        let _ = (
+            state,
+            parts,
+            id,
+            document,
+            version,
+            query.session_id,
+            query.start,
+            query.limit,
+        );
         Err(editing::unsupported())
     }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
