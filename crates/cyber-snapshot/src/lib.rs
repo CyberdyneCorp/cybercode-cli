@@ -7,9 +7,8 @@
 mod git;
 mod restore;
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 use std::time::Duration;
 
 use cyber_server::runtime::{FileDiff, RestoreError, Snapshot, Snapshots};
@@ -26,18 +25,12 @@ const DEFAULT_MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 pub struct GitSnapshots {
     data_dir: PathBuf,
     config: Arc<ConfigFn>,
-    /// Workspace mutation locks, one per worktree.
-    locks: Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl GitSnapshots {
     /// `data_dir` is the Cyber data directory; snapshots live under `<data_dir>/snapshot`.
     pub fn new(data_dir: PathBuf, config: Arc<ConfigFn>) -> Arc<Self> {
-        Arc::new(Self {
-            data_dir,
-            config,
-            locks: Mutex::default(),
-        })
+        Arc::new(Self { data_dir, config })
     }
 
     fn root(&self) -> PathBuf {
@@ -51,11 +44,6 @@ impl GitSnapshots {
             return None;
         }
         Shadow::locate(&self.root(), location)
-    }
-
-    fn lock(&self, worktree: &Path) -> Arc<tokio::sync::Mutex<()>> {
-        let mut locks = self.locks.lock().unwrap_or_else(PoisonError::into_inner);
-        Arc::clone(locks.entry(worktree.to_path_buf()).or_default())
     }
 
     fn options(&self, location: &Path) -> (Vec<String>, u64) {
@@ -103,7 +91,8 @@ impl Snapshots for GitSnapshots {
                 return Ok(None);
             };
             let (ignore, max) = self.options(Path::new(&directory));
-            let lock = self.lock(&shadow.worktree);
+            let lock = cyber_server::workspace::mutation_lock(&shadow.worktree)
+                .map_err(|error| error.to_string())?;
             let _guard = lock.lock().await;
             shadow.track(&ignore, max).await.map(Some)
         })
@@ -154,7 +143,8 @@ impl Snapshots for GitSnapshots {
             let shadow = self.shadow(&directory).ok_or_else(|| {
                 RestoreError::Failed("snapshots are unavailable for this Location".into())
             })?;
-            let lock = self.lock(&shadow.worktree);
+            let lock = cyber_server::workspace::mutation_lock(&shadow.worktree)
+                .map_err(|error| RestoreError::Failed(error.to_string()))?;
             let _guard = lock.lock().await;
             let backups = self
                 .root()

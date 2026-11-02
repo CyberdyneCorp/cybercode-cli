@@ -227,6 +227,16 @@ impl App {
         // Establish the private directory before Linux sandbox mount planning or
         // any plugin, LSP, MCP, hook or model-driven subprocess can launch.
         cyber_tools::plugin_host::hide_computer_artifacts(&opts.paths, &opts.home)?;
+        // Prepare the existing object before sandbox mount planning. Unsafe storage
+        // disables editing while retaining the live viewer and normal App startup.
+        let binary_storage = cyber_core::binary::storage::StorageRoot::prepare(&opts.paths.data)
+            .ok()
+            .map(Arc::new);
+        let binary_path = opts.paths.data.join("binary");
+        cyber_sandbox::hide_credential_file(&opts.home, binary_path.clone());
+        if let Ok(canonical) = binary_path.canonicalize() {
+            cyber_sandbox::hide_credential_file(&opts.home, canonical);
+        }
         if let Some(password) = &opts.password {
             cyber_sandbox::reserve_owner_credential(password);
         }
@@ -348,6 +358,11 @@ impl App {
             interactive: opts.interactive,
             snapshots,
         });
+        if let Some(storage) = binary_storage {
+            runtime
+                .configure_binary_storage(storage)
+                .map_err(|error| error.to_string())?;
+        }
         host.attach(runtime.clone());
         // One fair scheduler of the slots of every Workflow agent of this server
         // (`workflows.max_concurrent`, reduced to the core count), fixed at startup like the

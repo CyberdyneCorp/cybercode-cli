@@ -483,6 +483,9 @@ async fn patch_feedback(
 }
 
 async fn write_one(ctx: &Ctx<'_>, change: &Change) -> Result<(), String> {
+    let workspace =
+        cyber_server::workspace::mutation_lock(&ctx.location).map_err(|error| error.to_string())?;
+    let _workspace = workspace.lock_owned().await;
     let lock = ctx.host.path_lock(&change.path);
     let _guard = lock.lock().await;
     if tokio::fs::read(&change.path).await.ok() != change.before {

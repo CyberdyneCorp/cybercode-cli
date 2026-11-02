@@ -14,7 +14,11 @@ use crate::tools::ToolError;
 
 /// A synthetic call of the `read` tool (or `list`) on `path`.
 fn invocation(turn: &TurnContext, action: &str, path: &Path, asker: Asker) -> Invocation {
-    let name = if action == "list" { "list" } else { "read" };
+    let name = match action {
+        "list" => "list",
+        "edit" => "edit",
+        _ => "read",
+    };
     Invocation {
         tool_output: Default::default(),
         registration: None,
@@ -57,11 +61,14 @@ fn decide(policy: &Policy, location: &Path, tool: &str, action: &str, path: &Pat
     let resource = path
         .strip_prefix(location)
         .map_or_else(|_| permissions::slash(&path), permissions::slash);
+    let edit = action == "edit";
     let request = |action: &str, resource: String| Request {
         tool: Some(tool.into()),
         action: action.into(),
         resources: vec![resource],
-        read_only: true,
+        read_only: !edit,
+        file_edit: edit,
+        mutates: if edit { vec![path.clone()] } else { vec![] },
         ..Request::default()
     };
     let decision = file_decision(policy.decide(&request(action, resource)));
@@ -89,20 +96,50 @@ impl BuiltinHost {
         self.policy_for(inv, agent).await
     }
 
+    async fn browse_context<'a>(
+        &'a self,
+        inv: &'a Invocation,
+        cancel: CancellationToken,
+    ) -> Result<Ctx<'a>, String> {
+        Ok(Ctx {
+            skill_paths: Default::default(),
+            loaded_skill: Default::default(),
+            provenance: Default::default(),
+            compiler_feedback: Default::default(),
+            hook_decision: None,
+            denial: Default::default(),
+            host: self,
+            policy: self.browse_policy(inv).await?,
+            location: canonical(Path::new(&inv.directory)),
+            inv,
+            cancel,
+        })
+    }
+
     pub(crate) async fn decide_files(
         &self,
         turn: &TurnContext,
         action: &str,
         paths: &[PathBuf],
     ) -> Vec<FileDecision> {
+        if !matches!(action, "read" | "list" | "edit") {
+            return vec![FileDecision::Deny; paths.len()];
+        }
         let inv = invocation(turn, action, Path::new(&turn.directory), Asker::detached());
-        let Ok(policy) = self.browse_policy(&inv).await else {
+        let Ok(ctx) = self.browse_context(&inv, CancellationToken::new()).await else {
             return vec![FileDecision::Deny; paths.len()];
         };
         let location = canonical(Path::new(&turn.directory));
         paths
             .iter()
-            .map(|path| decide(&policy, &location, &inv.name, action, path))
+            .map(|path| {
+                if action == "edit"
+                    && crate::sandboxing::binary_edit_boundary(&ctx, &canonical(path)).is_err()
+                {
+                    return FileDecision::Deny;
+                }
+                decide(&ctx.policy, &location, &inv.name, action, path)
+            })
             .collect()
     }
 
@@ -115,32 +152,44 @@ impl BuiltinHost {
         path: &Path,
         asker: Asker,
         cancel: CancellationToken,
+        mut metadata: Value,
     ) -> Result<(), String> {
+        if !matches!(action, "read" | "list" | "edit") {
+            return Err("Invalid file action".into());
+        }
+        if action == "edit" {
+            // An owner editor operation has its own explicit review. A normal
+            // permission ask remains manual; it must not start classifier inference.
+            if !metadata.is_object() {
+                metadata = json!({});
+            }
+            metadata["requires_confirmation"] = json!(true);
+        }
         let inv = invocation(turn, action, path, asker);
-        let ctx = Ctx {
-            skill_paths: Default::default(),
-            loaded_skill: Default::default(),
-            provenance: Default::default(),
-            compiler_feedback: Default::default(),
-            hook_decision: None,
-            denial: Default::default(),
-            host: self,
-            policy: self.browse_policy(&inv).await?,
-            location: canonical(Path::new(&inv.directory)),
-            inv: &inv,
-            cancel,
-        };
+        let ctx = self.browse_context(&inv, cancel).await?;
         let path = canonical(path);
         let resource = ctx.resource(&path);
         let request = Request {
             action: action.into(),
             resources: vec![resource.clone()],
-            read_only: true,
+            read_only: action != "edit",
+            file_edit: action == "edit",
+            mutates: if action == "edit" {
+                vec![path.clone()]
+            } else {
+                vec![]
+            },
             ..Request::default()
         };
         let outcome = async {
-            ctx.check_external(std::slice::from_ref(&path)).await?;
-            ctx.authorize(request, vec![resource], Value::Null).await
+            if action == "edit" {
+                crate::sandboxing::binary_edit_boundary(&ctx, &path).map_err(ToolError::Failed)?;
+                ctx.check_external_writes(std::slice::from_ref(&path))
+                    .await?;
+            } else {
+                ctx.check_external(std::slice::from_ref(&path)).await?;
+            }
+            ctx.authorize(request, vec![resource], metadata).await
         };
         match outcome.await {
             Ok(()) => Ok(()),

@@ -872,3 +872,122 @@ async fn binary_close_requires_its_session_but_no_longer_needs_a_live_location()
         json!({"data":true})
     );
 }
+
+#[tokio::test]
+async fn binary_private_root_is_hidden_before_drafts_exist_even_with_readable_path_grants() {
+    use cyber_server::runtime::{Asker, Invocation, ToolHost, ToolOutcome};
+    let f = Fixture::with(json!({"*": "allow"})).await;
+    let session = f.session().await;
+    let info = f._app.runtime.state(&session).await.unwrap().info;
+    let private = f._app.paths.data.join("binary");
+    assert!(private.is_dir());
+    // Created after App bootstrap, as actual draft files would be.
+    let secret = private.join("owner-draft.json");
+    std::fs::write(&secret, "PRIVATE UNSAVED OWNER BYTES").unwrap();
+    let public = f.project.join("public.txt");
+    std::fs::write(&public, "public positive control").unwrap();
+    let invoke = |path: &Path, call: &str| Invocation {
+        tool_output: Default::default(),
+        registration: None,
+        session_id: session.clone(),
+        directory: info.directory.clone(),
+        agent: info.agent.clone(),
+        mode: info.mode.clone(),
+        message_id: "msg_binary_privacy".into(),
+        call_id: call.into(),
+        name: "read".into(),
+        input: json!({"path": path}),
+        attempt: 1,
+        operation_key: call.into(),
+        asker: Asker::detached(),
+        rules: info.rules.clone(),
+    };
+    let result = f
+        ._app
+        .host
+        .execute(
+            invoke(&secret, "call_private"),
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await;
+    let ToolOutcome::Failed(reason) = result else {
+        panic!("private draft was not refused: {result:?}")
+    };
+    assert!(reason.contains("Sandbox denied: read"), "{reason}");
+    assert!(!reason.contains("PRIVATE UNSAVED"));
+    let result = f
+        ._app
+        .host
+        .execute(
+            invoke(&public, "call_public"),
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await;
+    let ToolOutcome::Ok(output) = result else {
+        panic!("positive read failed: {result:?}")
+    };
+    assert!(output.contains("public positive control"));
+    let mut sandbox = cyber_sandbox::SandboxConfig::resolve(
+        &Value::Null,
+        &Default::default(),
+        None,
+        &f.root.join("home"),
+    );
+    sandbox.readable_paths.push(private.clone());
+    assert!(sandbox.unreadable(&f.root.join("home")).contains(&private));
+}
+
+#[tokio::test]
+async fn owner_binary_edit_permission_remains_manual_in_auto_mode_without_inference() {
+    let f = Fixture::with(json!({"read": "allow", "edit": "ask"})).await;
+    let (status, session) = f
+        .send(
+            "POST",
+            "/sessions",
+            Some(json!({"model": "test/main", "mode": "auto"})),
+        )
+        .await;
+    assert_eq!(status, 201, "{session}");
+    let id = session["data"]["id"].as_str().unwrap();
+    let turn = f
+        ._app
+        .runtime
+        .file_turn(Some(id), &f.project)
+        .await
+        .unwrap();
+    let runtime = f._app.runtime.clone();
+    let path = f.project.join("blob.bin");
+    let authorize = tokio::spawn(async move { runtime.authorize_file(&turn, "edit", &path).await });
+    let mut asked = vec![];
+    for _ in 0..500 {
+        asked = pending(&f, id).await;
+        if !asked.is_empty() || authorize.is_finished() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(asked.len(), 1, "manual permission was not requested");
+    assert_eq!(
+        asked[0]["metadata"]["requires_confirmation"], true,
+        "{asked:?}"
+    );
+    assert!(
+        f._model.requests().is_empty(),
+        "owner operation invoked a provider"
+    );
+    let request = asked[0]["id"].as_str().unwrap();
+    let (status, result) = f
+        .send(
+            "POST",
+            &format!("/sessions/{id}/permissions/{request}/reply"),
+            Some(json!({"reply": "once"})),
+        )
+        .await;
+    assert_eq!(status, 204, "{result}");
+    authorize.await.unwrap().unwrap();
+    assert!(f._model.requests().is_empty());
+    assert_eq!(
+        std::fs::read(f.project.join("blob.bin")).unwrap(),
+        [0, 159, 146, 150]
+    );
+}
